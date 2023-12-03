@@ -5,6 +5,7 @@ This is the current list of possible films to be explored in this project. See s
 - [3 10 To Yuma](https://www.themoviedb.org/movie/5176) (1957)
 - [12 Years a Slave](https://www.themoviedb.org/movie/76203) (2013)
 - [A Fistful Of Dollars](https://www.themoviedb.org/movie/391) (1964)
+- [An Eastern Westerner](https://www.themoviedb.org/movie/40575-an-eastern-westerner) (1920)
 - [Annie Get Your Gun](https://www.themoviedb.org/movie/569535) (1950)
 - [Back To The Future Part III](https://www.themoviedb.org/movie/196) (1990)
 - [Big Jake](https://www.themoviedb.org/movie/21717) (1971)

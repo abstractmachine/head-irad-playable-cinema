@@ -1,6 +1,7 @@
 3 10 To Yuma (1957)
 12 Years a Slave (2013)
 A Fistful Of Dollars (1964)
+An Eastern Westerner (1920)
 Annie Get Your Gun (1950)
 Back To The Future Part III (1990)
 Big Jake (1971)
