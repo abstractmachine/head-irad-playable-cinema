@@ -1,0 +1,34 @@
+# Bibliography
+- Bellour, Raymond. L’analyse du film. Albatros, 1980.
+- Bellour, Raymond. L’Entre-Images: Photo, Cinéma, Vidéo. La Différence, 1990.
+- Blanchet, Alexis. « Cinéma et jeux vidéo : trente ans de liaisons ». MédiaMorphoses, no 22, 2008, p. 33-38.
+- Blanchet, Alexis. Les jeux vidéo au cinéma. Armand Collin. 2012.
+- Blanchet, Alexis. Des Pixels à Hollywood. Éditions Pix’n’Love. 2010.
+- Boidy, Maxime. Les études visuelles. Presses universitaires de Vincennes, 2017.
+- Boyer, Elsa. Le conflit des perceptions. MF, 2015.
+- Bolter, Jay David; Grusin, Richard. Remediation: Understanding New Media. The MIT Press, 2000.
+- Bordwell, David ; Thompson, Kristin. Film Art: An Introduction. McGraw-Hill, 2009.
+- Burdick, Anne; Drucker, Johanna; Lunenfeld, Peter; Presner, Todd; Schnapp, Jeffrey. Digital Humanities. The MIT Press, 2016.
+- Cook, David A. A History of Narrative Film. 3rd ed., illustrated. W.W. Norton, 1996.
+- Crawford, Kate. Contre-atlas de l’intelligence artificielle. Les coûts politiques, sociaux et environnementaux de l’IA [2021], trad. de l’anglais (Australie) par Laurent Bury. Zulma, 2022.
+- Deleuze, Gilles. L’Image-mouvement : Cinéma 1. Minuit, 1983.
+- Deleuze, Gilles. L’Image-temps : Cinéma 2. Minuit, 1985.
+- Drucker, Johanna. Graphesis, Visual Forms of Knowledge Production. Harvard Press, 2014.
+- Ehmann, Antje ; Eshun, Kodwo (eds.). Harun Farocki Against What? Against Whom? Walther König, 2010.
+- Fourmentraux, Jean-Paul. Des images performatives et opératoires : Autour de Jean-Luc Moulène. Études photographiques. 2017.
+- Guylas, Aaron. The Paranormal and the Paranoid: Conspiratorial Science Fiction Television. Rowman & Littlefield, 2015.
+- Heller-Nicolas, Alexandra. Found footage horror films : fear and the appearance of reality. McFarland and Co., 2014.
+- Klevan, Andrew; Clayton, Alex; eds. The Language and Style of Film Criticism. Routledge, 2011.
+- Jenkins, Henry; Ford, Sam; Green, Joshua. Spreadable Media: Creating Value and Meaning in a Networked Culture. NYU Press. 2011.
+- Manovich, Lev. The Language of New Media. The MIT Press, 2002.
+- Manovich, Lev. Software Takes Command. Bloomsbury Academic, 2013.
+- Manovich, Lev. Cultural Analytics. The MIT Press, 2020.
+- Masure, Anthony. Design sous artifice : la création au risque du machine learning. HEAD – Publishing, 2023.
+- Metz, Christian. Essais sur la signification au cinéma. Paris, Klincksieck, 1968.
+- Pasquinelli Matteo. The Eye of the Master: A Social History of Artificial Intelligence. Verso Books, 2023.
+- Perret, Catherine. Politique de l’archive et rhétorique des images. Critique, 2010.
+- Rose, Gillian. Visual Methodologies. SAGE. 2001.
+- Russel, Stuart. Human Compatible: Artificial Intelligence and the Problem of Control. Random House. 2020.
+- Russell, Stuart; Norvig, Peter. Artificial Intelligence: A Modern Approach, Global Edition, 4th ed. Pearson. 2021.
+- Simmon, Scott. The Invention of the Western Film: A Cultural History of the Genre's First Half-Century. Cambridge University Press, 2003.
+- Szeliski, Richard. Computer Vision: Algorithms and Applications, 2nd edition. The University of Washington, 2020.
