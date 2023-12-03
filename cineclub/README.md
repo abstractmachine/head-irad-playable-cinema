@@ -4,6 +4,9 @@ This is the current list of possible films to be explored in this project. See s
 ## Logs
 There are [logs](logs/) of films that have been re-watched, along with relevant watch notes.
 
+# Spreadsheet
+A Google Sheet containing various notes for each film: [HEAD-IRAD-RCDAV-Playable-Cinema-Watch-Notes](https://docs.google.com/spreadsheets/d/1MuC1bYNAfFrPAPa93R7w_8goGTN33EPHiK0ESyprPzQ/edit?usp=sharing).
+
 ## Westerns
 - [3 10 To Yuma](https://www.themoviedb.org/movie/5176) (1957)
 - [12 Years a Slave](https://www.themoviedb.org/movie/76203) (2013)
