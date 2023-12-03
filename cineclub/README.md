@@ -2,7 +2,7 @@
 This is the current list of possible films to be explored in this project. See sub-folders for notes and other documentation on each of these films.
 
 ## Logs
-There are [logs](/logs/) of films that have been re-watched, along with relevant watch notes.
+There are [logs](logs/) of films that have been re-watched, along with relevant watch notes.
 
 ## Westerns
 - [3 10 To Yuma](https://www.themoviedb.org/movie/5176) (1957)
