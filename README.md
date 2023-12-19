@@ -4,7 +4,7 @@
 This github repository will evolve throughout the project.
 
 ## Dates
-The starting date has yet to be finalized. Currently: 10 months, 2024.
+The official starting date has yet to be finalized. Currently: 10 months, 2024.
 
 ## Sections
 - [Project Proposal](proposal/)
