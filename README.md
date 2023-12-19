@@ -7,12 +7,12 @@ This github repository will evolve throughout the project.
 The starting date has yet to be finalized. Currently: 10 months, 2024.
 
 ## Sections
+- [Project Proposal](proposal/)
 - [Cineclub](cineclub/)
 - [Code](code/)
 - [Ludothèque](ludotheque/)
 - [Presskit](press/)
 - [Process](process/)
-- [Project Proposal](proposal/)
 - [References](references/)
 - [Tools](tools/)
 - [Training](training/)
