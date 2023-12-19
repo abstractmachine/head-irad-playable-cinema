@@ -9,10 +9,10 @@ The official starting date has yet to be finalized. Currently: 10 months, 2024.
 ## Sections
 - [Project Proposal](proposal/)
 - [Cineclub](cineclub/)
+- [Tools](tools/)
 - [Code](code/)
 - [Ludothèque](ludotheque/)
 - [Presskit](press/)
 - [Process](process/)
 - [References](references/)
-- [Tools](tools/)
 - [Training](training/)

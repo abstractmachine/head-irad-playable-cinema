@@ -1,5 +1,12 @@
 # Tools
 
+## Online platforms
+- Huggingface : <https://huggingface.co>
+- Google Colab : <https://colab.research.google.com>
+- CVat : <https://www.cvat.ai>
+- Roboflow : <https://roboflow.com>
+
+
 ## Image
 - Eagle : https://en.eagle.cool
 
