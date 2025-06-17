@@ -26,4 +26,4 @@
 
 - [Project overview & context](https://abstractmachine.net/en/posts/inside-inside)  
 - [Teaser video (Inside Inside)](https://vimeo.com/589844238)  
-- [GIFF Festival installation (2021)](https://www.giff.ch/archives/2021/
+- [GIFF Festival installation (2021)](https://www.giff.ch/archives/2021/)
