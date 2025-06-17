@@ -7,12 +7,16 @@ This is the playback tester that allows us to run video playthroughs downloaded 
 To run:
 
 ```
-> python 
+> cd ./code/playable-playback
+> python playback.py
 ```
 
-## Files
-- The training (cf. [playable-trainer](../playable-trainer/) ) is executed either locally or on Google Colab. The model is then placed in this folder `model.pt`
-- The playback app assumes the local video file is named `video.mp4`.
+## Required Files
+- `model.pt`
+- `video.mp4`
+
+
+The training (cf. [playable-trainer](../playable-trainer/) ) is executed either locally or on Google Colab and then placed in this folder as `model.pt`. The playback app assumes the local video file is named `video.mp4`.
 
 ## Pyenv
 Currently we are using the following `pyenv` configuration :
