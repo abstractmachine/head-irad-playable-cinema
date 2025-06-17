@@ -15,11 +15,17 @@ model.to(device)
 
 # Initialize Qt app
 app = QApplication(sys.argv)
-window = QWidget()
+class ResizableWindow(QWidget):
+    def resizeEvent(self, event):
+        w, h = self.width(), self.height()
+        print(f"Window resized to: {w} x {h}")
+        super().resizeEvent(event)
+
+window = ResizableWindow()
 window.setWindowTitle("Playable Cinema – Real-Time Prediction")
 
 # Video capture
-video_path = os.path.abspath("inside.mp4")
+video_path = os.path.abspath("video.mp4")
 cap = cv2.VideoCapture(video_path)
 fps = cap.get(cv2.CAP_PROP_FPS)
 total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -48,7 +54,9 @@ def show_frame(frame):
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     h, w, ch = rgb.shape
     image = QImage(rgb.data, w, h, ch * w, QImage.Format_RGB888)
-    video_label.setPixmap(QPixmap.fromImage(image))
+    video_label.setPixmap(QPixmap.fromImage(image).scaled(
+        video_label.width(), video_label.height(), Qt.KeepAspectRatio, Qt.SmoothTransformation
+    ))
 
 def display_frame():
     global current_time_ms, frame_buffer
@@ -60,7 +68,7 @@ def display_frame():
     frame_buffer = frame.copy()
 
     # Run YOLO prediction on every frame
-    result = model(frame_buffer)[0]
+    result = model.predict(frame_buffer, verbose=False)[0]
     annotated = result.plot()
     show_frame(annotated)
 
@@ -103,7 +111,7 @@ layout.addWidget(play_button)
 layout.addWidget(pause_button)
 
 window.setLayout(layout)
-window.resize(854, 480)
+window.resize(921, 640)
 window.show()
 
 sys.exit(app.exec_())

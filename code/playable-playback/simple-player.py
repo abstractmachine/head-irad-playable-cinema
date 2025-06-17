@@ -17,7 +17,7 @@ player = QMediaPlayer()
 player.setVideoOutput(video_widget)
 
 # Load video
-video_path = os.path.abspath("inside.mp4")
+video_path = os.path.abspath("video.mp4")
 print("Loading video from:", video_path)
 player.setMedia(QMediaContent(QUrl.fromLocalFile(video_path)))
 
