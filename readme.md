@@ -5,10 +5,11 @@
 ---
 
 ## Team
-[Douglas Edric Stanley](https://abstractmachine.net), Project Lead
-[Faust Perillaud](), Research Assistant, training & labelling
-TBD, Research Assistant, model development
-[Anthony Masure](https://www.anthonymasure.com), Dean, IRAD, HEAD – Genève
+- [Douglas Edric Stanley](https://abstractmachine.net), Project Lead
+- [Faust Perillaud](), Research Assistant, training & labelling
+- TBD, Research Assistant, model development
+- [Anthony Masure](https://www.anthonymasure.com), Dean, IRAD, HEAD – Genève
+- [Christelle Granite-Noble](https://www.hesge.ch/head/annuaire/christelle-granite-noble), Administrative Coordination
 
 ---
 
