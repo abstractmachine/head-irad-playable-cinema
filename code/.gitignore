@@ -1,0 +1,14 @@
+# macOS system files
+.DS_Store
+
+# Node modules (if using Node.js)
+node_modules/
+
+# Python cache (if using Python)
+__pycache__/
+
+# ignore any .mp4 file in any sub-directory
+**/*.mp4
+# Ignore all .mp4 files in the root directory
+/*.mp4
+

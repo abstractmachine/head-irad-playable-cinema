@@ -1,0 +1,13 @@
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 1
+names: ['boy']
+
+roboflow:
+  workspace: testplayablecin
+  project: playable-cinema
+  version: 2
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/testplayablecin/playable-cinema/dataset/2
