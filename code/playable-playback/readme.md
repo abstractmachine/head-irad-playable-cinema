@@ -34,7 +34,7 @@ To activate :
 
 ## Dependencies
 ```
-> pyenv virtualenv 3.11.9 playable-cinema
-> pyenv activate playable-cinema
+> pyenv virtualenv 3.11.9 playable-playback
+> pyenv activate playable-playback
 > pip install PyQt5 ultralytics opencv-python
 ```

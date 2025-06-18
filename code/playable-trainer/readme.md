@@ -46,13 +46,8 @@ playable-cinema-dataset/
 > python train.py
 ```
 
-## Dependencies
-```
-> pip install ultralytics
-```
-
 ## YOLO
-It looks like `yolov8n.pt` is the yolo training thingy that makes Yolo work because it downloads it directly from their github.
+It looks like `yolov8n.pt` is the yolo training thingy that makes Yolo work because it downloads it directly from their github. Not sure what this is about, need to clarify how to choose the training model, the data format, etc.
 
 ## Pyenv
 ```
@@ -63,7 +58,13 @@ It looks like `yolov8n.pt` is the yolo training thingy that makes Yolo work beca
 To activate :
 
 ```
-> pyenv activate playable-playback
+> pyenv activate playable-trainer
+```
+
+## Dependencies
+To train we need to install the [Ultralytics](https://github.com/ultralytics/ultralytics) libraries.
+```
+> pip install ultralytics
 ```
 
 # Colab Training

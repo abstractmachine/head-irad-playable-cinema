@@ -6,10 +6,10 @@
 
 ## Team
 - [Douglas Edric Stanley](https://abstractmachine.net), Project Lead
-- [Faust Perillaud](), Research Assistant, training & labelling
+- [Faust Perillaud](https://www.head-geneve.show/projects/spectral-yard-fp-100e1), Research Assistant, training & labelling
 - TBD, Research Assistant, model development
-- [Anthony Masure](https://www.anthonymasure.com), Dean, IRAD, HEAD – Genève
-- [Christelle Granite-Noble](https://www.hesge.ch/head/annuaire/christelle-granite-noble), Administrative Coordination
+- [Anthony Masure](https://www.anthonymasure.com), Dean of Research, [IRAD](https://www.hesge.ch/head/en/programs-research/research), [HEAD – Genève](https://www.hesge.ch/head/en)
+- [Christelle Granite-Noble](https://www.hesge.ch/head/annuaire/christelle-granite-noble), Administrative Coordination, [IRAD](https://www.hesge.ch/head/en/programs-research/research)
 
 ---
 
