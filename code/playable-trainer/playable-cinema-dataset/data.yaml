@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 3
+names: ['boy', 'human', 'zombie']
+
+roboflow:
+  workspace: testplayablecin
+  project: playable-cinema
+  version: 4
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/testplayablecin/playable-cinema/dataset/4

@@ -8,3 +8,85 @@ Our datasets are being labelled by [Faust Perillaud](.) over at Roboflow. For no
 
 [Roboflow Playable Cinema](https://app.roboflow.com/testplayablecin/playable-cinema/overview)
 
+# Local Training
+
+## Download
+Download the dataset from Roboflow :
+
+```
+> cd ./code/playable-trainer
+```
+
+![](./download-dataset.png)
+
+```
+> unzip name-of-dataset.v4i.yolov5pytorch.zip -d playable-cinema-dataset
+```
+
+Big dump of `.jpg` don't be frightened; this creates a folder called `playable-cinema-dataset/`.
+
+```
+playable-cinema-dataset/
+├── data.yaml
+├── train/
+│   ├── images/
+│   └── labels/
+├── valid/
+│   ├── images/
+│   └── labels/
+├── test/
+│   ├── images/
+│   └── labels/
+
+```
+
+## Run
+```
+> cd ./code/playable-trainer
+> python train.py
+```
+
+## Dependencies
+```
+> pip install ultralytics
+```
+
+## YOLO
+It looks like `yolov8n.pt` is the yolo training thingy that makes Yolo work because it downloads it directly from their github.
+
+## Pyenv
+```
+> cd ./code/playable-trainer
+> pyenv virtualenv 3.11.9 playable-trainer
+```
+
+To activate :
+
+```
+> pyenv activate playable-playback
+```
+
+# Colab Training
+There is a `head-irad-playable-dataset-trainer.ipynb` script on Douglas' Google Colab.
+
+## A-100
+We've had fast results with connecting to `A-100` (NVIDIA) cards.
+
+## Upload
+For example, we uploaded this .zip file to Colab: `Playable Cinema.v4i.yolov5pytorch.zip` and it did it's thing putting the contents into the Google Colab local folder. Note there is a %### done progress bar.
+
+This is ugly, but I renamed this zip to `playable-trainer.zip` for the Colab script.
+
+There is a new big `.zip` dump.
+
+## Install
+Install `ultralytics`
+
+## Train
+Last train took `?min`
+
+## Rename old model
+In `playable-playback` folder, rename `model.pt` > `model-2025-##-##.pt` so that we can go back to older trainings.
+
+## Download
+Download into `playable-playback` folder and rename to `model.pt`.
