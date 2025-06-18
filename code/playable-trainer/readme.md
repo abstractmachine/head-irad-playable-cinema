@@ -84,7 +84,7 @@ There is a new big `.zip` dump.
 Install `ultralytics`
 
 ## Train
-Last train took `?min`
+Last train took `6m28s`.
 
 ## Rename old model
 In `playable-playback` folder, rename `model.pt` > `model-2025-##-##.pt` so that we can go back to older trainings.
