@@ -20,9 +20,13 @@ Our datasets are being labelled by [Faust Perillaud](.) over at Roboflow. For no
 ## Download Dataset
 For example, to custom train on our own locally or on Colab.
 
+*Note: The download window did not open in `Safari`. I had to switch over to `Chrome`.
+
 1. Go to [Roboflow Playable Cinema](https://app.roboflow.com/testplayablecin/playable-cinema/overview) Project space on Roboflow.
 2. Sign-in
 3. Open [Playable Cinema](https://app.roboflow.com/testplayablecin/playable-cinema/models) Models tab
 4. Select `Dataset`
 5. Select prefered `Version` (usually latest date)
 6. Select `Download Dataset`
+7. Select `Get Zip File` & `Continue`
+8. Select Format. We are using `Yolo v5 Pytorch`

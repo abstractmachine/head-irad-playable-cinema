@@ -90,4 +90,4 @@ Last train took `6m28s`.
 In `playable-playback` folder, rename `model.pt` > `model-2025-##-##.pt` so that we can go back to older trainings.
 
 ## Download
-Download into `playable-playback` folder and rename to `model.pt`.
+Download the file named `best.pt` into `playable-playback` folder and rename this file to `model.pt`. You can now run the model with [playback.py](../playable-playback/playback.py)
