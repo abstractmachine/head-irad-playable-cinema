@@ -27,3 +27,8 @@
 - [Project overview & context](https://abstractmachine.net/en/posts/inside-inside)  
 - [Teaser video (Inside Inside)](https://vimeo.com/589844238)  
 - [GIFF Festival installation (2021)](https://www.giff.ch/archives/2021/)
+
+--
+
+## Financing
+This project was financed with a research grant from the [Network of Expertise in Design and Visual Arts](https://www.hesge.ch/head/en/programs-research/research) / [Réseau de compétences Design et Arts visuels](https://www.hesge.ch/head/formations-recherche/recherche).
