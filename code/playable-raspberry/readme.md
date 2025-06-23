@@ -2,7 +2,7 @@
 After lots of complicated hand-wringing and weird chatbot suggestions, it turns out connecting a Raspberry to HES-SO's Eduroam is quite easy:
 
 1. Connect on Raspberry to a temporary phone (sharing) or over Wired ethernet
-2. Go to [](http://cat.eduroam.org)
+2. Go to [cat.eduroam.org](http://cat.eduroam.org)
 3. Select `Connect your device to eduroam®` > `Click here to download your eduroam installer`
 4. Select `HES-SO`
 5. We don't want the default `Chrome` installer, we want a Linux installer:
