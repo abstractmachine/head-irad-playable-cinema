@@ -76,7 +76,7 @@ We've had fast results with connecting to `A-100` (NVIDIA) cards.
 ## Upload
 For example, we uploaded this .zip file to Colab: `Playable Cinema.v4i.yolov5pytorch.zip` and it did it's thing putting the contents into the Google Colab local folder. Note there is a %### done progress bar.
 
-This is ugly, but I renamed this zip to `playable-trainer.zip` for the Colab script.
+This is ugly, but I renamed this zip to `playable-dataset.zip` for the Colab script.
 
 There is a new big `.zip` dump.
 
