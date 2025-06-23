@@ -84,7 +84,9 @@ There is a new big `.zip` dump.
 Install `ultralytics`
 
 ## Train
-Last train took `6m28s`.
+- First train (1 class) on a A-100 GPU took `6m28s`
+- Train on Colab Python Something Processor Something took `~25minutes`
+- Train on A-100 (2025-06-23) took ~10m
 
 ## Rename old model
 In `playable-playback` folder, rename `model.pt` > `model-2025-##-##.pt` so that we can go back to older trainings.
