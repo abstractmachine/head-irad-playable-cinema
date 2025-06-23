@@ -2,8 +2,6 @@
 
 **Playable Cinema** is an experimental research project that explores how machine learning can be used to reconfigure moving images from cinema and video games into interactive audiovisual experiences. Using computer vision techniques such as semantic segmentation and visual inference, the project builds a dataset that connects patterns between dystopian cinema and the award-winning indie game *Inside* (Playdead, 2016). This testbed serves as a prototype for a larger-scale dataset comparing Western films and *Red Dead Redemption 2*.
 
----
-
 ## Team
 - [Douglas Edric Stanley](https://abstractmachine.net), Project Lead
 - [Faust Perillaud](https://www.head-geneve.show/projects/spectral-yard-fp-100e1), Research Assistant, training & labelling
@@ -11,7 +9,6 @@
 - [Anthony Masure](https://www.anthonymasure.com), Dean of Research, [IRAD](https://www.hesge.ch/head/en/programs-research/research), [HEAD – Genève](https://www.hesge.ch/head/en)
 - [Christelle Granite-Noble](https://www.hesge.ch/head/annuaire/christelle-granite-noble), Administrative Coordination, [IRAD](https://www.hesge.ch/head/en/programs-research/research)
 
----
 
 ## 🔧 Current Status & Timeline
 
@@ -19,8 +16,6 @@
 - **Training Prototype Model (Q3 2024):** Building initial inference pipeline and testing labeling workflow.
 - **Scaling Up (Q4 2024):** Transitioning to a larger dataset involving Western films and *Red Dead Redemption 2*.
 - **Deployment (Q1 2025):** Developing interactive installation and real-time inference API.
-
----
 
 ## 🌍 External Resources
 
