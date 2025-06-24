@@ -26,6 +26,23 @@ class ResizableWindow(QWidget):
 		w, h = self.width(), self.height()
 		print(f"Window resized to: {w} x {h}")
 		super().resizeEvent(event)
+
+	def keyPressEvent(self, event):
+		if event.key() == Qt.Key_Space:
+			toggle_play_pause()
+		elif event.key() == Qt.Key_Left:
+			# Seek 1 second back
+			new_time = max(0, current_time_ms - 1000)
+			seek(new_time)
+			slider.setValue(new_time)
+		elif event.key() == Qt.Key_Right:
+			# Seek 1 second forward
+			new_time = min(duration_ms, current_time_ms + 1000)
+			seek(new_time)
+			slider.setValue(new_time)
+		else:
+			super().keyPressEvent(event)
+
 window = ResizableWindow()
 # Set the title of the window
 window.setWindowTitle("Playable Cinema – Real-Time Prediction")
@@ -40,9 +57,8 @@ duration_ms = int((total_frames / fps) * 1000)
 # UI elements for displaying video and controls
 video_label = QLabel()
 video_label.setAlignment(Qt.AlignCenter)
-# Create buttons for play and pause functionality
-play_button = QPushButton("Play")
-pause_button = QPushButton("Pause")
+# Replace both play_button and pause_button with a single toggle button
+play_pause_button = QPushButton("Play")
 # Slider for seeking through the video
 slider = QSlider(Qt.Horizontal)
 slider.setRange(0, duration_ms)
@@ -53,6 +69,7 @@ play_timer = QTimer()
 # Track current playback time and buffer for current frame
 current_time_ms = 0
 frame_buffer = None
+is_playing = False  # Track playback state
 
 # ---- FRAME PROCESSING ----
 
@@ -102,11 +119,16 @@ def update_timecode():
 
 # ---- CONTROLS ----
 
-def play():
-	play_timer.start(int(1000 / fps))
-
-def pause():
-	play_timer.stop()
+def toggle_play_pause():
+	global is_playing
+	if is_playing:
+		play_timer.stop()
+		play_pause_button.setText("Play")
+		is_playing = False
+	else:
+		play_timer.start(int(1000 / fps))
+		play_pause_button.setText("Pause")
+		is_playing = True
 
 # Function to seek to a specific position in the video
 def seek(position_ms):
@@ -131,9 +153,8 @@ def seek(position_ms):
 
 # ---- SIGNALS ----
 
-# Connect buttons and slider to their respective functions
-play_button.clicked.connect(play)
-pause_button.clicked.connect(pause)
+# Connect the button to the toggle function
+play_pause_button.clicked.connect(toggle_play_pause)
 slider.sliderMoved.connect(seek)
 play_timer.timeout.connect(display_frame)
 
@@ -143,8 +164,7 @@ play_timer.timeout.connect(display_frame)
 layout = QVBoxLayout()
 layout.addWidget(video_label)
 layout.addWidget(slider)
-layout.addWidget(play_button)
-layout.addWidget(pause_button)
+layout.addWidget(play_pause_button)
 
 # Set the layout for the window
 window.setLayout(layout)
