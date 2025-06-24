@@ -38,3 +38,7 @@ To activate :
 > pyenv activate playable-playback
 > pip install PyQt5 ultralytics opencv-python
 ```
+
+## Inside Playthrough
+We are testing the Inside playback with this video: 
+[Inside Full Game Walkthrough No Commentary - All Secrets + Both Endings - 1080p HD - Xbox One Gameplay](https://www.youtube.com/watch?v=NP4AuKdb_dA&t=656s)

@@ -85,6 +85,20 @@ def display_frame():
 	# Update the slider position based on current playback time
 	current_time_ms += int(1000 / fps)
 	slider.setValue(current_time_ms)
+	update_timecode()  # Update titlebar
+
+def ms_to_timecode(ms):
+	"""Convert milliseconds to HH:MM:SS format."""
+	seconds = ms // 1000
+	h = seconds // 3600
+	m = (seconds % 3600) // 60
+	s = seconds % 60
+	return f"{h:02}:{m:02}:{s:02}"
+
+def update_timecode():
+	current = ms_to_timecode(current_time_ms)
+	total = ms_to_timecode(duration_ms)
+	window.setWindowTitle(f"Playable Cinema – {current} / {total}")
 
 # ---- CONTROLS ----
 
@@ -113,6 +127,7 @@ def seek(position_ms):
 		annotated = result.plot()
 		# Display the annotated frame in the video label
 		show_frame(annotated)
+	update_timecode()  # Update titlebar
 
 # ---- SIGNALS ----
 
