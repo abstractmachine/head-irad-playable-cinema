@@ -8,6 +8,43 @@ Our datasets are being labelled by [Faust Perillaud](.) over at Roboflow. For no
 
 [Roboflow Playable Cinema](https://app.roboflow.com/testplayablecin/playable-cinema/overview)
 
+See below for [Local Training](#Local-Training)
+
+# Colab Training
+There is a `head-irad-playable-dataset-trainer.ipynb` script on Douglas' Google Colab.
+
+## Download
+Goto the [Roboflow Playable Cinema](https://app.roboflow.com/testplayablecin/playable-cinema/overview) dataset. Select `Versions` > `Download Dataset` > `Yolo v5 PyTorch` / `Show Download Code` + uncheck `Also train a model (with credits)`.
+
+![](./roboflow-download-code.png)
+
+Rename this file to `playable-dataset.zip`.
+
+## A-100
+We've had fast results with connecting to `A-100` (NVIDIA) cards.
+
+## Upload
+For example, we uploaded this .zip file to Colab: `Playable Cinema.v4i.yolov5pytorch.zip` and it did it's thing putting the contents into the Google Colab local folder. Note there is a %### done progress bar.
+
+This is ugly, but I renamed this zip to `playable-dataset.zip` for the Colab script.
+
+There is a new big `.zip` dump.
+
+## Install
+Install `ultralytics`
+
+## Train
+- First train (1 class) on a A-100 GPU took `6m28s`
+- Train on Colab Python Something Processor Something took `~25minutes`
+- Train on A-100 (2025-06-23) took ~10m
+
+## Rename old model
+In `playable-playback` folder, rename `model.pt` > `model-2025-##-##.pt` so that we can go back to older trainings.
+
+## Download
+Download the file named `best.pt` into `playable-playback` folder and rename this file to `model.pt`. You can now run the model with [playback.py](../playable-playback/playback.py)
+
+
 # Local Training
 
 ## Download
@@ -66,30 +103,3 @@ To train we need to install the [Ultralytics](https://github.com/ultralytics/ult
 ```
 > pip install ultralytics
 ```
-
-# Colab Training
-There is a `head-irad-playable-dataset-trainer.ipynb` script on Douglas' Google Colab.
-
-## A-100
-We've had fast results with connecting to `A-100` (NVIDIA) cards.
-
-## Upload
-For example, we uploaded this .zip file to Colab: `Playable Cinema.v4i.yolov5pytorch.zip` and it did it's thing putting the contents into the Google Colab local folder. Note there is a %### done progress bar.
-
-This is ugly, but I renamed this zip to `playable-dataset.zip` for the Colab script.
-
-There is a new big `.zip` dump.
-
-## Install
-Install `ultralytics`
-
-## Train
-- First train (1 class) on a A-100 GPU took `6m28s`
-- Train on Colab Python Something Processor Something took `~25minutes`
-- Train on A-100 (2025-06-23) took ~10m
-
-## Rename old model
-In `playable-playback` folder, rename `model.pt` > `model-2025-##-##.pt` so that we can go back to older trainings.
-
-## Download
-Download the file named `best.pt` into `playable-playback` folder and rename this file to `model.pt`. You can now run the model with [playback.py](../playable-playback/playback.py)

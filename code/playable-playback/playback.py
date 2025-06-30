@@ -13,6 +13,10 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap
 
+# set the normal and fast seek amounts
+NORMAL_SEEK_AMOUNT = 1000  # 1 second in milliseconds
+FAST_SEEK_AMOUNT = 10000     # 10 seconds in milliseconds
+
 # Load YOLO model for real-time prediction
 model = YOLO("model.pt")
 device = "mps" if torch.backends.mps.is_available() else "cpu"
@@ -31,13 +35,15 @@ class ResizableWindow(QWidget):
 		if event.key() == Qt.Key_Space:
 			toggle_play_pause()
 		elif event.key() == Qt.Key_Left:
-			# Seek 1 second back
-			new_time = max(0, current_time_ms - 1000)
+			# Check if shift key is held - if so, seek 3 seconds back, otherwise 1 second
+			seek_amount = FAST_SEEK_AMOUNT if event.modifiers() & Qt.ShiftModifier else NORMAL_SEEK_AMOUNT
+			new_time = max(0, current_time_ms - seek_amount)
 			seek(new_time)
 			slider.setValue(new_time)
 		elif event.key() == Qt.Key_Right:
-			# Seek 1 second forward
-			new_time = min(duration_ms, current_time_ms + 1000)
+			# Check if shift key is held - if so, seek 3 seconds forward, otherwise 1 second
+			seek_amount = FAST_SEEK_AMOUNT if event.modifiers() & Qt.ShiftModifier else NORMAL_SEEK_AMOUNT
+			new_time = min(duration_ms, current_time_ms + seek_amount)
 			seek(new_time)
 			slider.setValue(new_time)
 		else:
