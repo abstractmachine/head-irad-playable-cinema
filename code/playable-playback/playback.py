@@ -1,5 +1,6 @@
 # required libraries for the application
 import sys, os
+import argparse
 # OpenCV is used for video processing and frame manipulation
 import cv2
 # torch is the core library for PyTorch, used for tensor operations and model inference
@@ -17,8 +18,15 @@ from PyQt5.QtGui import QImage, QPixmap
 NORMAL_SEEK_AMOUNT = 1000  # 1 second in milliseconds
 FAST_SEEK_AMOUNT = 10000     # 10 seconds in milliseconds
 
+# Parse command line arguments
+parser = argparse.ArgumentParser(description='Playable Cinema - Real-Time Video Prediction')
+parser.add_argument('--model', '-m', 
+                   default='model.pt', 
+                   help='Path to the YOLO model file (default: model.pt)')
+args = parser.parse_args()
+
 # Load YOLO model for real-time prediction
-model = YOLO("model.pt")
+model = YOLO(args.model)
 device = "mps" if torch.backends.mps.is_available() else "cpu"
 model.to(device)
 
@@ -34,13 +42,13 @@ class ResizableWindow(QWidget):
 	def keyPressEvent(self, event):
 		if event.key() == Qt.Key_Space:
 			toggle_play_pause()
-		elif event.key() == Qt.Key_Left:
+		elif event.key() in (Qt.Key_Left, Qt.Key_J):  # Left arrow or A key
 			# Check if shift key is held - if so, seek 3 seconds back, otherwise 1 second
 			seek_amount = FAST_SEEK_AMOUNT if event.modifiers() & Qt.ShiftModifier else NORMAL_SEEK_AMOUNT
 			new_time = max(0, current_time_ms - seek_amount)
 			seek(new_time)
 			slider.setValue(new_time)
-		elif event.key() == Qt.Key_Right:
+		elif event.key() in (Qt.Key_Right, Qt.Key_L):  # Right arrow or D key
 			# Check if shift key is held - if so, seek 3 seconds forward, otherwise 1 second
 			seek_amount = FAST_SEEK_AMOUNT if event.modifiers() & Qt.ShiftModifier else NORMAL_SEEK_AMOUNT
 			new_time = min(duration_ms, current_time_ms + seek_amount)
@@ -76,6 +84,7 @@ play_timer = QTimer()
 current_time_ms = 0
 frame_buffer = None
 is_playing = False  # Track playback state
+is_scrubbing = False  # Track if user is dragging the slider
 
 # ---- FRAME PROCESSING ----
 
@@ -88,6 +97,10 @@ def show_frame(frame):
 	video_label.setPixmap(QPixmap.fromImage(image).scaled(
 		video_label.width(), video_label.height(), Qt.KeepAspectRatio, Qt.SmoothTransformation
 	))
+
+# Function to show frame without YOLO inference (for scrubbing)
+def show_frame_without_inference(frame):
+	show_frame(frame)
 
 # Function to display the next frame in the video
 def display_frame():
@@ -137,7 +150,7 @@ def toggle_play_pause():
 		is_playing = True
 
 # Function to seek to a specific position in the video
-def seek(position_ms):
+def seek(position_ms, run_inference=True):
 	# variables to track current playback time and frame buffer
 	global current_time_ms, frame_buffer
 	current_time_ms = position_ms
@@ -149,19 +162,53 @@ def seek(position_ms):
 	if ret:
 		# copy the frame to the buffer for processing
 		frame_buffer = frame.copy()
-		# Run YOLO prediction on the current frame
-		result = model(frame_buffer)[0]
-		# Annotate the frame with predictions
-		annotated = result.plot()
-		# Display the annotated frame in the video label
-		show_frame(annotated)
+		
+		if run_inference:
+			# Run YOLO prediction on the current frame
+			result = model(frame_buffer)[0]
+			# Annotate the frame with predictions
+			annotated = result.plot()
+			# Display the annotated frame in the video label
+			show_frame(annotated)
+		else:
+			# Show frame without inference during scrubbing
+			show_frame_without_inference(frame_buffer)
 	update_timecode()  # Update titlebar
 
 # ---- SIGNALS ----
 
+# Function to handle slider press (start scrubbing)
+def slider_pressed():
+	global is_scrubbing
+	is_scrubbing = True
+	# Pause playback during scrubbing
+	if is_playing:
+		play_timer.stop()
+
+# Function to handle slider release (end scrubbing)
+def slider_released():
+	global is_scrubbing
+	is_scrubbing = False
+	# Run inference on the final position
+	seek(slider.value(), run_inference=True)
+	# Resume playback if it was playing before scrubbing
+	if is_playing:
+		play_timer.start(int(1000 / fps))
+
+# Function to handle slider movement during scrubbing
+def slider_moved(value):
+	if is_scrubbing:
+		# Show frame without inference during scrubbing
+		seek(value, run_inference=False)
+	else:
+		# Normal seek with inference
+		seek(value, run_inference=True)
+
 # Connect the button to the toggle function
 play_pause_button.clicked.connect(toggle_play_pause)
-slider.sliderMoved.connect(seek)
+slider.sliderPressed.connect(slider_pressed)
+slider.sliderReleased.connect(slider_released)
+slider.sliderMoved.connect(slider_moved)
 play_timer.timeout.connect(display_frame)
 
 # ---- LAYOUT ----
