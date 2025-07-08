@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 9
+names: ['blob', 'boy', 'dog', 'human', 'interactible', 'mechanism', 'structure', 'submarine', 'zombie']
+
+roboflow:
+  workspace: testplayablecin
+  project: playable-cinema
+  version: 9
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/testplayablecin/playable-cinema/dataset/9

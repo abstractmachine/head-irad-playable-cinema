@@ -1,6 +1,26 @@
 # Raspberry Pi
 These are various notes on configuring a Raspberry Pi for inferencing (i.e. interacting with an already-trained model).
 
+
+## Clean Install from Scratch
+This is a full step-by-step for installing the Raspberry Pi 5 playback inferencing software.
+
+## SD Card
+We are using a `SanDisk 64GB Extreme Pro MicroSDXC UHS-I Card`. Sppeds are announced at `200 MB/s` write and `90 MB/s` read. We formatted it ExFAT.
+
+## Raspbian
+Model: Raspberry Pi 5
+OS: Raspberry Pi OS (64-bit)
+
+## English
+We have selected `Use English language`, which might create a problem with Swiss keyboards, but we want to avoid folders named `Téléchargement` and other weirdities in the command line so we'll first choose English, reboot, then choose the right keyboard if that creates problems.
+
+## Login
+See private sheet.
+
+## Updates
+For now, we have skipped the automatic updates.
+
 ## Eduroam
 After lots of complicated hand-wringing and weird chatbot suggestions, it turns out connecting a Raspberry to HES-SO's Eduroam is quite easy:
 
@@ -19,26 +39,21 @@ After lots of complicated hand-wringing and weird chatbot suggestions, it turns 
 	- Enter login + password (twice)
 7. All done (hopefully)
 
-## Pyenv
-We are going to use specific `python` environements. So to install `pyenv` I'm following the pyenv installation tutorial [Install Multiple Versions of Python on your Raspberry Pi](https://samwestby.com/tutorials/rpi-pyenv) by Sam Westby.
+## ~~Pyenv~~
+I had bad luck with `pyenv` during the installation of the dependencies, so I used a system-wide Python installation of the libraries.
 
-Here's the full list of dependencies that we need to install:
+## Dependencies
+See various `Python` projects (ex: [Playable-Playback](../playable-playback/readme.md)) for their dependencies. 
 
-```
-sudo apt-get install --yes libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libgdbm-dev lzma lzma-dev tcl-dev libxml2-dev libxmlsec1-dev libffi-dev liblzma-dev wget curl make build-essential openssl
-```
-
-After those libraries, follow the tutorial to install and activate `pyenv`.
-
-Then we can install the version we want of `python`:
-
-## Example
-Now that we have `pyenv` on our Raspberry Pi, we can start doing this. The following is for example taken from the [playback readme](../playable-playback/readme.md)
+## System Wide Dependencies Installation
+Here is the installs we used:
 
 ```
-$ pyenv install 3.11.9
-$ pyenv virtualenv 3.11.9 playable-playback
-$ pyenv activate playable-playback
-$ pip install PyQt5 ultralytics opencv-python
-$ ./pythong playback.py
+$ sudo apt update
+$ sudo apt install python3-opencv
+$ sudo python3 -m pip install torch --break-system-packages
+$ sudo python3 -m pip install ultralytics --break-system-packages
 ```
+
+## Video
+In the `playable-playback` folder, the `git` repository does not have a video for inferencing (interpreting), so you will have to download/install a `video.mp4` file into the `playback` folder.

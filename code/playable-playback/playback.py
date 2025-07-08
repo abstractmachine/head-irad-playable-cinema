@@ -1,6 +1,8 @@
 # required libraries for the application
 import sys, os
 import argparse
+import csv
+from datetime import datetime
 # OpenCV is used for video processing and frame manipulation
 import cv2
 # torch is the core library for PyTorch, used for tensor operations and model inference
@@ -42,13 +44,16 @@ class ResizableWindow(QWidget):
 	def keyPressEvent(self, event):
 		if event.key() == Qt.Key_Space:
 			toggle_play_pause()
-		elif event.key() in (Qt.Key_Left, Qt.Key_J):  # Left arrow or A key
+		elif event.key() == Qt.Key_F:
+			# Flag current frame
+			flag_current_frame()
+		elif event.key() in (Qt.Key_Left, Qt.Key_J):  # Left arrow or J key
 			# Check if shift key is held - if so, seek 3 seconds back, otherwise 1 second
 			seek_amount = FAST_SEEK_AMOUNT if event.modifiers() & Qt.ShiftModifier else NORMAL_SEEK_AMOUNT
 			new_time = max(0, current_time_ms - seek_amount)
 			seek(new_time)
 			slider.setValue(new_time)
-		elif event.key() in (Qt.Key_Right, Qt.Key_L):  # Right arrow or D key
+		elif event.key() in (Qt.Key_Right, Qt.Key_L):  # Right arrow or L key
 			# Check if shift key is held - if so, seek 3 seconds forward, otherwise 1 second
 			seek_amount = FAST_SEEK_AMOUNT if event.modifiers() & Qt.ShiftModifier else NORMAL_SEEK_AMOUNT
 			new_time = min(duration_ms, current_time_ms + seek_amount)
@@ -59,7 +64,8 @@ class ResizableWindow(QWidget):
 
 window = ResizableWindow()
 # Set the title of the window
-window.setWindowTitle("Playable Cinema – Real-Time Prediction")
+model_name = os.path.basename(args.model)
+window.setWindowTitle(f"Playable Cinema – {model_name} – Real-Time Prediction")
 
 # Set up video capture from file
 video_path = os.path.abspath("video.mp4")
@@ -86,7 +92,73 @@ frame_buffer = None
 is_playing = False  # Track playback state
 is_scrubbing = False  # Track if user is dragging the slider
 
+# Flagging system variables
+flag_csv_file = None  # Will store the path to the current session's CSV file
+last_result = None  # Store the last YOLO result for flagging
+
 # ---- FRAME PROCESSING ----
+
+# Function to create flagging CSV file name
+def create_flag_csv_filename():
+	# Create playback-flags directory if it doesn't exist
+	flags_dir = "playback-flags"
+	if not os.path.exists(flags_dir):
+		os.makedirs(flags_dir)
+	
+	# Get today's date
+	today = datetime.now().strftime("%Y-%m-%d")
+	
+	# Find the next available letter suffix
+	suffix = 'a'
+	while True:
+		filename = f"playback-flags-{today}-{suffix}.csv"
+		filepath = os.path.join(flags_dir, filename)
+		if not os.path.exists(filepath):
+			return filepath
+		suffix = chr(ord(suffix) + 1)
+
+# Function to initialize CSV file with headers
+def initialize_flag_csv(filepath):
+	with open(filepath, 'w', newline='', encoding='utf-8') as csvfile:
+		writer = csv.writer(csvfile)
+		writer.writerow(['model', 'timecode', 'detection_count', 'labels'])
+
+# Function to flag current frame
+def flag_current_frame():
+	global flag_csv_file, last_result
+	
+	# Create CSV file if this is the first flag
+	if flag_csv_file is None:
+		flag_csv_file = create_flag_csv_filename()
+		initialize_flag_csv(flag_csv_file)
+		print(f"Created flagging file: {flag_csv_file}")
+	
+	# Get model name
+	model_name = os.path.basename(args.model)
+	
+	# Get current timecode
+	timecode = ms_to_timecode(current_time_ms)
+	
+	# Get detection information
+	detection_count = 0
+	labels = []
+	
+	if last_result is not None and last_result.boxes is not None:
+		detection_count = len(last_result.boxes)
+		# Get class names for detected objects
+		if hasattr(last_result, 'names') and last_result.boxes is not None:
+			class_ids = last_result.boxes.cls.cpu().numpy() if len(last_result.boxes) > 0 else []
+			labels = [last_result.names[int(class_id)] for class_id in class_ids]
+	
+	# Format labels as a semicolon-separated string
+	labels_str = ';'.join(labels) if labels else 'none'
+	
+	# Write to CSV
+	with open(flag_csv_file, 'a', newline='', encoding='utf-8') as csvfile:
+		writer = csv.writer(csvfile)
+		writer.writerow([model_name, timecode, detection_count, labels_str])
+	
+	print(f"Flagged frame at {timecode} - {detection_count} detections: {labels_str}")
 
 # Function to display a frame in the video label
 def show_frame(frame):
@@ -104,7 +176,7 @@ def show_frame_without_inference(frame):
 
 # Function to display the next frame in the video
 def display_frame():
-	global current_time_ms, frame_buffer
+	global current_time_ms, frame_buffer, last_result
 	ret, frame = cap.read()
 	if not ret:
 		# stop playback if no frame is returned
@@ -115,6 +187,7 @@ def display_frame():
 
 	# Run YOLO prediction on the current frame
 	result = model.predict(frame_buffer, verbose=False)[0]
+	last_result = result  # Store result for flagging
 	annotated = result.plot()
 	show_frame(annotated)
 
@@ -134,7 +207,8 @@ def ms_to_timecode(ms):
 def update_timecode():
 	current = ms_to_timecode(current_time_ms)
 	total = ms_to_timecode(duration_ms)
-	window.setWindowTitle(f"Playable Cinema – {current} / {total}")
+	model_name = os.path.basename(args.model)
+	window.setWindowTitle(f"Playable Cinema – {model_name} – {current} / {total}")
 
 # ---- CONTROLS ----
 
@@ -152,7 +226,7 @@ def toggle_play_pause():
 # Function to seek to a specific position in the video
 def seek(position_ms, run_inference=True):
 	# variables to track current playback time and frame buffer
-	global current_time_ms, frame_buffer
+	global current_time_ms, frame_buffer, last_result
 	current_time_ms = position_ms
 	frame_index = int((position_ms / 1000) * fps)
 	# set the video capture to the specific frame index
@@ -166,12 +240,14 @@ def seek(position_ms, run_inference=True):
 		if run_inference:
 			# Run YOLO prediction on the current frame
 			result = model(frame_buffer)[0]
+			last_result = result  # Store result for flagging
 			# Annotate the frame with predictions
 			annotated = result.plot()
 			# Display the annotated frame in the video label
 			show_frame(annotated)
 		else:
 			# Show frame without inference during scrubbing
+			last_result = None  # Clear result since no inference was run
 			show_frame_without_inference(frame_buffer)
 	update_timecode()  # Update titlebar
 
