@@ -240,8 +240,8 @@ def annotate_current_frame():
     with open(text_path, "w", encoding="utf-8") as f:
         f.write(text)
     
-    # Clear the text input
-    text_input.clear()
+    # DON'T! Clear the text input
+    #text_input.clear()
     print(f"Annotation enregistrée : {image_name} / {text}")
 
 # Connexions
