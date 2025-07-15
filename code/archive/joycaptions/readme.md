@@ -1,0 +1,2 @@
+## JoyCaption
+Faust found what looks like a cool captioning project: [JoyCaption](https://github.com/fpgaminer/joycaption?tab=readme-ov-file) (github), (cf. [Huggingface model](https://huggingface.co/fancyfeast/llama-joycaption-beta-one-hf-llava)). We only realized later that `fancyfeast` is in reference to furry culture. But by then, we had also figured out that the logic behind what we wanted, was actually the [BLIP](https://huggingface.co/docs/transformers/en/model_doc/blip) and [BLIP-2](https://huggingface.co/docs/transformers/en/model_doc/blip-2) model approach.
