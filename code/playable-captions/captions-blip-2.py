@@ -7,60 +7,37 @@ from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QLabel, QSlider, QFileDialog, QTextEdit, QSizePolicy
 )
-from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import QThread, pyqtSignal
 from PyQt5.QtGui import QPixmap, QImage
 
 import time
 import psutil
 
-# --- Argument parsing for model path and type ---
-parser = argparse.ArgumentParser()
-parser.add_argument('--model', type=str, default=None, help="Path to BLIP or BLIP-2 model folder")
-parser.add_argument('--blip', action='store_true', help="Force BLIP base mode (otherwise auto-detect)")
-parser.add_argument('--blip2', action='store_true', help="Force BLIP-2 mode (otherwise auto-detect)")
-args, unknown = parser.parse_known_args()
+# --- Add these imports for BLIP-2 ---
+from transformers import Blip2Processor, Blip2ForConditionalGeneration
 
-# --- Model Loader (auto-detect BLIP or BLIP-2) ---
-def detect_blip2(model_path):
-    files = set(os.listdir(model_path))
-    # Force BLIP-2 if flag is set
-    if getattr(args, "blip2", False):
-        return True
-    # Force BLIP if flag is set
-    if getattr(args, "blip", False):
-        return False
-    # BLIP-2 models have 'generation_config.json'
-    if "generation_config.json" in files:
-        return True
-    # BLIP base models have 'special_tokens_map.json' and 'tokenizer_config.json'
-    if "special_tokens_map.json" in files and "tokenizer_config.json" in files:
-        return False
-    # Fallback: default to BLIP (safer)
-    return False
+# --- Argument parsing for model path ---
+parser = argparse.ArgumentParser()
+parser.add_argument('--model', type=str, default=None, help="Path to BLIP-2 model folder")
+args, unknown = parser.parse_known_args()
 
 class AnnotateThread(QThread):
     finished = pyqtSignal(str)
 
-    def __init__(self, pil_img, annotator):
+    def __init__(self, pil_img, blip2_model):
         super().__init__()
         self.pil_img = pil_img
-        self.annotator = annotator
+        self.blip2_model = blip2_model
 
     def run(self):
-        annotation = self.annotator.annotate(self.pil_img)
+        annotation = self.blip2_model.annotate(self.pil_img)
         self.finished.emit(annotation)
 
-class BaseAnnotator:
-    model_mem_mb = 0
-    last_infer_time = 0
-    def annotate(self, pil_image):
-        return "No model specified. Please provide a valid BLIP or BLIP-2 model path:\n--model <path_to_model>"
-
-class BLIP2Annotator(BaseAnnotator):
+# --- BLIP-2 Model Loader ---
+class BLIP2Annotator:
     def __init__(self, model_path):
         print(f"Loading BLIP-2 model from: {model_path}")
-        import torch
-        from transformers import Blip2Processor, Blip2ForConditionalGeneration
         process = psutil.Process(os.getpid())
         mem_before = process.memory_info().rss
         t0 = time.time()
@@ -72,10 +49,9 @@ class BLIP2Annotator(BaseAnnotator):
         mem_after = process.memory_info().rss
         self.model_mem_mb = (mem_after - mem_before) / (1024 * 1024)
         self.load_time = t1 - t0
-        print(f"BLIP-2 loaded in {self.load_time:.2f}s, memory used: {self.model_mem_mb:.1f} MB")
+        print(f"Model loaded in {self.load_time:.2f}s, memory used: {self.model_mem_mb:.1f} MB")
 
     def annotate(self, pil_image):
-        import torch
         t0 = time.time()
         inputs = self.processor(images=pil_image, return_tensors="pt").to(self.device)
         generated_ids = self.model.generate(**inputs, max_new_tokens=50)
@@ -84,42 +60,19 @@ class BLIP2Annotator(BaseAnnotator):
         self.last_infer_time = t1 - t0
         return caption
 
-class BLIPAnnotator(BaseAnnotator):
-    def __init__(self, model_path):
-        print(f"Loading BLIP model from: {model_path}")
-        import torch
-        from transformers import BlipProcessor, BlipForConditionalGeneration
-        process = psutil.Process(os.getpid())
-        mem_before = process.memory_info().rss
-        t0 = time.time()
-        self.processor = BlipProcessor.from_pretrained(model_path)
-        self.model = BlipForConditionalGeneration.from_pretrained(model_path)
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.model.to(self.device)
-        t1 = time.time()
-        mem_after = process.memory_info().rss
-        self.model_mem_mb = (mem_after - mem_before) / (1024 * 1024)
-        self.load_time = t1 - t0
-        print(f"BLIP loaded in {self.load_time:.2f}s, memory used: {self.model_mem_mb:.1f} MB")
-
+# --- Dummy fallback if no model is specified ---
+class DummyBLIP2:
+    model_mem_mb = 0
+    last_infer_time = 0
     def annotate(self, pil_image):
-        import torch
-        t0 = time.time()
-        inputs = self.processor(images=pil_image, return_tensors="pt").to(self.device)
-        generated_ids = self.model.generate(**inputs, max_new_tokens=50)
-        caption = self.processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
-        t1 = time.time()
-        self.last_infer_time = t1 - t0
-        return caption
+        return "No model specified. Please provide a valid BLIP-2 model path:\n--model <path_to_model>"
 
 # --- Select model based on argument ---
 if args.model:
-    if detect_blip2(args.model):
-        annotator = BLIP2Annotator(args.model)
-    else:
-        annotator = BLIPAnnotator(args.model)
+    import torch
+    blip2_model = BLIP2Annotator(args.model)
 else:
-    annotator = BaseAnnotator()
+    blip2_model = DummyBLIP2()
 
 def frame_to_timecode(frame_idx, fps):
     if fps == 0:
@@ -161,7 +114,7 @@ class VideoAnnotator(QWidget):
         self.slider.setEnabled(False)
         self.slider.sliderPressed.connect(self.pause)
         self.slider.sliderReleased.connect(self.slider_released)
-        self.slider.valueChanged.connect(self.slider_scrub)
+        self.slider.valueChanged.connect(self.slider_scrub)  # <-- Add this line
         layout.addWidget(self.slider)
 
         # 3. Three buttons (beneath timeline)
@@ -198,10 +151,10 @@ class VideoAnnotator(QWidget):
     def update_titlebar(self):
         mem_info = ""
         infer_info = ""
-        if hasattr(annotator, "model_mem_mb") and annotator.model_mem_mb:
-            mem_info = f" | Model: {annotator.model_mem_mb:.1f} MB"
-        if hasattr(annotator, "last_infer_time") and annotator.last_infer_time:
-            infer_info = f" | Last infer: {annotator.last_infer_time:.2f}s"
+        if hasattr(blip2_model, "model_mem_mb") and blip2_model.model_mem_mb:
+            mem_info = f" | Model: {blip2_model.model_mem_mb:.1f} MB"
+        if hasattr(blip2_model, "last_infer_time") and blip2_model.last_infer_time:
+            infer_info = f" | Last infer: {blip2_model.last_infer_time:.2f}s"
         if self.filename_title:
             tc = frame_to_timecode(self.current_frame_idx, self.fps)
             self.setWindowTitle(f"{self.filename_title} - {tc}{mem_info}{infer_info}")
@@ -292,7 +245,7 @@ class VideoAnnotator(QWidget):
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             pil_img = Image.fromarray(rgb)
             # Start annotation in a separate thread
-            self.annotate_thread = AnnotateThread(pil_img, annotator)
+            self.annotate_thread = AnnotateThread(pil_img, blip2_model)
             self.annotate_thread.finished.connect(self.on_annotation_finished)
             self.annotate_thread.start()
         else:
@@ -310,7 +263,7 @@ class VideoAnnotator(QWidget):
         modifiers = event.modifiers()
 
         # Spacebar (cross-platform)
-        if key in (Qt.Key_Space, 0x20):
+        if key in (Qt.Key_Space, 0x20):  # 0x20 is space on some platforms
             self.toggle_play()
             return
 

@@ -18,8 +18,8 @@ class CustomTextEdit(QTextEdit):
             # For all other keys, handle normally
             super().keyPressEvent(event)
 
-NORMAL_SEEK_AMOUNT = 1000
-FAST_SEEK_AMOUNT = 10000
+NORMAL_SEEK_AMOUNT = 100
+FAST_SEEK_AMOUNT = 5000
 
 # Mode tracking
 NAVIGATION_MODE = "navigation"
@@ -54,18 +54,18 @@ class ResizableWindow(QWidget):
             elif event.key() == Qt.Key_Left:
                 # Move one frame back or 1 second with shift
                 if event.modifiers() & Qt.ShiftModifier:
-                    seek_amount = FAST_SEEK_AMOUNT*10  # 10 seconds
+                    seek_amount = FAST_SEEK_AMOUNT
                 else:
-                    seek_amount = FAST_SEEK_AMOUNT * 1  # One second
+                    seek_amount = NORMAL_SEEK_AMOUNT
                 new_time = max(0, current_time_ms - seek_amount)
                 seek(new_time)
                 slider.setValue(new_time)
             elif event.key() == Qt.Key_Right:
                 # Move one frame forward or 1 second with shift
                 if event.modifiers() & Qt.ShiftModifier:
-                    seek_amount = FAST_SEEK_AMOUNT*10  # 10 seconds
+                    seek_amount = FAST_SEEK_AMOUNT
                 else:
-                    seek_amount = FAST_SEEK_AMOUNT*1  # One second
+                    seek_amount = NORMAL_SEEK_AMOUNT
                 new_time = min(duration_ms, current_time_ms + seek_amount)
                 seek(new_time)
                 slider.setValue(new_time)
