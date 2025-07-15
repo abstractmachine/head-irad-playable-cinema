@@ -3,6 +3,6 @@ This is the future presskit for the research project [Playable Cinema](https://w
 
 ## Team
 - [Douglas Edric Stanley](http://abstractmachine.net/biography), Project Lead
-- TBD
+- [Faust Perillaud](https://2024.head-geneve.show/projects/spectral-yard-fp-100e1)
 - TBD
 

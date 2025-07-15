@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap
+from PyQt5.QtWidgets import QDialog
 
 import openai
 import base64
@@ -72,6 +73,41 @@ def timecode_from_frame(frame_idx, fps):
     ms = int((total_seconds - int(total_seconds)) * 1000)
     return f"{h:02d}-{m:02d}-{s:02d}-{ms:03d}"
 
+class SystemPromptEditor(QDialog):
+    def __init__(self, parent, prompt_path, current_prompt):
+        super().__init__(parent)
+        self.setWindowTitle("Edit System Prompt")
+        self.prompt_path = prompt_path
+        self.original_prompt = current_prompt
+
+        layout = QVBoxLayout()
+        self.text_edit = QTextEdit()
+        self.text_edit.setPlainText(current_prompt)
+        layout.addWidget(self.text_edit)
+
+        self.save_btn = QPushButton("Save")
+        self.save_btn.setEnabled(False)
+        self.save_btn.clicked.connect(self.save_prompt)
+        layout.addWidget(self.save_btn)
+
+        self.text_edit.textChanged.connect(self.on_text_changed)
+
+        self.setLayout(layout)
+
+    def on_text_changed(self):
+        changed = self.text_edit.toPlainText() != self.original_prompt
+        self.save_btn.setEnabled(changed)
+
+    def save_prompt(self):
+        new_prompt = self.text_edit.toPlainText()
+        with open(self.prompt_path, "w") as f:
+            f.write(new_prompt)
+        global SYSTEM_PROMPT
+        SYSTEM_PROMPT = new_prompt
+        self.original_prompt = new_prompt
+        self.save_btn.setEnabled(False)
+        self.accept()
+
 class VideoPlayer(QWidget):
     def __init__(self):
         super().__init__()
@@ -120,15 +156,20 @@ class VideoPlayer(QWidget):
         self.play_btn.setEnabled(False)
         btn_layout.addWidget(self.play_btn)
 
-        self.bot_test_btn = QPushButton("Bot Test")
+        self.bot_test_btn = QPushButton("Test")
         self.bot_test_btn.clicked.connect(self.bot_test_caption)
         self.bot_test_btn.setEnabled(False)
         btn_layout.addWidget(self.bot_test_btn)
 
-        self.bot_btn = QPushButton("Bot Notation")
+        self.bot_btn = QPushButton("Annotation")
         self.bot_btn.clicked.connect(self.start_bot_notation)
         self.bot_btn.setEnabled(False)
         btn_layout.addWidget(self.bot_btn)
+
+        # Add Edit System Prompt button to the same row
+        self.edit_prompt_btn = QPushButton("system_prompt")
+        self.edit_prompt_btn.clicked.connect(self.edit_system_prompt)
+        btn_layout.addWidget(self.edit_prompt_btn)
 
         layout.addLayout(btn_layout)
 
@@ -140,6 +181,11 @@ class VideoPlayer(QWidget):
         layout.addWidget(self.caption_field)
 
         self.setLayout(layout)
+
+    def edit_system_prompt(self):
+        dlg = SystemPromptEditor(self, system_prompt_file, SYSTEM_PROMPT)
+        dlg.exec_()
+        # SYSTEM_PROMPT is updated globally by the dialog
 
     def load_video(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open Video File", "", "Video Files (*.mp4 *.avi *.mov)")
@@ -279,11 +325,11 @@ class VideoPlayer(QWidget):
         if self.bot_notation_active:
             self.bot_timer.stop()
             self.bot_notation_active = False
-            self.bot_btn.setText("Bot Notation")
+            self.bot_btn.setText("Annotation")
             self.bot_btn.setEnabled(True)
             return
         self.pause()
-        self.bot_btn.setText("Bot Notating")
+        self.bot_btn.setText("Annotating")
         self.bot_btn.setEnabled(True)
         self.bot_notation_active = True
         self.bot_timer.start(1)
@@ -291,7 +337,7 @@ class VideoPlayer(QWidget):
     def bot_notation_step(self):
         if not self.cap or not self.video_path or not self.bot_notation_active:
             self.bot_timer.stop()
-            self.bot_btn.setText("Bot Notation")
+            self.bot_btn.setText("Annotation")
             self.bot_btn.setEnabled(True)
             self.bot_notation_active = False
             return
@@ -300,7 +346,7 @@ class VideoPlayer(QWidget):
         ret, frame = self.cap.read()
         if not ret:
             self.bot_timer.stop()
-            self.bot_btn.setText("Bot Notation")
+            self.bot_btn.setText("Annotation")
             self.bot_btn.setEnabled(True)
             self.bot_notation_active = False
             return
@@ -332,11 +378,10 @@ class VideoPlayer(QWidget):
         with open(txt_path, "w") as f:
             f.write(caption)
 
-        #next_frame = int(self.current_frame_idx + max(1, int(self.fps * 0.1)))
         next_frame = int(self.current_frame_idx + max(1, int(self.fps * video_step_size)))
         if next_frame >= self.frame_count:
             self.bot_timer.stop()
-            self.bot_btn.setText("Bot Notation")
+            self.bot_btn.setText("Annotation")
             self.bot_btn.setEnabled(True)
             self.bot_notation_active = False
             return
