@@ -8,6 +8,15 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap
 
+import openai
+import base64
+import mimetypes
+
+# use a file for API key to hide from version control
+# local file is called API_KEY.txt
+
+openai.api_key = os.environ.get("OPENAI_API_KEY", "your-api-key")
+
 def timecode_from_frame(frame_idx, fps):
     total_seconds = frame_idx / fps if fps else 0
     h = int(total_seconds // 3600)
