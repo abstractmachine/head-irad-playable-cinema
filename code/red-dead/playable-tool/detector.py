@@ -78,36 +78,45 @@ def create_detector(method, detector_args):
     if method == "detect-adaptive":
         from scenedetect.detectors import AdaptiveDetector
         detector = AdaptiveDetector()
-        # Map CLI threshold to adaptive_threshold
         if "threshold" in detector_args:
             detector.adaptive_threshold = detector_args["threshold"]
             unused_args.pop("threshold", None)
-        # Set other attributes if present
         for key in ["frame_window", "min_content_val", "weights", "luma_only", "kernel_size", "min_scene_len"]:
             if key in detector_args:
                 setattr(detector, key, detector_args[key])
                 unused_args.pop(key, None)
+
     elif method == "detect-content":
-        print("detect-content not yet implemented")
-        detector = ContentDetector()
+        from scenedetect.detectors import ContentDetector
+        ctor_keys = ["threshold", "weights", "luma_only", "kernel_size", "min_scene_len", "frame_window"]
+        ctor_args = {k: detector_args[k] for k in ctor_keys if k in detector_args}
+        detector = ContentDetector(**ctor_args)
+        for k in ctor_args:
+            unused_args.pop(k, None)
+
     elif method == "detect-hist":
-        print("detect-hist not yet implemented")
-        detector = ContentDetector()
+        from scenedetect.detectors import HistogramDetector
+        ctor_keys = ["threshold", "bins", "min_scene_len"]
+        ctor_args = {k: detector_args[k] for k in ctor_keys if k in detector_args}
+        detector = HistogramDetector(**ctor_args)
+        for k in ctor_args:
+            unused_args.pop(k, None)
+
     elif method == "detect-threshold":
-        print("detect-threshold not yet implemented")
-        detector = ContentDetector()
-    elif method == "detect-hash":
-        print("detect-hash not yet implemented")
-        detector = ContentDetector()
+        from scenedetect.detectors import ThresholdDetector
+        ctor_keys = ["threshold", "fade_bias", "add_last_scene", "min_scene_len"]
+        ctor_args = {k: detector_args[k] for k in ctor_keys if k in detector_args}
+        detector = ThresholdDetector(**ctor_args)
+        for k in ctor_args:
+            unused_args.pop(k, None)
+
     else:
         from scenedetect.detectors import ContentDetector
         detector = ContentDetector()
 
-    # Warn about unused args
     if unused_args:
         print(f"Warning: The following detector options were not used: {', '.join(unused_args.keys())}")
 
-    print(f"Detector type: {type(detector).__name__}, threshold: {getattr(detector, 'threshold', None)}")
     print("vars(detector):", vars(detector))
 
     return detector
@@ -203,7 +212,6 @@ class DetectorWindow(QMainWindow):
         self.method_dropdown.addItems([
             "detect-adaptive",
             "detect-content",
-            "detect-hash",
             "detect-hist",
             "detect-threshold"
         ])

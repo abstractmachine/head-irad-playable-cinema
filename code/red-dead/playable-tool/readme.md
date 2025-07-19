@@ -17,21 +17,20 @@ This tool leans heavily on [PySceneDetect](https://www.scenedetect.com) for iden
 There are various detection alogorithms. Cf. [PySceneDetect Detectors Docs](https://www.scenedetect.com/docs/latest/cli.html#detectors):
 
 #### [detect-adaptive](https://www.scenedetect.com/docs/latest/cli.html#detect-adaptive)
-
-Configurable Options:
-- adaptive_threshold (-t, --threshold)
+Options:
+- adaptive_threshold (`-t`, `--threshold`)
     - The threshold for triggering a cut (float).
-- min_content_val (-c, --min-content-val)
+- min_content_val (`-c`, `--min-content-val`)
     - Minimum content value to trigger a cut (float).
-- frame_window (-f, --frame-window)
+- frame_window (`-f`, `--frame-window`)
     - Size of the rolling window (int).
-- weights (-w, --weights)
+- weights (`-w`, `--weights`)
     - Tuple of 4 floats: (delta_hue, delta_sat, delta_lum, delta_edges).
-- luma_only (-l, --luma-only)
+- luma_only (`-l`, `--luma-only`)
     - Boolean flag to use only luma channel.
-- kernel_size (-k, --kernel-size)
+- kernel_size (`-k`, `--kernel-size`)
     - Size of kernel for edge detection (int).
-- min_scene_len (-m, --min-scene-len)
+- min_scene_len (`-m`, `--min-scene-len`)
     - Minimum scene length (int, float, or timecode string).
 
 Examples:
@@ -47,16 +46,29 @@ Examples:
 - `-m 00:01:52.778` (sets min_scene_len to a timecode)
 
 #### [detect-content](https://www.scenedetect.com/docs/latest/cli.html#detect-content)
-Not yet implemented
+Options:
+- threshold (`-t`, `--threshold`)
+- weights (`-w`, `--weights`)
+- luma_only (`-l`, `--luma-only`)
+- kernel_size (`-k`, `--kernel-size`)
+- min_scene_len (`-m`, `--min-scene-len`)
+- frame_window (`-f`, `--frame-window`)
 
 #### [detect-hash](https://www.scenedetect.com/docs/latest/cli.html#detect-hash)
 Not yet implemented
 
 #### [detect-hist](https://www.scenedetect.com/docs/latest/cli.html#detect-hist)
-Not yet implemented
+Options:
+- threshold (`-t`, `--threshold`)
+- bins (`-b`, `--bins`)
+- min_scene_len (`-m`, `--min-scene-len`)
 
 #### [detect-threshold](https://www.scenedetect.com/docs/latest/cli.html#detect-threshold)
-Not yet implemented
+Options:
+- threshold (`-t`, `--threshold`)
+- fade_bias (`--fade-bias`)
+- add_last_scene (`--add-last-scene`)
+- min_scene_len (`-m`, `--min-scene-len`)
 
 Each of these methods has its own list of default and adjustable options. For example, `detect-adaptive` has a `-t` (`threshold`) option that defaults to `3.0`, whereas `detect-content` has a `-t` threshold option that defaults to `27.0`. `-w` uses four values, for example `-w 1.0 1.0 1.0 0.0`. We can enter any, all, or none of these options next to the `Detect` button.
 
