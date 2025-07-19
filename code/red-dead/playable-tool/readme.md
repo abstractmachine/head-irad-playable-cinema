@@ -17,14 +17,41 @@ This tool leans heavily on [PySceneDetect](https://www.scenedetect.com) for iden
 There are various detection alogorithms. Cf. [PySceneDetect Detectors Docs](https://www.scenedetect.com/docs/latest/cli.html#detectors):
 
 - [detect-adaptive](https://www.scenedetect.com/docs/latest/cli.html#detect-adaptive)
+
+Configurable Options:
+- adaptive_threshold (-t, --threshold)
+    - The threshold for triggering a cut (float).
+- min_content_val (-c, --min-content-val)
+    - Minimum content value to trigger a cut (float).
+- frame_window (-f, --frame-window)
+    - Size of the rolling window (int).
+- weights (-w, --weights)
+    - Tuple of 4 floats: (delta_hue, delta_sat, delta_lum, delta_edges).
+- luma_only (-l, --luma-only)
+    - Boolean flag to use only luma channel.
+- kernel_size (-k, --kernel-size)
+    - Size of kernel for edge detection (int).
+- min_scene_len (-m, --min-scene-len)
+    - Minimum scene length (int, float, or timecode string).
+
+Examples:
+
+- `-t 2.5` (sets adaptive_threshold)
+- `-c 16.0` (sets min_content_val)
+- `-f 4` (sets frame_window)
+- `-w 1.0 1.0 1.0 0.0` (sets weights)
+- `-l` (sets luma_only to True)
+- `-k 5` (sets kernel_size)
+- `-m 100` (sets min_scene_len to 100 frames)
+- `-m 3.5s` (sets min_scene_len to 3.5 seconds)
+- `-m 00:01:52.778` (sets min_scene_len to a timecode)
+
 - [detect-content](https://www.scenedetect.com/docs/latest/cli.html#detect-content)
 - [detect-hash](https://www.scenedetect.com/docs/latest/cli.html#detect-hash)
 - [detect-hist](https://www.scenedetect.com/docs/latest/cli.html#detect-hist)
 - [detect-threshold](https://www.scenedetect.com/docs/latest/cli.html#detect-threshold)
 
 Each of these methods has its own list of default and adjustable options. For example, `detect-adaptive` has a `-t` (`threshold`) option that defaults to `3.0`, whereas `detect-content` has a `-t` threshold option that defaults to `27.0`. `-w` uses four values, for example `-w 1.0 1.0 1.0 0.0`. We can enter any, all, or none of these options next to the `Detect` button.
-
-See above links for more info on each method's options.
 
 ## Create Pyenv
 This is how to create the appropriate `pyenv`:

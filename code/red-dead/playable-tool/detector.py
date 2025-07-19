@@ -15,6 +15,8 @@ from scenedetect.detectors import ContentDetector
 JUMP_FRAME_PADDING_PLAYBACK = 0  # Number of frames to pad when jumping in playback mode
 JUMP_FRAME_PADDING_DETECTION = 5  # Number of frames to pad when jumping in detection mode
 
+# Function to parse command line arguments for detector options
+# Returns a dictionary of detector arguments based on the provided string
 def parse_detector_args(arg_string):
     # Supported options mapping: CLI arg -> detector kwarg
     option_map = {
@@ -69,6 +71,48 @@ def parse_detector_args(arg_string):
                     kwargs[key] = val
     return kwargs
 
+# Helper function to create a detector based on the method and args
+def create_detector(method, detector_args):
+    unused_args = dict(detector_args)  # Track which args are not used
+
+    if method == "detect-adaptive":
+        from scenedetect.detectors import AdaptiveDetector
+        detector = AdaptiveDetector()
+        # Map CLI threshold to adaptive_threshold
+        if "threshold" in detector_args:
+            detector.adaptive_threshold = detector_args["threshold"]
+            unused_args.pop("threshold", None)
+        # Set other attributes if present
+        for key in ["frame_window", "min_content_val", "weights", "luma_only", "kernel_size", "min_scene_len"]:
+            if key in detector_args:
+                setattr(detector, key, detector_args[key])
+                unused_args.pop(key, None)
+    elif method == "detect-content":
+        print("detect-content not yet implemented")
+        detector = ContentDetector()
+    elif method == "detect-hist":
+        print("detect-hist not yet implemented")
+        detector = ContentDetector()
+    elif method == "detect-threshold":
+        print("detect-threshold not yet implemented")
+        detector = ContentDetector()
+    elif method == "detect-hash":
+        print("detect-hash not yet implemented")
+        detector = ContentDetector()
+    else:
+        from scenedetect.detectors import ContentDetector
+        detector = ContentDetector()
+
+    # Warn about unused args
+    if unused_args:
+        print(f"Warning: The following detector options were not used: {', '.join(unused_args.keys())}")
+
+    print(f"Detector type: {type(detector).__name__}, threshold: {getattr(detector, 'threshold', None)}")
+    print("vars(detector):", vars(detector))
+
+    return detector
+
+# SceneDetectWorker class to run scene detection in a separate thread
 class SceneDetectWorker(QObject):
     finished = pyqtSignal(list)
 
@@ -89,26 +133,9 @@ class SceneDetectWorker(QObject):
             detector_args = parse_detector_args(self.weights)
             print(f"Parsed detector args: {detector_args}")
 
-            # Add the selected detector with dynamic arguments
-            if self.method == "detect-content":
-                from scenedetect.detectors import ContentDetector
-                scene_manager.add_detector(ContentDetector(**detector_args))
-            elif self.method == "detect-adaptive":
-                from scenedetect.detectors import AdaptiveDetector
-                scene_manager.add_detector(AdaptiveDetector(**detector_args))
-            elif self.method == "detect-hist":
-                from scenedetect.detectors import HistogramDetector
-                scene_manager.add_detector(HistogramDetector(**detector_args))
-            elif self.method == "detect-hash":
-                from scenedetect.detectors import SceneDetector
-                # If you have a HashDetector, use it here
-                # scene_manager.add_detector(HashDetector(**detector_args))
-                scene_manager.add_detector(ContentDetector(**detector_args))  # fallback
-            elif self.method == "detect-threshold":
-                from scenedetect.detectors import ThresholdDetector
-                scene_manager.add_detector(ThresholdDetector(**detector_args))
-            else:
-                scene_manager.add_detector(ContentDetector(**detector_args))
+            # Create and add the detector using the helper function
+            detector = create_detector(self.method, detector_args)
+            scene_manager.add_detector(detector)
 
             scene_manager.detect_scenes(video)
             scene_list = scene_manager.get_scene_list()
@@ -187,7 +214,7 @@ class DetectorWindow(QMainWindow):
         self.weights_field.setFixedWidth(180)
         # center the text
         self.weights_field.setAlignment(Qt.AlignCenter)
-        self.weights_field.setToolTip("Set PySceneDetect parameters.\nSee documentation for details.\nExample: -w 1.0 1.0 1.0 0.0 -t 3.2\n")
+        self.weights_field.setToolTip("Set PySceneDetect parameters.\nSee documentation for details.\nExamples:\nweights: -w 1.0 1.0 1.0 0.0\nthreshold: -t 3.2")
 
         # Delete button
         self.delete_button = QPushButton("Delete")
