@@ -3,8 +3,11 @@ import json
 import os
 from PyQt5.QtWidgets import QApplication, QLineEdit, QTextEdit
 from PyQt5.QtCore import QObject, QEvent
+
+# our other wi
 from player import PlayerWindow
 from detector import DetectorWindow
+from annotate import AnnotateWindow
 
 PREFS_PATH = "preferences.json"
 
@@ -43,7 +46,14 @@ def load_preferences(windows):
 
 def main():
     app = QApplication(sys.argv)
-    windows = {"player": PlayerWindow(), "detector": DetectorWindow()}
+    player_window = PlayerWindow()
+    detector_window = DetectorWindow()
+    annotate_window = AnnotateWindow(player_window, detector_window)
+    windows = {
+        "player": player_window,
+        "detector": detector_window,
+        "annotate": annotate_window
+    }
 
     # Install global key filter
     key_filter = GlobalKeyFilter([windows["player"]])
@@ -68,16 +78,16 @@ def main():
     # Show the app windows
     windows["detector"].show()
     windows["player"].show()
+    windows["annotate"].show()
 
     def clean_quit():
-        # Stop media playback
         try:
             windows["player"].media_player.stop()
         except Exception:
             pass
-        # Close windows
         windows["player"].close()
         windows["detector"].close()
+        windows["annotate"].close()
 
     app.aboutToQuit.connect(clean_quit)
     sys.exit(app.exec_())

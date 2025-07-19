@@ -21,6 +21,7 @@ def parse_detector_args(arg_string):
     # Supported options mapping: CLI arg -> detector kwarg
     option_map = {
         '-t': 'threshold',
+        '--adaptive-threshold': 'adaptive_threshold',
         '--threshold': 'threshold',
         '-c': 'min_content_val',
         '--min-content-val': 'min_content_val',

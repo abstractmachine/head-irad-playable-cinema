@@ -14,13 +14,13 @@ $ python app.py
 This tool leans heavily on [PySceneDetect](https://www.scenedetect.com) for identification of scenes and shots.
 
 ### Detectors
-There are various detection alogorithms. Cf. [PySceneDetect Detectors Docs](https://www.scenedetect.com/docs/latest/cli.html#detectors). Each of these methods has its own list of default and adjustable options. For example, `detect-adaptive` has a `-t` (`threshold`) option that defaults to `3.0`, whereas `detect-content` has a `-t` threshold option that defaults to `27.0`. `-w` uses four values, for example `-w 1.0 1.0 1.0 0.0`. We can enter any, all, or none of these options next to the `Detect` button.
+There are various detection alogorithms. Cf. [PySceneDetect Detectors Docs](https://www.scenedetect.com/docs/latest/cli.html#detectors). Each of these methods has its own list of default and adjustable options. For example, `detect-adaptive` has a `-t` (`adaptive_threshold`) option that defaults to `3.0`, whereas `detect-content` has a `-t` (`threshold`) option that defaults to `27.0`. `-w` uses four values, for example `-w 1.0 1.0 1.0 0.0`. We can enter any, all, or none of these options next to the `Detect` button.
 
 ![Detection method options field](images/detection-method-options.png)
 
 #### [detect-adaptive](https://www.scenedetect.com/docs/latest/cli.html#detect-adaptive)
 Options:
-- adaptive_threshold (`-t`, `--threshold`)
+- adaptive_threshold (`-t`, `--adaptive_threshold`)
     - The threshold for triggering a cut (float).
 - min_content_val (`-c`, `--min-content-val`)
     - Minimum content value to trigger a cut (float).
