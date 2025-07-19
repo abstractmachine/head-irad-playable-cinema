@@ -1,42 +1,31 @@
-# Application stuff
 import os
-import json
-from PyQt5.QtWidgets import QApplication
-
-# PyQt5 Interface Stuff
 from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QSlider, QLineEdit, QFileDialog, QSizePolicy
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QPushButton, QSlider, QLineEdit, QFileDialog, QSizePolicy
 )
-from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QSizePolicy
-
-# Video Player Stuff
-from PyQt5.QtMultimedia import QMediaPlayer
+from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
 from PyQt5.QtMultimediaWidgets import QVideoWidget
 from PyQt5.QtCore import QUrl
-from PyQt5.QtMultimedia import QMediaContent  # Add this import at the top
-
-# signals from one window to another
-from PyQt5.QtCore import pyqtSignal
 
 SEEK_NORMAL = "1"
 SEEK_FAST = "30"
 
-PREFS_PATH = "preferences.json"
-
 class PlayerWindow(QMainWindow):
-    
-    video_loaded = pyqtSignal(str)  # Signal with video path
+
+    # Define signals for communication
+    video_loaded = pyqtSignal(str)
+    request_save = pyqtSignal()
+    request_load = pyqtSignal(dict)
+    video_timecode_changed = pyqtSignal()
 
     def __init__(self):
         super().__init__()
+        self._pending_save_data = {}
         self.video_title = "[No video loaded]"
         self.timecode = "00:00:00"
         self.update_window_title()
         self.setGeometry(100, 100, 900, 600)
-
-        # remember for later the current video path
         self.current_video_path = None
 
         # Video playback setup
@@ -63,17 +52,6 @@ class PlayerWindow(QMainWindow):
         self.fast_seek.setAlignment(Qt.AlignCenter)
         self.normal_seek.editingFinished.connect(self.validate_normal_seek)
         self.fast_seek.editingFinished.connect(self.validate_fast_seek)
-
-        # --- Load seek values from preferences.json ---
-        if os.path.exists(PREFS_PATH):
-            with open(PREFS_PATH, "r") as f:
-                prefs = json.load(f)
-            player_prefs = prefs.get("player", {})
-            if "normal_seek" in player_prefs:
-                self.normal_seek.setText(player_prefs["normal_seek"])
-            if "fast_seek" in player_prefs:
-                self.fast_seek.setText(player_prefs["fast_seek"])
-        # --- end load ---
 
         # Load button
         self.load_button = QPushButton("Load")
@@ -110,11 +88,10 @@ class PlayerWindow(QMainWindow):
         seek_layout.addStretch()
 
         # Set a fixed width for buttons
-        button_width = 120  # Adjust as needed
+        button_width = 120
         for btn in [self.load_button, self.play_pause_button, self.back_button, self.forward_button]:
             btn.setFixedWidth(button_width)
 
-        # Layouts
         controls_layout = QHBoxLayout()
         controls_layout.addWidget(self.load_button)
         controls_layout.addStretch()
@@ -142,9 +119,48 @@ class PlayerWindow(QMainWindow):
         self.media_player.durationChanged.connect(self.update_duration)
         self.timeline.sliderMoved.connect(self.set_position)
 
-    def update_window_title(self):
-        self.setWindowTitle(f"{self.video_title} | {self.timecode}")
+        # Connect preference signals
+        self.request_save.connect(self.on_request_save)
+        self.request_load.connect(self.on_request_load)
 
+    def on_request_save(self):
+        pos = self.pos()
+        size = self.size()
+        self._pending_save_data = {
+            "x": pos.x(),
+            "y": pos.y(),
+            "width": size.width(),
+            "height": size.height(),
+            "normal_seek": self.normal_seek.text(),
+            "fast_seek": self.fast_seek.text()
+        }
+
+    def on_request_load(self, data):
+        if "normal_seek" in data:
+            self.normal_seek.setText(data["normal_seek"])
+        if "fast_seek" in data:
+            self.fast_seek.setText(data["fast_seek"])
+        if "x" in data and "y" in data:
+            self.move(data["x"], data["y"])
+        if "width" in data and "height" in data:
+            self.resize(data["width"], data["height"])
+
+    def update_window_title(self):
+        duration_seconds = getattr(self, "duration_seconds", None)
+        if duration_seconds is not None and duration_seconds > 0:
+            h = duration_seconds // 3600
+            m = (duration_seconds % 3600) // 60
+            s = duration_seconds % 60
+            duration_str = f"{h:02}:{m:02}:{s:02}"
+            self.setWindowTitle(f"{self.video_title} | {self.timecode} / {duration_str}")
+        else:
+            self.setWindowTitle(f"{self.video_title} | {self.timecode}")
+
+    def update_duration(self, duration):
+        self.timeline.setRange(0, duration)
+        self.duration_seconds = duration // 1000
+        self.update_window_title()
+        
     def load_video(self):
         file_dialog = QFileDialog(self)
         file_path, _ = file_dialog.getOpenFileName(self, "Load Video", "", "Video Files (*.mp4 *.avi *.mov)")
@@ -152,15 +168,14 @@ class PlayerWindow(QMainWindow):
             self.video_title = file_path.split('/')[-1]
             self.update_window_title()
             self.media_player.setMedia(QMediaContent(QUrl.fromLocalFile(file_path)))
+            # print("Media set:", file_path)
             self.play_pause_button.setEnabled(True)
             self.back_button.setEnabled(True)
             self.forward_button.setEnabled(True)
             self.timeline.setEnabled(True)
             self.media_player.play()
             self.media_player.pause()
-            # remember the current video path so we can analyze it in Detector
             self.current_video_path = file_path
-              # Emit signal that video has been loaded
             self.video_loaded.emit(file_path)
 
     def set_timecode(self, timecode):
@@ -193,18 +208,18 @@ class PlayerWindow(QMainWindow):
             
     def update_position(self, position):
         self.timeline.setValue(position)
-        # Update timecode in window title
         seconds = position // 1000
         h = seconds // 3600
         m = (seconds % 3600) // 60
         s = seconds % 60
         self.set_timecode(f"{h:02}:{m:02}:{s:02}")
-
-    def update_duration(self, duration):
-        self.timeline.setRange(0, duration)
+        self.emit_timecode_changed(position)
 
     def set_position(self, position):
         self.media_player.setPosition(position)
+
+    def emit_timecode_changed(self, position):
+        self.video_timecode_changed.emit()
 
     def seek_video(self, seconds):
         new_position = self.media_player.position() + (seconds * 1000)
@@ -221,6 +236,23 @@ class PlayerWindow(QMainWindow):
         if not value.isdigit() or int(value) <= 0:
             self.fast_seek.setText("10")
         self.fast_seek.clearFocus()
+
+    def jump_to_timecode(self, timecode, is_last_frame=False):
+        parts = timecode.split(":")
+        if len(parts) == 3:
+            h = int(parts[0])
+            m = int(parts[1])
+            s = float(parts[2])
+            ms = int((h * 3600 + m * 60 + s) * 1000)
+            if is_last_frame and self.current_video_path:
+                from scenedetect import open_video
+                video = open_video(self.current_video_path)
+                fps = video.frame_rate  # Use frame_rate instead of get_fps()
+                frame_duration = int(1000 / fps)
+                ms = max(ms - frame_duration, 0)
+            self.media_player.setPosition(ms)
+        else:
+            print(f"Invalid timecode format: {timecode}")
     
     def handle_global_key(self, event):
         focus_widget = QApplication.focusWidget()
@@ -248,3 +280,10 @@ class PlayerWindow(QMainWindow):
         elif key == Qt.Key_Right:
             if self.forward_button.isEnabled():
                 self.seek_video(seek_amount)
+
+    def closeEvent(self, event):
+        try:
+            self.media_player.stop()
+        except Exception:
+            pass
+        super().closeEvent(event)
