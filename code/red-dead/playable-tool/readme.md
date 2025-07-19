@@ -16,7 +16,7 @@ This tool leans heavily on [PySceneDetect](https://www.scenedetect.com) for iden
 ### Detectors
 There are various detection alogorithms. Cf. [PySceneDetect Detectors Docs](https://www.scenedetect.com/docs/latest/cli.html#detectors):
 
-- [detect-adaptive](https://www.scenedetect.com/docs/latest/cli.html#detect-adaptive)
+#### [detect-adaptive](https://www.scenedetect.com/docs/latest/cli.html#detect-adaptive)
 
 Configurable Options:
 - adaptive_threshold (-t, --threshold)
@@ -46,10 +46,17 @@ Examples:
 - `-m 3.5s` (sets min_scene_len to 3.5 seconds)
 - `-m 00:01:52.778` (sets min_scene_len to a timecode)
 
-- [detect-content](https://www.scenedetect.com/docs/latest/cli.html#detect-content)
-- [detect-hash](https://www.scenedetect.com/docs/latest/cli.html#detect-hash)
-- [detect-hist](https://www.scenedetect.com/docs/latest/cli.html#detect-hist)
-- [detect-threshold](https://www.scenedetect.com/docs/latest/cli.html#detect-threshold)
+#### [detect-content](https://www.scenedetect.com/docs/latest/cli.html#detect-content)
+Not yet implemented
+
+#### [detect-hash](https://www.scenedetect.com/docs/latest/cli.html#detect-hash)
+Not yet implemented
+
+#### [detect-hist](https://www.scenedetect.com/docs/latest/cli.html#detect-hist)
+Not yet implemented
+
+#### [detect-threshold](https://www.scenedetect.com/docs/latest/cli.html#detect-threshold)
+Not yet implemented
 
 Each of these methods has its own list of default and adjustable options. For example, `detect-adaptive` has a `-t` (`threshold`) option that defaults to `3.0`, whereas `detect-content` has a `-t` threshold option that defaults to `27.0`. `-w` uses four values, for example `-w 1.0 1.0 1.0 0.0`. We can enter any, all, or none of these options next to the `Detect` button.
 
