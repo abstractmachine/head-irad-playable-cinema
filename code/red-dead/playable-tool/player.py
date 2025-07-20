@@ -1,12 +1,12 @@
 import os
-from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QSlider, QLineEdit, QFileDialog, QSizePolicy
-)
-from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
+
+from PyQt5.QtCore import Qt, pyqtSignal, QUrl
+from PyQt5.QtMultimedia import QMediaContent, QMediaPlayer
 from PyQt5.QtMultimediaWidgets import QVideoWidget
-from PyQt5.QtCore import QUrl
+from PyQt5.QtWidgets import (
+    QApplication, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMainWindow,
+    QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget
+)
 
 SEEK_NORMAL = "1"
 SEEK_FAST = "30"

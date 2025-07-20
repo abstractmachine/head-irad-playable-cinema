@@ -16,7 +16,7 @@ This tool leans heavily on [PySceneDetect](https://www.scenedetect.com) for iden
 ### Detectors
 There are various detection alogorithms. Cf. [PySceneDetect Detectors Docs](https://www.scenedetect.com/docs/latest/cli.html#detectors). Each of these methods has its own list of default and adjustable options. For example, `detect-adaptive` has a `-t` (`adaptive_threshold`) option that defaults to `3.0`, whereas `detect-content` has a `-t` (`threshold`) option that defaults to `27.0`. `-w` uses four values, for example `-w 1.0 1.0 1.0 0.0`. We can enter any, all, or none of these options next to the `Detect` button.
 
-![Detection method options field](images/detection-method-options.png)
+![Detection method options field](ui/images/detection-method-options.png)
 
 #### [detect-adaptive](https://www.scenedetect.com/docs/latest/cli.html#detect-adaptive)
 Options:
@@ -46,6 +46,8 @@ Examples:
 - `-m 100` (sets min_scene_len to 100 frames)
 - `-m 3.5s` (sets min_scene_len to 3.5 seconds)
 - `-m 00:01:52.778` (sets min_scene_len to a timecode)
+
+Note: the bigger the `-t ##` number, the less shots you will have. In a 10:00 video, we tried `-t 50` and there were only 4 shots. A low low number, sometimes even `-t 2.0` can have a very high number of shots, especially if there is a lot of camera movement, such as in video games.
 
 #### [detect-content](https://www.scenedetect.com/docs/latest/cli.html#detect-content)
 Options:
