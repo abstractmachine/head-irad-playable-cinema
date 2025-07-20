@@ -222,6 +222,8 @@ class DetectorWindow(QMainWindow):
         self.thread = None
         self.scene_table.itemChanged.connect(self.on_scene_table_item_changed)
 
+        self.current_time_ms = 0
+
     def select_detections_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Scene Detections Folder", self.detections_folder)
         if folder:
@@ -559,3 +561,33 @@ class DetectorWindow(QMainWindow):
                 end = row.get("End", "")
                 caption = row.get("Caption", "")
                 self.add_scene_row(scene_num, start, end, caption, ignore)
+
+    def update_caption_for_current_shot(self, caption_text):
+        time_ms = self.current_time_ms
+        closest_row = None
+        closest_diff = float('inf')
+
+        for row in range(self.scene_table.rowCount()):
+            start_tc = self.scene_table.item(row, 2).text()
+            def tc_to_ms(tc):
+                parts = tc.split(":")
+                if len(parts) == 3:
+                    h = int(parts[0])
+                    m = int(parts[1])
+                    s = float(parts[2])
+                    return int((h * 3600 + m * 60 + s) * 1000)
+                return 0
+            start_ms = tc_to_ms(start_tc)
+            diff = abs(time_ms - start_ms)
+            if diff < closest_diff:
+                closest_diff = diff
+                closest_row = row
+
+        # Only annotate if the closest is within a reasonable tolerance (e.g. 1000ms)
+        time_tolerance = 500
+        if closest_row is not None and closest_diff <= time_tolerance:
+            self.scene_table.item(closest_row, 4).setText(caption_text)
+            self.save_shotlist_to_csv()
+
+    def set_current_time(self, ms):
+        self.current_time_ms = ms

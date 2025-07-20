@@ -17,7 +17,7 @@ class PlayerWindow(QMainWindow):
     video_loaded = pyqtSignal(str)
     request_save = pyqtSignal()
     request_load = pyqtSignal(dict)
-    video_timecode_changed = pyqtSignal()
+    video_timecode_changed = pyqtSignal(int)
 
     def __init__(self):
         super().__init__()
@@ -44,6 +44,8 @@ class PlayerWindow(QMainWindow):
         # Seek speed controls
         self.normal_seek = QLineEdit(SEEK_NORMAL)
         self.fast_seek = QLineEdit(SEEK_FAST)
+        self.normal_seek.setToolTip("Normal seek speed in seconds")
+        self.fast_seek.setToolTip("Fast seek speed in seconds")
         self.normal_seek.setFixedWidth(40)
         self.fast_seek.setFixedWidth(40)
         self.normal_seek.setFocusPolicy(Qt.ClickFocus)
@@ -55,23 +57,23 @@ class PlayerWindow(QMainWindow):
 
         # Load button
         self.load_button = QPushButton("Load")
-        self.load_button.setToolTip("Load video (Shortcut: L or V)")
+        self.load_button.setToolTip("Load video\nShortcut: L or V")
         self.load_button.clicked.connect(self.load_video)
 
         # Play/Pause button
         self.play_pause_button = QPushButton("Play")
-        self.play_pause_button.setToolTip("Play or pause video (Space or P)")
+        self.play_pause_button.setToolTip("Play or pause video\nShortcut:Space")
         self.play_pause_button.clicked.connect(self.toggle_play_pause)
         self.play_pause_button.setEnabled(False)
         self.is_playing = False
 
         # Seek buttons
         self.back_button = QPushButton("Back")
-        self.back_button.setToolTip("Seek backward (Left arrow, Shift for fast)")
+        self.back_button.setToolTip("Seek backward\nShortcut: Left arrow, Shift for fast")
         self.back_button.setEnabled(False)
         self.back_button.clicked.connect(self.seek_back)
         self.forward_button = QPushButton("Forward")
-        self.forward_button.setToolTip("Seek forward (Right arrow, Shift for fast)")
+        self.forward_button.setToolTip("Seek forward\nShortcut: Right arrow, Shift for fast")
         self.forward_button.setEnabled(False)
         self.forward_button.clicked.connect(self.seek_forward)
 
@@ -220,7 +222,7 @@ class PlayerWindow(QMainWindow):
         self.media_player.setPosition(position)
 
     def emit_timecode_changed(self, position):
-        self.video_timecode_changed.emit()
+        self.video_timecode_changed.emit(position)
 
     def seek_video(self, seconds):
         new_position = self.media_player.position() + (seconds * 1000)
@@ -272,7 +274,7 @@ class PlayerWindow(QMainWindow):
 
         if key in (Qt.Key_L, Qt.Key_V):
             self.load_video()
-        elif key in (Qt.Key_Space, Qt.Key_P):
+        elif key == Qt.Key_Space:
             if self.play_pause_button.isEnabled():
                 self.toggle_play_pause()
         elif key == Qt.Key_Left:

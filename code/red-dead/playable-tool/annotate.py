@@ -18,6 +18,7 @@ class SystemPromptEdit(QTextEdit):
 class AnnotateWindow(QMainWindow):
     request_save = pyqtSignal()
     request_load = pyqtSignal(dict)
+    caption_submitted = pyqtSignal(str)  # Signal to emit the submitted caption
 
     def __init__(self, player_window, detector_window):
         super().__init__()
@@ -47,29 +48,34 @@ class AnnotateWindow(QMainWindow):
 
         self.annotate_button = QPushButton("Annotate")
         self.annotate_button.setFixedWidth(120)
-        self.annotate_button.setEnabled(False)  # Disabled at startup
+        self.annotate_button.setEnabled(False)
+        self.annotate_button.setToolTip("Rewrite current caption into current 'Caption' cell\nShortcut: A")
         button_layout.addWidget(self.annotate_button)
 
-        self.test_button = QPushButton("API")
-        self.test_button.setFixedWidth(120)
-        self.test_button.setEnabled(False)  # Disabled at startup
-        button_layout.addWidget(self.test_button)
+        self.api_button = QPushButton("OpenAI API")
+        self.api_button.setFixedWidth(120)
+        self.api_button.setEnabled(False)
+        self.api_button.setToolTip("Send current shot to OpenAI API and receive a caption\nShortcut: O")
+        button_layout.addWidget(self.api_button)
 
         self.bot_button = QPushButton("Bot")
         self.bot_button.setFixedWidth(120)
-        self.bot_button.setEnabled(False)  # Disabled at startup
+        self.bot_button.setEnabled(False)
+        self.bot_button.setToolTip("Start the auto-Bot to automatically generate captions via OpenAI API\nShortcut: B")
         button_layout.addWidget(self.bot_button)
 
         # --- Add new buttons here ---
         self.playback_button = QPushButton("Playback")
         self.playback_button.setFixedWidth(120)
         self.playback_button.setEnabled(False)  # Disabled at startup
+        self.playback_button.setToolTip("As Playback timeline changes, update the current caption\nShortcut: P")
         button_layout.addWidget(self.playback_button)
 
-        self.interpret_button = QPushButton("Interpret")
-        self.interpret_button.setFixedWidth(120)
-        self.interpret_button.setEnabled(False)  # Disabled at startup
-        button_layout.addWidget(self.interpret_button)
+        self.inference_button = QPushButton("Inference")
+        self.inference_button.setFixedWidth(120)
+        self.inference_button.setEnabled(False)  # Disabled at startup
+        self.inference_button.setToolTip("As Playback timeline changes, use loaded model to Inference a new caption\nShortcut: I")
+        button_layout.addWidget(self.inference_button)
         # --- End new buttons ---
 
         button_layout.addStretch()
@@ -121,6 +127,8 @@ class AnnotateWindow(QMainWindow):
 
         self.setFocusPolicy(Qt.StrongFocus)
 
+        self.annotate_button.clicked.connect(self.submit_caption)
+
     def eventFilter(self, obj, event):
         # Block ENTER/newline in caption_field and exit editing instead
         if obj is self.caption_field and event.type() == event.KeyPress:
@@ -150,12 +158,16 @@ class AnnotateWindow(QMainWindow):
     def keyPressEvent(self, event):
         # Only handle hotkeys, not ENTER
         key = event.key()
-        if key == Qt.Key_T:
-            self.test_button.click()
-        elif key == Qt.Key_A:
+        if key == Qt.Key_A:
             self.annotate_button.click()
+        elif key == Qt.Key_O:
+            self.api_button.click()
         elif key == Qt.Key_B:
             self.bot_button.click()
+        elif key == Qt.Key_P:
+            self.playback_button.click()
+        elif key == Qt.Key_I:
+            self.inference_button.click()
         else:
             super().keyPressEvent(event)
 
@@ -203,7 +215,11 @@ class AnnotateWindow(QMainWindow):
 
     def set_shotlist_status(self, exists):
         self.annotate_button.setEnabled(exists)
-        self.test_button.setEnabled(exists)
+        self.api_button.setEnabled(exists)
         self.bot_button.setEnabled(exists)
         self.playback_button.setEnabled(exists)
-        self.interpret_button.setEnabled(exists)
+        self.inference_button.setEnabled(exists)
+
+    def submit_caption(self):
+        text = self.caption_field.toPlainText()
+        self.caption_submitted.emit(text)

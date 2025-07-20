@@ -34,6 +34,7 @@ class GlobalKeyFilter(QObject):
                     return True
             elif not isinstance(focus_widget, (QLineEdit, QTextEdit)):
                 self.windows["player"].handle_global_key(event)
+                self.windows["annotate"].keyPressEvent(event)
                 return True
         return False
 
@@ -85,7 +86,9 @@ def main():
     windows["player"].video_loaded.connect(windows["detector"].process_video)
     windows["detector"].jump_to_timecode_signal.connect(windows["player"].jump_to_timecode)
     windows["player"].video_timecode_changed.connect(windows["detector"].clear_table_selection)
+    windows["player"].video_timecode_changed.connect(windows["detector"].set_current_time)
     windows["detector"].shotlist_status.connect(windows["annotate"].set_shotlist_status)
+    windows["annotate"].caption_submitted.connect(windows["detector"].update_caption_for_current_shot)
 
     # Show the app windows
     windows["detector"].show()
