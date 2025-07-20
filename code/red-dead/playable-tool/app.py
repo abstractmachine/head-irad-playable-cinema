@@ -91,6 +91,7 @@ def main():
     windows["detector"].shotlist_status.connect(windows["annotate"].set_shotlist_status)
     windows["detector"].caption_selected.connect(windows["annotate"].set_caption_field)
     windows["detector"].abort_api.connect(windows["annotate"].handle_api_abort)
+    windows["detector"].shot_timecodes.connect(windows["player"].handle_shot_timecodes)
     windows["annotate"].caption_submitted.connect(windows["detector"].update_caption_for_current_shot)
     windows["annotate"].request_current_shot.connect(windows["detector"].handle_request_current_shot)
 

@@ -607,6 +607,7 @@ class DetectorWindow(QMainWindow):
         self.current_time_ms = ms
 
     def handle_request_current_shot(self, count):
+        print("handle_request_current_shot called with count:", count)
         row = self.find_closest_shot(self.current_time_ms, tolerance=500)
         if row is None:
             print("No shot found for current time.")

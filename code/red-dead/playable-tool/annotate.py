@@ -321,7 +321,7 @@ class AnnotateWindow(QMainWindow):
         for btn in [self.annotate_button, self.api_button, self.bot_button, self.playback_button, self.inference_button]:
             btn.setEnabled(False)
 
-        # Request timecodes from detector
+        # print("API button clicked, sending request to detector for frames.")
         self.request_current_shot.emit(FRAMES_PER_SHOT)
 
         # Start animation
@@ -345,7 +345,7 @@ class AnnotateWindow(QMainWindow):
         self.caption_field.setPlainText(result)  # <-- Set API result
 
     def handle_api_abort(self, message):
-        print("API abort received:", message)
+        # print("API abort received:", message)
         if hasattr(self, 'api_anim_timer'):
             self.api_anim_timer.stop()
             self.api_button.setText("OpenAI API")

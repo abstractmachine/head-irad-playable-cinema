@@ -328,7 +328,7 @@ class PlayerWindow(QMainWindow):
                 ret, frame = cap.read()
                 if ret:
                     frames.append(frame)
-                    print(f"Extracted frame {frame_num} for timecode {tc}")
+                    # print(f"Extracted frame {frame_num} for timecode {tc}")
                 else:
                     print(f"Failed to extract frame at {tc} (frame {frame_num})")
             else:
@@ -339,7 +339,8 @@ class PlayerWindow(QMainWindow):
 
     def handle_shot_timecodes(self, start_tc, timecodes):
         # print(f"Handling shot timecodes: start={start_tc}, count={len(timecodes)}")
-        all_timecodes = [start_tc] + timecodes
+        # all_timecodes = [start_tc] + timecodes
+        all_timecodes = timecodes  # Use only the provided timecodes, not including start_tc
         self.frame_thread = QThread()
         self.frame_worker = FrameExtractorWorker(self.current_video_path, all_timecodes)
         self.frame_worker.moveToThread(self.frame_thread)
