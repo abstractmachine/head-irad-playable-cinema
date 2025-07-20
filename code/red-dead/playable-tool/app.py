@@ -84,11 +84,15 @@ def main():
 
     # Signal Connections
     windows["player"].video_loaded.connect(windows["detector"].process_video)
-    windows["detector"].jump_to_timecode_signal.connect(windows["player"].jump_to_timecode)
     windows["player"].video_timecode_changed.connect(windows["detector"].clear_table_selection)
     windows["player"].video_timecode_changed.connect(windows["detector"].set_current_time)
+    windows["player"].frames_extracted.connect(windows["annotate"].handle_api_frames)
+    windows["detector"].jump_to_timecode_signal.connect(windows["player"].jump_to_timecode)
     windows["detector"].shotlist_status.connect(windows["annotate"].set_shotlist_status)
+    windows["detector"].caption_selected.connect(windows["annotate"].set_caption_field)
+    windows["detector"].abort_api.connect(windows["annotate"].handle_api_abort)
     windows["annotate"].caption_submitted.connect(windows["detector"].update_caption_for_current_shot)
+    windows["annotate"].request_current_shot.connect(windows["detector"].handle_request_current_shot)
 
     # Show the app windows
     windows["detector"].show()

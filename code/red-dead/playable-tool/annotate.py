@@ -1,9 +1,86 @@
+import os
+import tempfile
+import base64
+import mimetypes
+import openai
+
+from PyQt5.QtGui import QFont, QFontDatabase, QTextOption
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QTimer
 from PyQt5.QtWidgets import (
     QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QLineEdit, QTextEdit, QPushButton, QSizePolicy
 )
-from PyQt5.QtGui import QFont, QFontDatabase, QTextOption
-from PyQt5.QtCore import pyqtSignal, Qt
-import os
+
+FRAMES_PER_SHOT = 5
+
+def encode_image(image_array):
+    # Save numpy array to temp file and encode as base64
+    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+        temp_jpg_path = tmp.name
+        import cv2
+        cv2.imwrite(temp_jpg_path, image_array)
+        mime_type, _ = mimetypes.guess_type(temp_jpg_path)
+        with open(temp_jpg_path, "rb") as image_file:
+            encoded = f"data:{mime_type};base64," + base64.b64encode(image_file.read()).decode("utf-8")
+        os.remove(temp_jpg_path)
+        return encoded
+
+class ApiWorker(QObject):
+    finished = pyqtSignal()
+    result = pyqtSignal(object)
+
+    def __init__(self, frames):
+        super().__init__()
+        self.frames = frames
+
+    def run(self):
+        # print(f"API Worker received {len(self.frames)} frames")
+        images_payload = []
+        for frame in self.frames:
+            images_payload.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": encode_image(frame),
+                    "detail": "high"
+                }
+            })
+
+        # Read system prompt
+        system_prompt_path = os.path.join(os.path.dirname(__file__), "preferences", "system_prompt.txt")
+        try:
+            with open(system_prompt_path, "r", encoding="utf-8") as f:
+                system_prompt = f.read()
+        except Exception:
+            system_prompt = "Describe the scene in these images."
+
+        # Read API key from file
+        api_key_path = os.path.join(os.path.dirname(__file__), "preferences", "api_key.txt")
+        try:
+            with open(api_key_path, "r", encoding="utf-8") as f:
+                api_key = f.read().strip()
+        except Exception as e:
+            caption = f"Error reading API key: {e}"
+            self.result.emit(caption)
+            self.finished.emit()
+            return
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": images_payload}
+        ]
+
+        try:
+            response = openai.OpenAI(api_key=api_key).chat.completions.create(
+                model="gpt-4o",
+                messages=messages,
+                temperature=0.2,
+                max_tokens=300,
+            )
+            caption = response.choices[0].message.content
+        except Exception as e:
+            caption = f"Error generating caption: {e}"
+
+        self.result.emit(caption)
+        self.finished.emit()
 
 class SystemPromptEdit(QTextEdit):
     def __init__(self, parent=None, save_callback=None):
@@ -19,6 +96,7 @@ class AnnotateWindow(QMainWindow):
     request_save = pyqtSignal()
     request_load = pyqtSignal(dict)
     caption_submitted = pyqtSignal(str)  # Signal to emit the submitted caption
+    request_current_shot = pyqtSignal(int)
 
     def __init__(self, player_window, detector_window):
         super().__init__()
@@ -53,7 +131,7 @@ class AnnotateWindow(QMainWindow):
         button_layout.addWidget(self.annotate_button)
 
         self.api_button = QPushButton("OpenAI API")
-        self.api_button.setFixedWidth(120)
+        self.api_button.setFixedWidth(160)
         self.api_button.setEnabled(False)
         self.api_button.setToolTip("Send current shot to OpenAI API and receive a caption\nShortcut: O")
         button_layout.addWidget(self.api_button)
@@ -100,7 +178,7 @@ class AnnotateWindow(QMainWindow):
         self.system_prompt_field.setFont(hk_font_system)
         self.system_prompt_field.setStyleSheet("QTextEdit { border: none; color: black; }")
         self.system_prompt_field.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        main_layout.addWidget(self.system_prompt_field, stretch=2)
+        main_layout.addWidget(self.system_prompt_field, stretch=1)
 
         container = QWidget()
         container.setLayout(main_layout)
@@ -128,14 +206,12 @@ class AnnotateWindow(QMainWindow):
         self.setFocusPolicy(Qt.StrongFocus)
 
         self.annotate_button.clicked.connect(self.submit_caption)
+        self.api_button.clicked.connect(self.handle_api_button)
+
+        # Initialize current_timecodes
+        self.current_timecodes = []
 
     def eventFilter(self, obj, event):
-        # Block ENTER/newline in caption_field and exit editing instead
-        if obj is self.caption_field and event.type() == event.KeyPress:
-            if event.key() in (Qt.Key_Return, Qt.Key_Enter):
-                self.exit_caption_editing()
-                return True  # Block newline
-            return False
 
         # Save system prompt on focus out
         if obj is self.system_prompt_field and event.type() == event.FocusOut:
@@ -222,4 +298,62 @@ class AnnotateWindow(QMainWindow):
 
     def submit_caption(self):
         text = self.caption_field.toPlainText()
+        # print("Annotate button pressed, submitting caption:", text)
         self.caption_submitted.emit(text)
+
+    def handle_api_frames(self, frames):
+        # print("handle_api_frames called")
+        self.current_frames = frames
+
+        self.api_thread = QThread()
+        self.api_worker = ApiWorker(self.current_frames)  # Pass frames instead of timecodes
+        self.api_worker.moveToThread(self.api_thread)
+        self.api_thread.started.connect(self.api_worker.run)
+        self.api_worker.result.connect(self.handle_api_result)
+        self.api_worker.finished.connect(self.api_thread.quit)
+        self.api_worker.finished.connect(self.api_worker.deleteLater)
+        self.api_thread.finished.connect(self.api_thread.deleteLater)
+        self.api_thread.start()
+
+    def handle_api_button(self):
+        self.caption_field.clear()
+        self.api_button.setText("")
+        for btn in [self.annotate_button, self.api_button, self.bot_button, self.playback_button, self.inference_button]:
+            btn.setEnabled(False)
+
+        # Request timecodes from detector
+        self.request_current_shot.emit(FRAMES_PER_SHOT)
+
+        # Start animation
+        self.api_anim_step = 0
+        self.api_anim_timer = QTimer(self)
+        self.api_anim_timer.timeout.connect(self.animate_api_button)
+        self.api_anim_timer.start(400)  # update every 400ms
+
+    def animate_api_button(self):
+        dots = '.' * (self.api_anim_step % 4)
+        self.api_button.setText(f"{dots}")
+        self.api_anim_step += 1
+
+    def handle_api_result(self, result):
+        # Stop animation and restore UI
+        if hasattr(self, 'api_anim_timer'):
+            self.api_anim_timer.stop()
+            self.api_button.setText("OpenAI API")
+        for btn in [self.annotate_button, self.api_button, self.bot_button, self.playback_button, self.inference_button]:
+            btn.setEnabled(True)
+        self.caption_field.setPlainText(result)  # <-- Set API result
+
+    def handle_api_abort(self, message):
+        print("API abort received:", message)
+        if hasattr(self, 'api_anim_timer'):
+            self.api_anim_timer.stop()
+            self.api_button.setText("OpenAI API")
+        for btn in [self.annotate_button, self.api_button, self.bot_button, self.playback_button, self.inference_button]:
+            btn.setEnabled(True)
+        # set `api_button` back to normal state
+        self.api_button.setText("OpenAI API")
+        print("API aborted:", message)
+
+    def set_caption_field(self, caption):
+        self.caption_field.setPlainText(caption)

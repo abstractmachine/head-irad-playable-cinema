@@ -1,6 +1,7 @@
 import os
+import cv2
 
-from PyQt5.QtCore import Qt, pyqtSignal, QUrl
+from PyQt5.QtCore import Qt, pyqtSignal, QUrl, QObject, QThread
 from PyQt5.QtMultimedia import QMediaContent, QMediaPlayer
 from PyQt5.QtMultimediaWidgets import QVideoWidget
 from PyQt5.QtWidgets import (
@@ -10,6 +11,7 @@ from PyQt5.QtWidgets import (
 
 SEEK_NORMAL = "1"
 SEEK_FAST = "30"
+FRAMES_PER_SHOT = 30  # Assuming a default value, adjust as necessary
 
 class PlayerWindow(QMainWindow):
 
@@ -18,6 +20,7 @@ class PlayerWindow(QMainWindow):
     request_save = pyqtSignal()
     request_load = pyqtSignal(dict)
     video_timecode_changed = pyqtSignal(int)
+    frames_extracted = pyqtSignal(list)
 
     def __init__(self):
         super().__init__()
@@ -178,6 +181,7 @@ class PlayerWindow(QMainWindow):
             self.timeline.setEnabled(True)
             self.media_player.play()
             self.media_player.pause()
+            self.media_player.setPosition(0)  # Added line to seek to the start
             self.current_video_path = file_path
             self.video_loaded.emit(file_path)
 
@@ -293,3 +297,93 @@ class PlayerWindow(QMainWindow):
 
     def update_position_from_slider(self):
         self.media_player.setPosition(self.timeline.value())
+
+    def extract_frames_for_timecodes(self, timecodes):
+        
+        #Extract frames for the given timecodes from the current video.
+        #Returns a list of numpy arrays (frames).
+        
+        if not self.current_video_path:
+            print("No video loaded for frame extraction.")
+            return []
+
+        cap = cv2.VideoCapture(self.current_video_path)
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        frames = []
+
+        def timecode_to_frame(tc):
+            parts = tc.split(":")
+            if len(parts) == 3:
+                h = int(parts[0])
+                m = int(parts[1])
+                s = float(parts[2])
+                total_seconds = h * 3600 + m * 60 + s
+                return int(total_seconds * fps)
+            return None
+
+        for tc in timecodes:
+            frame_num = timecode_to_frame(tc)
+            if frame_num is not None:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+                ret, frame = cap.read()
+                if ret:
+                    frames.append(frame)
+                    print(f"Extracted frame {frame_num} for timecode {tc}")
+                else:
+                    print(f"Failed to extract frame at {tc} (frame {frame_num})")
+            else:
+                print(f"Invalid timecode: {tc}")
+
+        cap.release()
+        return frames
+
+    def handle_shot_timecodes(self, start_tc, timecodes):
+        # print(f"Handling shot timecodes: start={start_tc}, count={len(timecodes)}")
+        all_timecodes = [start_tc] + timecodes
+        self.frame_thread = QThread()
+        self.frame_worker = FrameExtractorWorker(self.current_video_path, all_timecodes)
+        self.frame_worker.moveToThread(self.frame_thread)
+        self.frame_thread.started.connect(self.frame_worker.run)
+        self.frame_worker.finished.connect(self.handle_frames_extracted)
+        self.frame_worker.finished.connect(self.frame_thread.quit)
+        self.frame_worker.finished.connect(self.frame_worker.deleteLater)
+        self.frame_thread.finished.connect(self.frame_thread.deleteLater)
+        self.frame_thread.start()
+
+    def handle_frames_extracted(self, frames):
+        # print(f"Extracted {len(frames)} frames for API.")
+        self.frames_extracted.emit(frames)  # Emit frames to AnnotateWindow
+
+class FrameExtractorWorker(QObject):
+    finished = pyqtSignal(list)  # Emits list of frames
+
+    def __init__(self, video_path, timecodes):
+        super().__init__()
+        self.video_path = video_path
+        self.timecodes = timecodes
+
+    def run(self):
+        import cv2
+        cap = cv2.VideoCapture(self.video_path)
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        frames = []
+
+        def timecode_to_frame(tc):
+            parts = tc.split(":")
+            if len(parts) == 3:
+                h = int(parts[0])
+                m = int(parts[1])
+                s = float(parts[2])
+                total_seconds = h * 3600 + m * 60 + s
+                return int(total_seconds * fps)
+            return None
+
+        for tc in self.timecodes:
+            frame_num = timecode_to_frame(tc)
+            if frame_num is not None:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+                ret, frame = cap.read()
+                if ret:
+                    frames.append(frame)
+        cap.release()
+        self.finished.emit(frames)

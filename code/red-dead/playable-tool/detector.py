@@ -3,7 +3,8 @@ import os
 import re
 import time
 
-from PyQt5.QtCore import Qt, pyqtSignal, QThread, QObject, QTimer
+from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtCore import Qt, QThread, QObject, QTimer
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QHBoxLayout, QLineEdit, QMainWindow,
@@ -136,10 +137,14 @@ class SceneDetectWorker(QObject):
         self.finished.emit(scene_list)
 
 class DetectorWindow(QMainWindow):
+    # define the signals we are going to send out
     request_save = pyqtSignal()
     request_load = pyqtSignal(dict)
     jump_to_timecode_signal = pyqtSignal(str, bool)
     shotlist_status = pyqtSignal(bool)
+    shot_timecodes = pyqtSignal(str, list)  # start_tc, timecodes
+    abort_api = pyqtSignal(str)  # Optionally pass a message
+    caption_selected = pyqtSignal(str)  # Add this signal
 
     def __init__(self):
         super().__init__()
@@ -362,12 +367,15 @@ class DetectorWindow(QMainWindow):
             self.shotlist_status.emit(True)
 
     def on_table_cell_clicked(self, row, col):
-        start_tc = self.scene_table.item(row, 2).text()  # Start is now col 2
-        end_tc = self.scene_table.item(row, 3).text()    # End is now col 3
+        start_tc = self.scene_table.item(row, 2).text()
+        end_tc = self.scene_table.item(row, 3).text()
         if col == 2:
             self.jump_to_timecode(start_tc)
         elif col == 3:
             self.jump_to_timecode(end_tc, is_last_frame=True)
+        elif col == 4:  # Caption column
+            caption = self.scene_table.item(row, 4).text()
+            self.caption_selected.emit(caption)
 
     def jump_to_timecode(self, timecode, is_last_frame=False):
         parts = timecode.split(":")
@@ -562,11 +570,9 @@ class DetectorWindow(QMainWindow):
                 caption = row.get("Caption", "")
                 self.add_scene_row(scene_num, start, end, caption, ignore)
 
-    def update_caption_for_current_shot(self, caption_text):
-        time_ms = self.current_time_ms
+    def find_closest_shot(self, time_ms, tolerance=1000):
         closest_row = None
         closest_diff = float('inf')
-
         for row in range(self.scene_table.rowCount()):
             start_tc = self.scene_table.item(row, 2).text()
             def tc_to_ms(tc):
@@ -582,12 +588,52 @@ class DetectorWindow(QMainWindow):
             if diff < closest_diff:
                 closest_diff = diff
                 closest_row = row
+        if closest_row is not None and closest_diff <= tolerance:
+            return closest_row
+        return None
 
-        # Only annotate if the closest is within a reasonable tolerance (e.g. 1000ms)
-        time_tolerance = 500
-        if closest_row is not None and closest_diff <= time_tolerance:
-            self.scene_table.item(closest_row, 4).setText(caption_text)
+    def update_caption_for_current_shot(self, caption_text):
+        # print("update_caption_for_current_shot called with:", caption_text)
+        # print("Current time ms:", self.current_time_ms)
+        row = self.find_closest_shot(self.current_time_ms, tolerance=500)
+        # print("Closest row found:", row)
+        if row is not None:
+            self.scene_table.item(row, 4).setText(caption_text)
             self.save_shotlist_to_csv()
+        else:
+            print("No matching shot found for annotation.")
 
     def set_current_time(self, ms):
         self.current_time_ms = ms
+
+    def handle_request_current_shot(self, count):
+        row = self.find_closest_shot(self.current_time_ms, tolerance=500)
+        if row is None:
+            print("No shot found for current time.")
+            self.abort_api.emit("No matching shot found for API request.")
+            return
+        shot_index = row + 1
+        start_tc = self.scene_table.item(row, 2).text()
+        end_tc = self.scene_table.item(row, 3).text()
+        def tc_to_ms(tc):
+            parts = tc.split(":")
+            if len(parts) == 3:
+                h = int(parts[0])
+                m = int(parts[1])
+                s = float(parts[2])
+                return int((h * 3600 + m * 60 + s) * 1000)
+            return 0
+        start_ms = tc_to_ms(start_tc)
+        end_ms = tc_to_ms(end_tc)
+        total_steps = count + 2
+        step_size = (end_ms - start_ms) / total_steps
+        timecodes = []
+        for i in range(1, total_steps - 1):
+            ms = int(start_ms + i * step_size)
+            h = ms // 3600000
+            m = (ms % 3600000) // 60000
+            s = ((ms % 60000) / 1000)
+            tc = f"{h:02}:{m:02}:{s:06.3f}"
+            timecodes.append(tc)
+        # Emit the signal to player
+        self.shot_timecodes.emit(start_tc, timecodes)
