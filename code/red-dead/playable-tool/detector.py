@@ -104,7 +104,7 @@ def create_detector(method, detector_args):
         detector = ContentDetector()
     if unused_args:
         print(f"Warning: The following detector options were not used: {', '.join(unused_args.keys())}")
-    print("vars(detector):", vars(detector))
+    # print("vars(detector):", vars(detector))
     return detector
 
 class SceneDetectWorker(QObject):
@@ -122,7 +122,7 @@ class SceneDetectWorker(QObject):
             video = open_video(self.video_path)
             scene_manager = SceneManager()
             detector_args = parse_detector_args(self.weights)
-            print(f"Parsed detector args: {detector_args}")
+            # print(f"Parsed detector args: {detector_args}")
             detector = create_detector(self.method, detector_args)
             scene_manager.add_detector(detector)
             scene_manager.detect_scenes(video)
@@ -157,14 +157,16 @@ class DetectorWindow(QMainWindow):
         layout.setSpacing(12)
 
         self.scene_table = QTableWidget()
-        self.scene_table.setColumnCount(4)
-        self.scene_table.setHorizontalHeaderLabels(["Ignore", "Start", "End", "Caption"])
+        self.scene_table.setColumnCount(5)
+        self.scene_table.setHorizontalHeaderLabels(["Ignore", "Scene", "Start", "End", "Caption"])
         self.scene_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.scene_table.cellClicked.connect(self.on_table_cell_clicked)
         layout.addWidget(self.scene_table)
-        self.scene_table.setColumnWidth(0, 110)
-        self.scene_table.setColumnWidth(1, 110)
-        self.scene_table.setColumnWidth(2, 500)
+        self.scene_table.setColumnWidth(0, 110)   # Ignore
+        self.scene_table.setColumnWidth(1, 80)    # Scene
+        self.scene_table.setColumnWidth(2, 110)   # Start
+        self.scene_table.setColumnWidth(3, 110)   # End
+        self.scene_table.setColumnWidth(4, 500)   # Caption
 
         self.detect_button = QPushButton("Detect")
         self.detect_button.setFixedWidth(120)
@@ -231,10 +233,11 @@ class DetectorWindow(QMainWindow):
         self.scene_table.setRowCount(0)
         for row in rows:
             ignore = row.get("Ignore", "No") == "Yes"
+            scene_num = row.get("Scene", "")
             start = row.get("Start", "")
             end = row.get("End", "")
             caption = row.get("Caption", "")
-            self.add_scene_row(start, end, caption, ignore)
+            self.add_scene_row(scene_num, start, end, caption, ignore)
         self.current_csv_path = csv_path
         self.delete_button.setEnabled(True)
 
@@ -341,14 +344,14 @@ class DetectorWindow(QMainWindow):
                 return f"{h:02}:{m:02}:{s:06.3f}"
             padded_start_tc = ms_to_tc(padded_start_ms)
             padded_end_tc = ms_to_tc(padded_end_ms)
-            csv_rows.append(["No", padded_start_tc, padded_end_tc, ""])
+            csv_rows.append(["No", 0, padded_start_tc, padded_end_tc, ""])
         if self.video_path:
             base = os.path.basename(self.video_path)
             name, _ = os.path.splitext(base)
             out_path = os.path.join(self.detections_folder, f"{name}.csv")
             with open(out_path, "w", newline="") as f:
                 writer = csv.writer(f)
-                writer.writerow(["Ignore", "Start", "End", "Caption"])
+                writer.writerow(["Ignore", "Scene", "Start", "End", "Caption"])
                 writer.writerows(csv_rows)
             self.current_csv_path = out_path
             self.delete_button.setEnabled(True)
@@ -356,11 +359,11 @@ class DetectorWindow(QMainWindow):
             self.shotlist_status.emit(True)
 
     def on_table_cell_clicked(self, row, col):
-        start_tc = self.scene_table.item(row, 1).text()
-        end_tc = self.scene_table.item(row, 2).text()
-        if col == 1:
+        start_tc = self.scene_table.item(row, 2).text()  # Start is now col 2
+        end_tc = self.scene_table.item(row, 3).text()    # End is now col 3
+        if col == 2:
             self.jump_to_timecode(start_tc)
-        elif col == 2:
+        elif col == 3:
             self.jump_to_timecode(end_tc, is_last_frame=True)
 
     def jump_to_timecode(self, timecode, is_last_frame=False):
@@ -406,6 +409,7 @@ class DetectorWindow(QMainWindow):
             "col1_width": self.scene_table.columnWidth(1),
             "col2_width": self.scene_table.columnWidth(2),
             "col3_width": self.scene_table.columnWidth(3),
+            "col4_width": self.scene_table.columnWidth(4),
             "detections_folder": self.detections_folder,
             "weights_field": self.weights_field.text(),
             "method_selected": self.method_dropdown.currentText()
@@ -424,6 +428,8 @@ class DetectorWindow(QMainWindow):
             self.scene_table.setColumnWidth(2, data["col2_width"])
         if "col3_width" in data:
             self.scene_table.setColumnWidth(3, data["col3_width"])
+        if "col4_width" in data:
+            self.scene_table.setColumnWidth(4, data["col4_width"])
         if "detections_folder" in data:
             self.detections_folder = data["detections_folder"]
         if "weights_field" in data:
@@ -481,10 +487,10 @@ class DetectorWindow(QMainWindow):
         if not isinstance(focus_widget, QTextEdit):
             self.keyPressEvent(event)
 
-    def add_scene_row(self, start_tc, end_tc, caption, ignore=False):
+    def add_scene_row(self, scene_num, start_tc, end_tc, caption, ignore=False):
         row = self.scene_table.rowCount()
         self.scene_table.insertRow(row)
-        # Centered checkbox widget for Ignore column
+        # Ignore column (checkbox)
         checkbox = QCheckBox()
         checkbox.setChecked(ignore)
         checkbox.stateChanged.connect(lambda state, r=row: self.on_ignore_checkbox_changed(r, state))
@@ -495,16 +501,20 @@ class DetectorWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         widget.setLayout(layout)
         self.scene_table.setCellWidget(row, 0, widget)
+        # Scene number column
+        scene_item = QTableWidgetItem(str(scene_num))
+        scene_item.setTextAlignment(Qt.AlignCenter)
+        self.scene_table.setItem(row, 1, scene_item)
         # Start, End, Caption columns
         start_item = QTableWidgetItem(start_tc)
         start_item.setTextAlignment(Qt.AlignCenter)
-        self.scene_table.setItem(row, 1, start_item)
+        self.scene_table.setItem(row, 2, start_item)
         end_item = QTableWidgetItem(end_tc)
         end_item.setTextAlignment(Qt.AlignCenter)
-        self.scene_table.setItem(row, 2, end_item)
+        self.scene_table.setItem(row, 3, end_item)
         caption_item = QTableWidgetItem(caption)
         caption_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.scene_table.setItem(row, 3, caption_item)
+        self.scene_table.setItem(row, 4, caption_item)
 
     def on_ignore_checkbox_changed(self, row, state):
         self.save_shotlist_to_csv()
@@ -518,7 +528,7 @@ class DetectorWindow(QMainWindow):
             return
         with open(self.current_csv_path, "w", newline="") as csvfile:
             writer = csv.writer(csvfile)
-            writer.writerow(["Ignore", "Start", "End", "Caption"])
+            writer.writerow(["Ignore", "Scene", "Start", "End", "Caption"])
             for row in range(self.scene_table.rowCount()):
                 widget = self.scene_table.cellWidget(row, 0)
                 checkbox = widget.findChild(QCheckBox)
@@ -534,7 +544,8 @@ class DetectorWindow(QMainWindow):
             self.scene_table.setRowCount(0)
             for row in reader:
                 ignore = row.get("Ignore", "No") == "Yes"
+                scene_num = row.get("Scene", "")
                 start = row.get("Start", "")
                 end = row.get("End", "")
                 caption = row.get("Caption", "")
-                self.add_scene_row(start, end, caption, ignore)
+                self.add_scene_row(scene_num, start, end, caption, ignore)

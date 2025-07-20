@@ -118,7 +118,8 @@ class PlayerWindow(QMainWindow):
         self.media_player.positionChanged.connect(self.update_position)
         self.media_player.durationChanged.connect(self.update_duration)
         self.timeline.sliderMoved.connect(self.set_position)
-
+        self.timeline.sliderReleased.connect(self.update_position_from_slider)
+        
         # Connect preference signals
         self.request_save.connect(self.on_request_save)
         self.request_load.connect(self.on_request_load)
@@ -287,3 +288,6 @@ class PlayerWindow(QMainWindow):
         except Exception:
             pass
         super().closeEvent(event)
+
+    def update_position_from_slider(self):
+        self.media_player.setPosition(self.timeline.value())
