@@ -33,7 +33,7 @@ class AnnotateWindow(QMainWindow):
 
         # Caption field (multi-line widget, but we block newlines)
         self.caption_field = QTextEdit()
-        self.caption_field.setPlaceholderText("...")
+        self.caption_field.setPlaceholderText("")
         self.caption_field.setFont(QFont("Helvetica", 18))
         self.caption_field.setStyleSheet("QTextEdit { border: none; color: black; }")
         self.caption_field.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -60,6 +60,18 @@ class AnnotateWindow(QMainWindow):
         self.bot_button.setEnabled(False)  # Disabled at startup
         button_layout.addWidget(self.bot_button)
 
+        # --- Add new buttons here ---
+        self.playback_button = QPushButton("Playback")
+        self.playback_button.setFixedWidth(120)
+        self.playback_button.setEnabled(False)  # Disabled at startup
+        button_layout.addWidget(self.playback_button)
+
+        self.interpret_button = QPushButton("Interpret")
+        self.interpret_button.setFixedWidth(120)
+        self.interpret_button.setEnabled(False)  # Disabled at startup
+        button_layout.addWidget(self.interpret_button)
+        # --- End new buttons ---
+
         button_layout.addStretch()
         button_row_widget = QWidget()
         button_row_widget.setLayout(button_layout)
@@ -72,10 +84,14 @@ class AnnotateWindow(QMainWindow):
         font_id = QFontDatabase.addApplicationFont(font_path)
         font_families = QFontDatabase.applicationFontFamilies(font_id)
         if font_families:
-            system_font = QFont(font_families[0], 12)
+            hk_font_caption = QFont(font_families[0], 18)
+            hk_font_system = QFont(font_families[0], 12)
         else:
-            system_font = QFont("Helvetica", 12)
-        self.system_prompt_field.setFont(system_font)
+            hk_font_caption = QFont("Helvetica", 18)
+            hk_font_system = QFont("Helvetica", 12)
+
+        self.caption_field.setFont(hk_font_caption)
+        self.system_prompt_field.setFont(hk_font_system)
         self.system_prompt_field.setStyleSheet("QTextEdit { border: none; color: black; }")
         self.system_prompt_field.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         main_layout.addWidget(self.system_prompt_field, stretch=2)
@@ -189,3 +205,5 @@ class AnnotateWindow(QMainWindow):
         self.annotate_button.setEnabled(exists)
         self.test_button.setEnabled(exists)
         self.bot_button.setEnabled(exists)
+        self.playback_button.setEnabled(exists)
+        self.interpret_button.setEnabled(exists)

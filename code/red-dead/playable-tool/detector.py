@@ -4,6 +4,7 @@ import re
 import time
 
 from PyQt5.QtCore import Qt, pyqtSignal, QThread, QObject, QTimer
+from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QHBoxLayout, QLineEdit, QMainWindow,
     QPushButton, QFileDialog, QTableWidget, QTableWidgetItem, QTextEdit,
@@ -505,13 +506,21 @@ class DetectorWindow(QMainWindow):
         scene_item = QTableWidgetItem(str(scene_num))
         scene_item.setTextAlignment(Qt.AlignCenter)
         self.scene_table.setItem(row, 1, scene_item)
-        # Start, End, Caption columns
+        # Start column (fixed-width font)
         start_item = QTableWidgetItem(start_tc)
         start_item.setTextAlignment(Qt.AlignCenter)
+        font = QFont("Courier New", 14)
+        font.setBold(True)
+        start_item.setFont(font)
         self.scene_table.setItem(row, 2, start_item)
+        # End column (fixed-width font)
         end_item = QTableWidgetItem(end_tc)
         end_item.setTextAlignment(Qt.AlignCenter)
+        font = QFont("Courier New", 14)
+        font.setBold(True)
+        end_item.setFont(font)
         self.scene_table.setItem(row, 3, end_item)
+        # Caption column
         caption_item = QTableWidgetItem(caption)
         caption_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.scene_table.setItem(row, 4, caption_item)
@@ -533,10 +542,11 @@ class DetectorWindow(QMainWindow):
                 widget = self.scene_table.cellWidget(row, 0)
                 checkbox = widget.findChild(QCheckBox)
                 ignore = "Yes" if checkbox.isChecked() else "No"
-                start = self.scene_table.item(row, 1).text()
-                end = self.scene_table.item(row, 2).text()
-                caption = self.scene_table.item(row, 3).text()
-                writer.writerow([ignore, start, end, caption])
+                scene_num = self.scene_table.item(row, 1).text()
+                start = self.scene_table.item(row, 2).text()
+                end = self.scene_table.item(row, 3).text()
+                caption = self.scene_table.item(row, 4).text()
+                writer.writerow([ignore, scene_num, start, end, caption])
 
     def load_shotlist_from_csv(self, path):
         with open(path, "r") as csvfile:
