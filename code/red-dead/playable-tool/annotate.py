@@ -108,8 +108,9 @@ class SystemPromptEdit(QTextEdit):
 class AnnotateWindow(QMainWindow):
     request_save = pyqtSignal()
     request_load = pyqtSignal(dict)
-    caption_submitted = pyqtSignal(str)  # Signal to emit the submitted caption
+    caption_submitted = pyqtSignal(str)
     request_current_shot = pyqtSignal(int)
+    request_next_shot = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -165,6 +166,12 @@ class AnnotateWindow(QMainWindow):
         self.inference_button.setEnabled(False)  # Disabled at startup
         self.inference_button.setToolTip("As Playback timeline changes, use loaded model to Inference a new caption\nShortcut: I")
         button_layout.addWidget(self.inference_button)
+
+        self.next_button = QPushButton("Next")
+        self.next_button.setFixedWidth(120)
+        self.next_button.setEnabled(False)
+        self.next_button.setToolTip("Jump to next shot")
+        button_layout.addWidget(self.next_button)
         # --- End new buttons ---
 
         button_layout.addStretch()
@@ -221,6 +228,8 @@ class AnnotateWindow(QMainWindow):
 
         # Initialize current_timecodes
         self.current_timecodes = []
+
+        self.next_button.clicked.connect(self.handle_next_button)
 
     def eventFilter(self, obj, event):
 
@@ -306,6 +315,7 @@ class AnnotateWindow(QMainWindow):
         self.bot_button.setEnabled(exists)
         self.playback_button.setEnabled(exists)
         self.inference_button.setEnabled(exists)
+        self.next_button.setEnabled(exists)  # <-- Add this line
 
     def submit_caption(self):
         text = self.caption_field.toPlainText()
@@ -369,3 +379,13 @@ class AnnotateWindow(QMainWindow):
 
     def set_caption_field(self, caption):
         self.caption_field.setPlainText(caption)
+
+    def handle_next_button(self):
+        self.request_next_shot.emit()
+
+    def handle_shot_position(self, current_row, row_count):
+        # Enable/disable Next button based on position
+        if row_count == 0 or current_row == row_count - 1 or current_row == -1:
+            self.next_button.setEnabled(False)
+        else:
+            self.next_button.setEnabled(True)

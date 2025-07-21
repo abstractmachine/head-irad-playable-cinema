@@ -5,7 +5,7 @@ import time
 
 from PyQt5.QtCore import pyqtSignal
 from PyQt5.QtCore import Qt, QThread, QObject, QTimer
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QColor
 from PyQt5.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QHBoxLayout, QLineEdit, QMainWindow,
     QPushButton, QFileDialog, QTableWidget, QTableWidgetItem, QTextEdit,
@@ -145,6 +145,7 @@ class ShotlistWindow(QMainWindow):
     shot_timecodes = pyqtSignal(str, list)  # start_tc, timecodes
     abort_api = pyqtSignal(str)  # Optionally pass a message
     caption_selected = pyqtSignal(str)  # Add this signal
+    shot_position = pyqtSignal(int, int)  # current_row, row_count
 
     def __init__(self):
         super().__init__()
@@ -583,6 +584,23 @@ class ShotlistWindow(QMainWindow):
 
     def set_current_time(self, ms):
         self.current_time_ms = ms
+        row_count = self.scene_table.rowCount()
+
+        # Clear previous highlights
+        for row in range(row_count):
+            index_item = self.scene_table.item(row, 1)
+            if index_item:
+                index_item.setBackground(QColor("white"))
+
+        if row_count == 0:
+            self.shot_position.emit(-1, 0)
+        else:
+            current_row = self.find_current_shot(ms)
+            # Highlight the current shot index cell
+            index_item = self.scene_table.item(current_row, 1)
+            if index_item:
+                index_item.setBackground(QColor("yellow"))
+            self.shot_position.emit(current_row, row_count)
 
     def handle_request_current_shot(self, count):
         row = self.find_current_shot(self.current_time_ms)
@@ -632,6 +650,8 @@ class ShotlistWindow(QMainWindow):
         # Emit the caption text to AnnotateWindow
         caption = self.scene_table.item(row, 4).text()
         self.caption_selected.emit(caption)
+        # Emit shot position
+        self.shot_position.emit(row, self.scene_table.rowCount())
 
     def find_current_shot(self, time_ms):
         row_count = self.scene_table.rowCount()
@@ -657,3 +677,19 @@ class ShotlistWindow(QMainWindow):
             else:
                 break
         return current_shot
+
+    def jump_to_next_shot(self):
+        row_count = self.scene_table.rowCount()
+        if row_count == 0:
+            return
+        current_row = self.find_current_shot(self.current_time_ms)
+        next_row = current_row + 1
+        if next_row < row_count:
+            start_tc = self.scene_table.item(next_row, 2).text()
+            self.jump_to_timecode(start_tc)
+            # Optionally select the row and emit caption
+            self.scene_table.setCurrentCell(next_row, 4)
+            caption = self.scene_table.item(next_row, 4).text()
+            self.caption_selected.emit(caption)
+        else:
+            print("Already at last shot.")

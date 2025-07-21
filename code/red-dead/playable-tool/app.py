@@ -92,6 +92,8 @@ def main():
     windows["shotlist"].shot_timecodes.connect(windows["player"].handle_shot_timecodes)
     windows["annotate"].caption_submitted.connect(windows["shotlist"].update_caption_for_current_shot)
     windows["annotate"].request_current_shot.connect(windows["shotlist"].handle_request_current_shot)
+    windows["annotate"].request_next_shot.connect(windows["shotlist"].jump_to_next_shot)
+    windows["shotlist"].shot_position.connect(windows["annotate"].handle_shot_position)
 
     # Show the app windows
     windows["shotlist"].show()
