@@ -13,16 +13,29 @@ from PyQt5.QtWidgets import (
 FRAMES_PER_SHOT = 5
 
 def encode_image(image_array):
-    # Save numpy array to temp file and encode as base64
+    import cv2
+    import time
+
+    # Create temp file, close handle before writing with OpenCV
     with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
         temp_jpg_path = tmp.name
-        import cv2
-        cv2.imwrite(temp_jpg_path, image_array)
-        mime_type, _ = mimetypes.guess_type(temp_jpg_path)
-        with open(temp_jpg_path, "rb") as image_file:
-            encoded = f"data:{mime_type};base64," + base64.b64encode(image_file.read()).decode("utf-8")
-        os.remove(temp_jpg_path)
-        return encoded
+
+    # Write image with OpenCV (file is closed)
+    cv2.imwrite(temp_jpg_path, image_array)
+    mime_type, _ = mimetypes.guess_type(temp_jpg_path)
+
+    # Read and encode
+    with open(temp_jpg_path, "rb") as image_file:
+        encoded = f"data:{mime_type};base64," + base64.b64encode(image_file.read()).decode("utf-8")
+
+    # Try to remove, retry if needed (Windows)
+    for _ in range(3):
+        try:
+            os.remove(temp_jpg_path)
+            break
+        except PermissionError:
+            time.sleep(0.1)
+    return encoded
 
 class ApiWorker(QObject):
     finished = pyqtSignal()
@@ -98,10 +111,8 @@ class AnnotateWindow(QMainWindow):
     caption_submitted = pyqtSignal(str)  # Signal to emit the submitted caption
     request_current_shot = pyqtSignal(int)
 
-    def __init__(self, player_window, detector_window):
+    def __init__(self):
         super().__init__()
-        self.player_window = player_window
-        self.detector_window = detector_window
 
         self.setWindowTitle("Annotate")
         self.setGeometry(400, 200, 600, 350)

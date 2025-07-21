@@ -10,3 +10,9 @@ To execute, you have to make this script executable :
 ```
 $ chmod +x convert.sh
 ```
+
+To run:
+
+```
+$ ./convert.sh
+```

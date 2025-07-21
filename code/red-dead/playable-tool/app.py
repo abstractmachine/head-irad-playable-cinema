@@ -7,10 +7,10 @@ from PyQt5.QtCore import Qt
 
 # our other windows
 from player import PlayerWindow
-from detector import DetectorWindow
+from shotlist import ShotlistWindow
 from annotate import AnnotateWindow
 
-PREFS_PATH = "preferences/preferences.json"
+PREFS_PATH = "./preferences/preferences.json"
 
 class GlobalKeyFilter(QObject):
     def __init__(self, windows):
@@ -58,13 +58,11 @@ def load_preferences(windows):
 
 def main():
     app = QApplication(sys.argv)
-    player_window = PlayerWindow()
-    detector_window = DetectorWindow()
-    annotate_window = AnnotateWindow(player_window, detector_window)
+    # create a dictionary of our windows
     windows = {
-        "player": player_window,
-        "detector": detector_window,
-        "annotate": annotate_window
+        "player": PlayerWindow(),
+        "shotlist": ShotlistWindow(),
+        "annotate": AnnotateWindow()
     }
 
     # Install global key filter
@@ -83,20 +81,20 @@ def main():
     app.aboutToQuit.connect(lambda: save_preferences(windows))
 
     # Signal Connections
-    windows["player"].video_loaded.connect(windows["detector"].process_video)
-    windows["player"].video_timecode_changed.connect(windows["detector"].clear_table_selection)
-    windows["player"].video_timecode_changed.connect(windows["detector"].set_current_time)
+    windows["player"].video_loaded.connect(windows["shotlist"].process_video)
+    windows["player"].video_timecode_changed.connect(windows["shotlist"].clear_table_selection)
+    windows["player"].video_timecode_changed.connect(windows["shotlist"].set_current_time)
     windows["player"].frames_extracted.connect(windows["annotate"].handle_api_frames)
-    windows["detector"].jump_to_timecode_signal.connect(windows["player"].jump_to_timecode)
-    windows["detector"].shotlist_status.connect(windows["annotate"].set_shotlist_status)
-    windows["detector"].caption_selected.connect(windows["annotate"].set_caption_field)
-    windows["detector"].abort_api.connect(windows["annotate"].handle_api_abort)
-    windows["detector"].shot_timecodes.connect(windows["player"].handle_shot_timecodes)
-    windows["annotate"].caption_submitted.connect(windows["detector"].update_caption_for_current_shot)
-    windows["annotate"].request_current_shot.connect(windows["detector"].handle_request_current_shot)
+    windows["shotlist"].jump_to_timecode_signal.connect(windows["player"].jump_to_timecode)
+    windows["shotlist"].shotlist_status.connect(windows["annotate"].set_shotlist_status)
+    windows["shotlist"].caption_selected.connect(windows["annotate"].set_caption_field)
+    windows["shotlist"].abort_api.connect(windows["annotate"].handle_api_abort)
+    windows["shotlist"].shot_timecodes.connect(windows["player"].handle_shot_timecodes)
+    windows["annotate"].caption_submitted.connect(windows["shotlist"].update_caption_for_current_shot)
+    windows["annotate"].request_current_shot.connect(windows["shotlist"].handle_request_current_shot)
 
     # Show the app windows
-    windows["detector"].show()
+    windows["shotlist"].show()
     windows["player"].show()
     windows["annotate"].show()
 
@@ -106,7 +104,7 @@ def main():
         except Exception:
             pass
         windows["player"].close()
-        windows["detector"].close()
+        windows["shotlist"].close()
         windows["annotate"].close()
 
     app.aboutToQuit.connect(clean_quit)

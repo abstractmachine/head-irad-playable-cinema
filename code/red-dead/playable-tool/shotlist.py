@@ -572,47 +572,22 @@ class ShotlistWindow(QMainWindow):
                 caption = row.get("Caption", "")
                 self.add_scene_row(scene_num, start, end, caption, ignore)
 
-    def find_closest_shot(self, time_ms, tolerance=1000):
-        closest_row = None
-        closest_diff = float('inf')
-        for row in range(self.scene_table.rowCount()):
-            start_tc = self.scene_table.item(row, 2).text()
-            def tc_to_ms(tc):
-                parts = tc.split(":")
-                if len(parts) == 3:
-                    h = int(parts[0])
-                    m = int(parts[1])
-                    s = float(parts[2])
-                    return int((h * 3600 + m * 60 + s) * 1000)
-                return 0
-            start_ms = tc_to_ms(start_tc)
-            diff = abs(time_ms - start_ms)
-            if diff < closest_diff:
-                closest_diff = diff
-                closest_row = row
-        if closest_row is not None and closest_diff <= tolerance:
-            return closest_row
-        return None
-
     def update_caption_for_current_shot(self, caption_text):
-        # print("update_caption_for_current_shot called with:", caption_text)
-        # print("Current time ms:", self.current_time_ms)
-        row = self.find_closest_shot(self.current_time_ms, tolerance=500)
-        # print("Closest row found:", row)
+        row = self.find_current_shot(self.current_time_ms)
+        #print(f"Updating caption for current shot at row {row} with time {self.current_time_ms} ms.")
         if row is not None:
             self.scene_table.item(row, 4).setText(caption_text)
             self.save_shotlist_to_csv()
         else:
-            print("No matching shot found for annotation.")
+            print("No matching shot found for annotation")
 
     def set_current_time(self, ms):
         self.current_time_ms = ms
 
     def handle_request_current_shot(self, count):
-        print("handle_request_current_shot called with count:", count)
-        row = self.find_closest_shot(self.current_time_ms, tolerance=500)
+        row = self.find_current_shot(self.current_time_ms)
         if row is None:
-            print("No shot found for current time.")
+            print(f"No shot found for current time {self.current_time_ms} ms - row count = {self.scene_table.rowCount()}.")
             self.abort_api.emit("No matching shot found for API request.")
             return
         shot_index = row + 1
@@ -657,3 +632,28 @@ class ShotlistWindow(QMainWindow):
         # Emit the caption text to AnnotateWindow
         caption = self.scene_table.item(row, 4).text()
         self.caption_selected.emit(caption)
+
+    def find_current_shot(self, time_ms):
+        row_count = self.scene_table.rowCount()
+        #print(f"Finding current shot for time {time_ms} ms in {row_count} rows.")
+        if row_count == 0:
+            return None  # No shots detected
+
+        def tc_to_ms(tc):
+            parts = tc.split(":")
+            if len(parts) == 3:
+                h = int(parts[0])
+                m = int(parts[1])
+                s = float(parts[2])
+                return int((h * 3600 + m * 60 + s) * 1000)
+            return 0
+
+        current_shot = 0
+        for row in range(row_count):
+            start_tc = self.scene_table.item(row, 2).text()
+            start_ms = tc_to_ms(start_tc)
+            if start_ms <= time_ms:
+                current_shot = row
+            else:
+                break
+        return current_shot
