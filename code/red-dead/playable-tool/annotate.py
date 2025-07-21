@@ -353,7 +353,8 @@ class AnnotateWindow(QMainWindow):
             btn.setEnabled(True)
         # set `api_button` back to normal state
         self.api_button.setText("OpenAI API")
-        print("API aborted:", message)
+        # print("API aborted:", message)
+        self.caption_field.setPlainText(f"API aborted: {message}")
 
     def set_caption_field(self, caption):
         self.caption_field.setPlainText(caption)
