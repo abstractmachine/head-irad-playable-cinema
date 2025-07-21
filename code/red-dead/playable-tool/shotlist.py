@@ -590,7 +590,7 @@ class ShotlistWindow(QMainWindow):
         for row in range(row_count):
             index_item = self.scene_table.item(row, 1)
             if index_item:
-                index_item.setBackground(QColor("white"))
+                index_item.setBackground(Qt.transparent)
 
         if row_count == 0:
             self.shot_position.emit(-1, 0)
@@ -599,7 +599,7 @@ class ShotlistWindow(QMainWindow):
             # Highlight the current shot index cell
             index_item = self.scene_table.item(current_row, 1)
             if index_item:
-                index_item.setBackground(QColor("yellow"))
+                index_item.setBackground(QColor("fuchsia"))
             self.shot_position.emit(current_row, row_count)
 
     def handle_request_current_shot(self, count):

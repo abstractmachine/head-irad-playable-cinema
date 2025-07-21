@@ -126,7 +126,7 @@ class AnnotateWindow(QMainWindow):
         self.caption_field = QTextEdit()
         self.caption_field.setPlaceholderText("")
         self.caption_field.setFont(QFont("Helvetica", 18))
-        self.caption_field.setStyleSheet("QTextEdit { border: none; color: black; }")
+        self.caption_field.setStyleSheet("QTextEdit { border: none; }")
         self.caption_field.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.caption_field.setWordWrapMode(QTextOption.WordWrap)
         main_layout.addWidget(self.caption_field, stretch=1)
@@ -137,41 +137,40 @@ class AnnotateWindow(QMainWindow):
         button_layout.addStretch()
 
         self.annotate_button = QPushButton("Annotate")
-        self.annotate_button.setFixedWidth(120)
+        self.annotate_button.setFixedWidth(100)
         self.annotate_button.setEnabled(False)
         self.annotate_button.setToolTip("Rewrite current caption into current 'Caption' cell\nShortcut: A")
         button_layout.addWidget(self.annotate_button)
 
-        self.api_button = QPushButton("OpenAI API")
-        self.api_button.setFixedWidth(160)
+        self.next_button = QPushButton("Next")
+        self.next_button.setFixedWidth(100)
+        self.next_button.setEnabled(False)
+        self.next_button.setToolTip("Jump to next shot")
+        button_layout.addWidget(self.next_button)
+
+        self.api_button = QPushButton("OpenAI")
+        self.api_button.setFixedWidth(100)
         self.api_button.setEnabled(False)
         self.api_button.setToolTip("Send current shot to OpenAI API and receive a caption\nShortcut: O")
         button_layout.addWidget(self.api_button)
 
-        self.bot_button = QPushButton("Bot")
-        self.bot_button.setFixedWidth(120)
+        self.bot_button = QPushButton("Bot Off")
+        self.bot_button.setFixedWidth(100)
         self.bot_button.setEnabled(False)
-        self.bot_button.setToolTip("Start the auto-Bot to automatically generate captions via OpenAI API\nShortcut: B")
         button_layout.addWidget(self.bot_button)
 
         # --- Add new buttons here ---
         self.playback_button = QPushButton("Playback")
-        self.playback_button.setFixedWidth(120)
+        self.playback_button.setFixedWidth(100)
         self.playback_button.setEnabled(False)  # Disabled at startup
         self.playback_button.setToolTip("As Playback timeline changes, update the current caption\nShortcut: P")
         button_layout.addWidget(self.playback_button)
 
         self.inference_button = QPushButton("Inference")
-        self.inference_button.setFixedWidth(120)
+        self.inference_button.setFixedWidth(100)
         self.inference_button.setEnabled(False)  # Disabled at startup
         self.inference_button.setToolTip("As Playback timeline changes, use loaded model to Inference a new caption\nShortcut: I")
         button_layout.addWidget(self.inference_button)
-
-        self.next_button = QPushButton("Next")
-        self.next_button.setFixedWidth(120)
-        self.next_button.setEnabled(False)
-        self.next_button.setToolTip("Jump to next shot")
-        button_layout.addWidget(self.next_button)
         # --- End new buttons ---
 
         button_layout.addStretch()
@@ -194,7 +193,7 @@ class AnnotateWindow(QMainWindow):
 
         self.caption_field.setFont(hk_font_caption)
         self.system_prompt_field.setFont(hk_font_system)
-        self.system_prompt_field.setStyleSheet("QTextEdit { border: none; color: black; }")
+        self.system_prompt_field.setStyleSheet("QTextEdit { border: none; }")
         self.system_prompt_field.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         main_layout.addWidget(self.system_prompt_field, stretch=1)
 
@@ -231,6 +230,21 @@ class AnnotateWindow(QMainWindow):
 
         self.next_button.clicked.connect(self.handle_next_button)
 
+        # Bot functionality
+        self.bot_active = False
+        self.bot_anim_timer = QTimer(self)
+        self.bot_anim_timer.timeout.connect(self.animate_bot_button)
+        self.bot_anim_dots = 0
+
+        self.bot_button.clicked.connect(self.toggle_bot)
+
+        # Initialize current_row and row_count
+        self.current_row = -1
+        self.row_count = 0
+        self.is_last_row = False
+
+        self.api_running = False
+
     def eventFilter(self, obj, event):
 
         # Save system prompt on focus out
@@ -264,6 +278,8 @@ class AnnotateWindow(QMainWindow):
             self.playback_button.click()
         elif key == Qt.Key_I:
             self.inference_button.click()
+        elif key == Qt.Key_N:
+            self.next_button.click()
         else:
             super().keyPressEvent(event)
 
@@ -315,7 +331,7 @@ class AnnotateWindow(QMainWindow):
         self.bot_button.setEnabled(exists)
         self.playback_button.setEnabled(exists)
         self.inference_button.setEnabled(exists)
-        self.next_button.setEnabled(exists)  # <-- Add this line
+        self.next_button.setEnabled(exists)
 
     def submit_caption(self):
         text = self.caption_field.toPlainText()
@@ -337,9 +353,10 @@ class AnnotateWindow(QMainWindow):
         self.api_thread.start()
 
     def handle_api_button(self):
+        self.api_running = True
         self.caption_field.clear()
         self.api_button.setText("")
-        for btn in [self.annotate_button, self.api_button, self.bot_button, self.playback_button, self.inference_button]:
+        for btn in [self.annotate_button, self.api_button, self.bot_button, self.playback_button, self.inference_button, self.next_button]:
             btn.setEnabled(False)
 
         # print("API button clicked, sending request to detector for frames.")
@@ -357,24 +374,26 @@ class AnnotateWindow(QMainWindow):
         self.api_anim_step += 1
 
     def handle_api_result(self, result):
-        # Stop animation and restore UI
+        self.api_running = False
         if hasattr(self, 'api_anim_timer'):
             self.api_anim_timer.stop()
-            self.api_button.setText("OpenAI API")
+            self.api_button.setText("OpenAI")
         for btn in [self.annotate_button, self.api_button, self.bot_button, self.playback_button, self.inference_button]:
             btn.setEnabled(True)
-        self.caption_field.setPlainText(result)  # <-- Set API result
+        # Restore Next button status based on memorized shot position
+        self.next_button.setEnabled(self.row_count != 0 and not self.is_last_row)
+        self.caption_field.setPlainText(result)
 
     def handle_api_abort(self, message):
-        # print("API abort received:", message)
+        self.api_running = False
         if hasattr(self, 'api_anim_timer'):
             self.api_anim_timer.stop()
-            self.api_button.setText("OpenAI API")
+            self.api_button.setText("OpenAI")
         for btn in [self.annotate_button, self.api_button, self.bot_button, self.playback_button, self.inference_button]:
             btn.setEnabled(True)
-        # set `api_button` back to normal state
-        self.api_button.setText("OpenAI API")
-        # print("API aborted:", message)
+        # Restore Next button status based on memorized shot position
+        self.next_button.setEnabled(self.row_count != 0 and not self.is_last_row)
+        self.api_button.setText("OpenAI")
         self.caption_field.setPlainText(f"API aborted: {message}")
 
     def set_caption_field(self, caption):
@@ -384,8 +403,26 @@ class AnnotateWindow(QMainWindow):
         self.request_next_shot.emit()
 
     def handle_shot_position(self, current_row, row_count):
-        # Enable/disable Next button based on position
-        if row_count == 0 or current_row == row_count - 1 or current_row == -1:
-            self.next_button.setEnabled(False)
+        self.current_row = current_row
+        self.row_count = row_count
+        self.is_last_row = (row_count == 0 or current_row == row_count - 1 or current_row == -1)
+        # Only enable Next if API is not running
+        self.next_button.setEnabled(not self.is_last_row and not self.api_running)
+
+    def toggle_bot(self):
+        if not self.bot_active:
+            self.bot_active = True
+            self.bot_anim_dots = 0
+            self.bot_button.setText("    Bot On")
+            self.bot_button.setStyleSheet("text-align: left;")
+            self.bot_anim_timer.start(500)
         else:
-            self.next_button.setEnabled(True)
+            self.bot_active = False
+            self.bot_anim_timer.stop()
+            self.bot_button.setText("Bot Off")
+            self.bot_button.setStyleSheet("text-align: center;")
+
+    def animate_bot_button(self):
+        self.bot_anim_dots = (self.bot_anim_dots + 1) % 4
+        self.bot_button.setText("    Bot On" + "." * self.bot_anim_dots)
+        self.bot_button.setStyleSheet("text-align: left;")
