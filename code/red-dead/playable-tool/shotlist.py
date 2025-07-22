@@ -153,7 +153,7 @@ class ShotlistWindow(QMainWindow):
         self._pending_save_data = {}
         self.setWindowTitle("Shotlist")
         self.setGeometry(200, 200, 600, 400)
-        self.detections_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scenes")
+        self.detections_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shotlists")
         os.makedirs(self.detections_folder, exist_ok=True)
         self.detecting_timer = QTimer()
         self.detecting_timer.timeout.connect(self.animate_detecting)
@@ -267,7 +267,7 @@ class ShotlistWindow(QMainWindow):
             self.scene_table.setRowCount(1)
             print("No video loaded or file not found.")
             self.detect_button.setEnabled(True)
-            self.detect_button.setText("Detect Scenes")
+            self.detect_button.setText("Detect Shots")
             self.detect_button.setStyleSheet(
                 "text-align: center; color: black; padding-left: 0px; padding-top: 3px; padding-bottom: 6px;"
             )
@@ -305,7 +305,7 @@ class ShotlistWindow(QMainWindow):
 
     def on_detection_finished(self):
         self.detect_button.setEnabled(True)
-        self.detect_button.setText("Detect Scenes")
+        self.detect_button.setText("Detect Shots")
         self.detect_button.setStyleSheet(
             "text-align: center; color: black; padding-left: 0px; padding-top: 3px; padding-bottom: 6px;"
         )
@@ -315,7 +315,7 @@ class ShotlistWindow(QMainWindow):
         self.on_detection_finished()
         if not scene_list or (isinstance(scene_list[0], str) and scene_list[0].startswith("Error:")):
             self.scene_table.setRowCount(0)  # Clear all rows
-            print("No scenes detected or an error occurred:", scene_list[0] if isinstance(scene_list, list) else scene_list)
+            print("No shots detected or an error occurred:", scene_list[0] if isinstance(scene_list, list) else scene_list)
             self.delete_button.setEnabled(False)
             # Notify AnnotateWindow to disable buttons
             self.shotlist_status.emit(False)
