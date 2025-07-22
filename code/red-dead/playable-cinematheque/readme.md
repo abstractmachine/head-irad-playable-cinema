@@ -1,6 +1,12 @@
 # Cinemathèque
 This is a list of all of the westerns we will be using in this project. We will collect all the available basic metadata (name, year, tmdb, director, actors, description, etc) and place it into a database called `cinematheque.csv`. We can then load all of this movie data at startup and call on films at will from this “cinemathèque”.
 
+## Run
+```
+$ cd playable-cinematheque
+$ python metadata.py
+```
+
 ## Activate/Deactivate Pyenv
 ```
 $ pyenv activate playable-cinematheque
