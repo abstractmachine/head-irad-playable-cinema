@@ -238,9 +238,7 @@ class AnnotateWindow(QMainWindow):
 
         self.bot_button.clicked.connect(self.toggle_bot)
 
-        # Initialize current_row and row_count
-        self.current_row = -1
-        self.row_count = 0
+        # Allows us to know if we are at the last active row in the shotlist
         self.is_last_row = False
 
         self.api_running = False
@@ -356,13 +354,11 @@ class AnnotateWindow(QMainWindow):
         self.api_running = True
         self.caption_field.clear()
         self.api_button.setText("")
-        for btn in [self.annotate_button, self.api_button, self.bot_button, self.playback_button, self.inference_button, self.next_button]:
+        # Do NOT disable self.bot_button here!
+        for btn in [self.annotate_button, self.api_button, self.playback_button, self.inference_button, self.next_button]:
             btn.setEnabled(False)
 
-        # print("API button clicked, sending request to detector for frames.")
         self.request_current_shot.emit(FRAMES_PER_SHOT)
-
-        # Start animation
         self.api_anim_step = 0
         self.api_anim_timer = QTimer(self)
         self.api_anim_timer.timeout.connect(self.animate_api_button)
@@ -378,21 +374,28 @@ class AnnotateWindow(QMainWindow):
         if hasattr(self, 'api_anim_timer'):
             self.api_anim_timer.stop()
             self.api_button.setText("OpenAI")
-        for btn in [self.annotate_button, self.api_button, self.bot_button, self.playback_button, self.inference_button]:
+        for btn in [self.annotate_button, self.api_button, self.playback_button, self.inference_button]:
             btn.setEnabled(True)
-        # Restore Next button status based on memorized shot position
-        self.next_button.setEnabled(self.row_count != 0 and not self.is_last_row)
+        self.next_button.setEnabled(not self.is_last_row)
         self.caption_field.setPlainText(result)
+        self.handle_bot_after_api_result()
+
+    def handle_bot_after_api_result(self):
+        if self.bot_active:
+            self.annotate_button.click()
+            if not self.is_last_row:
+                self.next_button.click()
+            else:
+                self.stop_bot()
 
     def handle_api_abort(self, message):
         self.api_running = False
         if hasattr(self, 'api_anim_timer'):
             self.api_anim_timer.stop()
             self.api_button.setText("OpenAI")
-        for btn in [self.annotate_button, self.api_button, self.bot_button, self.playback_button, self.inference_button]:
+        for btn in [self.annotate_button, self.api_button, self.playback_button, self.inference_button]:
             btn.setEnabled(True)
-        # Restore Next button status based on memorized shot position
-        self.next_button.setEnabled(self.row_count != 0 and not self.is_last_row)
+        self.next_button.setEnabled(not self.is_last_row)
         self.api_button.setText("OpenAI")
         self.caption_field.setPlainText(f"API aborted: {message}")
 
@@ -402,27 +405,37 @@ class AnnotateWindow(QMainWindow):
     def handle_next_button(self):
         self.request_next_shot.emit()
 
-    def handle_shot_position(self, current_row, row_count):
-        self.current_row = current_row
-        self.row_count = row_count
-        self.is_last_row = (row_count == 0 or current_row == row_count - 1 or current_row == -1)
-        # Only enable Next if API is not running
-        self.next_button.setEnabled(not self.is_last_row and not self.api_running)
-
     def toggle_bot(self):
         if not self.bot_active:
             self.bot_active = True
-            self.bot_anim_dots = 0
             self.bot_button.setText("    Bot On")
             self.bot_button.setStyleSheet("text-align: left;")
             self.bot_anim_timer.start(500)
+            self.start_bot_loop()
         else:
-            self.bot_active = False
-            self.bot_anim_timer.stop()
-            self.bot_button.setText("Bot Off")
-            self.bot_button.setStyleSheet("text-align: center;")
+            self.stop_bot()
+
+    def stop_bot(self):
+        self.bot_active = False
+        self.bot_anim_timer.stop()
+        self.bot_button.setText("Bot Off")
+        self.bot_button.setStyleSheet("text-align: center;")
+
+    def start_bot_loop(self):
+        if not self.bot_active or self.api_running:
+            return
+        # Step 2: Press OpenAI button
+        self.api_button.click()
 
     def animate_bot_button(self):
         self.bot_anim_dots = (self.bot_anim_dots + 1) % 4
         self.bot_button.setText("    Bot On" + "." * self.bot_anim_dots)
         self.bot_button.setStyleSheet("text-align: left;")
+
+    def handle_is_last_available_shot(self, is_last):
+        self.is_last_row = is_last
+        self.next_button.setEnabled(not is_last and not self.api_running)
+
+        # Bot loop logic
+        if self.bot_active and not self.api_running:
+            QTimer.singleShot(100, self.start_bot_loop)

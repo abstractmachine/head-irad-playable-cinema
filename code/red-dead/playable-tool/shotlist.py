@@ -146,6 +146,7 @@ class ShotlistWindow(QMainWindow):
     abort_api = pyqtSignal(str)  # Optionally pass a message
     caption_selected = pyqtSignal(str)  # Add this signal
     shot_position = pyqtSignal(int, int)  # current_row, row_count
+    is_last_available_shot = pyqtSignal(bool)
 
     def __init__(self):
         super().__init__()
@@ -585,6 +586,12 @@ class ShotlistWindow(QMainWindow):
     def set_current_time(self, ms):
         self.current_time_ms = ms
         row_count = self.scene_table.rowCount()
+        if row_count == 0:
+            self.is_last_available_shot.emit(True)
+            return
+        current_row = self.find_current_shot(ms)
+        last_non_ignored = self.is_last_non_ignored_row(current_row)
+        self.is_last_available_shot.emit(last_non_ignored)
 
         # Clear previous highlights
         for row in range(row_count):
@@ -683,13 +690,31 @@ class ShotlistWindow(QMainWindow):
         if row_count == 0:
             return
         current_row = self.find_current_shot(self.current_time_ms)
-        next_row = current_row + 1
-        if next_row < row_count:
+        non_ignored = self.get_non_ignored_rows()
+        # Find the next non-ignored row after current_row
+        next_row = None
+        for r in non_ignored:
+            if r > current_row:
+                next_row = r
+                break
+        if next_row is not None:
             start_tc = self.scene_table.item(next_row, 2).text()
             self.jump_to_timecode(start_tc)
-            # Optionally select the row and emit caption
             self.scene_table.setCurrentCell(next_row, 4)
             caption = self.scene_table.item(next_row, 4).text()
             self.caption_selected.emit(caption)
         else:
-            print("Already at last shot.")
+            print("Already at last non-ignored shot.")
+
+    def get_non_ignored_rows(self):
+        rows = []
+        for row in range(self.scene_table.rowCount()):
+            widget = self.scene_table.cellWidget(row, 0)
+            checkbox = widget.findChild(QCheckBox)
+            if not checkbox.isChecked():
+                rows.append(row)
+        return rows
+
+    def is_last_non_ignored_row(self, current_row):
+        non_ignored = self.get_non_ignored_rows()
+        return non_ignored and current_row == non_ignored[-1]

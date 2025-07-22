@@ -93,8 +93,8 @@ def main():
     windows["annotate"].caption_submitted.connect(windows["shotlist"].update_caption_for_current_shot)
     windows["annotate"].request_current_shot.connect(windows["shotlist"].handle_request_current_shot)
     windows["annotate"].request_next_shot.connect(windows["shotlist"].jump_to_next_shot)
-    windows["shotlist"].shot_position.connect(windows["annotate"].handle_shot_position)
-
+    windows["shotlist"].is_last_available_shot.connect(windows["annotate"].handle_is_last_available_shot)
+    
     # Show the app windows
     windows["shotlist"].show()
     windows["player"].show()
