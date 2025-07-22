@@ -13,6 +13,9 @@ $ python app.py
 ## PySceneDetect
 This tool leans heavily on [PySceneDetect](https://www.scenedetect.com) for identification of scenes and shots.
 
+### Classical Cinema Shotlist
+Faust has done some preliminary work testing the detectors on classical hollywood westerns, for example [The Undefeated](https://www.themoviedb.org/movie/18972-the-undefeated), and suggests the default `tolerance` (`-t`) at `3.0` works fine for detecting classical single-camera shot-by-shot films. As they suggest
+
 ### Detectors
 There are various detection alogorithms. Cf. [PySceneDetect Detectors Docs](https://www.scenedetect.com/docs/latest/cli.html#detectors). Each of these methods has its own list of default and adjustable options. For example, `detect-adaptive` has a `-t` (`adaptive_threshold`) option that defaults to `3.0`, whereas `detect-content` has a `-t` (`threshold`) option that defaults to `27.0`. `-w` uses four values, for example `-w 1.0 1.0 1.0 0.0`. We can enter any, all, or none of these options next to the `Detect` button.
 
