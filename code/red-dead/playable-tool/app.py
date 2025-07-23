@@ -52,6 +52,8 @@ def main():
     windows["player"].video_timecode_changed.connect(windows["shotlist"].clear_table_selection)
     windows["player"].video_timecode_changed.connect(windows["shotlist"].set_current_time)
     windows["player"].frames_extracted.connect(windows["annotate"].handle_api_frames)
+    windows["player"].video_loaded.connect(windows["cinema"].on_movie_loading_complete)
+    windows["cinema"].movie_selected.connect(windows["player"].load_video_from_path)
     windows["shotlist"].jump_to_timecode_signal.connect(windows["player"].jump_to_timecode)
     windows["shotlist"].shotlist_status.connect(windows["annotate"].set_shotlist_status)
     windows["shotlist"].caption_selected.connect(windows["annotate"].set_caption_field)

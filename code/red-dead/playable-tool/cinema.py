@@ -1,4 +1,4 @@
-from PyQt5.QtCore import Qt, pyqtSignal, QSize
+from PyQt5.QtCore import Qt, pyqtSignal, QSize, QThread, QTimer
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QPushButton, QListWidget, QListWidgetItem, QLabel, QSizePolicy, 
@@ -7,12 +7,16 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtGui import QPixmap, QFont, QFontDatabase
 import os
 import csv
+from metadata import MetadataWorker  # Import our metadata worker
 
 # Common font size for all text
 FONT_SIZE = 16
 
 class MovieItemWidget(QWidget):
     """Custom widget for each movie item in the list"""
+    
+    # Add a signal to emit when clicked
+    clicked = pyqtSignal(dict)
     
     def __init__(self, movie_data, posters_folder):
         super().__init__()
@@ -79,6 +83,13 @@ class MovieItemWidget(QWidget):
         layout.addLayout(info_layout, 1)  # Give info area more space
         self.setLayout(layout)
     
+    def mousePressEvent(self, event):
+        """Handle mouse clicks on the widget"""
+        if event.button() == Qt.LeftButton:
+            # print(f"Clicked on movie: {self.movie_data.get('title', 'Unknown')}")
+            self.clicked.emit(self.movie_data)
+        super().mousePressEvent(event)
+
     def load_poster(self):
         """Load poster image for this movie"""
         # Get the exact filename from metadata
@@ -131,13 +142,12 @@ class CinemaWindow(QMainWindow):
     # Define signals for communication
     request_save = pyqtSignal()
     request_load = pyqtSignal(dict)
+    movie_selected = pyqtSignal(str)  # Signal to send movie file path to player
     
     def __init__(self):
         super().__init__()
-        self._pending_save_data = {}
-        self.setWindowTitle("Cinematheque")
-        self.setGeometry(200, 200, 800, 500)
         self.project_folder = None
+        self.currently_loading_video = None  # Track what video is currently being requested
         
         # Load custom fonts only once
         if not CinemaWindow._fonts_loaded:
@@ -160,31 +170,48 @@ class CinemaWindow(QMainWindow):
         self.movie_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.movie_list.setAlternatingRowColors(True)
         self.movie_list.setSpacing(5)  # Add uniform spacing between items
+        self.movie_list.itemClicked.connect(self.on_movie_clicked)  # Add click handler
         layout.addWidget(self.movie_list)
         
         # Button layout
         button_layout = QHBoxLayout()
-        
+
         # Project folder button
         self.project_folder_button = QPushButton("Project Folder")
         self.project_folder_button.clicked.connect(self.select_project_folder)
-        
+
         # Import button (for when metadata.csv doesn't exist)
         self.import_button = QPushButton("Import Movies")
         self.import_button.clicked.connect(self.import_movies)
         self.import_button.setEnabled(False)
-        
+
+        # Metadata rebuild button
+        self.metadata_button = QPushButton("Rebuild Metadata")
+        self.metadata_button.clicked.connect(self.rebuild_metadata)
+        self.metadata_button.setEnabled(False)
+        self.metadata_button.setFixedSize(150, 30)  # Set fixed width and height
+
         button_layout.addWidget(self.project_folder_button)
         button_layout.addWidget(self.import_button)
+        button_layout.addWidget(self.metadata_button)
         button_layout.addStretch()
         
         layout.addLayout(button_layout)
         main_widget.setLayout(layout)
         
+        # Initialize thread variables
+        self.metadata_thread = None
+        self.metadata_worker = None
+        
+        # Initialize animation timer for rebuilding button
+        self.rebuild_animation_timer = QTimer()
+        self.rebuild_animation_timer.timeout.connect(self.animate_rebuild_button)
+        self.rebuild_dot_count = 0
+        
         # Connect preference signals
         self.request_save.connect(self.on_request_save)
         self.request_load.connect(self.on_request_load)
-    
+
     def load_fonts(self):
         """Load custom fonts from ui/fonts/ folder"""
         # Debug the font folder path
@@ -279,7 +306,10 @@ class CinemaWindow(QMainWindow):
     
     def load_project(self, folder_path):
         """Called when a project folder is selected or loaded from preferences"""
-        print(f"Loading project from: {folder_path}")
+        # print(f"Loading project from: {folder_path}")
+        
+        # Enable metadata rebuild button when project is loaded
+        self.metadata_button.setEnabled(True)
         
         # Check if metadata.csv exists
         metadata_path = os.path.join(folder_path, "metadata", "metadata.csv")
@@ -293,9 +323,9 @@ class CinemaWindow(QMainWindow):
             self.import_button.setEnabled(True)
             
             # Add placeholder item
-            placeholder_item = QListWidgetItem("No metadata.csv found. Click 'Import Movies' to create it.")
+            placeholder_item = QListWidgetItem("No metadata.csv found. Click 'Import Movies' or 'Rebuild Metadata' to create it.")
             self.movie_list.addItem(placeholder_item)
-    
+
     def load_movies_from_metadata(self, metadata_path, project_folder):
         """Load movies from metadata.csv file"""
         self.movie_list.clear()
@@ -308,6 +338,9 @@ class CinemaWindow(QMainWindow):
                     # Create custom widget for this movie
                     movie_widget = MovieItemWidget(row, posters_folder)
                     
+                    # Connect the widget's click signal to our handler
+                    movie_widget.clicked.connect(self.on_movie_widget_clicked)
+                    
                     # Create list item with fixed height
                     item = QListWidgetItem()
                     item.setSizeHint(movie_widget.size())
@@ -319,11 +352,122 @@ class CinemaWindow(QMainWindow):
                     
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load metadata.csv:\n{str(e)}")
-    
+
+    def on_movie_widget_clicked(self, movie_data):
+        """Handle movie widget click with movie data"""
+        filename = movie_data.get('filename', '')
+        
+        if filename and self.project_folder:
+            # Construct full path to movie file
+            movie_path = os.path.join(self.project_folder, "movies", filename)
+            if os.path.exists(movie_path):
+                # print(f"Loading movie: {movie_path}")
+                self.movie_selected.emit(movie_path)
+            else:
+                QMessageBox.warning(self, "File Not Found", f"Movie file not found:\n{movie_path}")
+
     def import_movies(self):
         """Placeholder for movie import functionality"""
         QMessageBox.information(self, "Import Movies", "Movie import functionality will be implemented here.")
     
+    def rebuild_metadata(self):
+        """Start metadata rebuild process in worker thread"""
+        if not self.project_folder:
+            QMessageBox.warning(self, "Warning", "Please select a project folder first.")
+            return
+        
+        # Check if API key files exist in preferences folder
+        tmdb_key_path = os.path.join(os.path.dirname(__file__), 'preferences/tmdb_api_key.txt')
+        opensubtitles_key_path = os.path.join(os.path.dirname(__file__), 'preferences/opensubtitles_api_key.txt')
+        
+        if not os.path.exists(tmdb_key_path):
+            QMessageBox.critical(self, "Error", "preferences/tmdb_api_key.txt file not found.")
+            return
+            
+        if not os.path.exists(opensubtitles_key_path):
+            QMessageBox.critical(self, "Error", "preferences/opensubtitles_api_key.txt file not found.")
+            return
+        
+        # Disable buttons during rebuild
+        self.metadata_button.setText("        Rebuilding")
+        self.metadata_button.setEnabled(False)
+        self.project_folder_button.setEnabled(False)
+        self.import_button.setEnabled(False)
+        
+        # Set button text alignment to left during rebuild
+        self.metadata_button.setStyleSheet("QPushButton { text-align: left; }")
+        
+        # Start animated dots
+        self.rebuild_dot_count = 0
+        self.rebuild_animation_timer.start(500)  # Update every 500ms
+        
+        # Clear movie list and show progress
+        self.movie_list.clear()
+        progress_item = QListWidgetItem("Starting metadata rebuild...")
+        self.movie_list.addItem(progress_item)
+        
+        # Create worker thread
+        self.metadata_thread = QThread()
+        self.metadata_worker = MetadataWorker(self.project_folder)
+        self.metadata_worker.moveToThread(self.metadata_thread)
+        
+        # Connect signals
+        self.metadata_thread.started.connect(self.metadata_worker.run)
+        self.metadata_worker.progress.connect(self.on_metadata_progress)
+        self.metadata_worker.error.connect(self.on_metadata_error)
+        self.metadata_worker.finished.connect(self.on_metadata_finished)
+        
+        # Start thread
+        self.metadata_thread.start()
+
+    def animate_rebuild_button(self):
+        """Animate the rebuilding button with dots"""
+        self.rebuild_dot_count = (self.rebuild_dot_count + 1) % 4
+        dots = "." * self.rebuild_dot_count
+        self.metadata_button.setText(f"        Rebuilding{dots}")
+
+    def on_metadata_progress(self, message):
+        """Handle progress updates from metadata worker"""
+        # Update the progress item
+        if self.movie_list.count() > 0:
+            item = self.movie_list.item(0)
+            item.setText(message)
+
+    def on_metadata_error(self, error_message):
+        """Handle errors from metadata worker"""
+        QMessageBox.critical(self, "Metadata Rebuild Error", error_message)
+        self.cleanup_metadata_thread()
+
+    def on_metadata_finished(self, success):
+        """Handle completion of metadata rebuild"""
+        self.cleanup_metadata_thread()
+        
+        if success:
+            # Reload the project
+            self.load_project(self.project_folder)
+        else:
+            QMessageBox.critical(self, "Error", "Metadata rebuild failed.")
+
+    def cleanup_metadata_thread(self):
+        """Clean up the metadata worker thread"""
+        # Stop animation timer
+        self.rebuild_animation_timer.stop()
+        
+        if self.metadata_thread:
+            self.metadata_thread.quit()
+            self.metadata_thread.wait()
+            self.metadata_thread = None
+            self.metadata_worker = None
+        
+        # Re-enable buttons
+        self.metadata_button.setText("Rebuild Metadata")
+        self.metadata_button.setEnabled(True)
+        self.project_folder_button.setEnabled(True)
+        
+        # Reset button text alignment to center when not running
+        self.metadata_button.setStyleSheet("QPushButton { text-align: center; }")
+        # import_button will be enabled/disabled by load_project
+
     def on_request_save(self):
         pos = self.pos()
         size = self.size()
@@ -353,3 +497,45 @@ class CinemaWindow(QMainWindow):
                 # Folder no longer exists, reset
                 self.project_folder = None
                 self.project_folder_button.setText("Project Folder")
+    
+    def on_movie_clicked(self, item):
+        """Handle movie item click"""
+        # Get the MovieItemWidget from the clicked item
+        movie_widget = self.movie_list.itemWidget(item)
+        if movie_widget and hasattr(movie_widget, 'movie_data'):
+            movie_data = movie_widget.movie_data
+            filename = movie_data.get('filename', '')
+            
+            if filename and self.project_folder:
+                # Construct full path to movie file
+                movie_path = os.path.join(self.project_folder, "movies", filename)
+                
+                # Check if this is the same video we're already trying to load
+                if self.currently_loading_video == movie_path:
+                    # print(f"Already requesting video: {movie_path}")
+                    return
+                
+                if os.path.exists(movie_path):
+                    # Print movie details when clicked
+                    # print(f"Clicked on movie:")
+                    # print(f"  Title: {movie_data.get('title', 'Unknown')}")
+                    # print(f"  Year: {movie_data.get('year', 'Unknown')}")
+                    # print(f"  Director: {movie_data.get('director', 'Unknown')}")
+                    # print(f"  Filename: {filename}")
+                    # print(f"  TMDB: {movie_data.get('tmdb', 'Unknown')}")
+                    # print(f"  IMDB: {movie_data.get('imdb', 'Unknown')}")
+                    
+                    # print(f"Loading movie: {movie_path}")
+                    
+                    # Set the currently loading video
+                    self.currently_loading_video = movie_path
+                    
+                    # Emit the signal
+                    self.movie_selected.emit(movie_path)
+                else:
+                    QMessageBox.warning(self, "File Not Found", f"Movie file not found:\n{movie_path}")
+
+    def on_movie_loading_complete(self, video_path):
+        """Called when a video has finished loading"""
+        if self.currently_loading_video == video_path:
+            self.currently_loading_video = None

@@ -3,7 +3,7 @@ import cv2
 import platform
 import vlc
 
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QThread, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QThread, QTimer, QMetaObject, Q_ARG
 from PyQt5.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMainWindow,
     QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget, QStyle
@@ -21,6 +21,9 @@ class PlayerWindow(QMainWindow):
     request_load = pyqtSignal(dict)
     video_timecode_changed = pyqtSignal(int)
     frames_extracted = pyqtSignal(list)
+    
+    # Internal signal for thread-safe VLC event handling
+    _vlc_time_changed = pyqtSignal(int)
 
     def __init__(self):
         super().__init__()
@@ -37,8 +40,17 @@ class PlayerWindow(QMainWindow):
         self.vlc_player = self.vlc_instance.media_player_new()
         self.video_widget = QWidget()
 
+        # Set up VLC event callbacks for position changes
+        self.vlc_events = self.vlc_player.event_manager()
+        self.vlc_events.event_attach(vlc.EventType.MediaPlayerTimeChanged, self.on_vlc_time_changed_callback)
+        self.vlc_events.event_attach(vlc.EventType.MediaPlayerPlaying, self.on_vlc_playing_callback)
+        
+        # Connect our internal signal to the main thread handler
+        self._vlc_time_changed.connect(self.on_vlc_time_changed_main_thread)
+
         # Timeline slider
         self.timeline = JumpSlider(Qt.Horizontal)
+        self.timeline.player_window = self  # Give slider reference to player
         self.timeline.setRange(0, 100)
         self.timeline.setValue(0)
         self.timeline.setEnabled(False)
@@ -46,7 +58,6 @@ class PlayerWindow(QMainWindow):
         self.timeline.setToolTip("Scrub through the video timeline")
         self.timeline.sliderPressed.connect(self.on_slider_pressed)
         self.timeline.sliderReleased.connect(self.on_slider_released)
-        self.timeline.sliderMoved.connect(self.on_slider_moved)
         self._slider_is_active = False
 
         # Seek speed controls
@@ -128,12 +139,30 @@ class PlayerWindow(QMainWindow):
         self.request_save.connect(self.on_request_save)
         self.request_load.connect(self.on_request_load)
 
-        # Timer for updating timeline and timecode
-        from PyQt5.QtCore import QTimer
-        self.timer = QTimer(self)
-        self.timer.setInterval(200)
-        self.timer.timeout.connect(self.update_position)
-        self.timer.start()
+        self._video_just_loaded = False
+
+    def on_vlc_time_changed_callback(self, event):
+        """VLC callback (runs in background thread) - emit signal to main thread"""
+        # This runs in VLC's thread, so we emit a signal to get back to main thread
+        self._vlc_time_changed.emit(event.u.new_time)
+
+    def on_vlc_time_changed_main_thread(self, new_time):
+        """Main thread handler for VLC time changes"""
+        # Don't update anything during active scrubbing to avoid conflicts
+        if (self._slider_is_active or 
+            (hasattr(self.timeline, 'is_scrubbing') and self.timeline.is_scrubbing)):
+            return
+            
+        # Only update if we're not actively scrubbing
+        self.timeline.setValue(new_time)
+        
+        # Update timecode display
+        seconds = new_time // 1000
+        h = seconds // 3600
+        m = (seconds % 3600) // 60
+        s = seconds % 60
+        self.set_timecode(f"{h:02}:{m:02}:{s:02}")
+        self.emit_timecode_changed(new_time)
 
     def on_request_save(self):
         pos = self.pos()
@@ -177,35 +206,111 @@ class PlayerWindow(QMainWindow):
         self.update_window_title()
 
     def load_video(self):
+        """Load video using file dialog"""
         file_dialog = QFileDialog(self)
         file_path, _ = file_dialog.getOpenFileName(self, "Load Video", "", "Video Files (*.mp4 *.avi *.mov)")
         if file_path:
-            self.video_title = os.path.basename(file_path)
-            self.update_window_title()
-            media = self.vlc_instance.media_new(file_path)
-            self.vlc_player.set_media(media)
-            # Set video output to the widget
-            win_id = int(self.video_widget.winId())
-            if platform.system() == "Windows":
-                self.vlc_player.set_hwnd(win_id)
-            elif platform.system() == "Darwin":
-                self.vlc_player.set_nsobject(win_id)
-            else:
-                self.vlc_player.set_xwindow(win_id)
-            self.current_video_path = file_path
-            self.video_loaded.emit(file_path)
-            self.play_pause_button.setEnabled(True)
-            self.back_button.setEnabled(True)
-            self.forward_button.setEnabled(True)
-            self.timeline.setEnabled(True)
-            self.vlc_player.play()
-            self.vlc_player.pause()
-            self.vlc_player.set_time(0)
-            # Start polling for duration
-            self.duration_timer = QTimer(self)
-            self.duration_timer.setInterval(200)
-            self.duration_timer.timeout.connect(self.check_duration)
-            self.duration_timer.start()
+            self._load_video_file(file_path)
+
+    def load_video_from_path(self, file_path):
+        """Load video from a specific file path (called from cinema window)"""
+        if file_path and os.path.exists(file_path):
+            # Check if this is the same video that's already loaded
+            if hasattr(self, 'current_video_path') and self.current_video_path == file_path:
+                # print(f"Video already loaded: {file_path}")
+                return
+            
+            self._load_video_file(file_path)
+        else:
+            print(f"Cannot load video: file not found at {file_path}")
+
+    def on_vlc_playing_callback(self, event):
+        """Called when VLC starts playing - let it continue playing"""
+        if self._video_just_loaded:
+            # This runs in VLC thread, so use QTimer to get back to main thread
+            QTimer.singleShot(0, self._finalize_after_load)
+
+    def _finalize_after_load(self):
+        """Finalize video loading without pausing (main thread)"""
+        # DON'T pause - let it keep playing
+        # self.vlc_player.pause()  # Remove this line
+        self.vlc_player.set_time(0)  # Still start from beginning
+        
+        # Update UI state to reflect that it's playing
+        self.play_pause_button.setText("Pause")
+        self.is_playing = True
+        
+        self._video_just_loaded = False
+        
+        # Emit the signal and start duration polling
+        self.video_loaded.emit(self.current_video_path)
+        QTimer.singleShot(500, self._start_duration_polling)
+
+    def _load_video_file(self, file_path):
+        """Internal method to handle the actual video loading process"""
+        # print(f"Loading video file: {file_path}")
+        
+        # Reset timeline to 0 immediately when starting to load
+        self.timeline.setValue(0)
+        self.set_timecode("00:00:00")
+    
+        # Stop any existing playback first
+        if hasattr(self, 'vlc_player') and self.vlc_player:
+            self.vlc_player.stop()
+        
+        # Stop any existing duration timer more safely
+        if hasattr(self, 'duration_timer') and self.duration_timer is not None:
+            try:
+                self.duration_timer.stop()
+                self.duration_timer.deleteLater()
+            except RuntimeError:
+                # Timer was already deleted, ignore the error
+                pass
+            self.duration_timer = None
+
+        self.video_title = os.path.basename(file_path)
+        self.update_window_title()
+        media = self.vlc_instance.media_new(file_path)
+        self.vlc_player.set_media(media)
+        
+        # Set video output to the widget
+        win_id = int(self.video_widget.winId())
+        if platform.system() == "Windows":
+            self.vlc_player.set_hwnd(win_id)
+        elif platform.system() == "Darwin":
+            self.vlc_player.set_nsobject(win_id)
+        else:
+            self.vlc_player.set_xwindow(win_id)
+        
+        self.current_video_path = file_path
+        
+        # Enable controls immediately
+        self.play_pause_button.setEnabled(True)
+        self.back_button.setEnabled(True)
+        self.forward_button.setEnabled(True)
+        self.timeline.setEnabled(True)
+        
+        # Set flag that we just loaded a video
+        self._video_just_loaded = True
+        
+        # Start video
+        self.vlc_player.play()
+
+    def _start_duration_polling(self):
+        """Start duration polling with proper cleanup"""
+        # Clean up any existing timer first
+        if hasattr(self, 'duration_timer') and self.duration_timer is not None:
+            try:
+                self.duration_timer.stop()
+                self.duration_timer.deleteLater()
+            except RuntimeError:
+                pass
+    
+        # Create new timer
+        self.duration_timer = QTimer(self)
+        self.duration_timer.setInterval(200)
+        self.duration_timer.timeout.connect(self.check_duration)
+        self.duration_timer.start()
 
     def check_duration(self):
         duration = self.vlc_player.get_length()
@@ -213,7 +318,17 @@ class PlayerWindow(QMainWindow):
             self.timeline.setRange(0, duration)
             self.duration_seconds = duration // 1000
             self.update_window_title()
-            self.duration_timer.stop()
+            # Safely stop and clean up the timer
+            if hasattr(self, 'duration_timer') and self.duration_timer is not None:
+                try:
+                    self.duration_timer.stop()
+                    self.duration_timer.deleteLater()
+                except RuntimeError:
+                    pass
+                self.duration_timer = None
+            # print(f"Duration set: {duration}ms ({self.duration_seconds}s)")
+        # else:
+        #     print("Waiting for valid duration...")
 
     def set_timecode(self, timecode):
         self.timecode = timecode
@@ -230,51 +345,35 @@ class PlayerWindow(QMainWindow):
             self.is_playing = True
 
     def on_slider_pressed(self):
+        """Called when user starts dragging the slider"""
         self._slider_is_active = True
 
     def on_slider_released(self):
+        """Called when user releases the slider"""
         self._slider_is_active = False
-        self.vlc_player.set_time(self.timeline.value())
-
-    def on_slider_moved(self, value):
-        # Seek live while dragging
-        self.vlc_player.set_time(value)
-
-    def seek_back(self):
-        seek_amount = int(self.normal_seek.text() or "1")
-        modifiers = QApplication.keyboardModifiers()
-        if modifiers & Qt.ShiftModifier:
-            seek_amount = int(self.fast_seek.text() or "10")
-        self.seek_video(-seek_amount)
-
-    def seek_forward(self):
-        seek_amount = int(self.normal_seek.text() or "1")
-        modifiers = QApplication.keyboardModifiers()
-        if modifiers & Qt.ShiftModifier:
-            seek_amount = int(self.fast_seek.text() or "10")
-        self.seek_video(seek_amount)
-
-    def update_position(self):
-        pos = self.vlc_player.get_time()
-        if not self._slider_is_active:
-            self.timeline.setValue(pos)
-        seconds = pos // 1000
-        h = seconds // 3600
-        m = (seconds % 3600) // 60
-        s = seconds % 60
-        self.set_timecode(f"{h:02}:{m:02}:{s:02}")
-        self.emit_timecode_changed(pos)
-
-    def set_position(self, position):
-        self.vlc_player.set_time(position)
 
     def emit_timecode_changed(self, position):
         self.video_timecode_changed.emit(position)
 
     def seek_video(self, seconds):
-        new_position = self.vlc_player.get_time() + (seconds * 1000)
+        """Seek video by specified number of seconds"""
+        current_time = self.vlc_player.get_time()
+        new_position = current_time + (seconds * 1000)
         duration = self.vlc_player.get_length()
-        self.vlc_player.set_time(max(0, min(new_position, duration)))
+        
+        # Clamp to valid range
+        new_position = max(0, min(new_position, duration))
+        self.vlc_player.set_time(new_position)
+
+    def seek_back(self):
+        """Seek backward by normal seek amount"""
+        normal_seek = int(self.normal_seek.text() or "1")
+        self.seek_video(-normal_seek)
+
+    def seek_forward(self):
+        """Seek forward by normal seek amount"""
+        normal_seek = int(self.normal_seek.text() or "1")
+        self.seek_video(normal_seek)
 
     def validate_normal_seek(self):
         value = self.normal_seek.text()
@@ -427,15 +526,131 @@ class FrameExtractorWorker(QObject):
         self.finished.emit(frames)
 
 class JumpSlider(QSlider):
+    """Custom slider that supports real-time scrubbing like QuickTime"""
+    
+    def __init__(self, orientation):
+        super().__init__(orientation)
+        self.was_playing_before_scrub = False
+        self.player_window = None  # Will be set by PlayerWindow
+        self.is_scrubbing = False
+        self.last_seek_time = 0  # Throttle seeking during scrub
+    
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            val = QStyle.sliderValueFromPosition(
-                self.minimum(), self.maximum(),
-                event.position().x() if hasattr(event, "position") else event.x(),
-                self.width()
-            )
-            self.setValue(val)
-            self.sliderMoved.emit(val)
-            self.sliderReleased.emit()
-            event.accept()
+        if event.button() == Qt.LeftButton and self.player_window:
+            self.is_scrubbing = True
+            
+            # Remember if we were playing before scrubbing
+            self.was_playing_before_scrub = self.player_window.vlc_player.is_playing()
+            
+            # Pause immediately
+            if self.was_playing_before_scrub:
+                self.player_window.vlc_player.pause()
+                self.player_window.play_pause_button.setText("Play")
+                self.player_window.is_playing = False
+            
+            # Calculate and jump to clicked position
+            self._jump_to_mouse_position(event, immediate=True)
+            
+            self.sliderPressed.emit()
+        
         super().mousePressEvent(event)
+    
+    def mouseMoveEvent(self, event):
+        # If we're dragging (mouse is pressed), jump to new position
+        if event.buttons() & Qt.LeftButton and self.player_window and self.is_scrubbing:
+            # Throttle the seeking during scrub to every 50ms for better performance
+            import time
+            current_time = time.time() * 1000
+            if current_time - self.last_seek_time > 50:  # Only seek every 50ms
+                self._jump_to_mouse_position(event, immediate=False)
+                self.last_seek_time = current_time
+            else:
+                # Still update slider position for smooth visual feedback
+                self._update_slider_position_only(event)
+        
+        super().mouseMoveEvent(event)
+    
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self.player_window and self.is_scrubbing:
+            # Jump to final position
+            self._jump_to_mouse_position(event, immediate=True)
+            
+            # Restore previous playback state
+            if self.was_playing_before_scrub:
+                self.player_window.vlc_player.play()
+                self.player_window.play_pause_button.setText("Pause")
+                self.player_window.is_playing = True
+            
+            self.is_scrubbing = False
+            self.sliderReleased.emit()
+        
+        super().mouseReleaseEvent(event)
+    
+    def _update_slider_position_only(self, event):
+        """Update only the slider position without seeking video"""
+        if self.orientation() == Qt.Horizontal:
+            if hasattr(event, "position"):
+                x = event.position().x()
+            else:
+                x = event.x()
+            value = self.minimum() + ((self.maximum() - self.minimum()) * x) / self.width()
+        else:
+            if hasattr(event, "position"):
+                y = event.position().y()
+            else:
+                y = event.y()
+            value = self.minimum() + ((self.maximum() - self.minimum()) * (self.height() - y)) / self.height()
+        
+        # Clamp value to valid range
+        value = max(self.minimum(), min(self.maximum(), int(value)))
+        
+        # Update slider position only
+        self.setValue(value)
+        
+        # Update timecode display without seeking
+        if self.player_window:
+            seconds = value // 1000
+            h = seconds // 3600
+            m = (seconds % 3600) // 60
+            s = seconds % 60
+            self.player_window.set_timecode(f"{h:02}:{m:02}:{s:02}")
+    
+    def _jump_to_mouse_position(self, event, immediate=False):
+        """Calculate position based on mouse and jump to that timecode"""
+        if self.orientation() == Qt.Horizontal:
+            if hasattr(event, "position"):
+                x = event.position().x()
+            else:
+                x = event.x()
+            value = self.minimum() + ((self.maximum() - self.minimum()) * x) / self.width()
+        else:
+            if hasattr(event, "position"):
+                y = event.position().y()
+            else:
+                y = event.y()
+            value = self.minimum() + ((self.maximum() - self.minimum()) * (self.height() - y)) / self.height()
+        
+        # Clamp value to valid range
+        value = max(self.minimum(), min(self.maximum(), int(value)))
+        
+        # Update slider position
+        self.setValue(value)
+        
+        # Update timecode display
+        if self.player_window:
+            seconds = value // 1000
+            h = seconds // 3600
+            m = (seconds % 3600) // 60
+            s = seconds % 60
+            self.player_window.set_timecode(f"{h:02}:{m:02}:{s:02}")
+            
+            # Only seek video for immediate actions (click/release) or throttled moves
+            if immediate:
+                # Use position-based seeking for better performance
+                duration = self.player_window.vlc_player.get_length()
+                if duration > 0:
+                    position = value / duration
+                    self.player_window.vlc_player.set_position(position)
+            else:
+                # For drag moves, use faster time-based seeking
+                self.player_window.vlc_player.set_time(value)
