@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (
     QPushButton, QListWidget, QListWidgetItem, QLabel, QSizePolicy, 
     QFileDialog, QMessageBox
 )
-from PyQt5.QtGui import QPixmap, QFont, QFontDatabase
+from PyQt5.QtGui import QPixmap, QFont, QFontDatabase, QColor
 import os
 import csv
 from metadata import MetadataWorker  # Import our metadata worker
@@ -96,16 +96,27 @@ class MovieItemWidget(QWidget):
     def update_background(self):
         """Update the background color based on selection state"""
         if self.is_selected:
-            # Fuschia background when selected
-            self.setStyleSheet("MovieItemWidget { background-color: #FF00FF; }")
+            # Use a more specific and stronger stylesheet
+            self.setStyleSheet("""
+                MovieItemWidget {
+                    background-color: #FF00FF !important;
+                }
+                QWidget {
+                    background-color: #FF00FF !important;
+                }
+            """)
+            self.setAutoFillBackground(True)
         else:
-            # Default background (transparent or white)
-            self.setStyleSheet("MovieItemWidget { background-color: transparent; }")
+            # Clear all styling completely
+            self.setStyleSheet("")
+            self.setAutoFillBackground(False)
+        
+        # Force immediate visual update
+        self.repaint()
     
     def mousePressEvent(self, event):
         """Handle mouse clicks on the widget"""
         if event.button() == Qt.LeftButton:
-            # print(f"Clicked on movie: {self.movie_data.get('title', 'Unknown')}")
             self.clicked.emit(self.movie_data)
         super().mousePressEvent(event)
 
@@ -190,7 +201,12 @@ class CinemaWindow(QMainWindow):
         self.movie_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.movie_list.setAlternatingRowColors(True)
         self.movie_list.setSpacing(5)  # Add uniform spacing between items
-        self.movie_list.itemClicked.connect(self.on_movie_clicked)  # Add click handler
+        
+        # DISABLE default Qt selection behavior
+        self.movie_list.setSelectionMode(QListWidget.NoSelection)
+        
+        # Connect to our custom click handler only
+        self.movie_list.itemClicked.connect(self.on_movie_clicked)
         layout.addWidget(self.movie_list)
         
         # Button layout
@@ -236,8 +252,6 @@ class CinemaWindow(QMainWindow):
         """Load custom fonts from ui/fonts/ folder"""
         # Debug the font folder path
         font_folder = os.path.join(os.path.dirname(__file__), "ui", "fonts")
-        # print(f"Looking for fonts in: {font_folder}")
-        # print(f"Font folder exists: {os.path.exists(font_folder)}")
         
         font_files = {
             'regular': "HKGrotesk-Regular.otf",
@@ -248,8 +262,6 @@ class CinemaWindow(QMainWindow):
         
         for style, font_file in font_files.items():
             font_path = os.path.join(font_folder, font_file)
-            # print(f"Checking font: {font_path}")
-            # print(f"Font file exists: {os.path.exists(font_path)}")
             
             if os.path.exists(font_path):
                 font_id = QFontDatabase.addApplicationFont(font_path)
@@ -257,7 +269,6 @@ class CinemaWindow(QMainWindow):
                     font_families = QFontDatabase.applicationFontFamilies(font_id)
                     if font_families:
                         CinemaWindow._font_families[style] = font_families[0]
-                        # print(f"Successfully loaded {style} font: {font_families[0]}")
                     else:
                         print(f"No font families returned for: {font_file}")
                         CinemaWindow._font_families[style] = "Helvetica"
@@ -267,13 +278,10 @@ class CinemaWindow(QMainWindow):
             else:
                 print(f"Font file not found: {font_path}")
                 CinemaWindow._font_families[style] = "Helvetica"
-        
-        # print(f"Final font families dictionary: {CinemaWindow._font_families}")
 
     @classmethod
     def get_loaded_fonts(cls):
         """Return the dictionary of loaded font families"""
-        # print(f"get_loaded_fonts called, returning: {cls._font_families}")
         return cls._font_families
     
     def select_project_folder(self):
@@ -326,8 +334,6 @@ class CinemaWindow(QMainWindow):
     
     def load_project(self, folder_path):
         """Called when a project folder is selected or loaded from preferences"""
-        # print(f"Loading project from: {folder_path}")
-        
         # Enable metadata rebuild button when project is loaded
         self.metadata_button.setEnabled(True)
         
@@ -359,12 +365,8 @@ class CinemaWindow(QMainWindow):
                     # Create custom widget for this movie
                     movie_widget = MovieItemWidget(row, posters_folder)
                     
-                    # Connect the widget's click signal to our handler
-                    movie_widget.clicked.connect(self.on_movie_widget_clicked)
-                    
                     # Create list item with fixed height
                     item = QListWidgetItem()
-                    item.setSizeHint(movie_widget.size())
                     item.setSizeHint(QSize(movie_widget.width(), 140))  # Fixed height of 140px
                     
                     # Add to list
@@ -374,29 +376,47 @@ class CinemaWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load metadata.csv:\n{str(e)}")
 
-    def on_movie_widget_clicked(self, movie_data):
-        """Handle movie widget click with movie data"""
-        # Clear previous selection
-        if self.selected_movie_widget:
-            self.selected_movie_widget.set_selected(False)
+    def on_movie_clicked(self, item):
+        """Handle movie item click with custom selection"""
         
-        # Find and select the clicked widget
-        for i in range(self.movie_list.count()):
-            item = self.movie_list.item(i)
-            widget = self.movie_list.itemWidget(item)
-            if widget and hasattr(widget, 'movie_data'):
-                if widget.movie_data == movie_data:
-                    widget.set_selected(True)
-                    self.selected_movie_widget = widget
-                    break
+        # Get the MovieItemWidget from the clicked item
+        movie_widget = self.movie_list.itemWidget(item)
+        if movie_widget and hasattr(movie_widget, 'movie_data'):
+            
+            # Clear previous selection FIRST (remove fuschia background)
+            if self.selected_movie_widget and self.selected_movie_widget != movie_widget:
+                self.selected_movie_widget.set_selected(False)
+                # Force immediate update
+                self.selected_movie_widget.update()
         
+            # Clear any Qt selection
+            self.movie_list.clearSelection()
+            
+            # Small delay to ensure previous selection is cleared before setting new one
+            QTimer.singleShot(10, lambda: self._set_new_selection(movie_widget))
+
+    def _set_new_selection(self, movie_widget):
+        """Helper method to set new selection after a small delay"""
+        movie_widget.set_selected(True)
+        movie_widget.update()  # Force immediate update
+        self.selected_movie_widget = movie_widget
+        
+        movie_data = movie_widget.movie_data
         filename = movie_data.get('filename', '')
         
         if filename and self.project_folder:
             # Construct full path to movie file
             movie_path = os.path.join(self.project_folder, "movies", filename)
+            
+            # Check if this is the same video we're already trying to load
+            if self.currently_loading_video == movie_path:
+                return
+            
             if os.path.exists(movie_path):
-                # print(f"Loading movie: {movie_path}")
+                # Set the currently loading video
+                self.currently_loading_video = movie_path
+                
+                # Emit the signal to load the movie
                 self.movie_selected.emit(movie_path)
             else:
                 QMessageBox.warning(self, "File Not Found", f"Movie file not found:\n{movie_path}")
@@ -533,41 +553,13 @@ class CinemaWindow(QMainWindow):
                 self.project_folder = None
                 self.project_folder_button.setText("Project Folder")
     
-    def on_movie_clicked(self, item):
-        """Handle movie item click"""
-        # Get the MovieItemWidget from the clicked item
-        movie_widget = self.movie_list.itemWidget(item)
-        if movie_widget and hasattr(movie_widget, 'movie_data'):
-            # Clear previous selection
-            if self.selected_movie_widget:
-                self.selected_movie_widget.set_selected(False)
-            
-            # Select this widget
-            movie_widget.set_selected(True)
-            self.selected_movie_widget = movie_widget
-            
-            movie_data = movie_widget.movie_data
-            filename = movie_data.get('filename', '')
-            
-            if filename and self.project_folder:
-                # Construct full path to movie file
-                movie_path = os.path.join(self.project_folder, "movies", filename)
-                
-                # Check if this is the same video we're already trying to load
-                if self.currently_loading_video == movie_path:
-                    # print(f"Already requesting video: {movie_path}")
-                    return
-                
-                if os.path.exists(movie_path):
-                    # Set the currently loading video
-                    self.currently_loading_video = movie_path
-                    
-                    # Emit the signal
-                    self.movie_selected.emit(movie_path)
-                else:
-                    QMessageBox.warning(self, "File Not Found", f"Movie file not found:\n{movie_path}")
-
-    def on_movie_loading_complete(self, video_path):
-        """Called when a video has finished loading"""
-        if self.currently_loading_video == video_path:
-            self.currently_loading_video = None
+    def on_movie_loading_complete(self, movie_path):
+        """Called when a movie has finished loading in the player"""
+        # Reset the currently loading video tracker
+        self.currently_loading_video = None
+        
+        # You can add any additional logic here that should happen
+        # when a video finishes loading, such as:
+        # - Updating UI state
+        # - Logging the successful load
+        # - Enabling/disabling certain features
