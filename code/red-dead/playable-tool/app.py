@@ -37,7 +37,7 @@ def main():
 
     # Create a main window with tabs
     tab_widget = QTabWidget()
-    tab_widget.addTab(windows["cinema"], "Cinema")
+    tab_widget.addTab(windows["cinema"], "Cinemathèque")
     tab_widget.addTab(windows["shotlist"], "Shotlist")
     tab_widget.show()
 
@@ -57,10 +57,10 @@ def main():
     windows["shotlist"].caption_selected.connect(windows["annotate"].set_caption_field)
     windows["shotlist"].abort_api.connect(windows["annotate"].handle_api_abort)
     windows["shotlist"].shot_timecodes.connect(windows["player"].handle_shot_timecodes)
+    windows["shotlist"].is_last_available_shot.connect(windows["annotate"].handle_is_last_available_shot)
     windows["annotate"].caption_submitted.connect(windows["shotlist"].update_caption_for_current_shot)
     windows["annotate"].request_current_shot.connect(windows["shotlist"].handle_request_current_shot)
     windows["annotate"].request_next_shot.connect(windows["shotlist"].jump_to_next_shot)
-    windows["shotlist"].is_last_available_shot.connect(windows["annotate"].handle_is_last_available_shot)
     
     # Show the app windows
     # windows["shotlist"].show()
