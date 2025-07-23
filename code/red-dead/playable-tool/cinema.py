@@ -22,6 +22,11 @@ class MovieItemWidget(QWidget):
         super().__init__()
         self.movie_data = movie_data
         self.posters_folder = posters_folder
+        self.is_selected = False  # Track selection state
+        
+        # Set default background
+        self.setAutoFillBackground(True)
+        self.update_background()
         
         # Create horizontal layout
         layout = QHBoxLayout()
@@ -82,6 +87,20 @@ class MovieItemWidget(QWidget):
         
         layout.addLayout(info_layout, 1)  # Give info area more space
         self.setLayout(layout)
+    
+    def set_selected(self, selected):
+        """Set the selection state and update background"""
+        self.is_selected = selected
+        self.update_background()
+    
+    def update_background(self):
+        """Update the background color based on selection state"""
+        if self.is_selected:
+            # Fuschia background when selected
+            self.setStyleSheet("MovieItemWidget { background-color: #FF00FF; }")
+        else:
+            # Default background (transparent or white)
+            self.setStyleSheet("MovieItemWidget { background-color: transparent; }")
     
     def mousePressEvent(self, event):
         """Handle mouse clicks on the widget"""
@@ -148,6 +167,7 @@ class CinemaWindow(QMainWindow):
         super().__init__()
         self.project_folder = None
         self.currently_loading_video = None  # Track what video is currently being requested
+        self.selected_movie_widget = None  # Track currently selected movie widget
         
         # Load custom fonts only once
         if not CinemaWindow._fonts_loaded:
@@ -329,6 +349,7 @@ class CinemaWindow(QMainWindow):
     def load_movies_from_metadata(self, metadata_path, project_folder):
         """Load movies from metadata.csv file"""
         self.movie_list.clear()
+        self.selected_movie_widget = None  # Clear selection when reloading
         posters_folder = os.path.join(project_folder, "posters")
         
         try:
@@ -355,6 +376,20 @@ class CinemaWindow(QMainWindow):
 
     def on_movie_widget_clicked(self, movie_data):
         """Handle movie widget click with movie data"""
+        # Clear previous selection
+        if self.selected_movie_widget:
+            self.selected_movie_widget.set_selected(False)
+        
+        # Find and select the clicked widget
+        for i in range(self.movie_list.count()):
+            item = self.movie_list.item(i)
+            widget = self.movie_list.itemWidget(item)
+            if widget and hasattr(widget, 'movie_data'):
+                if widget.movie_data == movie_data:
+                    widget.set_selected(True)
+                    self.selected_movie_widget = widget
+                    break
+        
         filename = movie_data.get('filename', '')
         
         if filename and self.project_folder:
@@ -503,6 +538,14 @@ class CinemaWindow(QMainWindow):
         # Get the MovieItemWidget from the clicked item
         movie_widget = self.movie_list.itemWidget(item)
         if movie_widget and hasattr(movie_widget, 'movie_data'):
+            # Clear previous selection
+            if self.selected_movie_widget:
+                self.selected_movie_widget.set_selected(False)
+            
+            # Select this widget
+            movie_widget.set_selected(True)
+            self.selected_movie_widget = movie_widget
+            
             movie_data = movie_widget.movie_data
             filename = movie_data.get('filename', '')
             
@@ -516,17 +559,6 @@ class CinemaWindow(QMainWindow):
                     return
                 
                 if os.path.exists(movie_path):
-                    # Print movie details when clicked
-                    # print(f"Clicked on movie:")
-                    # print(f"  Title: {movie_data.get('title', 'Unknown')}")
-                    # print(f"  Year: {movie_data.get('year', 'Unknown')}")
-                    # print(f"  Director: {movie_data.get('director', 'Unknown')}")
-                    # print(f"  Filename: {filename}")
-                    # print(f"  TMDB: {movie_data.get('tmdb', 'Unknown')}")
-                    # print(f"  IMDB: {movie_data.get('imdb', 'Unknown')}")
-                    
-                    # print(f"Loading movie: {movie_path}")
-                    
                     # Set the currently loading video
                     self.currently_loading_video = movie_path
                     
