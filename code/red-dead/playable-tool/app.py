@@ -12,6 +12,9 @@ from player import PlayerWindow
 from shotlist import ShotlistWindow
 from annotate import AnnotateWindow
 from cinema import CinemaWindow
+from prompt import PromptWindow
+from default import DefaultWindow
+from subtitles import SubtitlesWindow
 
 PREFS_PATH = "./preferences/preferences.json"
 
@@ -23,7 +26,10 @@ def main():
         "player": PlayerWindow(),
         "shotlist": ShotlistWindow(),
         "annotate": AnnotateWindow(),
-        "cinema": CinemaWindow()
+        "cinema": CinemaWindow(),
+        "default": DefaultWindow(),
+        "prompt": PromptWindow(),
+        "subtitles": SubtitlesWindow()
     }
 
     # Install global key filter
@@ -35,17 +41,25 @@ def main():
         win.request_save.connect(win.on_request_save)
         win.request_load.connect(win.on_request_load)
 
-    # Create a main window with tabs
+    # Create main tab widget for cinema and shotlist
     tab_widget = QTabWidget()
     tab_widget.addTab(windows["cinema"], "Cinemathèque")
     tab_widget.addTab(windows["shotlist"], "Shotlist")
     tab_widget.show()
 
-    # Load preferences at startup (now includes tab_widget)
-    load_preferences(windows, tab_widget)
+    # Create text tab widget for annotate, default, prompt, and subtitles
+    text_widget = QTabWidget()
+    text_widget.addTab(windows["annotate"], "Annotate")
+    text_widget.addTab(windows["default"], "Default")
+    text_widget.addTab(windows["prompt"], "Prompt")
+    text_widget.addTab(windows["subtitles"], "Subtitles")
+    text_widget.show()
 
-    # Save preferences on exit (now includes tab_widget)
-    app.aboutToQuit.connect(lambda: save_preferences(windows, tab_widget))
+    # Load preferences at startup (now includes both tab widgets)
+    load_preferences(windows, tab_widget, text_widget)
+
+    # Save preferences on exit (now includes both tab widgets)
+    app.aboutToQuit.connect(lambda: save_preferences(windows, tab_widget, text_widget))
 
     # Signal Connections
     windows["player"].video_loaded.connect(windows["shotlist"].process_video)
@@ -65,24 +79,20 @@ def main():
     windows["annotate"].request_next_shot.connect(windows["shotlist"].jump_to_next_shot)
     
     # Show the app windows
-    # windows["shotlist"].show()
     windows["player"].show()
-    windows["annotate"].show()
 
     def clean_quit():
         try:
-            windows["player"].media_player.stop()
+            windows["player"].player.terminate()  # Updated for MPV
         except Exception:
             pass
-        windows["player"].close()
-        windows["shotlist"].close()
-        windows["annotate"].close()
-        windows["cinema"].close()
+        for window in windows.values():
+            window.close()
 
     app.aboutToQuit.connect(clean_quit)
     sys.exit(app.exec_())
 
-def save_preferences(windows, tab_widget):
+def save_preferences(windows, tab_widget, text_widget):
     prefs = {}
     for key, win in windows.items():
         win.request_save.emit()
@@ -98,10 +108,20 @@ def save_preferences(windows, tab_widget):
         "height": size.height()
     }
     
+    # Save text widget position and size
+    pos = text_widget.pos()
+    size = text_widget.size()
+    prefs["text_widget"] = {
+        "x": pos.x(),
+        "y": pos.y(),
+        "width": size.width(),
+        "height": size.height()
+    }
+    
     with open(PREFS_PATH, "w") as f:
         json.dump(prefs, f)
 
-def load_preferences(windows, tab_widget):
+def load_preferences(windows, tab_widget, text_widget):
     if os.path.exists(PREFS_PATH):
         with open(PREFS_PATH, "r") as f:
             prefs = json.load(f)
@@ -114,6 +134,13 @@ def load_preferences(windows, tab_widget):
             tab_widget.move(tab_prefs["x"], tab_prefs["y"])
         if "width" in tab_prefs and "height" in tab_prefs:
             tab_widget.resize(tab_prefs["width"], tab_prefs["height"])
+            
+        # Load text widget position and size
+        text_prefs = prefs.get("text_widget", {})
+        if "x" in text_prefs and "y" in text_prefs:
+            text_widget.move(text_prefs["x"], text_prefs["y"])
+        if "width" in text_prefs and "height" in text_prefs:
+            text_widget.resize(text_prefs["width"], text_prefs["height"])
     else:
         for win in windows.values():
             win.request_load.emit({})
@@ -132,7 +159,7 @@ class GlobalKeyFilter(QObject):
                 if annotate.ignore_next_enter:
                     annotate.ignore_next_enter = False
                     return True
-                if focus_widget is annotate.system_prompt_field:
+                if hasattr(annotate, 'system_prompt_field') and focus_widget is annotate.system_prompt_field:
                     # Let system_prompt_field handle ENTER/RETURN for newlines
                     return False
                 if not isinstance(focus_widget, QLineEdit):

@@ -57,7 +57,7 @@ class ApiWorker(QObject):
                 }
             })
 
-        # Read system prompt
+        # Read system prompt from file when needed
         system_prompt_path = os.path.join(os.path.dirname(__file__), "preferences", "system_prompt.txt")
         try:
             with open(system_prompt_path, "r", encoding="utf-8") as f:
@@ -164,39 +164,20 @@ class AnnotateWindow(QMainWindow):
         button_row_widget.setLayout(button_layout)
         main_layout.addWidget(button_row_widget, stretch=0)
 
-        # System prompt field (2/3 of window)
-        self.system_prompt_field = SystemPromptEdit(save_callback=self.save_system_prompt)
-        self.system_prompt_field.setPlainText("Enter system prompt here...")
+        container = QWidget()
+        container.setLayout(main_layout)
+        self.setCentralWidget(container)
+
+        # Load custom font for caption field
         font_path = os.path.join(os.path.dirname(__file__), "ui/fonts/HKGrotesk-Regular.otf")
         font_id = QFontDatabase.addApplicationFont(font_path)
         font_families = QFontDatabase.applicationFontFamilies(font_id)
         if font_families:
             hk_font_caption = QFont(font_families[0], 18)
-            hk_font_system = QFont(font_families[0], 12)
         else:
             hk_font_caption = QFont("Helvetica", 18)
-            hk_font_system = QFont("Helvetica", 12)
 
         self.caption_field.setFont(hk_font_caption)
-        self.system_prompt_field.setFont(hk_font_system)
-        self.system_prompt_field.setStyleSheet("QTextEdit { border: none; }")
-        self.system_prompt_field.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        main_layout.addWidget(self.system_prompt_field, stretch=1)
-
-        container = QWidget()
-        container.setLayout(main_layout)
-        self.setCentralWidget(container)
-
-        # System prompt file path
-        self.system_prompt_path = os.path.join(
-            os.path.dirname(__file__),
-            "preferences",
-            "system_prompt.txt"
-        )
-        self.load_system_prompt()
-
-        # Save system prompt only when focus is lost
-        # self.system_prompt_field.installEventFilter(self)
 
         # Install event filter for global key press handling
         self.installEventFilter(self)
@@ -230,18 +211,12 @@ class AnnotateWindow(QMainWindow):
         self.api_running = False
 
     def eventFilter(self, obj, event):
-
-        # Save system prompt on focus out
-        if obj is self.system_prompt_field and event.type() == event.FocusOut:
-            self.save_system_prompt()
-            return False
-
-        # Global ENTER shortcut: only when NOT editing system prompt or caption field
+        # Global ENTER shortcut: only when NOT editing caption field
         if event.type() == event.KeyPress and event.key() in (Qt.Key_Return, Qt.Key_Enter):
             if self.ignore_next_enter:
                 self.ignore_next_enter = False
                 return True
-            if self.system_prompt_field.hasFocus() or self.caption_field.hasFocus():
+            if self.caption_field.hasFocus():
                 return False
             self.caption_field.setFocus()
             self.caption_field.selectAll()
@@ -267,25 +242,6 @@ class AnnotateWindow(QMainWindow):
         self.activateWindow()  # Bring window to front
         self.centralWidget().setFocus()  # Set focus to main widget
         self.ignore_next_enter = True
-
-    def load_system_prompt(self):
-        try:
-            with open(self.system_prompt_path, "r", encoding="utf-8") as f:
-                text = f.read()
-            self.system_prompt_field.setPlainText(text)
-            self.system_prompt = text
-        except Exception as e:
-            self.system_prompt_field.setPlainText("Enter system prompt here...")
-            self.system_prompt = "Enter system prompt here..."
-
-    def save_system_prompt(self):
-        text = self.system_prompt_field.toPlainText()
-        self.system_prompt = text
-        try:
-            with open(self.system_prompt_path, "w", encoding="utf-8") as f:
-                f.write(text)
-        except Exception as e:
-            print(f"Error saving system prompt: {e}")
 
     def on_request_save(self):
         geo = self.geometry()
