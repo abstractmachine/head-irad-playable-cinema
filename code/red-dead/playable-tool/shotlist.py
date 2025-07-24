@@ -145,7 +145,9 @@ class ShotlistWindow(QMainWindow):
     shot_timecodes = pyqtSignal(str, list)  # start_tc, timecodes
     abort_api = pyqtSignal(str)  # Optionally pass a message
     caption_selected = pyqtSignal(str)  # Add this signal
-    shot_position = pyqtSignal(int, int)  # current_row, row_count
+    # Remove the old shot_position signal - bad architecture
+    # shot_position = pyqtSignal(int, int)  # current_row, row_count
+    row_did_change = pyqtSignal(int)  # New signal: emits current_row when it changes
     is_last_available_shot = pyqtSignal(bool)
 
     def __init__(self):
@@ -232,6 +234,8 @@ class ShotlistWindow(QMainWindow):
         self.scene_table.itemChanged.connect(self.on_scene_table_item_changed)
 
         self.current_time_ms = 0
+        self.current_row = -1  # Track current row
+        self.last_current_row = -1  # Track previous row for comparison
 
     def select_detections_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Scene Detections Folder", self.detections_folder)
@@ -586,11 +590,28 @@ class ShotlistWindow(QMainWindow):
     def set_current_time(self, ms):
         self.current_time_ms = ms
         row_count = self.scene_table.rowCount()
+        
         if row_count == 0:
+            self.current_row = -1
             self.is_last_available_shot.emit(True)
             return
-        current_row = self.find_current_shot(ms)
-        last_non_ignored = self.is_last_non_ignored_row(current_row)
+
+        new_current_row = self.find_current_shot(ms)
+        
+        # Check if current row changed
+        if new_current_row != self.current_row:
+            self.current_row = new_current_row
+            self.row_did_change.emit(self.current_row)
+            
+            # **ONLY emit caption when row changes - no table manipulation**
+            if self.current_row >= 0:
+                caption = self.scene_table.item(self.current_row, 4).text()
+                self.caption_selected.emit(caption)
+            else:
+                self.caption_selected.emit("")
+        
+        # Update last shot status
+        last_non_ignored = self.is_last_non_ignored_row(self.current_row)
         self.is_last_available_shot.emit(last_non_ignored)
 
         # Clear previous highlights
@@ -599,15 +620,11 @@ class ShotlistWindow(QMainWindow):
             if index_item:
                 index_item.setBackground(Qt.transparent)
 
-        if row_count == 0:
-            self.shot_position.emit(-1, 0)
-        else:
-            current_row = self.find_current_shot(ms)
-            # Highlight the current shot index cell
-            index_item = self.scene_table.item(current_row, 1)
+        # Highlight the current shot index cell
+        if self.current_row >= 0:
+            index_item = self.scene_table.item(self.current_row, 1)
             if index_item:
                 index_item.setBackground(QColor("fuchsia"))
-            self.shot_position.emit(current_row, row_count)
 
     def handle_request_current_shot(self, count):
         row = self.find_current_shot(self.current_time_ms)
@@ -646,26 +663,58 @@ class ShotlistWindow(QMainWindow):
         if not indexes:
             return
         row = indexes[0].row()
+        
         # Jump to Begin (start) timecode
         start_tc = self.scene_table.item(row, 2).text()
         self.jump_to_timecode(start_tc)
-        # Block signals to avoid recursion
+        
+        # Block signals BEFORE calling setCurrentCell to avoid recursion
         self.scene_table.blockSignals(True)
         self.scene_table.setCurrentCell(row, 4)
         self.scene_table.clearSelection()
         self.scene_table.blockSignals(False)
+        
         # Emit the caption text to AnnotateWindow
         caption = self.scene_table.item(row, 4).text()
         self.caption_selected.emit(caption)
-        # Emit shot position
-        self.shot_position.emit(row, self.scene_table.rowCount())
+        
+        # Update current row and emit change signal
+        if row != self.current_row:
+            self.current_row = row
+            self.row_did_change.emit(self.current_row)
 
-    def find_current_shot(self, time_ms):
+    def jump_to_next_shot(self):
+        """Jump to the next non-ignored shot"""
         row_count = self.scene_table.rowCount()
-        #print(f"Finding current shot for time {time_ms} ms in {row_count} rows.")
+        
         if row_count == 0:
-            return None  # No shots detected
+            print("No shots available")
+            return
+        
+        # Start searching from current_row + 1, or from 0 if current_row is invalid
+        start_row = max(0, self.current_row + 1)
+        
+        # Find next non-ignored row
+        for next_row in range(start_row, row_count):
+            widget = self.scene_table.cellWidget(next_row, 0)
+            if widget:
+                checkbox = widget.findChild(QCheckBox)
+                if checkbox and not checkbox.isChecked():
+                    # Found next non-ignored shot
+                    start_tc = self.scene_table.item(next_row, 2).text()
+                    self.jump_to_timecode(start_tc)
+                    return
+        
+        # No next shot found
+        print("Already at last available shot")
 
+    def find_current_shot(self, ms):
+        """Find the row index of the shot that contains the given time in ms"""
+        row_count = self.scene_table.rowCount()
+        
+        if row_count == 0:
+            return -1
+        
         def tc_to_ms(tc):
             parts = tc.split(":")
             if len(parts) == 3:
@@ -674,47 +723,41 @@ class ShotlistWindow(QMainWindow):
                 s = float(parts[2])
                 return int((h * 3600 + m * 60 + s) * 1000)
             return 0
-
-        current_shot = 0
+        
         for row in range(row_count):
-            start_tc = self.scene_table.item(row, 2).text()
-            start_ms = tc_to_ms(start_tc)
-            if start_ms <= time_ms:
-                current_shot = row
-            else:
-                break
-        return current_shot
-
-    def jump_to_next_shot(self):
-        row_count = self.scene_table.rowCount()
-        if row_count == 0:
-            return
-        current_row = self.find_current_shot(self.current_time_ms)
-        non_ignored = self.get_non_ignored_rows()
-        # Find the next non-ignored row after current_row
-        next_row = None
-        for r in non_ignored:
-            if r > current_row:
-                next_row = r
-                break
-        if next_row is not None:
-            start_tc = self.scene_table.item(next_row, 2).text()
-            self.jump_to_timecode(start_tc)
-            self.scene_table.setCurrentCell(next_row, 4)
-            caption = self.scene_table.item(next_row, 4).text()
-            self.caption_selected.emit(caption)
-        else:
-            print("Already at last non-ignored shot.")
-
-    def get_non_ignored_rows(self):
-        rows = []
-        for row in range(self.scene_table.rowCount()):
+            # Skip ignored shots
             widget = self.scene_table.cellWidget(row, 0)
-            checkbox = widget.findChild(QCheckBox)
-            if not checkbox.isChecked():
-                rows.append(row)
-        return rows
+            if widget:
+                checkbox = widget.findChild(QCheckBox)
+                if checkbox and checkbox.isChecked():
+                    continue
+            
+            start_tc = self.scene_table.item(row, 2).text()
+            end_tc = self.scene_table.item(row, 3).text()
+            start_ms = tc_to_ms(start_tc)
+            end_ms = tc_to_ms(end_tc)
+            
+            if start_ms <= ms < end_ms:
+                return row
+        
+        return -1
 
     def is_last_non_ignored_row(self, current_row):
-        non_ignored = self.get_non_ignored_rows()
-        return non_ignored and current_row == non_ignored[-1]
+        """Check if there are any non-ignored shots after the current position"""
+        row_count = self.scene_table.rowCount()
+        
+        if row_count == 0:
+            return True
+        
+        # Start searching from current_row + 1, or from 0 if current_row is invalid
+        start_row = max(0, current_row + 1)
+        
+        # Check if there are any non-ignored rows after current position
+        for row in range(start_row, row_count):
+            widget = self.scene_table.cellWidget(row, 0)
+            if widget:
+                checkbox = widget.findChild(QCheckBox)
+                if checkbox and not checkbox.isChecked():
+                    return False  # Found a non-ignored row after current
+        
+        return True  # No non-ignored rows found after current position

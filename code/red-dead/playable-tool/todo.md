@@ -1,4 +1,5 @@
 # Bugs
+- When not playing, the shotlist index does not advance. This keeps the auto-bot from being able to press the `Next` button
 - For the long `playthroughs` (approx 25h+ of footage), we should:
     - Use the standard detection method `threshold-adaptive`
     - Add a `max_length` text field in the `shotlist` window

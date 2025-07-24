@@ -644,6 +644,9 @@ class JumpSlider(QSlider):
             s = seconds % 60
             self.player_window.set_timecode(f"{h:02}:{m:02}:{s:02}")
             
+            # Always emit timecode change, even when paused/scrubbing
+            self.player_window.emit_timecode_changed(value)
+            
             # Only seek video for immediate actions (click/release) or throttled moves
             if immediate:
                 # Use position-based seeking for better performance
