@@ -4,6 +4,8 @@ import csv
 import requests
 import time
 import re
+import subprocess
+import json
 
 class MetadataWorker(QObject):
     """Worker class for rebuilding metadata in a separate thread"""
@@ -70,6 +72,11 @@ class MetadataWorker(QObject):
                 
                 movie_data = self.parse_movie_filename(filename)
                 if movie_data:
+                    # **NEW: Get video duration**
+                    duration = self.get_video_duration(os.path.join(movies_folder, filename))
+                    if duration:
+                        movie_data['duration'] = duration
+                    
                     tmdb_data = self.fetch_tmdb_data(movie_data['tmdb'])
                     if tmdb_data:
                         movie_data.update(tmdb_data)
@@ -237,13 +244,47 @@ class MetadataWorker(QObject):
             except Exception as e:
                 print(f"Error downloading subtitle for {movie['title']}: {e}")
     
+    def get_video_duration(self, video_path):
+        """Get video duration in minutes using ffprobe"""
+        try:
+            # Use ffprobe to get video duration
+            cmd = [
+                'ffprobe', 
+                '-v', 'quiet',
+                '-print_format', 'json',
+                '-show_format',
+                video_path
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            
+            if result.returncode == 0:
+                data = json.loads(result.stdout)
+                duration_seconds = float(data['format']['duration'])
+                duration_minutes = int(duration_seconds / 60)
+                return duration_minutes
+            else:
+                print(f"ffprobe failed for {video_path}: {result.stderr}")
+                return None
+                
+        except subprocess.TimeoutExpired:
+            print(f"ffprobe timeout for {video_path}")
+            return None
+        except FileNotFoundError:
+            print("ffprobe not found. Please install FFmpeg.")
+            return None
+        except Exception as e:
+            print(f"Error getting duration for {video_path}: {e}")
+            return None
+    
     def write_metadata_csv(self, movies_data):
         """Write metadata to CSV file"""
         metadata_folder = os.path.join(self.project_folder, "metadata")
         os.makedirs(metadata_folder, exist_ok=True)
         
         csv_path = os.path.join(metadata_folder, "metadata.csv")
-        fieldnames = ['title', 'year', 'director', 'tmdb', 'imdb', 'filename', 'overview', 'tagline']
+        # **NEW: Add 'duration' to fieldnames**
+        fieldnames = ['title', 'year', 'director', 'tmdb', 'imdb', 'filename', 'duration', 'overview', 'tagline']
         
         # Sort movies alphabetically by title (case-insensitive)
         sorted_movies = sorted(movies_data, key=lambda movie: movie.get('title', '').lower())

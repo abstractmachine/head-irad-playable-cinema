@@ -1,7 +1,5 @@
 import csv
 import os
-import re
-import time
 
 from PyQt5.QtCore import pyqtSignal
 from PyQt5.QtCore import Qt, QThread, QObject, QTimer
@@ -12,129 +10,11 @@ from PyQt5.QtWidgets import (
     QVBoxLayout, QWidget
 )
 
-from scenedetect import open_video, SceneManager
-from scenedetect.detectors import ContentDetector
+from scenedetect import open_video
+from detector import SceneDetectWorker
 
 JUMP_FRAME_PADDING_PLAYBACK = 0  # Number of frames to pad when jumping in playback mode
 JUMP_FRAME_PADDING_DETECTION = 5  # Number of frames to pad when jumping in detection mode
-
-# Function to parse command line arguments for detector options
-def parse_detector_args(arg_string):
-    option_map = {
-        '-t': 'threshold',
-        '--adaptive-threshold': 'adaptive_threshold',
-        '--threshold': 'threshold',
-        '-c': 'min_content_val',
-        '--min-content-val': 'min_content_val',
-        '-w': 'weights',
-        '--weights': 'weights',
-        '-l': 'luma_only',
-        '--luma-only': 'luma_only',
-        '-k': 'kernel_size',
-        '--kernel-size': 'kernel_size',
-        '-m': 'min_scene_len',
-        '--min-scene-len': 'min_scene_len',
-        '-f': 'frame_window',
-        '--frame-window': 'frame_window',
-        '-s': 'size',
-        '--size': 'size',
-        '--fade-bias': 'fade_bias',
-        '--add-last-scene': 'add_last_scene',
-        '--bins': 'bins',
-        '-b': 'bins',
-        '--lowpass': 'lowpass',
-    }
-    pattern = r'(-{1,2}\w+)(?:\s+([^\s-][^-\s]*))?'
-    matches = re.findall(pattern, arg_string)
-    kwargs = {}
-    for opt, val in matches:
-        key = option_map.get(opt)
-        if key:
-            if key == 'weights':
-                weights_match = re.findall(r'-w ([\d\.]+) ([\d\.]+) ([\d\.]+) ([\d\.]+)', arg_string)
-                if weights_match:
-                    kwargs['weights'] = tuple(map(float, weights_match[0]))
-            elif key == 'luma_only':
-                kwargs['luma_only'] = True
-            elif key == 'add_last_scene':
-                kwargs['add_last_scene'] = True
-            elif val is not None and val != '':
-                try:
-                    if '.' in val:
-                        kwargs[key] = float(val)
-                    else:
-                        kwargs[key] = int(val)
-                except ValueError:
-                    kwargs[key] = val
-    return kwargs
-
-def create_detector(method, detector_args):
-    unused_args = dict(detector_args)
-    if method == "detect-adaptive":
-        from scenedetect.detectors import AdaptiveDetector
-        detector = AdaptiveDetector()
-        if "threshold" in detector_args:
-            detector.adaptive_threshold = detector_args["threshold"]
-            unused_args.pop("threshold", None)
-        for key in ["frame_window", "min_content_val", "weights", "luma_only", "kernel_size", "min_scene_len"]:
-            if key in detector_args:
-                setattr(detector, key, detector_args[key])
-                unused_args.pop(key, None)
-    elif method == "detect-content":
-        from scenedetect.detectors import ContentDetector
-        ctor_keys = ["threshold", "weights", "luma_only", "kernel_size", "min_scene_len", "frame_window"]
-        ctor_args = {k: detector_args[k] for k in ctor_keys if k in detector_args}
-        detector = ContentDetector(**ctor_args)
-        for k in ctor_args:
-            unused_args.pop(k, None)
-    elif method == "detect-hist":
-        from scenedetect.detectors import HistogramDetector
-        ctor_keys = ["threshold", "bins", "min_scene_len"]
-        ctor_args = {k: detector_args[k] for k in ctor_keys if k in detector_args}
-        detector = HistogramDetector(**ctor_args)
-        for k in ctor_args:
-            unused_args.pop(k, None)
-    elif method == "detect-threshold":
-        from scenedetect.detectors import ThresholdDetector
-        ctor_keys = ["threshold", "fade_bias", "add_last_scene", "min_scene_len"]
-        ctor_args = {k: detector_args[k] for k in ctor_keys if k in detector_args}
-        detector = ThresholdDetector(**ctor_args)
-        for k in ctor_args:
-            unused_args.pop(k, None)
-    else:
-        from scenedetect.detectors import ContentDetector
-        detector = ContentDetector()
-    if unused_args:
-        print(f"Warning: The following detector options were not used: {', '.join(unused_args.keys())}")
-    # print("vars(detector):", vars(detector))
-    return detector
-
-class SceneDetectWorker(QObject):
-    finished = pyqtSignal(list)
-    def __init__(self, video_path, method, weights):
-        super().__init__()
-        self.video_path = video_path
-        self.method = method
-        self.weights = weights
-    def run(self):
-        print("Scene detection started for:", self.video_path)
-        scene_list = []
-        start_time = time.time()
-        try:
-            video = open_video(self.video_path)
-            scene_manager = SceneManager()
-            detector_args = parse_detector_args(self.weights)
-            # print(f"Parsed detector args: {detector_args}")
-            detector = create_detector(self.method, detector_args)
-            scene_manager.add_detector(detector)
-            scene_manager.detect_scenes(video)
-            scene_list = scene_manager.get_scene_list()
-        except Exception as e:
-            scene_list = [f"Error: {e}"]
-        elapsed = time.time() - start_time
-        elapsed_str = time.strftime("%H:%M:%S", time.gmtime(elapsed))
-        print(f"Scene detection finished. Elapsed time: {elapsed_str}")
-        self.finished.emit(scene_list)
 
 class ShotlistWindow(QMainWindow):
     # define the signals we are going to send out
@@ -171,8 +51,9 @@ class ShotlistWindow(QMainWindow):
         self.scene_table.setHorizontalHeaderLabels(["Ignore", "Scene", "Start", "End", "Caption"])
         self.scene_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.scene_table.cellClicked.connect(self.on_table_cell_clicked)
-        self.scene_table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.scene_table.selectionModel().selectionChanged.connect(self.on_row_selected)
+        
+        self.scene_table.verticalHeader().sectionClicked.connect(self.on_row_header_clicked)
+        
         layout.addWidget(self.scene_table)
         self.scene_table.setColumnWidth(0, 110)   # Ignore
         self.scene_table.setColumnWidth(1, 80)    # Scene
@@ -202,7 +83,7 @@ class ShotlistWindow(QMainWindow):
         ])
         self.method_dropdown.setFixedWidth(150)
 
-        self.weights_field = QLineEdit("-w 1.0 1.0 1.0 0.0 -t 32")
+        self.weights_field = QLineEdit("-t 3.0")
         self.weights_field.setFixedWidth(180)
         self.weights_field.setAlignment(Qt.AlignCenter)
         self.weights_field.setToolTip("Set PySceneDetect parameters.\nSee documentation for details.\nExamples:\nweights: -w 1.0 1.0 1.0 0.0\nthreshold: -t 3.2")
@@ -263,7 +144,7 @@ class ShotlistWindow(QMainWindow):
         self.detecting_dots = 0
         self.detect_button.setText("Detecting")
         self.detect_button.setStyleSheet(
-            "text-align: left; color: grey; padding-left: 30px; padding-top: 3px; padding-bottom: 6px;"
+            "text-align: left; padding-left: 30px; padding-top: 3px; padding-bottom: 6px;"
         )
         self.detecting_timer.start(500)
         self.scene_table.setRowCount(0)
@@ -273,7 +154,7 @@ class ShotlistWindow(QMainWindow):
             self.detect_button.setEnabled(True)
             self.detect_button.setText("Detect Shots")
             self.detect_button.setStyleSheet(
-                "text-align: center; color: black; padding-left: 0px; padding-top: 3px; padding-bottom: 6px;"
+                "text-align: center; padding-left: 0px; padding-top: 3px; padding-bottom: 6px;"
             )
             self.detecting_timer.stop()
             return
@@ -304,14 +185,14 @@ class ShotlistWindow(QMainWindow):
         self.detecting_dots = (self.detecting_dots + 1) % 4
         self.detect_button.setText("Detecting" + "." * self.detecting_dots)
         self.detect_button.setStyleSheet(
-            "text-align: left; color: grey; padding-left: 30px; padding-top: 3px; padding-bottom: 6px;"
+            "text-align: left; padding-left: 30px; padding-top: 3px; padding-bottom: 6px;"
         )
 
     def on_detection_finished(self):
         self.detect_button.setEnabled(True)
         self.detect_button.setText("Detect Shots")
         self.detect_button.setStyleSheet(
-            "text-align: center; color: black; padding-left: 0px; padding-top: 3px; padding-bottom: 6px;"
+            "text-align: center; padding-left: 0px; padding-top: 3px; padding-bottom: 6px;"
         )
         self.detecting_timer.stop()
 
@@ -375,15 +256,24 @@ class ShotlistWindow(QMainWindow):
             self.shotlist_status.emit(True)
 
     def on_table_cell_clicked(self, row, col):
-        start_tc = self.scene_table.item(row, 2).text()
-        end_tc = self.scene_table.item(row, 3).text()
-        if col == 2:
-            self.jump_to_timecode(start_tc)
-        elif col == 3:
-            self.jump_to_timecode(end_tc, is_last_frame=True)
-        elif col == 4:  # Caption column
-            caption = self.scene_table.item(row, 4).text()
-            self.caption_selected.emit(caption)
+        # Get the column header text to determine what was clicked
+        header_item = self.scene_table.horizontalHeaderItem(col)
+        if not header_item:
+            return
+        
+        column_title = header_item.text()
+        
+        if column_title == "Start":
+            print("Start timecode clicked")
+            # start_tc = self.scene_table.item(row, col).text()
+            # self.jump_to_timecode(start_tc)
+        elif column_title == "End":
+            print("End timecode clicked")
+            # end_tc = self.scene_table.item(row, col).text()
+            # self.jump_to_timecode(end_tc, is_last_frame=True)
+        else:
+            print(f"Clicked on column: {column_title}")
+            # Handle other columns if needed
 
     def jump_to_timecode(self, timecode, is_last_frame=False):
         parts = timecode.split(":")
@@ -761,3 +651,15 @@ class ShotlistWindow(QMainWindow):
                     return False  # Found a non-ignored row after current
         
         return True  # No non-ignored rows found after current position
+
+    def on_row_header_clicked(self, row):
+        """Handle clicking on row header (row number on the left)"""
+        print(f"Row header {row} clicked")
+        
+        # Jump to the start of this shot
+        # start_tc = self.scene_table.item(row, 2).text()
+        # self.jump_to_timecode(start_tc)
+        
+        # Optionally emit the caption for this shot
+        # caption = self.scene_table.item(row, 4).text()
+        # self.caption_selected.emit(caption)

@@ -62,15 +62,34 @@ class MovieItemWidget(QWidget):
         title_label.setWordWrap(True)
         info_layout.addWidget(title_label)
 
-        # Year and Director on same line with regular font
+        # Year, Director, and Duration on same line with regular font
         year = movie_data.get('year', 'Unknown Year')
         director = movie_data.get('director', 'Unknown Director')
+        duration = movie_data.get('duration', '')
 
-        year_director_label = QLabel(f"{year} <span style='color: #808080;'>|</span> {director}")
-        year_director_font = QFont(font_family, FONT_SIZE)
-        year_director_font.setWeight(QFont.Normal)  # Set to Normal weight
-        year_director_label.setFont(year_director_font)
-        info_layout.addWidget(year_director_label)
+        # Format the duration if it exists
+        if duration:
+            # Assume duration is in minutes, format as "Xh Ym" or just "Ym" if under 1 hour
+            try:
+                duration_minutes = int(duration)
+                if duration_minutes >= 60:
+                    hours = duration_minutes // 60
+                    minutes = duration_minutes % 60
+                    duration_str = f"{hours}h {minutes}m"
+                else:
+                    duration_str = f"{duration_minutes}m"
+            except (ValueError, TypeError):
+                duration_str = str(duration)
+            
+            year_director_duration_text = f"{year} | {director} | {duration_str}"
+        else:
+            year_director_duration_text = f"{year} | {director}"
+
+        year_director_duration_label = QLabel(year_director_duration_text)
+        year_director_duration_font = QFont(font_family, FONT_SIZE)
+        year_director_duration_font.setWeight(QFont.Normal)  # Set to Normal weight
+        year_director_duration_label.setFont(year_director_duration_font)
+        info_layout.addWidget(year_director_duration_label)
 
         # Tagline
         tagline = movie_data.get('tagline', '')
