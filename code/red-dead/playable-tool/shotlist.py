@@ -167,7 +167,6 @@ class ShotlistWindow(QMainWindow):
         txt_path = os.path.join(self.detections_folder, f"{name}.txt")
         with open(txt_path, "w") as txtfile:
             txtfile.write(f"{method}\n{weights_text}\n")
-
         # --- End .txt file writing ---
 
         self.worker = SceneDetectWorker(self.video_path, method, weights_text)
@@ -255,6 +254,13 @@ class ShotlistWindow(QMainWindow):
             self.load_shotlist_from_csv(out_path)
             self.shotlist_status.emit(True)
 
+    def on_row_header_clicked(self, row):
+        """Handle clicking on row header (row number on the left)"""
+        # Jump to the start of this shot
+        self.jump_to_row_start(row)
+        # Emit the caption for this shot
+        self.emit_caption_for_row(row)
+
     def on_table_cell_clicked(self, row, col):
         # Get the column header text to determine what was clicked
         header_item = self.scene_table.horizontalHeaderItem(col)
@@ -264,13 +270,16 @@ class ShotlistWindow(QMainWindow):
         column_title = header_item.text()
         
         if column_title == "Start":
-            print("Start timecode clicked")
-            # start_tc = self.scene_table.item(row, col).text()
-            # self.jump_to_timecode(start_tc)
+            # print("Start timecode clicked")
+            start_tc = self.scene_table.item(row, col).text()
+            self.jump_to_timecode(start_tc)
         elif column_title == "End":
-            print("End timecode clicked")
-            # end_tc = self.scene_table.item(row, col).text()
-            # self.jump_to_timecode(end_tc, is_last_frame=True)
+            # print("End timecode clicked")
+            end_tc = self.scene_table.item(row, col).text()
+            self.jump_to_timecode(end_tc, is_last_frame=True)
+        elif column_title == "Caption":
+            # Emit the caption for this shot
+            self.emit_caption_for_row(row)
         else:
             print(f"Clicked on column: {column_title}")
             # Handle other columns if needed
@@ -663,13 +672,6 @@ class ShotlistWindow(QMainWindow):
                     return False  # Found a non-ignored row after current
         
         return True  # No non-ignored rows found after current position
-
-    def on_row_header_clicked(self, row):
-        """Handle clicking on row header (row number on the left)"""
-        # Jump to the start of this shot
-        self.jump_to_row_start(row)
-        # Emit the caption for this shot
-        self.emit_caption_for_row(row)
 
     def jump_to_row_start(self, row):
         """Jump to the specified row in the scene table"""

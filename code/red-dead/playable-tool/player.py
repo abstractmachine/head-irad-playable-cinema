@@ -394,8 +394,22 @@ class PlayerWindow(QMainWindow):
             m = int(parts[1])
             s = float(parts[2])
             ms = int((h * 3600 + m * 60 + s) * 1000)
-            # is_last_frame logic unchanged
-            self.vlc_player.set_time(ms)
+            
+            # Set the timeline slider value, which will trigger the video update
+            self.timeline.setValue(ms)
+            
+            # Force immediate update of the VLC player position
+            self.update_position_from_slider()
+            
+            # Update timecode display
+            seconds = ms // 1000
+            h = seconds // 3600
+            m = (seconds % 3600) // 60
+            s = seconds % 60
+            self.set_timecode(f"{h:02}:{m:02}:{s:02}")
+            
+            # Emit timecode change signal
+            self.emit_timecode_changed(ms)
         else:
             print(f"Invalid timecode format: {timecode}")
 

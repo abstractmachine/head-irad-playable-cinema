@@ -1,5 +1,5 @@
 # Bugs
-- When not playing, the shotlist index does not advance. This keeps the auto-bot from being able to press the `Next` button
+
 - For the long `playthroughs` (approx 25h+ of footage), we should:
     - Use the standard detection method `threshold-adaptive`
     - Add a `max_length` text field in the `shotlist` window
@@ -7,12 +7,12 @@
 - Subtitles
     - 
 - Add :
-    - High Noon
     - The Naked Spur (Higher Res)
     - Track Of The Cat (Higher Res)
-    - McCabe and Mrs Miller
+    - Cf. /PLAYABLE/Work/todo
 
 
 # Fixed
+- ~~When not playing, the shotlist index does not advance. This keeps the auto-bot from being able to press the `Next` button~~
 - ~~Play for a second before shotlist jumping. There is a weird hack I have to do in tool where you have to play/pause video after it has loaded, in order to get the timecode to align correctly in the shotlist. Otherwise the timings are off.~~
 - ~~Sometimes the shotlist can't find a closest shot~~

@@ -159,20 +159,6 @@ class AnnotateWindow(QMainWindow):
         self.bot_button.setEnabled(False)
         button_layout.addWidget(self.bot_button)
 
-        # --- Add new buttons here ---
-        self.playback_button = QPushButton("Playback")
-        self.playback_button.setFixedWidth(100)
-        self.playback_button.setEnabled(False)  # Disabled at startup
-        self.playback_button.setToolTip("As Playback timeline changes, update the current caption\nShortcut: P")
-        button_layout.addWidget(self.playback_button)
-
-        self.inference_button = QPushButton("Inference")
-        self.inference_button.setFixedWidth(100)
-        self.inference_button.setEnabled(False)  # Disabled at startup
-        self.inference_button.setToolTip("As Playback timeline changes, use loaded model to Inference a new caption\nShortcut: I")
-        button_layout.addWidget(self.inference_button)
-        # --- End new buttons ---
-
         button_layout.addStretch()
         button_row_widget = QWidget()
         button_row_widget.setLayout(button_layout)
@@ -272,10 +258,6 @@ class AnnotateWindow(QMainWindow):
             self.api_button.click()
         elif key == Qt.Key_B:
             self.bot_button.click()
-        elif key == Qt.Key_P:
-            self.playback_button.click()
-        elif key == Qt.Key_I:
-            self.inference_button.click()
         elif key == Qt.Key_N:
             self.next_button.click()
         else:
@@ -327,8 +309,6 @@ class AnnotateWindow(QMainWindow):
         self.annotate_button.setEnabled(exists)
         self.api_button.setEnabled(exists)
         self.bot_button.setEnabled(exists)
-        self.playback_button.setEnabled(exists)
-        self.inference_button.setEnabled(exists)
         self.next_button.setEnabled(exists)
 
     def submit_caption(self):
@@ -355,7 +335,7 @@ class AnnotateWindow(QMainWindow):
         self.caption_field.clear()
         self.api_button.setText("")
         # Do NOT disable self.bot_button here!
-        for btn in [self.annotate_button, self.api_button, self.playback_button, self.inference_button, self.next_button]:
+        for btn in [self.annotate_button, self.api_button, self.next_button]:
             btn.setEnabled(False)
 
         self.request_current_shot.emit(FRAMES_PER_SHOT)
@@ -374,7 +354,7 @@ class AnnotateWindow(QMainWindow):
         if hasattr(self, 'api_anim_timer'):
             self.api_anim_timer.stop()
             self.api_button.setText("OpenAI")
-        for btn in [self.annotate_button, self.api_button, self.playback_button, self.inference_button]:
+        for btn in [self.annotate_button, self.api_button]:
             btn.setEnabled(True)
         self.next_button.setEnabled(not self.is_last_row)
         self.caption_field.setPlainText(result)
@@ -393,7 +373,7 @@ class AnnotateWindow(QMainWindow):
         if hasattr(self, 'api_anim_timer'):
             self.api_anim_timer.stop()
             self.api_button.setText("OpenAI")
-        for btn in [self.annotate_button, self.api_button, self.playback_button, self.inference_button]:
+        for btn in [self.annotate_button, self.api_button]:
             btn.setEnabled(True)
         self.next_button.setEnabled(not self.is_last_row)
         self.api_button.setText("OpenAI")
