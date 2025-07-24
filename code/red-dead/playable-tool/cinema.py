@@ -348,7 +348,7 @@ class CinemaWindow(QMainWindow):
         
         # Set the project folder and load project
         self.project_folder = folder
-        self.project_folder_button.setText(f"Project: {os.path.basename(folder)}")
+        self.project_folder_button.setText(f"Project")
         self.load_project(folder)
     
     def load_project(self, folder_path):
@@ -565,7 +565,7 @@ class CinemaWindow(QMainWindow):
                 # Don't reload if it's the same folder
                 if self.project_folder != folder:
                     self.project_folder = folder
-                    self.project_folder_button.setText(f"Project: {os.path.basename(folder)}")
+                    self.project_folder_button.setText(f"Project")
                     self.load_project(folder)
             else:
                 # Folder no longer exists, reset

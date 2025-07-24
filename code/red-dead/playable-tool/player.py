@@ -97,7 +97,7 @@ class PlayerWindow(QMainWindow):
         self.forward_button.clicked.connect(self.seek_forward)
 
         # Make buttons expand equally
-        for btn in [self.load_button, self.play_pause_button, self.back_button, self.forward_button]:
+        for btn in [self.play_pause_button, self.back_button, self.forward_button]:
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         # Layouts
@@ -110,12 +110,10 @@ class PlayerWindow(QMainWindow):
 
         # Set a fixed width for buttons
         button_width = 120
-        for btn in [self.load_button, self.play_pause_button, self.back_button, self.forward_button]:
+        for btn in [self.play_pause_button, self.back_button, self.forward_button]:
             btn.setFixedWidth(button_width)
 
         controls_layout = QHBoxLayout()
-        controls_layout.addWidget(self.load_button)
-        controls_layout.addStretch()
         controls_layout.addWidget(self.play_pause_button)
         controls_layout.addStretch()
         controls_layout.addWidget(self.back_button)
