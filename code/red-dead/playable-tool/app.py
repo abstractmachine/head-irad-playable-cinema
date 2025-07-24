@@ -55,19 +55,20 @@ def main():
     text_widget.addTab(windows["subtitles"], "Subtitles")
     text_widget.show()
 
-    # Load preferences at startup (now includes both tab widgets)
-    load_preferences(windows, tab_widget, text_widget)
-
-    # Save preferences on exit (now includes both tab widgets)
-    app.aboutToQuit.connect(lambda: save_preferences(windows, tab_widget, text_widget))
-
     # Signal Connections
     windows["player"].video_loaded.connect(windows["shotlist"].process_video)
     windows["player"].video_timecode_changed.connect(windows["shotlist"].clear_table_selection)
     windows["player"].video_timecode_changed.connect(windows["shotlist"].set_current_time)
     windows["player"].frames_extracted.connect(windows["annotate"].handle_api_frames)
     windows["player"].video_loaded.connect(windows["cinema"].on_movie_loading_complete)
+    windows["player"].video_loaded.connect(windows["prompt"].on_movie_loaded)
     windows["cinema"].movie_selected.connect(windows["player"].load_video_from_path)
+    windows["cinema"].project_loaded.connect(windows["prompt"].set_project_folder)
+    
+    # Simple connections for annotate window (same pattern as prompt)
+    windows["player"].video_loaded.connect(windows["annotate"].on_movie_loaded)
+    windows["cinema"].project_loaded.connect(windows["annotate"].set_project_folder)
+    
     windows["shotlist"].jump_to_timecode_signal.connect(windows["player"].jump_to_timecode)
     windows["shotlist"].shotlist_status.connect(windows["annotate"].set_shotlist_status)
     windows["shotlist"].caption_selected.connect(windows["annotate"].set_caption_field)
@@ -77,7 +78,13 @@ def main():
     windows["annotate"].caption_submitted.connect(windows["shotlist"].update_caption_for_current_shot)
     windows["annotate"].request_current_shot.connect(windows["shotlist"].handle_request_current_shot)
     windows["annotate"].request_next_shot.connect(windows["shotlist"].jump_to_next_shot)
-    
+
+    # Load preferences at startup (now includes both tab widgets) - MOVE THIS AFTER CONNECTIONS
+    load_preferences(windows, tab_widget, text_widget)
+
+    # Save preferences on exit (now includes both tab widgets)
+    app.aboutToQuit.connect(lambda: save_preferences(windows, tab_widget, text_widget))
+
     # Show the app windows
     windows["player"].show()
 

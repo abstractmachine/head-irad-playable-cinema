@@ -41,9 +41,11 @@ class ApiWorker(QObject):
     finished = pyqtSignal()
     result = pyqtSignal(object)
 
-    def __init__(self, frames):
+    def __init__(self, frames, project_folder=None, movie_filename=None):
         super().__init__()
         self.frames = frames
+        self.project_folder = project_folder
+        self.movie_filename = movie_filename
 
     def run(self):
         # print(f"API Worker received {len(self.frames)} frames")
@@ -57,13 +59,8 @@ class ApiWorker(QObject):
                 }
             })
 
-        # Read system prompt from file when needed
-        system_prompt_path = os.path.join(os.path.dirname(__file__), "preferences", "system_prompt.txt")
-        try:
-            with open(system_prompt_path, "r", encoding="utf-8") as f:
-                system_prompt = f.read()
-        except Exception:
-            system_prompt = "Describe the scene in these images."
+        # Read system prompt from movie-specific file if available, otherwise fallback
+        system_prompt = self._get_system_prompt()
 
         # Read API key from file
         api_key_path = os.path.join(os.path.dirname(__file__), "preferences", "api_key.txt")
@@ -94,6 +91,33 @@ class ApiWorker(QObject):
 
         self.result.emit(caption)
         self.finished.emit()
+
+    def _get_system_prompt(self):
+        """Get system prompt, preferring movie-specific prompt over fallback"""
+        # Try movie-specific prompt first
+        if self.project_folder and self.movie_filename:
+            # Transform filename: whatever.mp4 -> whatever.txt
+            if self.movie_filename.lower().endswith('.mp4'):
+                prompt_filename = self.movie_filename[:-4] + '.txt'
+            else:
+                prompt_filename = self.movie_filename + '.txt'
+            
+            movie_prompt_path = os.path.join(self.project_folder, "prompts", prompt_filename)
+            
+            if os.path.exists(movie_prompt_path):
+                try:
+                    with open(movie_prompt_path, "r", encoding="utf-8") as f:
+                        return f.read()
+                except Exception as e:
+                    print(f"Error reading movie prompt {movie_prompt_path}: {e}")
+
+        # Fallback to global system prompt
+        system_prompt_path = os.path.join(os.path.dirname(__file__), "preferences", "system_prompt.txt")
+        try:
+            with open(system_prompt_path, "r", encoding="utf-8") as f:
+                return f.read()
+        except Exception:
+            return "Describe the scene in these images."
 
 class SystemPromptEdit(QTextEdit):
     def __init__(self, parent=None, save_callback=None):
@@ -210,6 +234,10 @@ class AnnotateWindow(QMainWindow):
 
         self.api_running = False
 
+        # Add variables to track project and movie info
+        self.project_folder = None
+        self.current_movie_filename = None
+
     def eventFilter(self, obj, event):
         # Global ENTER shortcut: only when NOT editing caption field
         if event.type() == event.KeyPress and event.key() in (Qt.Key_Return, Qt.Key_Enter):
@@ -272,12 +300,26 @@ class AnnotateWindow(QMainWindow):
         # print("Annotate button pressed, submitting caption:", text)
         self.caption_submitted.emit(text)
 
+    def set_project_folder(self, project_folder):
+        """Set the project folder when cinema window loads a project"""
+        self.project_folder = project_folder
+
+    def on_movie_loaded(self, movie_path):
+        """Called when a new movie is loaded in the player"""
+        movie_filename = os.path.basename(movie_path)
+        self.current_movie_filename = movie_filename
+
     def handle_api_frames(self, frames):
         # print("handle_api_frames called")
         self.current_frames = frames
 
         self.api_thread = QThread()
-        self.api_worker = ApiWorker(self.current_frames)  # Pass frames instead of timecodes
+        # Pass project info to ApiWorker
+        self.api_worker = ApiWorker(
+            self.current_frames, 
+            self.project_folder, 
+            self.current_movie_filename
+        )
         self.api_worker.moveToThread(self.api_thread)
         self.api_thread.started.connect(self.api_worker.run)
         self.api_worker.result.connect(self.handle_api_result)

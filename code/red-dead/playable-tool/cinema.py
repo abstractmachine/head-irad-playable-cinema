@@ -22,7 +22,7 @@ class MovieItemWidget(QWidget):
         super().__init__()
         self.movie_data = movie_data
         self.posters_folder = posters_folder
-        self.is_selected = False  # Track selection state
+        self.is_selected = False
         
         # Set default background
         self.setAutoFillBackground(True)
@@ -192,6 +192,7 @@ class CinemaWindow(QMainWindow):
     request_save = pyqtSignal()
     request_load = pyqtSignal(dict)
     movie_selected = pyqtSignal(str)  # Signal to send movie file path to player
+    project_loaded = pyqtSignal(str)  # Signal when project folder is loaded
     
     def __init__(self):
         super().__init__()
@@ -205,7 +206,7 @@ class CinemaWindow(QMainWindow):
             CinemaWindow._fonts_loaded = True
         
         # Required project folders
-        self.required_folders = ["datasets", "gameplay", "metadata", "movies", "posters", "shotlists", "subtitles"]
+        self.required_folders = ["datasets", "gameplay", "metadata", "movies", "posters", "prompts", "shotlists", "subtitles"]
         
         # Create main widget and layout
         main_widget = QWidget()
@@ -312,8 +313,11 @@ class CinemaWindow(QMainWindow):
     
     def set_project_folder(self, folder):
         """Set the project folder and check for required folders"""
+        
         # Don't reload if it's the same folder
         if self.project_folder == folder:
+            # EMIT THE SIGNAL EVEN IF IT'S THE SAME FOLDER
+            self.project_loaded.emit(folder)
             return
             
         # Check if all required folders exist
@@ -324,19 +328,6 @@ class CinemaWindow(QMainWindow):
                 missing_folders.append(required_folder)
         
         if missing_folders:
-            # Show alert asking to create missing folders
-            missing_list = ", ".join(missing_folders)
-            reply = QMessageBox.question(
-                self, 
-                "Create Missing Folders", 
-                f"The following required folders are missing:\n{missing_list}\n\nWould you like to create them?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.Yes
-            )
-            
-            if reply == QMessageBox.No:
-                return  # User cancelled
-            
             # Create missing folders
             try:
                 for folder_name in missing_folders:
@@ -349,6 +340,7 @@ class CinemaWindow(QMainWindow):
         # Set the project folder and load project
         self.project_folder = folder
         self.project_folder_button.setText(f"Project")
+        self.project_loaded.emit(folder)
         self.load_project(folder)
     
     def load_project(self, folder_path):
@@ -564,9 +556,11 @@ class CinemaWindow(QMainWindow):
             if os.path.exists(folder):
                 # Don't reload if it's the same folder
                 if self.project_folder != folder:
-                    self.project_folder = folder
-                    self.project_folder_button.setText(f"Project")
-                    self.load_project(folder)
+                    # Set the project folder and load it
+                    self.set_project_folder(folder)
+                    # self.project_folder = folder
+                    # self.project_folder_button.setText(f"Project")
+                    # self.load_project(folder)
             else:
                 # Folder no longer exists, reset
                 self.project_folder = None
