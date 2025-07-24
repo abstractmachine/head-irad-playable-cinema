@@ -593,12 +593,17 @@ class ShotlistWindow(QMainWindow):
         
         # Find next non-ignored row
         for next_row in range(start_row, row_count):
-            widget = self.scene_table.cellWidget(next_row, 0)
+            ignore_col_index = self.get_column_index_by_name("Ignore")
+            if ignore_col_index == -1:
+                continue
+            
+            widget = self.scene_table.cellWidget(next_row, ignore_col_index)
             if widget:
                 checkbox = widget.findChild(QCheckBox)
                 if checkbox and not checkbox.isChecked():
                     # Found next non-ignored shot
-                    start_tc = self.scene_table.item(next_row, 2).text()
+                    start_col_index = self.get_column_index_by_name("Start")
+                    start_tc = self.scene_table.item(next_row, start_col_index).text()
                     self.jump_to_timecode(start_tc)
                     return
         
@@ -661,17 +666,22 @@ class ShotlistWindow(QMainWindow):
 
     def on_row_header_clicked(self, row):
         """Handle clicking on row header (row number on the left)"""
-        
-        row_header_index = row+1  # Convert to 1-based index for user-friendly display
-        print(f"Row header index #{row_header_index} clicked")
-        
         # Jump to the start of this shot
-        # start_tc = self.scene_table.item(row, 2).text()
-        # self.jump_to_timecode(start_tc)
-        
-        # Optionally emit the caption for this shot
-        # caption = self.scene_table.item(row, 4).text()
-        # self.caption_selected.emit(caption)
+        self.jump_to_row_start(row)
+        # Emit the caption for this shot
+        self.emit_caption_for_row(row)
+
+    def jump_to_row_start(self, row):
+        """Jump to the specified row in the scene table"""
+        start_index = self.get_column_index_by_name("Start")
+        start_tc = self.scene_table.item(row, start_index).text()
+        self.jump_to_timecode(start_tc)
+
+    def emit_caption_for_row(self, row):
+        """emit the caption for this shot via signal"""
+        caption_index = self.get_column_index_by_name("Caption")
+        caption = self.scene_table.item(row, caption_index).text()
+        self.caption_selected.emit(caption)
 
     def get_column_index_by_name(self, column_name):
         """Find the column index by header name"""
