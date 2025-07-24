@@ -216,16 +216,20 @@ class MetadataWorker(QObject):
                 if response.status_code == 200:
                     data = response.json()
                     
-                    # Find the first subtitle entry with a file
-                    subtitle_entry = None
+                    # Find the subtitle entry with the highest ratings
+                    best_subtitle_entry = None
+                    highest_ratings = -1
+                    
                     for entry in data.get('data', []):
                         files = entry.get('attributes', {}).get('files', [])
-                        if files:
-                            subtitle_entry = files[0]
-                            break
+                        ratings = entry.get('attributes', {}).get('ratings', 0)
+                        
+                        if files and ratings > highest_ratings:
+                            highest_ratings = ratings
+                            best_subtitle_entry = files[0]
                     
-                    if subtitle_entry:
-                        subtitle_file_id = subtitle_entry['file_id']
+                    if best_subtitle_entry:
+                        subtitle_file_id = best_subtitle_entry['file_id']
                         download_url = 'https://api.opensubtitles.com/api/v1/download'
                         download_response = requests.post(download_url, headers=headers, json={'file_id': subtitle_file_id})
                         
@@ -237,7 +241,7 @@ class MetadataWorker(QObject):
                             if subtitle_file.status_code == 200:
                                 with open(subtitle_path, 'wb') as f:
                                     f.write(subtitle_file.content)
-                                self.progress.emit(f"Downloaded subtitle: {movie['title']}")
+                                self.progress.emit(f"Downloaded subtitle: {movie['title']} (rating: {highest_ratings})")
                 
                 time.sleep(1)  # Be polite to the API
                 

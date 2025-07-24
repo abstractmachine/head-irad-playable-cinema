@@ -35,8 +35,11 @@ class ShotlistWindow(QMainWindow):
         self._pending_save_data = {}
         self.setWindowTitle("Shotlist")
         self.setGeometry(200, 200, 600, 400)
-        self.detections_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shotlists")
-        os.makedirs(self.detections_folder, exist_ok=True)
+        
+        # Initialize detections_folder to None - will be set when project loads
+        self.detections_folder = None
+        self.project_folder = None
+
         self.detecting_timer = QTimer()
         self.detecting_timer.timeout.connect(self.animate_detecting)
         self.detecting_dots = 0
@@ -730,3 +733,10 @@ class ShotlistWindow(QMainWindow):
                 break
         
         return new_row
+
+    def set_project_folder(self, project_folder):
+        """Set the project folder and update detections folder"""
+        self.project_folder = project_folder
+        self.detections_folder = os.path.join(project_folder, "shotlists")
+        os.makedirs(self.detections_folder, exist_ok=True)
+        # print(f"Shotlist: Detections folder set to {self.detections_folder}")

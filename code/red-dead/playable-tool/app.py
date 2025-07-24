@@ -49,9 +49,9 @@ def main():
 
     # Create text tab widget for annotate, default, prompt, and subtitles
     text_widget = QTabWidget()
-    text_widget.addTab(windows["annotate"], "Annotate")
-    text_widget.addTab(windows["default"], "Default")
-    text_widget.addTab(windows["prompt"], "Prompt")
+    text_widget.addTab(windows["annotate"], "Annotator")
+    text_widget.addTab(windows["default"], "Default Prompt")
+    text_widget.addTab(windows["prompt"], "Movie Prompt")
     text_widget.addTab(windows["subtitles"], "Subtitles")
     text_widget.show()
 
@@ -64,11 +64,17 @@ def main():
     windows["player"].video_loaded.connect(windows["prompt"].on_movie_loaded)
     windows["cinema"].movie_selected.connect(windows["player"].load_video_from_path)
     windows["cinema"].project_loaded.connect(windows["prompt"].set_project_folder)
-    
+    windows["cinema"].project_loaded.connect(windows["shotlist"].set_project_folder)
+
     # Simple connections for annotate window (same pattern as prompt)
     windows["player"].video_loaded.connect(windows["annotate"].on_movie_loaded)
     windows["cinema"].project_loaded.connect(windows["annotate"].set_project_folder)
     
+    # Simple connections for subtitles window (same pattern as prompt)
+    windows["player"].video_loaded.connect(windows["subtitles"].on_movie_loaded)
+    windows["cinema"].project_loaded.connect(windows["subtitles"].set_project_folder)
+    windows["player"].video_timecode_changed.connect(windows["subtitles"].on_timecode_changed)
+
     windows["shotlist"].jump_to_timecode_signal.connect(windows["player"].jump_to_timecode)
     windows["shotlist"].shotlist_status.connect(windows["annotate"].set_shotlist_status)
     windows["shotlist"].caption_selected.connect(windows["annotate"].set_caption_field)
