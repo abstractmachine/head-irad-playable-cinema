@@ -469,7 +469,7 @@ class ShotlistWindow(QMainWindow):
                 self.add_scene_row(scene_num, start, end, caption, ignore)
 
     def update_caption_for_current_shot(self, caption_text):
-        row = self.find_current_shot(self.current_time_ms)
+        row = self.find_closest_row(self.current_time_ms)
         #print(f"Updating caption for current shot at row {row} with time {self.current_time_ms} ms.")
         if row is not None:
             self.scene_table.item(row, 4).setText(caption_text)
@@ -481,22 +481,25 @@ class ShotlistWindow(QMainWindow):
         self.current_time_ms = ms
         row_count = self.scene_table.rowCount()
         
+        # if we don't have any rows, we can't do anything
         if row_count == 0:
             self.current_row = -1
             self.is_last_available_shot.emit(True)
             return
 
-        new_current_row = self.find_current_shot(ms)
-        
         # Check if current row changed
+        new_current_row = self.find_closest_row(ms)
         if new_current_row != self.current_row:
             self.current_row = new_current_row
             self.row_did_change.emit(self.current_row)
             
-            # **ONLY emit caption when row changes - no table manipulation**
+            # only emit caption when row changes - no table manipulation
             if self.current_row >= 0:
-                caption = self.scene_table.item(self.current_row, 4).text()
-                self.caption_selected.emit(caption)
+                # find column index of caption column
+                caption_col = self.get_column_index_by_name("Caption")
+                if caption_col != -1:
+                    caption = self.scene_table.item(self.current_row, caption_col).text()
+                    self.caption_selected.emit(caption)
             else:
                 self.caption_selected.emit("")
         
@@ -506,15 +509,19 @@ class ShotlistWindow(QMainWindow):
 
         # Clear previous highlights
         for row in range(row_count):
-            index_item = self.scene_table.item(row, 1)
-            if index_item:
-                index_item.setBackground(Qt.transparent)
+            scene_col = self.get_column_index_by_name("Scene")
+            if scene_col != -1:
+                index_item = self.scene_table.item(row, scene_col)
+                if index_item:
+                    index_item.setBackground(Qt.transparent)
 
         # Highlight the current shot index cell
         if self.current_row >= 0:
-            index_item = self.scene_table.item(self.current_row, 1)
-            if index_item:
-                index_item.setBackground(QColor("fuchsia"))
+            scene_col = self.get_column_index_by_name("Scene")
+            if scene_col != -1:
+                index_item = self.scene_table.item(self.current_row, scene_col)
+                if index_item:
+                    index_item.setBackground(QColor("fuchsia"))
 
     def handle_request_current_shot(self, count):
         row = self.find_current_shot(self.current_time_ms)
@@ -654,7 +661,9 @@ class ShotlistWindow(QMainWindow):
 
     def on_row_header_clicked(self, row):
         """Handle clicking on row header (row number on the left)"""
-        print(f"Row header {row} clicked")
+        
+        row_header_index = row+1  # Convert to 1-based index for user-friendly display
+        print(f"Row header index #{row_header_index} clicked")
         
         # Jump to the start of this shot
         # start_tc = self.scene_table.item(row, 2).text()
@@ -663,3 +672,49 @@ class ShotlistWindow(QMainWindow):
         # Optionally emit the caption for this shot
         # caption = self.scene_table.item(row, 4).text()
         # self.caption_selected.emit(caption)
+
+    def get_column_index_by_name(self, column_name):
+        """Find the column index by header name"""
+        for col in range(self.scene_table.columnCount()):
+            header_item = self.scene_table.horizontalHeaderItem(col)
+            if header_item and header_item.text() == column_name:
+                return col
+        return -1  # Column not found
+
+    def find_closest_row(self, ms):
+        """Find the row index closest to the given time in ms"""
+        row_count = self.scene_table.rowCount()
+        
+        if row_count == 0:
+            return -1
+        
+        def tc_to_ms(tc):
+            parts = tc.split(":")
+            if len(parts) == 3:
+                h = int(parts[0])
+                m = int(parts[1])
+                s = float(parts[2])
+                return int((h * 3600 + m * 60 + s) * 1000)
+            return 0
+        
+        # Start with the first row as candidate
+        new_row = 0
+        
+        # Get the Start column index by name
+        start_col = self.get_column_index_by_name("Start")
+        if start_col == -1:
+            return -1  # Start column not found
+        
+        for row in range(row_count):
+            # Get the Begin (Start) time for this row
+            start_tc = self.scene_table.item(row, start_col).text()
+            start_ms = tc_to_ms(start_tc)
+            
+            # If this Begin time is equal to or before our current ms
+            if start_ms <= ms:
+                new_row = row
+            else:
+                # Begin time is after our ms, so we found our row
+                break
+        
+        return new_row
