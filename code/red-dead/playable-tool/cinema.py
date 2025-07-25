@@ -9,6 +9,8 @@ import os
 import csv
 from metadata import MetadataWorker  # Import our metadata worker
 
+DEBUG = True  # Set to True to enable debug messages
+
 # Common font size for all text
 FONT_SIZE = 16
 
@@ -236,19 +238,13 @@ class CinemaWindow(QMainWindow):
         self.project_folder_button = QPushButton("Project Folder")
         self.project_folder_button.clicked.connect(self.select_project_folder)
 
-        # Import button (for when metadata.csv doesn't exist)
-        self.import_button = QPushButton("Import Movies")
-        self.import_button.clicked.connect(self.import_movies)
-        self.import_button.setEnabled(False)
-
         # Metadata rebuild button
         self.metadata_button = QPushButton("Rebuild Metadata")
         self.metadata_button.clicked.connect(self.rebuild_metadata)
         self.metadata_button.setEnabled(False)
-        self.metadata_button.setFixedSize(150, 30)  # Set fixed width and height
+        self.metadata_button.setFixedSize(150, 32)  # Set fixed width and height
 
         button_layout.addWidget(self.project_folder_button)
-        button_layout.addWidget(self.import_button)
         button_layout.addWidget(self.metadata_button)
         button_layout.addStretch()
         
@@ -352,7 +348,7 @@ class CinemaWindow(QMainWindow):
     
     def load_project(self, folder_path):
         """Called when a project folder is selected or loaded from preferences"""
-        # Enable metadata rebuild button when project is loaded
+        # Enable buttons when project is loaded
         self.metadata_button.setEnabled(True)
         
         # Check if metadata.csv exists
@@ -360,14 +356,12 @@ class CinemaWindow(QMainWindow):
         
         if os.path.exists(metadata_path):
             self.load_movies_from_metadata(metadata_path, folder_path)
-            self.import_button.setEnabled(False)
         else:
-            # No metadata file, enable import button
+            # No metadata file, show placeholder
             self.movie_list.clear()
-            self.import_button.setEnabled(True)
             
             # Add placeholder item
-            placeholder_item = QListWidgetItem("No metadata.csv found. Click 'Import Movies' or 'Rebuild Metadata' to create it.")
+            placeholder_item = QListWidgetItem("No metadata.csv found. Click 'Rebuild Metadata' to create it.")
             self.movie_list.addItem(placeholder_item)
 
     def load_movies_from_metadata(self, metadata_path, project_folder):
@@ -439,10 +433,6 @@ class CinemaWindow(QMainWindow):
             else:
                 QMessageBox.warning(self, "File Not Found", f"Movie file not found:\n{movie_path}")
 
-    def import_movies(self):
-        """Placeholder for movie import functionality"""
-        QMessageBox.information(self, "Import Movies", "Movie import functionality will be implemented here.")
-    
     def rebuild_metadata(self):
         """Start metadata rebuild process in worker thread"""
         if not self.project_folder:
@@ -465,7 +455,6 @@ class CinemaWindow(QMainWindow):
         self.metadata_button.setText("        Rebuilding")
         self.metadata_button.setEnabled(False)
         self.project_folder_button.setEnabled(False)
-        self.import_button.setEnabled(False)
         
         # Set button text alignment to left during rebuild
         self.metadata_button.setStyleSheet("QPushButton { text-align: left; }")
@@ -539,7 +528,6 @@ class CinemaWindow(QMainWindow):
         
         # Reset button text alignment to center when not running
         self.metadata_button.setStyleSheet("QPushButton { text-align: center; }")
-        # import_button will be enabled/disabled by load_project
 
     def on_request_save(self):
         pos = self.pos()
@@ -565,9 +553,6 @@ class CinemaWindow(QMainWindow):
                 if self.project_folder != folder:
                     # Set the project folder and load it
                     self.set_project_folder(folder)
-                    # self.project_folder = folder
-                    # self.project_folder_button.setText(f"Project")
-                    # self.load_project(folder)
             else:
                 # Folder no longer exists, reset
                 self.project_folder = None

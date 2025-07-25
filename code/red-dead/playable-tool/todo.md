@@ -1,7 +1,6 @@
 # TODO
 - Add :
     - Subtitles of all dialogue spoken in between `Start` and `End` when sending to `OpenAI` `API`. Include somehow in System Prompt
-    - Movie importer (to fast load formet, etc)
 
 - Save image-upload-count to OpenAI in each movie's shotlist folder
 
@@ -12,6 +11,7 @@
 
 # Bugs
 
+- Movie importer hanged after a few minutes
 - For the long `playthroughs` (approx 25h+ of footage), we should:
     - Use the standard detection method `threshold-adaptive`
     - Add a `max_length` text field in the `shotlist` window

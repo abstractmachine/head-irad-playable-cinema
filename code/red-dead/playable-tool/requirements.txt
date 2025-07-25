@@ -11,9 +11,19 @@ scenedetect[opencv]
 
 # AI
 openai
+requests
 torch
 transformers
 accelerate
+
+# Note: Video converter requires ffmpeg command line tools
+# ffmpeg must be installed separately
+# Mac:  brew install ffmpeg
+#       brew install ffprobe
+# Linux:    sudo apt install ffmpeg
+#           sudo apt install ffprobe
+# Windows: Download from https://ffmpeg.org/download.html
+#           and add to PATH
 
 # To install the requirements using pip:
 # pip install --upgrade -r requirements.txt
