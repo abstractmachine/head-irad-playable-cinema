@@ -1,12 +1,11 @@
 import os
-import cv2
 import platform
 import vlc
 
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QThread, QTimer, QMetaObject, Q_ARG
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtWidgets import (
-    QApplication, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMainWindow,
-    QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget, QStyle
+    QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMainWindow,
+    QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget
 )
 
 SEEK_NORMAL = "1"
@@ -202,6 +201,9 @@ class PlayerWindow(QMainWindow):
 
     def set_video_time(self, time_ms):
         """Single method to set VLC time and update all UI elements"""
+        # Ensure time_ms is an integer
+        time_ms = int(time_ms)
+        
         duration = self.vlc_player.get_length()
         if duration > 0:
             time_ms = max(0, min(time_ms, duration))
@@ -222,7 +224,7 @@ class PlayerWindow(QMainWindow):
     def seek_video(self, seconds):
         """Seek video by specified number of seconds"""
         current_time = self.vlc_player.get_time()
-        new_time = current_time + (seconds * 1000)
+        new_time = current_time + int(seconds * 1000)  # Convert to int
         self.set_video_time(new_time)
 
     def jump_to_timecode(self, timecode, is_last_frame=False):
@@ -238,10 +240,14 @@ class PlayerWindow(QMainWindow):
             print(f"Invalid timecode format: {timecode}")
 
     def seek_back(self):
+        if not self.current_video_path or not self.vlc_player:
+            return
         seek_amount = float(self.normal_seek.text())
         self.seek_video(-seek_amount)
 
     def seek_forward(self):
+        if not self.current_video_path or not self.vlc_player:
+            return
         seek_amount = float(self.normal_seek.text())
         self.seek_video(seek_amount)
 
@@ -267,10 +273,13 @@ class PlayerWindow(QMainWindow):
         modifiers = event.modifiers()
         
         if key == Qt.Key_Space:
-            self.toggle_play_pause()
+            if self.current_video_path and self.vlc_player:  # Only if video loaded
+                self.toggle_play_pause()
         elif key == Qt.Key_L or key == Qt.Key_V:
             self.load_video()
         elif key == Qt.Key_Left:
+            if not self.current_video_path or not self.vlc_player:  # Check before seeking
+                return
             if modifiers & Qt.ShiftModifier:
                 seek_amount = float(self.fast_seek.text())
                 self.seek_video(-seek_amount)
@@ -278,6 +287,8 @@ class PlayerWindow(QMainWindow):
                 seek_amount = float(self.normal_seek.text())
                 self.seek_video(-seek_amount)
         elif key == Qt.Key_Right:
+            if not self.current_video_path or not self.vlc_player:  # Check before seeking
+                return
             if modifiers & Qt.ShiftModifier:
                 seek_amount = float(self.fast_seek.text())
                 self.seek_video(seek_amount)
@@ -456,7 +467,7 @@ class PlayerWindow(QMainWindow):
                 h = int(parts[0])
                 m = int(parts[1])
                 s = float(parts[2])
-                time_ms = (h * 3600 + m * 60 + s) * 1000
+                time_ms = int((h * 3600 + m * 60 + s) * 1000)  # Ensure integer
                 
                 # Extract frame at this timecode
                 cap.set(cv2.CAP_PROP_POS_MSEC, time_ms)
