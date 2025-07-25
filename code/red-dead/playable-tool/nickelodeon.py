@@ -60,7 +60,7 @@ class JumpSlider(QSlider):
                 self.player_window.emit_timecode_changed(value)
                 self.player_window.vlc_player.set_time(value)
 
-class PlayerWindow(QMainWindow):
+class NickelodeonWindow(QMainWindow):
     # Define signals for communication
     video_loaded = pyqtSignal(str)
     request_save = pyqtSignal()
@@ -186,8 +186,14 @@ class PlayerWindow(QMainWindow):
         self._video_just_loaded = False
 
     def on_vlc_time_changed_callback(self, event):
-        """VLC callback (runs in background thread) - emit signal to main thread"""
-        self._vlc_time_changed.emit(event.u.new_time)
+        """Callback for VLC time changed events"""
+        try:
+            # Check if the object still exists and is valid
+            if hasattr(self, '_vlc_time_changed') and self._vlc_time_changed is not None:
+                self._vlc_time_changed.emit(event.u.new_time)
+        except (RuntimeError, AttributeError):
+            # Object has been deleted or is invalid, ignore the callback
+            pass
 
     def on_vlc_time_changed_main_thread(self, new_time):
         """Main thread handler for VLC time changes"""
@@ -491,3 +497,44 @@ class PlayerWindow(QMainWindow):
 
     def emit_timecode_changed(self, position):
         self.video_timecode_changed.emit(position)
+
+    def closeEvent(self, event):
+        """Handle window close event to properly clean up VLC"""
+        try:
+            # Stop the player first
+            if hasattr(self, 'player') and self.player:
+                self.player.stop()
+            
+            # Release the media player
+            if hasattr(self, 'player') and self.player:
+                # Detach event callbacks to prevent callbacks on deleted objects
+                event_manager = self.player.event_manager()
+                if event_manager:
+                    event_manager.event_detach(vlc.EventType.MediaPlayerTimeChanged)
+                    event_manager.event_detach(vlc.EventType.MediaPlayerEndReached)
+                    # Add any other events you're listening to
+                
+                self.player.release()
+                self.player = None
+            
+            # Release the VLC instance
+            if hasattr(self, 'vlc_instance') and self.vlc_instance:
+                self.vlc_instance.release()
+                self.vlc_instance = None
+                
+        except Exception as e:
+            print(f"Error during cleanup: {e}")
+        finally:
+            # Call the parent close event
+            super().closeEvent(event)
+
+    def __del__(self):
+        """Destructor to ensure VLC resources are cleaned up"""
+        try:
+            if hasattr(self, 'player') and self.player:
+                self.player.stop()
+                self.player.release()
+            if hasattr(self, 'vlc_instance') and self.vlc_instance:
+                self.vlc_instance.release()
+        except:
+            pass  # Ignore any errors during destruction
