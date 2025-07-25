@@ -72,10 +72,11 @@ class ShotlistWindow(QMainWindow):
         )
         self.detect_button.setEnabled(False)
 
-        self.folder_button = QPushButton("Folder")
-        self.folder_button.setFixedWidth(100)
-        self.folder_button.setMinimumHeight(32)
-        self.folder_button.clicked.connect(self.select_detections_folder)
+        # Remove the folder button - no longer needed
+        # self.folder_button = QPushButton("Folder")
+        # self.folder_button.setFixedWidth(100)
+        # self.folder_button.setMinimumHeight(32)
+        # self.folder_button.clicked.connect(self.select_detections_folder)
 
         self.method_dropdown = QComboBox()
         self.method_dropdown.addItems([
@@ -99,7 +100,8 @@ class ShotlistWindow(QMainWindow):
 
         button_layout = QHBoxLayout()
         button_layout.addStretch()
-        button_layout.addWidget(self.folder_button)
+        # Remove folder_button from layout
+        # button_layout.addWidget(self.folder_button)
         button_layout.addWidget(self.method_dropdown)
         button_layout.addWidget(self.weights_field)
         button_layout.addWidget(self.detect_button)
@@ -120,11 +122,6 @@ class ShotlistWindow(QMainWindow):
         self.current_time_ms = 0
         self.current_row = -1  # Track current row
         self.last_current_row = -1  # Track previous row for comparison
-
-    def select_detections_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Scene Detections Folder", self.detections_folder)
-        if folder:
-            self.detections_folder = folder
 
     def load_scene_detections(self, csv_path):
         with open(csv_path, "r", newline="") as f:
@@ -331,7 +328,6 @@ class ShotlistWindow(QMainWindow):
             "col2_width": self.scene_table.columnWidth(2),
             "col3_width": self.scene_table.columnWidth(3),
             "col4_width": self.scene_table.columnWidth(4),
-            "detections_folder": self.detections_folder,
             "weights_field": self.weights_field.text(),
             "method_selected": self.method_dropdown.currentText()
         }
@@ -351,8 +347,6 @@ class ShotlistWindow(QMainWindow):
             self.scene_table.setColumnWidth(3, data["col3_width"])
         if "col4_width" in data:
             self.scene_table.setColumnWidth(4, data["col4_width"])
-        if "detections_folder" in data:
-            self.detections_folder = data["detections_folder"]
         if "weights_field" in data:
             self.weights_field.setText(data["weights_field"])
         if "method_selected" in data:
@@ -462,10 +456,14 @@ class ShotlistWindow(QMainWindow):
                 widget = self.scene_table.cellWidget(row, 0)
                 checkbox = widget.findChild(QCheckBox)
                 ignore = "Yes" if checkbox.isChecked() else "No"
-                scene_num = self.scene_table.item(row, 1).text()
-                start = self.scene_table.item(row, 2).text()
-                end = self.scene_table.item(row, 3).text()
-                caption = self.scene_table.item(row, 4).text()
+                scene_index = self.get_column_index_by_name("Scene")
+                scene_num = self.scene_table.item(row, scene_index).text()
+                start_index = self.get_column_index_by_name("Start")
+                start = self.scene_table.item(row, start_index).text()
+                end_index = self.get_column_index_by_name("End")
+                end = self.scene_table.item(row, end_index).text()
+                caption_index = self.get_column_index_by_name("Caption")
+                caption = self.scene_table.item(row, caption_index).text()
                 writer.writerow([ignore, scene_num, start, end, caption])
 
     def load_shotlist_from_csv(self, path):
@@ -484,7 +482,8 @@ class ShotlistWindow(QMainWindow):
         row = self.find_closest_row(self.current_time_ms)
         #print(f"Updating caption for current shot at row {row} with time {self.current_time_ms} ms.")
         if row is not None:
-            self.scene_table.item(row, 4).setText(caption_text)
+            caption_col = self.get_column_index_by_name("Caption")
+            self.scene_table.item(row, caption_col).setText(caption_text)
             self.save_shotlist_to_csv()
         else:
             print("No matching shot found for annotation")
@@ -541,9 +540,33 @@ class ShotlistWindow(QMainWindow):
             print(f"No shot found for current time {self.current_time_ms} ms - row count = {self.scene_table.rowCount()}.")
             self.abort_api.emit("No matching shot found for API request.")
             return
-        shot_index = row + 1
-        start_tc = self.scene_table.item(row, 2).text()
-        end_tc = self.scene_table.item(row, 3).text()
+            
+        # Use get_column_index_by_name instead of hardcoded indices
+        start_col = self.get_column_index_by_name("Start")
+        end_col = self.get_column_index_by_name("End")
+        
+        if start_col == -1 or end_col == -1:
+            print("Error: Could not find Start or End columns")
+            self.abort_api.emit("Column structure error.")
+            return
+            
+        # Check if the table items exist before accessing them
+        start_item = self.scene_table.item(row, start_col)
+        end_item = self.scene_table.item(row, end_col)
+        
+        if not start_item or not end_item:
+            print(f"Error: Table items not found for row {row}")
+            self.abort_api.emit("Shot data not available.")
+            return
+            
+        start_tc = start_item.text()
+        end_tc = end_item.text()
+        
+        if not start_tc or not end_tc:
+            print(f"Error: Empty timecodes for row {row}")
+            self.abort_api.emit("Invalid shot timecodes.")
+            return
+            
         def tc_to_ms(tc):
             parts = tc.split(":")
             if len(parts) == 3:
@@ -552,6 +575,7 @@ class ShotlistWindow(QMainWindow):
                 s = float(parts[2])
                 return int((h * 3600 + m * 60 + s) * 1000)
             return 0
+            
         start_ms = tc_to_ms(start_tc)
         end_ms = tc_to_ms(end_tc)
         total_steps = count + 2
@@ -574,17 +598,20 @@ class ShotlistWindow(QMainWindow):
         row = indexes[0].row()
         
         # Jump to Begin (start) timecode
-        start_tc = self.scene_table.item(row, 2).text()
+        start_col = self.get_column_index_by_name("Start")
+        start_tc = self.scene_table.item(row, start_col).text()
         self.jump_to_timecode(start_tc)
+
+        caption_index = self.get_column_index_by_name("Caption")
         
         # Block signals BEFORE calling setCurrentCell to avoid recursion
         self.scene_table.blockSignals(True)
-        self.scene_table.setCurrentCell(row, 4)
+        self.scene_table.setCurrentCell(row, caption_index)
         self.scene_table.clearSelection()
         self.scene_table.blockSignals(False)
         
         # Emit the caption text to AnnotateWindow
-        caption = self.scene_table.item(row, 4).text()
+        caption = self.scene_table.item(row, caption_index).text()
         self.caption_selected.emit(caption)
         
         # Update current row and emit change signal
@@ -645,9 +672,14 @@ class ShotlistWindow(QMainWindow):
                 checkbox = widget.findChild(QCheckBox)
                 if checkbox and checkbox.isChecked():
                     continue
-            
-            start_tc = self.scene_table.item(row, 2).text()
-            end_tc = self.scene_table.item(row, 3).text()
+
+            start_index = self.get_column_index_by_name("Start")
+            end_index = self.get_column_index_by_name("End")
+            if start_index == -1 or end_index == -1:
+                return -1
+
+            start_tc = self.scene_table.item(row, start_index).text()
+            end_tc = self.scene_table.item(row, end_index).text()
             start_ms = tc_to_ms(start_tc)
             end_ms = tc_to_ms(end_tc)
             
