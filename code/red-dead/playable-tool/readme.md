@@ -16,7 +16,7 @@ A comprehensive PyQt5-based application designed for video analysis, annotation,
 
 1. **Create Python Environment**
    ```bash
-   cd ./code/red-dead/playable-tool
+   cd ~/your-folder-path-to/playable-tool
    pyenv virtualenv 3.11.9 playable-tool
    pyenv activate playable-tool
    ```
@@ -39,8 +39,13 @@ python app.py
 ```
 
 ## Project Structure
+Click the `Folder` button in the `Cinemathèque` window to set your project folder. You can create this folder from the system window that opens, or select a previously created project folder.
 
-Each project requires the following folder structure:
+### Auto-fix Folder Structure
+When you select the project `Folder` button, it will automatically look inside that folder and verify any and all required sub-folders. It will suggest creating any missing folders. Click `Cancel` if you have somehow mistakenly chosen the wrong folder.
+
+### Structure
+The system should fix any missing folders for you, but if you are curious, each project requires the following folder structure:
 ```
 project-folder/
 ├── movies/           # Video files (.mp4)
@@ -57,8 +62,8 @@ project-folder/
 
 ### 1. Cinemathèque Window
 - Project and movie management
-- Automatic metadata retrieval from TMDB
-- Poster and subtitle downloading
+- Automatic metadata retrieval from TMDB (The Movie DataBase)
+- Poster and subtitle downloading from TMDB and OpenSubtitles.com
 
 ### 2. Player Window
 - Frame-accurate video playback
@@ -66,30 +71,46 @@ project-folder/
 - Keyboard shortcuts (Space: play/pause, Arrow keys: seek)
 
 ### 3. Shotlist Window
-- Scene detection and shot management
-- Configurable detection algorithms
-- Shot timeline with start/end timecodes
+- Scene/shot detection and shot management
+- Shot-by-shot captions (image descriptions) are stored here
+- Configurable detection algorithms for scene detection
+- Shot-by-shot timeline with start/end timecodes
 
 ### 4. Annotate Window
-- OpenAI GPT-4 Vision integration
-- Configurable frame extraction
+- OpenAI GPT-4o Vision integration for automatically captioning shots
+    - Automated captioning can be edited
+- Manual captioning of shots
+- Configurable frame extraction count sent to OpenAI during automated captionning
 - Bot mode for automated processing
 
 ### 5. Prompt Management
 - Default system prompts
 - Movie-specific prompt overrides
 - Auto-saving text editors
+- Optional tags can be embedded in prompts that will be populated with movie metadata.
+
+#### Prompt tags
+Use these tags inside your prompts and the app will replace each tag with its corresponding value.
+- Movie Info
+    - {title}
+    - {year}
+    - {director}
+    - {description}
+    - {tagline}
+- Subtitle content
+    - {shot-subtitles}
+    - {full-subtitles}
+- Images
+    - {image-count}
+
 
 ## Scene Detection with PySceneDetect
-
 This tool leans heavily on [PySceneDetect](https://www.scenedetect.com) for identification of scenes and shots.
 
 ### Classical Cinema Shotlist
-
 Faust has done preliminary work testing the detectors on classical Hollywood westerns, for example [The Undefeated](https://www.themoviedb.org/movie/18972-the-undefeated), and suggests the default `tolerance` (`-t`) at `3.0` works fine for detecting classical single-camera shot-by-shot films.
 
 ### Detection Methods
-
 There are various detection algorithms. Cf. [PySceneDetect Detectors Docs](https://www.scenedetect.com/docs/latest/cli.html#detectors). Each method has its own list of default and adjustable options. For example, `detect-adaptive` has a `-t` (`adaptive_threshold`) option that defaults to `3.0`, whereas `detect-content` has a `-t` (`threshold`) option that defaults to `27.0`. Enter any, all, or none of these options next to the `Detect` button.
 
 ![Detection method options field](ui/images/detection-method-options.png)
