@@ -11,6 +11,12 @@
 - [Anthony Masure](https://www.anthonymasure.com), Dean of Research, [IRAD](https://www.hesge.ch/head/en/programs-research/research), [HEAD – Genève](https://www.hesge.ch/head/en)
 - [Christelle Granite-Noble](https://www.hesge.ch/head/annuaire/christelle-granite-noble), Administrative Coordination, [IRAD](https://www.hesge.ch/head/en/programs-research/research)
 
+## Software
+A [training and playback tool](./code/red-dead/playable-tool/) is currently in development.
+
+## Hardware
+There is a [physical object/installation](./hardware/) is currently in developement.
+
 ## Current Status & Timeline
 - **Test Phase (Q2 2025):** Annotating sequences from *Inside* using Roboflow and SAM tools.
 - **Training Prototype Model (Q3 2025):** Building initial inference pipeline and testing labeling workflow.
