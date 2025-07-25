@@ -6,19 +6,18 @@
 - [Douglas Edric Stanley](https://abstractmachine.net), Project Lead
 - [Faust Perillaud](https://2024.head-geneve.show/en/projects/spectral-yard-fp-100e1), Research Assistant, training & labelling
 - TBD, Research Assistant, model development
+
+## HEAD – Genève
 - [Anthony Masure](https://www.anthonymasure.com), Dean of Research, [IRAD](https://www.hesge.ch/head/en/programs-research/research), [HEAD – Genève](https://www.hesge.ch/head/en)
 - [Christelle Granite-Noble](https://www.hesge.ch/head/annuaire/christelle-granite-noble), Administrative Coordination, [IRAD](https://www.hesge.ch/head/en/programs-research/research)
 
+## Current Status & Timeline
+- **Test Phase (Q2 2025):** Annotating sequences from *Inside* using Roboflow and SAM tools.
+- **Training Prototype Model (Q3 2025):** Building initial inference pipeline and testing labeling workflow.
+- **Scaling Up (Q3 2025):** Transitioning to a larger dataset involving Western films and *Red Dead Redemption 2*.
+- **Deployment (Q4 2025):** Developing interactive installation, annotation tool and real-time inference API.
 
-## 🔧 Current Status & Timeline
-
-- **Test Phase (Q2 2024):** Annotating sequences from *Inside* using Roboflow and SAM tools.
-- **Training Prototype Model (Q3 2024):** Building initial inference pipeline and testing labeling workflow.
-- **Scaling Up (Q4 2024):** Transitioning to a larger dataset involving Western films and *Red Dead Redemption 2*.
-- **Deployment (Q1 2025):** Developing interactive installation and real-time inference API.
-
-## 🌍 External Resources
-
+## External Resources
 - [Project overview & context](https://abstractmachine.net/en/posts/inside-inside)  
 - [Teaser video (Inside Inside)](https://vimeo.com/589844238)  
 - [GIFF Festival installation (2021)](https://www.giff.ch/archives/2021/)
