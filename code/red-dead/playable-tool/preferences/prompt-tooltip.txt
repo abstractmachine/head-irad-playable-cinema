@@ -1,0 +1,5 @@
+# Info
+{title} {year} {director} {description} {tagline}
+
+# Subtitles
+{shot-subtitles} {full-subtitles}

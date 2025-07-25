@@ -361,7 +361,22 @@ class PlayerWindow(QMainWindow):
         
         # Clamp to valid range
         new_position = max(0, min(new_position, duration))
+        
+        # Update VLC position
         self.vlc_player.set_time(new_position)
+        
+        # Update timeline slider to match new position
+        self.timeline.setValue(new_position)
+        
+        # Update timecode display
+        seconds_total = new_position // 1000
+        h = seconds_total // 3600
+        m = (seconds_total % 3600) // 60
+        s = seconds_total % 60
+        self.set_timecode(f"{h:02}:{m:02}:{s:02}")
+        
+        # Emit timecode change signal to update other windows
+        self.emit_timecode_changed(new_position)
 
     def seek_back(self):
         """Seek backward by normal seek amount"""

@@ -50,8 +50,8 @@ def main():
     # Create text tab widget for annotate, default, prompt, and subtitles
     text_widget = QTabWidget()
     text_widget.addTab(windows["annotate"], "Annotator")
-    text_widget.addTab(windows["default"], "Default Prompt")
-    text_widget.addTab(windows["prompt"], "Movie Prompt")
+    text_widget.addTab(windows["default"], "Default")
+    text_widget.addTab(windows["prompt"], "Shot Prompt")
     text_widget.addTab(windows["subtitles"], "Subtitles")
     text_widget.show()
 
@@ -166,19 +166,9 @@ class GlobalKeyFilter(QObject):
     def eventFilter(self, obj, event):
         if event.type() == QEvent.KeyPress:
             focus_widget = QApplication.focusWidget()
-            annotate = self.windows["annotate"]
-            # Check ignore_next_enter before forwarding
-            if event.key() in (Qt.Key_Return, Qt.Key_Enter):
-                if annotate.ignore_next_enter:
-                    annotate.ignore_next_enter = False
-                    return True
-                if hasattr(annotate, 'system_prompt_field') and focus_widget is annotate.system_prompt_field:
-                    # Let system_prompt_field handle ENTER/RETURN for newlines
-                    return False
-                if not isinstance(focus_widget, QLineEdit):
-                    annotate.keyPressEvent(event)
-                    return True
-            elif not isinstance(focus_widget, (QLineEdit, QTextEdit)):
+            
+            # Keep all other key handling for shortcuts (A, O, B, N, etc.)
+            if not isinstance(focus_widget, (QLineEdit, QTextEdit)):
                 self.windows["player"].handle_global_key(event)
                 self.windows["annotate"].keyPressEvent(event)
                 return True

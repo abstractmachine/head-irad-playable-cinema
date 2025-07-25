@@ -7,7 +7,7 @@ import openai
 from PyQt5.QtGui import QFont, QFontDatabase, QTextOption
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QTimer
 from PyQt5.QtWidgets import (
-    QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QLineEdit, QTextEdit, QPushButton, QSizePolicy
+    QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QLineEdit, QTextEdit, QPushButton, QSizePolicy
 )
 
 FRAMES_PER_SHOT = 5
@@ -203,13 +203,8 @@ class AnnotateWindow(QMainWindow):
 
         self.caption_field.setFont(hk_font_caption)
 
-        # Install event filter for global key press handling
-        self.installEventFilter(self)
-
         # Ensure main window has focus at startup
         self.setFocus()
-
-        self.ignore_next_enter = False
 
         self.setFocusPolicy(Qt.StrongFocus)
 
@@ -238,20 +233,6 @@ class AnnotateWindow(QMainWindow):
         self.project_folder = None
         self.current_movie_filename = None
 
-    def eventFilter(self, obj, event):
-        # Global ENTER shortcut: only when NOT editing caption field
-        if event.type() == event.KeyPress and event.key() in (Qt.Key_Return, Qt.Key_Enter):
-            if self.ignore_next_enter:
-                self.ignore_next_enter = False
-                return True
-            if self.caption_field.hasFocus():
-                return False
-            self.caption_field.setFocus()
-            self.caption_field.selectAll()
-            return True
-
-        return super().eventFilter(obj, event)
-
     def keyPressEvent(self, event):
         # Only handle hotkeys, not ENTER
         key = event.key()
@@ -265,11 +246,6 @@ class AnnotateWindow(QMainWindow):
             self.next_button.click()
         else:
             super().keyPressEvent(event)
-
-    def exit_caption_editing(self):
-        self.activateWindow()  # Bring window to front
-        self.centralWidget().setFocus()  # Set focus to main widget
-        self.ignore_next_enter = True
 
     def on_request_save(self):
         geo = self.geometry()

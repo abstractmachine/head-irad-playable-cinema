@@ -328,6 +328,13 @@ class CinemaWindow(QMainWindow):
                 missing_folders.append(required_folder)
         
         if missing_folders:
+            # Show warning dialog
+            message = "The following required folders are missing:\n" + "\n".join(missing_folders) + \
+                      "\n\nDo you want to create them now?"
+            reply = QMessageBox.question(self, "Missing Folders", message, 
+                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if reply == QMessageBox.No:
+                return
             # Create missing folders
             try:
                 for folder_name in missing_folders:

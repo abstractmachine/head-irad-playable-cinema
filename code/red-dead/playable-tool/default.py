@@ -21,7 +21,10 @@ class DefaultWindow(QMainWindow):
 
         # Default prompt editor
         self.default_prompt_field = QTextEdit()
-        self.default_prompt_field.setPlaceholderText("Enter your default prompt here...")
+        self.default_prompt_field.setPlaceholderText("")
+        
+        # Load and set tooltip from file
+        self.load_tooltip()
         
         # Load custom font
         font_path = os.path.join(os.path.dirname(__file__), "ui/fonts/HKGrotesk-Regular.otf")
@@ -95,3 +98,21 @@ class DefaultWindow(QMainWindow):
             w = data.get("width", 600)
             h = data.get("height", 400)
             self.setGeometry(x, y, w, h)
+
+    def load_tooltip(self):
+        """Load tooltip text from preferences/prompt-tooltip.txt"""
+        tooltip_path = os.path.join(
+            os.path.dirname(__file__),
+            "preferences",
+            "prompt-tooltip.txt"
+        )
+        
+        try:
+            with open(tooltip_path, "r", encoding="utf-8") as f:
+                tooltip_text = f.read().strip()
+                self.default_prompt_field.setToolTip(tooltip_text)
+        except Exception as e:
+            # Fallback tooltip if file doesn't exist
+            default_tooltip = "Edit the default system prompt that will be used as a template for new movies."
+            self.default_prompt_field.setToolTip(default_tooltip)
+            print(f"Could not load tooltip from {tooltip_path}: {e}")
