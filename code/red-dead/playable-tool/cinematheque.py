@@ -52,8 +52,8 @@ class MovieItemWidget(QWidget):
         info_layout.setSpacing(0)
         info_layout.setContentsMargins(0, 10, 0, 0)  # Add top margin to push content down
 
-        # Get loaded fonts from CinemaWindow
-        fonts = CinemaWindow.get_loaded_fonts()
+        # Get loaded fonts from CinemathequeWindow
+        fonts = CinemathequeWindow.get_loaded_fonts()  # Updated class name
         font_family = fonts.get('regular', 'Helvetica')  # Use the base family name
 
         # Title (using Black weight)
@@ -184,7 +184,7 @@ class MovieItemWidget(QWidget):
         self.poster_label.setText("No\nPoster")
         self.poster_label.setAlignment(Qt.AlignCenter)
 
-class CinemaWindow(QMainWindow):
+class CinemathequeWindow(QMainWindow):  # Updated class name
     
     # Class variable to track if fonts are loaded
     _fonts_loaded = False
@@ -203,9 +203,9 @@ class CinemaWindow(QMainWindow):
         self.selected_movie_widget = None  # Track currently selected movie widget
         
         # Load custom fonts only once
-        if not CinemaWindow._fonts_loaded:
+        if not CinemathequeWindow._fonts_loaded:  # Updated class name
             self.load_fonts()
-            CinemaWindow._fonts_loaded = True
+            CinemathequeWindow._fonts_loaded = True  # Updated class name
         
         # Required project folders
         self.required_folders = ["datasets", "gameplay", "metadata", "movies", "posters", "prompts", "shotlists", "subtitles"]
@@ -284,16 +284,16 @@ class CinemaWindow(QMainWindow):
                 if font_id != -1:
                     font_families = QFontDatabase.applicationFontFamilies(font_id)
                     if font_families:
-                        CinemaWindow._font_families[style] = font_families[0]
+                        CinemathequeWindow._font_families[style] = font_families[0]  # Updated class name
                     else:
                         print(f"No font families returned for: {font_file}")
-                        CinemaWindow._font_families[style] = "Helvetica"
+                        CinemathequeWindow._font_families[style] = "Helvetica"  # Updated class name
                 else:
                     print(f"Failed to add font to database: {font_file}")
-                    CinemaWindow._font_families[style] = "Helvetica"
+                    CinemathequeWindow._font_families[style] = "Helvetica"  # Updated class name
             else:
                 print(f"Font file not found: {font_path}")
-                CinemaWindow._font_families[style] = "Helvetica"
+                CinemathequeWindow._font_families[style] = "Helvetica"  # Updated class name
 
     @classmethod
     def get_loaded_fonts(cls):

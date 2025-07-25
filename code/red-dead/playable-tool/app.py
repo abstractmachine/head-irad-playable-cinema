@@ -11,10 +11,11 @@ from PyQt5.QtCore import Qt
 from nickelodeon import NickelodeonWindow
 from shotlist import ShotlistWindow
 from annotate import AnnotateWindow
-from cinema import CinemaWindow
+from cinematheque import CinemathequeWindow
 from prompt import PromptWindow
 from default import DefaultWindow
 from subtitles import SubtitlesWindow
+from inference import InferenceWindow  # Add new import
 
 PREFS_PATH = "./preferences/preferences.json"
 
@@ -25,15 +26,16 @@ def main():
     windows = {
         "nickelodeon": NickelodeonWindow(),
         "shotlist": ShotlistWindow(),
-        "annotate": AnnotateWindow(),
-        "cinema": CinemaWindow(),
+        "captions": AnnotateWindow(),
+        "cinematheque": CinemathequeWindow(),
         "default": DefaultWindow(),
         "prompt": PromptWindow(),
-        "subtitles": SubtitlesWindow()
+        "subtitles": SubtitlesWindow(),
+        "inference": InferenceWindow()  # Add new window
     }
 
     # Install global key filter
-    key_filter = GlobalKeyFilter(windows)  # Pass the dict, not a list
+    key_filter = GlobalKeyFilter(windows)
     app.installEventFilter(key_filter)
 
     # Connect signals for preferences
@@ -41,15 +43,15 @@ def main():
         win.request_save.connect(win.on_request_save)
         win.request_load.connect(win.on_request_load)
 
-    # Create main tab widget for cinema and shotlist
+    # Create main tab widget for cinematheque and shotlist
     tab_widget = QTabWidget()
-    tab_widget.addTab(windows["cinema"], "Cinemathèque")
+    tab_widget.addTab(windows["cinematheque"], "Cinemathèque")
     tab_widget.addTab(windows["shotlist"], "Shotlist")
     tab_widget.show()
 
-    # Create text tab widget for annotate, default, prompt, and subtitles
+    # Create text tab widget for captions, default, prompt, subtitles, and inference
     text_widget = QTabWidget()
-    text_widget.addTab(windows["annotate"], "Annotator")
+    text_widget.addTab(windows["captions"], "Annotator")
     
     # Add default tab and set its tooltip
     default_tab_index = text_widget.addTab(windows["default"], "Default")
@@ -62,58 +64,65 @@ def main():
     text_widget.setTabToolTip(prompt_tab_index, prompt_tooltip)
     
     text_widget.addTab(windows["subtitles"], "Subtitles")
+    text_widget.addTab(windows["inference"], "Inference")  # Add new tab
     text_widget.show()
 
     # Signal Connections
-    windows["nickelodeon"].video_loaded.connect(windows["shotlist"].process_video)  # Changed from "player"
+    windows["nickelodeon"].video_loaded.connect(windows["shotlist"].process_video)
     windows["nickelodeon"].video_timecode_changed.connect(windows["shotlist"].clear_table_selection)
     windows["nickelodeon"].video_timecode_changed.connect(windows["shotlist"].set_current_time)
-    windows["nickelodeon"].frames_extracted.connect(windows["annotate"].handle_api_frames)
-    windows["nickelodeon"].video_loaded.connect(windows["cinema"].on_movie_loading_complete)
+    windows["nickelodeon"].frames_extracted.connect(windows["captions"].handle_api_frames)
+    windows["nickelodeon"].video_loaded.connect(windows["cinematheque"].on_movie_loading_complete)
     windows["nickelodeon"].video_loaded.connect(windows["prompt"].on_movie_loaded)
-    windows["cinema"].movie_selected.connect(windows["nickelodeon"].load_video_from_path)
-    windows["cinema"].project_loaded.connect(windows["prompt"].set_project_folder)
-    windows["cinema"].project_loaded.connect(windows["shotlist"].set_project_folder)
+    windows["cinematheque"].movie_selected.connect(windows["nickelodeon"].load_video_from_path)
+    windows["cinematheque"].project_loaded.connect(windows["prompt"].set_project_folder)
+    windows["cinematheque"].project_loaded.connect(windows["shotlist"].set_project_folder)
 
-    # Simple connections for annotate window (same pattern as prompt)
-    windows["nickelodeon"].video_loaded.connect(windows["annotate"].on_movie_loaded)
-    windows["cinema"].project_loaded.connect(windows["annotate"].set_project_folder)
-    
-    # Simple connections for subtitles window (same pattern as prompt)
+    windows["nickelodeon"].video_loaded.connect(windows["captions"].on_movie_loaded)
+    windows["cinematheque"].project_loaded.connect(windows["captions"].set_project_folder)
+
     windows["nickelodeon"].video_loaded.connect(windows["subtitles"].on_movie_loaded)
-    windows["cinema"].project_loaded.connect(windows["subtitles"].set_project_folder)
+    windows["cinematheque"].project_loaded.connect(windows["subtitles"].set_project_folder)
     windows["nickelodeon"].video_timecode_changed.connect(windows["subtitles"].on_timecode_changed)
 
-    windows["shotlist"].jump_to_timecode_signal.connect(windows["nickelodeon"].jump_to_timecode)
-    windows["shotlist"].shotlist_status.connect(windows["annotate"].set_shotlist_status)
-    windows["shotlist"].caption_selected.connect(windows["annotate"].set_caption_field)
-    windows["shotlist"].abort_api.connect(windows["annotate"].handle_api_abort)
-    windows["shotlist"].shot_timecodes.connect(windows["nickelodeon"].handle_shot_timecodes)
-    windows["shotlist"].is_last_available_shot.connect(windows["annotate"].handle_is_last_available_shot)
-    windows["annotate"].caption_submitted.connect(windows["shotlist"].update_caption_for_current_shot)
-    windows["annotate"].request_current_shot.connect(windows["shotlist"].handle_request_current_shot)
-    windows["annotate"].request_next_shot.connect(windows["shotlist"].jump_to_next_shot)
+    # Add connections for inference window
+    windows["nickelodeon"].video_loaded.connect(windows["inference"].on_movie_loaded)
+    windows["cinematheque"].project_loaded.connect(windows["inference"].set_project_folder)
+    windows["nickelodeon"].video_timecode_changed.connect(windows["inference"].on_timecode_changed)
 
-    # Load preferences at startup (now includes both tab widgets) - MOVE THIS AFTER CONNECTIONS
+    windows["shotlist"].jump_to_timecode_signal.connect(windows["nickelodeon"].jump_to_timecode)
+    windows["shotlist"].shotlist_status.connect(windows["captions"].set_shotlist_status)
+    windows["shotlist"].caption_selected.connect(windows["captions"].set_caption_field)
+    windows["shotlist"].abort_api.connect(windows["captions"].handle_api_abort)
+    windows["shotlist"].shot_timecodes.connect(windows["nickelodeon"].handle_shot_timecodes)
+    windows["shotlist"].is_last_available_shot.connect(windows["captions"].handle_is_last_available_shot)
+    windows["captions"].caption_submitted.connect(windows["shotlist"].update_caption_for_current_shot)
+    windows["captions"].request_current_shot.connect(windows["shotlist"].handle_request_current_shot)
+    windows["captions"].request_next_shot.connect(windows["shotlist"].jump_to_next_shot)
+
+    # Load preferences at startup
     load_preferences(windows, tab_widget, text_widget)
 
-    # Save preferences on exit (now includes both tab widgets)
+    # Save preferences on exit
     app.aboutToQuit.connect(lambda: save_preferences(windows, tab_widget, text_widget))
 
     # Show the app windows
-    windows["nickelodeon"].show()  # Changed from "player"
+    windows["nickelodeon"].show()
 
+    # Because we have a VLC player, we need to ensure it closes properly on app exit
     def clean_quit():
         try:
-            windows["nickelodeon"].player.terminate()  # Updated for MPV - Changed from "player"
+            windows["nickelodeon"].player.terminate()
         except Exception:
             pass
         for window in windows.values():
             window.close()
 
+    # Connect the clean quit function to the app's aboutToQuit signal
     app.aboutToQuit.connect(clean_quit)
     sys.exit(app.exec_())
 
+# Save and load preferences for all windows and widgets
 def save_preferences(windows, tab_widget, text_widget):
     prefs = {}
     for key, win in windows.items():
@@ -143,6 +152,7 @@ def save_preferences(windows, tab_widget, text_widget):
     with open(PREFS_PATH, "w") as f:
         json.dump(prefs, f)
 
+# Load preferences for all windows and widgets
 def load_preferences(windows, tab_widget, text_widget):
     if os.path.exists(PREFS_PATH):
         with open(PREFS_PATH, "r") as f:
@@ -167,6 +177,7 @@ def load_preferences(windows, tab_widget, text_widget):
         for win in windows.values():
             win.request_load.emit({})
 
+# Load tooltip text from a file
 def load_tooltip_text(filename):
     """Load tooltip text from preferences file"""
     tooltip_path = os.path.join(os.path.dirname(__file__), "preferences", filename)
@@ -177,6 +188,7 @@ def load_tooltip_text(filename):
     except:
         return ""  # Just return empty string if file doesn't exist
 
+# Global key filter to handle key events across all windows
 class GlobalKeyFilter(QObject):
     def __init__(self, windows):
         super().__init__()
@@ -189,9 +201,10 @@ class GlobalKeyFilter(QObject):
             # Keep all other key handling for shortcuts (A, O, B, N, etc.)
             if not isinstance(focus_widget, (QLineEdit, QTextEdit)):
                 self.windows["nickelodeon"].handle_global_key(event)  # Changed from "player"
-                self.windows["annotate"].keyPressEvent(event)
+                self.windows["captions"].keyPressEvent(event)
                 return True
         return False
 
+# Ensure the main function is called when the script is run
 if __name__ == "__main__":
     main()
