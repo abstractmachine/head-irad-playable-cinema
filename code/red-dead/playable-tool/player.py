@@ -452,6 +452,10 @@ class PlayerWindow(QMainWindow):
 
     def handle_shot_timecodes(self, start_timecode, timecodes_list):
         """Handle shot timecodes from shotlist for frame extraction"""
+        
+        if not self.current_video_path:
+            return
+            
         # Jump to the start of the shot
         self.jump_to_timecode(start_timecode)
         
@@ -460,29 +464,30 @@ class PlayerWindow(QMainWindow):
         import cv2
         cap = cv2.VideoCapture(self.current_video_path)
         
-        for timecode in timecodes_list:
+        for i, timecode in enumerate(timecodes_list):
             # Convert timecode to milliseconds
             parts = timecode.split(":")
             if len(parts) == 3:
                 h = int(parts[0])
                 m = int(parts[1])
                 s = float(parts[2])
-                time_ms = int((h * 3600 + m * 60 + s) * 1000)  # Ensure integer
-                
+                time_ms = int((h * 3600 + m * 60 + s) * 1000)
+                                
                 # Extract frame at this timecode
                 cap.set(cv2.CAP_PROP_POS_MSEC, time_ms)
                 ret, frame = cap.read()
                 if ret:
                     frames.append(frame)
-        
+                else:
+                    pass
+
         cap.release()
         
         # Emit the extracted frames to the annotate window
         if frames:
             self.frames_extracted.emit(frames)
-            print(f"Extracted {len(frames)} frames from shot")
         else:
-            print("No frames could be extracted from the shot")
+            pass
 
     def emit_timecode_changed(self, position):
         self.video_timecode_changed.emit(position)

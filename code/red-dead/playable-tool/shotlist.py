@@ -1,6 +1,8 @@
 import csv
 import os
 
+DEBUG = False # Set to True to enable debug prints
+
 from PyQt5.QtCore import pyqtSignal
 from PyQt5.QtCore import Qt, QThread, QObject, QTimer
 from PyQt5.QtGui import QFont, QColor
@@ -150,7 +152,6 @@ class ShotlistWindow(QMainWindow):
         self.scene_table.setRowCount(0)
         if not self.video_path or not os.path.exists(self.video_path):
             self.scene_table.setRowCount(1)
-            print("No video loaded or file not found.")
             self.detect_button.setEnabled(True)
             self.detect_button.setText("Detect Shots")
             self.detect_button.setStyleSheet(
@@ -199,7 +200,6 @@ class ShotlistWindow(QMainWindow):
         self.on_detection_finished()
         if not scene_list or (isinstance(scene_list[0], str) and scene_list[0].startswith("Error:")):
             self.scene_table.setRowCount(0)  # Clear all rows
-            print("No shots detected or an error occurred:", scene_list[0] if isinstance(scene_list, list) else scene_list)
             self.delete_button.setEnabled(False)
             # Notify AnnotateWindow to disable buttons
             self.shotlist_status.emit(False)
@@ -270,19 +270,16 @@ class ShotlistWindow(QMainWindow):
         column_title = header_item.text()
         
         if column_title == "Start":
-            # print("Start timecode clicked")
             start_tc = self.scene_table.item(row, col).text()
             self.jump_to_timecode(start_tc)
         elif column_title == "End":
-            # print("End timecode clicked")
             end_tc = self.scene_table.item(row, col).text()
             self.jump_to_timecode(end_tc, is_last_frame=True)
         elif column_title == "Caption":
             # Emit the caption for this shot
             self.emit_caption_for_row(row)
         else:
-            print(f"Clicked on column: {column_title}")
-            # Handle other columns if needed
+            pass
 
     def jump_to_timecode(self, timecode, is_last_frame=False):
         parts = timecode.split(":")
@@ -480,13 +477,12 @@ class ShotlistWindow(QMainWindow):
 
     def update_caption_for_current_shot(self, caption_text):
         row = self.find_closest_row(self.current_time_ms)
-        #print(f"Updating caption for current shot at row {row} with time {self.current_time_ms} ms.")
         if row is not None:
             caption_col = self.get_column_index_by_name("Caption")
             self.scene_table.item(row, caption_col).setText(caption_text)
             self.save_shotlist_to_csv()
         else:
-            print("No matching shot found for annotation")
+            pass
 
     def set_current_time(self, ms):
         self.current_time_ms = ms
@@ -536,17 +532,17 @@ class ShotlistWindow(QMainWindow):
 
     def handle_request_current_shot(self, count):
         row = self.find_current_shot(self.current_time_ms)
-        if row is None:
-            print(f"No shot found for current time {self.current_time_ms} ms - row count = {self.scene_table.rowCount()}.")
+        
+        # Fix: Check for both None AND -1 (invalid row)
+        if row is None or row < 0:
             self.abort_api.emit("No matching shot found for API request.")
             return
-            
-        # Use get_column_index_by_name instead of hardcoded indices
+        
+        # Continue with existing frame extraction logic...
         start_col = self.get_column_index_by_name("Start")
         end_col = self.get_column_index_by_name("End")
         
         if start_col == -1 or end_col == -1:
-            print("Error: Could not find Start or End columns")
             self.abort_api.emit("Column structure error.")
             return
             
@@ -555,7 +551,6 @@ class ShotlistWindow(QMainWindow):
         end_item = self.scene_table.item(row, end_col)
         
         if not start_item or not end_item:
-            print(f"Error: Table items not found for row {row}")
             self.abort_api.emit("Shot data not available.")
             return
             
@@ -563,10 +558,10 @@ class ShotlistWindow(QMainWindow):
         end_tc = end_item.text()
         
         if not start_tc or not end_tc:
-            print(f"Error: Empty timecodes for row {row}")
             self.abort_api.emit("Invalid shot timecodes.")
             return
-            
+                
+        # Generate timecodes for frame extraction
         def tc_to_ms(tc):
             parts = tc.split(":")
             if len(parts) == 3:
@@ -588,6 +583,7 @@ class ShotlistWindow(QMainWindow):
             s = ((ms % 60000) / 1000)
             tc = f"{h:02}:{m:02}:{s:06.3f}"
             timecodes.append(tc)
+                
         # Emit the signal to player
         self.shot_timecodes.emit(start_tc, timecodes)
 
@@ -621,14 +617,16 @@ class ShotlistWindow(QMainWindow):
 
     def jump_to_next_shot(self):
         """Jump to the next non-ignored shot"""
+        if DEBUG: print("DEBUG: jump_to_next_shot called")
         row_count = self.scene_table.rowCount()
         
         if row_count == 0:
-            print("No shots available")
+            if DEBUG: print("DEBUG: No rows in table")
             return
         
         # Start searching from current_row + 1, or from 0 if current_row is invalid
         start_row = max(0, self.current_row + 1)
+        if DEBUG: print(f"DEBUG: Searching for next shot starting from row {start_row}")
         
         # Find next non-ignored row
         for next_row in range(start_row, row_count):
@@ -641,13 +639,14 @@ class ShotlistWindow(QMainWindow):
                 checkbox = widget.findChild(QCheckBox)
                 if checkbox and not checkbox.isChecked():
                     # Found next non-ignored shot
+                    if DEBUG: print(f"DEBUG: Found next non-ignored shot at row {next_row}")
                     start_col_index = self.get_column_index_by_name("Start")
                     start_tc = self.scene_table.item(next_row, start_col_index).text()
                     self.jump_to_timecode(start_tc)
                     return
         
         # No next shot found
-        print("Already at last available shot")
+        if DEBUG: print("DEBUG: Already at last available shot")
 
     def find_current_shot(self, ms):
         """Find the row index of the shot that contains the given time in ms"""
@@ -665,17 +664,21 @@ class ShotlistWindow(QMainWindow):
                 return int((h * 3600 + m * 60 + s) * 1000)
             return 0
         
+        # Get the start time of the first shot for comparison
+        start_index = self.get_column_index_by_name("Start")
+        if start_index == -1:
+            return -1
+        
+        first_shot_start = tc_to_ms(self.scene_table.item(0, start_index).text())
+        
+        # If we're before the first shot, return the first shot
+        if ms < first_shot_start:
+            return 0
+        
+        # Otherwise, search for the shot that contains this time
         for row in range(row_count):
-            # Skip ignored shots
-            widget = self.scene_table.cellWidget(row, 0)
-            if widget:
-                checkbox = widget.findChild(QCheckBox)
-                if checkbox and checkbox.isChecked():
-                    continue
-
-            start_index = self.get_column_index_by_name("Start")
             end_index = self.get_column_index_by_name("End")
-            if start_index == -1 or end_index == -1:
+            if end_index == -1:
                 return -1
 
             start_tc = self.scene_table.item(row, start_index).text()
@@ -686,6 +689,7 @@ class ShotlistWindow(QMainWindow):
             if start_ms <= ms < end_ms:
                 return row
         
+        # If we get here, we're after the last shot
         return -1
 
     def is_last_non_ignored_row(self, current_row):
@@ -771,4 +775,3 @@ class ShotlistWindow(QMainWindow):
         self.project_folder = project_folder
         self.detections_folder = os.path.join(project_folder, "shotlists")
         os.makedirs(self.detections_folder, exist_ok=True)
-        # print(f"Shotlist: Detections folder set to {self.detections_folder}")

@@ -4,6 +4,8 @@ import base64
 import mimetypes
 import openai
 
+DEBUG = False # Debug flag - set to True to enable debug output
+
 from PyQt5.QtGui import QFont, QFontDatabase, QTextOption
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QTimer
 from PyQt5.QtWidgets import (
@@ -45,8 +47,7 @@ class ApiWorker(QObject):
         self.project_folder = project_folder
         self.movie_filename = movie_filename
 
-    def run(self):
-        # print(f"API Worker received {len(self.frames)} frames")
+    def run(self):        
         images_payload = []
         for frame in self.frames:
             images_payload.append({
@@ -56,10 +57,10 @@ class ApiWorker(QObject):
                     "detail": "high"
                 }
             })
-
+        
         # Read system prompt from movie-specific file if available, otherwise fallback
         system_prompt = self._get_system_prompt()
-
+        
         # Read API key from file
         api_key_path = os.path.join(os.path.dirname(__file__), "preferences", "api_key.txt")
         try:
@@ -75,7 +76,7 @@ class ApiWorker(QObject):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": images_payload}
         ]
-
+        
         try:
             response = openai.OpenAI(api_key=api_key).chat.completions.create(
                 model="gpt-4o",
@@ -107,7 +108,7 @@ class ApiWorker(QObject):
                     with open(movie_prompt_path, "r", encoding="utf-8") as f:
                         return f.read()
                 except Exception as e:
-                    print(f"Error reading movie prompt {movie_prompt_path}: {e}")
+                    pass
 
         # Fallback to global system prompt
         system_prompt_path = os.path.join(os.path.dirname(__file__), "preferences", "system_prompt.txt")
@@ -284,8 +285,8 @@ class AnnotateWindow(QMainWindow):
         self.next_button.setEnabled(exists)
 
     def submit_caption(self):
+        if DEBUG: print("DEBUG: submit_caption called")
         text = self.caption_field.toPlainText()
-        # print("Annotate button pressed, submitting caption:", text)
         self.caption_submitted.emit(text)
 
     def set_project_folder(self, project_folder):
@@ -298,7 +299,6 @@ class AnnotateWindow(QMainWindow):
         self.current_movie_filename = movie_filename
 
     def handle_api_frames(self, frames):
-        # print("handle_api_frames called")
         self.current_frames = frames
 
         self.api_thread = QThread()
@@ -316,7 +316,13 @@ class AnnotateWindow(QMainWindow):
         self.api_thread.finished.connect(self.api_thread.deleteLater)
         self.api_thread.start()
 
-    def handle_api_button(self):
+    def handle_api_button(self):        
+        # Stop any existing animation timer first
+        if hasattr(self, 'api_anim_timer') and self.api_anim_timer is not None:
+            self.api_anim_timer.stop()
+            self.api_anim_timer.deleteLater()
+            self.api_anim_timer = None
+        
         self.api_running = True
         self.caption_field.clear()
         self.api_button.setText("")
@@ -331,10 +337,17 @@ class AnnotateWindow(QMainWindow):
             frame_count = 5  # Fallback to default
             
         self.request_current_shot.emit(frame_count)
-        self.api_anim_step = 0
-        self.api_anim_timer = QTimer(self)
-        self.api_anim_timer.timeout.connect(self.animate_api_button)
-        self.api_anim_timer.start(400)  # update every 400ms
+        
+        # Use QTimer.singleShot to check if API is still running after signal processing
+        QTimer.singleShot(100, self.start_api_animation_if_still_running)
+
+    def start_api_animation_if_still_running(self):
+        """Start animation only if API is still running (wasn't aborted)"""
+        if self.api_running:
+            self.api_anim_step = 0
+            self.api_anim_timer = QTimer(self)
+            self.api_anim_timer.timeout.connect(self.animate_api_button)
+            self.api_anim_timer.start(400)  # update every 400ms
 
     def animate_api_button(self):
         dots = '.' * (self.api_anim_step % 4)
@@ -342,6 +355,7 @@ class AnnotateWindow(QMainWindow):
         self.api_anim_step += 1
 
     def handle_api_result(self, result):
+        if DEBUG: print("DEBUG: handle_api_result called")
         self.api_running = False
         if hasattr(self, 'api_anim_timer'):
             self.api_anim_timer.stop()
@@ -350,53 +364,77 @@ class AnnotateWindow(QMainWindow):
             btn.setEnabled(True)
         self.next_button.setEnabled(not self.is_last_row)
         self.caption_field.setPlainText(result)
+        if DEBUG: print("DEBUG: About to call handle_bot_after_api_result")
         self.handle_bot_after_api_result()
 
     def handle_bot_after_api_result(self):
+        if DEBUG: print(f"DEBUG: handle_bot_after_api_result called - bot_active={self.bot_active}")
         if self.bot_active:
+            if DEBUG: print("DEBUG: Bot clicking Annotate button")
             self.annotate_button.click()
             if not self.is_last_row:
+                if DEBUG: print("DEBUG: Bot clicking Next button")
                 self.next_button.click()
             else:
+                if DEBUG: print("DEBUG: Bot reached last row, stopping")
                 self.stop_bot()
 
     def handle_api_abort(self, message):
         self.api_running = False
-        if hasattr(self, 'api_anim_timer'):
-            self.api_anim_timer.stop()
-            self.api_button.setText("OpenAI")
+        
+        # Stop the animation timer MORE AGGRESSIVELY
+        if hasattr(self, 'api_anim_timer') and self.api_anim_timer is not None:
+            try:
+                self.api_anim_timer.stop()
+                self.api_anim_timer.deleteLater()
+            except Exception as e:
+                pass
+            finally:
+                self.api_anim_timer = None
+            
+        # Reset button text and enable buttons
+        self.api_button.setText("OpenAI")
         for btn in [self.annotate_button, self.api_button]:
             btn.setEnabled(True)
         self.next_button.setEnabled(not self.is_last_row)
-        self.api_button.setText("OpenAI")
+        
+        # Show error message in caption field
         self.caption_field.setPlainText(f"API aborted: {message}")
 
     def set_caption_field(self, caption):
         self.caption_field.setPlainText(caption)
 
     def handle_next_button(self):
+        if DEBUG: print("DEBUG: handle_next_button called")
         self.request_next_shot.emit()
 
     def toggle_bot(self):
+        if DEBUG: print("DEBUG: toggle_bot called")
         if not self.bot_active:
+            if DEBUG: print("DEBUG: Starting bot")
             self.bot_active = True
             self.bot_button.setText("    Bot On")
             self.bot_button.setStyleSheet("text-align: left;")
             self.bot_anim_timer.start(500)
             self.start_bot_loop()
         else:
+            if DEBUG: print("DEBUG: Stopping bot")
             self.stop_bot()
 
     def stop_bot(self):
+        if DEBUG: print("DEBUG: stop_bot called")
         self.bot_active = False
         self.bot_anim_timer.stop()
         self.bot_button.setText("Bot Off")
         self.bot_button.setStyleSheet("text-align: center;")
 
     def start_bot_loop(self):
+        if DEBUG: print(f"DEBUG: start_bot_loop called - bot_active={self.bot_active}, api_running={self.api_running}")
         if not self.bot_active or self.api_running:
+            if DEBUG: print("DEBUG: Bot loop aborted - bot not active or API running")
             return
         # Step 2: Press OpenAI button
+        if DEBUG: print("DEBUG: Bot clicking OpenAI button")
         self.api_button.click()
 
     def animate_bot_button(self):
@@ -405,11 +443,13 @@ class AnnotateWindow(QMainWindow):
         self.bot_button.setStyleSheet("text-align: left;")
 
     def handle_is_last_available_shot(self, is_last):
+        if DEBUG: print(f"DEBUG: handle_is_last_available_shot called - is_last={is_last}, bot_active={self.bot_active}, api_running={self.api_running}")
         self.is_last_row = is_last
         self.next_button.setEnabled(not is_last and not self.api_running)
 
         # Bot loop logic
         if self.bot_active and not self.api_running:
+            if DEBUG: print("DEBUG: Bot continuing loop via handle_is_last_available_shot")
             QTimer.singleShot(100, self.start_bot_loop)
 
     def validate_frame_count(self):
