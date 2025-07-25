@@ -1,6 +1,9 @@
 # TODO
 - Add :
     - Subtitles of all dialogue spoken in between `Start` and `End` when sending to `OpenAI` `API`. Include somehow in System Prompt
+    - Movie importer (to fast load formet, etc)
+
+- Save image-upload-count to OpenAI in each movie's shotlist folder
 
 - Add Movies :
     - The Naked Spur (Higher Res)

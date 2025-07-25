@@ -50,8 +50,17 @@ def main():
     # Create text tab widget for annotate, default, prompt, and subtitles
     text_widget = QTabWidget()
     text_widget.addTab(windows["annotate"], "Annotator")
-    text_widget.addTab(windows["default"], "Default")
-    text_widget.addTab(windows["prompt"], "Shot Prompt")
+    
+    # Add default tab and set its tooltip
+    default_tab_index = text_widget.addTab(windows["default"], "Default")
+    default_tooltip = load_tooltip_text("prompt-tooltip.txt")
+    text_widget.setTabToolTip(default_tab_index, default_tooltip)
+    
+    # Add prompt tab and set its tooltip
+    prompt_tab_index = text_widget.addTab(windows["prompt"], "Shot Prompt")
+    prompt_tooltip = load_tooltip_text("prompt-tooltip.txt")
+    text_widget.setTabToolTip(prompt_tab_index, prompt_tooltip)
+    
     text_widget.addTab(windows["subtitles"], "Subtitles")
     text_widget.show()
 
@@ -157,6 +166,16 @@ def load_preferences(windows, tab_widget, text_widget):
     else:
         for win in windows.values():
             win.request_load.emit({})
+
+def load_tooltip_text(filename):
+    """Load tooltip text from preferences file"""
+    tooltip_path = os.path.join(os.path.dirname(__file__), "preferences", filename)
+    
+    try:
+        with open(tooltip_path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except:
+        return ""  # Just return empty string if file doesn't exist
 
 class GlobalKeyFilter(QObject):
     def __init__(self, windows):

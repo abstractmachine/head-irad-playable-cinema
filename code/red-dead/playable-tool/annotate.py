@@ -7,10 +7,8 @@ import openai
 from PyQt5.QtGui import QFont, QFontDatabase, QTextOption
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QTimer
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QLineEdit, QTextEdit, QPushButton, QSizePolicy
+    QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QLineEdit, QTextEdit, QPushButton, QSizePolicy
 )
-
-FRAMES_PER_SHOT = 5
 
 def encode_image(image_array):
     import cv2
@@ -178,6 +176,15 @@ class AnnotateWindow(QMainWindow):
         self.api_button.setToolTip("Send current shot to OpenAI API and receive a caption\nShortcut: O")
         button_layout.addWidget(self.api_button)
 
+        # Frame count field
+        self.frame_count_field = QLineEdit("5")
+        self.frame_count_field.setFixedWidth(30)
+        self.frame_count_field.setMinimumHeight(24)
+        self.frame_count_field.setAlignment(Qt.AlignCenter)
+        self.frame_count_field.setToolTip("Number of frames to send to OpenAI (0 = none)")
+        self.frame_count_field.editingFinished.connect(self.validate_frame_count)
+        button_layout.addWidget(self.frame_count_field)
+
         self.bot_button = QPushButton("Bot Off")
         self.bot_button.setFixedWidth(100)
         self.bot_button.setEnabled(False)
@@ -253,7 +260,8 @@ class AnnotateWindow(QMainWindow):
             "x": geo.x(),
             "y": geo.y(),
             "width": geo.width(),
-            "height": geo.height()
+            "height": geo.height(),
+            "frame_count": self.frame_count_field.text()  # Save frame count
         }
         return self._pending_save_data
 
@@ -264,6 +272,10 @@ class AnnotateWindow(QMainWindow):
             w = data.get("width", 400)
             h = data.get("height", 150)
             self.setGeometry(x, y, w, h)
+            
+            # Load frame count
+            if "frame_count" in data:
+                self.frame_count_field.setText(data["frame_count"])
 
     def set_shotlist_status(self, exists):
         self.annotate_button.setEnabled(exists)
@@ -312,7 +324,13 @@ class AnnotateWindow(QMainWindow):
         for btn in [self.annotate_button, self.api_button, self.next_button]:
             btn.setEnabled(False)
 
-        self.request_current_shot.emit(FRAMES_PER_SHOT)
+        # Get frame count from input field
+        try:
+            frame_count = int(self.frame_count_field.text())
+        except ValueError:
+            frame_count = 5  # Fallback to default
+            
+        self.request_current_shot.emit(frame_count)
         self.api_anim_step = 0
         self.api_anim_timer = QTimer(self)
         self.api_anim_timer.timeout.connect(self.animate_api_button)
@@ -393,3 +411,12 @@ class AnnotateWindow(QMainWindow):
         # Bot loop logic
         if self.bot_active and not self.api_running:
             QTimer.singleShot(100, self.start_bot_loop)
+
+    def validate_frame_count(self):
+        """Validate frame count input"""
+        try:
+            value = int(self.frame_count_field.text())
+            if value < 0:
+                self.frame_count_field.setText("0")
+        except ValueError:
+            self.frame_count_field.setText("5")  # Reset to default if invalid

@@ -28,9 +28,6 @@ class PromptWindow(QMainWindow):
         self.system_prompt_field = QTextEdit()
         self.system_prompt_field.setPlaceholderText("No movie loadaded")
         
-        # Load and set tooltip from file
-        self.load_tooltip()
-        
         # Load custom font
         font_path = os.path.join(os.path.dirname(__file__), "ui/fonts/HKGrotesk-Regular.otf")
         font_id = QFontDatabase.addApplicationFont(font_path)
@@ -187,21 +184,3 @@ class PromptWindow(QMainWindow):
             w = data.get("width", 600)
             h = data.get("height", 400)
             self.setGeometry(x, y, w, h)
-
-    def load_tooltip(self):
-        """Load tooltip text from preferences/prompt-tooltip.txt"""
-        tooltip_path = os.path.join(
-            os.path.dirname(__file__),
-            "preferences",
-            "prompt-tooltip.txt"
-        )
-        
-        try:
-            with open(tooltip_path, "r", encoding="utf-8") as f:
-                tooltip_text = f.read().strip()
-                self.system_prompt_field.setToolTip(tooltip_text)
-        except Exception as e:
-            # Fallback tooltip if file doesn't exist
-            default_tooltip = "Edit the system prompt that will be used for OpenAI API calls for this specific movie."
-            self.system_prompt_field.setToolTip(default_tooltip)
-            print(f"Could not load tooltip from {tooltip_path}: {e}")
