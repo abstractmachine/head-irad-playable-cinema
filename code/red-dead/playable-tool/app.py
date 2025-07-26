@@ -15,6 +15,7 @@ from ui import UI
 
 # our other windows
 from nickelodeon import NickelodeonWindow
+from playhouse import PlayhouseWindow
 from shotlist import ShotlistWindow
 from annotate import AnnotateWindow
 from cinematheque import CinemathequeWindow
@@ -35,6 +36,7 @@ def main():
     # create a dictionary of our windows, passing ui to each
     windows = {
         "nickelodeon": NickelodeonWindow(ui),
+        "playhouse": PlayhouseWindow(ui),
         "shotlist": ShotlistWindow(ui),
         "captions": AnnotateWindow(ui),
         "cinematheque": CinemathequeWindow(ui),
@@ -119,11 +121,13 @@ def main():
 
     # Show the app windows
     windows["nickelodeon"].show()
+    windows["playhouse"].show()
 
     # Because we have a VLC player, we need to ensure it closes properly on app exit
     def clean_quit():
         try:
             windows["nickelodeon"].player.terminate()
+            windows["playhouse"].player.terminate()
         except Exception:
             pass
         for window in windows.values():

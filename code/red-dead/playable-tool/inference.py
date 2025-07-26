@@ -100,7 +100,7 @@ class InferenceWindow(QMainWindow):
 
     def select_model(self):
         """Handle Inference Model button click"""
-        self.caption_model = "Example Model v1.0"
+        self.caption_model = "Caption Model v1.0"
         self.caption_model_field.setText(self.caption_model)
         self.gameplay_inference.setPlainText("Caption Model loaded: " + self.caption_model)
         if DEBUG: print(f"Caption: Model selected - {self.caption_model}")
