@@ -109,6 +109,7 @@ def main():
     windows["captions"].caption_submitted.connect(windows["shotlist"].update_caption_for_current_shot)
     windows["captions"].request_current_shot.connect(windows["shotlist"].handle_request_current_shot)
     windows["captions"].request_next_shot.connect(windows["shotlist"].jump_to_next_shot)
+    windows["captions"].bot_finished.connect(windows["cinematheque"].on_bot_finished)
 
     # Load preferences at startup
     load_preferences(windows, tab_widget, text_widget)

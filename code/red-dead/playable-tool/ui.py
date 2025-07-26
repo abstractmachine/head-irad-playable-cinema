@@ -9,7 +9,7 @@ class UI:
         self.fonts = {
             # style: (family, size, weight, italic)
             'tiny':     ('Roboto Mono', 12, QFont.Bold, False),
-            'button':   ('Roboto', 13, QFont.Normal, False),
+            'button':   ('Roboto', 12, QFont.Normal, False),
             'collumn':  ('Roboto', 10, QFont.Normal, False),
             'cell':     ('Roboto', 12, QFont.Normal, False),
             'cell-tiny':('Roboto', 12, QFont.Thin, False),

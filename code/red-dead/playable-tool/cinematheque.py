@@ -1,4 +1,4 @@
-DEBUG = False  # Set to True to enable debug output
+DEBUG = True  # Set to True to enable debug output
 
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QThread, QTimer
 from PyQt5.QtWidgets import (
@@ -340,6 +340,28 @@ class CinemathequeWindow(QMainWindow):
                     
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load metadata.csv:\n{str(e)}")
+
+    def on_bot_finished(self):
+        """Handle bot finished signal"""
+        if DEBUG: print("DEBUG: Cinematheque: bot finished")
+        # Vertify if we are at the end of the list
+        if self.movie_list.count() == 0:
+            if DEBUG: print("DEBUG: Cinematheque: No movies to process")
+            return
+        
+        # Get the last item in the list
+        last_item = self.movie_list.item(self.movie_list.count() - 1)
+        # Compare our selected movie widget with the last item
+        last_widget = self.movie_list.itemWidget(last_item)
+        if self.selected_movie_widget and self.selected_movie_widget == last_widget:
+            if DEBUG: print("DEBUG: Cinematheque: Bot reached last movie, stopping")
+            return
+        
+        # If we reach here, it means the bot is still active
+        if DEBUG: print("DEBUG: Cinematheque: Move movies remaining, select next movie")
+
+        # Work todo here to handle the selecting the new movie
+        # Then emitting a message to tell the bot to start processing the next movie
 
     def on_movie_clicked(self, item):
         """Handle movie item click with custom selection"""

@@ -18,22 +18,29 @@ class InferenceWindow(QMainWindow):
         # Initialize variables
         self.project_folder = None
         self.current_movie_filename = None
-        self.current_model = "No model loaded"
+        self.caption_model = "No caption model loaded"
+        self.search_model = "No search model loaded"
         
         # Main layout
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(10)
 
-        # Inference text display (read-only)
-        self.inference_field = QTextEdit()
-        self.inference_field.setPlaceholderText("Test example: Inference not yet implemented.")
-        self.inference_field.setReadOnly(True)  # Make it read-only
+        # Gameplay inference field (top)
+        self.gameplay_inference = QTextEdit()
+        self.gameplay_inference.setPlaceholderText("Live caption model inferencing outputs here.")
+        self.gameplay_inference.setReadOnly(True)
+        self.gameplay_inference.setFont(self.ui.get_font('text'))
+        self.gameplay_inference.setStyleSheet("QTextEdit { border: none; padding: 5px; }")
+        main_layout.addWidget(self.gameplay_inference, stretch=1)
 
-        # Set to 'text' font from UI
-        self.inference_field.setFont(self.ui.get_font('text'))
-        self.inference_field.setStyleSheet("QTextEdit { border: none; padding: 5px; }")
-        main_layout.addWidget(self.inference_field, stretch=1)
+        # Matched caption field (bottom)
+        self.matched_caption = QTextEdit()
+        self.matched_caption.setPlaceholderText("Matched caption will appear here.")
+        self.matched_caption.setReadOnly(True)
+        self.matched_caption.setFont(self.ui.get_font('text'))
+        self.matched_caption.setStyleSheet("QTextEdit { border: none; padding: 5px; }")
+        main_layout.addWidget(self.matched_caption, stretch=1)
 
         # Button layout
         button_layout = QHBoxLayout()
@@ -45,24 +52,38 @@ class InferenceWindow(QMainWindow):
         # Off button
         self.off_button = QPushButton("Off")
         self.off_button.clicked.connect(self.turn_off_inference)
-        self.off_button.setFixedSize(button_width, button_height)
+        self.off_button.setFixedSize(80, button_height)
         self.off_button.setFont(self.ui.get_font('button'))
         button_layout.addWidget(self.off_button)
 
-        # Model button
-        self.model_button = QPushButton("Model")
+        # Inference Model button
+        self.model_button = QPushButton("Caption")
         self.model_button.clicked.connect(self.select_model)
         self.model_button.setFixedSize(button_width, button_height)
         self.model_button.setFont(self.ui.get_font('button'))
         button_layout.addWidget(self.model_button)
 
-        # Current model display (simple label matching button height)
-        self.current_model_field = QLabel(self.current_model)
-        self.current_model_field.setFont(self.ui.get_font('monospace'))
-        self.current_model_field.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        # Current model display
+        self.caption_model_field = QLabel(self.caption_model)
+        self.caption_model_field.setFont(self.ui.get_font('monospace'))
+        self.caption_model_field.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         tiny_height = self.ui.get_dimensions('tiny')[1]
-        self.current_model_field.setFixedHeight(tiny_height)  # Use tiny height
-        button_layout.addWidget(self.current_model_field, stretch=1)
+        self.caption_model_field.setFixedHeight(tiny_height)
+        button_layout.addWidget(self.caption_model_field, stretch=1)
+
+        # Search Model button
+        self.search_model_button = QPushButton("Search")
+        self.search_model_button.clicked.connect(self.select_search_model)
+        self.search_model_button.setFixedSize(button_width, button_height)
+        self.search_model_button.setFont(self.ui.get_font('button'))
+        button_layout.addWidget(self.search_model_button)
+
+        # Search model display
+        self.search_model_field = QLabel(self.search_model)
+        self.search_model_field.setFont(self.ui.get_font('monospace'))
+        self.search_model_field.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.search_model_field.setFixedHeight(tiny_height)
+        button_layout.addWidget(self.search_model_field, stretch=1)
 
         main_layout.addLayout(button_layout)
 
@@ -73,17 +94,23 @@ class InferenceWindow(QMainWindow):
 
     def turn_off_inference(self):
         """Handle Off button click"""
-        self.inference_field.setPlainText("Inference turned off.")
+        self.gameplay_inference.setPlainText("Inference turned off.")
+        self.matched_caption.setPlainText("")
         if DEBUG: print("Inference: Turned off")
 
     def select_model(self):
-        """Handle Model button click"""
-        # For now, just simulate model selection
-        # In the future, this could open a file dialog or model selection interface
-        self.current_model = "Example Model v1.0"
-        self.current_model_field.setText(self.current_model)
-        self.inference_field.setPlainText("Model loaded: " + self.current_model)
-        if DEBUG: print(f"Inference: Model selected - {self.current_model}")
+        """Handle Inference Model button click"""
+        self.caption_model = "Example Model v1.0"
+        self.caption_model_field.setText(self.caption_model)
+        self.gameplay_inference.setPlainText("Caption Model loaded: " + self.caption_model)
+        if DEBUG: print(f"Caption: Model selected - {self.caption_model}")
+
+    def select_search_model(self):
+        """Handle Search Model button click"""
+        self.search_model = "Search Model v1.0"
+        self.search_model_field.setText(self.search_model)
+        self.matched_caption.setPlainText("Search model loaded: " + self.search_model)
+        if DEBUG: print(f"Inference: Search model selected - {self.search_model}")
 
     def set_project_folder(self, project_folder):
         """Set the project folder when cinematheque window loads a project"""
@@ -105,7 +132,7 @@ class InferenceWindow(QMainWindow):
         self.setWindowTitle(f"Inference - {movie_name}")
         
         # Clear inference field for new movie
-        self.inference_field.setPlainText(f"Ready for inference on: {movie_name}")
+        self.gameplay_inference.setPlainText(f"Ready for inference on: {movie_name}")
         if DEBUG: print(f"Inference: Movie loaded - {movie_filename}")
 
     def on_movie_loaded_with_metadata(self, movie_path, metadata=None):
@@ -118,7 +145,7 @@ class InferenceWindow(QMainWindow):
                 print("Inference: No metadata provided for movie.")
                 print(f"Inference: Movie loaded - {movie_path}")
                 print(f"Inference: Movie metadata {metadata}")
-            self.inference_field.setPlainText("No metadata provided.")
+            self.gameplay_inference.setPlainText("No metadata provided.")
             return
 
         movie_name = metadata.get('title', 'Unknown Title')
@@ -127,8 +154,9 @@ class InferenceWindow(QMainWindow):
 
         self.setWindowTitle(f"Inference - {movie_name}")
 
-        info = f"Ready for inference on:\nTitle: {movie_name}\nFilename: {movie_filename}\nYear: {movie_year}"
-        self.inference_field.setPlainText(info)
+        info = f"Ready to match \nTitle: {movie_name}\nFilename: {movie_filename}\nYear: {movie_year}"
+        self.gameplay_inference.setPlainText(info)
+        
 
         if DEBUG:
             print(f"Inference: Movie loaded - {movie_filename}")
@@ -157,7 +185,7 @@ class InferenceWindow(QMainWindow):
             "y": geo.y(),
             "width": geo.width(),
             "height": geo.height(),
-            "current_model": self.current_model
+            "caption_model": self.caption_model
         }
         return self._pending_save_data
 
@@ -171,6 +199,6 @@ class InferenceWindow(QMainWindow):
             self.setGeometry(x, y, w, h)
             
             # Load saved model
-            saved_model = data.get("current_model", "No model loaded")
-            self.current_model = saved_model
-            self.current_model_field.setText(self.current_model)
+            saved_model = data.get("caption_model", "No caption model loaded")
+            self.caption_model = saved_model
+            self.caption_model_field.setText(self.caption_model)

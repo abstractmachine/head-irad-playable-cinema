@@ -134,6 +134,7 @@ class AnnotateWindow(QMainWindow):
     caption_submitted = pyqtSignal(str)
     request_current_shot = pyqtSignal(int)
     request_next_shot = pyqtSignal()
+    bot_finished = pyqtSignal()
 
     def __init__(self, ui):
         super().__init__()
@@ -378,6 +379,7 @@ class AnnotateWindow(QMainWindow):
             else:
                 if DEBUG: print("DEBUG: Bot reached last row, stopping")
                 self.stop_bot()
+                self.handle_bot_finished()
 
     def handle_api_abort(self, message):
         self.api_running = False
@@ -400,6 +402,10 @@ class AnnotateWindow(QMainWindow):
         
         # Show error message in caption field
         self.caption_field.setPlainText(f"API aborted: {message}")
+
+    def handle_bot_finished(self):
+        if DEBUG: print("DEBUG: handle_bot_finished called")
+        self.bot_finished.emit()
 
     def set_caption_field(self, caption):
         self.caption_field.setPlainText(caption)
@@ -426,7 +432,7 @@ class AnnotateWindow(QMainWindow):
         self.bot_active = False
         self.bot_anim_timer.stop()
         self.bot_button.setText("Bot Off")
-        self.bot_button.setAlignment(Qt.AlignCenter)
+        self.bot_button.setStyleSheet("text-align: center;")
 
     def start_bot_loop(self):
         if DEBUG: print(f"DEBUG: start_bot_loop called - bot_active={self.bot_active}, api_running={self.api_running}")
@@ -440,7 +446,7 @@ class AnnotateWindow(QMainWindow):
     def animate_bot_button(self):
         self.bot_anim_dots = (self.bot_anim_dots + 1) % 4
         self.bot_button.setText("    Bot On" + "." * self.bot_anim_dots)
-        self.bot_button.setAlignment(Qt.AlignLeft)
+        self.bot_button.setStyleSheet("text-align: left;")
 
     def handle_is_last_available_shot(self, is_last):
         if DEBUG: print(f"DEBUG: handle_is_last_available_shot called - is_last={is_last}, bot_active={self.bot_active}, api_running={self.api_running}")
