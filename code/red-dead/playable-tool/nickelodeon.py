@@ -1,3 +1,5 @@
+DEBUG = False  # Set to True to enable debug output
+
 import os
 import platform
 import vlc
@@ -63,6 +65,7 @@ class JumpSlider(QSlider):
 class NickelodeonWindow(QMainWindow):
     # Define signals for communication
     video_loaded = pyqtSignal(str)
+    video_loaded_with_metadata = pyqtSignal(str, dict)
     request_save = pyqtSignal()
     request_load = pyqtSignal(dict)
     video_timecode_changed = pyqtSignal(int)
@@ -71,10 +74,12 @@ class NickelodeonWindow(QMainWindow):
     # Internal signal for thread-safe VLC event handling
     _vlc_time_changed = pyqtSignal(int)
 
-    def __init__(self):
+    def __init__(self, ui):
         super().__init__()
+        self.ui = ui  # Store UI instance
         self._pending_save_data = {}
-        self.video_title = "[No video loaded]"
+        self.video_title = ""
+        self.movie_metadata = None  # Store complete movie metadata
         self.timecode = "00:00:00"
         self.update_window_title()
         self.setGeometry(100, 100, 900, 600)
@@ -85,6 +90,7 @@ class NickelodeonWindow(QMainWindow):
         self.vlc_instance = vlc.Instance()
         self.vlc_player = self.vlc_instance.media_player_new()
         self.video_widget = QWidget()
+        self.video_widget.setStyleSheet("background-color: black;")
 
         # Set up VLC event callbacks for position changes
         self.vlc_events = self.vlc_player.event_manager()
@@ -111,8 +117,11 @@ class NickelodeonWindow(QMainWindow):
         self.fast_seek = QLineEdit(SEEK_FAST)
         self.normal_seek.setToolTip("Normal seek speed in seconds")
         self.fast_seek.setToolTip("Fast seek speed in seconds")
-        self.normal_seek.setFixedWidth(40)
-        self.fast_seek.setFixedWidth(40)
+        tiny_width, tiny_height = self.ui.get_dimensions('tiny')
+        self.normal_seek.setFixedSize(tiny_width, tiny_height)
+        self.fast_seek.setFixedSize(tiny_width, tiny_height)
+        self.normal_seek.setFont(self.ui.get_font('tiny'))
+        self.fast_seek.setFont(self.ui.get_font('tiny'))
         self.normal_seek.setFocusPolicy(Qt.ClickFocus)
         self.fast_seek.setFocusPolicy(Qt.ClickFocus)
         self.normal_seek.setAlignment(Qt.AlignCenter)
@@ -120,60 +129,53 @@ class NickelodeonWindow(QMainWindow):
         self.normal_seek.editingFinished.connect(self.validate_normal_seek)
         self.fast_seek.editingFinished.connect(self.validate_fast_seek)
 
-        # Load button
-        self.load_button = QPushButton("Load")
-        self.load_button.setToolTip("Load video\nShortcut: L or V")
-        self.load_button.clicked.connect(self.load_video)
-
         # Play/Pause button
         self.play_pause_button = QPushButton("Play")
         self.play_pause_button.setToolTip("Play or pause video\nShortcut:Space")
         self.play_pause_button.clicked.connect(self.toggle_play_pause)
         self.play_pause_button.setEnabled(False)
+        self.play_pause_button.setFont(self.ui.get_font('button'))
+        self.play_pause_button.setFixedSize(100, 32)
         self.is_playing = False
 
-        # Seek buttons
+        # Seek back
         self.back_button = QPushButton("Back")
         self.back_button.setToolTip("Seek backward\nShortcut: Left arrow, Shift for fast")
         self.back_button.setEnabled(False)
         self.back_button.clicked.connect(self.seek_back)
+        self.back_button.setFont(self.ui.get_font('button'))
+        self.back_button.setFixedSize(100, 32)
+        # Seek forward
         self.forward_button = QPushButton("Forward")
         self.forward_button.setToolTip("Seek forward\nShortcut: Right arrow, Shift for fast")
         self.forward_button.setEnabled(False)
         self.forward_button.clicked.connect(self.seek_forward)
+        self.forward_button.setFont(self.ui.get_font('button'))
+        self.forward_button.setFixedSize(100, 32)
 
-        # Make buttons expand equally
-        for btn in [self.play_pause_button, self.back_button, self.forward_button]:
-            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        # Replace Load button with timecode display
+        self.timecode_label = QLabel("00:00:00 | 00:00:00")
+        self.timecode_label.setFont(self.ui.get_font('monospace'))
+        self.timecode_label.setAlignment(Qt.AlignCenter)
+        self.timecode_label.setStyleSheet("QLabel { padding: 5px; }")
+        self.timecode_label.setToolTip("Current timecode | Total duration")
 
         # Layouts
-        seek_layout = QHBoxLayout()
-        seek_layout.addWidget(QLabel("Seek:"))
-        seek_layout.addWidget(self.normal_seek)
-        seek_layout.addWidget(QLabel("Fast:"))
-        seek_layout.addWidget(self.fast_seek)
-        seek_layout.addStretch()
-
-        # Set a fixed width for buttons
-        button_width = 120
-        for btn in [self.play_pause_button, self.back_button, self.forward_button]:
-            btn.setFixedWidth(button_width)
-
         controls_layout = QHBoxLayout()
         controls_layout.addWidget(self.play_pause_button)
-        controls_layout.addStretch()
         controls_layout.addWidget(self.back_button)
-        controls_layout.addStretch()
         controls_layout.addWidget(self.forward_button)
+        controls_layout.addWidget(self.normal_seek)
+        controls_layout.addWidget(self.fast_seek)
         controls_layout.addStretch()
-        controls_layout.addLayout(seek_layout)
+        controls_layout.addWidget(self.timecode_label)
 
         layout = QVBoxLayout()
-        layout.setSpacing(10)
+        layout.setSpacing(5)  # Reduced spacing
         layout.setContentsMargins(10, 10, 10, 10)
-        layout.addWidget(self.video_widget)
-        layout.addWidget(self.timeline)
-        layout.addLayout(controls_layout)
+        layout.addWidget(self.video_widget, stretch=1)  # Give video widget all available space
+        layout.addWidget(self.timeline)  # Timeline takes minimal space
+        layout.addLayout(controls_layout)  # Controls take minimal space
 
         container = QWidget()
         container.setLayout(layout)
@@ -226,6 +228,17 @@ class NickelodeonWindow(QMainWindow):
         m = (seconds % 3600) // 60
         s = seconds % 60
         self.set_timecode(f"{h:02}:{m:02}:{s:02}")
+        
+        # Update the timecode label
+        duration_seconds = getattr(self, "duration_seconds", None)
+        if duration_seconds is not None and duration_seconds > 0:
+            dh = duration_seconds // 3600
+            dm = (duration_seconds % 3600) // 60
+            ds = duration_seconds % 60
+            duration_str = f"{dh:02}:{dm:02}:{ds:02}"
+            self.timecode_label.setText(f"{h:02}:{m:02}:{s:02} | {duration_str}")
+        else:
+            self.timecode_label.setText(f"{h:02}:{m:02}:{s:02} | 00:00:00")
 
     def seek_video(self, seconds):
         """Seek video by specified number of seconds"""
@@ -325,31 +338,42 @@ class NickelodeonWindow(QMainWindow):
             self.resize(data["width"], data["height"])
 
     def update_window_title(self):
-        duration_seconds = getattr(self, "duration_seconds", None)
-        if duration_seconds is not None and duration_seconds > 0:
-            h = duration_seconds // 3600
-            m = (duration_seconds % 3600) // 60
-            s = duration_seconds % 60
-            duration_str = f"{h:02}:{m:02}:{s:02}"
-            self.setWindowTitle(f"{self.video_title} | {self.timecode} / {duration_str}")
+        """Update window title to show Nickelodeon | {movie-title} ({year})"""
+        titlebar_string = "Nickelodeon"
+        if self.video_title == "":
+            titlebar_string = "Nickelodeon"
+        elif self.movie_metadata:
+            # Use metadata if available
+            title = self.movie_metadata.get('title', 'Unknown Title')
+            year = self.movie_metadata.get('year', '')
+            if year:
+                titlebar_string = f"{title} ({year})"
+            else:
+                titlebar_string = title
+            
         else:
-            self.setWindowTitle(f"{self.video_title} | {self.timecode}")
+            # Fallback: Extract clean title from filename
+            #display_title = os.path.splitext(self.video_title)[0]
+            #display_title = display_title.replace('_', ' ').replace('-', ' ')
+            #display_title = ' '.join(word.capitalize() for word in display_title.split())
+            titlebar_string = f"Nickelodeon | {self.video_title}"
 
-    def load_video(self):
-        """Load video using file dialog"""
-        file_dialog = QFileDialog(self)
-        file_path, _ = file_dialog.getOpenFileName(self, "Load Video", "", "Video Files (*.mp4 *.avi *.mov)")
-        if file_path:
-            self._load_video_file(file_path)
+        self.setWindowTitle(titlebar_string)
 
-    def load_video_from_path(self, file_path):
-        """Load video from a specific file path (called from cinema window)"""
+    def load_video_from_path_with_metadata(self, file_path, metadata=None):
+        """Load video from a specific file path with metadata (called from cinema window)"""
         if file_path and os.path.exists(file_path):
             if hasattr(self, 'current_video_path') and self.current_video_path == file_path:
                 return
+            # Store the metadata
+            self.movie_metadata = metadata
             self._load_video_file(file_path)
         else:
             print(f"Cannot load video: file not found at {file_path}")
+
+    def load_video_from_path(self, file_path):
+        """Load video from a specific file path (called from cinema window) - legacy method"""
+        self.load_video_from_path_with_metadata(file_path, None)
 
     def on_vlc_playing_callback(self, event):
         """Called when VLC starts playing"""
@@ -363,6 +387,10 @@ class NickelodeonWindow(QMainWindow):
         self.is_playing = True
         self._video_just_loaded = False
         self.video_loaded.emit(self.current_video_path)
+        if (DEBUG):
+            print(f"Nickelodeon: Video loaded: {self.current_video_path}")
+            print(f"Nickelodeon: Video metadata: {self.movie_metadata}")
+        self.video_loaded_with_metadata.emit(self.current_video_path, self.movie_metadata)
         QTimer.singleShot(500, self._start_duration_polling)
 
     def _load_video_file(self, file_path):
@@ -381,8 +409,11 @@ class NickelodeonWindow(QMainWindow):
                 pass
             self.duration_timer = None
 
+        # Store the filename for internal use
         self.video_title = os.path.basename(file_path)
+        # Update window title (will use metadata if available)
         self.update_window_title()
+        
         media = self.vlc_instance.media_new(file_path)
         self.vlc_player.set_media(media)
         
@@ -426,6 +457,10 @@ class NickelodeonWindow(QMainWindow):
             self.timeline.setRange(0, duration)
             self.duration_seconds = duration // 1000
             self.update_window_title()
+            
+            # Update timecode label with duration
+            self._update_timecode_display(self.vlc_player.get_time())
+            
             if hasattr(self, 'duration_timer') and self.duration_timer is not None:
                 try:
                     self.duration_timer.stop()
@@ -436,7 +471,7 @@ class NickelodeonWindow(QMainWindow):
 
     def set_timecode(self, timecode):
         self.timecode = timecode
-        self.update_window_title()
+        # Note: We no longer update window title here, only in update_window_title()
 
     def toggle_play_pause(self):
         if self.vlc_player.is_playing():
@@ -502,20 +537,20 @@ class NickelodeonWindow(QMainWindow):
         """Handle window close event to properly clean up VLC"""
         try:
             # Stop the player first
-            if hasattr(self, 'player') and self.player:
-                self.player.stop()
+            if hasattr(self, 'vlc_player') and self.vlc_player:
+                self.vlc_player.stop()
             
             # Release the media player
-            if hasattr(self, 'player') and self.player:
+            if hasattr(self, 'vlc_player') and self.vlc_player:
                 # Detach event callbacks to prevent callbacks on deleted objects
-                event_manager = self.player.event_manager()
+                event_manager = self.vlc_player.event_manager()
                 if event_manager:
                     event_manager.event_detach(vlc.EventType.MediaPlayerTimeChanged)
                     event_manager.event_detach(vlc.EventType.MediaPlayerEndReached)
                     # Add any other events you're listening to
                 
-                self.player.release()
-                self.player = None
+                self.vlc_player.release()
+                self.vlc_player = None
             
             # Release the VLC instance
             if hasattr(self, 'vlc_instance') and self.vlc_instance:
@@ -531,9 +566,9 @@ class NickelodeonWindow(QMainWindow):
     def __del__(self):
         """Destructor to ensure VLC resources are cleaned up"""
         try:
-            if hasattr(self, 'player') and self.player:
-                self.player.stop()
-                self.player.release()
+            if hasattr(self, 'vlc_player') and self.vlc_player:
+                self.vlc_player.stop()
+                self.vlc_player.release()
             if hasattr(self, 'vlc_instance') and self.vlc_instance:
                 self.vlc_instance.release()
         except:

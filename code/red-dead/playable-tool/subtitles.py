@@ -1,6 +1,7 @@
+DEBUG = False  # Set to True to enable debug output
+
 import os
 import re
-from PyQt5.QtGui import QFont, QFontDatabase
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import (
     QMainWindow, QVBoxLayout, QWidget, QTextEdit
@@ -10,8 +11,9 @@ class SubtitlesWindow(QMainWindow):
     request_save = pyqtSignal()
     request_load = pyqtSignal(dict)
 
-    def __init__(self):
+    def __init__(self, ui):
         super().__init__()
+        self.ui = ui  # Store UI instance
         self.setWindowTitle("Subtitles")
         
         # Initialize variables
@@ -30,16 +32,8 @@ class SubtitlesWindow(QMainWindow):
         self.subtitles_field.setPlaceholderText("")
         self.subtitles_field.setReadOnly(True)  # Make it read-only
         
-        # Load custom font - same as annotate.py
-        font_path = os.path.join(os.path.dirname(__file__), "ui/fonts/HKGrotesk-Regular.otf")
-        font_id = QFontDatabase.addApplicationFont(font_path)
-        font_families = QFontDatabase.applicationFontFamilies(font_id)
-        if font_families:
-            hk_font = QFont(font_families[0], 18)
-        else:
-            hk_font = QFont("Helvetica", 18)
-        
-        self.subtitles_field.setFont(hk_font)
+        # Use UI font system instead of custom font loading
+        self.subtitles_field.setFont(self.ui.get_font('text'))
         self.subtitles_field.setStyleSheet("QTextEdit { border: none; padding: 5px; }")
         main_layout.addWidget(self.subtitles_field, stretch=1)
 

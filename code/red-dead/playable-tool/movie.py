@@ -1,3 +1,5 @@
+DEBUG = False  # Set to True to enable debug output
+
 import os
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel

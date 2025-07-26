@@ -1,7 +1,7 @@
+DEBUG = False  # Set to True to enable debug output
+
 import csv
 import os
-
-DEBUG = False # Set to True to enable debug prints
 
 from PyQt5.QtCore import pyqtSignal
 from PyQt5.QtCore import Qt, QThread, QObject, QTimer
@@ -32,8 +32,10 @@ class ShotlistWindow(QMainWindow):
     row_did_change = pyqtSignal(int)  # New signal: emits current_row when it changes
     is_last_available_shot = pyqtSignal(bool)
 
-    def __init__(self):
+    def __init__(self, ui):
         super().__init__()
+        self.ui = ui  # Store UI instance
+        
         self._pending_save_data = {}
         self.setWindowTitle("Shotlist")
         self.setGeometry(200, 200, 600, 400)
@@ -58,6 +60,13 @@ class ShotlistWindow(QMainWindow):
         self.scene_table.cellClicked.connect(self.on_table_cell_clicked)
         
         self.scene_table.verticalHeader().sectionClicked.connect(self.on_row_header_clicked)
+
+        # Set column header font using UI 'collumn' style
+        header_font = self.ui.get_font('collumn')
+        header = self.scene_table.horizontalHeader()
+        header.setFont(header_font)
+
+        button_width, button_height = self.ui.get_dimensions('button')
         
         layout.addWidget(self.scene_table)
         self.scene_table.setColumnWidth(0, 110)   # Ignore
@@ -66,20 +75,6 @@ class ShotlistWindow(QMainWindow):
         self.scene_table.setColumnWidth(3, 110)   # End
         self.scene_table.setColumnWidth(4, 500)   # Caption
 
-        self.detect_button = QPushButton("Detect")
-        self.detect_button.setFixedWidth(120)
-        self.detect_button.setMinimumHeight(32)
-        self.detect_button.setStyleSheet(
-            "text-align: center; padding-left: 0px; padding-top: 3px; padding-bottom: 6px;"
-        )
-        self.detect_button.setEnabled(False)
-
-        # Remove the folder button - no longer needed
-        # self.folder_button = QPushButton("Folder")
-        # self.folder_button.setFixedWidth(100)
-        # self.folder_button.setMinimumHeight(32)
-        # self.folder_button.clicked.connect(self.select_detections_folder)
-
         self.method_dropdown = QComboBox()
         self.method_dropdown.addItems([
             "detect-adaptive",
@@ -87,18 +82,33 @@ class ShotlistWindow(QMainWindow):
             "detect-hist",
             "detect-threshold"
         ])
-        self.method_dropdown.setFixedWidth(150)
+        self.method_dropdown.setFixedSize(180, button_height)
+        self.method_dropdown.setFont(self.ui.get_font('button'))
+
+        tiny_width, tiny_height = self.ui.get_dimensions('tiny')
 
         self.weights_field = QLineEdit("-t 3.0")
-        self.weights_field.setFixedWidth(180)
+        # self.weights_field.setFixedWidth(180)
         self.weights_field.setAlignment(Qt.AlignCenter)
         self.weights_field.setToolTip("Set PySceneDetect parameters.\nSee documentation for details.\nExamples:\nweights: -w 1.0 1.0 1.0 0.0\nthreshold: -t 3.2")
+        self.weights_field.setFont(self.ui.get_font('tiny'))
+        self.weights_field.setFixedSize(180, tiny_height)
+        # self.weights_field.setMinimumHeight(tiny_height)
+        # self.weights_field.setMaximumHeight(tiny_height)
 
         self.delete_button = QPushButton("Delete")
-        self.delete_button.setFixedWidth(100)
-        self.delete_button.setMinimumHeight(32)
+        self.delete_button.setFixedSize(button_width, button_height)
+        self.delete_button.setFont(self.ui.get_font('button'))
         self.delete_button.setEnabled(False)
         self.delete_button.clicked.connect(self.delete_scene_csv)
+
+        self.detect_button = QPushButton("Detect")
+        self.detect_button.setFixedSize(button_width, button_height)
+        self.detect_button.setFont(self.ui.get_font('button'))
+        self.detect_button.setStyleSheet(
+            "text-align: center; padding-left: 0px; padding-top: 3px; padding-bottom: 6px;"
+        )
+        self.detect_button.setEnabled(False)
 
         button_layout = QHBoxLayout()
         button_layout.addStretch()
@@ -412,29 +422,36 @@ class ShotlistWindow(QMainWindow):
         layout.setAlignment(Qt.AlignCenter)
         layout.setContentsMargins(0, 0, 0, 0)
         widget.setLayout(layout)
-        self.scene_table.setCellWidget(row, 0, widget)
+        ignore_col = self.get_column_index_by_name("Ignore")
+        self.scene_table.setCellWidget(row, ignore_col, widget)
+
         # Scene number column
+        scene_col = self.get_column_index_by_name("Scene")
         scene_item = QTableWidgetItem(str(scene_num))
         scene_item.setTextAlignment(Qt.AlignCenter)
-        self.scene_table.setItem(row, 1, scene_item)
-        # Start column (fixed-width font)
+        scene_item.setFont(self.ui.get_font('cell-tiny'))
+        self.scene_table.setItem(row, scene_col, scene_item)
+
+        # Start column
+        start_col = self.get_column_index_by_name("Start")
         start_item = QTableWidgetItem(start_tc)
         start_item.setTextAlignment(Qt.AlignCenter)
-        font = QFont("Courier New", 14)
-        font.setBold(True)
-        start_item.setFont(font)
-        self.scene_table.setItem(row, 2, start_item)
-        # End column (fixed-width font)
+        start_item.setFont(self.ui.get_font('cell-mono'))
+        self.scene_table.setItem(row, start_col, start_item)
+
+        # End column
+        end_col = self.get_column_index_by_name("End")
         end_item = QTableWidgetItem(end_tc)
         end_item.setTextAlignment(Qt.AlignCenter)
-        font = QFont("Courier New", 14)
-        font.setBold(True)
-        end_item.setFont(font)
-        self.scene_table.setItem(row, 3, end_item)
+        end_item.setFont(self.ui.get_font('cell-mono'))
+        self.scene_table.setItem(row, end_col, end_item)
+
         # Caption column
+        caption_col = self.get_column_index_by_name("Caption")
         caption_item = QTableWidgetItem(caption)
         caption_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.scene_table.setItem(row, 4, caption_item)
+        caption_item.setFont(self.ui.get_font('cell-text'))
+        self.scene_table.setItem(row, caption_col, caption_item)
 
     def on_ignore_checkbox_changed(self, row, state):
         self.save_shotlist_to_csv()

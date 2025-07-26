@@ -1,5 +1,6 @@
+DEBUG = False  # Set to True to enable debug output
+
 import os
-from PyQt5.QtGui import QFont, QFontDatabase
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import (
     QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QTextEdit, QPushButton, 
@@ -10,8 +11,9 @@ class DefaultWindow(QMainWindow):
     request_save = pyqtSignal()
     request_load = pyqtSignal(dict)
 
-    def __init__(self):
+    def __init__(self, ui):
         super().__init__()
+        self.ui = ui  # Store UI instance
         self.setWindowTitle("Default Prompt")
         
         # Main layout
@@ -23,16 +25,8 @@ class DefaultWindow(QMainWindow):
         self.default_prompt_field = QTextEdit()
         self.default_prompt_field.setPlaceholderText("")
         
-        # Load custom font
-        font_path = os.path.join(os.path.dirname(__file__), "ui/fonts/HKGrotesk-Regular.otf")
-        font_id = QFontDatabase.addApplicationFont(font_path)
-        font_families = QFontDatabase.applicationFontFamilies(font_id)
-        if font_families:
-            hk_font = QFont(font_families[0], 12)
-        else:
-            hk_font = QFont("Helvetica", 12)
-        
-        self.default_prompt_field.setFont(hk_font)
+        # Use UI font system instead of custom font loading
+        self.default_prompt_field.setFont(self.ui.get_font('prompt'))
         self.default_prompt_field.setStyleSheet("QTextEdit { border: none; padding: 5px; }")
         main_layout.addWidget(self.default_prompt_field, stretch=1)
 

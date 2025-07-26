@@ -1,18 +1,21 @@
+DEBUG = False  # Set to True to enable debug output
+
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QThread, QTimer
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QPushButton, QListWidget, QListWidgetItem, QLabel, QSizePolicy, 
     QFileDialog, QMessageBox
 )
-from PyQt5.QtGui import QPixmap, QFont, QFontDatabase, QColor
+from PyQt5.QtGui import QPixmap, QColor
 import os
 import csv
 from metadata import MetadataWorker  # Import our metadata worker
 
-DEBUG = True  # Set to True to enable debug messages
-
 # Common font size for all text
-FONT_SIZE = 16
+POSTER_WIDTH = 60
+POSTER_HEIGHT = 90
+ITEM_HEIGHT = 110
+INFO_SPACING = 1
 
 class MovieItemWidget(QWidget):
     """Custom widget for each movie item in the list"""
@@ -20,10 +23,11 @@ class MovieItemWidget(QWidget):
     # Add a signal to emit when clicked
     clicked = pyqtSignal(dict)
     
-    def __init__(self, movie_data, posters_folder):
+    def __init__(self, movie_data, posters_folder, ui):
         super().__init__()
         self.movie_data = movie_data
         self.posters_folder = posters_folder
+        self.ui = ui  # Store UI instance
         self.is_selected = False
         
         # Set default background
@@ -32,12 +36,12 @@ class MovieItemWidget(QWidget):
         
         # Create horizontal layout
         layout = QHBoxLayout()
-        layout.setContentsMargins(10, 0, 10, 10) # (left, top, right, bottom)
-        layout.setSpacing(15)
+        layout.setContentsMargins(8, 0, 5, 0) # (left, top, right, bottom)
+        layout.setSpacing(10) # Space between poster and info
         
         # Poster label (left side)
         self.poster_label = QLabel()
-        self.poster_label.setFixedSize(80, 120)  # Poster aspect ratio
+        self.poster_label.setFixedSize(POSTER_WIDTH, POSTER_HEIGHT)
         self.poster_label.setStyleSheet("background-color: #f0f0f0; border: none;")
         self.poster_label.setAlignment(Qt.AlignCenter)
         self.poster_label.setScaledContents(True)
@@ -49,18 +53,12 @@ class MovieItemWidget(QWidget):
         
         # Movie info (right side)
         info_layout = QVBoxLayout()
-        info_layout.setSpacing(0)
-        info_layout.setContentsMargins(0, 10, 0, 0)  # Add top margin to push content down
+        info_layout.setSpacing(INFO_SPACING)
+        info_layout.setContentsMargins(0, 8, 0, 0)  # Add top margin to push content down
 
-        # Get loaded fonts from CinemathequeWindow
-        fonts = CinemathequeWindow.get_loaded_fonts()  # Updated class name
-        font_family = fonts.get('regular', 'Helvetica')  # Use the base family name
-
-        # Title (using Black weight)
+        # Title
         title_label = QLabel(movie_data.get('title', 'Unknown Title'))
-        title_font = QFont(font_family, FONT_SIZE)
-        title_font.setWeight(QFont.Black)  # Set to Black weight
-        title_label.setFont(title_font)
+        title_label.setFont(self.ui.get_font('title'))  # Use UI font system
         title_label.setWordWrap(True)
         info_layout.addWidget(title_label)
 
@@ -88,9 +86,7 @@ class MovieItemWidget(QWidget):
             year_director_duration_text = f"{year} | {director}"
 
         year_director_duration_label = QLabel(year_director_duration_text)
-        year_director_duration_font = QFont(font_family, FONT_SIZE)
-        year_director_duration_font.setWeight(QFont.Normal)  # Set to Normal weight
-        year_director_duration_label.setFont(year_director_duration_font)
+        year_director_duration_label.setFont(self.ui.get_font('year'))
         info_layout.addWidget(year_director_duration_label)
 
         # Tagline
@@ -98,10 +94,7 @@ class MovieItemWidget(QWidget):
         if tagline:
             tagline_label = QLabel(tagline)
             tagline_label.setWordWrap(True)
-            tagline_font = QFont(font_family, FONT_SIZE)
-            tagline_font.setWeight(QFont.Normal)  # Set to Normal weight
-            tagline_font.setItalic(True)  # Set italic style
-            tagline_label.setFont(tagline_font)
+            tagline_label.setFont(self.ui.get_font('tagline'))
             info_layout.addWidget(tagline_label)
         
         info_layout.addStretch()  # Push content to top
@@ -184,28 +177,20 @@ class MovieItemWidget(QWidget):
         self.poster_label.setText("No\nPoster")
         self.poster_label.setAlignment(Qt.AlignCenter)
 
-class CinemathequeWindow(QMainWindow):  # Updated class name
-    
-    # Class variable to track if fonts are loaded
-    _fonts_loaded = False
-    _font_families = {}
+class CinemathequeWindow(QMainWindow):
     
     # Define signals for communication
     request_save = pyqtSignal()
     request_load = pyqtSignal(dict)
-    movie_selected = pyqtSignal(str)  # Signal to send movie file path to player
+    movie_selected = pyqtSignal(str, dict)  # Signal to send movie file path AND metadata to player
     project_loaded = pyqtSignal(str)  # Signal when project folder is loaded
     
-    def __init__(self):
+    def __init__(self, ui):
         super().__init__()
+        self.ui = ui  # Store UI instance
         self.project_folder = None
         self.currently_loading_video = None  # Track what video is currently being requested
         self.selected_movie_widget = None  # Track currently selected movie widget
-        
-        # Load custom fonts only once
-        if not CinemathequeWindow._fonts_loaded:  # Updated class name
-            self.load_fonts()
-            CinemathequeWindow._fonts_loaded = True  # Updated class name
         
         # Required project folders
         self.required_folders = ["datasets", "gameplay", "metadata", "movies", "posters", "prompts", "shotlists", "subtitles"]
@@ -233,16 +218,20 @@ class CinemathequeWindow(QMainWindow):  # Updated class name
         
         # Button layout
         button_layout = QHBoxLayout()
+        button_width, button_height = self.ui.get_dimensions('button')
 
         # Project folder button
         self.project_folder_button = QPushButton("Project Folder")
+        self.project_folder_button.setFont(self.ui.get_font('button'))  # Use UI font system
         self.project_folder_button.clicked.connect(self.select_project_folder)
+        self.project_folder_button.setFixedSize(button_width, button_height)
 
         # Metadata rebuild button
         self.metadata_button = QPushButton("Rebuild Metadata")
+        self.metadata_button.setFont(self.ui.get_font('button'))  # Use UI font system
         self.metadata_button.clicked.connect(self.rebuild_metadata)
         self.metadata_button.setEnabled(False)
-        self.metadata_button.setFixedSize(150, 32)  # Set fixed width and height
+        self.metadata_button.setFixedSize(160, button_height)
 
         button_layout.addWidget(self.project_folder_button)
         button_layout.addWidget(self.metadata_button)
@@ -263,42 +252,6 @@ class CinemathequeWindow(QMainWindow):  # Updated class name
         # Connect preference signals
         self.request_save.connect(self.on_request_save)
         self.request_load.connect(self.on_request_load)
-
-    def load_fonts(self):
-        """Load custom fonts from ui/fonts/ folder"""
-        # Debug the font folder path
-        font_folder = os.path.join(os.path.dirname(__file__), "ui", "fonts")
-        
-        font_files = {
-            'regular': "HKGrotesk-Regular.otf",
-            'italic': "HKGrotesk-Italic.otf",
-            'bold': "HKGrotesk-Bold.otf",
-            'black': "HKGrotesk-Black.otf"
-        }
-        
-        for style, font_file in font_files.items():
-            font_path = os.path.join(font_folder, font_file)
-            
-            if os.path.exists(font_path):
-                font_id = QFontDatabase.addApplicationFont(font_path)
-                if font_id != -1:
-                    font_families = QFontDatabase.applicationFontFamilies(font_id)
-                    if font_families:
-                        CinemathequeWindow._font_families[style] = font_families[0]  # Updated class name
-                    else:
-                        print(f"No font families returned for: {font_file}")
-                        CinemathequeWindow._font_families[style] = "Helvetica"  # Updated class name
-                else:
-                    print(f"Failed to add font to database: {font_file}")
-                    CinemathequeWindow._font_families[style] = "Helvetica"  # Updated class name
-            else:
-                print(f"Font file not found: {font_path}")
-                CinemathequeWindow._font_families[style] = "Helvetica"  # Updated class name
-
-    @classmethod
-    def get_loaded_fonts(cls):
-        """Return the dictionary of loaded font families"""
-        return cls._font_families
     
     def select_project_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Project Folder")
@@ -374,12 +327,12 @@ class CinemathequeWindow(QMainWindow):  # Updated class name
             with open(metadata_path, 'r', encoding='utf-8') as csvfile:
                 reader = csv.DictReader(csvfile)
                 for row in reader:
-                    # Create custom widget for this movie
-                    movie_widget = MovieItemWidget(row, posters_folder)
+                    # Create custom widget for this movie, passing UI instance
+                    movie_widget = MovieItemWidget(row, posters_folder, self.ui)
                     
                     # Create list item with fixed height
                     item = QListWidgetItem()
-                    item.setSizeHint(QSize(movie_widget.width(), 140))  # Fixed height of 140px
+                    item.setSizeHint(QSize(movie_widget.width(), ITEM_HEIGHT))
                     
                     # Add to list
                     self.movie_list.addItem(item)
@@ -428,8 +381,8 @@ class CinemathequeWindow(QMainWindow):  # Updated class name
                 # Set the currently loading video
                 self.currently_loading_video = movie_path
                 
-                # Emit the signal to load the movie
-                self.movie_selected.emit(movie_path)
+                # Emit the signal with both movie path AND metadata
+                self.movie_selected.emit(movie_path, movie_data)
             else:
                 QMessageBox.warning(self, "File Not Found", f"Movie file not found:\n{movie_path}")
 

@@ -1,3 +1,5 @@
+DEBUG = False  # Set to True to enable debug output
+
 import re
 import time
 from PyQt5.QtCore import QObject, pyqtSignal

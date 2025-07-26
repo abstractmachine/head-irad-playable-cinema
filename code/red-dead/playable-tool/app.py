@@ -1,3 +1,5 @@
+DEBUG = False  # Set to True to enable debug output
+
 import sys
 import json
 import os
@@ -6,6 +8,10 @@ from PyQt5.QtWidgets import QTabWidget
 
 from PyQt5.QtCore import QObject, QEvent
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QFont
+
+# Import our UI class
+from ui import UI
 
 # our other windows
 from nickelodeon import NickelodeonWindow
@@ -15,23 +21,27 @@ from cinematheque import CinemathequeWindow
 from prompt import PromptWindow
 from default import DefaultWindow
 from subtitles import SubtitlesWindow
-from inference import InferenceWindow  # Add new import
+from inference import InferenceWindow
 
 PREFS_PATH = "./preferences/preferences.json"
 
 def main():
     app = QApplication(sys.argv)
 
-    # create a dictionary of our windows
+    # Create UI instance with all fonts loaded
+    ui = UI()
+    if DEBUG:print(f"UI initialized with fonts: {list(ui.font_families.keys())}")
+
+    # create a dictionary of our windows, passing ui to each
     windows = {
-        "nickelodeon": NickelodeonWindow(),
-        "shotlist": ShotlistWindow(),
-        "captions": AnnotateWindow(),
-        "cinematheque": CinemathequeWindow(),
-        "default": DefaultWindow(),
-        "prompt": PromptWindow(),
-        "subtitles": SubtitlesWindow(),
-        "inference": InferenceWindow()  # Add new window
+        "nickelodeon": NickelodeonWindow(ui),
+        "shotlist": ShotlistWindow(ui),
+        "captions": AnnotateWindow(ui),
+        "cinematheque": CinemathequeWindow(ui),
+        "default": DefaultWindow(ui),
+        "prompt": PromptWindow(ui),
+        "subtitles": SubtitlesWindow(ui),
+        "inference": InferenceWindow(ui)
     }
 
     # Install global key filter
@@ -43,28 +53,30 @@ def main():
         win.request_save.connect(win.on_request_save)
         win.request_load.connect(win.on_request_load)
 
+    # The font we'll use for tab labels
+    button_font = ui.get_font('button')
+
     # Create main tab widget for cinematheque and shotlist
     tab_widget = QTabWidget()
     tab_widget.addTab(windows["cinematheque"], "Cinemathèque")
     tab_widget.addTab(windows["shotlist"], "Shotlist")
+    tab_widget.tabBar().setFont(button_font)
+
     tab_widget.show()
 
     # Create text tab widget for captions, default, prompt, subtitles, and inference
     text_widget = QTabWidget()
-    text_widget.addTab(windows["captions"], "Annotator")
-    
-    # Add default tab and set its tooltip
-    default_tab_index = text_widget.addTab(windows["default"], "Default")
+    text_widget.addTab(windows["captions"], "Shot Captions")
+    default_tab_index = text_widget.addTab(windows["default"], "Default Prompt")
     default_tooltip = load_tooltip_text("prompt-tooltip.txt")
     text_widget.setTabToolTip(default_tab_index, default_tooltip)
-    
-    # Add prompt tab and set its tooltip
     prompt_tab_index = text_widget.addTab(windows["prompt"], "Shot Prompt")
     prompt_tooltip = load_tooltip_text("prompt-tooltip.txt")
     text_widget.setTabToolTip(prompt_tab_index, prompt_tooltip)
-    
     text_widget.addTab(windows["subtitles"], "Subtitles")
-    text_widget.addTab(windows["inference"], "Inference")  # Add new tab
+    text_widget.addTab(windows["inference"], "Inference")
+    text_widget.tabBar().setFont(button_font)
+
     text_widget.show()
 
     # Signal Connections
@@ -74,21 +86,18 @@ def main():
     windows["nickelodeon"].frames_extracted.connect(windows["captions"].handle_api_frames)
     windows["nickelodeon"].video_loaded.connect(windows["cinematheque"].on_movie_loading_complete)
     windows["nickelodeon"].video_loaded.connect(windows["prompt"].on_movie_loaded)
-    windows["cinematheque"].movie_selected.connect(windows["nickelodeon"].load_video_from_path)
+    windows["nickelodeon"].video_loaded.connect(windows["captions"].on_movie_loaded)
+    windows["nickelodeon"].video_loaded.connect(windows["subtitles"].on_movie_loaded)
+    windows["nickelodeon"].video_timecode_changed.connect(windows["subtitles"].on_timecode_changed)
+    windows["nickelodeon"].video_loaded_with_metadata.connect(windows["inference"].on_movie_loaded_with_metadata)
+    windows["nickelodeon"].video_timecode_changed.connect(windows["inference"].on_timecode_changed)
+
+    windows["cinematheque"].movie_selected.connect(windows["nickelodeon"].load_video_from_path_with_metadata)
     windows["cinematheque"].project_loaded.connect(windows["prompt"].set_project_folder)
     windows["cinematheque"].project_loaded.connect(windows["shotlist"].set_project_folder)
-
-    windows["nickelodeon"].video_loaded.connect(windows["captions"].on_movie_loaded)
     windows["cinematheque"].project_loaded.connect(windows["captions"].set_project_folder)
-
-    windows["nickelodeon"].video_loaded.connect(windows["subtitles"].on_movie_loaded)
     windows["cinematheque"].project_loaded.connect(windows["subtitles"].set_project_folder)
-    windows["nickelodeon"].video_timecode_changed.connect(windows["subtitles"].on_timecode_changed)
-
-    # Add connections for inference window
-    windows["nickelodeon"].video_loaded.connect(windows["inference"].on_movie_loaded)
     windows["cinematheque"].project_loaded.connect(windows["inference"].set_project_folder)
-    windows["nickelodeon"].video_timecode_changed.connect(windows["inference"].on_timecode_changed)
 
     windows["shotlist"].jump_to_timecode_signal.connect(windows["nickelodeon"].jump_to_timecode)
     windows["shotlist"].shotlist_status.connect(windows["captions"].set_shotlist_status)
@@ -96,6 +105,7 @@ def main():
     windows["shotlist"].abort_api.connect(windows["captions"].handle_api_abort)
     windows["shotlist"].shot_timecodes.connect(windows["nickelodeon"].handle_shot_timecodes)
     windows["shotlist"].is_last_available_shot.connect(windows["captions"].handle_is_last_available_shot)
+
     windows["captions"].caption_submitted.connect(windows["shotlist"].update_caption_for_current_shot)
     windows["captions"].request_current_shot.connect(windows["shotlist"].handle_request_current_shot)
     windows["captions"].request_next_shot.connect(windows["shotlist"].jump_to_next_shot)

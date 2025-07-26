@@ -1,12 +1,12 @@
+DEBUG = False  # Set to True to enable debug output
+
 import os
 import tempfile
 import base64
 import mimetypes
 import openai
 
-DEBUG = False # Debug flag - set to True to enable debug output
-
-from PyQt5.QtGui import QFont, QFontDatabase, QTextOption
+from PyQt5.QtGui import QTextOption
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QTimer
 from PyQt5.QtWidgets import (
     QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QLineEdit, QTextEdit, QPushButton, QSizePolicy
@@ -135,8 +135,9 @@ class AnnotateWindow(QMainWindow):
     request_current_shot = pyqtSignal(int)
     request_next_shot = pyqtSignal()
 
-    def __init__(self):
+    def __init__(self, ui):
         super().__init__()
+        self.ui = ui  # Store UI instance
 
         self.setWindowTitle("Annotate")
         self.setGeometry(400, 200, 600, 350)
@@ -145,10 +146,10 @@ class AnnotateWindow(QMainWindow):
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(10)
 
-        # Caption field (multi-line widget, but we block newlines)
+        # Caption field (multi-line widget)
         self.caption_field = QTextEdit()
         self.caption_field.setPlaceholderText("")
-        self.caption_field.setFont(QFont("Helvetica", 18))
+        self.caption_field.setFont(self.ui.get_font('text'))  # Use UI font system
         self.caption_field.setStyleSheet("QTextEdit { border: none; }")
         self.caption_field.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.caption_field.setWordWrapMode(QTextOption.WordWrap)
@@ -159,36 +160,45 @@ class AnnotateWindow(QMainWindow):
         button_layout.setSpacing(10)
         button_layout.addStretch()
 
+        button_width, button_height = self.ui.get_dimensions('button')
+
         self.annotate_button = QPushButton("Annotate")
-        self.annotate_button.setFixedWidth(100)
         self.annotate_button.setEnabled(False)
+        self.annotate_button.setFont(self.ui.get_font('button'))
+        self.annotate_button.setFixedSize(button_width, button_height)
         self.annotate_button.setToolTip("Rewrite current caption into current 'Caption' cell\nShortcut: A")
         button_layout.addWidget(self.annotate_button)
 
         self.next_button = QPushButton("Next")
-        self.next_button.setFixedWidth(100)
         self.next_button.setEnabled(False)
+        self.next_button.setFont(self.ui.get_font('button'))
+        self.next_button.setFixedSize(button_width, button_height)
         self.next_button.setToolTip("Jump to next shot")
         button_layout.addWidget(self.next_button)
 
         self.api_button = QPushButton("OpenAI")
-        self.api_button.setFixedWidth(100)
         self.api_button.setEnabled(False)
+        self.api_button.setFont(self.ui.get_font('button'))
+        self.api_button.setFixedSize(button_width, button_height)
         self.api_button.setToolTip("Send current shot to OpenAI API and receive a caption\nShortcut: O")
         button_layout.addWidget(self.api_button)
 
         # Frame count field
+        tiny_width, tiny_height = self.ui.get_dimensions('tiny')
         self.frame_count_field = QLineEdit("5")
-        self.frame_count_field.setFixedWidth(30)
-        self.frame_count_field.setMinimumHeight(24)
+        self.frame_count_field.setFont(self.ui.get_font('tiny'))
+        self.frame_count_field.setFixedSize(tiny_width, tiny_height)
         self.frame_count_field.setAlignment(Qt.AlignCenter)
+        # self.frame_count_field.setFont(self.ui.get_font('small'))
+        # self.frame_count_field.setFixedSize(30, 24)
         self.frame_count_field.setToolTip("Number of frames to send to OpenAI (0 = none)")
         self.frame_count_field.editingFinished.connect(self.validate_frame_count)
         button_layout.addWidget(self.frame_count_field)
 
         self.bot_button = QPushButton("Bot Off")
-        self.bot_button.setFixedWidth(100)
         self.bot_button.setEnabled(False)
+        self.bot_button.setFont(self.ui.get_font('button'))
+        self.bot_button.setFixedSize(button_width, button_height)
         button_layout.addWidget(self.bot_button)
 
         button_layout.addStretch()
@@ -200,20 +210,10 @@ class AnnotateWindow(QMainWindow):
         container.setLayout(main_layout)
         self.setCentralWidget(container)
 
-        # Load custom font for caption field
-        font_path = os.path.join(os.path.dirname(__file__), "ui/fonts/HKGrotesk-Regular.otf")
-        font_id = QFontDatabase.addApplicationFont(font_path)
-        font_families = QFontDatabase.applicationFontFamilies(font_id)
-        if font_families:
-            hk_font_caption = QFont(font_families[0], 18)
-        else:
-            hk_font_caption = QFont("Helvetica", 18)
-
-        self.caption_field.setFont(hk_font_caption)
+        # Remove the custom font loading code - it's now handled by UI class
 
         # Ensure main window has focus at startup
         self.setFocus()
-
         self.setFocusPolicy(Qt.StrongFocus)
 
         self.annotate_button.clicked.connect(self.submit_caption)
@@ -426,7 +426,7 @@ class AnnotateWindow(QMainWindow):
         self.bot_active = False
         self.bot_anim_timer.stop()
         self.bot_button.setText("Bot Off")
-        self.bot_button.setStyleSheet("text-align: center;")
+        self.bot_button.setAlignment(Qt.AlignCenter)
 
     def start_bot_loop(self):
         if DEBUG: print(f"DEBUG: start_bot_loop called - bot_active={self.bot_active}, api_running={self.api_running}")
@@ -440,7 +440,7 @@ class AnnotateWindow(QMainWindow):
     def animate_bot_button(self):
         self.bot_anim_dots = (self.bot_anim_dots + 1) % 4
         self.bot_button.setText("    Bot On" + "." * self.bot_anim_dots)
-        self.bot_button.setStyleSheet("text-align: left;")
+        self.bot_button.setAlignment(Qt.AlignLeft)
 
     def handle_is_last_available_shot(self, is_last):
         if DEBUG: print(f"DEBUG: handle_is_last_available_shot called - is_last={is_last}, bot_active={self.bot_active}, api_running={self.api_running}")
