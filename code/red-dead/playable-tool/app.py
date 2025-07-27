@@ -59,27 +59,29 @@ def main():
     button_font = ui.get_font('button')
 
     # Create main tab widget for cinematheque and shotlist
-    tab_widget = QTabWidget()
-    tab_widget.addTab(windows["cinematheque"], "Cinemathèque")
-    tab_widget.addTab(windows["shotlist"], "Shotlist")
-    tab_widget.tabBar().setFont(button_font)
+    cinema_widget = QTabWidget()
 
-    tab_widget.show()
+    cinema_widget.addTab(windows["cinematheque"], "Cinemathèque")
+    cinema_widget.addTab(windows["shotlist"], "Shotlist")
+    cinema_widget.tabBar().setFont(button_font)
+
+    cinema_widget.show()
 
     # Create text tab widget for captions, default, prompt, subtitles, and inference
-    text_widget = QTabWidget()
-    text_widget.addTab(windows["captions"], "Shot Captions")
-    default_tab_index = text_widget.addTab(windows["default"], "Default Prompt")
-    default_tooltip = load_tooltip_text("prompt-tooltip.txt")
-    text_widget.setTabToolTip(default_tab_index, default_tooltip)
-    prompt_tab_index = text_widget.addTab(windows["prompt"], "Shot Prompt")
-    prompt_tooltip = load_tooltip_text("prompt-tooltip.txt")
-    text_widget.setTabToolTip(prompt_tab_index, prompt_tooltip)
-    text_widget.addTab(windows["subtitles"], "Subtitles")
-    text_widget.addTab(windows["inference"], "Inference")
-    text_widget.tabBar().setFont(button_font)
+    play_widget = QTabWidget()
 
-    text_widget.show()
+    play_widget.addTab(windows["captions"], "Shot Captions")
+    default_tab_index = play_widget.addTab(windows["default"], "Default Prompt")
+    default_tooltip = load_tooltip_text("prompt-tooltip.txt")
+    play_widget.setTabToolTip(default_tab_index, default_tooltip)
+    prompt_tab_index = play_widget.addTab(windows["prompt"], "Shot Prompt")
+    prompt_tooltip = load_tooltip_text("prompt-tooltip.txt")
+    play_widget.setTabToolTip(prompt_tab_index, prompt_tooltip)
+    play_widget.addTab(windows["subtitles"], "Subtitles")
+    play_widget.addTab(windows["inference"], "Inference")
+    play_widget.tabBar().setFont(button_font)
+
+    play_widget.show()
 
     # Signal Connections
     windows["nickelodeon"].video_loaded.connect(windows["shotlist"].process_video)
@@ -114,10 +116,10 @@ def main():
     windows["captions"].bot_finished.connect(windows["cinematheque"].on_bot_finished)
 
     # Load preferences at startup
-    load_preferences(windows, tab_widget, text_widget)
+    load_preferences(windows, cinema_widget, play_widget)
 
     # Save preferences on exit
-    app.aboutToQuit.connect(lambda: save_preferences(windows, tab_widget, text_widget))
+    app.aboutToQuit.connect(lambda: save_preferences(windows, cinema_widget, play_widget))
 
     # Show the app windows
     windows["nickelodeon"].show()
@@ -138,16 +140,16 @@ def main():
     sys.exit(app.exec_())
 
 # Save and load preferences for all windows and widgets
-def save_preferences(windows, tab_widget, text_widget):
+def save_preferences(windows, cinema_widget, play_widget):
     prefs = {}
     for key, win in windows.items():
         win.request_save.emit()
         prefs[key] = win._pending_save_data  # Each window sets this attribute
     
     # Save tab widget position and size
-    pos = tab_widget.pos()
-    size = tab_widget.size()
-    prefs["tab_widget"] = {
+    pos = cinema_widget.pos()
+    size = cinema_widget.size()
+    prefs["cinema_widget"] = {
         "x": pos.x(),
         "y": pos.y(),
         "width": size.width(),
@@ -155,9 +157,9 @@ def save_preferences(windows, tab_widget, text_widget):
     }
     
     # Save text widget position and size
-    pos = text_widget.pos()
-    size = text_widget.size()
-    prefs["text_widget"] = {
+    pos = play_widget.pos()
+    size = play_widget.size()
+    prefs["play_widget"] = {
         "x": pos.x(),
         "y": pos.y(),
         "width": size.width(),
@@ -168,7 +170,7 @@ def save_preferences(windows, tab_widget, text_widget):
         json.dump(prefs, f)
 
 # Load preferences for all windows and widgets
-def load_preferences(windows, tab_widget, text_widget):
+def load_preferences(windows, cinema_widget, play_widget):
     if os.path.exists(PREFS_PATH):
         with open(PREFS_PATH, "r") as f:
             prefs = json.load(f)
@@ -176,18 +178,18 @@ def load_preferences(windows, tab_widget, text_widget):
             win.request_load.emit(prefs.get(key, {}))
         
         # Load tab widget position and size
-        tab_prefs = prefs.get("tab_widget", {})
+        tab_prefs = prefs.get("cinema_widget", {})
         if "x" in tab_prefs and "y" in tab_prefs:
-            tab_widget.move(tab_prefs["x"], tab_prefs["y"])
+            cinema_widget.move(tab_prefs["x"], tab_prefs["y"])
         if "width" in tab_prefs and "height" in tab_prefs:
-            tab_widget.resize(tab_prefs["width"], tab_prefs["height"])
+            cinema_widget.resize(tab_prefs["width"], tab_prefs["height"])
             
         # Load text widget position and size
-        text_prefs = prefs.get("text_widget", {})
+        text_prefs = prefs.get("play_widget", {})
         if "x" in text_prefs and "y" in text_prefs:
-            text_widget.move(text_prefs["x"], text_prefs["y"])
+            play_widget.move(text_prefs["x"], text_prefs["y"])
         if "width" in text_prefs and "height" in text_prefs:
-            text_widget.resize(text_prefs["width"], text_prefs["height"])
+            play_widget.resize(text_prefs["width"], text_prefs["height"])
     else:
         for win in windows.values():
             win.request_load.emit({})

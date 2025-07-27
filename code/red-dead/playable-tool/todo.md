@@ -1,4 +1,11 @@
 # TODO
+- Finish:
+    - Abstract class Player still doesn't implement all the previous timeline scrubbing, load signlaing, etc
+    - Create an abstract class of the `shotlist`. We'll call it the `medialist`. Use this abstract class to make a `playlist` in the `Playlist` tab
+
+- Reset
+    - When loading new Project folder, reset all the contents of the existing windows (for now it keeps previous shotlist active, etc)
+
 - Add :
     - Subtitles of all dialogue spoken in between `Start` and `End` when sending to `OpenAI` `API`. Include somehow in System Prompt
     - Prompt tag system using {title}, {director}, etc that tool can replace with metadata

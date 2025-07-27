@@ -3,9 +3,14 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QLineEdit, QSizePolicy, QSlider
 )
+
 import os
 import platform
 import vlc
+
+SEEK_NORMAL = "1"
+SEEK_FAST = "30"
+FRAMES_PER_SHOT = 30
 
 class AbstractPlayerWindow(QMainWindow):
     # Signals for communication
@@ -239,6 +244,18 @@ class AbstractPlayerWindow(QMainWindow):
         self._update_timecode_display(time_ms)
         self.emit_timecode_changed(time_ms)
 
+    def jump_to_timecode(self, timecode, is_last_frame=False):
+        """Jump to specific timecode"""
+        parts = timecode.split(":")
+        if len(parts) == 3:
+            h = int(parts[0])
+            m = int(parts[1])
+            s = float(parts[2])
+            time_ms = int((h * 3600 + m * 60 + s) * 1000)
+            self.set_video_time(time_ms)
+        else:
+            print(f"Invalid timecode format: {timecode}")
+
     def _update_timecode_display(self, time_ms):
         seconds = time_ms // 1000
         h = seconds // 3600
@@ -254,6 +271,45 @@ class AbstractPlayerWindow(QMainWindow):
             self.timecode_label.setText(f"{h:02}:{m:02}:{s:02} | {duration_str}")
         else:
             self.timecode_label.setText(f"{h:02}:{m:02}:{s:02} | 00:00:00")
+
+    def handle_shot_timecodes(self, start_timecode, timecodes_list):
+        """Handle shot timecodes from shotlist for frame extraction"""
+        
+        if not self.current_video_path:
+            return
+            
+        # Jump to the start of the shot
+        self.jump_to_timecode(start_timecode)
+        
+        # Extract frames at the specified timecodes
+        frames = []
+        import cv2
+        cap = cv2.VideoCapture(self.current_video_path)
+        
+        for i, timecode in enumerate(timecodes_list):
+            # Convert timecode to milliseconds
+            parts = timecode.split(":")
+            if len(parts) == 3:
+                h = int(parts[0])
+                m = int(parts[1])
+                s = float(parts[2])
+                time_ms = int((h * 3600 + m * 60 + s) * 1000)
+                                
+                # Extract frame at this timecode
+                cap.set(cv2.CAP_PROP_POS_MSEC, time_ms)
+                ret, frame = cap.read()
+                if ret:
+                    frames.append(frame)
+                else:
+                    pass
+
+        cap.release()
+        
+        # Emit the extracted frames to the annotate window
+        if frames:
+            self.frames_extracted.emit(frames)
+        else:
+            pass
 
     def emit_timecode_changed(self, position):
         self.video_timecode_changed.emit(position)
@@ -298,3 +354,75 @@ class AbstractPlayerWindow(QMainWindow):
             print(f"Error during cleanup: {e}")
         finally:
             super().closeEvent(event)
+
+    def on_request_save(self):
+        pos = self.pos()
+        size = self.size()
+        self._pending_save_data = {
+            "x": pos.x(),
+            "y": pos.y(),
+            "width": size.width(),
+            "height": size.height(),
+            "normal_seek": self.normal_seek.text(),
+            "fast_seek": self.fast_seek.text()
+        }
+
+    def on_request_load(self, data):
+        if "normal_seek" in data:
+            self.normal_seek.setText(data["normal_seek"])
+        if "fast_seek" in data:
+            self.fast_seek.setText(data["fast_seek"])
+        if "x" in data and "y" in data:
+            self.move(data["x"], data["y"])
+        if "width" in data and "height" in data:
+            self.resize(data["width"], data["height"])
+
+
+
+class JumpSlider(QSlider):
+    def __init__(self, orientation):
+        super().__init__(orientation)
+        self.player_window = None
+        self.is_scrubbing = False
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.is_scrubbing = True
+            self._jump_to_mouse_position(event)
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self.is_scrubbing and event.buttons() & Qt.LeftButton:
+            self._jump_to_mouse_position(event)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.is_scrubbing = False
+            self._jump_to_mouse_position(event, immediate=True)
+        super().mouseReleaseEvent(event)
+
+    def _jump_to_mouse_position(self, event, immediate=False):
+        if self.orientation() == Qt.Horizontal:
+            if hasattr(event, "position"):
+                x = event.position().x()
+            else:
+                x = event.x()
+            value = self.minimum() + ((self.maximum() - self.minimum()) * x) / self.width()
+        else:
+            if hasattr(event, "position"):
+                y = event.position().y()
+            else:
+                y = event.y()
+            value = self.minimum() + ((self.maximum() - self.minimum()) * (self.height() - y)) / self.height()
+        
+        value = max(self.minimum(), min(self.maximum(), int(value)))
+        
+        if self.player_window:
+            if immediate:
+                self.player_window.set_video_time(value)
+            else:
+                self.setValue(value)
+                self.player_window._update_timecode_display(value)
+                self.player_window.emit_timecode_changed(value)
+                self.player_window.vlc_player.set_time(value)
