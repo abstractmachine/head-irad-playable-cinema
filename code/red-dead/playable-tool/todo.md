@@ -2,6 +2,7 @@
 - Finish:
     - Abstract class Player still doesn't implement all the previous timeline scrubbing, load signlaing, etc
     - Create an abstract class of the `shotlist`. We'll call it the `medialist`. Use this abstract class to make a `playlist` in the `Playlist` tab
+    - Add a 'Playbill' window with a list of all the movies in the `gameplay` folder
 
 - Reset
     - When loading new Project folder, reset all the contents of the existing windows (for now it keeps previous shotlist active, etc)
