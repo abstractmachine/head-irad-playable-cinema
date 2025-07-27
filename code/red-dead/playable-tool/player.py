@@ -40,7 +40,8 @@ class AbstractPlayerWindow(QMainWindow):
         self.video_widget.setStyleSheet("background-color: black;")
 
         # Timeline slider
-        self.timeline = QSlider(Qt.Horizontal)
+        self.timeline = JumpSlider(Qt.Horizontal)
+        self.timeline.player_window = self
         self.timeline.setRange(0, 100)
         self.timeline.setValue(0)
         self.timeline.setEnabled(False)
@@ -61,6 +62,8 @@ class AbstractPlayerWindow(QMainWindow):
         self.fast_seek.setAlignment(Qt.AlignCenter)
         self.normal_seek.editingFinished.connect(self.validate_normal_seek)
         self.fast_seek.editingFinished.connect(self.validate_fast_seek)
+        self.normal_seek.setFocusPolicy(Qt.ClickFocus)
+        self.fast_seek.setFocusPolicy(Qt.ClickFocus)
 
         # Play/Pause button
         self.play_pause_button = QPushButton("Play")
@@ -175,6 +178,8 @@ class AbstractPlayerWindow(QMainWindow):
         self.timeline.setEnabled(True)
         self.vlc_player.play()
         QTimer.singleShot(500, self._start_duration_polling)
+        self.video_loaded.emit(self.current_video_path)
+        self.video_loaded_with_metadata.emit(self.current_video_path, self.movie_metadata)
 
     def _start_duration_polling(self):
         """Start duration polling"""
