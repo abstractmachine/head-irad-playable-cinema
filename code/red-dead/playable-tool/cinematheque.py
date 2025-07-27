@@ -77,11 +77,13 @@ class CinemathequeWindow(QMainWindow):
         self.shotlist_bot_button = QPushButton("Shotlist Bot Off")
         self.shotlist_bot_button.setFont(self.ui.get_font('button'))
         self.shotlist_bot_button.setFixedSize(120, button_height)
+        self.shotlist_bot_button.setEnabled(False)
         self.shotlist_bot_button.clicked.connect(self.handle_shotlist_bot)
 
         self.caption_bot_button = QPushButton("Caption Bot Off")
         self.caption_bot_button.setFont(self.ui.get_font('button'))
         self.caption_bot_button.setFixedSize(120, button_height)
+        self.caption_bot_button.setEnabled(False)
         self.caption_bot_button.clicked.connect(self.handle_caption_bot)
 
         button_layout.addWidget(self.project_folder_button)
@@ -424,7 +426,7 @@ class MovieItemWidget(QWidget):
         
         # Create horizontal layout
         layout = QHBoxLayout()
-        layout.setContentsMargins(8, 0, 5, 0) # (left, top, right, bottom)
+        layout.setContentsMargins(10, 0, 5, 0) # (left, top, right, bottom)
         layout.setSpacing(10) # Space between poster and info
         
         # Poster label (left side)

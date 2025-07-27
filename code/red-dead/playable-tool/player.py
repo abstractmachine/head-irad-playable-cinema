@@ -50,6 +50,8 @@ class AbstractPlayerWindow(QMainWindow):
         self.timeline.sliderPressed.connect(self.on_slider_pressed)
         self.timeline.sliderReleased.connect(self.on_slider_released)
 
+        button_width, button_height = self.ui.get_dimensions('button')
+
         # Seek speed controls
         self.normal_seek = QLineEdit("1")
         self.fast_seek = QLineEdit("30")
@@ -71,7 +73,7 @@ class AbstractPlayerWindow(QMainWindow):
         self.play_pause_button.clicked.connect(self.toggle_play_pause)
         self.play_pause_button.setEnabled(False)
         self.play_pause_button.setFont(self.ui.get_font('button'))
-        self.play_pause_button.setFixedSize(100, 32)
+        self.play_pause_button.setFixedSize(100, button_height)
         self.is_playing = False
 
         # Seek back
@@ -80,7 +82,7 @@ class AbstractPlayerWindow(QMainWindow):
         self.back_button.setEnabled(False)
         self.back_button.clicked.connect(self.seek_back)
         self.back_button.setFont(self.ui.get_font('button'))
-        self.back_button.setFixedSize(100, 32)
+        self.back_button.setFixedSize(100, button_height)
 
         # Seek forward
         self.forward_button = QPushButton("Forward")
@@ -88,13 +90,13 @@ class AbstractPlayerWindow(QMainWindow):
         self.forward_button.setEnabled(False)
         self.forward_button.clicked.connect(self.seek_forward)
         self.forward_button.setFont(self.ui.get_font('button'))
-        self.forward_button.setFixedSize(100, 32)
+        self.forward_button.setFixedSize(100, button_height)
 
         # Timecode display
         self.timecode_label = QLabel("00:00:00 | 00:00:00")
         self.timecode_label.setFont(self.ui.get_font('monospace'))
         self.timecode_label.setAlignment(Qt.AlignCenter)
-        self.timecode_label.setStyleSheet("QLabel { padding: 5px; }")
+        self.timecode_label.setStyleSheet("QLabel { padding: 0px; }")
         self.timecode_label.setToolTip("Current timecode | Total duration")
 
         # Layouts
@@ -109,7 +111,7 @@ class AbstractPlayerWindow(QMainWindow):
 
         layout = QVBoxLayout()
         layout.setSpacing(5)
-        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setContentsMargins(10, 0, 10, 0)
         layout.addWidget(self.video_widget, stretch=1)
         layout.addWidget(self.timeline)
         layout.addLayout(controls_layout)

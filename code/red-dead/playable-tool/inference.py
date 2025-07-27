@@ -36,7 +36,7 @@ class InferenceWindow(QMainWindow):
 
         # Matched caption field (bottom)
         self.matched_caption = QTextEdit()
-        self.matched_caption.setPlaceholderText("Matched caption will appear here.")
+        self.matched_caption.setPlaceholderText("Matched movie caption will appear here.")
         self.matched_caption.setReadOnly(True)
         self.matched_caption.setFont(self.ui.get_font('text'))
         self.matched_caption.setStyleSheet("QTextEdit { border: none; padding: 5px; }")
@@ -132,7 +132,7 @@ class InferenceWindow(QMainWindow):
         self.setWindowTitle(f"Inference - {movie_name}")
         
         # Clear inference field for new movie
-        self.gameplay_inference.setPlainText(f"Ready for inference on: {movie_name}")
+        self.matched_caption.setPlainText(f"Ready for inference on: {movie_name}")
         if DEBUG: print(f"Inference: Movie loaded - {movie_filename}")
 
     def on_movie_loaded_with_metadata(self, movie_path, metadata=None):
@@ -145,7 +145,7 @@ class InferenceWindow(QMainWindow):
                 print("Inference: No metadata provided for movie.")
                 print(f"Inference: Movie loaded - {movie_path}")
                 print(f"Inference: Movie metadata {metadata}")
-            self.gameplay_inference.setPlainText("No metadata provided.")
+            self.matched_caption.setPlainText("No metadata provided.")
             return
 
         movie_name = metadata.get('title', 'Unknown Title')
@@ -155,9 +155,8 @@ class InferenceWindow(QMainWindow):
         self.setWindowTitle(f"Inference - {movie_name}")
 
         info = f"Ready to match \nTitle: {movie_name}\nFilename: {movie_filename}\nYear: {movie_year}"
-        self.gameplay_inference.setPlainText(info)
+        self.matched_caption.setPlainText(info)
         
-
         if DEBUG:
             print(f"Inference: Movie loaded - {movie_filename}")
             print(f"Inference: Title - {movie_name}")

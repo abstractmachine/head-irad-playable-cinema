@@ -20,7 +20,6 @@ from shotlist import ShotlistWindow
 from annotate import AnnotateWindow
 from cinematheque import CinemathequeWindow
 from prompt import PromptWindow
-from default import DefaultWindow
 from subtitles import SubtitlesWindow
 from inference import InferenceWindow
 
@@ -40,7 +39,6 @@ def main():
         "shotlist": ShotlistWindow(ui),
         "captions": AnnotateWindow(ui),
         "cinematheque": CinemathequeWindow(ui),
-        "default": DefaultWindow(ui),
         "prompt": PromptWindow(ui),
         "subtitles": SubtitlesWindow(ui),
         "inference": InferenceWindow(ui)
@@ -67,14 +65,11 @@ def main():
 
     cinema_widget.show()
 
-    # Create text tab widget for captions, default, prompt, subtitles, and inference
+    # Create text tab widget for captions, prompt, subtitles, and inference
     play_widget = QTabWidget()
 
-    play_widget.addTab(windows["captions"], "Shot Captions")
-    default_tab_index = play_widget.addTab(windows["default"], "Default Prompt")
-    default_tooltip = load_tooltip_text("prompt-tooltip.txt")
-    play_widget.setTabToolTip(default_tab_index, default_tooltip)
-    prompt_tab_index = play_widget.addTab(windows["prompt"], "Shot Prompt")
+    play_widget.addTab(windows["captions"], "Captions")
+    prompt_tab_index = play_widget.addTab(windows["prompt"], "Prompts")
     prompt_tooltip = load_tooltip_text("prompt-tooltip.txt")
     play_widget.setTabToolTip(prompt_tab_index, prompt_tooltip)
     play_widget.addTab(windows["subtitles"], "Subtitles")

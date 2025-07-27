@@ -103,7 +103,7 @@ def create_detector(method, detector_args):
     
     return detector
 
-class SceneDetectWorker(QObject):
+class ShotDetectWorker(QObject):
     """Worker class for running scene detection in a separate thread"""
     finished = pyqtSignal(list)
     
@@ -114,7 +114,7 @@ class SceneDetectWorker(QObject):
         self.weights = weights
         
     def run(self):
-        print("Scene detection started for:", self.video_path)
+        print("Shot detection started for:", self.video_path)
         scene_list = []
         start_time = time.time()
         try:
@@ -129,5 +129,5 @@ class SceneDetectWorker(QObject):
             scene_list = [f"Error: {e}"]
         elapsed = time.time() - start_time
         elapsed_str = time.strftime("%H:%M:%S", time.gmtime(elapsed))
-        print(f"Scene detection finished. Elapsed time: {elapsed_str}")
+        print(f"Shot detection finished. Elapsed time: {elapsed_str}")
         self.finished.emit(scene_list)

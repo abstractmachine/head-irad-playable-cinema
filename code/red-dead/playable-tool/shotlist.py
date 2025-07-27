@@ -2,6 +2,7 @@ DEBUG = False  # Set to True to enable debug output
 
 import csv
 import os
+from re import S
 
 from PyQt5.QtCore import pyqtSignal
 from PyQt5.QtCore import Qt, QThread, QObject, QTimer
@@ -13,7 +14,7 @@ from PyQt5.QtWidgets import (
 )
 
 from scenedetect import open_video
-from detector import SceneDetectWorker
+from detector import ShotDetectWorker
 
 JUMP_FRAME_PADDING_PLAYBACK = 0  # Number of frames to pad when jumping in playback mode
 JUMP_FRAME_PADDING_DETECTION = 5  # Number of frames to pad when jumping in detection mode
@@ -82,7 +83,7 @@ class ShotlistWindow(QMainWindow):
             "detect-hist",
             "detect-threshold"
         ])
-        self.method_dropdown.setFixedSize(180, button_height)
+        self.method_dropdown.setFixedSize(130, button_height)
         self.method_dropdown.setFont(self.ui.get_font('button'))
 
         tiny_width, tiny_height = self.ui.get_dimensions('tiny')
@@ -92,7 +93,7 @@ class ShotlistWindow(QMainWindow):
         self.weights_field.setAlignment(Qt.AlignCenter)
         self.weights_field.setToolTip("Set PySceneDetect parameters.\nSee documentation for details.\nExamples:\nweights: -w 1.0 1.0 1.0 0.0\nthreshold: -t 3.2")
         self.weights_field.setFont(self.ui.get_font('tiny'))
-        self.weights_field.setFixedSize(180, tiny_height)
+        self.weights_field.setFixedSize(160, tiny_height)
         # self.weights_field.setMinimumHeight(tiny_height)
         # self.weights_field.setMaximumHeight(tiny_height)
 
@@ -102,21 +103,27 @@ class ShotlistWindow(QMainWindow):
         self.delete_button.setEnabled(False)
         self.delete_button.clicked.connect(self.delete_scene_csv)
 
-        self.detect_button = QPushButton("Detect")
-        self.detect_button.setFixedSize(button_width, button_height)
+        self.detect_button = QPushButton("Detect Shots")
+        self.detect_button.setFixedSize(120, button_height)
         self.detect_button.setFont(self.ui.get_font('button'))
         self.detect_button.setStyleSheet(
             "text-align: center; padding-left: 0px; padding-top: 3px; padding-bottom: 6px;"
         )
         self.detect_button.setEnabled(False)
 
+        # New Detect Scenes button
+        self.detect_scenes_button = QPushButton("Detect Scenes")
+        self.detect_scenes_button.setFixedSize(120, button_height)
+        self.detect_scenes_button.setFont(self.ui.get_font('button'))
+        self.detect_scenes_button.setEnabled(False)  # Inactive for now
+        self.detect_scenes_button.clicked.connect(self.handle_detect_scenes)
+
         button_layout = QHBoxLayout()
         button_layout.addStretch()
-        # Remove folder_button from layout
-        # button_layout.addWidget(self.folder_button)
         button_layout.addWidget(self.method_dropdown)
         button_layout.addWidget(self.weights_field)
         button_layout.addWidget(self.detect_button)
+        button_layout.addWidget(self.detect_scenes_button)
         button_layout.addWidget(self.delete_button)
         button_layout.addStretch()
         layout.addLayout(button_layout)
@@ -180,13 +187,13 @@ class ShotlistWindow(QMainWindow):
             txtfile.write(f"{method}\n{weights_text}\n")
         # --- End .txt file writing ---
 
-        self.worker = SceneDetectWorker(self.video_path, method, weights_text)
+        self.shot_worker = ShotDetectWorker(self.video_path, method, weights_text)
         self.thread = QThread()
-        self.worker.moveToThread(self.thread)
-        self.thread.started.connect(self.worker.run)
-        self.worker.finished.connect(self.on_scene_detected)
-        self.worker.finished.connect(self.thread.quit)
-        self.worker.finished.connect(self.worker.deleteLater)
+        self.shot_worker.moveToThread(self.thread)
+        self.thread.started.connect(self.shot_worker.run)
+        self.shot_worker.finished.connect(self.on_scene_detected)
+        self.shot_worker.finished.connect(self.thread.quit)
+        self.shot_worker.finished.connect(self.shot_worker.deleteLater)
         self.thread.finished.connect(self.thread.deleteLater)
         self.thread.finished.connect(self.on_detection_finished)
         self.thread.start()
@@ -786,6 +793,9 @@ class ShotlistWindow(QMainWindow):
                 break
         
         return new_row
+    
+    def handle_detect_scenes(self):
+        print("Detect Scenes button pressed (dummy method).")
 
     def set_project_folder(self, project_folder):
         """Set the project folder and update detections folder"""
