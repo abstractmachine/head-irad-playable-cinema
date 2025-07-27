@@ -17,166 +17,6 @@ POSTER_HEIGHT = 90
 ITEM_HEIGHT = 110
 INFO_SPACING = 1
 
-class MovieItemWidget(QWidget):
-    """Custom widget for each movie item in the list"""
-    
-    # Add a signal to emit when clicked
-    clicked = pyqtSignal(dict)
-    
-    def __init__(self, movie_data, posters_folder, ui):
-        super().__init__()
-        self.movie_data = movie_data
-        self.posters_folder = posters_folder
-        self.ui = ui  # Store UI instance
-        self.is_selected = False
-        
-        # Set default background
-        self.setAutoFillBackground(True)
-        self.update_background()
-        
-        # Create horizontal layout
-        layout = QHBoxLayout()
-        layout.setContentsMargins(8, 0, 5, 0) # (left, top, right, bottom)
-        layout.setSpacing(10) # Space between poster and info
-        
-        # Poster label (left side)
-        self.poster_label = QLabel()
-        self.poster_label.setFixedSize(POSTER_WIDTH, POSTER_HEIGHT)
-        self.poster_label.setStyleSheet("background-color: #f0f0f0; border: none;")
-        self.poster_label.setAlignment(Qt.AlignCenter)
-        self.poster_label.setScaledContents(True)
-        
-        # Load poster image if available
-        self.load_poster()
-        
-        layout.addWidget(self.poster_label)
-        
-        # Movie info (right side)
-        info_layout = QVBoxLayout()
-        info_layout.setSpacing(INFO_SPACING)
-        info_layout.setContentsMargins(0, 8, 0, 0)  # Add top margin to push content down
-
-        # Title
-        title_label = QLabel(movie_data.get('title', 'Unknown Title'))
-        title_label.setFont(self.ui.get_font('title'))  # Use UI font system
-        title_label.setWordWrap(True)
-        info_layout.addWidget(title_label)
-
-        # Year, Director, and Duration on same line with regular font
-        year = movie_data.get('year', 'Unknown Year')
-        director = movie_data.get('director', 'Unknown Director')
-        duration = movie_data.get('duration', '')
-
-        # Format the duration if it exists
-        if duration:
-            # Assume duration is in minutes, format as "Xh Ym" or just "Ym" if under 1 hour
-            try:
-                duration_minutes = int(duration)
-                if duration_minutes >= 60:
-                    hours = duration_minutes // 60
-                    minutes = duration_minutes % 60
-                    duration_str = f"{hours}h {minutes}m"
-                else:
-                    duration_str = f"{duration_minutes}m"
-            except (ValueError, TypeError):
-                duration_str = str(duration)
-            
-            year_director_duration_text = f"{year} | {director} | {duration_str}"
-        else:
-            year_director_duration_text = f"{year} | {director}"
-
-        year_director_duration_label = QLabel(year_director_duration_text)
-        year_director_duration_label.setFont(self.ui.get_font('year'))
-        info_layout.addWidget(year_director_duration_label)
-
-        # Tagline
-        tagline = movie_data.get('tagline', '')
-        if tagline:
-            tagline_label = QLabel(tagline)
-            tagline_label.setWordWrap(True)
-            tagline_label.setFont(self.ui.get_font('tagline'))
-            info_layout.addWidget(tagline_label)
-        
-        info_layout.addStretch()  # Push content to top
-        
-        layout.addLayout(info_layout, 1)  # Give info area more space
-        self.setLayout(layout)
-    
-    def set_selected(self, selected):
-        """Set the selection state and update background"""
-        self.is_selected = selected
-        self.update_background()
-    
-    def update_background(self):
-        """Update the background color based on selection state"""
-        if self.is_selected:
-            # Use a more specific and stronger stylesheet
-            self.setStyleSheet("""
-                MovieItemWidget {
-                    background-color: #FF00FF !important;
-                }
-                QWidget {
-                    background-color: #FF00FF !important;
-                }
-            """)
-            self.setAutoFillBackground(True)
-        else:
-            # Clear all styling completely
-            self.setStyleSheet("")
-            self.setAutoFillBackground(False)
-        
-        # Force immediate visual update
-        self.repaint()
-    
-    def mousePressEvent(self, event):
-        """Handle mouse clicks on the widget"""
-        if event.button() == Qt.LeftButton:
-            self.clicked.emit(self.movie_data)
-        super().mousePressEvent(event)
-
-    def load_poster(self):
-        """Load poster image for this movie"""
-        # Get the exact filename from metadata
-        filename = self.movie_data.get('filename', '')
-        
-        # Remove .mp4 extension if present
-        if filename.endswith('.mp4'):
-            filename = filename[:-4]
-
-        # Try common image extensions
-        for ext in ['.jpg', '.jpeg', '.png', '.bmp']:
-            poster_path = os.path.join(self.posters_folder, f"{filename}{ext}")
-            if os.path.exists(poster_path):
-                pixmap = QPixmap(poster_path)
-                if not pixmap.isNull():
-                    self.poster_label.setPixmap(pixmap)
-                    return
-                else:
-                    print(f"✗ Failed to load pixmap from: {poster_path}")
-
-        # Fallback: try tmdb_id format
-        tmdb_id = self.movie_data.get('tmdb_id', '')
-        if tmdb_id:
-            for ext in ['.jpg', '.jpeg', '.png', '.bmp']:
-                poster_path = os.path.join(self.posters_folder, f"{tmdb_id}{ext}")
-                if os.path.exists(poster_path):
-                    pixmap = QPixmap(poster_path)
-                    if not pixmap.isNull():
-                        self.poster_label.setPixmap(pixmap)
-                        return
-                    else:
-                        print(f"✗ Failed to load pixmap from fallback: {poster_path}")
-
-        # If no poster found, show placeholder and debug info
-        print(f"✗ No poster found for: {self.movie_data.get('title', 'Unknown')}")
-        print(f"  Looked for: {filename}.[jpg|jpeg|png|bmp]")
-        if tmdb_id:
-            print(f"  Also tried: {tmdb_id}.[jpg|jpeg|png|bmp]")
-        print(f"  In folder: {self.posters_folder}")
-        
-        self.poster_label.setText("No\nPoster")
-        self.poster_label.setAlignment(Qt.AlignCenter)
-
 class CinemathequeWindow(QMainWindow):
     
     # Define signals for communication
@@ -187,7 +27,7 @@ class CinemathequeWindow(QMainWindow):
     
     def __init__(self, ui):
         super().__init__()
-        self.ui = ui  # Store UI instance
+        self.ui = ui
         self.project_folder = None
         self.currently_loading_video = None  # Track what video is currently being requested
         self.selected_movie_widget = None  # Track currently selected movie widget
@@ -222,19 +62,32 @@ class CinemathequeWindow(QMainWindow):
 
         # Project folder button
         self.project_folder_button = QPushButton("Project Folder")
-        self.project_folder_button.setFont(self.ui.get_font('button'))  # Use UI font system
+        self.project_folder_button.setFont(self.ui.get_font('button'))
         self.project_folder_button.clicked.connect(self.select_project_folder)
         self.project_folder_button.setFixedSize(button_width, button_height)
 
         # Metadata rebuild button
         self.metadata_button = QPushButton("Rebuild Metadata")
-        self.metadata_button.setFont(self.ui.get_font('button'))  # Use UI font system
+        self.metadata_button.setFont(self.ui.get_font('button'))
         self.metadata_button.clicked.connect(self.rebuild_metadata)
         self.metadata_button.setEnabled(False)
         self.metadata_button.setFixedSize(160, button_height)
 
+        # Bot buttons
+        self.shotlist_bot_button = QPushButton("Shotlist Bot Off")
+        self.shotlist_bot_button.setFont(self.ui.get_font('button'))
+        self.shotlist_bot_button.setFixedSize(120, button_height)
+        self.shotlist_bot_button.clicked.connect(self.handle_shotlist_bot)
+
+        self.caption_bot_button = QPushButton("Caption Bot Off")
+        self.caption_bot_button.setFont(self.ui.get_font('button'))
+        self.caption_bot_button.setFixedSize(120, button_height)
+        self.caption_bot_button.clicked.connect(self.handle_caption_bot)
+
         button_layout.addWidget(self.project_folder_button)
         button_layout.addWidget(self.metadata_button)
+        button_layout.addWidget(self.shotlist_bot_button)
+        button_layout.addWidget(self.caption_bot_button)
         button_layout.addStretch()
         
         layout.addLayout(button_layout)
@@ -543,3 +396,171 @@ class CinemathequeWindow(QMainWindow):
         # - Updating UI state
         # - Logging the successful load
         # - Enabling/disabling certain features
+
+    def handle_shotlist_bot(self):
+        print("Shotlist Bot button pressed.")
+
+    def handle_caption_bot(self):
+        print("Caption Bot button pressed.")
+
+# --------------------
+
+class MovieItemWidget(QWidget):
+    """Custom widget for each movie item in the list"""
+    
+    # Add a signal to emit when clicked
+    clicked = pyqtSignal(dict)
+    
+    def __init__(self, movie_data, posters_folder, ui):
+        super().__init__()
+        self.movie_data = movie_data
+        self.posters_folder = posters_folder
+        self.ui = ui  # Store UI instance
+        self.is_selected = False
+        
+        # Set default background
+        self.setAutoFillBackground(True)
+        self.update_background()
+        
+        # Create horizontal layout
+        layout = QHBoxLayout()
+        layout.setContentsMargins(8, 0, 5, 0) # (left, top, right, bottom)
+        layout.setSpacing(10) # Space between poster and info
+        
+        # Poster label (left side)
+        self.poster_label = QLabel()
+        self.poster_label.setFixedSize(POSTER_WIDTH, POSTER_HEIGHT)
+        self.poster_label.setStyleSheet("background-color: #f0f0f0; border: none;")
+        self.poster_label.setAlignment(Qt.AlignCenter)
+        self.poster_label.setScaledContents(True)
+        
+        # Load poster image if available
+        self.load_poster()
+        
+        layout.addWidget(self.poster_label)
+        
+        # Movie info (right side)
+        info_layout = QVBoxLayout()
+        info_layout.setSpacing(INFO_SPACING)
+        info_layout.setContentsMargins(0, 8, 0, 0)  # Add top margin to push content down
+
+        # Title
+        title_label = QLabel(movie_data.get('title', 'Unknown Title'))
+        title_label.setFont(self.ui.get_font('title'))  # Use UI font system
+        title_label.setWordWrap(True)
+        info_layout.addWidget(title_label)
+
+        # Year, Director, and Duration on same line with regular font
+        year = movie_data.get('year', 'Unknown Year')
+        director = movie_data.get('director', 'Unknown Director')
+        duration = movie_data.get('duration', '')
+
+        # Format the duration if it exists
+        if duration:
+            # Assume duration is in minutes, format as "Xh Ym" or just "Ym" if under 1 hour
+            try:
+                duration_minutes = int(duration)
+                if duration_minutes >= 60:
+                    hours = duration_minutes // 60
+                    minutes = duration_minutes % 60
+                    duration_str = f"{hours}h {minutes}m"
+                else:
+                    duration_str = f"{duration_minutes}m"
+            except (ValueError, TypeError):
+                duration_str = str(duration)
+            
+            year_director_duration_text = f"{year} | {director} | {duration_str}"
+        else:
+            year_director_duration_text = f"{year} | {director}"
+
+        year_director_duration_label = QLabel(year_director_duration_text)
+        year_director_duration_label.setFont(self.ui.get_font('year'))
+        info_layout.addWidget(year_director_duration_label)
+
+        # Tagline
+        tagline = movie_data.get('tagline', '')
+        if tagline:
+            tagline_label = QLabel(tagline)
+            tagline_label.setWordWrap(True)
+            tagline_label.setFont(self.ui.get_font('tagline'))
+            info_layout.addWidget(tagline_label)
+        
+        info_layout.addStretch()  # Push content to top
+        
+        layout.addLayout(info_layout, 1)  # Give info area more space
+        self.setLayout(layout)
+    
+    def set_selected(self, selected):
+        """Set the selection state and update background"""
+        self.is_selected = selected
+        self.update_background()
+    
+    def update_background(self):
+        """Update the background color based on selection state"""
+        if self.is_selected:
+            # Use a more specific and stronger stylesheet
+            self.setStyleSheet("""
+                MovieItemWidget {
+                    background-color: #FF00FF !important;
+                }
+                QWidget {
+                    background-color: #FF00FF !important;
+                }
+            """)
+            self.setAutoFillBackground(True)
+        else:
+            # Clear all styling completely
+            self.setStyleSheet("")
+            self.setAutoFillBackground(False)
+        
+        # Force immediate visual update
+        self.repaint()
+    
+    def mousePressEvent(self, event):
+        """Handle mouse clicks on the widget"""
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(self.movie_data)
+        super().mousePressEvent(event)
+
+    def load_poster(self):
+        """Load poster image for this movie"""
+        # Get the exact filename from metadata
+        filename = self.movie_data.get('filename', '')
+        
+        # Remove .mp4 extension if present
+        if filename.endswith('.mp4'):
+            filename = filename[:-4]
+
+        # Try common image extensions
+        for ext in ['.jpg', '.jpeg', '.png', '.bmp']:
+            poster_path = os.path.join(self.posters_folder, f"{filename}{ext}")
+            if os.path.exists(poster_path):
+                pixmap = QPixmap(poster_path)
+                if not pixmap.isNull():
+                    self.poster_label.setPixmap(pixmap)
+                    return
+                else:
+                    print(f"✗ Failed to load pixmap from: {poster_path}")
+
+        # Fallback: try tmdb_id format
+        tmdb_id = self.movie_data.get('tmdb_id', '')
+        if tmdb_id:
+            for ext in ['.jpg', '.jpeg', '.png', '.bmp']:
+                poster_path = os.path.join(self.posters_folder, f"{tmdb_id}{ext}")
+                if os.path.exists(poster_path):
+                    pixmap = QPixmap(poster_path)
+                    if not pixmap.isNull():
+                        self.poster_label.setPixmap(pixmap)
+                        return
+                    else:
+                        print(f"✗ Failed to load pixmap from fallback: {poster_path}")
+
+        # If no poster found, show placeholder and debug info
+        print(f"✗ No poster found for: {self.movie_data.get('title', 'Unknown')}")
+        print(f"  Looked for: {filename}.[jpg|jpeg|png|bmp]")
+        if tmdb_id:
+            print(f"  Also tried: {tmdb_id}.[jpg|jpeg|png|bmp]")
+        print(f"  In folder: {self.posters_folder}")
+        
+        self.poster_label.setText("No\nPoster")
+        self.poster_label.setAlignment(Qt.AlignCenter)

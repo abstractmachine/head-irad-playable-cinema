@@ -196,10 +196,10 @@ class AnnotateWindow(QMainWindow):
         self.frame_count_field.editingFinished.connect(self.validate_frame_count)
         button_layout.addWidget(self.frame_count_field)
 
-        self.bot_button = QPushButton("Bot Off")
+        self.bot_button = QPushButton("Caption Bot Off")
         self.bot_button.setEnabled(False)
         self.bot_button.setFont(self.ui.get_font('button'))
-        self.bot_button.setFixedSize(button_width, button_height)
+        self.bot_button.setFixedSize(120, button_height)
         button_layout.addWidget(self.bot_button)
 
         button_layout.addStretch()
@@ -419,7 +419,7 @@ class AnnotateWindow(QMainWindow):
         if not self.bot_active:
             if DEBUG: print("DEBUG: Starting bot")
             self.bot_active = True
-            self.bot_button.setText("    Bot On")
+            self.bot_button.setText(" Caption Bot On")
             self.bot_button.setStyleSheet("text-align: left;")
             self.bot_anim_timer.start(500)
             self.start_bot_loop()
@@ -431,7 +431,7 @@ class AnnotateWindow(QMainWindow):
         if DEBUG: print("DEBUG: stop_bot called")
         self.bot_active = False
         self.bot_anim_timer.stop()
-        self.bot_button.setText("Bot Off")
+        self.bot_button.setText("Caption Bot Off")
         self.bot_button.setStyleSheet("text-align: center;")
 
     def start_bot_loop(self):
@@ -445,7 +445,7 @@ class AnnotateWindow(QMainWindow):
 
     def animate_bot_button(self):
         self.bot_anim_dots = (self.bot_anim_dots + 1) % 4
-        self.bot_button.setText("    Bot On" + "." * self.bot_anim_dots)
+        self.bot_button.setText(" Caption Bot On" + "." * self.bot_anim_dots)
         self.bot_button.setStyleSheet("text-align: left;")
 
     def handle_is_last_available_shot(self, is_last):
