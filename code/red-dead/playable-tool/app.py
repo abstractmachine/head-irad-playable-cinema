@@ -97,6 +97,7 @@ def main():
     windows["cinematheque"].project_loaded.connect(windows["captions"].set_project_folder)
     windows["cinematheque"].project_loaded.connect(windows["subtitles"].set_project_folder)
     windows["cinematheque"].project_loaded.connect(windows["inference"].set_project_folder)
+    windows["cinematheque"].shotlist_bot_start.connect(windows["shotlist"].start_shotlist_bot)
 
     windows["shotlist"].jump_to_timecode_signal.connect(windows["nickelodeon"].jump_to_timecode)
     windows["shotlist"].shotlist_status.connect(windows["captions"].set_shotlist_status)
@@ -104,6 +105,7 @@ def main():
     windows["shotlist"].abort_api.connect(windows["captions"].handle_api_abort)
     windows["shotlist"].shot_timecodes.connect(windows["nickelodeon"].handle_shot_timecodes)
     windows["shotlist"].is_last_available_shot.connect(windows["captions"].handle_is_last_available_shot)
+    windows["shotlist"].shotlist_status.connect(windows["cinematheque"].on_shotlist_status)
 
     windows["captions"].caption_submitted.connect(windows["shotlist"].update_caption_for_current_shot)
     windows["captions"].request_current_shot.connect(windows["shotlist"].handle_request_current_shot)

@@ -329,6 +329,18 @@ class ShotlistWindow(QMainWindow):
         else:
             self.jump_to_timecode_signal.emit(timecode, is_last_frame)
 
+    # ------- Shotlist Bot -------
+
+    def start_shotlist_bot(self):
+        # Only start if Detect Shots button is enabled (not already running)
+        if self.detect_button.isEnabled():
+            self.detect_button.click()
+        else:
+            # Already running, do nothing
+            pass
+
+    # ------- Load/Save Preferences -------
+
     def on_request_save(self):
         pos = self.pos()
         size = self.size()
@@ -367,6 +379,8 @@ class ShotlistWindow(QMainWindow):
             idx = self.method_dropdown.findText(data["method_selected"])
             if idx != -1:
                 self.method_dropdown.setCurrentIndex(idx)
+
+    # ------- Video Processing -------
 
     def process_video(self, video_path):
         shotlist_exists = False

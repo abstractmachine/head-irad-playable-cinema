@@ -68,29 +68,29 @@ class AbstractPlayerWindow(QMainWindow):
         self.fast_seek.setFocusPolicy(Qt.ClickFocus)
 
         # Play/Pause button
-        self.play_pause_button = QPushButton("Play")
+        self.play_pause_button = QPushButton("⏵")
         self.play_pause_button.setToolTip("Play or pause video\nShortcut:Space")
         self.play_pause_button.clicked.connect(self.toggle_play_pause)
         self.play_pause_button.setEnabled(False)
         self.play_pause_button.setFont(self.ui.get_font('button'))
-        self.play_pause_button.setFixedSize(100, button_height)
+        self.play_pause_button.setFixedSize(60, button_height)
         self.is_playing = False
 
         # Seek back
-        self.back_button = QPushButton("Back")
+        self.back_button = QPushButton("⏪")
         self.back_button.setToolTip("Seek backward\nShortcut: Left arrow, Shift for fast")
         self.back_button.setEnabled(False)
         self.back_button.clicked.connect(self.seek_back)
         self.back_button.setFont(self.ui.get_font('button'))
-        self.back_button.setFixedSize(100, button_height)
+        self.back_button.setFixedSize(60, button_height)
 
         # Seek forward
-        self.forward_button = QPushButton("Forward")
+        self.forward_button = QPushButton("⏩")
         self.forward_button.setToolTip("Seek forward\nShortcut: Right arrow, Shift for fast")
         self.forward_button.setEnabled(False)
         self.forward_button.clicked.connect(self.seek_forward)
         self.forward_button.setFont(self.ui.get_font('button'))
-        self.forward_button.setFixedSize(100, button_height)
+        self.forward_button.setFixedSize(60, button_height)
 
         # Timecode display
         self.timecode_label = QLabel("00:00:00 | 00:00:00")
@@ -178,9 +178,14 @@ class AbstractPlayerWindow(QMainWindow):
         self.back_button.setEnabled(True)
         self.forward_button.setEnabled(True)
         self.timeline.setEnabled(True)
+        # self.vlc_player.play()
+        self.play_pause_button.setText("⏵")
+        self.is_playing = False
+
+        # Prime VLC so seeking works before first play
         self.vlc_player.play()
-        self.play_pause_button.setText("Pause")  # Set button to Pause since video is playing
-        self.is_playing = True                  # Update playing state
+        QTimer.singleShot(100, self.vlc_player.pause)
+
         QTimer.singleShot(500, self._start_duration_polling)
         self.video_loaded.emit(self.current_video_path)
         self.video_loaded_with_metadata.emit(self.current_video_path, self.movie_metadata)
@@ -226,11 +231,11 @@ class AbstractPlayerWindow(QMainWindow):
     def toggle_play_pause(self):
         if self.vlc_player.is_playing():
             self.vlc_player.pause()
-            self.play_pause_button.setText("Play")
+            self.play_pause_button.setText("⏵")
             self.is_playing = False
         else:
             self.vlc_player.play()
-            self.play_pause_button.setText("Pause")
+            self.play_pause_button.setText("⏸")
             self.is_playing = True
 
     def seek_back(self):
@@ -347,6 +352,8 @@ class AbstractPlayerWindow(QMainWindow):
     def _on_vlc_time_changed(self, event):
         """Emit signal when VLC time changes (for subtitles, etc.)"""
         position = self.vlc_player.get_time()
+        self.timeline.setValue(position)
+        self._update_timecode_display(position)
         self.emit_timecode_changed(position)
 
     def validate_fast_seek(self):

@@ -24,6 +24,7 @@ class CinemathequeWindow(QMainWindow):
     request_load = pyqtSignal(dict)
     movie_selected = pyqtSignal(str, dict)  # Signal to send movie file path AND metadata to player
     project_loaded = pyqtSignal(str)  # Signal when project folder is loaded
+    shotlist_bot_start = pyqtSignal()  # Signal to start shotlist bot
     
     def __init__(self, ui):
         super().__init__()
@@ -76,13 +77,13 @@ class CinemathequeWindow(QMainWindow):
         # Bot buttons
         self.shotlist_bot_button = QPushButton("Shotlist Bot Off")
         self.shotlist_bot_button.setFont(self.ui.get_font('button'))
-        self.shotlist_bot_button.setFixedSize(120, button_height)
-        self.shotlist_bot_button.setEnabled(False)
+        self.shotlist_bot_button.setFixedSize(140, button_height)
         self.shotlist_bot_button.clicked.connect(self.handle_shotlist_bot)
+        self.disable_shotlist_bot_button()
 
         self.caption_bot_button = QPushButton("Caption Bot Off")
         self.caption_bot_button.setFont(self.ui.get_font('button'))
-        self.caption_bot_button.setFixedSize(120, button_height)
+        self.caption_bot_button.setFixedSize(140, button_height)
         self.caption_bot_button.setEnabled(False)
         self.caption_bot_button.clicked.connect(self.handle_caption_bot)
 
@@ -91,7 +92,13 @@ class CinemathequeWindow(QMainWindow):
         button_layout.addWidget(self.shotlist_bot_button)
         button_layout.addWidget(self.caption_bot_button)
         button_layout.addStretch()
-        
+
+       # Connect signals
+        self.shotlist_bot_active = False
+        self.shotlist_bot_anim_timer = QTimer()
+        self.shotlist_bot_anim_timer.timeout.connect(self.animate_shotlist_bot)
+        self.shotlist_bot_dots = 0
+
         layout.addLayout(button_layout)
         main_widget.setLayout(layout)
         
@@ -181,6 +188,7 @@ class CinemathequeWindow(QMainWindow):
         try:
             with open(metadata_path, 'r', encoding='utf-8') as csvfile:
                 reader = csv.DictReader(csvfile)
+                movie_count = 0
                 for row in reader:
                     # Create custom widget for this movie, passing UI instance
                     movie_widget = MovieItemWidget(row, posters_folder, self.ui)
@@ -192,10 +200,12 @@ class CinemathequeWindow(QMainWindow):
                     # Add to list
                     self.movie_list.addItem(item)
                     self.movie_list.setItemWidget(item, movie_widget)
+                    movie_count += 1
                     
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load metadata.csv:\n{str(e)}")
-
+            self.disable_shotlist_bot_button()
+    
     def on_bot_finished(self):
         """Handle bot finished signal"""
         if DEBUG: print("DEBUG: Cinematheque: bot finished")
@@ -213,7 +223,7 @@ class CinemathequeWindow(QMainWindow):
             return
         
         # If we reach here, it means the bot is still active
-        if DEBUG: print("DEBUG: Cinematheque: Move movies remaining, select next movie")
+        if DEBUG: print("DEBUG: Cinematheque: More movies remaining, select next movie")
 
         # Work todo here to handle the selecting the new movie
         # Then emitting a message to tell the bot to start processing the next movie
@@ -262,6 +272,12 @@ class CinemathequeWindow(QMainWindow):
                 self.movie_selected.emit(movie_path, movie_data)
             else:
                 QMessageBox.warning(self, "File Not Found", f"Movie file not found:\n{movie_path}")
+
+        # After setting the new selection, enable/disable the bot button
+        QTimer.singleShot(20, self.update_shotlist_bot_button_state)
+
+    def update_shotlist_bot_button_state(self):
+        self.enable_shotlist_bot_button()
 
     def rebuild_metadata(self):
         """Start metadata rebuild process in worker thread"""
@@ -359,6 +375,77 @@ class CinemathequeWindow(QMainWindow):
         # Reset button text alignment to center when not running
         self.metadata_button.setStyleSheet("QPushButton { text-align: center; }")
 
+    # -------- Shotlist Bot --------
+
+    def enable_shotlist_bot_button(self):
+        # Enable only if a movie is currently selected
+        self.shotlist_bot_button.setEnabled(self.selected_movie_widget is not None)
+
+    def disable_shotlist_bot_button(self):
+        self.shotlist_bot_button.setEnabled(False)
+
+    def handle_shotlist_bot(self):
+        if not self.shotlist_bot_active:
+            self.shotlist_bot_active = True
+            self.shotlist_bot_button.setText("      Shotlist Bot On")
+            self.shotlist_bot_button.setStyleSheet("QPushButton { text-align: left; }")
+            self.shotlist_bot_anim_timer.start(500)
+            # Send signal to shotlist to start detection
+            self.shotlist_bot_start.emit()
+        else:
+            # Optionally allow stopping the bot
+            self.shotlist_bot_active = False
+            self.shotlist_bot_button.setText("Shotlist Bot Off")
+            self.shotlist_bot_button.setStyleSheet("QPushButton { text-align: center; }")
+            self.shotlist_bot_anim_timer.stop()
+
+    def animate_shotlist_bot(self):
+        self.shotlist_bot_dots = (self.shotlist_bot_dots + 1) % 4
+        dots = "." * self.shotlist_bot_dots
+        self.shotlist_bot_button.setText(f"      Shotlist Bot On{dots}")
+        self.shotlist_bot_button.setStyleSheet("QPushButton { text-align: left; }")
+
+    def on_shotlist_status(self, finished):
+        # Called by shotlist.py when detection is finished
+        if finished and self.shotlist_bot_active:
+            # Select next movie in the list
+            self.select_next_movie()
+        elif not finished:
+            # Detection is still running, keep animating
+            pass
+
+    def select_next_movie(self):
+        # Find the index of the currently selected movie
+        count = self.movie_list.count()
+        if count == 0 or not self.selected_movie_widget:
+            self.shotlist_bot_active = False
+            self.shotlist_bot_button.setText("Shotlist Bot Off")
+            self.shotlist_bot_anim_timer.stop()
+            return
+        # Find current index
+        for i in range(count):
+            widget = self.movie_list.itemWidget(self.movie_list.item(i))
+            if widget == self.selected_movie_widget:
+                next_index = i + 1
+                if next_index < count:
+                    next_item = self.movie_list.item(next_index)
+                    self.on_movie_clicked(next_item)
+                else:
+                    # No more movies, stop bot
+                    self.shotlist_bot_active = False
+                    self.shotlist_bot_button.setText("Shotlist Bot Off")
+                    self.shotlist_bot_anim_timer.stop()
+                break
+
+    def on_movie_loading_complete(self, movie_path):
+        """Called when a movie has finished loading in the player"""
+        self.currently_loading_video = None
+        # If bot is still active, start detection again
+        if self.shotlist_bot_active:
+            self.shotlist_bot_start.emit()
+    
+    # ---- Save/Load Preferences ----
+
     def on_request_save(self):
         pos = self.pos()
         size = self.size()
@@ -387,20 +474,12 @@ class CinemathequeWindow(QMainWindow):
                 # Folder no longer exists, reset
                 self.project_folder = None
                 self.project_folder_button.setText("Project Folder")
-    
-    def on_movie_loading_complete(self, movie_path):
-        """Called when a movie has finished loading in the player"""
-        # Reset the currently loading video tracker
-        self.currently_loading_video = None
         
         # You can add any additional logic here that should happen
         # when a video finishes loading, such as:
         # - Updating UI state
         # - Logging the successful load
         # - Enabling/disabling certain features
-
-    def handle_shotlist_bot(self):
-        print("Shotlist Bot button pressed.")
 
     def handle_caption_bot(self):
         print("Caption Bot button pressed.")
