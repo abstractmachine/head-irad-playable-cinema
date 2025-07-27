@@ -6,3 +6,12 @@
 
 # Images
 {image-count}
+
+# Example
+This is the movie {title} ({year}), directed by {director}. {image-count} images have been uploaded from this shot in this movie.
+
+In the movie rags they wrote:
+{tagline}
+
+Here are the subtitles to this shot in the movie:
+{shot-subtitles}

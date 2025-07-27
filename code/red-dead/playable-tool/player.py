@@ -179,6 +179,8 @@ class AbstractPlayerWindow(QMainWindow):
         self.forward_button.setEnabled(True)
         self.timeline.setEnabled(True)
         self.vlc_player.play()
+        self.play_pause_button.setText("Pause")  # Set button to Pause since video is playing
+        self.is_playing = True                  # Update playing state
         QTimer.singleShot(500, self._start_duration_polling)
         self.video_loaded.emit(self.current_video_path)
         self.video_loaded_with_metadata.emit(self.current_video_path, self.movie_metadata)
