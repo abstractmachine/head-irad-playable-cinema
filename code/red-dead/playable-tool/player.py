@@ -183,6 +183,13 @@ class AbstractPlayerWindow(QMainWindow):
         self.video_loaded.emit(self.current_video_path)
         self.video_loaded_with_metadata.emit(self.current_video_path, self.movie_metadata)
 
+        # VLC event: emit timecode signal as video plays
+        event_manager = self.vlc_player.event_manager()
+        event_manager.event_attach(
+            vlc.EventType.MediaPlayerTimeChanged,
+            self._on_vlc_time_changed
+        )
+
     def _start_duration_polling(self):
         """Start duration polling"""
         if hasattr(self, 'duration_timer') and self.duration_timer is not None:
@@ -334,6 +341,11 @@ class AbstractPlayerWindow(QMainWindow):
                 self.normal_seek.setText("1")
         except ValueError:
             self.normal_seek.setText("1")
+            
+    def _on_vlc_time_changed(self, event):
+        """Emit signal when VLC time changes (for subtitles, etc.)"""
+        position = self.vlc_player.get_time()
+        self.emit_timecode_changed(position)
 
     def validate_fast_seek(self):
         try:

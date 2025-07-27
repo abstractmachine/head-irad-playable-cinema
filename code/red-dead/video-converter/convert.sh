@@ -1,6 +1,6 @@
 mkdir -p ../converted
 
-for f in *.mp4 *.mkv; do
+for f in *.mp4 *.mkv *.m4v *.avi; do
   # Get the height of the input video
   HEIGHT=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$f")
 
