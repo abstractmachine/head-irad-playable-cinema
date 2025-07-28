@@ -1,17 +1,20 @@
 # Info
 {title} {year} {director} {description} {tagline}
 
-# Subtitles
-{shot-subtitles} {full-subtitles}
-
 # Images
 {image-count}
+
+# Subtitles (WARNING: NOT YET IMPLEMENTED)
+{shot-subtitles} {full-subtitles}
 
 # Example
 This is the movie {title} ({year}), directed by {director}. {image-count} images have been uploaded from this shot in this movie.
 
-In the movie rags they wrote:
+On the movie posters in {year} they wrote:
 {tagline}
 
 Here are the subtitles to this shot in the movie:
 {shot-subtitles}
+
+And the full movie subtitles to give them context:
+{full-subtitles}

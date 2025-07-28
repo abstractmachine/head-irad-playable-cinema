@@ -7,6 +7,8 @@ from PyQt5.QtWidgets import (
     QLabel, QSizePolicy, QComboBox, QStackedLayout
 )
 
+from caption import parse_system_prompt
+
 class PromptWindow(QMainWindow):
     request_save = pyqtSignal()
     request_load = pyqtSignal(dict)
@@ -130,8 +132,18 @@ class PromptWindow(QMainWindow):
             self.load_cheatsheet()
 
     def handle_test_button(self):
+        # if no movie is loaded, show a warning
+        if not self.current_movie_filename:
+            self.test_field.setPlainText("No movie loaded to test prompt.")
+            if DEBUG: print("DEBUG: No movie loaded, cannot test prompt.")
+            return
         if DEBUG: print("DEBUG: Test button pressed")
-        self.test_field.setPlainText("Test button pressed!")
+        # Get current prompt text
+        prompt_text = self.system_prompt_field.toPlainText()
+        # Parse prompt using the parser from annotate.py
+        interpreted = parse_system_prompt(prompt_text, self.current_metadata)
+        # Show interpreted result in test field
+        self.test_field.setPlainText(interpreted)
 
     def load_cheatsheet(self):
         if DEBUG: print("DEBUG: Loading cheatsheet")
@@ -151,12 +163,13 @@ class PromptWindow(QMainWindow):
         if DEBUG: print(f"DEBUG: set_project_folder called with {project_folder}")
         self.project_folder = project_folder
 
-    def on_movie_loaded(self, movie_path):
+    def on_movie_loaded_with_metadata(self, movie_path, metadata):
         if DEBUG: print(f"DEBUG: on_movie_loaded called with {movie_path}")
         if not self.project_folder:
             print("Warning: No project folder set in prompt window")
             return
         movie_filename = os.path.basename(movie_path)
+        self.current_metadata = metadata
         if self.current_movie_filename == movie_filename:
             if DEBUG: print("DEBUG: Movie already loaded, skipping reload")
             return

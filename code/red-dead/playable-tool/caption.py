@@ -5,12 +5,27 @@ import tempfile
 import base64
 import mimetypes
 import openai
+import re
 
 from PyQt5.QtGui import QTextOption
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QTimer
 from PyQt5.QtWidgets import (
     QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QLineEdit, QTextEdit, QPushButton, QSizePolicy
 )
+
+def parse_system_prompt(prompt_text, data):
+    """
+    Replace tags like {title} or {image-count} in prompt_text with values from data dict.
+    If a tag is missing, insert OBVIOUS DUMMY TEXT.
+    """
+    def replace_tag(match):
+        tag = match.group(1)
+        if tag in data:
+            return str(data[tag])
+        else:
+            return f"{tag}"
+
+    return re.sub(r"\{([a-zA-Z0-9_-]+)\}", replace_tag, prompt_text)
 
 def encode_image(image_array):
     import cv2
@@ -41,9 +56,10 @@ class ApiWorker(QObject):
     finished = pyqtSignal()
     result = pyqtSignal(object)
 
-    def __init__(self, frames, project_folder=None, movie_filename=None):
+    def __init__(self, frames, metadata, project_folder=None, movie_filename=None):
         super().__init__()
         self.frames = frames
+        self.metadata = metadata
         self.project_folder = project_folder
         self.movie_filename = movie_filename
 
@@ -58,8 +74,19 @@ class ApiWorker(QObject):
                 }
             })
         
+        if DEBUG: print("DEBUG: Interpreting system prompt")
+
+        # add image-count to metadata
+        self.metadata["image-count"] = len(self.frames)
+
         # Read system prompt from movie-specific file if available, otherwise fallback
         system_prompt = self._get_system_prompt()
+        parsed_prompt = parse_system_prompt(system_prompt, self.metadata)
+
+        print("-----------------")
+        print("WARNING: System prompt is not yet fully parsed. parsed_prompt:")
+        print(f"{parsed_prompt}")
+        print("-----------------")
         
         # Read API key from file
         api_key_path = os.path.join(os.path.dirname(__file__), "preferences", "api_key.txt")
@@ -73,7 +100,7 @@ class ApiWorker(QObject):
             return
 
         messages = [
-            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": parsed_prompt},
             {"role": "user", "content": images_payload}
         ]
         
@@ -128,10 +155,10 @@ class SystemPromptEdit(QTextEdit):
             self.save_callback()
         super().focusOutEvent(event)
 
-class AnnotateWindow(QMainWindow):
+class CaptionWindow(QMainWindow):
     request_save = pyqtSignal()
     request_load = pyqtSignal(dict)
-    caption_submitted = pyqtSignal(str)
+    shot_caption_submitted = pyqtSignal(str)
     request_current_shot = pyqtSignal(int)
     request_next_shot = pyqtSignal()
     bot_finished = pyqtSignal()
@@ -140,7 +167,7 @@ class AnnotateWindow(QMainWindow):
         super().__init__()
         self.ui = ui  # Store UI instance
 
-        self.setWindowTitle("Annotate")
+        self.setWindowTitle("Caption")
         self.setGeometry(400, 200, 600, 350)
 
         main_layout = QVBoxLayout()
@@ -288,15 +315,16 @@ class AnnotateWindow(QMainWindow):
     def submit_caption(self):
         if DEBUG: print("DEBUG: submit_caption called")
         text = self.caption_field.toPlainText()
-        self.caption_submitted.emit(text)
+        self.shot_caption_submitted.emit(text)
 
     def set_project_folder(self, project_folder):
         """Set the project folder when cinema window loads a project"""
         self.project_folder = project_folder
 
-    def on_movie_loaded(self, movie_path):
+    def on_movie_loaded_with_metadata(self, movie_path, metadata):
         """Called when a new movie is loaded in the player"""
         movie_filename = os.path.basename(movie_path)
+        self.metadata = metadata
         self.current_movie_filename = movie_filename
 
     def handle_api_frames(self, frames):
@@ -305,8 +333,9 @@ class AnnotateWindow(QMainWindow):
         self.api_thread = QThread()
         # Pass project info to ApiWorker
         self.api_worker = ApiWorker(
-            self.current_frames, 
-            self.project_folder, 
+            self.current_frames,
+            self.metadata,
+            self.project_folder,
             self.current_movie_filename
         )
         self.api_worker.moveToThread(self.api_thread)
@@ -407,7 +436,7 @@ class AnnotateWindow(QMainWindow):
         if DEBUG: print("DEBUG: handle_bot_finished called")
         self.bot_finished.emit()
 
-    def set_caption_field(self, caption):
+    def set_shot_caption_field(self, caption):
         self.caption_field.setPlainText(caption)
 
     def handle_next_button(self):

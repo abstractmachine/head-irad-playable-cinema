@@ -97,7 +97,7 @@ class SubtitlesWindow(QMainWindow):
         """Set the project folder when cinema window loads a project"""
         self.project_folder = project_folder
 
-    def on_movie_loaded(self, movie_path):
+    def on_movie_loaded_with_metadata(self, movie_path, metadata):
         """Called when a new movie is loaded in the player"""
         movie_filename = os.path.basename(movie_path)
         

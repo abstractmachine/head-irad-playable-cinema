@@ -17,7 +17,7 @@ from ui import UI
 from nickelodeon import NickelodeonWindow
 from playhouse import PlayhouseWindow
 from shotlist import ShotlistWindow
-from annotate import AnnotateWindow
+from caption import CaptionWindow
 from cinematheque import CinemathequeWindow
 from prompt import PromptWindow
 from subtitles import SubtitlesWindow
@@ -37,7 +37,7 @@ def main():
         "nickelodeon": NickelodeonWindow(ui),
         "playhouse": PlayhouseWindow(ui),
         "shotlist": ShotlistWindow(ui),
-        "captions": AnnotateWindow(ui),
+        "captions": CaptionWindow(ui),
         "cinematheque": CinemathequeWindow(ui),
         "prompt": PromptWindow(ui),
         "subtitles": SubtitlesWindow(ui),
@@ -58,35 +58,29 @@ def main():
 
     # Create main tab widget for cinematheque and shotlist
     cinema_widget = QTabWidget()
-
     cinema_widget.addTab(windows["cinematheque"], "Cinemathèque")
     cinema_widget.addTab(windows["shotlist"], "Shotlist")
     cinema_widget.tabBar().setFont(button_font)
-
     cinema_widget.show()
 
     # Create text tab widget for captions, prompt, subtitles, and inference
     play_widget = QTabWidget()
-
     play_widget.addTab(windows["captions"], "Captions")
-    prompt_tab_index = play_widget.addTab(windows["prompt"], "Prompts")
-    prompt_tooltip = load_tooltip_text("prompt-tooltip.txt")
-    play_widget.setTabToolTip(prompt_tab_index, prompt_tooltip)
+    play_widget.addTab(windows["prompt"], "Prompts")
     play_widget.addTab(windows["subtitles"], "Subtitles")
     play_widget.addTab(windows["inference"], "Inference")
     play_widget.tabBar().setFont(button_font)
-
     play_widget.show()
 
     # Signal Connections
-    windows["nickelodeon"].video_loaded.connect(windows["shotlist"].process_video)
+    windows["nickelodeon"].video_loaded_with_metadata.connect(windows["shotlist"].on_movie_loaded_with_metadata)
     windows["nickelodeon"].video_timecode_changed.connect(windows["shotlist"].clear_table_selection)
     windows["nickelodeon"].video_timecode_changed.connect(windows["shotlist"].set_current_time)
     windows["nickelodeon"].frames_extracted.connect(windows["captions"].handle_api_frames)
-    windows["nickelodeon"].video_loaded.connect(windows["cinematheque"].on_movie_loading_complete)
-    windows["nickelodeon"].video_loaded.connect(windows["prompt"].on_movie_loaded)
-    windows["nickelodeon"].video_loaded.connect(windows["captions"].on_movie_loaded)
-    windows["nickelodeon"].video_loaded.connect(windows["subtitles"].on_movie_loaded)
+    windows["nickelodeon"].video_loaded_with_metadata.connect(windows["cinematheque"].on_movie_loaded_with_metadata)
+    windows["nickelodeon"].video_loaded_with_metadata.connect(windows["prompt"].on_movie_loaded_with_metadata)
+    windows["nickelodeon"].video_loaded_with_metadata.connect(windows["captions"].on_movie_loaded_with_metadata)
+    windows["nickelodeon"].video_loaded_with_metadata.connect(windows["subtitles"].on_movie_loaded_with_metadata)
     windows["nickelodeon"].video_timecode_changed.connect(windows["subtitles"].on_timecode_changed)
     windows["nickelodeon"].video_loaded_with_metadata.connect(windows["inference"].on_movie_loaded_with_metadata)
     windows["nickelodeon"].video_timecode_changed.connect(windows["inference"].on_timecode_changed)
@@ -101,13 +95,13 @@ def main():
 
     windows["shotlist"].jump_to_timecode_signal.connect(windows["nickelodeon"].jump_to_timecode)
     windows["shotlist"].shotlist_status.connect(windows["captions"].set_shotlist_status)
-    windows["shotlist"].caption_selected.connect(windows["captions"].set_caption_field)
+    windows["shotlist"].shot_caption_selected.connect(windows["captions"].set_shot_caption_field)
     windows["shotlist"].abort_api.connect(windows["captions"].handle_api_abort)
     windows["shotlist"].shot_timecodes.connect(windows["nickelodeon"].handle_shot_timecodes)
     windows["shotlist"].is_last_available_shot.connect(windows["captions"].handle_is_last_available_shot)
     windows["shotlist"].shotlist_status.connect(windows["cinematheque"].on_shotlist_status)
 
-    windows["captions"].caption_submitted.connect(windows["shotlist"].update_caption_for_current_shot)
+    windows["captions"].shot_caption_submitted.connect(windows["shotlist"].update_shot_caption_for_current_shot)
     windows["captions"].request_current_shot.connect(windows["shotlist"].handle_request_current_shot)
     windows["captions"].request_next_shot.connect(windows["shotlist"].jump_to_next_shot)
     windows["captions"].bot_finished.connect(windows["cinematheque"].on_bot_finished)

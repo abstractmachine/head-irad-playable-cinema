@@ -14,7 +14,6 @@ FRAMES_PER_SHOT = 30
 
 class AbstractPlayerWindow(QMainWindow):
     # Signals for communication
-    video_loaded = pyqtSignal(str)
     video_loaded_with_metadata = pyqtSignal(str, dict)
     video_timecode_changed = pyqtSignal(int)
     frames_extracted = pyqtSignal(list)
@@ -187,7 +186,6 @@ class AbstractPlayerWindow(QMainWindow):
         QTimer.singleShot(100, self.vlc_player.pause)
 
         QTimer.singleShot(500, self._start_duration_polling)
-        self.video_loaded.emit(self.current_video_path)
         self.video_loaded_with_metadata.emit(self.current_video_path, self.movie_metadata)
 
         # VLC event: emit timecode signal as video plays

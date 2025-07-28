@@ -81,6 +81,12 @@ class CinemathequeWindow(QMainWindow):
         self.shotlist_bot_button.clicked.connect(self.handle_shotlist_bot)
         self.disable_shotlist_bot_button()
 
+        self.scene_bot_button = QPushButton("Scene Bot Off")
+        self.scene_bot_button.setFont(self.ui.get_font('button'))
+        self.scene_bot_button.setFixedSize(140, button_height)
+        self.scene_bot_button.setEnabled(False)
+        self.scene_bot_button.clicked.connect(self.handle_caption_bot)
+
         self.caption_bot_button = QPushButton("Caption Bot Off")
         self.caption_bot_button.setFont(self.ui.get_font('button'))
         self.caption_bot_button.setFixedSize(140, button_height)
@@ -90,6 +96,7 @@ class CinemathequeWindow(QMainWindow):
         button_layout.addWidget(self.project_folder_button)
         button_layout.addWidget(self.metadata_button)
         button_layout.addWidget(self.shotlist_bot_button)
+        button_layout.addWidget(self.scene_bot_button)
         button_layout.addWidget(self.caption_bot_button)
         button_layout.addStretch()
 
@@ -437,7 +444,7 @@ class CinemathequeWindow(QMainWindow):
                     self.shotlist_bot_anim_timer.stop()
                 break
 
-    def on_movie_loading_complete(self, movie_path):
+    def on_movie_loaded_with_metadata(self, movie_path, metadata):
         """Called when a movie has finished loading in the player"""
         self.currently_loading_video = None
         # If bot is still active, start detection again

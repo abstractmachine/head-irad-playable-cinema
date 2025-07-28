@@ -27,7 +27,7 @@ class ShotlistWindow(QMainWindow):
     shotlist_status = pyqtSignal(bool)
     shot_timecodes = pyqtSignal(str, list)  # start_tc, timecodes
     abort_api = pyqtSignal(str)  # Optionally pass a message
-    caption_selected = pyqtSignal(str)  # Add this signal
+    shot_caption_selected = pyqtSignal(str)  # Add this signal
     # Remove the old shot_position signal - bad architecture
     # shot_position = pyqtSignal(int, int)  # current_row, row_count
     row_did_change = pyqtSignal(int)  # New signal: emits current_row when it changes
@@ -55,8 +55,10 @@ class ShotlistWindow(QMainWindow):
         layout.setSpacing(12)
 
         self.scene_table = QTableWidget()
-        self.scene_table.setColumnCount(5)
-        self.scene_table.setHorizontalHeaderLabels(["Ignore", "Scene", "Start", "End", "Caption"])
+        self.scene_table.setColumnCount(6)
+        self.scene_table.setHorizontalHeaderLabels([
+            "Ignore", "Scene", "Start", "End", "Shot_Caption", "Scene_Caption"
+        ])
         self.scene_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.scene_table.cellClicked.connect(self.on_table_cell_clicked)
         
@@ -74,7 +76,8 @@ class ShotlistWindow(QMainWindow):
         self.scene_table.setColumnWidth(1, 80)    # Scene
         self.scene_table.setColumnWidth(2, 110)   # Start
         self.scene_table.setColumnWidth(3, 110)   # End
-        self.scene_table.setColumnWidth(4, 500)   # Caption
+        self.scene_table.setColumnWidth(4, 300)   # Shot Caption
+        self.scene_table.setColumnWidth(5, 300)   # Scene Caption
 
         self.method_dropdown = QComboBox()
         self.method_dropdown.addItems([
@@ -152,8 +155,9 @@ class ShotlistWindow(QMainWindow):
             scene_num = row.get("Scene", "")
             start = row.get("Start", "")
             end = row.get("End", "")
-            caption = row.get("Caption", "")
-            self.add_scene_row(scene_num, start, end, caption, ignore)
+            shot_caption = row.get("Shot_Caption", "")
+            scene_caption = row.get("Scene_Caption", "")
+            self.add_scene_row(scene_num, start, end, shot_caption, scene_caption, ignore)
         self.current_csv_path = csv_path
         self.delete_button.setEnabled(True)
 
@@ -257,14 +261,14 @@ class ShotlistWindow(QMainWindow):
                 return f"{h:02}:{m:02}:{s:06.3f}"
             padded_start_tc = ms_to_tc(padded_start_ms)
             padded_end_tc = ms_to_tc(padded_end_ms)
-            csv_rows.append(["No", 0, padded_start_tc, padded_end_tc, ""])
+            csv_rows.append(["No", 0, padded_start_tc, padded_end_tc, "", ""])
         if self.video_path:
             base = os.path.basename(self.video_path)
             name, _ = os.path.splitext(base)
             out_path = os.path.join(self.detections_folder, f"{name}.csv")
             with open(out_path, "w", newline="") as f:
                 writer = csv.writer(f)
-                writer.writerow(["Ignore", "Scene", "Start", "End", "Caption"])
+                writer.writerow(["Ignore", "Scene", "Start", "End", "Shot_Caption", "Scene_Caption"])
                 writer.writerows(csv_rows)
             self.current_csv_path = out_path
             self.delete_button.setEnabled(True)
@@ -276,7 +280,7 @@ class ShotlistWindow(QMainWindow):
         # Jump to the start of this shot
         self.jump_to_row_start(row)
         # Emit the caption for this shot
-        self.emit_caption_for_row(row)
+        self.emit_shot_caption_for_row(row)
 
     def on_table_cell_clicked(self, row, col):
         # Get the column header text to determine what was clicked
@@ -292,9 +296,9 @@ class ShotlistWindow(QMainWindow):
         elif column_title == "End":
             end_tc = self.scene_table.item(row, col).text()
             self.jump_to_timecode(end_tc, is_last_frame=True)
-        elif column_title == "Caption":
+        elif column_title == "Shot_Caption":
             # Emit the caption for this shot
-            self.emit_caption_for_row(row)
+            self.emit_shot_caption_for_row(row)
         else:
             pass
 
@@ -382,7 +386,7 @@ class ShotlistWindow(QMainWindow):
 
     # ------- Video Processing -------
 
-    def process_video(self, video_path):
+    def on_movie_loaded_with_metadata(self, video_path, metadata):
         shotlist_exists = False
         if video_path:
             self.video_path = video_path
@@ -430,7 +434,7 @@ class ShotlistWindow(QMainWindow):
         if not isinstance(focus_widget, QTextEdit):
             self.keyPressEvent(event)
 
-    def add_scene_row(self, scene_num, start_tc, end_tc, caption, ignore=False):
+    def add_scene_row(self, scene_num, start_tc, end_tc, shot_caption, scene_caption, ignore=False):
         row = self.scene_table.rowCount()
         self.scene_table.insertRow(row)
         # Ignore column (checkbox)
@@ -467,12 +471,19 @@ class ShotlistWindow(QMainWindow):
         end_item.setFont(self.ui.get_font('cell-mono'))
         self.scene_table.setItem(row, end_col, end_item)
 
-        # Caption column
-        caption_col = self.get_column_index_by_name("Caption")
-        caption_item = QTableWidgetItem(caption)
-        caption_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        caption_item.setFont(self.ui.get_font('cell-text'))
-        self.scene_table.setItem(row, caption_col, caption_item)
+        # Shot Caption column
+        shot_caption_col = self.get_column_index_by_name("Shot_Caption")
+        shot_caption_item = QTableWidgetItem(shot_caption)
+        shot_caption_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        shot_caption_item.setFont(self.ui.get_font('cell-text'))
+        self.scene_table.setItem(row, shot_caption_col, shot_caption_item)
+
+        # Scene Caption column
+        scene_caption_col = self.get_column_index_by_name("Scene_Caption")
+        scene_caption_item = QTableWidgetItem(scene_caption)
+        scene_caption_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        scene_caption_item.setFont(self.ui.get_font('cell-text'))
+        self.scene_table.setItem(row, scene_caption_col, scene_caption_item)
 
     def on_ignore_checkbox_changed(self, row, state):
         self.save_shotlist_to_csv()
@@ -486,7 +497,7 @@ class ShotlistWindow(QMainWindow):
             return
         with open(self.current_csv_path, "w", newline="") as csvfile:
             writer = csv.writer(csvfile)
-            writer.writerow(["Ignore", "Scene", "Start", "End", "Caption"])
+            writer.writerow(["Ignore", "Scene", "Start", "End", "Shot_Caption", "Scene_Caption"])
             for row in range(self.scene_table.rowCount()):
                 widget = self.scene_table.cellWidget(row, 0)
                 checkbox = widget.findChild(QCheckBox)
@@ -497,9 +508,11 @@ class ShotlistWindow(QMainWindow):
                 start = self.scene_table.item(row, start_index).text()
                 end_index = self.get_column_index_by_name("End")
                 end = self.scene_table.item(row, end_index).text()
-                caption_index = self.get_column_index_by_name("Caption")
-                caption = self.scene_table.item(row, caption_index).text()
-                writer.writerow([ignore, scene_num, start, end, caption])
+                shot_caption_index = self.get_column_index_by_name("Shot_Caption")
+                shot_caption = self.scene_table.item(row, shot_caption_index).text() if shot_caption_index != -1 else ""
+                scene_caption_index = self.get_column_index_by_name("Scene_Caption")
+                scene_caption = self.scene_table.item(row, scene_caption_index).text() if scene_caption_index != -1 else ""
+                writer.writerow([ignore, scene_num, start, end, shot_caption, scene_caption])
 
     def load_shotlist_from_csv(self, path):
         with open(path, "r") as csvfile:
@@ -510,14 +523,15 @@ class ShotlistWindow(QMainWindow):
                 scene_num = row.get("Scene", "")
                 start = row.get("Start", "")
                 end = row.get("End", "")
-                caption = row.get("Caption", "")
-                self.add_scene_row(scene_num, start, end, caption, ignore)
+                shot_caption = row.get("Shot_Caption", "")
+                scene_caption = row.get("Scene_Caption", "")
+                self.add_scene_row(scene_num, start, end, shot_caption, scene_caption, ignore)
 
-    def update_caption_for_current_shot(self, caption_text):
+    def update_shot_caption_for_current_shot(self, shot_caption_text):
         row = self.find_closest_row(self.current_time_ms)
         if row is not None:
-            caption_col = self.get_column_index_by_name("Caption")
-            self.scene_table.item(row, caption_col).setText(caption_text)
+            shot_caption_col = self.get_column_index_by_name("Shot_Caption")
+            self.scene_table.item(row, shot_caption_col).setText(shot_caption_text)
             self.save_shotlist_to_csv()
         else:
             pass
@@ -538,16 +552,16 @@ class ShotlistWindow(QMainWindow):
             self.current_row = new_current_row
             self.row_did_change.emit(self.current_row)
             
-            # only emit caption when row changes - no table manipulation
+            # only emit shot caption when row changes - no table manipulation
             if self.current_row >= 0:
-                # find column index of caption column
-                caption_col = self.get_column_index_by_name("Caption")
-                if caption_col != -1:
-                    caption = self.scene_table.item(self.current_row, caption_col).text()
-                    self.caption_selected.emit(caption)
+                # find column index of shot caption column
+                shot_caption_col = self.get_column_index_by_name("Shot_Caption")
+                if shot_caption_col != -1:
+                    shot_caption = self.scene_table.item(self.current_row, shot_caption_col).text()
+                    self.shot_caption_selected.emit(shot_caption)
             else:
-                self.caption_selected.emit("")
-        
+                self.shot_caption_selected.emit("")
+
         # Update last shot status
         last_non_ignored = self.is_last_non_ignored_row(self.current_row)
         self.is_last_available_shot.emit(last_non_ignored)
@@ -636,18 +650,18 @@ class ShotlistWindow(QMainWindow):
         start_tc = self.scene_table.item(row, start_col).text()
         self.jump_to_timecode(start_tc)
 
-        caption_index = self.get_column_index_by_name("Caption")
-        
+        shot_caption_index = self.get_column_index_by_name("Shot_Caption")
+
         # Block signals BEFORE calling setCurrentCell to avoid recursion
         self.scene_table.blockSignals(True)
-        self.scene_table.setCurrentCell(row, caption_index)
+        self.scene_table.setCurrentCell(row, shot_caption_index)
         self.scene_table.clearSelection()
         self.scene_table.blockSignals(False)
         
         # Emit the caption text to AnnotateWindow
-        caption = self.scene_table.item(row, caption_index).text()
-        self.caption_selected.emit(caption)
-        
+        shot_caption = self.scene_table.item(row, shot_caption_index).text()
+        self.caption_selected.emit(shot_caption)
+
         # Update current row and emit change signal
         if row != self.current_row:
             self.current_row = row
@@ -756,11 +770,11 @@ class ShotlistWindow(QMainWindow):
         start_tc = self.scene_table.item(row, start_index).text()
         self.jump_to_timecode(start_tc)
 
-    def emit_caption_for_row(self, row):
-        """emit the caption for this shot via signal"""
-        caption_index = self.get_column_index_by_name("Caption")
-        caption = self.scene_table.item(row, caption_index).text()
-        self.caption_selected.emit(caption)
+    def emit_shot_caption_for_row(self, row):
+        """emit the shot caption for this shot via signal"""
+        shot_caption_index = self.get_column_index_by_name("Shot_Caption")
+        shot_caption = self.scene_table.item(row, shot_caption_index).text()
+        self.shot_caption_selected.emit(shot_caption)
 
     def get_column_index_by_name(self, column_name):
         """Find the column index by header name"""
