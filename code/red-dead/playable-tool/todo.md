@@ -1,8 +1,8 @@
 # TODO
 
 ## Finish:
-- Create an abstract class of the `shotlist`. We'll call it the `medialist`. Use this abstract class to make a `playlist` in the `Playlist` tab
-- Add a 'Playbill' window with a list of all the movies in the `gameplay` folder
+- Create an abstract class of the `shotlist`. We'll call it the `medialist`. Use this abstract class to make a `Playlist` tab
+- Add a `Playbill` tab with a list of all the movies in the `gameplay` folder
 - Finish System Prompt tag system
 
 ## Scene Detection
