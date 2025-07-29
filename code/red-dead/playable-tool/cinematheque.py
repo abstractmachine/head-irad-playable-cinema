@@ -256,31 +256,24 @@ class CinemathequeWindow(QMainWindow):
 
     def _set_new_selection(self, movie_widget):
         """Helper method to set new selection after a small delay"""
+        # Prevent selection if a video is already loading
+        if self.currently_loading_video is not None:
+            return
         movie_widget.set_selected(True)
         movie_widget.update()  # Force immediate update
         self.selected_movie_widget = movie_widget
-        
+
         movie_data = movie_widget.movie_data
         filename = movie_data.get('filename', '')
-        
+
         if filename and self.project_folder:
-            # Construct full path to movie file
             movie_path = os.path.join(self.project_folder, "movies", filename)
-            
-            # Check if this is the same video we're already trying to load
-            if self.currently_loading_video == movie_path:
-                return
-            
             if os.path.exists(movie_path):
-                # Set the currently loading video
                 self.currently_loading_video = movie_path
-                
-                # Emit the signal with both movie path AND metadata
                 self.movie_selected.emit(movie_path, movie_data)
             else:
                 QMessageBox.warning(self, "File Not Found", f"Movie file not found:\n{movie_path}")
 
-        # After setting the new selection, enable/disable the bot button
         QTimer.singleShot(20, self.update_shotlist_bot_button_state)
 
     def update_shotlist_bot_button_state(self):
@@ -445,7 +438,6 @@ class CinemathequeWindow(QMainWindow):
                 break
 
     def on_movie_loaded_with_metadata(self, movie_path, metadata):
-        """Called when a movie has finished loading in the player"""
         self.currently_loading_video = None
         # If bot is still active, start detection again
         if self.shotlist_bot_active:

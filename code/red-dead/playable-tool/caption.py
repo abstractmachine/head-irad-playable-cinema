@@ -26,12 +26,11 @@ def parse_system_prompt(prompt_text, data, row_data=None, subtitles=None):
         # if the tag is {shot-subtitles}
         elif tag == "shot-subtitles":
             # get shot subtitles from data
-            subtitles_output = "Subtitles go here"
-            subtitles_output += "\n\n"
+            subtitles_output = ""
             if row_data:
                 timecode_start = row_data['Start']
                 timecode_end = row_data['End']
-                subtitles_output += timecode_start + " - " + timecode_end + "\n"
+                # subtitles_output += timecode_start + " - " + timecode_end + "\n"
                 subtitles_output += subtitles.get_subtitles_between(timecode_start, timecode_end)
             else:
                 subtitles_output = ""
