@@ -34,7 +34,7 @@ class CinemathequeWindow(QMainWindow):
         self.selected_movie_widget = None  # Track currently selected movie widget
         
         # Required project folders
-        self.required_folders = ["datasets", "gameplay", "metadata", "movies", "posters", "prompts", "shotlists", "subtitles"]
+        self.required_folders = ["datasets", "gameplay", "metadata", "movies", "posters", "shotlists", "subtitles"]
         
         # Create main widget and layout
         main_widget = QWidget()

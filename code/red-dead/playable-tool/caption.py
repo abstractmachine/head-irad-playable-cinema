@@ -13,15 +13,29 @@ from PyQt5.QtWidgets import (
     QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QLineEdit, QTextEdit, QPushButton, QSizePolicy
 )
 
-def parse_system_prompt(prompt_text, data):
+def parse_system_prompt(prompt_text, data, row_data=None, subtitles=None):
     """
     Replace tags like {title} or {image-count} in prompt_text with values from data dict.
     If a tag is missing, insert OBVIOUS DUMMY TEXT.
     """
+
     def replace_tag(match):
         tag = match.group(1)
         if tag in data:
             return str(data[tag])
+        # if the tag is {shot-subtitles}
+        elif tag == "shot-subtitles":
+            # get shot subtitles from data
+            subtitles_output = "Subtitles go here"
+            subtitles_output += "\n\n"
+            if row_data:
+                timecode_start = row_data['Start']
+                timecode_end = row_data['End']
+                subtitles_output += timecode_start + " - " + timecode_end + "\n"
+                subtitles_output += subtitles.get_subtitles_between(timecode_start, timecode_end)
+            else:
+                subtitles_output = ""
+            return subtitles_output
         else:
             return f"{tag}"
 
@@ -56,10 +70,12 @@ class ApiWorker(QObject):
     finished = pyqtSignal()
     result = pyqtSignal(object)
 
-    def __init__(self, frames, metadata, project_folder=None, movie_filename=None):
+    def __init__(self, frames, metadata, row_data, subtitles_window, project_folder=None, movie_filename=None):
         super().__init__()
         self.frames = frames
         self.metadata = metadata
+        self.row_data = row_data
+        self.subtitles_window = subtitles_window  # Store reference to subtitles window
         self.project_folder = project_folder
         self.movie_filename = movie_filename
 
@@ -80,13 +96,8 @@ class ApiWorker(QObject):
         self.metadata["image-count"] = len(self.frames)
 
         # Read system prompt from movie-specific file if available, otherwise fallback
-        system_prompt = self._get_system_prompt()
-        parsed_prompt = parse_system_prompt(system_prompt, self.metadata)
-
-        print("-----------------")
-        print("WARNING: System prompt is not yet fully parsed. parsed_prompt:")
-        print(f"{parsed_prompt}")
-        print("-----------------")
+        system_prompt = self._get_shot_prompt()
+        parsed_prompt = parse_system_prompt(system_prompt, self.metadata, self.row_data, self.subtitles_window)
         
         # Read API key from file
         api_key_path = os.path.join(os.path.dirname(__file__), "preferences", "api_key.txt")
@@ -118,29 +129,13 @@ class ApiWorker(QObject):
         self.result.emit(caption)
         self.finished.emit()
 
-    def _get_system_prompt(self):
-        """Get system prompt, preferring movie-specific prompt over fallback"""
-        # Try movie-specific prompt first
-        if self.project_folder and self.movie_filename:
-            # Transform filename: whatever.mp4 -> whatever.txt
-            if self.movie_filename.lower().endswith('.mp4'):
-                prompt_filename = self.movie_filename[:-4] + '.txt'
-            else:
-                prompt_filename = self.movie_filename + '.txt'
-            
-            movie_prompt_path = os.path.join(self.project_folder, "prompts", prompt_filename)
-            
-            if os.path.exists(movie_prompt_path):
-                try:
-                    with open(movie_prompt_path, "r", encoding="utf-8") as f:
-                        return f.read()
-                except Exception as e:
-                    pass
+    def _get_shot_prompt(self):
+        """Get shot prompt, preferring movie-specific prompt over fallback"""
 
         # Fallback to global system prompt
-        system_prompt_path = os.path.join(os.path.dirname(__file__), "preferences", "system_prompt.txt")
+        shot_prompt_path = os.path.join(os.path.dirname(__file__), "preferences", "shot_prompt.txt")
         try:
-            with open(system_prompt_path, "r", encoding="utf-8") as f:
+            with open(shot_prompt_path, "r", encoding="utf-8") as f:
                 return f.read()
         except Exception:
             return "Describe the scene in these images."
@@ -163,9 +158,10 @@ class CaptionWindow(QMainWindow):
     request_next_shot = pyqtSignal()
     bot_finished = pyqtSignal()
 
-    def __init__(self, ui):
+    def __init__(self, ui, subtitles_window):
         super().__init__()
         self.ui = ui  # Store UI instance
+        self.subtitles_window = subtitles_window  # Store reference to subtitles window
 
         self.setWindowTitle("Caption")
         self.setGeometry(400, 200, 600, 350)
@@ -327,6 +323,11 @@ class CaptionWindow(QMainWindow):
         self.metadata = metadata
         self.current_movie_filename = movie_filename
 
+    def handle_row_data(self, row_data):
+        """Handle row data emitted from shotlist."""
+        self.row_data = row_data
+        if DEBUG: print(f"DEBUG Caption: Received row data: {row_data}")
+
     def handle_api_frames(self, frames):
         self.current_frames = frames
 
@@ -335,6 +336,8 @@ class CaptionWindow(QMainWindow):
         self.api_worker = ApiWorker(
             self.current_frames,
             self.metadata,
+            self.row_data,
+            self.subtitles_window,
             self.project_folder,
             self.current_movie_filename
         )

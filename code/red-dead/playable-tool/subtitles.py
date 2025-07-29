@@ -43,9 +43,14 @@ class SubtitlesWindow(QMainWindow):
         self.setCentralWidget(container)
 
     def parse_srt_time(self, time_str):
-        """Convert SRT time format (HH:MM:SS,mmm) to milliseconds"""
-        # Format: 00:02:03,012
-        time_part, ms_part = time_str.split(',')
+        """Convert SRT time format (HH:MM:SS,mmm or HH:MM:SS.mmm) to milliseconds"""
+        # Accept both ',' and '.' as millisecond separator
+        if ',' in time_str:
+            time_part, ms_part = time_str.split(',')
+        elif '.' in time_str:
+            time_part, ms_part = time_str.split('.')
+        else:
+            raise ValueError(f"Invalid SRT time format: '{time_str}'")
         h, m, s = map(int, time_part.split(':'))
         ms = int(ms_part)
         return (h * 3600 + m * 60 + s) * 1000 + ms
@@ -177,6 +182,21 @@ class SubtitlesWindow(QMainWindow):
         else:
             # No subtitle at this time
             self.subtitles_field.setPlainText(f"")
+
+    def get_subtitles_between(self, timecode_start, timecode_end):
+        """Return all subtitles text between start_ms and end_ms (inclusive)."""
+        start_ms = self.parse_srt_time(timecode_start)
+        end_ms = self.parse_srt_time(timecode_end)
+        results = []
+        for sub in self.subtitles_data:
+            if sub['end_ms'] < start_ms:
+                continue
+            if sub['start_ms'] > end_ms:
+                break
+            # If the subtitle overlaps the interval, include it
+            if sub['start_ms'] <= end_ms and sub['end_ms'] >= start_ms:
+                results.append(sub['text'])
+        return "\n".join(results)
 
     def on_request_save(self):
         """Save window preferences"""

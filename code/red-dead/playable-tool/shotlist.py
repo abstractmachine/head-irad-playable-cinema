@@ -20,6 +20,7 @@ JUMP_FRAME_PADDING_PLAYBACK = 0  # Number of frames to pad when jumping in playb
 JUMP_FRAME_PADDING_DETECTION = 5  # Number of frames to pad when jumping in detection mode
 
 class ShotlistWindow(QMainWindow):
+
     # define the signals we are going to send out
     request_save = pyqtSignal()
     request_load = pyqtSignal(dict)
@@ -31,6 +32,7 @@ class ShotlistWindow(QMainWindow):
     # Remove the old shot_position signal - bad architecture
     # shot_position = pyqtSignal(int, int)  # current_row, row_count
     row_did_change = pyqtSignal(int)  # New signal: emits current_row when it changes
+    row_data = pyqtSignal(dict)
     is_last_available_shot = pyqtSignal(bool)
 
     def __init__(self, ui):
@@ -409,6 +411,8 @@ class ShotlistWindow(QMainWindow):
             self.detect_button.setEnabled(False)
         # Emit shotlist status
         self.shotlist_status.emit(shotlist_exists)
+        # Emit data of the first row if it exists
+        self.send_row_data()
 
     def delete_scene_csv(self):
         # Delete CSV file
@@ -536,10 +540,37 @@ class ShotlistWindow(QMainWindow):
         else:
             pass
 
+    def get_column_data(self, row_index = None):
+        """Get all data for a specific row as a dictionary."""
+
+        if row_index == None:
+            row_index = self.current_row  # Default to current row if not specified
+
+        row_data = {}
+
+        if (self.scene_table.rowCount() == 0 or row_index < 0 or row_index >= self.scene_table.rowCount()):
+            return row_data  # Return empty dict if row index is invalid
+        
+        column_names = [self.scene_table.horizontalHeaderItem(i).text() for i in range(self.scene_table.columnCount())]
+        for col_index, col_name in enumerate(column_names):
+            item = self.scene_table.item(row_index, col_index)
+            if item:
+                row_data[col_name] = item.text()
+            else:
+                row_data[col_name] = ""
+
+        # Send the row data back to whomever requested it
+        return row_data
+
+    def send_row_data(self, row_index = None):
+        """Send the data of a specific row to the connected slot."""
+        row_data = self.get_column_data(row_index)
+        self.row_data.emit(row_data)
+
     def set_current_time(self, ms):
         self.current_time_ms = ms
         row_count = self.scene_table.rowCount()
-        
+
         # if we don't have any rows, we can't do anything
         if row_count == 0:
             self.current_row = -1
@@ -551,6 +582,9 @@ class ShotlistWindow(QMainWindow):
         if new_current_row != self.current_row:
             self.current_row = new_current_row
             self.row_did_change.emit(self.current_row)
+
+            # send out the current row data
+            self.send_row_data()
             
             # only emit shot caption when row changes - no table manipulation
             if self.current_row >= 0:

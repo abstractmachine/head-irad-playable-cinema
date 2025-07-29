@@ -32,15 +32,18 @@ def main():
     ui = UI()
     if DEBUG:print(f"UI initialized with fonts: {list(ui.font_families.keys())}")
 
+    # Several window are going to need to access subtitles, so we create it first
+    subtitles_window = SubtitlesWindow(ui)
+
     # create a dictionary of our windows, passing ui to each
     windows = {
+        "subtitles": subtitles_window,
+        "captions": CaptionWindow(ui, subtitles_window),
+        "prompt": PromptWindow(ui, subtitles_window),
         "nickelodeon": NickelodeonWindow(ui),
         "playhouse": PlayhouseWindow(ui),
         "shotlist": ShotlistWindow(ui),
-        "captions": CaptionWindow(ui),
         "cinematheque": CinemathequeWindow(ui),
-        "prompt": PromptWindow(ui),
-        "subtitles": SubtitlesWindow(ui),
         "inference": InferenceWindow(ui)
     }
 
@@ -86,7 +89,6 @@ def main():
     windows["nickelodeon"].video_timecode_changed.connect(windows["inference"].on_timecode_changed)
 
     windows["cinematheque"].movie_selected.connect(windows["nickelodeon"].load_video_from_path_with_metadata)
-    windows["cinematheque"].project_loaded.connect(windows["prompt"].set_project_folder)
     windows["cinematheque"].project_loaded.connect(windows["shotlist"].set_project_folder)
     windows["cinematheque"].project_loaded.connect(windows["captions"].set_project_folder)
     windows["cinematheque"].project_loaded.connect(windows["subtitles"].set_project_folder)
@@ -100,6 +102,8 @@ def main():
     windows["shotlist"].shot_timecodes.connect(windows["nickelodeon"].handle_shot_timecodes)
     windows["shotlist"].is_last_available_shot.connect(windows["captions"].handle_is_last_available_shot)
     windows["shotlist"].shotlist_status.connect(windows["cinematheque"].on_shotlist_status)
+    windows["shotlist"].row_data.connect(windows["captions"].handle_row_data)
+    windows["shotlist"].row_data.connect(windows["prompt"].handle_row_data)
 
     windows["captions"].shot_caption_submitted.connect(windows["shotlist"].update_shot_caption_for_current_shot)
     windows["captions"].request_current_shot.connect(windows["shotlist"].handle_request_current_shot)

@@ -5,6 +5,9 @@
 - Add a `Playbill` tab with a list of all the movies in the `gameplay` folder
 - Finish System Prompt tag system
 
+## Prompt
+Now that we have the tagging system (ex: {title}, {year}), maybe we can remove per-movie prompts and only use one single `default` prompt.
+
 ## Scene Detection
 Use some sort of [CLIP](https://huggingface.co/docs/transformers/en/model_doc/clip) model to detect "Scene Clustering"
 
@@ -26,11 +29,19 @@ Train a model (cf. [FAISS](https://huggingface.co/docs/datasets/en/faiss_es) on 
 
 # Bugs
 
+- Check `Prompts` folder for `default` and `movie` when changing movies. The `movie` prompt looked like it was overwriting `default`
+    - If `default` is selected in `Prompt` window, it overwrites it in `default` when selecting new movie
 - Movie importer hanged after a few minutes
 - For the long `playthroughs` (approx 25h+ of footage), we should:
     - Use the standard detection method `threshold-adaptive`
     - Add a `max_length` text field in the `shotlist` window
     - After detections, if `max_length` field is not 0, cut any row in the shotlist whose length (`End` - `Begin`) is longer than than `max_length` into parts no longer than `max_length`
+- Big bug when running any detection algorithm, and click on different film before algorithm has finished
+
+# Question
+- ~~If we load and there is no project or the old project, what appears?~~
+    - Ok, the `Project` button appears prominently, is good for now
+- If we load and the previous project no longer exists, what appears?
 
 # Fixed
 - ~~When not playing, the shotlist index does not advance. This keeps the auto-bot from being able to press the `Next` button~~
