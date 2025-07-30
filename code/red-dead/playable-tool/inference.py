@@ -180,10 +180,6 @@ class InferenceWindow(QMainWindow):
         """Save window preferences"""
         geo = self.geometry()
         self._pending_save_data = {
-            "x": geo.x(),
-            "y": geo.y(),
-            "width": geo.width(),
-            "height": geo.height(),
             "caption_model": self.caption_model
         }
         return self._pending_save_data
@@ -191,12 +187,6 @@ class InferenceWindow(QMainWindow):
     def on_request_load(self, data):
         """Load window preferences"""
         if data:
-            x = data.get("x", 100)
-            y = data.get("y", 100)
-            w = data.get("width", 600)
-            h = data.get("height", 400)
-            self.setGeometry(x, y, w, h)
-            
             # Load saved model
             saved_model = data.get("caption_model", "No caption model loaded")
             self.caption_model = saved_model

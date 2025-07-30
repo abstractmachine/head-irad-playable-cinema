@@ -351,10 +351,6 @@ class ShotlistWindow(QMainWindow):
         pos = self.pos()
         size = self.size()
         self._pending_save_data = {
-            "x": pos.x(),
-            "y": pos.y(),
-            "width": size.width(),
-            "height": size.height(),
             "col0_width": self.scene_table.columnWidth(0),
             "col1_width": self.scene_table.columnWidth(1),
             "col2_width": self.scene_table.columnWidth(2),
@@ -365,10 +361,6 @@ class ShotlistWindow(QMainWindow):
         }
 
     def on_request_load(self, data):
-        if "x" in data and "y" in data:
-            self.move(data["x"], data["y"])
-        if "width" in data and "height" in data:
-            self.resize(data["width"], data["height"])
         if "col0_width" in data:
             self.scene_table.setColumnWidth(0, data["col0_width"])
         if "col1_width" in data:

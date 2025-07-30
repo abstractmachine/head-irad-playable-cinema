@@ -280,22 +280,12 @@ class CaptionWindow(QMainWindow):
     def on_request_save(self):
         geo = self.geometry()
         self._pending_save_data = {
-            "x": geo.x(),
-            "y": geo.y(),
-            "width": geo.width(),
-            "height": geo.height(),
             "frame_count": self.frame_count_field.text()  # Save frame count
         }
         return self._pending_save_data
 
     def on_request_load(self, data):
         if data:
-            x = data.get("x", 400)
-            y = data.get("y", 200)
-            w = data.get("width", 400)
-            h = data.get("height", 150)
-            self.setGeometry(x, y, w, h)
-            
             # Load frame count
             if "frame_count" in data:
                 self.frame_count_field.setText(data["frame_count"])

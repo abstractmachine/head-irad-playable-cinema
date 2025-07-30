@@ -174,18 +174,11 @@ class PromptWindow(QMainWindow):
         geo = self.geometry()
         if DEBUG: print(f"DEBUG: on_request_save called, geometry={geo}")
         self._pending_save_data = {
-            "x": geo.x(),
-            "y": geo.y(),
-            "width": geo.width(),
-            "height": geo.height()
         }
         return self._pending_save_data
 
     def on_request_load(self, data):
         if DEBUG: print(f"DEBUG: on_request_load called with {data}")
         if data:
-            x = data.get("x", 100)
-            y = data.get("y", 100)
-            w = data.get("width", 600)
-            h = data.get("height", 400)
-            self.setGeometry(x, y, w, h)
+            # do nothing
+            pass

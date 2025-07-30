@@ -385,10 +385,6 @@ class AbstractPlayerWindow(QMainWindow):
         pos = self.pos()
         size = self.size()
         self._pending_save_data = {
-            "x": pos.x(),
-            "y": pos.y(),
-            "width": size.width(),
-            "height": size.height(),
             "normal_seek": self.normal_seek.text(),
             "fast_seek": self.fast_seek.text()
         }
@@ -398,12 +394,6 @@ class AbstractPlayerWindow(QMainWindow):
             self.normal_seek.setText(data["normal_seek"])
         if "fast_seek" in data:
             self.fast_seek.setText(data["fast_seek"])
-        if "x" in data and "y" in data:
-            self.move(data["x"], data["y"])
-        if "width" in data and "height" in data:
-            self.resize(data["width"], data["height"])
-
-
 
 class JumpSlider(QSlider):
     def __init__(self, orientation):

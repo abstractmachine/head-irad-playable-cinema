@@ -490,18 +490,10 @@ class CinemathequeWindow(QMainWindow):
         pos = self.pos()
         size = self.size()
         self._pending_save_data = {
-            "x": pos.x(),
-            "y": pos.y(),
-            "width": size.width(),
-            "height": size.height(),
             "project_folder": self.project_folder
         }
     
     def on_request_load(self, data):
-        if "x" in data and "y" in data:
-            self.move(data["x"], data["y"])
-        if "width" in data and "height" in data:
-            self.resize(data["width"], data["height"])
         if "project_folder" in data and data["project_folder"]:
             # Load project folder from preferences
             folder = data["project_folder"]

@@ -3,8 +3,10 @@ DEBUG = False  # Set to True to enable debug output
 import sys
 import json
 import os
+import subprocess
 from PyQt5.QtWidgets import QApplication, QLineEdit, QTextEdit
 from PyQt5.QtWidgets import QTabWidget
+from PyQt5.QtWidgets import QMainWindow, QDockWidget, QWidget
 
 from PyQt5.QtCore import QObject, QEvent
 from PyQt5.QtCore import Qt
@@ -25,12 +27,53 @@ from inference import InferenceWindow
 
 PREFS_PATH = "./preferences/preferences.json"
 
+class PlayableCinemaMainWindow(QMainWindow):
+    def __init__(self, windows):
+        super().__init__()
+        self.setWindowTitle("Playable Cinema")
+        self.setDockOptions(QMainWindow.AllowNestedDocks | QMainWindow.AllowTabbedDocks)
+        self.resize(1600, 900)
+
+        central = QWidget()
+        self.setCentralWidget(central)
+
+        # Add all other windows as dock widgets
+        self.add_dock("Shotlist", windows["shotlist"], Qt.RightDockWidgetArea)
+        self.add_dock("Captions", windows["captions"], Qt.BottomDockWidgetArea)
+        self.add_dock("Prompts", windows["prompt"], Qt.BottomDockWidgetArea)
+        self.add_dock("Subtitles", windows["subtitles"], Qt.BottomDockWidgetArea)
+        self.add_dock("Inference", windows["inference"], Qt.BottomDockWidgetArea)
+        self.add_dock("Nickelodeon", windows["nickelodeon"], Qt.LeftDockWidgetArea)
+        self.add_dock("Playhouse", windows["playhouse"], Qt.LeftDockWidgetArea)
+        self.add_dock("Cinemathèque", windows["cinematheque"], Qt.LeftDockWidgetArea)
+
+    def add_dock(self, name, widget, area):
+        dock = QDockWidget(name, self)
+        dock.setWidget(widget)
+        dock.setObjectName(name)
+        dock.setFloating(False)
+        dock.setAllowedAreas(Qt.AllDockWidgetAreas)
+        self.addDockWidget(area, dock)
+
+def is_dark_mode():
+    try:
+        result = subprocess.run(
+            ["defaults", "read", "-g", "AppleInterfaceStyle"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
+        return "Dark" in result.stdout
+    except Exception:
+        return False
+
 def main():
+    # Initialize the application
     app = QApplication(sys.argv)
 
     # Create UI instance with all fonts loaded
     ui = UI()
-    if DEBUG:print(f"UI initialized with fonts: {list(ui.font_families.keys())}")
+
+    # Set the visual style for the application
+    set_visual_style(app)
 
     # Several window are going to need to access subtitles, so we create it first
     subtitles_window = SubtitlesWindow(ui)
@@ -116,9 +159,8 @@ def main():
     # Save preferences on exit
     app.aboutToQuit.connect(lambda: save_preferences(windows, cinema_widget, play_widget))
 
-    # Show the app windows
-    windows["nickelodeon"].show()
-    windows["playhouse"].show()
+    main_window = PlayableCinemaMainWindow(windows)
+    main_window.show()
 
     # Because we have a VLC player, we need to ensure it closes properly on app exit
     def clean_quit():
@@ -133,6 +175,35 @@ def main():
     # Connect the clean quit function to the app's aboutToQuit signal
     app.aboutToQuit.connect(clean_quit)
     sys.exit(app.exec_())
+
+# Set the visual style for the application
+def set_visual_style(app):
+    """Set the visual style for the application"""
+
+    if is_dark_mode():
+        app.setStyleSheet(f"""
+        QDockWidget {{ border: none; background: transparent; }}
+        QDockWidget::title {{
+            background: #111;
+            color: #888;
+            text-align: center;
+            padding-left: 8px;
+            padding-top: 2px;
+            padding-bottom: 2px;
+        }}
+        """)
+    else:
+        app.setStyleSheet(f"""
+        QDockWidget {{ border: none; background: transparent; }}
+        QDockWidget::title {{
+            background: #eee;
+            color: #888;
+            text-align: center;
+            padding-left: 8px;
+            padding-top: 2px;
+            padding-bottom: 2px;
+        }}
+        """)
 
 # Save and load preferences for all windows and widgets
 def save_preferences(windows, cinema_widget, play_widget):
