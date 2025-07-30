@@ -1,4 +1,4 @@
-DEBUG = True  # Set to True to enable debug output
+DEBUG = False  # Set to True to enable debug output
 
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QThread, QTimer
 from PyQt5.QtWidgets import (
@@ -32,10 +32,7 @@ class CinemathequeWindow(QMainWindow):
         self.project_folder = None
         self.currently_loading_video = None  # Track what video is currently being requested
         self.selected_movie_widget = None  # Track currently selected movie widget
-        
-        # Required project folders
-        self.required_folders = ["datasets", "gameplay", "metadata", "movies", "posters", "shotlists", "subtitles"]
-        
+         
         # Create main widget and layout
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
@@ -131,20 +128,43 @@ class CinemathequeWindow(QMainWindow):
     
     def set_project_folder(self, folder):
         """Set the project folder and check for required folders"""
+
+        if DEBUG: print(f"DEBUG: Cinematheque: Setting project folder to {folder}")
         
         # Don't reload if it's the same folder
         if self.project_folder == folder:
+            if DEBUG: print("DEBUG: Cinematheque: Project folder already set to this folder, skipping reload")
             # EMIT THE SIGNAL EVEN IF IT'S THE SAME FOLDER
             self.project_loaded.emit(folder)
             return
-            
+        
+        self.check_missing_folders_and_files(folder)
+        
+        # Set the project folder and load project
+        self.project_folder = folder
+        self.project_folder_button.setText(f"Project")
+        self.project_loaded.emit(folder)
+        self.load_project(folder)
+
+    def check_missing_folders_and_files(self, folder):
+        """Check if all required folders and files exist in the project folder"""
+        
+        if DEBUG: print(f"DEBUG: Cinematheque: Checking missing folders and files in {folder}")        
+        # Required project folders
+        required_folders = ["datasets", "gameplay", "keys", "metadata", "movies", "posters", "shotlists", "subtitles"]
+        # Some folders need to add a .gitignore
+        add_gitignore_folders = ["keys", "movies", "gameplay", "posters", "subtitles"]
+        # Some folders need these text files in them
+        required_text_files = ["keys/openai_api_key.txt", "keys/tmdb_api_key.txt", "keys/opensubtitles_api_key.txt"]
+             
         # Check if all required folders exist
         missing_folders = []
-        for required_folder in self.required_folders:
+        for required_folder in required_folders:
             folder_path = os.path.join(folder, required_folder)
             if not os.path.exists(folder_path):
                 missing_folders.append(required_folder)
         
+        # If any folders are missing, prompt user to create these folders for them
         if missing_folders:
             # Show warning dialog
             message = "The following required folders are missing:\n" + "\n".join(missing_folders) + \
@@ -158,15 +178,36 @@ class CinemathequeWindow(QMainWindow):
                 for folder_name in missing_folders:
                     folder_path = os.path.join(folder, folder_name)
                     os.makedirs(folder_path, exist_ok=True)
+                    # Check to see if we need to add a .gitignore
+                    if folder_name in add_gitignore_folders:
+                        gitignore_path = os.path.join(folder_path, ".gitignore")
+                        if not os.path.exists(gitignore_path):
+                            try:
+                                with open(gitignore_path, 'w') as f:
+                                    f.write("# Ignore all files in this folder (Remove this to reactivate git syncing)\n*\n")
+                            except Exception as e:
+                                QMessageBox.critical(self, "Error", f"Failed to create .gitignore:\n{str(e)}")
+                                return
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to create folders:\n{str(e)}")
                 return
+            
+        # Check if required text files exist
+        for required_file in required_text_files:
+            file_path = os.path.join(folder, required_file)
+            # if this file does not exist, just create it
+            if not os.path.exists(file_path):
+                try:
+                    # Create the parent directories if they don't exist
+                    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                    with open(file_path, 'w') as f:
+                        f.write("")  # Create an empty file
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Failed to create {required_file}:\n{str(e)}")
+                    return
         
-        # Set the project folder and load project
-        self.project_folder = folder
-        self.project_folder_button.setText(f"Project")
-        self.project_loaded.emit(folder)
-        self.load_project(folder)
+        # If we reach here, all folders and files are present or created successfully
+        if DEBUG: print("DEBUG: All required folders and files are present.")
     
     def load_project(self, folder_path):
         """Called when a project folder is selected or loaded from preferences"""

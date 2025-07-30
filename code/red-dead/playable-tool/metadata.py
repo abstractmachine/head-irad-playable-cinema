@@ -27,12 +27,12 @@ class MetadataWorker(QObject):
         """Load API keys from files"""
         try:
             # Load TMDB API key
-            tmdb_key_path = os.path.join(os.path.dirname(__file__), 'preferences/tmdb_api_key.txt')
+            tmdb_key_path = os.path.join(self.project_folder, 'keys', 'tmdb_api_key.txt')
             with open(tmdb_key_path, 'r') as f:
                 self.tmdb_api_key = f.read().strip()
-            
+
             # Load OpenSubtitles API key
-            opensubtitles_key_path = os.path.join(os.path.dirname(__file__), 'preferences/opensubtitles_api_key.txt')
+            opensubtitles_key_path = os.path.join(self.project_folder, 'keys', 'opensubtitles_api_key.txt')
             with open(opensubtitles_key_path, 'r') as f:
                 self.opensubtitles_api_key = f.read().strip()
                 

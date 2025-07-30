@@ -208,10 +208,10 @@ The Annotate window includes an automated "Bot" mode that:
 ## Configuration
 
 ### API Keys Required
-Create these files in the `preferences/` directory:
-- `api_key.txt` - OpenAI API key
-- `tmdb_api_key.txt` - TMDB API key (for metadata)
-- `opensubtitles_api_key.txt` - OpenSubtitles API key
+Once you have created a `Project` folder, you need to copy the following API keys into their respective text files inside the project folder's `Keys` folder. Just copy-paste the respective API key on the first line of each text file and save:
+- `openai_api_key.txt` - [OpenAI API key](https://platform.openai.com/api-keys)
+- `tmdb_api_key.txt` - [TMDB API key](https://developer.themoviedb.org/docs/getting-started) (for metadata)
+- `opensubtitles_api_key.txt` - [OpenSubtitles API key](https://forum.opensubtitles.com/)
 
 ### Preferences Directory
 ```
