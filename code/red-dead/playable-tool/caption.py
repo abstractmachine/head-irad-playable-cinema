@@ -98,7 +98,6 @@ class ApiWorker(QObject):
         system_prompt = self._get_shot_prompt()
         parsed_prompt = parse_system_prompt(system_prompt, self.metadata, self.row_data, self.subtitles_window)
         
-        # Read API key from file
         api_key_path = os.path.join(self.project_folder, "keys", "openai_api_key.txt")
         try:
             with open(api_key_path, "r", encoding="utf-8") as f:
