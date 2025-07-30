@@ -181,7 +181,7 @@ Options:
 ## AI Integration
 
 ### OpenAI Configuration
-1. Create `preferences/api_key.txt` with your OpenAI API key
+1. In your Project Folder, find `preferences/api_key.txt` and replace contents with your own OpenAI API key
 2. Configure prompts in Default or Shot Prompt tabs
 3. Adjust frame count for API calls (default: 5 frames per shot)
 
@@ -208,20 +208,10 @@ The Annotate window includes an automated "Bot" mode that:
 ## Configuration
 
 ### API Keys Required
-Once you have created a `Project` folder, you need to copy the following API keys into their respective text files inside the project folder's `Keys` folder. Just copy-paste the respective API key on the first line of each text file and save:
+Once you have created a `Project` folder, you need to copy the following API keys into their respective text files inside the project folder's `Preferences` folder. Just copy-paste the respective API key on the first line of each text file and save:
 - `openai_api_key.txt` - [OpenAI API key](https://platform.openai.com/api-keys)
 - `tmdb_api_key.txt` - [TMDB API key](https://developer.themoviedb.org/docs/getting-started) (for metadata)
 - `opensubtitles_api_key.txt` - [OpenSubtitles API key](https://forum.opensubtitles.com/)
-
-### Preferences Directory
-```
-preferences/
-├── preferences.json          # Window positions and sizes
-├── api_key.txt              # OpenAI API key
-├── tmdb_api_key.txt         # TMDB API key
-├── opensubtitles_api_key.txt # OpenSubtitles API key
-├── default_prompt.txt       # Default AI prompt
-```
 
 ## File Formats
 

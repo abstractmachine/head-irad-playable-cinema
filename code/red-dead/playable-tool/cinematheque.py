@@ -151,12 +151,12 @@ class CinemathequeWindow(QMainWindow):
         
         if DEBUG: print(f"DEBUG: Cinematheque: Checking missing folders and files in {folder}")        
         # Required project folders
-        required_folders = ["datasets", "gameplay", "keys", "metadata", "movies", "posters", "shotlists", "subtitles"]
+        required_folders = ["datasets", "gameplay", "metadata", "movies", "posters", "preferences", "shotlists", "subtitles"]
         # Some folders need to add a .gitignore
-        add_gitignore_folders = ["keys", "movies", "gameplay", "posters", "subtitles"]
+        add_gitignore_folders = ["movies", "gameplay", "posters", "preferences", "subtitles"]
         # Some folders need these text files in them
-        required_text_files = ["keys/openai_api_key.txt", "keys/tmdb_api_key.txt", "keys/opensubtitles_api_key.txt"]
-             
+        required_text_files = ["preferences/openai_api_key.txt", "preferences/tmdb_api_key.txt", "preferences/opensubtitles_api_key.txt"]
+        
         # Check if all required folders exist
         missing_folders = []
         for required_folder in required_folders:
@@ -167,8 +167,8 @@ class CinemathequeWindow(QMainWindow):
         # If any folders are missing, prompt user to create these folders for them
         if missing_folders:
             # Show warning dialog
-            message = "The following required folders are missing:\n" + "\n".join(missing_folders) + \
-                      "\n\nDo you want to create them now?"
+            message = "The following project folder(s) could not be found:\n" + "\n".join(missing_folders) + \
+                      "\n\nDo you want to create now?"
             reply = QMessageBox.question(self, "Missing Folders", message, 
                                          QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if reply == QMessageBox.No:
