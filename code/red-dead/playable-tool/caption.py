@@ -173,7 +173,6 @@ class CaptionWindow(QWidget):
         self.caption_field = QTextEdit()
         self.caption_field.setPlaceholderText("")
         self.caption_field.setFont(self.ui.get_font('text'))
-        self.caption_field.setStyleSheet("QTextEdit { border: none; padding: 0px; margin: 0px; }")
         self.caption_field.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.caption_field.setWordWrapMode(QTextOption.WordWrap)
         main_layout.addWidget(self.caption_field, stretch=1)
@@ -217,13 +216,13 @@ class CaptionWindow(QWidget):
         # Frame count label and field in a horizontal layout
         frame_count_row = QHBoxLayout()
         frame_count_row.setContentsMargins(0, 0, 0, 0)
-        frame_count_row.setSpacing(4)
+        frame_count_row.setSpacing(0)
 
         frame_count_label = QLabel(" Frame Count")
         frame_count_label.setFont(self.ui.get_font('tiny-condensed'))
         frame_count_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         frame_count_label.setFixedSize(70, tiny_height)
-        frame_count_label.setStyleSheet("QLabel { color: grey; margin-top: 4px; }")
+        frame_count_label.setStyleSheet("QLabel { color: #888; margin-top: 4px; }")
 
         frame_count_row.addWidget(frame_count_label)
 
@@ -235,7 +234,7 @@ class CaptionWindow(QWidget):
 
         self.frame_count_field = QLineEdit("5")
         self.frame_count_field.setFont(self.ui.get_font('tiny'))
-        self.frame_count_field.setFixedSize(tiny_width, tiny_height)
+        self.frame_count_field.setFixedSize(40, tiny_height)
         self.frame_count_field.setAlignment(Qt.AlignCenter)
         self.frame_count_field.setToolTip("Number of frames to send to OpenAI (0 = none)")
         self.frame_count_field.editingFinished.connect(self.validate_frame_count)

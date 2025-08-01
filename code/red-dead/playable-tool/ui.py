@@ -22,10 +22,10 @@ class UI:
             'black':    ('Roboto Serif', 16, QFont.Black, False),
             'prompt':   ('Roboto Mono', 12, QFont.Normal, False),
             'monospace':('Roboto Mono', 14, QFont.Normal, False),
-            'title':    ('Roboto Slab', 17, QFont.Black, False),
-            'year':     ('Roboto Slab', 14, QFont.Normal, False),
-            'director': ('Roboto Slab', 14, QFont.Normal, False),
-            'tagline':  ('Roboto Serif', 13, QFont.Light, True),
+            'title':    ('Roboto Slab', 11, QFont.Black, False),
+            'year':     ('Roboto Slab', 11, QFont.Normal, False),
+            'director': ('Roboto Slab', 11, QFont.Normal, False),
+            'tagline':  ('Roboto Serif', 11, QFont.Normal, True),
             'default':  ('Roboto', 16, QFont.Normal, False),
         }
         self.font_paths = [
@@ -103,26 +103,33 @@ class UI:
     def get_style_sheet(self, style=None):
         if style == 'app':
             # common style sheet
-            return_text = self.get_common_style_sheet() + "\n\n"
+            return_text = self.get_common_style_sheet()
         
             # differing styles based on dark|light mode
             if self.is_dark_mode():
-                return_text += self.get_dark_style_sheet()
+                return_text += "\n\n" + self.get_dark_style_sheet()
             else:
-                return_text += self.get_light_style_sheet()
+                return_text += "\n\n" + self.get_light_style_sheet()
             return return_text
         
         else:
             return ""
-        
+
+    # -------------------------------------------------------
+
     def get_common_style_sheet(self):
 
         # get the button font
         button_font = self.get_font("button")
-        # get that font's name
         button_font_name = button_font.family()
         button_font_size = button_font.pointSize()
         button_font_weight = button_font.weight()
+
+        # cell-mono font
+        monospaced_font = self.get_font("monospaced")
+        monospaced_font_name = monospaced_font.family()
+        monospaced_font_size = monospaced_font.pointSize()
+        monospaced_font_weight = monospaced_font.weight()
 
         # dimensions
         # button_width = 80
@@ -179,6 +186,7 @@ class UI:
 
         QScrollBar::handle {{
             background: transparent;
+            min-height: 32px;
             border: none;
             border-radius: 0px;
         }}
@@ -193,7 +201,6 @@ class UI:
 
         QScrollBar::add-line:vertical,
         QScrollBar::sub-line:vertical {{
-            height: 10px;
             border: none;
             color: transparent;
             background: transparent;
@@ -214,6 +221,25 @@ class UI:
         QScrollBar::sub-page:vertical {{
         }}
 
+        /* LISTS */
+
+        QHBoxLayout {{
+            margin: 0px;
+            padding: 0px;
+        }}
+
+        QListWidget::item {{
+            margin-left: 0px;
+            padding-left: 0px;
+            border: none;
+        }}
+
+        QListWidget {{
+            padding-left: 0px;
+            margin-left: 0px;
+            border: none;
+        }}
+
         /* TABLES */
 
         QHeaderView {{
@@ -226,16 +252,17 @@ class UI:
         }}
 
         QHeaderView::section:horizontal {{
-            background: transparent;
         }}
 
         QHeaderView::section:horizontal:last {{
-            border-right: none;
+            /*border-right: none;*/
         }}
 
         QHeaderView::section:vertical {{
-            background: transparent;
-            text-align: right;
+            padding: 0px 8px 0px 0px;
+            font-family: {monospaced_font_name};
+            font-size: 12px;
+            font-weight: {monospaced_font_weight};
         }}
 
         QHeaderView::section:vertical:last {{
@@ -244,7 +271,6 @@ class UI:
 
         QTableCornerButton::section {{
             border: none;
-            background: transparent;
         }}
 
         /* DROP DOWN */
@@ -315,8 +341,22 @@ class UI:
             border-radius: 0px;
         }}
 
-        QLineEdit, QTextEdit {{
+        /* LINE EDITS AND TEXT EDITS */
+
+        QTextEdit {{
+            border: none;
+            padding: 0px;
+            margin: 0px;
             border-radius: 0px;
+        }}
+
+        QLineEdit {{
+            border-radius: 7%;
+        }}
+
+        /* LABELS */
+
+        QLabel {{
         }}
 
         /* BUTTONS */
@@ -366,12 +406,14 @@ class UI:
         QSlider::handle:horizontal {{
             border: none;
             width: 16px;
-            height: 16px;
+            height: 1px;
             margin: -6px 0; /* centers the handle */
             border-radius: 8px;
         }}
         
         """
+    
+    # -------------------------------------------------------
         
     def get_dark_style_sheet(self):
         highlight_color = "#f0f"
@@ -385,6 +427,8 @@ class UI:
         dark_title_background = "#222"
         dark_title_color = "#ccc"
         dark_dock_border = "#111"
+
+        separator_size = 3
 
         return f"""
 
@@ -454,12 +498,22 @@ class UI:
 
         QScrollBar::add-page:horizontal,
         QScrollBar::sub-page:horizontal {{
-            border-top: 1px solid {dark_title_color};
+            border-top: 1px solid {highlight_color};
         }}
 
         QScrollBar::add-page:vertical,
         QScrollBar::sub-page:vertical {{
-            border-left: 1px solid {dark_title_color};
+            border-left: 1px solid {highlight_color};
+        }}
+
+        /* LISTS */
+
+        QListWidget, QListView, QListWidget::item {{
+            background: transparent;
+        }}
+
+        QListWidget::item {{
+            border-bottom: {separator_size}px solid {dark_dock_border};
         }}
 
         /* TABLES */
@@ -469,6 +523,7 @@ class UI:
 
         QTableView {{
             gridline-color: #888;
+            border-bottom: 1px solid {dark_title_color};
         }}
 
         QHeaderView::section:horizontal {{
@@ -480,6 +535,7 @@ class UI:
         }}
 
         QHeaderView::section:horizontal:last {{
+            border-right: none;
         }}
 
         QHeaderView::section:vertical {{
@@ -490,10 +546,15 @@ class UI:
             border-bottom: 1px solid {dark_title_color};
         }}
 
+        QHeaderView::section:vertical:first {{
+        }}
+
         QHeaderView::section:vertical:last {{
+            border-bottom: none;
         }}
 
         QTableCornerButton::section {{
+            background: transparent;
         }}
 
         /* DROP DOWN */
@@ -547,8 +608,27 @@ class UI:
             background: {dark_background};
         }}
 
-        QLineEdit, QTextEdit {{
+        /* TEXT EDITS AND LINE EDITS */
+        
+        QTextEdit {{
+            selection-background-color: {highlight_color};
+            selection-color: #fff;
+        }}
+
+        QLineEdit {{
             border: 1px solid #888;
+        }}
+
+        QLineEdit:focus {{
+            border: 1px solid {highlight_color};
+            background: {highlight_color};
+            color: #fff;
+        }}
+
+        /* LABELS */
+
+        QLabel {{
+            color: {dark_color};
         }}
 
         /* BUTTONS */
@@ -595,6 +675,8 @@ class UI:
                 
         """
 
+    # -------------------------------------------------------
+
     def get_light_style_sheet(self):
         highlight_color = "#f0f"
         light_background = "#eee"
@@ -607,6 +689,8 @@ class UI:
         light_title_background = "#ddd"
         light_title_color = "#333"
         light_dock_border = "#eee"
+
+        separator_size = 3
 
         return f"""
 
@@ -677,12 +761,22 @@ class UI:
 
         QScrollBar::add-page:horizontal,
         QScrollBar::sub-page:horizontal {{
-            border-top: 1px solid {light_title_color};
+            border-top: 1px solid {highlight_color};
         }}
 
         QScrollBar::add-page:vertical,
         QScrollBar::sub-page:vertical {{
-            border-left: 1px solid {light_title_color};
+            border-left: 1px solid {highlight_color};
+        }}
+
+        /* LISTS */
+
+        QListWidget, QListView, QListWidget::item {{
+            background: transparent;        
+        }}
+
+        QListWidget::item {{
+            border-bottom: {separator_size}px solid {light_dock_border};
         }}
 
         /* TABLES */
@@ -692,6 +786,7 @@ class UI:
 
         QTableView {{
             gridline-color: #888;
+            border-bottom: 1px solid {light_title_color};
         }}
 
         QHeaderView::section:horizontal {{
@@ -714,7 +809,11 @@ class UI:
             border-bottom: 1px solid {light_title_color};
         }}
 
+        QHeaderView::section:vertical:first {{
+        }}
+
         QHeaderView::section:vertical:last {{
+            border-bottom: none;
         }}
 
         QTableCornerButton::section {{
@@ -722,9 +821,26 @@ class UI:
         }}
 
         /* LINE EDITS AND TEXT EDITS */
+        
+        QTextEdit {{
+            selection-background-color: {highlight_color};
+            selection-color: #fff;
+        }}
 
-        QLineEdit, QTextEdit {{
+        QLineEdit {{
             border: 1px solid #888;
+        }}
+
+        QLineEdit:focus {{
+            border: 1px solid {highlight_color};
+            background: {highlight_color};
+            color: #fff;
+        }}
+
+        /* LABELS */
+
+        QLabel {{
+            color: {light_color};
         }}
 
         /* DROP DOWN */
@@ -774,12 +890,6 @@ class UI:
 
         QTabWidget::pane {{
             background: {light_background};
-        }}
-
-        /* LINE EDITS AND TEXT EDITS */
-
-        QLineEdit, QTextEdit {{
-            border: 1px solid #888;
         }}
 
         /* BUTTONS */

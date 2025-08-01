@@ -90,7 +90,7 @@ class AbstractPlayerWindow(QMainWindow):
         self.timecode_label = QLabel("00:00:00 | 00:00:00")
         self.timecode_label.setFont(self.ui.get_font('monospace'))
         self.timecode_label.setAlignment(Qt.AlignCenter)
-        self.timecode_label.setStyleSheet("QLabel { padding: 0px; }")
+        self.timecode_label.setStyleSheet("QLabel { padding: 0px; color: #888; }")
         self.timecode_label.setToolTip("Current timecode | Total duration")
 
         # Layouts

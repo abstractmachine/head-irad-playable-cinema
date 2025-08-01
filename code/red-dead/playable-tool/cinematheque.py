@@ -12,10 +12,14 @@ import csv
 from metadata import MetadataWorker  # Import our metadata worker
 
 # Common font size for all text
-POSTER_WIDTH = 50
-POSTER_HEIGHT = 75
-ITEM_HEIGHT = 85
-INFO_SPACING = 1
+POSTER_WIDTH = 40
+POSTER_HEIGHT = 60
+ITEM_HEIGHT = 63
+HIGHLIGHT_COLOR = "#f0f"
+DARK_ITEM_BACKGROUND = "#444"
+LIGHT_ITEM_BACKGROUND = "#ddd"
+DARK_TEXT_COLOR = "#fff"
+LIGHT_TEXT_COLOR = "#000"
 
 class CinemathequeWindow(QMainWindow):
     
@@ -38,15 +42,15 @@ class CinemathequeWindow(QMainWindow):
         self.setCentralWidget(main_widget)
         
         layout = QVBoxLayout()
-        layout.setSpacing(0)  # Set spacing to 0
+        layout.setSpacing(0)
         layout.setContentsMargins(0, 0, 0, 0)  # Set margins to 0
         
         # Movie list viewer
         self.movie_list = QListWidget()
         self.movie_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.movie_list.setAlternatingRowColors(True)
-        self.movie_list.setSpacing(0)  # Set item spacing to 0
-        
+        self.movie_list.setAlternatingRowColors(False)
+        self.movie_list.setSpacing(0)
+
         # DISABLE default Qt selection behavior
         self.movie_list.setSelectionMode(QListWidget.NoSelection)
         
@@ -246,15 +250,27 @@ class CinemathequeWindow(QMainWindow):
                     # Create list item with fixed height
                     item = QListWidgetItem()
                     item.setSizeHint(QSize(movie_widget.width(), ITEM_HEIGHT))
-                    
+
                     # Add to list
                     self.movie_list.addItem(item)
                     self.movie_list.setItemWidget(item, movie_widget)
                     movie_count += 1
-                    
+
+            # now that we've loaded, update the list
+            self.update_movie_list()
+
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load metadata.csv:\n{str(e)}")
             self.disable_shotlist_bot_button()
+
+    def update_movie_list(self):
+        # have each item update its background color
+        for i in range(self.movie_list.count()):
+            item = self.movie_list.item(i)
+            if item:
+                movie_widget = self.movie_list.itemWidget(item)
+                if movie_widget:
+                    movie_widget.update_background()
     
     def shot_bot_finished(self):
         """Handle bot finished signal"""
@@ -300,7 +316,7 @@ class CinemathequeWindow(QMainWindow):
         movie_widget = self.movie_list.itemWidget(item)
         if movie_widget and hasattr(movie_widget, 'movie_data'):
             
-            # Clear previous selection FIRST (remove fuschia background)
+            # Clear previous selection FIRST (remove fuchsia background)
             if self.selected_movie_widget and self.selected_movie_widget != movie_widget:
                 self.selected_movie_widget.set_selected(False)
                 # Force immediate update
@@ -587,34 +603,30 @@ class MovieItemWidget(QWidget):
         super().__init__()
         self.movie_data = movie_data
         self.posters_folder = posters_folder
-        self.ui = ui  # Store UI instance
+        self.ui = ui
         self.is_selected = False
-        
-        # Set default background
+        self.is_dark_mode = ui.is_dark_mode()
+
         self.setAutoFillBackground(True)
-        self.update_background()
-        
+
         # Create horizontal layout
         layout = QHBoxLayout()
-        layout.setContentsMargins(4, 0, 0, 0) # Set margins to 0
-        layout.setSpacing(0) # Set spacing to 0
-        
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
         # Poster label (left side)
         self.poster_label = QLabel()
         self.poster_label.setFixedSize(POSTER_WIDTH, POSTER_HEIGHT)
-        self.poster_label.setStyleSheet("border: none; padding: 0px;")  # No border/padding
+        self.poster_label.setStyleSheet("border: none; padding: 0px 4px 0px 0px; margin: 0px;")
         self.poster_label.setAlignment(Qt.AlignCenter)
         self.poster_label.setScaledContents(True)
-        
-        # Load poster image if available
         self.load_poster()
-        
         layout.addWidget(self.poster_label)
-        
+
         # Movie info (right side)
         info_layout = QVBoxLayout()
-        info_layout.setSpacing(0)  # Set spacing to 0
-        info_layout.setContentsMargins(5, 5, 5, 5)  # Set margins to 5
+        info_layout.setSpacing(0)
+        info_layout.setContentsMargins(0,0,0,0)
 
         # Title
         title_label = QLabel(movie_data.get('title', 'Unknown Title'))
@@ -669,25 +681,52 @@ class MovieItemWidget(QWidget):
     
     def update_background(self):
         """Update the background color based on selection state"""
+        # Depending on light/dark mode, set text color
+        if self.is_dark_mode:
+            text_color = DARK_TEXT_COLOR
+            background_color = DARK_ITEM_BACKGROUND
+        else:
+            text_color = LIGHT_TEXT_COLOR
+            background_color = LIGHT_ITEM_BACKGROUND
+        # If selected, highlight with fuchsia background
         if self.is_selected:
-            # Use a more specific and stronger stylesheet
-            self.setStyleSheet("""
-                MovieItemWidget {
-                    background-color: #FF00FF !important;
-                }
-                QWidget {
-                    background-color: #FF00FF !important;
-                }
+            self.highlight_background('white', HIGHLIGHT_COLOR)
+        else:
+            self.setStyleSheet(f"""
+                background-color: {background_color};
+                color: {text_color};
             """)
             self.setAutoFillBackground(True)
-        else:
-            # Clear all styling completely
-            self.setStyleSheet("")
-            self.setAutoFillBackground(False)
-        
-        # Force immediate visual update
+        self.repaint()
+
+    def highlight_background(self, color, background):
+        """Highlight the background with a specific color"""
+        self.setStyleSheet(f"""
+            MovieItemWidget {{
+                background-color: {background} !important;
+                color: {color} !important;
+            }}
+            QWidget {{
+                background-color: {background} !important;
+                color: {color} !important;
+            }}
+        """)
+        self.setAutoFillBackground(True)
         self.repaint()
     
+    def remove_background(self):
+        """Remove background color"""
+        self.setStyleSheet("""
+            MovieItemWidget {
+                background: transparent !important;
+            }
+            QWidget {
+                background: transparent !important;
+            }
+        """)
+        self.setAutoFillBackground(False)
+        self.repaint()
+
     def mousePressEvent(self, event):
         """Handle mouse clicks on the widget"""
         if event.button() == Qt.LeftButton:

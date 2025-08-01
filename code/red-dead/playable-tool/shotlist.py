@@ -6,7 +6,7 @@ from re import S
 
 from PyQt5.QtCore import pyqtSignal
 from PyQt5.QtCore import Qt, QThread, QTimer
-from PyQt5.QtGui import QColor
+from PyQt5.QtGui import QColor, QBrush
 from PyQt5.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QHBoxLayout, QLineEdit, QMainWindow,
     QPushButton, QTableWidget, QTableWidgetItem, QTextEdit,
@@ -38,7 +38,9 @@ class ShotlistWindow(QMainWindow):
     def __init__(self, ui):
         super().__init__()
         self.ui = ui  # Store UI instance
-        
+
+        self.is_dark_mode = self.ui.is_dark_mode()
+
         self._pending_save_data = {}
         self.setWindowTitle("Shotlist")
         self.setGeometry(200, 200, 600, 400)
@@ -80,6 +82,9 @@ class ShotlistWindow(QMainWindow):
         self.scene_table.setColumnWidth(3, 110)   # End
         self.scene_table.setColumnWidth(4, 300)   # Shot Caption
         self.scene_table.setColumnWidth(5, 300)   # Scene Caption
+        
+        self.scene_table.verticalHeader().setDefaultAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.scene_table.setAlternatingRowColors(False)
 
         self.method_dropdown = QComboBox()
         self.method_dropdown.addItems([
@@ -101,6 +106,7 @@ class ShotlistWindow(QMainWindow):
         self.weights_field.setAlignment(Qt.AlignCenter)
         self.weights_field.setToolTip("Set PySceneDetect parameters.\nSee documentation for details.\nExamples:\nweights: -w 1.0 1.0 1.0 0.0\nthreshold: -t 3.2")
         self.weights_field.setFont(self.ui.get_font('tiny-condensed'))
+        self.weights_field.setStyleSheet("QLineEdit { margin: 0px 10px 0px 15px; }")
         self.weights_field.setFixedSize(120, tiny_height)
 
         self.delete_button = QPushButton("Delete")
@@ -112,9 +118,6 @@ class ShotlistWindow(QMainWindow):
         self.detect_button = QPushButton("Detect Shots")
         self.detect_button.setFixedSize(120, button_height)
         self.detect_button.setFont(self.ui.get_font('button'))
-        self.detect_button.setStyleSheet(
-            "text-align: center; padding-left: 0px; padding-top: 0px; padding-bottom: 0px;"  # Set all padding to 0
-        )
         self.detect_button.setEnabled(False)
 
         # New Detect Scenes button
@@ -170,9 +173,9 @@ class ShotlistWindow(QMainWindow):
         self.shotlist_status.emit(False)
         self.detect_button.setEnabled(False)
         self.detecting_dots = 0
-        self.detect_button.setText("Detecting")
+        self.detect_button.setText("        Detecting")
         self.detect_button.setStyleSheet(
-            "text-align: left; padding-left: 30px; padding-top: 3px; padding-bottom: 6px;"
+            "text-align: left;"
         )
         self.detecting_timer.start(500)
         self.scene_table.setRowCount(0)
@@ -181,7 +184,7 @@ class ShotlistWindow(QMainWindow):
             self.detect_button.setEnabled(True)
             self.detect_button.setText("Detect Shots")
             self.detect_button.setStyleSheet(
-                "text-align: center; padding-left: 0px; padding-top: 3px; padding-bottom: 6px;"
+                "text-align: center;"
             )
             self.detecting_timer.stop()
             return
@@ -209,16 +212,16 @@ class ShotlistWindow(QMainWindow):
 
     def animate_detecting(self):
         self.detecting_dots = (self.detecting_dots + 1) % 4
-        self.detect_button.setText("Detecting" + "." * self.detecting_dots)
+        self.detect_button.setText("        Detecting" + "." * self.detecting_dots)
         self.detect_button.setStyleSheet(
-            "text-align: left; padding-left: 30px; padding-top: 3px; padding-bottom: 6px;"
+            "text-align: left;"
         )
 
     def on_detection_finished(self):
         self.detect_button.setEnabled(True)
         self.detect_button.setText("Detect Shots")
         self.detect_button.setStyleSheet(
-            "text-align: center; padding-left: 0px; padding-top: 3px; padding-bottom: 6px;"
+            "text-align: center;"
         )
         self.detecting_timer.stop()
 
@@ -604,6 +607,7 @@ class ShotlistWindow(QMainWindow):
                 index_item = self.scene_table.item(row, scene_col)
                 if index_item:
                     index_item.setBackground(Qt.transparent)
+                    index_item.setForeground(QBrush(QColor("#000" if not self.is_dark_mode else "#fff")))
 
         # Highlight the current shot index cell
         if self.current_row >= 0:
@@ -611,7 +615,8 @@ class ShotlistWindow(QMainWindow):
             if scene_col != -1:
                 index_item = self.scene_table.item(self.current_row, scene_col)
                 if index_item:
-                    index_item.setBackground(QColor("fuchsia"))
+                    index_item.setBackground(QColor("#f0f"))
+                    index_item.setForeground(QBrush(QColor("#fff")))
 
     def handle_request_current_shot(self, count):
         row = self.find_current_shot(self.current_time_ms)
