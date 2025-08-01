@@ -102,24 +102,20 @@ class UI:
         
     def get_style_sheet(self, style=None):
         if style == 'app':
+            # common style sheet
+            return_text = self.get_common_style_sheet() + "\n\n"
+        
+            # differing styles based on dark|light mode
             if self.is_dark_mode():
-                return self.get_dark_style_sheet()
+                return_text += self.get_dark_style_sheet()
             else:
-                return self.get_light_style_sheet()
+                return_text += self.get_light_style_sheet()
+            return return_text
+        
         else:
             return ""
         
-    def get_dark_style_sheet(self):
-        highlight_color = "#f0f"
-        dark_background = "#111"
-        dark_color = "#eee"
-        dark_button_background = "#888"
-        dark_button_color = "#fff"
-        dark_button_disabled_background = "#444"
-        dark_button_disabled_color = "#666"
-        dark_title_background = "#222"
-        dark_title_color = "#ccc"
-        dark_dock_border = "#111"
+    def get_common_style_sheet(self):
 
         # get the button font
         button_font = self.get_font("button")
@@ -127,23 +123,21 @@ class UI:
         button_font_name = button_font.family()
         button_font_size = button_font.pointSize()
         button_font_weight = button_font.weight()
-        # get the button dimensions
+
+        # dimensions
         # button_width = 80
         button_height = 24
+        separator_size = 3
 
         return f"""
-
         /* WINDOW */
 
         QMainWindow::separator {{
-            background: {dark_dock_border};
-            width: 2px;
-            height: 2px;
+            width: {separator_size}px;
+            height: {separator_size}px;
         }}
 
         QMainWindow {{
-            /* background: #f0f;
-            color: #ff0; */
             border: none;
             outline: none;
         }}
@@ -151,7 +145,6 @@ class UI:
         /* WIDGETS */
 
         QWidget {{
-            background: {dark_background};
             border: none;
             outline: none;
         }}
@@ -162,22 +155,104 @@ class UI:
         }}
                         
         QDockWidget::title {{
-            background: {dark_title_background};
-            color: {dark_title_color};
             text-align: center;
             padding-left: 8px;
             padding-top: 2px;
             padding-bottom: 2px;
         }}
 
+        /* SCROLL BARS */
+
+        QScrollBar {{
+            background: transparent;
+            margin: 0px 0px 0px 0px;
+            border: none;
+        }}
+
+        QScrollBar:vertical {{
+            width: 10px;
+        }}
+
+        QScrollBar:horizontal {{
+            height: 10px;
+        }}
+
+        QScrollBar::handle {{
+            background: transparent;
+            border: none;
+            border-radius: 0px;
+        }}
+
+        QScrollBar::handle:vertical {{
+            height: 0px;
+        }}
+
+        QScrollBar::handle:horizontal {{
+            width: 0px;
+        }}
+
+        QScrollBar::add-line:vertical,
+        QScrollBar::sub-line:vertical {{
+            height: 10px;
+            border: none;
+            color: transparent;
+            background: transparent;
+        }}
+
+        QScrollBar::add-page,
+        QScrollBar::sub-page {{
+            color: transparent;
+            background: transparent;
+            border: none;
+        }}
+
+        QScrollBar::add-page:horizontal,
+        QScrollBar::sub-page:horizontal {{
+        }}
+
+        QScrollBar::add-page:vertical,
+        QScrollBar::sub-page:vertical {{
+        }}
+
+        /* TABLES */
+
+        QHeaderView {{
+            font-family: {button_font_name};
+            font-size: {button_font_size}px;
+            font-weight: {button_font_weight};
+        }}
+
+        QTableView {{
+        }}
+
+        QHeaderView::section:horizontal {{
+            background: transparent;
+        }}
+
+        QHeaderView::section:horizontal:last {{
+            border-right: none;
+        }}
+
+        QHeaderView::section:vertical {{
+            background: transparent;
+            text-align: right;
+        }}
+
+        QHeaderView::section:vertical:last {{
+            border-bottom: none;
+        }}
+
+        QTableCornerButton::section {{
+            border: none;
+            background: transparent;
+        }}
+
         /* DROP DOWN */
 
         QComboBox {{
-            background: {dark_button_background};         /* Background of the combo box */
-            color: {dark_button_color};              /* Text color */
-            border: none;   /* Border */
+            border: none;
             border-radius: 10%;
-            padding: 0px 0x 0px 20px; /* Space for the arrow */
+            padding: 0px 0x 0px 20px;
             /* Font settings */
             font-family: {button_font_name};
             font-size: {button_font_size}px;
@@ -186,8 +261,6 @@ class UI:
         }}
 
         QComboBox:disabled {{
-            background: {{dark_button_disabled_background}};
-            color: {{dark_button_disabled_color}};
         }}
 
         QComboBox::drop-down {{
@@ -195,13 +268,251 @@ class UI:
             subcontrol-position: top right;
             width: 20px;
             border-radius: 10%;
-            background: {dark_button_background};
         }}
 
         QComboBox::down-arrow {{
             image: url('ui/icons/dropdown-dark.png');
             width: 8px;
             height: 8px;
+        }}
+
+        QComboBox QAbstractItemView {{
+            border: none;
+        }}
+
+        /* TABS */
+
+        QTabBar::tab {{
+            border: none;
+            border-bottom: none;
+            padding: 2px 2px;
+            min-width: 80px;
+            border-radius: 0px;
+            font-family: {button_font_name};
+            font-size: {button_font_size}px;
+            font-weight: {button_font_weight};
+            min-height: {button_height}px;
+        }}
+
+        QTabBar::tab:selected {{
+            border: none;
+            border-radius: 0px;
+        }}
+
+        QTabBar::tab:!selected {{
+            margin-top: 0px;
+            border-radius: 0px;
+        }}
+
+        QTabWidget {{
+            border-radius: 0px;
+        }}
+
+        QTabWidget::pane {{
+            border: none;              /* or your preferred border */
+            border-radius: 0px;        /* remove rounded corners */
+            top: 0px;                  /* align with tab bar */
+            border-radius: 0px;
+        }}
+
+        QLineEdit, QTextEdit {{
+            border-radius: 0px;
+        }}
+
+        /* BUTTONS */
+        
+        QPushButton {{
+            border-style: none;
+            border-radius: 10%;
+            padding: 0px 0px;
+            margin: 5;
+            font-family: {button_font_name};
+            font-size: {button_font_size}px;
+            font-weight: {button_font_weight};
+            min-height: {button_height}px;
+            vertical-align: center;
+        }}
+
+        QPushButton:pressed {{
+        }}
+
+        QPushButton:disabled {{
+        }}
+
+        /* SLIDER */
+
+        QSlider {{
+            background: transparent;
+            height: 4px;
+            margin: 8px 8px;
+        }}
+
+        QSlider::groove:horizontal {{
+            border: none;
+            height: 4px;
+            border-radius: 2px;
+        }}
+        
+        QSlider::sub-page:horizontal {{
+            border-radius: 2px;
+        }}
+
+        QSlider::handle:horizontal:pressed {{
+        }}
+
+        QSlider::handle:horizontal:disabled {{
+        }}
+
+        QSlider::handle:horizontal {{
+            border: none;
+            width: 16px;
+            height: 16px;
+            margin: -6px 0; /* centers the handle */
+            border-radius: 8px;
+        }}
+        
+        """
+        
+    def get_dark_style_sheet(self):
+        highlight_color = "#f0f"
+        dark_background = "#111"
+        dark_color = "#eee"
+        dark_window_background = "#222"
+        dark_button_background = "#888"
+        dark_button_color = "#fff"
+        dark_button_disabled_background = "#444"
+        dark_button_disabled_color = "#666"
+        dark_title_background = "#222"
+        dark_title_color = "#ccc"
+        dark_dock_border = "#111"
+
+        return f"""
+
+        /* WINDOW */
+
+        QMainWindow::separator {{
+            background: {dark_dock_border};
+        }}
+
+        QMainWindow {{
+            /* background: #f0f;
+            color: #ff0; */
+        }}
+
+        /* WIDGETS */
+
+        QWidget {{
+            background: {dark_window_background};
+        }}
+                        
+        QDockWidget {{
+            background: transparent;
+        }}
+                        
+        QDockWidget::title {{
+            background: {dark_title_background};
+            color: {dark_title_color};
+        }}
+
+        /* SCROLL BARS */
+
+        QScrollBar {{
+            background: transparent;
+        }}
+
+        QScrollBar:vertical {{
+        }}
+
+        QScrollBar:horizontal {{
+        }}
+
+        QScrollBar::handle {{
+            background: transparent;
+        }}
+
+        QScrollBar::handle:vertical {{
+            border-top: 1px solid {highlight_color};
+            border-bottom: 1px solid {highlight_color};
+        }}
+
+        QScrollBar::handle:horizontal {{
+            border-left: 1px solid {highlight_color};
+            border-right: 1px solid {highlight_color};
+        }}
+
+        QScrollBar::add-line:vertical,
+        QScrollBar::sub-line:vertical {{
+            color: transparent;
+            background: transparent;
+        }}
+
+        QScrollBar::add-page,
+        QScrollBar::sub-page {{
+            color: transparent;
+            background: transparent;
+        }}
+
+        QScrollBar::add-page:horizontal,
+        QScrollBar::sub-page:horizontal {{
+            border-top: 1px solid {dark_title_color};
+        }}
+
+        QScrollBar::add-page:vertical,
+        QScrollBar::sub-page:vertical {{
+            border-left: 1px solid {dark_title_color};
+        }}
+
+        /* TABLES */
+
+        QHeaderView {{
+        }}
+
+        QTableView {{
+            gridline-color: #888;
+        }}
+
+        QHeaderView::section:horizontal {{
+            background: transparent;
+            color: {dark_title_color};
+            border: 0px solid {dark_title_color};
+            border-bottom: 1px solid {dark_title_color};
+            border-right: 1px solid {dark_title_color};
+        }}
+
+        QHeaderView::section:horizontal:last {{
+        }}
+
+        QHeaderView::section:vertical {{
+            background: transparent;
+            color: {dark_title_color};
+            border: 0px solid {dark_title_color};
+            border-right: 1px solid {dark_title_color};
+            border-bottom: 1px solid {dark_title_color};
+        }}
+
+        QHeaderView::section:vertical:last {{
+        }}
+
+        QTableCornerButton::section {{
+        }}
+
+        /* DROP DOWN */
+
+        QComboBox {{
+            background: {dark_button_background};
+            color: {dark_button_color};
+        }}
+
+        QComboBox:disabled {{
+            background: {dark_button_disabled_background};
+            color: {dark_button_disabled_color};
+        }}
+
+        QComboBox::drop-down {{
+            background: {dark_button_background};
+        }}
+
+        QComboBox::down-arrow {{
         }}
 
         QComboBox QAbstractItemView {{
@@ -217,46 +528,27 @@ class UI:
         QTabBar::tab {{
             background: {dark_button_disabled_background};    /* Unselected tab background */
             color: {dark_button_disabled_color};              /* Unselected tab text */
-            border: none;
-            border-bottom: none;
-            padding: 2px 2px;
-            min-width: 80px;
-            border-radius: 0px;
-            font-family: {button_font_name};
-            font-size: {button_font_size}px;
-            font-weight: {button_font_weight};
-            min-height: {button_height}px;
         }}
 
         QTabBar::tab:selected {{
             background: {dark_button_background};    /* Selected tab background */
             color: {dark_button_color};              /* Selected tab text */
-            border: none;
-            border-radius: 0px;
         }}
 
         QTabBar::tab:!selected {{
-            margin-top: 0px;          /* Slight offset for unselected tabs */
-            border-radius: 0px;
+
         }}
 
         QTabWidget {{
-            background: pink; /* Background for the tab widget */
-            color: orange;           /* Text color for the tab widget */  
-            border-radius: 0px;
+            background: {dark_background};
         }}
 
         QTabWidget::pane {{
-            border: none;    /* or your preferred border */
-            background: #0ff;          /* match your window background */
-            border-radius: 0px;        /* remove rounded corners */
-            top: 0px;                  /* align with tab bar */
-            border-radius: 0px;
+            background: {dark_background};
         }}
 
         QLineEdit, QTextEdit {{
             border: 1px solid #888;
-            border-radius: 0px;
         }}
 
         /* BUTTONS */
@@ -264,15 +556,6 @@ class UI:
         QPushButton {{
             background: {dark_button_background};
             color: {dark_button_color};
-            border-style: none;
-            border-radius: 10%;
-            padding: 0px 0px;
-            margin: 5;
-            font-family: {button_font_name};
-            font-size: {button_font_size}px;
-            font-weight: {button_font_weight};
-            min-height: {button_height}px;
-            vertical-align: center;
         }}
 
         QPushButton:pressed {{
@@ -288,20 +571,14 @@ class UI:
 
         QSlider {{
             background: transparent;
-            height: 4px;
-            margin: 8px 8px;
         }}
 
         QSlider::groove:horizontal {{
-            border: none;
-            height: 4px;
             background: {dark_button_disabled_background};
-            border-radius: 2px;
         }}
         
         QSlider::sub-page:horizontal {{
             background: {dark_button_background};
-            border-radius: 2px;
         }}
 
         QSlider::handle:horizontal:pressed {{
@@ -314,11 +591,6 @@ class UI:
 
         QSlider::handle:horizontal {{
             background: {dark_button_color};
-            border: none;
-            width: 16px;
-            height: 16px;
-            margin: -6px 0; /* centers the handle */
-            border-radius: 8px;
         }}
                 
         """
@@ -327,6 +599,7 @@ class UI:
         highlight_color = "#f0f"
         light_background = "#eee"
         light_color = "#111"
+        light_window_background = "#ddd"
         light_button_background = "#888"
         light_button_color = "#eee"
         light_button_disabled_background = "#ccc"
@@ -335,100 +608,147 @@ class UI:
         light_title_color = "#333"
         light_dock_border = "#eee"
 
-        # get the button font
-        button_font = self.get_font("button")
-        # get that font's name
-        button_font_name = button_font.family()
-        button_font_size = button_font.pointSize()
-        button_font_weight = button_font.weight()
-        # get the button dimensions
-        # button_width = 80
-        button_height = 24
-
         return f"""
 
         /* WINDOW */
 
         QMainWindow::separator {{
             background: {light_dock_border};
-            width: 2px;
-            height: 2px;
         }}
 
         QMainWindow {{
             /* background: #f0f;
             color: #ff0; */
-            border: none;
-            outline: none;
         }}
 
         /* WIDGETS */
 
         QWidget {{
-            background: {light_background};
-            border: none;
-            outline: none;
+            background: {light_window_background};
         }}
                         
         QDockWidget {{
-            border: none;
             background: transparent;
         }}
                         
         QDockWidget::title {{
             background: {light_title_background};
             color: {light_title_color};
-            text-align: center;
-            padding-left: 8px;
-            padding-top: 2px;
-            padding-bottom: 2px;
+        }}
+
+        /* SCROLL BARS */
+
+        QScrollBar {{
+            background: transparent;
+            border: none;
+        }}
+
+        QScrollBar:vertical {{
+        }}
+
+        QScrollBar:horizontal {{
+        }}
+
+        QScrollBar::handle {{
+            background: transparent;
+        }}
+
+        QScrollBar::handle:vertical {{
+            border-top: 1px solid {highlight_color};
+            border-bottom: 1px solid {highlight_color};
+        }}
+
+        QScrollBar::handle:horizontal {{
+            border-left: 1px solid {highlight_color};
+            border-right: 1px solid {highlight_color};
+        }}
+
+        QScrollBar::add-line:vertical,
+        QScrollBar::sub-line:vertical {{
+            color: transparent;
+            background: transparent;
+        }}
+
+        QScrollBar::add-page,
+        QScrollBar::sub-page {{
+            color: transparent;
+            background: transparent;
+        }}
+
+        QScrollBar::add-page:horizontal,
+        QScrollBar::sub-page:horizontal {{
+            border-top: 1px solid {light_title_color};
+        }}
+
+        QScrollBar::add-page:vertical,
+        QScrollBar::sub-page:vertical {{
+            border-left: 1px solid {light_title_color};
+        }}
+
+        /* TABLES */
+
+        QHeaderView {{
+        }}
+
+        QTableView {{
+            gridline-color: #888;
+        }}
+
+        QHeaderView::section:horizontal {{
+            background: transparent;
+            color: {light_title_color};
+            border: 0px solid {light_title_color};
+            border-bottom: 1px solid {light_title_color};
+            border-right: 1px solid {light_title_color};
+        }}
+
+        QHeaderView::section:horizontal:last {{
+            border-right: none;
+        }}
+
+        QHeaderView::section:vertical {{
+            background: transparent;
+            color: {light_title_color};
+            border: 0px solid {light_title_color};
+            border-right: 1px solid {light_title_color};
+            border-bottom: 1px solid {light_title_color};
+        }}
+
+        QHeaderView::section:vertical:last {{
+        }}
+
+        QTableCornerButton::section {{
+            background: transparent;
         }}
 
         /* LINE EDITS AND TEXT EDITS */
 
         QLineEdit, QTextEdit {{
             border: 1px solid #888;
-            border-radius: 0px;
         }}
 
         /* DROP DOWN */
 
         QComboBox {{
-            background: {light_button_background};         /* Background of the combo box */
+            background: {light_button_background};    /* Background of the combo box */
             color: {light_button_color};              /* Text color */
-            border: none;   /* Border */
-            border-radius: 10%;
-            padding: 0px 0x 0px 20px; /* Space for the arrow */
-            /* Font settings */
-            font-family: {button_font_name};
-            font-size: {button_font_size}px;
-            font-weight: {button_font_weight};
-            min-height: {button_height}px;
         }}
 
         QComboBox:disabled {{
-            background: {{light_button_disabled_background}};
-            color: {{light_button_disabled_color}};
+            background: {light_button_disabled_background};
+            color: {light_button_disabled_color};
         }}
 
         QComboBox::drop-down {{
-            subcontrol-origin: padding;
-            subcontrol-position: top right;
-            width: 20px;
-            border-radius: 10%;
             background: {light_button_background};
         }}
 
         QComboBox::down-arrow {{
-            image: url('ui/icons/dropdown-dark.png');
-            width: 8px;
-            height: 8px;
         }}
 
         QComboBox QAbstractItemView {{
             background: #f0f;
             /*color: #0f0;*/
-            border: none;
             /*selection-background-color: #00f;
             selection-color: #f0f;*/
         }}        
@@ -438,46 +758,28 @@ class UI:
         QTabBar::tab {{
             background: {light_button_disabled_background};    /* Unselected tab background */
             color: {light_button_disabled_color};              /* Unselected tab text */
-            border: none;
-            border-bottom: none;
-            padding: 2px 2px;
-            min-width: 80px;
-            border-radius: 0px;
-            font-family: {button_font_name};
-            font-size: {button_font_size}px;
-            font-weight: {button_font_weight};
-            min-height: {button_height}px;
         }}
 
         QTabBar::tab:selected {{
             background: {light_button_background};    /* Selected tab background */
             color: {light_button_color};              /* Selected tab text */
-            border: none;
-            border-radius: 0px;
         }}
 
         QTabBar::tab:!selected {{
-            margin-top: 0px;          /* Slight offset for unselected tabs */
-            border-radius: 0px;
         }}
 
         QTabWidget {{
             background: {light_background};
-            border: none;
         }}
 
         QTabWidget::pane {{
             background: {light_background};
-            border: none;
-            border-radius: 0px;
-            top: 0px;
         }}
 
         /* LINE EDITS AND TEXT EDITS */
 
         QLineEdit, QTextEdit {{
             border: 1px solid #888;
-            border-radius: 0px;
         }}
 
         /* BUTTONS */
@@ -485,15 +787,6 @@ class UI:
         QPushButton {{
             background: {light_button_background};
             color: {light_button_color};
-            border-style: none;
-            border-radius: 10%;
-            padding: 0px 0px;
-            margin: 5;
-            font-family: {button_font_name};
-            font-size: {button_font_size}px;
-            font-weight: {button_font_weight};
-            min-height: {button_height}px;
-            vertical-align: center;
         }}
 
         QPushButton:pressed {{
@@ -509,20 +802,14 @@ class UI:
 
         QSlider {{
             background: transparent;
-            height: 4px;
-            margin: 8px 8px;
         }}
 
         QSlider::groove:horizontal {{
-            border: none;
-            height: 4px;
             background: {light_button_disabled_background};
-            border-radius: 2px;
         }}
         
         QSlider::sub-page:horizontal {{
             background: {light_button_background};
-            border-radius: 2px;
         }}
 
         QSlider::handle:horizontal:pressed {{
@@ -535,11 +822,6 @@ class UI:
 
         QSlider::handle:horizontal {{
             background: {light_button_background};
-            border: none;
-            width: 16px;
-            height: 16px;
-            margin: -6px 0; /* centers the handle */
-            border-radius: 8px;
         }}
                 
         """
