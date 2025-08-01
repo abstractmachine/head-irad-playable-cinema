@@ -362,6 +362,7 @@ class ShotlistWindow(QMainWindow):
             "col2_width": self.scene_table.columnWidth(2),
             "col3_width": self.scene_table.columnWidth(3),
             "col4_width": self.scene_table.columnWidth(4),
+            "col5_width": self.scene_table.columnWidth(5),
             "weights_field": self.weights_field.text(),
             "method_selected": self.method_dropdown.currentText()
         }
@@ -377,6 +378,8 @@ class ShotlistWindow(QMainWindow):
             self.scene_table.setColumnWidth(3, data["col3_width"])
         if "col4_width" in data:
             self.scene_table.setColumnWidth(4, data["col4_width"])
+        if "col5_width" in data:
+            self.scene_table.setColumnWidth(5, data["col5_width"])
         if "weights_field" in data:
             self.weights_field.setText(data["weights_field"])
         if "method_selected" in data:

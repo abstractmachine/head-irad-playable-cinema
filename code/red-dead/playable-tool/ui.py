@@ -306,6 +306,26 @@ class UI:
             border: none;
         }}
 
+        /* CHECK BOXES */
+
+        QCheckBox {{
+            spacing: 4px;
+        }}
+
+        QCheckBox::indicator {{
+            width: 16px;
+            height: 16px;
+            border: none;
+        }}
+
+        QCheckBox::indicator:unchecked {{
+            image: url('ui/icons/checkbox_off.png');
+        }}
+
+        QCheckBox::indicator:checked {{
+            image: url('ui/icons/checkbox_on.png');
+        }}
+
         /* TABS */
 
         QTabBar::tab {{
@@ -582,6 +602,14 @@ class UI:
             border: none;
             /*selection-background-color: #00f;
             selection-color: #f0f;*/
+        }}
+
+        /* CHECK BOXES */
+
+        QCheckBox::indicator:unchecked {{
+        }}
+
+        QCheckBox::indicator:checked {{
         }}
 
         /* TABS */
@@ -867,7 +895,15 @@ class UI:
             /*color: #0f0;*/
             /*selection-background-color: #00f;
             selection-color: #f0f;*/
-        }}        
+        }}     
+
+        /* CHECK BOXES */
+
+        QCheckBox::indicator:unchecked {{
+        }}
+
+        QCheckBox::indicator:checked {{
+        }}   
 
         /* TABS */
 
