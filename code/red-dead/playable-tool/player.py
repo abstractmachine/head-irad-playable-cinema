@@ -8,9 +8,8 @@ import os
 import platform
 import vlc
 
-SEEK_NORMAL = "1"
-SEEK_FAST = "30"
-FRAMES_PER_SHOT = 30
+SEEK_NORMAL = 1
+SEEK_FAST = 30
 
 class AbstractPlayerWindow(QMainWindow):
     # Signals for communication
@@ -31,12 +30,19 @@ class AbstractPlayerWindow(QMainWindow):
         self.duration_seconds = None
         self._slider_is_active = False
 
+        # Set a minimum height for the player window
+        self.setMinimumHeight(300)
+
         # VLC setup (subclasses may override for other backends)
         os.environ["VLC_VERBOSE"] = str("-1")
         self.vlc_instance = vlc.Instance()
         self.vlc_player = self.vlc_instance.media_player_new()
         self.video_widget = QWidget()
-        self.video_widget.setStyleSheet("background-color: black;")
+
+        if ui.is_dark_mode():
+            self.video_widget.setStyleSheet("background-color: 111;")
+        else:
+            self.video_widget.setStyleSheet("background-color: eee;")
 
         # Timeline slider
         self.timeline = JumpSlider(Qt.Horizontal)
@@ -45,26 +51,15 @@ class AbstractPlayerWindow(QMainWindow):
         self.timeline.setValue(0)
         self.timeline.setEnabled(False)
         self.timeline.setMinimumHeight(32)
+        # Set margins and spacing to zero, but add left/right margin via stylesheet
+        self.timeline.setContentsMargins(0, 0, 0, 0)
+        self.timeline.setStyleSheet("QSlider { margin-left: 8px; margin-right: 8px; padding: 0px; }")
+        # self.timeline.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.timeline.setToolTip("Scrub through the video timeline")
         self.timeline.sliderPressed.connect(self.on_slider_pressed)
         self.timeline.sliderReleased.connect(self.on_slider_released)
 
         button_width, button_height = self.ui.get_dimensions('button')
-
-        # Seek speed controls
-        self.normal_seek = QLineEdit("1")
-        self.fast_seek = QLineEdit("30")
-        tiny_width, tiny_height = self.ui.get_dimensions('tiny')
-        self.normal_seek.setFixedSize(tiny_width, tiny_height)
-        self.fast_seek.setFixedSize(tiny_width, tiny_height)
-        self.normal_seek.setFont(self.ui.get_font('tiny'))
-        self.fast_seek.setFont(self.ui.get_font('tiny'))
-        self.normal_seek.setAlignment(Qt.AlignCenter)
-        self.fast_seek.setAlignment(Qt.AlignCenter)
-        self.normal_seek.editingFinished.connect(self.validate_normal_seek)
-        self.fast_seek.editingFinished.connect(self.validate_fast_seek)
-        self.normal_seek.setFocusPolicy(Qt.ClickFocus)
-        self.fast_seek.setFocusPolicy(Qt.ClickFocus)
 
         # Play/Pause button
         self.play_pause_button = QPushButton("⏵")
@@ -100,17 +95,19 @@ class AbstractPlayerWindow(QMainWindow):
 
         # Layouts
         controls_layout = QHBoxLayout()
+        controls_layout.setContentsMargins(0, 0, 0, 0)  # No margins
+        controls_layout.setSpacing(0)                   # No spacing
+        controls_layout.addStretch()  # Stretch to the left of buttons
         controls_layout.addWidget(self.play_pause_button)
         controls_layout.addWidget(self.back_button)
         controls_layout.addWidget(self.forward_button)
-        controls_layout.addWidget(self.normal_seek)
-        controls_layout.addWidget(self.fast_seek)
-        controls_layout.addStretch()
+        controls_layout.addStretch()  # Stretch between buttons and timecode label
         controls_layout.addWidget(self.timecode_label)
+        controls_layout.addStretch()  # Stretch to the right of
 
         layout = QVBoxLayout()
-        layout.setSpacing(5)
-        layout.setContentsMargins(10, 0, 10, 0)
+        layout.setSpacing(0)                             # No spacing
+        layout.setContentsMargins(0, 0, 0, 10)           # No margins
         layout.addWidget(self.video_widget, stretch=1)
         layout.addWidget(self.timeline)
         layout.addLayout(controls_layout)
@@ -239,13 +236,13 @@ class AbstractPlayerWindow(QMainWindow):
     def seek_back(self):
         if not self.current_video_path or not self.vlc_player:
             return
-        seek_amount = float(self.normal_seek.text())
+        seek_amount = SEEK_NORMAL
         self.seek_video(-seek_amount)
 
     def seek_forward(self):
         if not self.current_video_path or not self.vlc_player:
             return
-        seek_amount = float(self.normal_seek.text())
+        seek_amount = SEEK_NORMAL
         self.seek_video(seek_amount)
 
     def seek_video(self, seconds):
@@ -354,14 +351,6 @@ class AbstractPlayerWindow(QMainWindow):
         self._update_timecode_display(position)
         self.emit_timecode_changed(position)
 
-    def validate_fast_seek(self):
-        try:
-            value = float(self.fast_seek.text())
-            if value <= 0:
-                self.fast_seek.setText("30")
-        except ValueError:
-            self.fast_seek.setText("30")
-
     def closeEvent(self, event):
         try:
             if hasattr(self, 'vlc_player') and self.vlc_player:
@@ -384,16 +373,10 @@ class AbstractPlayerWindow(QMainWindow):
     def on_request_save(self):
         pos = self.pos()
         size = self.size()
-        self._pending_save_data = {
-            "normal_seek": self.normal_seek.text(),
-            "fast_seek": self.fast_seek.text()
-        }
+        self._pending_save_data = {}
 
     def on_request_load(self, data):
-        if "normal_seek" in data:
-            self.normal_seek.setText(data["normal_seek"])
-        if "fast_seek" in data:
-            self.fast_seek.setText(data["fast_seek"])
+        pass
 
 class JumpSlider(QSlider):
     def __init__(self, orientation):

@@ -3,112 +3,102 @@ DEBUG = False  # Set to True to enable debug output
 import os
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import (
-    QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QTextEdit, QPushButton, QLabel
+    QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton, QLabel
 )
 
-class InferenceWindow(QMainWindow):
+class InferenceWindow(QWidget):
     request_save = pyqtSignal()
     request_load = pyqtSignal(dict)
 
     def __init__(self, ui):
         super().__init__()
         self.ui = ui  # Store UI instance
-        self.setWindowTitle("Inference")
-        
-        # Initialize variables
+
+        self.setMinimumHeight(80)
         self.project_folder = None
         self.current_movie_filename = None
-        self.caption_model = "No caption model loaded"
-        self.search_model = "No search model loaded"
-        
-        # Main layout
-        main_layout = QVBoxLayout()
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(10)
+        self.caption_model = ""
+        self.search_model = ""
 
-        # Gameplay inference field (top)
+        # Main layout
+        main_layout = QHBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # --- Top area: Two columns (each with QTextEdit) ---
+        top_layout = QHBoxLayout()
+        top_layout.setSpacing(2)  # 2px space between the two text fields
+
+        # Left column (gameplay_inference)
+        left_col = QVBoxLayout()
+        left_col.setSpacing(0)
         self.gameplay_inference = QTextEdit()
-        self.gameplay_inference.setPlaceholderText("Live caption model inferencing outputs here.")
+        self.gameplay_inference.setPlaceholderText("No caption model loaded.")
         self.gameplay_inference.setReadOnly(True)
         self.gameplay_inference.setFont(self.ui.get_font('text'))
-        self.gameplay_inference.setStyleSheet("QTextEdit { border: none; padding: 5px; }")
-        main_layout.addWidget(self.gameplay_inference, stretch=1)
+        self.gameplay_inference.setStyleSheet("QTextEdit { border: none; padding: 0px; margin: 0px; }")
+        left_col.addWidget(self.gameplay_inference, stretch=1)
 
-        # Matched caption field (bottom)
+        # Right column (matched_caption)
+        right_col = QVBoxLayout()
+        right_col.setSpacing(0)
         self.matched_caption = QTextEdit()
-        self.matched_caption.setPlaceholderText("Matched movie caption will appear here.")
+        self.matched_caption.setPlaceholderText("No search model loaded.")
         self.matched_caption.setReadOnly(True)
         self.matched_caption.setFont(self.ui.get_font('text'))
-        self.matched_caption.setStyleSheet("QTextEdit { border: none; padding: 5px; }")
-        main_layout.addWidget(self.matched_caption, stretch=1)
+        self.matched_caption.setStyleSheet("QTextEdit { border: none; padding: 0px; margin: 0px; }")
+        right_col.addWidget(self.matched_caption, stretch=1)
 
-        # Button layout
-        button_layout = QHBoxLayout()
-        button_layout.setSpacing(10)
+        # Add columns to top_layout
+        top_layout.addLayout(left_col, stretch=1)
+        top_layout.addLayout(right_col, stretch=1)
 
-        # Button dimensions
+        # --- Button area: Vertical on the right ---
+        button_layout = QVBoxLayout()
+        button_layout.setSpacing(2)
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        button_layout.setAlignment(Qt.AlignTop)
         button_width, button_height = self.ui.get_dimensions('button')
 
-        # Off button
+        self.caption_model_button = QPushButton("Caption")
+        self.caption_model_button.clicked.connect(self.select_caption_model)
+        self.caption_model_button.setFixedSize(80, button_height)
+        self.caption_model_button.setFont(self.ui.get_font('button'))
+        button_layout.addWidget(self.caption_model_button)
+
         self.off_button = QPushButton("Off")
         self.off_button.clicked.connect(self.turn_off_inference)
         self.off_button.setFixedSize(80, button_height)
         self.off_button.setFont(self.ui.get_font('button'))
         button_layout.addWidget(self.off_button)
 
-        # Inference Model button
-        self.model_button = QPushButton("Caption")
-        self.model_button.clicked.connect(self.select_model)
-        self.model_button.setFixedSize(button_width, button_height)
-        self.model_button.setFont(self.ui.get_font('button'))
-        button_layout.addWidget(self.model_button)
-
-        # Current model display
-        self.caption_model_field = QLabel(self.caption_model)
-        self.caption_model_field.setFont(self.ui.get_font('monospace'))
-        self.caption_model_field.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        tiny_height = self.ui.get_dimensions('tiny')[1]
-        self.caption_model_field.setFixedHeight(tiny_height)
-        button_layout.addWidget(self.caption_model_field, stretch=1)
-
-        # Search Model button
         self.search_model_button = QPushButton("Search")
         self.search_model_button.clicked.connect(self.select_search_model)
-        self.search_model_button.setFixedSize(button_width, button_height)
+        self.search_model_button.setFixedSize(80, button_height)
         self.search_model_button.setFont(self.ui.get_font('button'))
         button_layout.addWidget(self.search_model_button)
 
-        # Search model display
-        self.search_model_field = QLabel(self.search_model)
-        self.search_model_field.setFont(self.ui.get_font('monospace'))
-        self.search_model_field.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.search_model_field.setFixedHeight(tiny_height)
-        button_layout.addWidget(self.search_model_field, stretch=1)
+        # Assemble main layout: text fields (stretch=2), then vertical buttons (stretch=0)
+        main_layout.addLayout(top_layout, stretch=2)
+        main_layout.addLayout(button_layout, stretch=0)
 
-        main_layout.addLayout(button_layout)
-
-        # Set up container
-        container = QWidget()
-        container.setLayout(main_layout)
-        self.setCentralWidget(container)
+        self.setLayout(main_layout)
 
     def turn_off_inference(self):
         """Handle Off button click"""
-        self.gameplay_inference.setPlainText("Inference turned off.")
+        self.gameplay_inference.setPlainText("")
         self.matched_caption.setPlainText("")
         if DEBUG: print("Inference: Turned off")
 
-    def select_model(self):
+    def select_caption_model(self):
         """Handle Inference Model button click"""
-        self.caption_model = "Caption Model v1.0"
-        self.caption_model_field.setText(self.caption_model)
+        self.caption_model = "Caption Model v0.1"
         self.gameplay_inference.setPlainText("Caption Model loaded: " + self.caption_model)
         if DEBUG: print(f"Caption: Model selected - {self.caption_model}")
 
     def select_search_model(self):
         """Handle Search Model button click"""
-        self.search_model = "Search Model v1.0"
-        self.search_model_field.setText(self.search_model)
+        self.search_model = "Search Model v0.1"
         self.matched_caption.setPlainText("Search model loaded: " + self.search_model)
         if DEBUG: print(f"Inference: Search model selected - {self.search_model}")
 
@@ -178,7 +168,6 @@ class InferenceWindow(QMainWindow):
 
     def on_request_save(self):
         """Save window preferences"""
-        geo = self.geometry()
         self._pending_save_data = {
             "caption_model": self.caption_model
         }
@@ -188,6 +177,6 @@ class InferenceWindow(QMainWindow):
         """Load window preferences"""
         if data:
             # Load saved model
-            saved_model = data.get("caption_model", "No caption model loaded")
+            saved_model = data.get("caption_model", "")
             self.caption_model = saved_model
-            self.caption_model_field.setText(self.caption_model)
+            self.gameplay_inference.setPlainText(self.caption_model)

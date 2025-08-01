@@ -5,11 +5,11 @@ import os
 from re import S
 
 from PyQt5.QtCore import pyqtSignal
-from PyQt5.QtCore import Qt, QThread, QObject, QTimer
-from PyQt5.QtGui import QFont, QColor
+from PyQt5.QtCore import Qt, QThread, QTimer
+from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QHBoxLayout, QLineEdit, QMainWindow,
-    QPushButton, QFileDialog, QTableWidget, QTableWidgetItem, QTextEdit,
+    QPushButton, QTableWidget, QTableWidgetItem, QTextEdit,
     QVBoxLayout, QWidget
 )
 
@@ -53,8 +53,8 @@ class ShotlistWindow(QMainWindow):
 
         central_widget = QWidget()
         layout = QVBoxLayout(central_widget)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(12)
+        layout.setContentsMargins(0, 0, 0, 0)   # Set margins to 0
+        layout.setSpacing(0)                    # Set spacing to 0
 
         self.scene_table = QTableWidget()
         self.scene_table.setColumnCount(6)
@@ -89,18 +89,19 @@ class ShotlistWindow(QMainWindow):
             "detect-threshold"
         ])
         self.method_dropdown.setFixedSize(130, button_height)
+        self.method_dropdown.setToolTip("Select the detection method.\nSee documentation for details.")
+        self.method_dropdown.setCurrentIndex(0)
         self.method_dropdown.setFont(self.ui.get_font('button'))
+        # push this button using margins
+        self.method_dropdown.setContentsMargins(0, 0, 0, 0)
 
         tiny_width, tiny_height = self.ui.get_dimensions('tiny')
 
         self.weights_field = QLineEdit("-t 3.0")
-        # self.weights_field.setFixedWidth(180)
         self.weights_field.setAlignment(Qt.AlignCenter)
         self.weights_field.setToolTip("Set PySceneDetect parameters.\nSee documentation for details.\nExamples:\nweights: -w 1.0 1.0 1.0 0.0\nthreshold: -t 3.2")
-        self.weights_field.setFont(self.ui.get_font('tiny'))
-        self.weights_field.setFixedSize(160, tiny_height)
-        # self.weights_field.setMinimumHeight(tiny_height)
-        # self.weights_field.setMaximumHeight(tiny_height)
+        self.weights_field.setFont(self.ui.get_font('tiny-condensed'))
+        self.weights_field.setFixedSize(120, tiny_height)
 
         self.delete_button = QPushButton("Delete")
         self.delete_button.setFixedSize(button_width, button_height)
@@ -112,7 +113,7 @@ class ShotlistWindow(QMainWindow):
         self.detect_button.setFixedSize(120, button_height)
         self.detect_button.setFont(self.ui.get_font('button'))
         self.detect_button.setStyleSheet(
-            "text-align: center; padding-left: 0px; padding-top: 3px; padding-bottom: 6px;"
+            "text-align: center; padding-left: 0px; padding-top: 0px; padding-bottom: 0px;"  # Set all padding to 0
         )
         self.detect_button.setEnabled(False)
 
@@ -124,6 +125,8 @@ class ShotlistWindow(QMainWindow):
         self.detect_scenes_button.clicked.connect(self.handle_detect_scenes)
 
         button_layout = QHBoxLayout()
+        button_layout.setContentsMargins(0, 0, 0, 0)  # Set margins to 0
+        button_layout.setSpacing(0)                   # Set spacing to 0
         button_layout.addStretch()
         button_layout.addWidget(self.method_dropdown)
         button_layout.addWidget(self.weights_field)
@@ -577,9 +580,11 @@ class ShotlistWindow(QMainWindow):
 
             # send out the current row data
             self.send_row_data()
-            
+
             # only emit shot caption when row changes - no table manipulation
             if self.current_row >= 0:
+                # Scroll to the selected row
+                self.scroll_to_row(self.current_row)
                 # find column index of shot caption column
                 shot_caption_col = self.get_column_index_by_name("Shot_Caption")
                 if shot_caption_col != -1:
@@ -692,6 +697,26 @@ class ShotlistWindow(QMainWindow):
         if row != self.current_row:
             self.current_row = row
             self.row_did_change.emit(self.current_row)
+            # Scroll to the selected row
+            self.scroll_to_row(row)
+
+    def scroll_to_row(self, row):
+        if DEBUG: print(f"DEBUG: scroll_to_row called for row {row}")
+        table = self.scene_table
+        first_visible = table.rowAt(0)
+        last_visible = table.rowAt(table.viewport().height() - 1)
+        if last_visible == -1:
+            last_visible = table.rowCount() - 1
+        if row < first_visible or row > last_visible:
+            if DEBUG: print(f"DEBUG: scrolling to row {row} (not visible: {first_visible}-{last_visible})")
+            # Use the "Scene" column (usually index 1) for scrolling
+            scene_col = self.get_column_index_by_name("Scene")
+            if scene_col == -1:
+                scene_col = 0  # fallback
+            index = table.model().index(row, scene_col)
+            table.scrollTo(index, table.PositionAtTop)
+        else:
+            if DEBUG: print(f"DEBUG: row {row} already visible ({first_visible}-{last_visible}), no scroll")
 
     def jump_to_next_shot(self):
         """Jump to the next non-ignored shot"""
@@ -725,6 +750,39 @@ class ShotlistWindow(QMainWindow):
         
         # No next shot found
         if DEBUG: print("DEBUG: Already at last available shot")
+
+    def jump_to_previous_shot(self):
+        """Jump to the previous non-ignored shot"""
+        if DEBUG: print("DEBUG: jump_to_previous_shot called")
+        row_count = self.scene_table.rowCount()
+        
+        if row_count == 0:
+            if DEBUG: print("DEBUG: No rows in table")
+            return
+        
+        # Start searching from current_row - 1, or from last row if current_row is invalid
+        start_row = min(row_count - 1, self.current_row - 1 if self.current_row > 0 else -1)
+        if DEBUG: print(f"DEBUG: Searching for previous shot starting from row {start_row}")
+        
+        # Find previous non-ignored row
+        for prev_row in range(start_row, -1, -1):
+            ignore_col_index = self.get_column_index_by_name("Ignore")
+            if ignore_col_index == -1:
+                continue
+            
+            widget = self.scene_table.cellWidget(prev_row, ignore_col_index)
+            if widget:
+                checkbox = widget.findChild(QCheckBox)
+                if checkbox and not checkbox.isChecked():
+                    # Found previous non-ignored shot
+                    if DEBUG: print(f"DEBUG: Found previous non-ignored shot at row {prev_row}")
+                    start_col_index = self.get_column_index_by_name("Start")
+                    start_tc = self.scene_table.item(prev_row, start_col_index).text()
+                    self.jump_to_timecode(start_tc)
+                    return
+        
+        # No previous shot found
+        if DEBUG: print("DEBUG: Already at first available shot")
 
     def find_current_shot(self, ms):
         """Find the row index of the shot that contains the given time in ms"""

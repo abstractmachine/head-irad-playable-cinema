@@ -12,9 +12,9 @@ import csv
 from metadata import MetadataWorker  # Import our metadata worker
 
 # Common font size for all text
-POSTER_WIDTH = 60
-POSTER_HEIGHT = 90
-ITEM_HEIGHT = 110
+POSTER_WIDTH = 50
+POSTER_HEIGHT = 75
+ITEM_HEIGHT = 85
 INFO_SPACING = 1
 
 class CinemathequeWindow(QMainWindow):
@@ -38,14 +38,14 @@ class CinemathequeWindow(QMainWindow):
         self.setCentralWidget(main_widget)
         
         layout = QVBoxLayout()
-        layout.setSpacing(10)
-        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(0)  # Set spacing to 0
+        layout.setContentsMargins(0, 0, 0, 0)  # Set margins to 0
         
         # Movie list viewer
         self.movie_list = QListWidget()
         self.movie_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.movie_list.setAlternatingRowColors(True)
-        self.movie_list.setSpacing(5)  # Add uniform spacing between items
+        self.movie_list.setSpacing(0)  # Set item spacing to 0
         
         # DISABLE default Qt selection behavior
         self.movie_list.setSelectionMode(QListWidget.NoSelection)
@@ -56,6 +56,8 @@ class CinemathequeWindow(QMainWindow):
         
         # Button layout
         button_layout = QHBoxLayout()
+        button_layout.setContentsMargins(0, 0, 0, 0)  # Set margins to 0
+        button_layout.setSpacing(0)  # Set spacing to 0
         button_width, button_height = self.ui.get_dimensions('button')
 
         # Project folder button
@@ -97,7 +99,7 @@ class CinemathequeWindow(QMainWindow):
         button_layout.addWidget(self.caption_bot_button)
         button_layout.addStretch()
 
-       # Connect signals
+        # Connect signals
         self.shotlist_bot_active = False
         self.shotlist_bot_anim_timer = QTimer()
         self.shotlist_bot_anim_timer.timeout.connect(self.animate_shotlist_bot)
@@ -254,8 +256,9 @@ class CinemathequeWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to load metadata.csv:\n{str(e)}")
             self.disable_shotlist_bot_button()
     
-    def on_bot_finished(self):
+    def shot_bot_finished(self):
         """Handle bot finished signal"""
+        
         if DEBUG: print("DEBUG: Cinematheque: bot finished")
         # Vertify if we are at the end of the list
         if self.movie_list.count() == 0:
@@ -276,8 +279,22 @@ class CinemathequeWindow(QMainWindow):
         # Work todo here to handle the selecting the new movie
         # Then emitting a message to tell the bot to start processing the next movie
 
+    def turn_off_all_bots(self):
+        """Turn off all running bots and reset their buttons."""
+        if self.shotlist_bot_active:
+            self.shotlist_bot_active = False
+            self.shotlist_bot_button.setText("Shotlist Bot Off")
+            self.shotlist_bot_button.setStyleSheet("QPushButton { text-align: center; }")
+            self.shotlist_bot_anim_timer.stop()
+        self.scene_bot_button.setText("Scene Bot Off")
+        self.scene_bot_button.setStyleSheet("QPushButton { text-align: center; }")
+        self.caption_bot_button.setText("Caption Bot Off")
+        self.caption_bot_button.setStyleSheet("QPushButton { text-align: center; }")
+
     def on_movie_clicked(self, item):
         """Handle movie item click with custom selection"""
+        # make sure to turn off all bots when a movie is clicked
+        self.turn_off_all_bots()
         
         # Get the MovieItemWidget from the clicked item
         movie_widget = self.movie_list.itemWidget(item)
@@ -456,27 +473,69 @@ class CinemathequeWindow(QMainWindow):
             pass
 
     def select_next_movie(self):
-        # Find the index of the currently selected movie
         count = self.movie_list.count()
-        if count == 0 or not self.selected_movie_widget:
-            self.shotlist_bot_active = False
-            self.shotlist_bot_button.setText("Shotlist Bot Off")
-            self.shotlist_bot_anim_timer.stop()
+        # If nothing is selected but there are movies and a project folder, select the first movie
+        if count > 0 and self.project_folder and not self.selected_movie_widget:
+            self.turn_off_all_bots()
+            first_item = self.movie_list.item(0)
+            self.on_movie_clicked(first_item)
+            self.scroll_to_movie(0)
             return
-        # Find current index
+
+        if count == 0 or not self.selected_movie_widget:
+            self.turn_off_all_bots()
+            return
         for i in range(count):
             widget = self.movie_list.itemWidget(self.movie_list.item(i))
             if widget == self.selected_movie_widget:
                 next_index = i + 1
                 if next_index < count:
+                    self.turn_off_all_bots()
                     next_item = self.movie_list.item(next_index)
                     self.on_movie_clicked(next_item)
+                    self.scroll_to_movie(next_index)
                 else:
-                    # No more movies, stop bot
-                    self.shotlist_bot_active = False
-                    self.shotlist_bot_button.setText("Shotlist Bot Off")
-                    self.shotlist_bot_anim_timer.stop()
+                    self.turn_off_all_bots()
                 break
+
+    def select_previous_movie(self):
+        count = self.movie_list.count()
+        if count == 0 or not self.selected_movie_widget:
+            return
+        for i in range(count):
+            widget = self.movie_list.itemWidget(self.movie_list.item(i))
+            if widget == self.selected_movie_widget:
+                prev_index = i - 1
+                if prev_index >= 0:
+                    self.turn_off_all_bots()
+                    prev_item = self.movie_list.item(prev_index)
+                    self.on_movie_clicked(prev_item)
+                    self.scroll_to_movie(prev_index)
+                break
+
+    def scroll_to_movie(self, index):
+        """Scrolls the movie list so the movie at 'index' is visible at the top if offscreen."""
+        item = self.movie_list.item(index)
+        if not item:
+            if DEBUG:
+                print(f"DEBUG: scroll_to_movie: No item at index {index}")
+            return
+
+        item_rect = self.movie_list.visualItemRect(item)
+        viewport_rect = self.movie_list.viewport().rect()
+
+        if DEBUG:
+            print(f"DEBUG: scroll_to_movie called for index {index}")
+            print(f"DEBUG: item_rect={item_rect}, viewport_rect={viewport_rect}")
+
+        # If the item is not fully visible, scroll to it
+        if not viewport_rect.contains(item_rect):
+            if DEBUG:
+                print(f"DEBUG: scrolling to movie {index} (not fully visible)")
+            self.movie_list.scrollToItem(item, self.movie_list.PositionAtTop)
+        else:
+            if DEBUG:
+                print(f"DEBUG: movie {index} already fully visible, no scroll needed.")
 
     def on_movie_loaded_with_metadata(self, movie_path, metadata):
         self.currently_loading_video = None
@@ -537,13 +596,13 @@ class MovieItemWidget(QWidget):
         
         # Create horizontal layout
         layout = QHBoxLayout()
-        layout.setContentsMargins(10, 0, 5, 0) # (left, top, right, bottom)
-        layout.setSpacing(10) # Space between poster and info
+        layout.setContentsMargins(4, 0, 0, 0) # Set margins to 0
+        layout.setSpacing(0) # Set spacing to 0
         
         # Poster label (left side)
         self.poster_label = QLabel()
         self.poster_label.setFixedSize(POSTER_WIDTH, POSTER_HEIGHT)
-        self.poster_label.setStyleSheet("background-color: #f0f0f0; border: none;")
+        self.poster_label.setStyleSheet("border: none; padding: 0px;")  # No border/padding
         self.poster_label.setAlignment(Qt.AlignCenter)
         self.poster_label.setScaledContents(True)
         
@@ -554,8 +613,8 @@ class MovieItemWidget(QWidget):
         
         # Movie info (right side)
         info_layout = QVBoxLayout()
-        info_layout.setSpacing(INFO_SPACING)
-        info_layout.setContentsMargins(0, 8, 0, 0)  # Add top margin to push content down
+        info_layout.setSpacing(0)  # Set spacing to 0
+        info_layout.setContentsMargins(5, 5, 5, 5)  # Set margins to 5
 
         # Title
         title_label = QLabel(movie_data.get('title', 'Unknown Title'))
@@ -600,7 +659,7 @@ class MovieItemWidget(QWidget):
         
         info_layout.addStretch()  # Push content to top
         
-        layout.addLayout(info_layout, 1)  # Give info area more space
+        layout.addLayout(info_layout, 0)  # Give info area more space
         self.setLayout(layout)
     
     def set_selected(self, selected):

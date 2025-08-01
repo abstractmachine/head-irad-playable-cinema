@@ -3,44 +3,40 @@ DEBUG = False  # Set to True to enable debug output
 import os
 import re
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtWidgets import (
-    QMainWindow, QVBoxLayout, QWidget, QTextEdit
-)
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QTextEdit, QSizePolicy
 
-class SubtitlesWindow(QMainWindow):
+class SubtitlesWindow(QWidget):
     request_save = pyqtSignal()
     request_load = pyqtSignal(dict)
 
     def __init__(self, ui):
         super().__init__()
         self.ui = ui  # Store UI instance
-        self.setWindowTitle("Subtitles")
-        
+
+        # Set a small minimum height if desired
+        self.setMinimumHeight(80)
+
         # Initialize variables
         self.project_folder = None
         self.current_movie_filename = None
         self.current_subtitle_path = None
         self.subtitles_data = []  # Parsed subtitle entries
-        
+
         # Main layout
         main_layout = QVBoxLayout()
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(10)
+        main_layout.setContentsMargins(0, 0, 0, 0)  # Zero margins
+        main_layout.setSpacing(0)                   # Zero spacing
 
         # Subtitles text editor (read-only display)
         self.subtitles_field = QTextEdit()
         self.subtitles_field.setPlaceholderText("")
-        self.subtitles_field.setReadOnly(True)  # Make it read-only
-        
-        # Use UI font system instead of custom font loading
+        self.subtitles_field.setReadOnly(True)
         self.subtitles_field.setFont(self.ui.get_font('text'))
-        self.subtitles_field.setStyleSheet("QTextEdit { border: none; padding: 5px; }")
+        self.subtitles_field.setStyleSheet("QTextEdit { border: none; padding: 0px; }")  # Zero border and padding
+        self.subtitles_field.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         main_layout.addWidget(self.subtitles_field, stretch=1)
 
-        # Set up container
-        container = QWidget()
-        container.setLayout(main_layout)
-        self.setCentralWidget(container)
+        self.setLayout(main_layout)
 
     def parse_srt_time(self, time_str):
         """Convert SRT time format (HH:MM:SS,mmm or HH:MM:SS.mmm) to milliseconds"""

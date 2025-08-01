@@ -1,5 +1,5 @@
 from PyQt5.QtCore import Qt
-from player import AbstractPlayerWindow
+from player import AbstractPlayerWindow, SEEK_NORMAL, SEEK_FAST
 
 class NickelodeonWindow(AbstractPlayerWindow):
     def __init__(self, ui):
@@ -20,17 +20,13 @@ class NickelodeonWindow(AbstractPlayerWindow):
             if not self.current_video_path or not self.vlc_player:  # Check before seeking
                 return
             if modifiers & Qt.ShiftModifier:
-                seek_amount = float(self.fast_seek.text())
-                self.seek_video(-seek_amount)
+                self.seek_video(-SEEK_FAST)  # Use SEEK_FAST constant
             else:
-                seek_amount = float(self.normal_seek.text())
-                self.seek_video(-seek_amount)
+                self.seek_video(-SEEK_NORMAL)  # Use SEEK_NORMAL constant
         elif key == Qt.Key_Right:
             if not self.current_video_path or not self.vlc_player:  # Check before seeking
                 return
             if modifiers & Qt.ShiftModifier:
-                seek_amount = float(self.fast_seek.text())
-                self.seek_video(seek_amount)
+                self.seek_video(SEEK_FAST)  # Use SEEK_FAST constant
             else:
-                seek_amount = float(self.normal_seek.text())
-                self.seek_video(seek_amount)
+                self.seek_video(SEEK_NORMAL)  # Use SEEK_NORMAL constant

@@ -10,7 +10,7 @@ import re
 from PyQt5.QtGui import QTextOption
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QTimer
 from PyQt5.QtWidgets import (
-    QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QLineEdit, QTextEdit, QPushButton, QSizePolicy
+    QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QLineEdit, QTextEdit, QPushButton, QSizePolicy, QLabel
 )
 
 def parse_system_prompt(prompt_text, data, row_data=None, subtitles=None):
@@ -148,74 +148,84 @@ class SystemPromptEdit(QTextEdit):
             self.save_callback()
         super().focusOutEvent(event)
 
-class CaptionWindow(QMainWindow):
+class CaptionWindow(QWidget):
     request_save = pyqtSignal()
     request_load = pyqtSignal(dict)
     shot_caption_submitted = pyqtSignal(str)
     request_current_shot = pyqtSignal(int)
     request_next_shot = pyqtSignal()
-    bot_finished = pyqtSignal()
+    request_previous_shot = pyqtSignal()
+    shot_bot_finished = pyqtSignal()
 
     def __init__(self, ui, subtitles_window):
         super().__init__()
         self.ui = ui  # Store UI instance
         self.subtitles_window = subtitles_window  # Store reference to subtitles window
 
-        self.setWindowTitle("Caption")
-        self.setGeometry(400, 200, 600, 350)
+        self.setMinimumHeight(80)
 
-        main_layout = QVBoxLayout()
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(10)
+        # Main horizontal layout, no margins or spacing
+        main_layout = QHBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
-        # Caption field (multi-line widget)
+        # Caption field (multi-line widget) on the left
         self.caption_field = QTextEdit()
         self.caption_field.setPlaceholderText("")
-        self.caption_field.setFont(self.ui.get_font('text'))  # Use UI font system
-        self.caption_field.setStyleSheet("QTextEdit { border: none; }")
+        self.caption_field.setFont(self.ui.get_font('text'))
+        self.caption_field.setStyleSheet("QTextEdit { border: none; padding: 0px; margin: 0px; }")
         self.caption_field.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.caption_field.setWordWrapMode(QTextOption.WordWrap)
         main_layout.addWidget(self.caption_field, stretch=1)
 
-        # Row of buttons (fixed height)
-        button_layout = QHBoxLayout()
-        button_layout.setSpacing(10)
-        button_layout.addStretch()
+        # Vertical button layout on the right, no margins, 2px spacing between buttons
+        button_layout = QVBoxLayout()
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        button_layout.setSpacing(0)
 
         button_width, button_height = self.ui.get_dimensions('button')
+        tiny_width, tiny_height = self.ui.get_dimensions('tiny')
 
         self.annotate_button = QPushButton("Annotate")
         self.annotate_button.setEnabled(False)
         self.annotate_button.setFont(self.ui.get_font('button'))
-        self.annotate_button.setFixedSize(button_width, button_height)
+        self.annotate_button.setFixedSize(120, button_height)
         self.annotate_button.setToolTip("Rewrite current caption into current 'Caption' cell\nShortcut: A")
         button_layout.addWidget(self.annotate_button)
+
+        self.previous_button = QPushButton("Previous")
+        self.previous_button.setEnabled(False)
+        self.previous_button.setFont(self.ui.get_font('button'))
+        self.previous_button.setFixedSize(120, button_height)
+        self.previous_button.setToolTip("Jump to previous shot")
+        button_layout.addWidget(self.previous_button)
 
         self.next_button = QPushButton("Next")
         self.next_button.setEnabled(False)
         self.next_button.setFont(self.ui.get_font('button'))
-        self.next_button.setFixedSize(button_width, button_height)
+        self.next_button.setFixedSize(120, button_height)
         self.next_button.setToolTip("Jump to next shot")
         button_layout.addWidget(self.next_button)
 
         self.api_button = QPushButton("OpenAI")
         self.api_button.setEnabled(False)
         self.api_button.setFont(self.ui.get_font('button'))
-        self.api_button.setFixedSize(button_width, button_height)
+        self.api_button.setFixedSize(120, button_height)
         self.api_button.setToolTip("Send current shot to OpenAI API and receive a caption\nShortcut: O")
         button_layout.addWidget(self.api_button)
 
-        # Frame count field
-        tiny_width, tiny_height = self.ui.get_dimensions('tiny')
-        self.frame_count_field = QLineEdit("5")
-        self.frame_count_field.setFont(self.ui.get_font('tiny'))
-        self.frame_count_field.setFixedSize(tiny_width, tiny_height)
-        self.frame_count_field.setAlignment(Qt.AlignCenter)
-        # self.frame_count_field.setFont(self.ui.get_font('small'))
-        # self.frame_count_field.setFixedSize(30, 24)
-        self.frame_count_field.setToolTip("Number of frames to send to OpenAI (0 = none)")
-        self.frame_count_field.editingFinished.connect(self.validate_frame_count)
-        button_layout.addWidget(self.frame_count_field)
+        # Frame count label and field in a horizontal layout
+        frame_count_row = QHBoxLayout()
+        frame_count_row.setContentsMargins(0, 0, 0, 0)
+        frame_count_row.setSpacing(4)
+
+        frame_count_label = QLabel(" Frame Count")
+        frame_count_label.setFont(self.ui.get_font('tiny-condensed'))
+        frame_count_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        frame_count_label.setFixedSize(70, tiny_height)
+        frame_count_label.setStyleSheet("QLabel { color: grey; margin-top: 4px; }")
+
+        frame_count_row.addWidget(frame_count_label)
 
         self.bot_button = QPushButton("Caption Bot Off")
         self.bot_button.setEnabled(False)
@@ -223,16 +233,21 @@ class CaptionWindow(QMainWindow):
         self.bot_button.setFixedSize(120, button_height)
         button_layout.addWidget(self.bot_button)
 
+        self.frame_count_field = QLineEdit("5")
+        self.frame_count_field.setFont(self.ui.get_font('tiny'))
+        self.frame_count_field.setFixedSize(tiny_width, tiny_height)
+        self.frame_count_field.setAlignment(Qt.AlignCenter)
+        self.frame_count_field.setToolTip("Number of frames to send to OpenAI (0 = none)")
+        self.frame_count_field.editingFinished.connect(self.validate_frame_count)
+        self.frame_count_field.setStyleSheet("QLineEdit { margin-top: 2px; }")  # 2px top margin
+        frame_count_row.addWidget(self.frame_count_field)
+
+        button_layout.addLayout(frame_count_row)
+
         button_layout.addStretch()
-        button_row_widget = QWidget()
-        button_row_widget.setLayout(button_layout)
-        main_layout.addWidget(button_row_widget, stretch=0)
+        main_layout.addLayout(button_layout, stretch=0)
 
-        container = QWidget()
-        container.setLayout(main_layout)
-        self.setCentralWidget(container)
-
-        # Remove the custom font loading code - it's now handled by UI class
+        self.setLayout(main_layout)
 
         # Ensure main window has focus at startup
         self.setFocus()
@@ -241,10 +256,9 @@ class CaptionWindow(QMainWindow):
         self.annotate_button.clicked.connect(self.submit_caption)
         self.api_button.clicked.connect(self.handle_api_button)
 
-        # Initialize current_timecodes
         self.current_timecodes = []
-
         self.next_button.clicked.connect(self.handle_next_button)
+        self.previous_button.clicked.connect(self.handle_previous_button)
 
         # Bot functionality
         self.bot_active = False
@@ -254,12 +268,8 @@ class CaptionWindow(QMainWindow):
 
         self.bot_button.clicked.connect(self.toggle_bot)
 
-        # Allows us to know if we are at the last active row in the shotlist
         self.is_last_row = False
-
         self.api_running = False
-
-        # Add variables to track project and movie info
         self.project_folder = None
         self.current_movie_filename = None
 
@@ -272,7 +282,9 @@ class CaptionWindow(QMainWindow):
             self.api_button.click()
         elif key == Qt.Key_B:
             self.bot_button.click()
-        elif key == Qt.Key_N:
+        elif key == Qt.Key_Up:
+            self.previous_button.click()
+        elif key == Qt.Key_Down:
             self.next_button.click()
         else:
             super().keyPressEvent(event)
@@ -295,6 +307,7 @@ class CaptionWindow(QMainWindow):
         self.api_button.setEnabled(exists)
         self.bot_button.setEnabled(exists)
         self.next_button.setEnabled(exists)
+        self.previous_button.setEnabled(exists)
 
     def submit_caption(self):
         if DEBUG: print("DEBUG: submit_caption called")
@@ -304,6 +317,7 @@ class CaptionWindow(QMainWindow):
     def set_project_folder(self, project_folder):
         """Set the project folder when cinema window loads a project"""
         self.project_folder = project_folder
+        self.caption_field.clear()  # Clear the text field when project_folder is set
 
     def on_movie_loaded_with_metadata(self, movie_path, metadata):
         """Called when a new movie is loaded in the player"""
@@ -425,7 +439,7 @@ class CaptionWindow(QMainWindow):
 
     def handle_bot_finished(self):
         if DEBUG: print("DEBUG: handle_bot_finished called")
-        self.bot_finished.emit()
+        self.shot_bot_finished.emit()
 
     def set_shot_caption_field(self, caption):
         self.caption_field.setPlainText(caption)
@@ -434,12 +448,16 @@ class CaptionWindow(QMainWindow):
         if DEBUG: print("DEBUG: handle_next_button called")
         self.request_next_shot.emit()
 
+    def handle_previous_button(self):
+        if DEBUG: print("DEBUG: handle_previous_button called")
+        self.request_previous_shot.emit()
+
     def toggle_bot(self):
         if DEBUG: print("DEBUG: toggle_bot called")
         if not self.bot_active:
             if DEBUG: print("DEBUG: Starting bot")
             self.bot_active = True
-            self.bot_button.setText(" Caption Bot On")
+            self.bot_button.setText("    Caption Bot On")
             self.bot_button.setStyleSheet("text-align: left;")
             self.bot_anim_timer.start(500)
             self.start_bot_loop()
@@ -465,7 +483,7 @@ class CaptionWindow(QMainWindow):
 
     def animate_bot_button(self):
         self.bot_anim_dots = (self.bot_anim_dots + 1) % 4
-        self.bot_button.setText(" Caption Bot On" + "." * self.bot_anim_dots)
+        self.bot_button.setText("    Caption Bot On" + "." * self.bot_anim_dots)
         self.bot_button.setStyleSheet("text-align: left;")
 
     def handle_is_last_available_shot(self, is_last):

@@ -21,63 +21,66 @@ class PromptWindow(QMainWindow):
         self.setWindowTitle("Prompt")
 
         self.metadata = {}
+        self.row_data = {}
 
-        # DEBUG: Print when window is initialized
         if DEBUG: print("DEBUG: PromptWindow initialized")
 
-        # Main layout
-        main_layout = QVBoxLayout()
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(10)
+        # Main layout: horizontal (buttons left, text right)
+        main_layout = QHBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)  # Window margins set to 0
+        main_layout.setSpacing(0)                   # No spacing between button and text
 
-        # Stacked layout for prompt fields
+        # Left: vertical buttons
+        button_width, button_height = self.ui.get_dimensions('button')
+        button_layout = QVBoxLayout()
+        button_layout.setSpacing(0)                 # No spacing between buttons
+        button_layout.setContentsMargins(0, 0, 0, 0)  # Button layout margins set to 0
+
+        self.prompt_type_dropdown = QComboBox()
+        self.prompt_type_dropdown.addItems([
+            "Shot", "Test", "Tags"
+        ])
+        self.prompt_type_dropdown.setFont(self.ui.get_font('button'))
+        self.prompt_type_dropdown.setFixedSize(80, button_height)
+        self.prompt_type_dropdown.currentIndexChanged.connect(self.handle_prompt_type_changed)
+        button_layout.addWidget(self.prompt_type_dropdown)
+
+        self.test_button = QPushButton("Test")
+        self.test_button.setFont(self.ui.get_font('button'))
+        self.test_button.setFixedSize(90, button_height)
+        self.test_button.clicked.connect(self.handle_test_button)
+        button_layout.addWidget(self.test_button)
+
+        button_layout.addStretch()
+        main_layout.addLayout(button_layout, stretch=0)
+
+        # Right: stacked text fields
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(0)                   # No spacing inside text layout
+        text_layout.setContentsMargins(0, 0, 0, 0)  # Text layout margins set to 0
+
         self.stacked_layout = QStackedLayout()
 
-        # System prompt editor
         self.system_prompt_field = QTextEdit()
         self.system_prompt_field.setPlaceholderText("")
         self.system_prompt_field.setFont(self.ui.get_font('prompt'))
-        self.system_prompt_field.setStyleSheet("QTextEdit { border: none; padding: 5px; }")
+        self.system_prompt_field.setStyleSheet("QTextEdit { border: none; padding: 0px; }")  # No border, no padding
         self.stacked_layout.addWidget(self.system_prompt_field)
 
-        # Test field (read-only)
         self.test_field = QTextEdit()
         self.test_field.setReadOnly(True)
         self.test_field.setFont(self.ui.get_font('prompt'))
-        self.test_field.setStyleSheet("QTextEdit { border: none; padding: 5px; }")
+        self.test_field.setStyleSheet("QTextEdit { border: none; padding: 0px; }")
         self.stacked_layout.addWidget(self.test_field)
 
-        # Cheatsheet field (read-only)
         self.cheatsheet_field = QTextEdit()
         self.cheatsheet_field.setReadOnly(True)
         self.cheatsheet_field.setFont(self.ui.get_font('prompt'))
-        self.cheatsheet_field.setStyleSheet("QTextEdit { border: none; padding: 5px; }")
+        self.cheatsheet_field.setStyleSheet("QTextEdit { border: none; padding: 0px; }")
         self.stacked_layout.addWidget(self.cheatsheet_field)
 
-        main_layout.addLayout(self.stacked_layout)
-
-        button_width, button_height = self.ui.get_dimensions('button')
-
-        # Dropdown for prompt type
-        self.prompt_type_dropdown = QComboBox()
-        self.prompt_type_dropdown.addItems([
-            "Shot", "Test", "Cheatsheet"
-        ])
-        self.prompt_type_dropdown.setFont(self.ui.get_font('button'))
-        self.prompt_type_dropdown.setFixedSize(button_width, button_height)
-        self.prompt_type_dropdown.currentIndexChanged.connect(self.handle_prompt_type_changed)
-
-        # Test button
-        self.test_button = QPushButton("Test")
-        self.test_button.setFont(self.ui.get_font('button'))
-        self.test_button.setFixedSize(button_width, button_height)
-        self.test_button.clicked.connect(self.handle_test_button)
-
-        # Layout for dropdown and buttons
-        controls_layout = QHBoxLayout()
-        controls_layout.addWidget(self.prompt_type_dropdown)
-        controls_layout.addWidget(self.test_button)
-        main_layout.addLayout(controls_layout)
+        text_layout.addLayout(self.stacked_layout)
+        main_layout.addLayout(text_layout, stretch=1)
 
         container = QWidget()
         container.setLayout(main_layout)
@@ -112,7 +115,7 @@ class PromptWindow(QMainWindow):
             self.load_shot_prompt()
         elif prompt_type == "Test":
             self.stacked_layout.setCurrentWidget(self.test_field)
-        elif prompt_type == "Cheatsheet":
+        elif prompt_type == "Tags":
             self.stacked_layout.setCurrentWidget(self.cheatsheet_field)
             self.load_cheatsheet()
             
@@ -130,7 +133,7 @@ class PromptWindow(QMainWindow):
         self.test_field.setPlainText(interpreted)
 
     def load_cheatsheet(self):
-        if DEBUG: print("DEBUG: Loading cheatsheet")
+        if DEBUG: print("DEBUG: Loading tags cheatsheet")
         if os.path.exists(self.cheatsheet_path):
             try:
                 with open(self.cheatsheet_path, "r", encoding="utf-8") as f:
