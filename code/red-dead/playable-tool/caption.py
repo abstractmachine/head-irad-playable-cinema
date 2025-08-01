@@ -218,7 +218,7 @@ class CaptionWindow(QWidget):
         frame_count_row.setContentsMargins(0, 0, 0, 0)
         frame_count_row.setSpacing(0)
 
-        frame_count_label = QLabel(" Frame Count")
+        frame_count_label = QLabel(" Frames")
         frame_count_label.setFont(self.ui.get_font('tiny-condensed'))
         frame_count_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         frame_count_label.setFixedSize(70, tiny_height)

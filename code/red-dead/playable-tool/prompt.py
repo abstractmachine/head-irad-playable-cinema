@@ -45,9 +45,14 @@ class PromptWindow(QMainWindow):
         self.prompt_type_dropdown.currentIndexChanged.connect(self.handle_prompt_type_changed)
         button_layout.addWidget(self.prompt_type_dropdown)
 
+        # align button_layout to the right
+        self.prompt_type_dropdown.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.prompt_type_dropdown.setStyleSheet("QComboBox { padding: 0px 0px 0px 10px; margin: 0px 0px 0px 10px; }")
+
         self.test_button = QPushButton("Test")
         self.test_button.setFont(self.ui.get_font('button'))
-        self.test_button.setFixedSize(90, button_height)
+        self.test_button.setFixedSize(80, button_height)
+        self.test_button.setStyleSheet("QPushButton { padding: 0px 0px 0px 0px; margin: 10px 0px 0px 10px; }")
         self.test_button.clicked.connect(self.handle_test_button)
         button_layout.addWidget(self.test_button)
 

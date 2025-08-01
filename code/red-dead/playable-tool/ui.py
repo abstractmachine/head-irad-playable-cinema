@@ -286,6 +286,13 @@ class UI:
             min-height: {button_height}px;
         }}
 
+        QComboBox, QPushButton {{
+            min-height: {button_height}px;
+            max-height: {button_height}px;
+            padding: 0 12px;
+            margin: 0;
+        }}
+
         QComboBox:disabled {{
         }}
 
@@ -302,10 +309,6 @@ class UI:
             height: 8px;
         }}
 
-        QComboBox QAbstractItemView {{
-            border: none;
-        }}
-
         /* CHECK BOXES */
 
         QCheckBox {{
@@ -316,10 +319,6 @@ class UI:
             width: 16px;
             height: 16px;
             border: none;
-        }}
-
-        QCheckBox::indicator:unchecked {{
-            image: url('ui/icons/checkbox_off.png');
         }}
 
         QCheckBox::indicator:checked {{
@@ -333,7 +332,7 @@ class UI:
             border-bottom: none;
             padding: 2px 2px;
             min-width: 80px;
-            border-radius: 0px;
+            border-radius: 0;
             font-family: {button_font_name};
             font-size: {button_font_size}px;
             font-weight: {button_font_weight};
@@ -342,23 +341,33 @@ class UI:
 
         QTabBar::tab:selected {{
             border: none;
-            border-radius: 0px;
         }}
 
         QTabBar::tab:!selected {{
             margin-top: 0px;
+        }}
+
+        QTabBar::tab {{
             border-radius: 0px;
         }}
 
+        QTabBar::tab:first {{
+            border-top-left-radius: 10%;
+            border-bottom-left-radius: 10%;
+        }}
+
+        QTabBar::tab:last {{
+            border-top-right-radius: 10%;
+            border-bottom-right-radius: 10%;
+        }}
+
         QTabWidget {{
-            border-radius: 0px;
         }}
 
         QTabWidget::pane {{
             border: none;              /* or your preferred border */
             border-radius: 0px;        /* remove rounded corners */
             top: 0px;                  /* align with tab bar */
-            border-radius: 0px;
         }}
 
         /* LINE EDITS AND TEXT EDITS */
@@ -447,6 +456,8 @@ class UI:
         dark_title_background = "#222"
         dark_title_color = "#ccc"
         dark_dock_border = "#111"
+        dark_cell_border = "#666"
+        dark_cell_grid = "#666"
 
         separator_size = 3
 
@@ -542,16 +553,16 @@ class UI:
         }}
 
         QTableView {{
-            gridline-color: #888;
-            border-bottom: 1px solid {dark_title_color};
+            gridline-color: {dark_cell_grid};
+            border-bottom: 1px solid {dark_cell_border};
         }}
 
         QHeaderView::section:horizontal {{
             background: transparent;
             color: {dark_title_color};
-            border: 0px solid {dark_title_color};
-            border-bottom: 1px solid {dark_title_color};
-            border-right: 1px solid {dark_title_color};
+            border: 0px solid {dark_cell_border};
+            border-bottom: 1px solid {dark_cell_border};
+            border-right: 1px solid {dark_cell_border};
         }}
 
         QHeaderView::section:horizontal:last {{
@@ -561,9 +572,9 @@ class UI:
         QHeaderView::section:vertical {{
             background: transparent;
             color: {dark_title_color};
-            border: 0px solid {dark_title_color};
-            border-right: 1px solid {dark_title_color};
-            border-bottom: 1px solid {dark_title_color};
+            border: 0px solid {dark_cell_border};
+            border-right: 1px solid {dark_cell_border};
+            border-bottom: 1px solid {dark_cell_border};
         }}
 
         QHeaderView::section:vertical:first {{
@@ -607,6 +618,7 @@ class UI:
         /* CHECK BOXES */
 
         QCheckBox::indicator:unchecked {{
+            image: url('ui/icons/checkbox_dark_off.png');
         }}
 
         QCheckBox::indicator:checked {{
@@ -717,6 +729,8 @@ class UI:
         light_title_background = "#ddd"
         light_title_color = "#333"
         light_dock_border = "#eee"
+        light_cell_border = "#999"
+        light_cell_grid = "#999"
 
         separator_size = 3
 
@@ -813,16 +827,16 @@ class UI:
         }}
 
         QTableView {{
-            gridline-color: #888;
-            border-bottom: 1px solid {light_title_color};
+            gridline-color: {light_cell_grid};
+            border-bottom: 1px solid {light_cell_border};
         }}
 
         QHeaderView::section:horizontal {{
             background: transparent;
             color: {light_title_color};
-            border: 0px solid {light_title_color};
-            border-bottom: 1px solid {light_title_color};
-            border-right: 1px solid {light_title_color};
+            border: 0px solid {light_cell_border};
+            border-bottom: 1px solid {light_cell_border};
+            border-right: 1px solid {light_cell_border};
         }}
 
         QHeaderView::section:horizontal:last {{
@@ -832,9 +846,9 @@ class UI:
         QHeaderView::section:vertical {{
             background: transparent;
             color: {light_title_color};
-            border: 0px solid {light_title_color};
-            border-right: 1px solid {light_title_color};
-            border-bottom: 1px solid {light_title_color};
+            border: 0px solid {light_cell_border};
+            border-right: 1px solid {light_cell_border};
+            border-bottom: 1px solid {light_cell_border};
         }}
 
         QHeaderView::section:vertical:first {{
@@ -891,15 +905,13 @@ class UI:
         }}
 
         QComboBox QAbstractItemView {{
-            background: #f0f;
-            /*color: #0f0;*/
-            /*selection-background-color: #00f;
-            selection-color: #f0f;*/
-        }}     
+            background: {light_button_background};
+        }}
 
         /* CHECK BOXES */
 
         QCheckBox::indicator:unchecked {{
+            image: url('ui/icons/checkbox_light_off.png');
         }}
 
         QCheckBox::indicator:checked {{

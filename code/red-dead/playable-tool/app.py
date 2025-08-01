@@ -163,6 +163,9 @@ def main():
     load_window_geometry(main_window)
     load_dock_layout(main_window)
 
+    # refresh screen to ensure all docks are visible
+    main_window.update()
+
     # Load preferences at startup (after main_window is created)
     load_preferences(windows, main_window)
 

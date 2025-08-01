@@ -44,6 +44,8 @@ class ShotlistWindow(QMainWindow):
         self._pending_save_data = {}
         self.setWindowTitle("Shotlist")
         self.setGeometry(200, 200, 600, 400)
+
+        button_width, button_height = self.ui.get_dimensions('button')
         
         # Initialize detections_folder to None - will be set when project loads
         self.detections_folder = None
@@ -72,8 +74,6 @@ class ShotlistWindow(QMainWindow):
         header_font = self.ui.get_font('collumn')
         header = self.scene_table.horizontalHeader()
         header.setFont(header_font)
-
-        button_width, button_height = self.ui.get_dimensions('button')
         
         layout.addWidget(self.scene_table)
         self.scene_table.setColumnWidth(0, 110)   # Ignore
