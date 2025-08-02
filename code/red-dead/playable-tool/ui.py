@@ -4,6 +4,9 @@ from PyQt5.QtGui import QFont, QFontDatabase
 import os
 import subprocess
 
+DARK_DOCK_BORDER = "#111"
+LIGHT_DOCK_BORDER = "#eee"
+
 class UI:
     def __init__(self):
         # Map styles to font file paths and default sizes
@@ -12,6 +15,7 @@ class UI:
             'tiny':     ('Roboto Mono', 12, QFont.Bold, False),
             'tiny-condensed': ('Roboto Condensed', 12, QFont.Normal, False),
             'button':   ('Roboto', 12, QFont.Normal, False),
+            'tab':      ('Roboto', 8, QFont.Normal, False),
             'collumn':  ('Roboto', 10, QFont.Normal, False),
             'cell':     ('Roboto', 12, QFont.Normal, False),
             'cell-tiny':('Roboto', 12, QFont.Thin, False),
@@ -96,7 +100,9 @@ class UI:
         if style == 'tiny':
             return (22, 22)
         elif style == 'button':
-            return (100, 32)
+            return (80, 24)
+        elif style == 'tab':
+            return (60, 20)
         else:
             return (140, 32)
         
@@ -111,10 +117,33 @@ class UI:
                 return_text += "\n\n" + self.get_dark_style_sheet()
             else:
                 return_text += "\n\n" + self.get_light_style_sheet()
+
+            return_text += "\n\n" + self.get_messy_style_hack()
             return return_text
         
         else:
             return ""
+        
+    # -------------------------------------------------------
+
+    def get_messy_style_hack(self):
+
+        # TODO: This gets called last, so this should be cleaned up in styles
+
+        if self.is_dark_mode():
+            tab_background = DARK_DOCK_BORDER
+        else:
+            tab_background = LIGHT_DOCK_BORDER
+
+        return f"""
+        
+        /* TEMP HACKS GO HERE */
+
+        QTabBar {{
+            background: transparent;  /* prevents shadow line */
+        }}
+
+        """
 
     # -------------------------------------------------------
 
@@ -125,6 +154,13 @@ class UI:
         button_font_name = button_font.family()
         button_font_size = button_font.pointSize()
         button_font_weight = button_font.weight()
+
+        # get the tab font
+        tab_font = self.get_font("tab")
+        tab_font_name = tab_font.family()
+        tab_font_size = tab_font.pointSize()
+        tab_font_weight = tab_font.weight()
+        tab_width, tab_height = self.get_dimensions("tab")
 
         # cell-mono font
         monospaced_font = self.get_font("monospaced")
@@ -359,16 +395,18 @@ class UI:
         QTabBar::tab {{
             border: none;
             padding: 0px 10px 0px 10px;
-            margin: 0px 0px 5px 0px;
+            margin: 0px 0px 4px 0px;
             border-radius: 0px;
-            font-family: {button_font_name};
-            font-size: {button_font_size}px;
-            font-weight: {button_font_weight};
-            min-height: {button_height}px;
+            font-family: {tab_font_name};
+            font-size: {tab_font_size}px;
+            font-weight: {tab_font_weight};
+            min-width: {tab_width}px;
+            max-width: {tab_width}px;
+            min-height: {tab_height}px;
         }}
 
         QTabBar::tab:first {{
-            margin: 0px 0px 5px 10px;
+            margin: 0px 0px 4px 3px;
             border-top-left-radius: 10%;
             border-bottom-left-radius: 10%;
         }}
@@ -379,16 +417,9 @@ class UI:
         }}
 
         QTabBar::tab {{
-            background: #0ff;
-            min-width: {button_width}px;
         }}
 
         QTabBar::tab:selected {{
-            background: #ff0;
-        }}
-
-        QTabBar {{
-            background: #f0f;
         }}
 
         QTabWidget::pane {{
@@ -401,11 +432,6 @@ class UI:
         QTabWidget {{
             background: #ddd;
             border: none;
-        }}
-
-        QTabBar {{
-            border: none;
-            background: #f0f;
         }}
 
         QDockWidget {{
@@ -497,7 +523,7 @@ class UI:
         dark_button_disabled_color = "#888"
         dark_title_background = "#222"
         dark_title_color = "#ccc"
-        dark_dock_border = "#111"
+        dark_dock_border = DARK_DOCK_BORDER
         dark_cell_border = "#666"
         dark_cell_grid = "#666"
 
@@ -768,7 +794,7 @@ class UI:
         light_button_disabled_color = "#888"
         light_title_background = "#ddd"
         light_title_color = "#333"
-        light_dock_border = "#eee"
+        light_dock_border = LIGHT_DOCK_BORDER
         light_cell_border = "#999"
         light_cell_grid = "#999"
 
@@ -888,8 +914,8 @@ class UI:
             background: transparent;
             color: {light_title_color};
             border: 0px solid {light_cell_border};
-            border-bottom: 1px solid {light_cell_border};
             border-right: 1px solid {light_cell_border};
+            border-bottom: 1px solid {light_cell_border};
         }}
 
         QHeaderView::section:horizontal:last {{

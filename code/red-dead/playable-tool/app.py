@@ -13,6 +13,8 @@ from PyQt5.QtWidgets import QApplication, QLineEdit, QTextEdit, QWidget
 from PyQt5.QtWidgets import QTabWidget
 from PyQt5.QtWidgets import QMainWindow, QDockWidget, QWidget
 from PyQt5.QtWidgets import QHBoxLayout
+# GUI
+from PyQt5.QtGui import QPalette
 
 # our UI class
 from ui import UI

@@ -65,7 +65,7 @@ class CinemathequeWindow(QMainWindow):
         button_width, button_height = self.ui.get_dimensions('button')
 
         # Project folder button
-        self.project_folder_button = QPushButton("Project Folder")
+        self.project_folder_button = QPushButton("Project")
         self.project_folder_button.setFont(self.ui.get_font('button'))
         self.project_folder_button.clicked.connect(self.select_project_folder)
         self.project_folder_button.setFixedSize(button_width, button_height)
