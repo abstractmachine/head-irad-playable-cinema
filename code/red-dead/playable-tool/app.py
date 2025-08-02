@@ -9,7 +9,7 @@ import hashlib
 from PyQt5.QtCore import QObject, QEvent
 from PyQt5.QtCore import Qt
 # Widgets
-from PyQt5.QtWidgets import QApplication, QLineEdit, QTextEdit
+from PyQt5.QtWidgets import QApplication, QLineEdit, QTextEdit, QWidget
 from PyQt5.QtWidgets import QTabWidget
 from PyQt5.QtWidgets import QMainWindow, QDockWidget, QWidget
 from PyQt5.QtWidgets import QHBoxLayout
@@ -87,6 +87,9 @@ class PlayableCinemaMainWindow(QMainWindow):
         return dock  # Return the dock so it can be tabified
 
 def main():
+    # Fusion style for Qt
+    QApplication.setStyle("Fusion")
+
     # Initialize the application
     app = QApplication(sys.argv)
 

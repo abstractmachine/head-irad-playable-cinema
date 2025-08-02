@@ -102,6 +102,7 @@ class UI:
         
     def get_style_sheet(self, style=None):
         if style == 'app':
+
             # common style sheet
             return_text = self.get_common_style_sheet()
         
@@ -132,11 +133,30 @@ class UI:
         monospaced_font_weight = monospaced_font.weight()
 
         # dimensions
-        # button_width = 80
+        button_width = 80
         button_height = 24
         separator_size = 3
 
         return f"""
+        
+        /* FUSION HACK */
+
+        QPushButton {{
+            background-color: #dddddd;
+            color: black;
+            border: none;
+            border-radius: 10%;
+            padding: 4px 8px;
+        }}
+
+        QPushButton:disabled {{
+            background-color: #cccccc;
+            color: #888;
+            border: 1px solid #aaa;
+        }}
+
+        /* --------------*/
+        
         /* WINDOW */
 
         QMainWindow::separator {{
@@ -221,6 +241,16 @@ class UI:
         QScrollBar::sub-page:vertical {{
         }}
 
+        QScrollBar::add-line:horizontal,
+        QScrollBar::sub-line:horizontal {{
+            width: 0px;
+            height: 0px;
+            border: none;
+            background: transparent;
+            image: none;
+            subcontrol-position: none;
+        }}
+
         /* LISTS */
 
         QHBoxLayout {{
@@ -279,7 +309,6 @@ class UI:
             border: none;
             border-radius: 10%;
             padding: 0px 0x 0px 20px;
-            /* Font settings */
             font-family: {button_font_name};
             font-size: {button_font_size}px;
             font-weight: {button_font_weight};
@@ -329,29 +358,17 @@ class UI:
 
         QTabBar::tab {{
             border: none;
-            border-bottom: none;
-            padding: 2px 2px;
-            min-width: 80px;
-            border-radius: 0;
+            padding: 0px 10px 0px 10px;
+            margin: 0px 0px 5px 0px;
+            border-radius: 0px;
             font-family: {button_font_name};
             font-size: {button_font_size}px;
             font-weight: {button_font_weight};
             min-height: {button_height}px;
         }}
 
-        QTabBar::tab:selected {{
-            border: none;
-        }}
-
-        QTabBar::tab:!selected {{
-            margin-top: 0px;
-        }}
-
-        QTabBar::tab {{
-            border-radius: 0px;
-        }}
-
         QTabBar::tab:first {{
+            margin: 0px 0px 5px 10px;
             border-top-left-radius: 10%;
             border-bottom-left-radius: 10%;
         }}
@@ -361,13 +378,38 @@ class UI:
             border-bottom-right-radius: 10%;
         }}
 
-        QTabWidget {{
+        QTabBar::tab {{
+            background: #0ff;
+            min-width: {button_width}px;
+        }}
+
+        QTabBar::tab:selected {{
+            background: #ff0;
+        }}
+
+        QTabBar {{
+            background: #f0f;
         }}
 
         QTabWidget::pane {{
-            border: none;              /* or your preferred border */
-            border-radius: 0px;        /* remove rounded corners */
-            top: 0px;                  /* align with tab bar */
+            background: #f00;
+            border: none;
+            border-radius: 0px;
+            margin: 0px;
+        }}
+
+        QTabWidget {{
+            background: #ddd;
+            border: none;
+        }}
+
+        QTabBar {{
+            border: none;
+            background: #f0f;
+        }}
+
+        QDockWidget {{
+            border-radius: 0px;
         }}
 
         /* LINE EDITS AND TEXT EDITS */
@@ -452,7 +494,7 @@ class UI:
         dark_button_background = "#888"
         dark_button_color = "#fff"
         dark_button_disabled_background = "#444"
-        dark_button_disabled_color = "#666"
+        dark_button_disabled_color = "#888"
         dark_title_background = "#222"
         dark_title_color = "#ccc"
         dark_dock_border = "#111"
@@ -462,6 +504,19 @@ class UI:
         separator_size = 3
 
         return f"""
+        
+        /* FUSION HACK */
+
+        QPushButton {{
+            background-color: {dark_button_background};
+            color: {dark_button_color};
+        }}
+
+        QPushButton:disabled {{
+            background-color: {dark_button_disabled_background};
+            color: {dark_button_disabled_color};
+            border: none;
+        }}
 
         /* WINDOW */
 
@@ -608,11 +663,8 @@ class UI:
         }}
 
         QComboBox QAbstractItemView {{
-            background: #f0f;
-            /*color: #0f0;*/
-            border: none;
-            /*selection-background-color: #00f;
-            selection-color: #f0f;*/
+            /*background: #f0f;
+            border: none;*/
         }}
 
         /* CHECK BOXES */
@@ -627,25 +679,13 @@ class UI:
         /* TABS */
 
         QTabBar::tab {{
-            background: {dark_button_disabled_background};    /* Unselected tab background */
-            color: {dark_button_disabled_color};              /* Unselected tab text */
+            background: {dark_button_disabled_background};    
+            color: {dark_button_disabled_color};              
         }}
 
         QTabBar::tab:selected {{
-            background: {dark_button_background};    /* Selected tab background */
-            color: {dark_button_color};              /* Selected tab text */
-        }}
-
-        QTabBar::tab:!selected {{
-
-        }}
-
-        QTabWidget {{
-            background: {dark_background};
-        }}
-
-        QTabWidget::pane {{
-            background: {dark_background};
+            background: {dark_button_background};
+            color: {dark_button_color};
         }}
 
         /* TEXT EDITS AND LINE EDITS */
@@ -725,7 +765,7 @@ class UI:
         light_button_background = "#888"
         light_button_color = "#eee"
         light_button_disabled_background = "#ccc"
-        light_button_disabled_color = "#eee"
+        light_button_disabled_color = "#888"
         light_title_background = "#ddd"
         light_title_color = "#333"
         light_dock_border = "#eee"
@@ -735,6 +775,19 @@ class UI:
         separator_size = 3
 
         return f"""
+        
+        /* FUSION HACK */
+
+        QPushButton {{
+            background-color: {light_button_background};
+            color: {light_button_color};
+        }}
+
+        QPushButton:disabled {{
+            background-color: {light_button_disabled_background};
+            color: {light_button_disabled_color};
+            border: none;
+        }}
 
         /* WINDOW */
 
@@ -888,8 +941,8 @@ class UI:
         /* DROP DOWN */
 
         QComboBox {{
-            background: {light_button_background};    /* Background of the combo box */
-            color: {light_button_color};              /* Text color */
+            background: {light_button_background};
+            color: {light_button_color};
         }}
 
         QComboBox:disabled {{
@@ -927,17 +980,6 @@ class UI:
         QTabBar::tab:selected {{
             background: {light_button_background};    /* Selected tab background */
             color: {light_button_color};              /* Selected tab text */
-        }}
-
-        QTabBar::tab:!selected {{
-        }}
-
-        QTabWidget {{
-            background: {light_background};
-        }}
-
-        QTabWidget::pane {{
-            background: {light_background};
         }}
 
         /* BUTTONS */

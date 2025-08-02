@@ -361,7 +361,7 @@ class CaptionWindow(QWidget):
         self.caption_field.clear()
         self.api_button.setText("")
         # Do NOT disable self.bot_button here!
-        for btn in [self.annotate_button, self.api_button, self.next_button]:
+        for btn in [self.annotate_button, self.api_button, self.next_button, self.previous_button]:
             btn.setEnabled(False)
 
         # Get frame count from input field
