@@ -13,32 +13,8 @@ from PyQt5.QtWidgets import (
     QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QLineEdit, QTextEdit, QPushButton, QSizePolicy, QLabel
 )
 
-def parse_system_prompt(prompt_text, data, row_data=None, subtitles=None):
-    """
-    Replace tags like {title} or {image-count} in prompt_text with values from data dict.
-    If a tag is missing, insert OBVIOUS DUMMY TEXT.
-    """
-
-    def replace_tag(match):
-        tag = match.group(1)
-        if tag in data:
-            return str(data[tag])
-        # if the tag is {shot-subtitles}
-        elif tag == "shot-subtitles":
-            # get shot subtitles from data
-            subtitles_output = ""
-            if row_data:
-                timecode_start = row_data['Start']
-                timecode_end = row_data['End']
-                # subtitles_output += timecode_start + " - " + timecode_end + "\n"
-                subtitles_output += subtitles.get_subtitles_between(timecode_start, timecode_end)
-            else:
-                subtitles_output = ""
-            return subtitles_output
-        else:
-            return f"{tag}"
-
-    return re.sub(r"\{([a-zA-Z0-9_-]+)\}", replace_tag, prompt_text)
+# Import the new function from prompt.py instead of using the old one
+from prompt import parse_system_prompt_files
 
 def encode_image(image_array):
     import cv2
@@ -74,7 +50,7 @@ class ApiWorker(QObject):
         self.frames = frames
         self.metadata = metadata
         self.row_data = row_data
-        self.subtitles_window = subtitles_window  # Store reference to subtitles window
+        self.subtitles_window = subtitles_window
         self.project_folder = project_folder
         self.movie_filename = movie_filename
 
@@ -94,9 +70,21 @@ class ApiWorker(QObject):
         # add image-count to metadata
         self.metadata["image-count"] = len(self.frames)
 
-        # Read system prompt from movie-specific file if available, otherwise fallback
-        system_prompt = self._get_shot_prompt()
-        parsed_prompt = parse_system_prompt(system_prompt, self.metadata, self.row_data, self.subtitles_window)
+        # Use the new parse_system_prompt_files function
+        parsed_prompt = parse_system_prompt_files(
+            self.project_folder,
+            self.metadata,
+            self.row_data,
+            self.subtitles_window
+        )
+        
+        # Check result of parsing
+        if parsed_prompt == "" or parsed_prompt is None:
+            if DEBUG: print("DEBUG: No specific prompt found, using generic prompt")
+            # Fallback to generic prompt if prompts directory doesn't exist
+            parsed_prompt = "Describe the scene in these images."
+
+        if DEBUG: print(f"DEBUG: Parsed prompt: {parsed_prompt}")
         
         api_key_path = os.path.join(self.project_folder, "preferences", "openai_api_key.txt")
         try:
@@ -126,17 +114,6 @@ class ApiWorker(QObject):
 
         self.result.emit(caption)
         self.finished.emit()
-
-    def _get_shot_prompt(self):
-        """Get shot prompt, preferring movie-specific prompt over fallback"""
-
-        # Fallback to global system prompt
-        shot_prompt_path = os.path.join(os.path.dirname(__file__), "preferences", "shot_prompt.txt")
-        try:
-            with open(shot_prompt_path, "r", encoding="utf-8") as f:
-                return f.read()
-        except Exception:
-            return "Describe the scene in these images."
 
 class SystemPromptEdit(QTextEdit):
     def __init__(self, parent=None, save_callback=None):

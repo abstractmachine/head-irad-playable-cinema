@@ -157,7 +157,7 @@ class CinemathequeWindow(QMainWindow):
         
         if DEBUG: print(f"DEBUG: Cinematheque: Checking missing folders and files in {folder}")        
         # Required project folders
-        required_folders = ["datasets", "gameplay", "metadata", "movies", "posters", "preferences", "shotlists", "subtitles"]
+        required_folders = ["datasets", "gameplay", "metadata", "movies", "posters", "preferences", "prompts", "shotlists", "subtitles"]
         # Some folders need to add a .gitignore
         add_gitignore_folders = ["movies", "gameplay", "posters", "preferences", "subtitles"]
         # Some folders need these text files in them
@@ -668,7 +668,7 @@ class MovieItemWidget(QWidget):
             tagline_label.setWordWrap(True)
             tagline_label.setFont(self.ui.get_font('tagline'))
             info_layout.addWidget(tagline_label)
-        
+
         info_layout.addStretch()  # Push content to top
         
         layout.addLayout(info_layout, 0)  # Give info area more space

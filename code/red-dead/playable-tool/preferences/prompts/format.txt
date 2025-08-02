@@ -1,0 +1,5 @@
+You will generate three sentences, each on its own, numbered line of text:
+
+1. In the first sentence, be specific: describe what the characters are wearing and holding, what they are looking at or doing, and how the scene is staged.
+2. The second sentece describes the subject of human interactions (dialogue, gestures, action, emotions).
+3. The third and final sentence should describe the environment, weather, and time of day — but based only on what is visible.

@@ -1,0 +1,1 @@
+I am uploading {image-count} images: I want you to describe this shot using these {image-count} images to help you better understand the context. Describe what you see in the image factually, but only focus on the essential elements that make each shot emblematic.

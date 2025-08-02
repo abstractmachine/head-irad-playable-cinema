@@ -113,7 +113,7 @@ Faust has done preliminary work testing the detectors on classical Hollywood wes
 ### Detection Methods
 There are various detection algorithms. Cf. [PySceneDetect Detectors Docs](https://www.scenedetect.com/docs/latest/cli.html#detectors). Each method has its own list of default and adjustable options. For example, `detect-adaptive` has a `-t` (`adaptive_threshold`) option that defaults to `3.0`, whereas `detect-content` has a `-t` (`threshold`) option that defaults to `27.0`. Enter any, all, or none of these options next to the `Detect` button.
 
-![Detection method options field](ui/images/detection-method-options.png)
+![Detection method options field](docs/detection-method-options.png)
 
 #### [detect-adaptive](https://www.scenedetect.com/docs/latest/cli.html#detect-adaptive)
 **Best for**: Variable content with mixed shot types

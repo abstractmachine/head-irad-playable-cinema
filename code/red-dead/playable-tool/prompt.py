@@ -1,13 +1,16 @@
 DEBUG = False  # Set to True to enable debug output
 
+# Python & OS
 import os
-from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtWidgets import (
-    QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QTextEdit, QPushButton, 
-    QLabel, QSizePolicy, QComboBox, QStackedLayout
-)
+import shutil
+import re
 
-from caption import parse_system_prompt
+# Qt
+from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtWidgets import (
+    QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QTextEdit, 
+    QSizePolicy, QComboBox, QStackedLayout
+)
 
 class PromptWindow(QMainWindow):
     request_save = pyqtSignal()
@@ -15,9 +18,9 @@ class PromptWindow(QMainWindow):
 
     def __init__(self, ui, subtitles_window=None):
         super().__init__()
+
         self.ui = ui
         self.subtitles_window = subtitles_window
-
         self.setWindowTitle("Prompt")
 
         self.metadata = {}
@@ -27,62 +30,88 @@ class PromptWindow(QMainWindow):
 
         # Main layout: horizontal (buttons left, text right)
         main_layout = QHBoxLayout()
-        main_layout.setContentsMargins(0, 0, 0, 0)  # Window margins set to 0
-        main_layout.setSpacing(0)                   # No spacing between button and text
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
         # Left: vertical buttons
         button_width, button_height = self.ui.get_dimensions('button')
         button_layout = QVBoxLayout()
-        button_layout.setSpacing(0)                 # No spacing between buttons
-        button_layout.setContentsMargins(0, 0, 0, 0)  # Button layout margins set to 0
+        button_layout.setSpacing(0)
+        button_layout.setContentsMargins(0, 0, 0, 0)
 
+        # Map prompt types to filenames
+        self.prompt_file_map = {
+            "System": "system.txt",
+            "Goal": "goal.txt", 
+            "Format": "format.txt",
+            "Warning": "warning.txt",
+            "Context": "context.txt",
+            "Shot": "shot.txt",
+            "Scene": "scene.txt",
+            "Image": "image.txt"
+        }
+
+        # These are going to be the text fields
+        self.text_fields = {
+            "Tags": None,
+            "Test": None,
+            "System": None,
+            "Goal": None,
+            "Format": None,
+            "Warning": None,
+            "Context": None,
+            "Image": None,
+            "Shot": None,
+            "Scene": None
+        }
+
+        # Dropdown Menu
         self.prompt_type_dropdown = QComboBox()
-        self.prompt_type_dropdown.addItems([
-            "Shot", "Test", "Tags"
-        ])
+        # use self.text_fields.keys() to populate the dropdown
+        self.prompt_type_dropdown.addItems(self.text_fields.keys())
+        self.prompt_type_dropdown.setCurrentIndex(0)  # Default to "System"
+        # UI Stuff
         self.prompt_type_dropdown.setFont(self.ui.get_font('button'))
         self.prompt_type_dropdown.setFixedSize(80, button_height)
+        
+        # Connect both signals for different behaviors
         self.prompt_type_dropdown.currentIndexChanged.connect(self.handle_prompt_type_changed)
+        self.prompt_type_dropdown.activated.connect(self.handle_prompt_type_activated)
+        
         button_layout.addWidget(self.prompt_type_dropdown)
 
         # align button_layout to the right
         self.prompt_type_dropdown.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.prompt_type_dropdown.setStyleSheet("QComboBox { padding: 0px 0px 0px 10px; margin: 0px 0px 0px 10px; }")
 
-        self.test_button = QPushButton("Test")
-        self.test_button.setFont(self.ui.get_font('button'))
-        self.test_button.setFixedSize(80, button_height)
-        self.test_button.setStyleSheet("QPushButton { padding: 0px 0px 0px 0px; margin: 10px 0px 0px 10px; }")
-        self.test_button.clicked.connect(self.handle_test_button)
-        button_layout.addWidget(self.test_button)
-
         button_layout.addStretch()
         main_layout.addLayout(button_layout, stretch=0)
 
-        # Right: stacked text fields
-        text_layout = QVBoxLayout()
-        text_layout.setSpacing(0)                   # No spacing inside text layout
-        text_layout.setContentsMargins(0, 0, 0, 0)  # Text layout margins set to 0
+        # Stacked Layout
 
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(0)
+        text_layout.setContentsMargins(0, 0, 0, 0)
+
+        # We will use a stacked layout to switch between text fields
         self.stacked_layout = QStackedLayout()
 
-        self.system_prompt_field = QTextEdit()
-        self.system_prompt_field.setPlaceholderText("")
-        self.system_prompt_field.setFont(self.ui.get_font('prompt'))
-        self.system_prompt_field.setStyleSheet("QTextEdit { border: none; padding: 0px; }")  # No border, no padding
-        self.stacked_layout.addWidget(self.system_prompt_field)
+        # Text Fields
 
-        self.test_field = QTextEdit()
-        self.test_field.setReadOnly(True)
-        self.test_field.setFont(self.ui.get_font('prompt'))
-        self.test_field.setStyleSheet("QTextEdit { border: none; padding: 0px; }")
-        self.stacked_layout.addWidget(self.test_field)
+        # Loop through text fields and create QTextEdit for each
+        for field_name in self.text_fields.keys():
+            text_edit = QTextEdit()
+            text_edit.setReadOnly(False)  # Make all fields editable by default
+            text_edit.setFont(self.ui.get_font('prompt'))
+            text_edit.setStyleSheet("QTextEdit { border: none; padding: 0px; }")  # No border, no padding
+            self.stacked_layout.addWidget(text_edit)
+            self.text_fields[field_name] = text_edit
+            # When a field is edited, save the current prompt, passing the field name
+            text_edit.textChanged.connect(lambda name=field_name: self.save_current_prompt(name))
 
-        self.cheatsheet_field = QTextEdit()
-        self.cheatsheet_field.setReadOnly(True)
-        self.cheatsheet_field.setFont(self.ui.get_font('prompt'))
-        self.cheatsheet_field.setStyleSheet("QTextEdit { border: none; padding: 0px; }")
-        self.stacked_layout.addWidget(self.cheatsheet_field)
+        # Test and Tags fields are read-only
+        self.text_fields["Test"].setReadOnly(True)
+        self.text_fields["Tags"].setReadOnly(True)
 
         text_layout.addLayout(self.stacked_layout)
         main_layout.addLayout(text_layout, stretch=1)
@@ -91,93 +120,146 @@ class PromptWindow(QMainWindow):
         container.setLayout(main_layout)
         self.setCentralWidget(container)
 
-        # Shot prompt file path
-        self.shot_prompt_path = os.path.join(
-            os.path.dirname(__file__),
-            "preferences",
-            "shot_prompt.txt"
-        )
-        self.cheatsheet_path = os.path.join(
-            os.path.dirname(__file__),
-            "preferences",
-            "prompt-tooltip.txt"
-        )
+        # Project folder
+        self.project_folder = None
+        self.prompt_type = None
 
-        # Show the correct field at startup
-        self.handle_prompt_type_changed(0)
+        # Set dropdown to none selected initially
+        self.prompt_type_dropdown.setCurrentIndex(-1)
 
-        # Connect textChanged signal to save_current_prompt slot
-        self.system_prompt_field.textChanged.connect(self.save_current_prompt)
+    def handle_prompt_type_activated(self, idx):
+        """Handle prompt type activation (including re-selection of same item)."""
+        if DEBUG: print(f"DEBUG: Prompt type activated at index {idx}")
+        
+        # Simply call the existing handler - it will handle all the logic
+        self.handle_prompt_type_changed(idx)
 
     def handle_prompt_type_changed(self, idx):
-        prompt_type = self.prompt_type_dropdown.currentText()
-        if DEBUG: print(f"DEBUG: Prompt type changed to {prompt_type}")
-        self.test_button.setEnabled(prompt_type == "Test")
-        # self.shot_prompt_button.setEnabled(prompt_type == "Shot")  # Removed
-        if prompt_type == "Shot":
-            self.system_prompt_field.setReadOnly(False)
-            self.stacked_layout.setCurrentWidget(self.system_prompt_field)
-            self.load_shot_prompt()
-        elif prompt_type == "Test":
-            self.stacked_layout.setCurrentWidget(self.test_field)
-        elif prompt_type == "Tags":
-            self.stacked_layout.setCurrentWidget(self.cheatsheet_field)
-            self.load_cheatsheet()
-            
+        """Handle prompt type change from dropdown."""
+        
+        # Handle unselected case
+        if idx == -1:
+            self.prompt_type = None
+            if DEBUG: print(f"DEBUG: Prompt type changed to unselected")
+            return
+
+        # Update prompt type based on selection
+        self.prompt_type = self.prompt_type_dropdown.itemText(idx)
+        if DEBUG: print(f"DEBUG: Prompt type changed to {self.prompt_type}")
+
+        # Set the index of the stacked layout to match the selected prompt type
+        self.stacked_layout.setCurrentIndex(idx)
+        
+        # Switch stacked layout based on selection
+        if self.prompt_type == "Test":
+            # Auto-run test when switching to test view
+            self.handle_test_button()
+        elif self.prompt_type == "Tags":
+            # Load the tags cheatsheet when switching to Tags view
+            self.load_tags()
+        else:
+            # Load the prompt for the selected type
+            self.load_prompt()
+
     def handle_row_data(self, row_data):
         """Handle row data emitted from shotlist."""
         self.row_data = row_data or {}
-        if DEBUG: print(f"DEBUG Prompt: Received row data: {row_data}")
+        if DEBUG: print(f"DEBUG Prompt: Received row data: {len(self.row_data)} items")
 
     def handle_test_button(self):
-        # Get current prompt text
-        prompt_text = self.system_prompt_field.toPlainText()
-        # Parse prompt using the parser from annotate.py
-        interpreted = parse_system_prompt(prompt_text, getattr(self, "current_metadata", self.metadata), self.row_data, self.subtitles_window)
-        # Show interpreted result in test field
-        self.test_field.setPlainText(interpreted)
+        """Test the current system prompt parsing."""
 
-    def load_cheatsheet(self):
-        if DEBUG: print("DEBUG: Loading tags cheatsheet")
-        if os.path.exists(self.cheatsheet_path):
-            try:
-                with open(self.cheatsheet_path, "r", encoding="utf-8") as f:
-                    text = f.read()
-                self.cheatsheet_field.setPlainText(text)
-            except Exception as e:
-                self.cheatsheet_field.setPlainText(f"Error loading cheatsheet: {e}")
-                if DEBUG: print(f"DEBUG: Error loading cheatsheet: {e}")
+        # Clear previous test output
+        self.text_fields["Test"].clear()
+        # Check if we have a project folder set
+        if not self.project_folder:
+            self.text_fields["Test"].setPlainText("ERROR: No project folder set")
+            return
+        
+        # Parse the system prompt (function now handles prompts directory internally)
+        parsed_prompt = parse_system_prompt_files(
+            self.project_folder,
+            getattr(self, 'current_metadata', self.metadata),
+            self.row_data,
+            self.subtitles_window
+        )
+        
+        if parsed_prompt == "":
+            self.text_fields["Test"].setPlainText("ERROR: Prompt parsing failed. Check console for recursion errors.")
         else:
-            self.cheatsheet_field.setPlainText("No cheatsheet found.")
-            if DEBUG: print("DEBUG: Cheatsheet file not found.")
+            self.text_fields["Test"].setPlainText(parsed_prompt)
+
+    def load_tags(self):
+        """Load the cheatsheet for prompt tags."""
+        if not self.project_folder:
+            self.text_fields["Tags"].setPlainText("ERROR: No project folder set")
+            return
+        
+        prompts_dir = os.path.join(self.project_folder, "prompts")
+        tags_path = os.path.join(prompts_dir, "tags.txt")
+
+        if not os.path.exists(tags_path):
+            self.text_fields["Tags"].setPlainText("ERROR: Tags file not found")
+            return
+        
+        try:
+            with open(tags_path, 'r', encoding='utf-8') as f:
+                tags_content = f.read()
+            self.text_fields["Tags"].setPlainText(tags_content)
+        except Exception as e:
+            self.text_fields["Tags"].setPlainText(f"ERROR: Could not read tags: {e}")
 
     def on_movie_loaded_with_metadata(self, movie_path, metadata):
         if DEBUG: print(f"DEBUG Prompt: on_movie_loaded called with {movie_path}")
         self.current_metadata = metadata
 
-    def load_shot_prompt(self):
-        if DEBUG: print("DEBUG: load_shot_prompt called")
-        try:
-            with open(self.shot_prompt_path, "r", encoding="utf-8") as f:
-                text = f.read()
-            self.system_prompt_field.setPlainText(text)
-            if DEBUG: print("DEBUG: Loaded shot prompt from file")
-        except Exception as e:
-            shot_prompt = "Analyze these video frames and provide a detailed description of the scene, focusing on visual elements, actions, and composition."
-            self.system_prompt_field.setPlainText(shot_prompt)
-            print(f"Could not load shot prompt: {e}")
-            if DEBUG: print(f"DEBUG: Could not load shot prompt: {e}")
+    def load_prompt(self):
+        """Load the appropriate prompt file based on current prompt type."""
+        if DEBUG: print(f"DEBUG: load_prompt called for {self.prompt_type}")
+        # make sure we have a project folder and prompt type set
+        if not self.project_folder or not self.prompt_type:
+            if DEBUG: print("DEBUG: No project folder or prompt type set, cannot load prompt")
+            return
+        # Check if the prompt type is valid
+        if self.prompt_type not in self.prompt_file_map:
+            if DEBUG: print(f"DEBUG: Invalid prompt type: {self.prompt_type}")
+            return
 
-    def save_current_prompt(self):
-        text = self.system_prompt_field.toPlainText()
+        filename = self.prompt_file_map[self.prompt_type]
+        file_path = os.path.join(self.prompts_directory, filename)
+        
         try:
-            with open(self.shot_prompt_path, "w", encoding="utf-8") as f:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            self.text_fields[self.prompt_type].setPlainText(content)
+            if DEBUG: print(f"DEBUG: Loaded {filename}")
+        except Exception as e:
+            if DEBUG: print(f"DEBUG: Could not load {filename}: {e}")
+            self.text_fields[self.prompt_type].setPlainText(f"ERROR: Could not load {filename}")
+
+    def save_current_prompt(self, field_name):
+        """Save the current prompt field to its corresponding file."""
+
+        if DEBUG: print(f"DEBUG: save_current_prompt called for {field_name}")
+        
+        if not self.project_folder or field_name in ["Test", "Tags"]:
+            return  # Don't save Test and Tags fields
+
+        if field_name not in self.prompt_file_map:
+            return
+
+        filename = self.prompt_file_map[field_name]
+        file_path = os.path.join(self.prompts_directory, filename)
+        text = self.text_fields[field_name].toPlainText()
+        
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
                 f.write(text)
-            if DEBUG: print(f"DEBUG: Saved shot prompt to {self.shot_prompt_path}")
+            if DEBUG: print(f"DEBUG: Saved {filename}")
         except Exception as e:
-            print(f"Error saving shot prompt: {e}")
-            if DEBUG: print(f"DEBUG: Error saving shot prompt: {e}")
+            if DEBUG: print(f"DEBUG: Could not save {filename}: {e}")
 
+    # Preferences handling
     def on_request_save(self):
         geo = self.geometry()
         if DEBUG: print(f"DEBUG: on_request_save called, geometry={geo}")
@@ -185,8 +267,196 @@ class PromptWindow(QMainWindow):
         }
         return self._pending_save_data
 
+    # Preferences handling
     def on_request_load(self, data):
         if DEBUG: print(f"DEBUG: on_request_load called with {data}")
         if data:
             # do nothing
             pass
+
+    def set_project_folder(self, project_folder):
+        """Set the current project folder and update paths for prompt files."""
+        self.project_folder = project_folder
+
+        # List of required files
+        required_files = [
+            'system.txt', 'goal.txt', 'format.txt', 'warning.txt', 'context.txt', 'shot.txt', 'scene.txt', 'image.txt', 'tags.txt'
+        ]
+
+        # Preferences source directory (now in prompts subdirectory)
+        preferences_prompts_dir = os.path.join(os.path.dirname(__file__), "preferences", "prompts")
+
+        # Ensure prompts subfolder exists
+        self.prompts_directory = os.path.join(self.project_folder, "prompts")
+        os.makedirs(self.prompts_directory, exist_ok=True)
+        if DEBUG: print(f"DEBUG: Prompts directory set to {self.prompts_directory}")
+
+        # Update paths for each required file and copy if missing
+        for filename in required_files:
+            dest_path = os.path.join(self.prompts_directory, filename)
+            src_path = os.path.join(preferences_prompts_dir, filename)
+            if not os.path.exists(dest_path) and os.path.exists(src_path):
+                shutil.copyfile(src_path, dest_path)
+                if DEBUG: print(f"DEBUG: Copied {filename} to {dest_path}")
+
+# ----------------------------------------------------------------
+
+# Function to parse system prompt files recursively
+
+def parse_system_prompt_files(project_directory, metadata=None, row_data=None, subtitles_window=None):
+    """
+    Parse system prompt by processing system.txt and recursively resolving file tags.
+    
+    Args:
+        project_directory: Path to project directory (will look for prompts/ subdirectory)
+        metadata: Movie metadata dict
+        row_data: Current shot data
+        subtitles_window: Reference to subtitles window
+    
+    Returns:
+        str: Parsed system prompt or empty string if recursion detected
+    """
+    if metadata is None:
+        metadata = {}
+    if row_data is None:
+        row_data = {}
+    
+    # Determine prompts directory from project directory
+    prompts_directory = os.path.join(project_directory, "prompts")
+    
+    # Check if prompts directory exists
+    if not os.path.exists(prompts_directory):
+        print(f"ERROR: Prompts directory not found at {prompts_directory}")
+        return ""
+    
+    def read_file_safe(filename):
+        """Safely read a file, return empty string if not found."""
+        try:
+            filepath = os.path.join(prompts_directory, filename)
+            with open(filepath, 'r', encoding='utf-8') as f:
+                return f.read().strip()
+        except Exception as e:
+            if DEBUG: print(f"DEBUG: Could not read {filename}: {e}")
+            return ""
+    
+    def parse_recursive(text, calling_stack=None):
+        """
+        Recursively parse text, resolving file tags and metadata tags.
+        
+        Args:
+            text: Text to parse
+            calling_stack: List of files currently being processed (for recursion detection)
+        
+        Returns:
+            str: Parsed text or empty string if recursion detected
+        """
+        if calling_stack is None:
+            calling_stack = []
+        
+        def replace_tag(match):
+            tag = match.group(1)
+            
+            # Handle file tags (e.g., {goal-prompt}, {format-prompt})
+            if tag.endswith('-prompt'):
+                base_name = tag[:-7]  # Remove '-prompt' suffix
+                filename = f"{base_name}.txt"
+                
+                # Check for recursion
+                if filename in calling_stack:
+                    print(f"ERROR: Recursion detected in prompt parsing!")
+                    print(f"Calling stack: {' -> '.join(calling_stack)} -> {filename}")
+                    return ""  # This will cause the entire parsing to fail
+                
+                # Read file and parse recursively
+                file_content = read_file_safe(filename)
+                if file_content:
+                    new_stack = calling_stack + [filename]
+                    parsed_content = parse_recursive(file_content, new_stack)
+                    if parsed_content == "" and file_content != "":
+                        # Recursion was detected in nested parsing
+                        return ""
+                    return parsed_content
+                else:
+                    return f"[FILE NOT FOUND: {filename}]"
+            
+            # Handle metadata tags
+            elif tag in metadata:
+                return str(metadata[tag])
+            
+            # Handle special tags
+            elif tag == "shot-subtitles":
+                if row_data and subtitles_window:
+                    try:
+                        timecode_start = row_data.get('Start', '')
+                        timecode_end = row_data.get('End', '')
+                        if timecode_start and timecode_end:
+                            return subtitles_window.get_subtitles_between(timecode_start, timecode_end)
+                    except Exception as e:
+                        if DEBUG: print(f"DEBUG: Error getting subtitles: {e}")
+                return ""
+            
+            elif tag == "scene-subtitles":
+                # TODO: Implement scene subtitle extraction
+                return "[SCENE SUBTITLES NOT YET IMPLEMENTED]"
+            
+            elif tag == "movie-subtitle":
+                # TODO: Implement movie subtitle extraction
+                return "[MOVIE SUBTITLE NOT YET IMPLEMENTED]"
+            
+            elif tag == "image-count":
+                return str(metadata.get('image-count', '0'))
+            
+            # Handle direct file inclusion (e.g., {goal.txt})
+            elif tag.endswith('.txt'):
+                filename = tag
+                
+                # Check for recursion
+                if filename in calling_stack:
+                    print(f"ERROR: Recursion detected in prompt parsing!")
+                    print(f"Calling stack: {' -> '.join(calling_stack)} -> {filename}")
+                    return ""
+                
+                # Read file and parse recursively
+                file_content = read_file_safe(filename)
+                if file_content:
+                    new_stack = calling_stack + [filename]
+                    parsed_content = parse_recursive(file_content, new_stack)
+                    if parsed_content == "" and file_content != "":
+                        # Recursion was detected in nested parsing
+                        return ""
+                    return parsed_content
+                else:
+                    if DEBUG: print(f"DEBUG: File {filename} not found in prompts directory")
+                    return f"[FILE NOT FOUND: {filename}]"
+
+
+            else: # Unknown tag
+                if DEBUG: print(f"DEBUG: Unknown tag: {tag}")
+                return_text = "{" + tag + "}"
+                return return_text  # Return the tag as is
+        
+        # Replace all tags in the text
+        result = re.sub(r"\{([a-zA-Z0-9_.-]+)\}", replace_tag, text)
+        
+        # Check if any recursion was detected (empty string returned from nested call)
+        if "" in [match.group() for match in re.finditer(r"\{([a-zA-Z0-9_.-]+)\}", text)] and result == "":
+            return ""
+        
+        return result
+    
+    # Start parsing with system.txt
+    system_content = read_file_safe("system.txt")
+    if not system_content:
+        print("ERROR: system.txt not found or empty")
+        print("Prompts directory:", prompts_directory)
+        return ""
+    
+    try:
+        parsed_result = parse_recursive(system_content, ["system.txt"])
+        if parsed_result == "" and system_content != "":
+            print("ERROR: Parsing failed due to recursion or other error")
+            return ""
+        return parsed_result
+    except Exception as e:
+        print(f"ERROR: Exception during prompt parsing: {e}")
+        return ""

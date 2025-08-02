@@ -1,0 +1,36 @@
+The main prompt sent to the API is the System Prompt. This prompt can include any (or none) of the following tags. Each tag will be replaced with its related content.
+
+Sub-prompts, such as the Goal Prompt or the Warning Prompt can also include these tags. But note that recursive loops are blocked: a tag cannot include itself, or be included in any sub-tags that it calls upon. This will invaldate the entire system prompt and produce a warning. Please Test your system prompts to make sure they are valid.
+
+{goal-prompt}
+This is the part of the prompt that clearly defines what we want from the API. Define what content we are seeking. Example: captions for a western movie.
+
+{format-prompt}
+This specifies the format of the returned result from the API. Examples: list format, short paragraph, summary, essay, definition list, et cætera).
+
+{warning-prompt}
+Describe what to avoid, and/or what sort of constraints the results should take into account. Examples: 500 word limit; short paragraph; avoid racist language, but do not whitewash the historical record of injustice; check the accuracy of dates.
+
+{context-prompt}
+
+{title} {year} {director}
+These are the Movie metadata tags that you can include in your prompts.
+
+{overview}
+A short description of the movie, often a single paragraph.
+
+{tagline}
+The tagline that offen appeared on the poster for the movie when it was released.
+
+{image-count}
+NOT YET IMPLEMENTED
+This is how many images you are uploading during each API request.
+
+{shot-subtitles}
+This includes the subtitles inside the beginning and ending timecodes of the current shot.
+
+{scene-subtitles}
+NOT YET IMPLEMENTED
+
+{movie-subtitle}
+NOT YET IMPLEMENTED
