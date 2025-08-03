@@ -405,12 +405,24 @@ class ShotlistWindow(QMainWindow):
                 self.current_csv_path = None
                 self.delete_button.setEnabled(False)
             self.detect_button.setEnabled(True)
+            
+            # Reset current row tracking when new movie loads
+            self.current_row = -1
+            self.last_current_row = -1
+            self.current_time_ms = 0
+            
         else:
             self.video_path = None
             self.scene_table.setRowCount(0)
             self.current_csv_path = None
             self.delete_button.setEnabled(False)
             self.detect_button.setEnabled(False)
+            
+            # Reset tracking when no video
+            self.current_row = -1
+            self.last_current_row = -1
+            self.current_time_ms = 0
+            
         # Emit shotlist status
         self.shotlist_status.emit(shotlist_exists)
         # Emit data of the first row if it exists

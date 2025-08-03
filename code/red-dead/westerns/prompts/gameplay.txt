@@ -1,0 +1,4 @@
+# Gameplay Prompt
+Replace this prompt with a prompt specific for captioning gameplay.
+
+Add text + tags here...

@@ -17,11 +17,26 @@ class MetadataWorker(QObject):
     finished = pyqtSignal(bool)  # Success/failure
     error = pyqtSignal(str)  # Error message
     
-    def __init__(self, project_folder):
+    def __init__(self, project_folder, data_folder="movies", metadata_filename="metadata.csv"):
         super().__init__()
         self.project_folder = project_folder
+        self.data_folder = data_folder  # "movies" or "gameplay"
+        self.metadata_filename = metadata_filename  # "metadata.csv" or "gameplay_metadata.csv"
         self.tmdb_api_key = None
         self.opensubtitles_api_key = None
+        
+        if DEBUG:
+            print(f"DEBUG: MetadataWorker: data_folder = '{self.data_folder}', metadata_filename = '{self.metadata_filename}'")
+    
+    def set_data_folder(self, data_folder):
+        """Set the data folder (movies, gameplay, etc.)"""
+        self.data_folder = data_folder
+        if DEBUG: print(f"DEBUG: MetadataWorker: data_folder set to '{self.data_folder}'")
+    
+    def set_metadata_filename(self, metadata_filename):
+        """Set the metadata filename"""
+        self.metadata_filename = metadata_filename
+        if DEBUG: print(f"DEBUG: MetadataWorker: metadata_filename set to '{self.metadata_filename}'")
         
     def load_api_keys(self):
         """Load API keys from files"""
@@ -47,56 +62,69 @@ class MetadataWorker(QObject):
             if not self.load_api_keys():
                 return
             
-            self.progress.emit("Scanning movie files...")
+            self.progress.emit(f"Scanning {self.data_folder} files...")
             
-            # Get list of .mp4 files from movies folder
-            movies_folder = os.path.join(self.project_folder, "movies")
-            if not os.path.exists(movies_folder):
-                self.error.emit("Movies folder not found")
+            # Get list of .mp4 files from data folder (was hardcoded to "movies")
+            data_folder_path = os.path.join(self.project_folder, self.data_folder)
+            if not os.path.exists(data_folder_path):
+                self.error.emit(f"{self.data_folder} folder not found")
                 return
                 
             # Filter out hidden files and macOS metadata files
-            movie_files = [
-                f for f in os.listdir(movies_folder) 
+            video_files = [
+                f for f in os.listdir(data_folder_path) 
                 if f.endswith('.mp4') and not f.startswith('.') and not f.startswith('._')
             ]
             
-            if not movie_files:
-                self.error.emit("No .mp4 files found in movies folder")
+            if not video_files:
+                self.error.emit(f"No .mp4 files found in {self.data_folder} folder")
                 return
                 
-            self.progress.emit(f"Found {len(movie_files)} movies")
+            self.progress.emit(f"Found {len(video_files)} videos")
             
-            # Parse movie data and fetch TMDB metadata
-            movies_data = []
-            for i, filename in enumerate(movie_files):
-                self.progress.emit(f"Processing {i+1}/{len(movie_files)}: {filename}")
+            # Parse video data and fetch TMDB metadata (if it's a movie)
+            videos_data = []
+            for i, filename in enumerate(video_files):
+                self.progress.emit(f"Processing {i+1}/{len(video_files)}: {filename}")
                 
-                movie_data = self.parse_movie_filename(filename)
-                if movie_data:
-                    # **NEW: Get video duration**
-                    duration = self.get_video_duration(os.path.join(movies_folder, filename))
+                if self.data_folder == "movies":
+                    # For movies, parse filename and fetch TMDB data
+                    video_data = self.parse_movie_filename(filename)
+                    if video_data:
+                        # Get video duration
+                        duration = self.get_video_duration(os.path.join(data_folder_path, filename))
+                        if duration:
+                            video_data['duration'] = duration
+                        
+                        tmdb_data = self.fetch_tmdb_data(video_data['tmdb'])
+                        if tmdb_data:
+                            video_data.update(tmdb_data)
+                            videos_data.append(video_data)
+                else:
+                    # For gameplay videos, create basic metadata
+                    video_data = self.create_basic_video_metadata(filename)
+                    duration = self.get_video_duration(os.path.join(data_folder_path, filename))
                     if duration:
-                        movie_data['duration'] = duration
-                    
-                    tmdb_data = self.fetch_tmdb_data(movie_data['tmdb'])
-                    if tmdb_data:
-                        movie_data.update(tmdb_data)
-                        movies_data.append(movie_data)
+                        video_data['duration'] = duration
+                    videos_data.append(video_data)
                 
                 time.sleep(0.1)  # Be nice to the API
             
-            # Download missing posters
-            self.progress.emit("Checking posters...")
-            self.download_missing_posters(movies_data)
+            if self.data_folder == "movies":
+                # Download missing posters and subtitles only for movies
+                self.progress.emit("Checking posters...")
+                self.download_missing_posters(videos_data)
+                
+                self.progress.emit("Checking subtitles...")
+                self.download_missing_subtitles(videos_data)
+            elif self.data_folder == "gameplay":
+                # Generate thumbnails for gameplay videos
+                self.progress.emit("Generating thumbnails...")
+                self.generate_missing_thumbnails(videos_data)
             
-            # Download missing subtitles
-            self.progress.emit("Checking subtitles...")
-            self.download_missing_subtitles(movies_data)
-            
-            # Write metadata.csv
-            self.progress.emit("Writing metadata.csv...")
-            self.write_metadata_csv(movies_data)
+            # Write metadata file
+            self.progress.emit(f"Writing {self.metadata_filename}...")
+            self.write_metadata_csv(videos_data)
             
             self.progress.emit("Metadata rebuild complete!")
             self.finished.emit(True)
@@ -283,20 +311,111 @@ class MetadataWorker(QObject):
             print(f"Error getting duration for {video_path}: {e}")
             return None
     
-    def write_metadata_csv(self, movies_data):
+    def create_basic_video_metadata(self, filename):
+        """Create basic metadata for non-movie videos (like gameplay)"""
+        # Extract title from filename (remove extension and clean up)
+        title = os.path.splitext(filename)[0]
+        title = title.replace('-', ' ').replace('_', ' ')
+        
+        return {
+            'title': title,
+            'year': '',
+            'director': '',
+            'tmdb': '',
+            'imdb': '',
+            'filename': filename,
+            'overview': '',
+            'tagline': ''
+        }
+    
+    def write_metadata_csv(self, videos_data):
         """Write metadata to CSV file"""
         metadata_folder = os.path.join(self.project_folder, "metadata")
         os.makedirs(metadata_folder, exist_ok=True)
         
-        csv_path = os.path.join(metadata_folder, "metadata.csv")
-        # **NEW: Add 'duration' to fieldnames**
+        csv_path = os.path.join(metadata_folder, self.metadata_filename)  # Use configurable filename
         fieldnames = ['title', 'year', 'director', 'tmdb', 'imdb', 'filename', 'duration', 'overview', 'tagline']
         
-        # Sort movies alphabetically by title (case-insensitive)
-        sorted_movies = sorted(movies_data, key=lambda movie: movie.get('title', '').lower())
+        # Sort videos alphabetically by title (case-insensitive)
+        sorted_videos = sorted(videos_data, key=lambda video: video.get('title', '').lower())
         
         with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
-            for movie in sorted_movies:
-                writer.writerow({field: movie.get(field, '') for field in fieldnames})
+            for video in sorted_videos:
+                writer.writerow({field: video.get(field, '') for field in fieldnames})
+    
+    def generate_missing_thumbnails(self, videos_data):
+        """Generate thumbnail images from first frame of gameplay videos"""
+        thumbnails_folder = os.path.join(self.project_folder, "thumbnails")
+        os.makedirs(thumbnails_folder, exist_ok=True)
+        
+        for video in videos_data:
+            filename = video.get('filename', '')
+            if not filename:
+                continue
+                
+            # Check if thumbnail already exists
+            filename_base = filename[:-4] if filename.endswith('.mp4') else filename  # Remove .mp4
+            thumbnail_path = os.path.join(thumbnails_folder, f"{filename_base}.jpg")
+            
+            if os.path.exists(thumbnail_path):
+                continue  # Thumbnail already exists
+                
+            # Generate thumbnail from first frame
+            try:
+                video_path = os.path.join(self.project_folder, self.data_folder, filename)
+                if not os.path.exists(video_path):
+                    continue
+                    
+                # Use ffmpeg to extract first frame as thumbnail
+                cmd = [
+                    'ffmpeg',
+                    '-i', video_path,           # Input video
+                    '-ss', '00:00:01',          # Seek to 1 second (to avoid black frames)
+                    '-vframes', '1',            # Extract only 1 frame
+                    '-q:v', '2',                # High quality
+                    '-y',                       # Overwrite output file
+                    thumbnail_path              # Output thumbnail
+                ]
+                
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                
+                if result.returncode == 0:
+                    self.progress.emit(f"Generated thumbnail: {video['title']}")
+                    if DEBUG:
+                        print(f"DEBUG: Generated thumbnail for {filename}: {thumbnail_path}")
+                else:
+                    if DEBUG:
+                        print(f"DEBUG: ffmpeg failed for {filename}: {result.stderr}")
+                    
+                    # Try with no seek (some videos might not support seeking)
+                    cmd_no_seek = [
+                        'ffmpeg',
+                        '-i', video_path,
+                        '-vframes', '1',
+                        '-q:v', '2',
+                        '-y',
+                        thumbnail_path
+                    ]
+                    
+                    result_no_seek = subprocess.run(cmd_no_seek, capture_output=True, text=True, timeout=60)
+                    if result_no_seek.returncode == 0:
+                        self.progress.emit(f"Generated thumbnail: {video['title']}")
+                        if DEBUG:
+                            print(f"DEBUG: Generated thumbnail (no seek) for {filename}: {thumbnail_path}")
+                    else:
+                        if DEBUG:
+                            print(f"DEBUG: ffmpeg failed (no seek) for {filename}: {result_no_seek.stderr}")
+                
+            except subprocess.TimeoutExpired:
+                if DEBUG:
+                    print(f"DEBUG: ffmpeg timeout for {filename}")
+            except FileNotFoundError:
+                if DEBUG:
+                    print("DEBUG: ffmpeg not found. Please install FFmpeg.")
+                self.progress.emit("FFmpeg not found - cannot generate thumbnails")
+                break
+            except Exception as e:
+                if DEBUG:
+                    print(f"DEBUG: Error generating thumbnail for {filename}: {e}")

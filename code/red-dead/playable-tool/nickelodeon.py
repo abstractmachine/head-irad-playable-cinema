@@ -14,8 +14,6 @@ class NickelodeonWindow(AbstractPlayerWindow):
         if key == Qt.Key_Space:
             if self.current_video_path and self.vlc_player:  # Only if video loaded
                 self.toggle_play_pause()
-        elif key == Qt.Key_L or key == Qt.Key_V:
-            self.load_video()
         elif key == Qt.Key_Left:
             if not self.current_video_path or not self.vlc_player:  # Check before seeking
                 return

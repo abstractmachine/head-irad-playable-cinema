@@ -102,7 +102,7 @@ class UI:
         elif style == 'button':
             return (80, 24)
         elif style == 'tab':
-            return (60, 20)
+            return (100, 20)
         else:
             return (140, 32)
         
@@ -222,6 +222,55 @@ class UI:
             padding-left: 8px;
             padding-top: 2px;
             padding-bottom: 2px;
+        }}
+
+        /* MESSAGE BOXES */
+
+        QPushButton {{
+            border-style: none;
+            border-radius: 10%;
+            padding: 0px 0px;
+            margin: 5;
+            font-family: {button_font_name};
+            font-size: {button_font_size}px;
+            font-weight: {button_font_weight};
+            min-height: {button_height}px;
+            vertical-align: center;
+        }}
+
+        QPushButton:pressed {{
+        }}
+
+        QPushButton:disabled {{
+        }}
+
+        /* MESSAGE BOX */
+        
+        QMessageBox {{
+            background: transparent;
+        }}
+        
+        QMessageBox QPushButton {{
+            min-width: {button_width}px;
+            min-height: {button_height}px;
+            max-height: {button_height}px;
+            padding: 6px 12px;
+            margin: 3px;
+        }}
+        
+        /* Hide only the icon, not the text */
+        QMessageBox QLabel[objectName="qt_msgbox_icon_label"] {{
+            max-width: 0px;
+            max-height: 0px;
+            margin: 0px;
+            padding: 0px;
+        }}
+
+        QMessageBox QLabel[objectName="qt_msgbox_icon_label"] {{
+            /* Replace with custom icon */
+            qproperty-pixmap: url('ui/icons/checkbox_on.png');
+            max-width: 32px;
+            max-height: 32px;
         }}
 
         /* SCROLL BARS */
@@ -394,7 +443,7 @@ class UI:
 
         QTabBar::tab {{
             border: none;
-            padding: 0px 10px 0px 10px;
+            padding: 0px 4px 0px 4px;
             margin: 0px 0px 4px 0px;
             border-radius: 0px;
             font-family: {tab_font_name};

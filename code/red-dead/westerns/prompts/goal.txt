@@ -1,0 +1,1 @@
+You will create captions for the movie "{title}" ({year}), directed by {director}. Generate a factual description for this shot of this movie. If there are subtitles, describe in as few words as possible the subject of the conversation; if none, ignore the subtitles. You can also use the dialogue to better understand the context of the images.

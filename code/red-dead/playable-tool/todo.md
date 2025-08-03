@@ -1,5 +1,8 @@
 # TODO
 
+# Load Time
+There is a speed issue with loading videos that have shotlists. Movies without shotlists load almost immediately.
+
 ## Finish:
 - Create an abstract class of the `shotlist`. We'll call it the `medialist`. Use this abstract class to make a `Playlist` tab
 - Add a `Playbill` tab with a list of all the movies in the `gameplay` folder
@@ -26,7 +29,7 @@ Train a model (cf. [FAISS](https://huggingface.co/docs/datasets/en/faiss_es) on 
 
 
 # Bugs
-
+- There seems to be an offset of the subtitles shown and what the prompt integrates (tested on `Breakheart Pass`)
 - ~~Check `Prompts` folder for `default` and `movie` when changing movies. The `movie` prompt looked like it was overwriting `default`~~
     - ~~If `default` is selected in `Prompt` window, it overwrites it in `default` when selecting new movie~~ (Entirely new prompt scripting system)
 - Movie importer hanged after a few minutes

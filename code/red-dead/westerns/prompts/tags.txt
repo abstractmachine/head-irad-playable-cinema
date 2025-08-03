@@ -1,0 +1,36 @@
+The main prompt sent to the API is the System Prompt. This prompt can include any (or none) of the following tags. Each tag will be replaced with its related content.
+
+All prompts other than the main 'System' prompt can include tags to other prompts. Please note that recursive loops are blocked: a tag cannot include itself, or be included in any sub-tags that it calls upon. Any recursion of this sort will invaldate the entire 'System' prompt and produce a warning in the console. Please 'Test' your system prompts to make sure they are valid.
+
+{goal-prompt}
+This is the part of the prompt that clearly defines what we want from the API. Define what content we are seeking. Example: 'These are captions of a western movie.'
+
+{format-prompt}
+This specifies the format of the returned result from the API. Examples: 'list format', 'short paragraph', 'summary', 'essay', 'definition list', et cætera.
+
+{warning-prompt}
+Describe what to avoid, and/or what sort of constraints the results should take into account. Examples: '500 word limit', 'short paragraph', 'avoid racist language, but do not whitewash the historical record of injustice; check the accuracy of dates', et cætera.
+
+{context-prompt}
+This gives context to your prompt. Context is key to all good prompting. Example: 'this captioning tool explore common tropes common between the mediums of cinema and video games.'
+
+{title} {year} {director}
+These are the Movie metadata tags that you can include in your prompts.
+
+{overview}
+A short description of the movie, often a single paragraph.
+
+{tagline}
+The tagline that offen appeared on the poster for the movie when it was released.
+
+{image-count}
+This is how many images you are uploading during each API request.
+
+{shot-subtitles}
+This includes the subtitles inside the beginning and ending timecodes of the current shot.
+
+{scene-subtitles}
+NOT YET IMPLEMENTED
+
+{movie-subtitles}
+The full contents of the subtitles from the entire movie.

@@ -154,7 +154,7 @@ class CaptionWindow(QWidget):
         self.caption_field.setWordWrapMode(QTextOption.WordWrap)
         main_layout.addWidget(self.caption_field, stretch=1)
 
-        # Vertical button layout on the right, no margins, 2px spacing between buttons
+        # Vertical button layout on the right, no margins, 0 spacing between buttons
         button_layout = QVBoxLayout()
         button_layout.setContentsMargins(0, 0, 0, 0)
         button_layout.setSpacing(0)
@@ -164,59 +164,20 @@ class CaptionWindow(QWidget):
 
         # System dropdown (now larger and first)
         self.prompt_type_dropdown = QComboBox()
-        self.prompt_type_dropdown.addItems(["System", "Shot", "Scene"])
+        self.prompt_type_dropdown.addItems(["System", "Shot", "Scene", "Gameplay"])
         self.prompt_type_dropdown.setCurrentIndex(0)
         self.prompt_type_dropdown.setFont(self.ui.get_font('tiny-condensed'))
         self.prompt_type_dropdown.setFixedSize(115, button_height)
-        self.prompt_type_dropdown.setStyleSheet("QComboBox { margin: 0px 0px 4px 5px; }")
+        self.prompt_type_dropdown.setStyleSheet("QComboBox { padding: 0px 0px 0px 2.5em; margin: 0px 0px 0px 4px; }")
         button_layout.addWidget(self.prompt_type_dropdown)
 
         self.annotate_button = QPushButton("Annotate")
         self.annotate_button.setEnabled(False)
         self.annotate_button.setFont(self.ui.get_font('button'))
-        self.annotate_button.setFixedSize(120, button_height)
+        self.annotate_button.setFixedSize(115, button_height)
+        self.annotate_button.setStyleSheet("QPushButton { margin: 5px 0px 0px 4px; }")
         self.annotate_button.setToolTip("Rewrite current caption into current 'Caption' cell\nShortcut: A")
         button_layout.addWidget(self.annotate_button)
-
-        # Replace separate Previous and Next buttons with a double button
-        nav_button_layout = QHBoxLayout()
-        nav_button_layout.setContentsMargins(0, 0, 0, 0)
-        nav_button_layout.setSpacing(0)  # No space between buttons
-
-        self.previous_button = QPushButton("▲")
-        self.previous_button.setEnabled(False)
-        self.previous_button.setFont(self.ui.get_font('button'))
-        self.previous_button.setFixedSize(60, button_height)  # Half width
-        self.previous_button.setToolTip("Jump to previous shot")
-
-        self.next_button = QPushButton("▼")
-        self.next_button.setEnabled(False)
-        self.next_button.setFont(self.ui.get_font('button'))
-        self.next_button.setFixedSize(60, button_height)  # Half width
-        self.next_button.setToolTip("Jump to next shot")
-
-        # Style to make them look like one button
-        self.previous_button.setStyleSheet("""
-            QPushButton {
-                border: none;
-                border-top-right-radius: 0px;
-                border-bottom-right-radius: 0px;
-                border-right: 0px;
-            }
-        """)
-
-        self.next_button.setStyleSheet("""
-            QPushButton {
-                border: none;
-                border-top-left-radius: 0px;
-                border-bottom-left-radius: 0px;
-                border-left: 0px;
-            }
-        """)
-
-        nav_button_layout.addWidget(self.previous_button)
-        nav_button_layout.addWidget(self.next_button)
-        button_layout.addLayout(nav_button_layout)
 
         # Frame count label and field in a horizontal layout
         frame_count_row = QHBoxLayout()
@@ -229,7 +190,7 @@ class CaptionWindow(QWidget):
         self.api_button.setFont(self.ui.get_font('tiny'))
         self.api_button.setFixedSize(80, button_height)
         self.api_button.setToolTip("Send current shot to AI API and receive a caption\nShortcut: O")
-        self.api_button.setStyleSheet("QPushButton { margin-top: 4px 16px 0px 0px; }")
+        self.api_button.setStyleSheet("QPushButton { margin: 0px 4px 0px 0px; }")
         
         frame_count_row.addWidget(self.api_button)
 
@@ -241,14 +202,57 @@ class CaptionWindow(QWidget):
 
         self.frame_count_field = QLineEdit("5")
         self.frame_count_field.setFont(self.ui.get_font('tiny'))
-        self.frame_count_field.setFixedSize(30, button_height)
+        self.frame_count_field.setFixedSize(24, 24)
         self.frame_count_field.setAlignment(Qt.AlignCenter)
         self.frame_count_field.setToolTip("Number of image frames to send to API (0 = none)")
         self.frame_count_field.editingFinished.connect(self.validate_frame_count)
-        self.frame_count_field.setStyleSheet("QLineEdit { margin-top: 0px 5px 0px 0px; }")
+        self.frame_count_field.setStyleSheet("QLineEdit { margin: 0px 0px 0px 0px; }")
+        self.frame_count_field.setFocusPolicy(Qt.ClickFocus)
         frame_count_row.addWidget(self.frame_count_field)
 
         button_layout.addLayout(frame_count_row)
+
+        # Replace separate Previous and Next buttons with a double button
+        nav_button_layout = QHBoxLayout()
+        nav_button_layout.setContentsMargins(0, 0, 0, 0)
+        nav_button_layout.setSpacing(0)  # No space between buttons
+
+        self.previous_button = QPushButton("▲")
+        self.previous_button.setEnabled(False)
+        self.previous_button.setFont(self.ui.get_font('button'))
+        self.previous_button.setFixedSize(52, button_height)  # Half width
+        self.previous_button.setToolTip("Jump to previous shot")
+
+        self.next_button = QPushButton("▼")
+        self.next_button.setEnabled(False)
+        self.next_button.setFont(self.ui.get_font('button'))
+        self.next_button.setFixedSize(52, button_height)  # Half width
+        self.next_button.setToolTip("Jump to next shot")
+
+        # Style to make them look like one button
+        self.previous_button.setStyleSheet("""
+            QPushButton {
+                margin: 5px 0px 0px 0px;
+                border: none;
+                border-top-right-radius: 0px;
+                border-bottom-right-radius: 0px;
+                border-right: 0px;
+            }
+        """)
+
+        self.next_button.setStyleSheet("""
+            QPushButton {
+                margin: 5px 0px 0px 0px;
+                border: none;
+                border-top-left-radius: 0px;
+                border-bottom-left-radius: 0px;
+                border-left: 0px;
+            }
+        """)
+
+        nav_button_layout.addWidget(self.previous_button)
+        nav_button_layout.addWidget(self.next_button)
+        button_layout.addLayout(nav_button_layout)
 
         button_layout.addStretch()
         main_layout.addLayout(button_layout, stretch=0)

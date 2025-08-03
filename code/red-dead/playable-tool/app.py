@@ -5,28 +5,27 @@ import sys
 import json
 import os
 import hashlib
-# QT
-from PyQt5.QtCore import QObject, QEvent
+
+# Qt
 from PyQt5.QtCore import Qt
 # Widgets
-from PyQt5.QtWidgets import QApplication, QLineEdit, QTextEdit, QWidget
-from PyQt5.QtWidgets import QTabWidget
+from PyQt5.QtWidgets import QApplication, QWidget
 from PyQt5.QtWidgets import QMainWindow, QDockWidget, QWidget
-from PyQt5.QtWidgets import QHBoxLayout
-# GUI
-from PyQt5.QtGui import QPalette
 
 # our UI class
 from ui import UI
+from key_filter import GlobalKeyFilter
 # our other windows
 from nickelodeon import NickelodeonWindow
 from playhouse import PlayhouseWindow
+from playbill import PlaybillWindow
 from shotlist import ShotlistWindow
 from caption import CaptionWindow
 from cinematheque import CinemathequeWindow
 from prompt import PromptWindow
 from subtitles import SubtitlesWindow
 from inference import InferenceWindow
+from project import ProjectWindow
 
 # TODO: Move these to the system default preferences path
 PREFS_PATH = "./preferences/preferences.json"
@@ -44,6 +43,8 @@ class PlayableCinemaMainWindow(QMainWindow):
         self.setCentralWidget(central)
 
         # Add each analysis widget as a separate dock
+        if DEBUG: print("DEBUG: Adding dock: Project")
+        dock_project = self.add_dock("Project", windows["project"], Qt.LeftDockWidgetArea)
         if DEBUG: print("DEBUG: Adding dock: Inference")
         dock_inference = self.add_dock("Inference", windows["inference"], Qt.LeftDockWidgetArea)
         if DEBUG: print("DEBUG: Adding dock: Prompts")
@@ -52,27 +53,25 @@ class PlayableCinemaMainWindow(QMainWindow):
         dock_captions = self.add_dock("Captions", windows["captions"], Qt.LeftDockWidgetArea)
 
         # Tabify them so they start on the same row, but can be undocked/moved
-        if DEBUG: print("DEBUG: Tabifying Inference <-> Captions")
-        self.tabifyDockWidget(dock_inference, dock_captions)
-        if DEBUG: print("DEBUG: Tabifying Inference <-> Prompts")
-        self.tabifyDockWidget(dock_inference, dock_prompts)
+        if DEBUG: print("DEBUG: Tabifying Project <-> Inference")
+        self.tabifyDockWidget(dock_project, dock_inference)
+        if DEBUG: print("DEBUG: Tabifying Project <-> Captions")
+        self.tabifyDockWidget(dock_project, dock_captions)
+        if DEBUG: print("DEBUG: Tabifying Project <-> Prompts")
+        self.tabifyDockWidget(dock_project, dock_prompts)
 
-        # Raise the Captions dock so it's visible by default
-        if DEBUG: print("DEBUG: Raising Captions dock")
-        dock_captions.raise_()
+        # Raise the Project dock so it's visible by default
+        if DEBUG: print("DEBUG: Raising Project dock")
+        dock_project.raise_()
 
         # Add other docks as before
-        if DEBUG: print("DEBUG: Adding dock: Subtitles")
+        if DEBUG: print("DEBUG: Adding docks")
         self.add_dock("Subtitles", windows["subtitles"], Qt.RightDockWidgetArea)
-        if DEBUG: print("DEBUG: Adding dock: Playhouse")
         self.add_dock("Playhouse", windows["playhouse"], Qt.TopDockWidgetArea)
-        if DEBUG: print("DEBUG: Adding dock: Nickelodeon")
         self.add_dock("Nickelodeon", windows["nickelodeon"], Qt.TopDockWidgetArea)
-        if DEBUG: print("DEBUG: Adding dock: Shotlist")
         self.add_dock("Shotlist", windows["shotlist"], Qt.BottomDockWidgetArea)
-        if DEBUG: print("DEBUG: Adding dock: Cinemathèque")
         self.add_dock("Cinemathèque", windows["cinematheque"], Qt.BottomDockWidgetArea)
-        if DEBUG: print("DEBUG: PlayableCinemaMainWindow __init__ end")
+        self.add_dock("Playbill", windows["playbill"], Qt.BottomDockWidgetArea)
 
         central.setFocusPolicy(Qt.ClickFocus)
 
@@ -106,11 +105,13 @@ def main():
 
     # create a dictionary of our windows, passing ui to each
     windows = {
+        "project": ProjectWindow(ui),
         "inference": InferenceWindow(ui),
         "captions": CaptionWindow(ui, subtitles_window),
         "subtitles": subtitles_window,
         "prompt": PromptWindow(ui, subtitles_window),
         "playhouse": PlayhouseWindow(ui),
+        "playbill": PlaybillWindow(ui),
         "nickelodeon": NickelodeonWindow(ui),
         "shotlist": ShotlistWindow(ui),
         "cinematheque": CinemathequeWindow(ui),
@@ -118,29 +119,39 @@ def main():
 
     # Connect signals for preferences
     for win in windows.values():
+        # Signals for saving and loading preferences in all windows
         win.request_save.connect(win.on_request_save)
         win.request_load.connect(win.on_request_load)
 
-    # Signal Connections
+    # Connect project signals to all windows that need project folder
+    windows["project"].project_loaded.connect(windows["shotlist"].set_project_folder)
+    windows["project"].project_loaded.connect(windows["captions"].set_project_folder)
+    windows["project"].project_loaded.connect(windows["subtitles"].set_project_folder)
+    windows["project"].project_loaded.connect(windows["inference"].set_project_folder)
+    windows["project"].project_loaded.connect(windows["prompt"].set_project_folder)
+    windows["project"].project_loaded.connect(windows["cinematheque"].set_project_folder)
+    windows["project"].project_loaded.connect(windows["playbill"].set_project_folder)
+
+    # Connect signals for all windows
     windows["nickelodeon"].video_loaded_with_metadata.connect(windows["shotlist"].on_movie_loaded_with_metadata)
     windows["nickelodeon"].video_loaded_with_metadata.connect(windows["cinematheque"].on_movie_loaded_with_metadata)
     windows["nickelodeon"].video_loaded_with_metadata.connect(windows["prompt"].on_movie_loaded_with_metadata)
     windows["nickelodeon"].video_loaded_with_metadata.connect(windows["captions"].on_movie_loaded_with_metadata)
     windows["nickelodeon"].video_loaded_with_metadata.connect(windows["subtitles"].on_movie_loaded_with_metadata)
     windows["nickelodeon"].video_loaded_with_metadata.connect(windows["inference"].on_movie_loaded_with_metadata)
+    
+    # Connect playhouse signals for gameplay videos
+    windows["playhouse"].video_loaded_with_metadata.connect(windows["playbill"].on_gameplay_loaded_with_metadata)
+    
     windows["nickelodeon"].video_timecode_changed.connect(windows["shotlist"].clear_table_selection)
     windows["nickelodeon"].video_timecode_changed.connect(windows["shotlist"].set_current_time)
     windows["nickelodeon"].video_timecode_changed.connect(windows["subtitles"].on_timecode_changed)
     windows["nickelodeon"].video_timecode_changed.connect(windows["inference"].on_timecode_changed)
     windows["nickelodeon"].frames_extracted.connect(windows["captions"].handle_api_frames)
 
-    windows["cinematheque"].project_loaded.connect(windows["shotlist"].set_project_folder)
-    windows["cinematheque"].project_loaded.connect(windows["captions"].set_project_folder)
-    windows["cinematheque"].project_loaded.connect(windows["subtitles"].set_project_folder)
-    windows["cinematheque"].project_loaded.connect(windows["inference"].set_project_folder)
-    windows["cinematheque"].project_loaded.connect(windows["prompt"].set_project_folder)
     windows["cinematheque"].shotlist_bot_start.connect(windows["shotlist"].start_shotlist_bot)
     windows["cinematheque"].movie_selected.connect(windows["nickelodeon"].load_video_from_path_with_metadata)
+    windows["playbill"].gameplay_selected.connect(windows["playhouse"].load_video_from_path_with_metadata)
 
     windows["shotlist"].jump_to_timecode_signal.connect(windows["nickelodeon"].jump_to_timecode)
     windows["shotlist"].shotlist_status.connect(windows["captions"].set_shotlist_status)
@@ -160,6 +171,7 @@ def main():
     windows["captions"].request_previous_shot.connect(windows["shotlist"].jump_to_previous_shot)
     windows["captions"].shot_bot_finished.connect(windows["cinematheque"].shot_bot_finished)
 
+    # Create the main window and set it up using our new windows
     main_window = PlayableCinemaMainWindow(windows)
     main_window.show()
 
@@ -216,6 +228,7 @@ def save_preferences(windows, main_window):
     with open(PREFS_PATH, "w") as f:
         json.dump(prefs, f)
 
+# Load preferences for all windows and widgets
 def load_preferences(windows, main_window):
     if os.path.exists(PREFS_PATH):
         with open(PREFS_PATH, "r") as f:
@@ -226,6 +239,7 @@ def load_preferences(windows, main_window):
         for win in windows.values():
             win.request_load.emit({})
 
+# Debugging function to report window and dock geometry
 def report_window_and_dock_geometry(main_window, label=""):
     print(f"DEBUG: --- Window & Dock Geometry Report {label} ---")
     geo = main_window.geometry()
@@ -324,52 +338,6 @@ def load_dock_layout(main_window, filename="previous.layout"):
                 os.remove(dock_layout_file)
     else:
         if DEBUG: print("DEBUG: No dock layout file found to load.")
-
-# Load tooltip text from a file
-def load_tooltip_text(filename):
-    """Load tooltip text from preferences file"""
-    tooltip_path = os.path.join(os.path.dirname(__file__), "preferences", filename)
-    
-    try:
-        with open(tooltip_path, "r", encoding="utf-8") as f:
-            return f.read().strip()
-    except:
-        return ""  # Just return empty string if file doesn't exist
-
-# Global key filter to handle key events across all windows
-class GlobalKeyFilter(QObject):
-    def __init__(self, windows, main_window):
-        super().__init__()
-        self.windows = windows  # This is now a dict
-        self.main_window = main_window
-
-    def eventFilter(self, obj, event):
-        if event.type() == QEvent.KeyPress:
-            # Avoid handling global shortcuts if focus is in a text field
-            widget = QApplication.focusWidget()
-            from PyQt5.QtWidgets import QLineEdit, QTextEdit, QPlainTextEdit
-            if isinstance(widget, (QLineEdit, QTextEdit, QPlainTextEdit)):
-                return False  # Let the text field handle the key event
-
-            cine = self.windows["cinematheque"]
-            if event.key() == Qt.Key_PageDown:
-                if DEBUG: print("DEBUG: PageDown pressed (Cinematheque navigation)")
-                cine.select_next_movie()
-                return True
-            elif event.key() == Qt.Key_PageUp:
-                if DEBUG: print("DEBUG: PageUp pressed (Cinematheque navigation)")
-                cine.select_previous_movie()
-                return True
-            elif event.key() == Qt.Key_W:
-                if DEBUG: print("DEBUG: W pressed (resetting dock layout)")
-                reset_dock_layout(self.main_window)
-                return True
-
-            # Keep all other key handling for shortcuts (A, O, B, N, etc.)
-            self.windows["nickelodeon"].handle_global_key(event)
-            self.windows["captions"].keyPressEvent(event)
-            return True
-        return False
 
 def reset_dock_layout(main_window):
     """Reset the dock layout to its default state."""

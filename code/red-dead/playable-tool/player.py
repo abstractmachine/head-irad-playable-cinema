@@ -55,7 +55,7 @@ class AbstractPlayerWindow(QMainWindow):
         self.timeline.setContentsMargins(0, 0, 0, 0)
         self.timeline.setStyleSheet("QSlider { margin-left: 8px; margin-right: 8px; padding: 0px; }")
         # self.timeline.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.timeline.setToolTip("Scrub through the video timeline")
+        # self.timeline.setToolTip("Scrub through the video timeline")
         self.timeline.sliderPressed.connect(self.on_slider_pressed)
         self.timeline.sliderReleased.connect(self.on_slider_released)
 
@@ -63,7 +63,7 @@ class AbstractPlayerWindow(QMainWindow):
 
         # Play/Pause button
         self.play_pause_button = QPushButton("⏵")
-        self.play_pause_button.setToolTip("Play or pause video\nShortcut:Space")
+        # self.play_pause_button.setToolTip("Play or pause video\nShortcut:Space")
         self.play_pause_button.clicked.connect(self.toggle_play_pause)
         self.play_pause_button.setEnabled(False)
         self.play_pause_button.setFont(self.ui.get_font('button'))
@@ -72,7 +72,7 @@ class AbstractPlayerWindow(QMainWindow):
 
         # Seek back
         self.back_button = QPushButton("⏪")
-        self.back_button.setToolTip("Seek backward\nShortcut: Left arrow, Shift for fast")
+        # self.back_button.setToolTip("Seek backward\nShortcut: Left arrow, Shift for fast")
         self.back_button.setEnabled(False)
         self.back_button.clicked.connect(self.seek_back)
         self.back_button.setFont(self.ui.get_font('button'))
@@ -80,7 +80,7 @@ class AbstractPlayerWindow(QMainWindow):
 
         # Seek forward
         self.forward_button = QPushButton("⏩")
-        self.forward_button.setToolTip("Seek forward\nShortcut: Right arrow, Shift for fast")
+        # self.forward_button.setToolTip("Seek forward\nShortcut: Right arrow, Shift for fast")
         self.forward_button.setEnabled(False)
         self.forward_button.clicked.connect(self.seek_forward)
         self.forward_button.setFont(self.ui.get_font('button'))

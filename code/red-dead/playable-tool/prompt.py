@@ -48,6 +48,7 @@ class PromptWindow(QMainWindow):
             "Context": "context.txt",
             "Shot": "shot.txt",
             "Scene": "scene.txt",
+            "Gameplay": "gameplay.txt",
             "Image": "image.txt"
         }
 
@@ -58,6 +59,7 @@ class PromptWindow(QMainWindow):
             "System": None,
             "Shot": None,
             "Scene": None,
+            "Gameplay": None,
             "Goal": None,
             "Format": None,
             "Warning": None,
@@ -292,7 +294,7 @@ class PromptWindow(QMainWindow):
 
         # List of required files
         required_files = [
-            'system.txt', 'goal.txt', 'format.txt', 'warning.txt', 'context.txt', 'shot.txt', 'scene.txt', 'image.txt', 'tags.txt'
+            'context.txt', 'format.txt', 'gameplay.txt', 'goal.txt', 'image.txt', 'scene.txt', 'shot.txt', 'system.txt', 'tags.txt', 'warning.txt'
         ]
 
         # Preferences source directory (now in prompts subdirectory)

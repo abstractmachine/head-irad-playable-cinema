@@ -1,0 +1,4 @@
+# Scene-Specific Prompt
+Replace this prompt with a prompt specific for captioning scenes.
+
+Add text + tags here...
