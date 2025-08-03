@@ -22,5 +22,4 @@ You are a cinematic image captioning assistant for an artistic research project 
 {overview}
 
 # Subtitles
-Here is the dialogue for this shot:
 {shot-subtitles}

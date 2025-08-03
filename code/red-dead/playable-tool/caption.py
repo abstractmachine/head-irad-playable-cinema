@@ -245,6 +245,7 @@ class CaptionWindow(QWidget):
         self.bot_button.clicked.connect(self.toggle_bot)
 
         self.is_last_row = False
+        self.is_first_row = True  # Add this line
         self.api_running = False
         self.project_folder = None
         self.current_movie_filename = None
@@ -374,6 +375,7 @@ class CaptionWindow(QWidget):
         for btn in [self.annotate_button, self.api_button]:
             btn.setEnabled(True)
         self.next_button.setEnabled(not self.is_last_row)
+        self.previous_button.setEnabled(not self.is_first_row)
         self.caption_field.setPlainText(result)
         if DEBUG: print("DEBUG: About to call handle_bot_after_api_result")
         self.handle_bot_after_api_result()
@@ -409,6 +411,7 @@ class CaptionWindow(QWidget):
         for btn in [self.annotate_button, self.api_button]:
             btn.setEnabled(True)
         self.next_button.setEnabled(not self.is_last_row)
+        self.previous_button.setEnabled(not self.is_first_row)
         
         # Show error message in caption field
         self.caption_field.setPlainText(f"API aborted: {message}")
@@ -471,6 +474,12 @@ class CaptionWindow(QWidget):
         if self.bot_active and not self.api_running:
             if DEBUG: print("DEBUG: Bot continuing loop via handle_is_last_available_shot")
             QTimer.singleShot(100, self.start_bot_loop)
+
+    def handle_is_first_available_shot(self, is_first):
+        """Handle whether this is the first available shot"""
+        if DEBUG: print(f"DEBUG: handle_is_first_available_shot called - is_first={is_first}")
+        self.is_first_row = is_first
+        self.previous_button.setEnabled(not is_first and not self.api_running)
 
     def validate_frame_count(self):
         """Validate frame count input"""

@@ -34,6 +34,7 @@ class ShotlistWindow(QMainWindow):
     row_did_change = pyqtSignal(int)  # New signal: emits current_row when it changes
     row_data = pyqtSignal(dict)
     is_last_available_shot = pyqtSignal(bool)
+    is_first_available_shot = pyqtSignal(bool)  # Add this new signal
 
     def __init__(self, ui):
         super().__init__()
@@ -576,6 +577,7 @@ class ShotlistWindow(QMainWindow):
         if row_count == 0:
             self.current_row = -1
             self.is_last_available_shot.emit(True)
+            self.is_first_available_shot.emit(True)  # Add this line
             return
 
         # Check if current row changed
@@ -603,6 +605,10 @@ class ShotlistWindow(QMainWindow):
         last_non_ignored = self.is_last_non_ignored_row(self.current_row)
         self.is_last_available_shot.emit(last_non_ignored)
 
+        # Update first shot status
+        first_non_ignored = self.is_first_non_ignored_row(self.current_row)
+        self.is_first_available_shot.emit(first_non_ignored)
+
         # Clear previous highlights
         for row in range(row_count):
             scene_col = self.get_column_index_by_name("Scene")
@@ -620,6 +626,26 @@ class ShotlistWindow(QMainWindow):
                 if index_item:
                     index_item.setBackground(QColor("#f0f"))
                     index_item.setForeground(QBrush(QColor("#fff")))
+
+    def is_first_non_ignored_row(self, current_row):
+        """Check if there are any non-ignored shots before the current position"""
+        row_count = self.scene_table.rowCount()
+        
+        if row_count == 0:
+            return True
+        
+        # Start searching from current_row - 1, or from last row if current_row is invalid
+        end_row = min(current_row - 1, row_count - 1) if current_row > 0 else -1
+        
+        # Check if there are any non-ignored rows before current position
+        for row in range(end_row, -1, -1):
+            widget = self.scene_table.cellWidget(row, 0)
+            if widget:
+                checkbox = widget.findChild(QCheckBox)
+                if checkbox and not checkbox.isChecked():
+                    return False  # Found a non-ignored row before current
+        
+        return True  # No non-ignored rows found before current position
 
     def handle_request_current_shot(self, count):
         row = self.find_current_shot(self.current_time_ms)

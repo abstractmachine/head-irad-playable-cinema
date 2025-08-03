@@ -194,6 +194,18 @@ class SubtitlesWindow(QWidget):
                 results.append(sub['text'])
         return "\n".join(results)
 
+    def get_all_subtitles(self):
+        """Return all subtitle text from the entire movie as a single string."""
+        if not self.subtitles_data:
+            return ""
+        
+        # Extract all subtitle text and join with newlines
+        all_text = []
+        for subtitle in self.subtitles_data:
+            all_text.append(subtitle['text'])
+        
+        return "\n".join(all_text)
+
     def on_request_save(self):
         """Save window preferences"""
         geo = self.geometry()

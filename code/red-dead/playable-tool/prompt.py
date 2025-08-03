@@ -399,9 +399,15 @@ def parse_system_prompt_files(project_directory, metadata=None, row_data=None, s
                 # TODO: Implement scene subtitle extraction
                 return "[SCENE SUBTITLES NOT YET IMPLEMENTED]"
             
-            elif tag == "movie-subtitle":
-                # TODO: Implement movie subtitle extraction
-                return "[MOVIE SUBTITLE NOT YET IMPLEMENTED]"
+            elif tag == "movie-subtitles":
+                # Extract all subtitles from the entire movie
+                if subtitles_window:
+                    try:
+                        return subtitles_window.get_all_subtitles()
+                    except Exception as e:
+                        if DEBUG: print(f"DEBUG: Error getting all movie subtitles: {e}")
+                        return "[ERROR RETRIEVING MOVIE SUBTITLES]"
+                return "[NO SUBTITLES WINDOW AVAILABLE]"
             
             elif tag == "image-count":
                 return str(metadata.get('image-count', '0'))

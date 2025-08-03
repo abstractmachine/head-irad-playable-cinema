@@ -148,6 +148,7 @@ def main():
     windows["shotlist"].abort_api.connect(windows["captions"].handle_api_abort)
     windows["shotlist"].shot_timecodes.connect(windows["nickelodeon"].handle_shot_timecodes)
     windows["shotlist"].is_last_available_shot.connect(windows["captions"].handle_is_last_available_shot)
+    windows["shotlist"].is_first_available_shot.connect(windows["captions"].handle_is_first_available_shot)
     windows["shotlist"].shotlist_status.connect(windows["cinematheque"].on_shotlist_status)
     windows["shotlist"].row_data.connect(windows["captions"].handle_row_data)
     windows["shotlist"].row_data.connect(windows["prompt"].handle_row_data)
