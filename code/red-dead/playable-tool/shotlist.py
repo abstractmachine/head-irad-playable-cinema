@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import (
 
 from scenedetect import open_video
 from detector import ShotDetectWorker
+from shotlist_worker import ShotlistLoadWorker
 
 JUMP_FRAME_PADDING_PLAYBACK = 0  # Number of frames to pad when jumping in playback mode
 JUMP_FRAME_PADDING_DETECTION = 5  # Number of frames to pad when jumping in detection mode
@@ -392,41 +393,72 @@ class ShotlistWindow(QMainWindow):
 
     def on_movie_loaded_with_metadata(self, video_path, metadata):
         shotlist_exists = False
+        self.video_path = video_path
         if video_path:
-            self.video_path = video_path
             base = os.path.basename(video_path)
             name, _ = os.path.splitext(base)
             csv_path = os.path.join(self.detections_folder, f"{name}.csv")
             if os.path.exists(csv_path):
-                self.load_scene_detections(csv_path)
+                # Start threaded shotlist loading
+                self.scene_table.setRowCount(0)
+                self.current_csv_path = csv_path
+                self.delete_button.setEnabled(False)
+                self.detect_button.setEnabled(True)
+                self._shotlist_thread = QThread()
+                self._shotlist_worker = ShotlistLoadWorker(csv_path)
+                self._shotlist_worker.moveToThread(self._shotlist_thread)
+                self._shotlist_thread.started.connect(self._shotlist_worker.run)
+                self._shotlist_worker.finished.connect(self.on_shotlist_loaded)
+                self._shotlist_worker.error.connect(self.on_shotlist_load_error)
+                self._shotlist_worker.finished.connect(self._shotlist_thread.quit)
+                self._shotlist_worker.finished.connect(self._shotlist_worker.deleteLater)
+                self._shotlist_thread.finished.connect(self._shotlist_thread.deleteLater)
+                self._shotlist_thread.start()
                 shotlist_exists = True
             else:
                 self.scene_table.setRowCount(0)
                 self.current_csv_path = None
                 self.delete_button.setEnabled(False)
-            self.detect_button.setEnabled(True)
-            
+                self.detect_button.setEnabled(True)
             # Reset current row tracking when new movie loads
             self.current_row = -1
             self.last_current_row = -1
             self.current_time_ms = 0
-            
         else:
             self.video_path = None
             self.scene_table.setRowCount(0)
             self.current_csv_path = None
             self.delete_button.setEnabled(False)
             self.detect_button.setEnabled(False)
-            
-            # Reset tracking when no video
             self.current_row = -1
             self.last_current_row = -1
             self.current_time_ms = 0
-            
-        # Emit shotlist status
+
         self.shotlist_status.emit(shotlist_exists)
-        # Emit data of the first row if it exists
         self.send_row_data()
+
+    def on_shotlist_loaded(self, rows):
+        self.scene_table.setRowCount(0)
+        for row in rows:
+            ignore = row.get("Ignore", "No") == "Yes"
+            scene_num = row.get("Scene", "")
+            start = row.get("Start", "")
+            end = row.get("End", "")
+            shot_caption = row.get("Shot_Caption", "")
+            scene_caption = row.get("Scene_Caption", "")
+            self.add_scene_row(scene_num, start, end, shot_caption, scene_caption, ignore)
+        self.delete_button.setEnabled(True)
+        self.select_first_available_shot()
+        self.shotlist_status.emit(True)
+        self.send_row_data()
+
+    def on_shotlist_load_error(self, error_msg):
+        self.scene_table.setRowCount(0)
+        self.delete_button.setEnabled(False)
+        self.shotlist_status.emit(False)
+        # Optionally, show error to user
+        if DEBUG:
+            print(f"Shotlist load error: {error_msg}")
 
     def delete_scene_csv(self):
         # Delete CSV file
@@ -960,3 +992,58 @@ class ShotlistWindow(QMainWindow):
         self.project_folder = project_folder
         self.detections_folder = os.path.join(project_folder, "shotlists")
         os.makedirs(self.detections_folder, exist_ok=True)
+
+    def clear_shotlist_table(self):
+        self.scene_table.setRowCount(0)
+        self.current_row = -1
+        self.last_current_row = -1
+        self.current_time_ms = 0
+        self.current_csv_path = None
+        self.delete_button.setEnabled(False)
+        self.shotlist_status.emit(False)
+        self.send_row_data()
+
+    def select_first_available_shot(self):
+        """Select the first non-ignored shot and update current_row."""
+        row_count = self.scene_table.rowCount()
+        if DEBUG: print(f"DEBUG: select_first_available_shot called, row_count={row_count}")
+        if row_count == 0:
+            if DEBUG: print("DEBUG: No rows in table, setting current_row to -1")
+            self.current_row = -1
+            self.row_did_change.emit(self.current_row)
+            self.send_row_data()
+            self.is_first_available_shot.emit(True)
+            self.is_last_available_shot.emit(True)
+            return
+
+        # Find first non-ignored row
+        for row in range(row_count):
+            ignore_col_index = self.get_column_index_by_name("Ignore")
+            if DEBUG: print(f"DEBUG: Checking row {row}, ignore_col_index={ignore_col_index}")
+            if ignore_col_index == -1:
+                if DEBUG: print(f"DEBUG: Ignore column not found for row {row}, skipping")
+                continue
+            widget = self.scene_table.cellWidget(row, ignore_col_index)
+            if widget:
+                checkbox = widget.findChild(QCheckBox)
+                if checkbox:
+                    if DEBUG: print(f"DEBUG: Row {row} checkbox checked={checkbox.isChecked()}")
+                    if not checkbox.isChecked():
+                        # Found first non-ignored shot
+                        if DEBUG: print(f"DEBUG: Selecting row {row} as first available shot")
+                        self.current_row = row
+                        self.row_did_change.emit(self.current_row)
+                        self.send_row_data(self.current_row)
+                        self.scroll_to_row(self.current_row)
+                        # Update first/last available shot signals
+                        self.is_first_available_shot.emit(self.is_first_non_ignored_row(self.current_row))
+                        self.is_last_available_shot.emit(self.is_last_non_ignored_row(self.current_row))
+                        return
+
+        # If all shots are ignored
+        if DEBUG: print("DEBUG: All shots are ignored, setting current_row to -1")
+        self.current_row = -1
+        self.row_did_change.emit(self.current_row)
+        self.send_row_data()
+        self.is_first_available_shot.emit(True)
+        self.is_last_available_shot.emit(True)

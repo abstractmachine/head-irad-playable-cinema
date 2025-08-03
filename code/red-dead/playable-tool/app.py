@@ -142,13 +142,15 @@ def main():
     
     # Connect playhouse signals for gameplay videos
     windows["playhouse"].video_loaded_with_metadata.connect(windows["playbill"].on_gameplay_loaded_with_metadata)
-    
+
+    # windows["nickelodeon"].new_movie_is_loading.connect(windows["shotlist"].clear_shotlist_table)
     windows["nickelodeon"].video_timecode_changed.connect(windows["shotlist"].clear_table_selection)
     windows["nickelodeon"].video_timecode_changed.connect(windows["shotlist"].set_current_time)
     windows["nickelodeon"].video_timecode_changed.connect(windows["subtitles"].on_timecode_changed)
     windows["nickelodeon"].video_timecode_changed.connect(windows["inference"].on_timecode_changed)
     windows["nickelodeon"].frames_extracted.connect(windows["captions"].handle_api_frames)
 
+    windows["cinematheque"].request_caption_bot_autostart.connect(windows["captions"].enable_auto_start_bot)
     windows["cinematheque"].shotlist_bot_start.connect(windows["shotlist"].start_shotlist_bot)
     windows["cinematheque"].movie_selected.connect(windows["nickelodeon"].load_video_from_path_with_metadata)
     windows["playbill"].gameplay_selected.connect(windows["playhouse"].load_video_from_path_with_metadata)

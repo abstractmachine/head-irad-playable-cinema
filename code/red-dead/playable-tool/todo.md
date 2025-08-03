@@ -29,6 +29,7 @@ Train a model (cf. [FAISS](https://huggingface.co/docs/datasets/en/faiss_es) on 
 
 
 # Bugs
+- There is a off-by-one bug in the `shotlist` data retrieval. Verify all the code that requests row data
 - There seems to be an offset of the subtitles shown and what the prompt integrates (tested on `Breakheart Pass`)
 - ~~Check `Prompts` folder for `default` and `movie` when changing movies. The `movie` prompt looked like it was overwriting `default`~~
     - ~~If `default` is selected in `Prompt` window, it overwrites it in `default` when selecting new movie~~ (Entirely new prompt scripting system)

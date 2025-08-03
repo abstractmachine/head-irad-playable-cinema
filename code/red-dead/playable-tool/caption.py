@@ -284,6 +284,9 @@ class CaptionWindow(QWidget):
         self.project_folder = None
         self.current_movie_filename = None
 
+        # New attribute to control auto-start behavior
+        self.auto_start_bot = False
+
     def keyPressEvent(self, event):
         # Only handle hotkeys, not ENTER
         key = event.key()
@@ -313,12 +316,19 @@ class CaptionWindow(QWidget):
             if "frame_count" in data:
                 self.frame_count_field.setText(data["frame_count"])
 
-    def set_shotlist_status(self, exists):
-        self.annotate_button.setEnabled(exists)
-        self.api_button.setEnabled(exists)
-        self.bot_button.setEnabled(exists)
-        self.next_button.setEnabled(exists)
-        self.previous_button.setEnabled(exists)
+    def set_shotlist_status(self, loaded):
+        if DEBUG: print(f"DEBUG: set_shotlist_status called, loaded={loaded}, auto_start_bot={self.auto_start_bot}, bot_active={self.bot_active}")
+        self.shotlist_loaded = loaded
+        self.api_button.setEnabled(loaded)
+        self.annotate_button.setEnabled(loaded)
+        self.next_button.setEnabled(loaded)
+        self.previous_button.setEnabled(loaded)
+        self.bot_button.setEnabled(loaded)
+        if loaded and self.auto_start_bot and self.bot_active:
+            if DEBUG: print("DEBUG: Auto-starting bot after shotlist loaded")
+            self.auto_start_bot = False
+            self.jump_to_first_available_shot()  # <-- Ensure valid shot selection
+            QTimer.singleShot(100, self.start_bot_loop)  # Start bot after jump
 
     def submit_caption(self):
         if DEBUG: print("DEBUG: submit_caption called")
@@ -417,14 +427,12 @@ class CaptionWindow(QWidget):
     def handle_bot_after_api_result(self):
         if DEBUG: print(f"DEBUG: handle_bot_after_api_result called - bot_active={self.bot_active}")
         if self.bot_active:
-            if DEBUG: print("DEBUG: Bot clicking Annotate button")
             self.annotate_button.click()
             if not self.is_last_row:
-                if DEBUG: print("DEBUG: Bot clicking Next button")
                 self.next_button.click()
             else:
-                if DEBUG: print("DEBUG: Bot reached last row, stopping")
-                self.stop_bot()
+                if DEBUG: print("DEBUG: Bot reached last row, moving to next movie")
+                self.auto_start_bot = True  # <-- Add this line
                 self.handle_bot_finished()
 
     def handle_api_abort(self, message):
@@ -465,8 +473,12 @@ class CaptionWindow(QWidget):
         if DEBUG: print("DEBUG: handle_previous_button called")
         self.request_previous_shot.emit()
 
+    def enable_auto_start_bot(self):
+        if DEBUG: print(f"DEBUG: enable_auto_start_bot called, bot_active={self.bot_active}")
+        self.auto_start_bot = True
+
     def toggle_bot(self):
-        if DEBUG: print("DEBUG: toggle_bot called")
+        if DEBUG: print(f"DEBUG: toggle_bot called, bot_active={self.bot_active}")
         if not self.bot_active:
             if DEBUG: print("DEBUG: Starting bot")
             self.bot_active = True
@@ -486,6 +498,10 @@ class CaptionWindow(QWidget):
         self.bot_button.setStyleSheet("text-align: center;")
 
     def start_bot_loop(self):
+        if not self.shotlist_loaded:
+            if DEBUG: print("DEBUG: Bot waiting for shotlist to load")
+            self.auto_start_bot = True
+            return
         if DEBUG: print(f"DEBUG: start_bot_loop called - bot_active={self.bot_active}, api_running={self.api_running}")
         if not self.bot_active or self.api_running:
             if DEBUG: print("DEBUG: Bot loop aborted - bot not active or API running")
@@ -523,3 +539,7 @@ class CaptionWindow(QWidget):
                 self.frame_count_field.setText("0")
         except ValueError:
             self.frame_count_field.setText("5")  # Reset to default if invalid
+
+    def jump_to_first_available_shot(self):
+        # Emit a signal to ShotlistWindow to jump to the first available shot
+        self.request_current_shot.emit(int(self.frame_count_field.text()))

@@ -16,6 +16,7 @@ class CinemathequeWindow(AbstractCatalogWindow):
     
     # Additional signals specific to cinematheque
     shotlist_bot_start = pyqtSignal()  # Signal to start shotlist bot
+    request_caption_bot_autostart = pyqtSignal()
     
     def __init__(self, ui):
         # Set catalog-specific properties before calling super().__init__()
@@ -145,20 +146,35 @@ class CinemathequeWindow(AbstractCatalogWindow):
     def shot_bot_finished(self):
         """Handle bot finished signal"""
         if DEBUG: print("DEBUG: Cinematheque: bot finished")
-        
-        # Verify if we are at the end of the list
-        if self.movie_list.count() == 0:
-            if DEBUG: print("DEBUG: Cinematheque: No movies to process")
+        was_caption_bot_active = self.caption_bot_button.text().startswith("    Caption Bot On")
+        count = self.movie_list.count()
+        if count == 0 or not self.selected_movie_widget:
+            if DEBUG: print("DEBUG: No movies or no selection, returning")
+            self.turn_off_all_bots()
             return
-        
-        # Get the last item in the list
-        last_item = self.movie_list.item(self.movie_list.count() - 1)
-        last_widget = self.movie_list.itemWidget(last_item)
-        if self.selected_movie_widget and self.selected_movie_widget == last_widget:
-            if DEBUG: print("DEBUG: Cinematheque: Bot reached last movie, stopping")
-            return
-        
-        if DEBUG: print("DEBUG: Cinematheque: More movies remaining, select next movie")
+
+        for i in range(count):
+            widget = self.movie_list.itemWidget(self.movie_list.item(i))
+            if widget == self.selected_movie_widget:
+                next_index = i + 1
+                if next_index < count:
+                    if DEBUG: print(f"DEBUG: Moving to next movie at index {next_index}")
+                    next_item = self.movie_list.item(next_index)
+                    self._direct_select_item(next_item)
+                    self.scroll_to_item(next_index)
+                    # Start the Caption Bot for the next movie after a short delay
+                    if was_caption_bot_active:
+                        QTimer.singleShot(500, self.start_caption_bot)
+                else:
+                    if DEBUG: print("DEBUG: Already at last movie, turning off bots")
+                    self.turn_off_all_bots()
+                break
+
+    def start_caption_bot(self):
+        if self.caption_bot_button.isEnabled():
+            if DEBUG: print("DEBUG: Starting Caption Bot for next movie")
+            self.request_caption_bot_autostart.emit()
+            self.caption_bot_button.click()
 
     def turn_off_all_bots(self):
         """Turn off all running bots and reset their buttons."""

@@ -18,6 +18,7 @@ class AbstractPlayerWindow(QMainWindow):
     frames_extracted = pyqtSignal(list)
     request_save = pyqtSignal()
     request_load = pyqtSignal(dict)
+    new_movie_is_loading = pyqtSignal()
 
     def __init__(self, ui):
         super().__init__()
@@ -138,6 +139,7 @@ class AbstractPlayerWindow(QMainWindow):
     def load_video_from_path_with_metadata(self, file_path, metadata=None):
         """Load video from a specific file path with metadata"""
         if file_path and os.path.exists(file_path):
+            self.new_movie_is_loading.emit()  # <--- Emit signal before loading
             if hasattr(self, 'current_video_path') and self.current_video_path == file_path:
                 return
             self.movie_metadata = metadata
