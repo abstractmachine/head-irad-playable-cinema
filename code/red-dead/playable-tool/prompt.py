@@ -56,13 +56,13 @@ class PromptWindow(QMainWindow):
             "Tags": None,
             "Test": None,
             "System": None,
+            "Shot": None,
+            "Scene": None,
             "Goal": None,
             "Format": None,
             "Warning": None,
             "Context": None,
-            "Image": None,
-            "Shot": None,
-            "Scene": None
+            "Image": None
         }
 
         # Dropdown Menu

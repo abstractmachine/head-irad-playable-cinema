@@ -10,7 +10,7 @@ import re
 from PyQt5.QtGui import QTextOption
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QTimer
 from PyQt5.QtWidgets import (
-    QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QLineEdit, QTextEdit, QPushButton, QSizePolicy, QLabel
+    QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QLineEdit, QTextEdit, QPushButton, QSizePolicy, QLabel, QComboBox
 )
 
 # Import the new function from prompt.py instead of using the old one
@@ -162,6 +162,15 @@ class CaptionWindow(QWidget):
         button_width, button_height = self.ui.get_dimensions('button')
         tiny_width, tiny_height = self.ui.get_dimensions('tiny')
 
+        # System dropdown (now larger and first)
+        self.prompt_type_dropdown = QComboBox()
+        self.prompt_type_dropdown.addItems(["System", "Shot", "Scene"])
+        self.prompt_type_dropdown.setCurrentIndex(0)
+        self.prompt_type_dropdown.setFont(self.ui.get_font('tiny-condensed'))
+        self.prompt_type_dropdown.setFixedSize(115, button_height)
+        self.prompt_type_dropdown.setStyleSheet("QComboBox { margin: 0px 0px 4px 5px; }")
+        button_layout.addWidget(self.prompt_type_dropdown)
+
         self.annotate_button = QPushButton("Annotate")
         self.annotate_button.setEnabled(False)
         self.annotate_button.setFont(self.ui.get_font('button'))
@@ -169,39 +178,60 @@ class CaptionWindow(QWidget):
         self.annotate_button.setToolTip("Rewrite current caption into current 'Caption' cell\nShortcut: A")
         button_layout.addWidget(self.annotate_button)
 
-        self.previous_button = QPushButton("Previous")
+        # Replace separate Previous and Next buttons with a double button
+        nav_button_layout = QHBoxLayout()
+        nav_button_layout.setContentsMargins(0, 0, 0, 0)
+        nav_button_layout.setSpacing(0)  # No space between buttons
+
+        self.previous_button = QPushButton("▲")
         self.previous_button.setEnabled(False)
         self.previous_button.setFont(self.ui.get_font('button'))
-        self.previous_button.setFixedSize(120, button_height)
+        self.previous_button.setFixedSize(60, button_height)  # Half width
         self.previous_button.setToolTip("Jump to previous shot")
-        button_layout.addWidget(self.previous_button)
 
-        self.next_button = QPushButton("Next")
+        self.next_button = QPushButton("▼")
         self.next_button.setEnabled(False)
         self.next_button.setFont(self.ui.get_font('button'))
-        self.next_button.setFixedSize(120, button_height)
+        self.next_button.setFixedSize(60, button_height)  # Half width
         self.next_button.setToolTip("Jump to next shot")
-        button_layout.addWidget(self.next_button)
 
-        self.api_button = QPushButton("API")
-        self.api_button.setEnabled(False)
-        self.api_button.setFont(self.ui.get_font('button'))
-        self.api_button.setFixedSize(120, button_height)
-        self.api_button.setToolTip("Send current shot to AI API and receive a caption\nShortcut: O")
-        button_layout.addWidget(self.api_button)
+        # Style to make them look like one button
+        self.previous_button.setStyleSheet("""
+            QPushButton {
+                border: none;
+                border-top-right-radius: 0px;
+                border-bottom-right-radius: 0px;
+                border-right: 0px;
+            }
+        """)
+
+        self.next_button.setStyleSheet("""
+            QPushButton {
+                border: none;
+                border-top-left-radius: 0px;
+                border-bottom-left-radius: 0px;
+                border-left: 0px;
+            }
+        """)
+
+        nav_button_layout.addWidget(self.previous_button)
+        nav_button_layout.addWidget(self.next_button)
+        button_layout.addLayout(nav_button_layout)
 
         # Frame count label and field in a horizontal layout
         frame_count_row = QHBoxLayout()
         frame_count_row.setContentsMargins(0, 0, 0, 0)
         frame_count_row.setSpacing(0)
 
-        frame_count_label = QLabel(" Frames")
-        frame_count_label.setFont(self.ui.get_font('tiny-condensed'))
-        frame_count_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        frame_count_label.setFixedSize(70, tiny_height)
-        frame_count_label.setStyleSheet("QLabel { color: #888; margin-top: 4px; }")
-
-        frame_count_row.addWidget(frame_count_label)
+        # API button (now smaller and second)
+        self.api_button = QPushButton("API")
+        self.api_button.setEnabled(False)
+        self.api_button.setFont(self.ui.get_font('tiny'))
+        self.api_button.setFixedSize(80, button_height)
+        self.api_button.setToolTip("Send current shot to AI API and receive a caption\nShortcut: O")
+        self.api_button.setStyleSheet("QPushButton { margin-top: 4px 16px 0px 0px; }")
+        
+        frame_count_row.addWidget(self.api_button)
 
         self.bot_button = QPushButton("Caption Bot Off")
         self.bot_button.setEnabled(False)
@@ -211,11 +241,11 @@ class CaptionWindow(QWidget):
 
         self.frame_count_field = QLineEdit("5")
         self.frame_count_field.setFont(self.ui.get_font('tiny'))
-        self.frame_count_field.setFixedSize(40, tiny_height)
+        self.frame_count_field.setFixedSize(30, button_height)
         self.frame_count_field.setAlignment(Qt.AlignCenter)
-        self.frame_count_field.setToolTip("Number of frames to send to API (0 = none)")
+        self.frame_count_field.setToolTip("Number of image frames to send to API (0 = none)")
         self.frame_count_field.editingFinished.connect(self.validate_frame_count)
-        self.frame_count_field.setStyleSheet("QLineEdit { margin-top: 2px; }")  # 2px top margin
+        self.frame_count_field.setStyleSheet("QLineEdit { margin-top: 0px 5px 0px 0px; }")
         frame_count_row.addWidget(self.frame_count_field)
 
         button_layout.addLayout(frame_count_row)

@@ -1,1 +1,4 @@
-I have uploaded {image-count} images. Use these images, as well as the subtitles to determine the subject and theme of the intrigue of this scene.
+# Scene-Specific Prompt
+Replace this prompt with a prompt specific for captioning scenes.
+
+Add text + tags here...

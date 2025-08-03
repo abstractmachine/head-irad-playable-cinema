@@ -122,7 +122,7 @@ class InferenceWindow(QWidget):
         self.setWindowTitle(f"Inference - {movie_name}")
         
         # Clear inference field for new movie
-        self.matched_caption.setPlainText(f"Ready for inference on: {movie_name}")
+        self.matched_caption.setPlainText(f"{movie_name}")
         if DEBUG: print(f"Inference: Movie loaded - {movie_filename}")
 
     def on_movie_loaded_with_metadata(self, movie_path, metadata=None):
@@ -144,7 +144,7 @@ class InferenceWindow(QWidget):
 
         self.setWindowTitle(f"Inference - {movie_name}")
 
-        info = f"Ready to match \nTitle: {movie_name}\nFilename: {movie_filename}\nYear: {movie_year}"
+        info = f"{movie_name}\n ({movie_year})"
         self.matched_caption.setPlainText(info)
         
         if DEBUG:
