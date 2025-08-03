@@ -152,6 +152,7 @@ def main():
     windows["shotlist"].shotlist_status.connect(windows["cinematheque"].on_shotlist_status)
     windows["shotlist"].row_data.connect(windows["captions"].handle_row_data)
     windows["shotlist"].row_data.connect(windows["prompt"].handle_row_data)
+    windows["shotlist"].row_did_change.connect(windows["prompt"].handle_row_did_change)
 
     windows["captions"].shot_caption_submitted.connect(windows["shotlist"].update_shot_caption_for_current_shot)
     windows["captions"].request_current_shot.connect(windows["shotlist"].handle_request_current_shot)

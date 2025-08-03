@@ -183,11 +183,11 @@ class CaptionWindow(QWidget):
         self.next_button.setToolTip("Jump to next shot")
         button_layout.addWidget(self.next_button)
 
-        self.api_button = QPushButton("OpenAI")
+        self.api_button = QPushButton("API")
         self.api_button.setEnabled(False)
         self.api_button.setFont(self.ui.get_font('button'))
         self.api_button.setFixedSize(120, button_height)
-        self.api_button.setToolTip("Send current shot to OpenAI API and receive a caption\nShortcut: O")
+        self.api_button.setToolTip("Send current shot to AI API and receive a caption\nShortcut: O")
         button_layout.addWidget(self.api_button)
 
         # Frame count label and field in a horizontal layout
@@ -213,7 +213,7 @@ class CaptionWindow(QWidget):
         self.frame_count_field.setFont(self.ui.get_font('tiny'))
         self.frame_count_field.setFixedSize(40, tiny_height)
         self.frame_count_field.setAlignment(Qt.AlignCenter)
-        self.frame_count_field.setToolTip("Number of frames to send to OpenAI (0 = none)")
+        self.frame_count_field.setToolTip("Number of frames to send to API (0 = none)")
         self.frame_count_field.editingFinished.connect(self.validate_frame_count)
         self.frame_count_field.setStyleSheet("QLineEdit { margin-top: 2px; }")  # 2px top margin
         frame_count_row.addWidget(self.frame_count_field)
@@ -371,7 +371,7 @@ class CaptionWindow(QWidget):
         self.api_running = False
         if hasattr(self, 'api_anim_timer'):
             self.api_anim_timer.stop()
-            self.api_button.setText("OpenAI")
+            self.api_button.setText("API")
         for btn in [self.annotate_button, self.api_button]:
             btn.setEnabled(True)
         self.next_button.setEnabled(not self.is_last_row)
@@ -407,7 +407,7 @@ class CaptionWindow(QWidget):
                 self.api_anim_timer = None
             
         # Reset button text and enable buttons
-        self.api_button.setText("OpenAI")
+        self.api_button.setText("API")
         for btn in [self.annotate_button, self.api_button]:
             btn.setEnabled(True)
         self.next_button.setEnabled(not self.is_last_row)
@@ -456,8 +456,8 @@ class CaptionWindow(QWidget):
         if not self.bot_active or self.api_running:
             if DEBUG: print("DEBUG: Bot loop aborted - bot not active or API running")
             return
-        # Step 2: Press OpenAI button
-        if DEBUG: print("DEBUG: Bot clicking OpenAI button")
+        # Step 2: Press API button
+        if DEBUG: print("DEBUG: Bot clicking API button")
         self.api_button.click()
 
     def animate_bot_button(self):

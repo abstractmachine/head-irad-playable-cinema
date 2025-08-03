@@ -209,9 +209,21 @@ class PromptWindow(QMainWindow):
         except Exception as e:
             self.text_fields["Tags"].setPlainText(f"ERROR: Could not read tags: {e}")
 
+    def handle_row_did_change(self, row_data):
+        """Handle row data change emitted from shotlist."""
+        # if the prompt type is Test, re-run the test with new row data
+        if self.prompt_type == "Test":
+            if DEBUG: print("DEBUG Prompt: Row data changed, re-running test")
+            self.handle_test_button()
+
     def on_movie_loaded_with_metadata(self, movie_path, metadata):
         if DEBUG: print(f"DEBUG Prompt: on_movie_loaded called with {movie_path}")
         self.current_metadata = metadata
+        
+        # If Test is currently selected, re-run the test with new metadata
+        if self.prompt_type == "Test":
+            if DEBUG: print("DEBUG Prompt: Test is selected, re-running test with new metadata")
+            self.handle_test_button()
 
     def load_prompt(self):
         """Load the appropriate prompt file based on current prompt type."""

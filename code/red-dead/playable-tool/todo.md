@@ -3,10 +3,6 @@
 ## Finish:
 - Create an abstract class of the `shotlist`. We'll call it the `medialist`. Use this abstract class to make a `Playlist` tab
 - Add a `Playbill` tab with a list of all the movies in the `gameplay` folder
-- Finish System Prompt tag system
-
-## Prompt
-Now that we have the tagging system (ex: {title}, {year}), maybe we can remove per-movie prompts and only use one single `default` prompt.
 
 ## Scene Detection
 Use some sort of [CLIP](https://huggingface.co/docs/transformers/en/model_doc/clip) model to detect "Scene Clustering"
@@ -25,12 +21,14 @@ Train a model (cf. [FAISS](https://huggingface.co/docs/datasets/en/faiss_es) on 
 ## Add Movies :
 - ~~The Naked Spur (Higher Res)~~
 - ~~Track Of The Cat (Higher Res)~~
-- Several more added as well (High Noon, The Searchers, McCabe and Mrs Miller, et cætera)
+- ~~Several more added as well (High Noon, The Searchers, McCabe and Mrs Miller, et cætera)~~ 
+- Giant list of forgotton movies:
+
 
 # Bugs
 
-- Check `Prompts` folder for `default` and `movie` when changing movies. The `movie` prompt looked like it was overwriting `default`
-    - If `default` is selected in `Prompt` window, it overwrites it in `default` when selecting new movie
+- ~~Check `Prompts` folder for `default` and `movie` when changing movies. The `movie` prompt looked like it was overwriting `default`~~
+    - ~~If `default` is selected in `Prompt` window, it overwrites it in `default` when selecting new movie~~ (Entirely new prompt scripting system)
 - Movie importer hanged after a few minutes
 - For the long `playthroughs` (approx 25h+ of footage), we should:
     - Use the standard detection method `threshold-adaptive`
@@ -42,7 +40,11 @@ Train a model (cf. [FAISS](https://huggingface.co/docs/datasets/en/faiss_es) on 
 - ~~If we load and there is no project or the old project, what appears?~~
     - Ok, the `Project` button appears prominently, is good for now
 - If we load and the previous project no longer exists, what appears?
+- ~~Now that we have the tagging system (ex: {title}, {year}), maybe we can remove per-movie prompts and only use one single `default` prompt.~~~
+    - There is now a prompt scripting system using {tags}. For now it is common to all movies but adapts itself, according the desired tags, using the metadata, subtitles, etc, of each movie.
 
+# Done
+- ~~ Finish System Prompt tag system~~
 # Fixed
 - ~~When not playing, the shotlist index does not advance. This keeps the auto-bot from being able to press the `Next` button~~
 - ~~Play for a second before shotlist jumping. There is a weird hack I have to do in tool where you have to play/pause video after it has loaded, in order to get the timecode to align correctly in the shotlist. Otherwise the timings are off.~~
