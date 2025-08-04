@@ -1,4 +1,4 @@
-DEBUG = False  # Set to True to enable debug output
+DEBUG = True  # Set to True to enable debug output
 
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QThread, QTimer
 from PyQt5.QtWidgets import (
@@ -10,7 +10,7 @@ from PyQt5.QtWidgets import (
 # OS Stuff
 import os
 import csv
-from metadata import MetadataWorker
+from metadata import MetadataWorker, read_metadata_csv
 from catalog_item import AbstractCatalogItemWidget, MovieItemWidget, ITEM_HEIGHT
 
 class AbstractCatalogWindow(QMainWindow):
@@ -172,29 +172,23 @@ class AbstractCatalogWindow(QMainWindow):
         if DEBUG: print(f"DEBUG: {self.catalog_name}: Assets folder: {assets_folder}")
         
         try:
-            with open(metadata_path, 'r', encoding='utf-8') as csvfile:
-                if DEBUG: print(f"DEBUG: {self.catalog_name}: Successfully opened metadata file")
-                reader = csv.DictReader(csvfile)
-                item_count = 0
-                for row in reader:
-                    if DEBUG: print(f"DEBUG: {self.catalog_name}: Processing row {item_count}: {row}")
-                    # Create custom widget for this item
-                    item_widget = self.create_item_widget(row, assets_folder)
-                    
-                    # Connect the widget's clicked signal to handle selection
-                    if hasattr(item_widget, 'clicked'):
-                        item_widget.clicked.connect(lambda data, widget=item_widget: self.on_widget_clicked(widget, data))
-                    
-                    # Create list item with fixed height
-                    item = QListWidgetItem()
-                    item.setSizeHint(QSize(item_widget.width(), ITEM_HEIGHT))
+            # Use the read_metadata_csv function to read the CSV file
+            for row in read_metadata_csv(metadata_path):
+                if DEBUG: print(f"DEBUG: {self.catalog_name}: Processing row: {row}")
+                # Create custom widget for this item
+                item_widget = self.create_item_widget(row, assets_folder)
+                
+                # Connect the widget's clicked signal to handle selection
+                if hasattr(item_widget, 'clicked'):
+                    item_widget.clicked.connect(lambda data, widget=item_widget: self.on_widget_clicked(widget, data))
+                
+                # Create list item with fixed height
+                item = QListWidgetItem()
+                item.setSizeHint(QSize(item_widget.width(), ITEM_HEIGHT))
 
-                    # Add to list
-                    self.item_list.addItem(item)
-                    self.item_list.setItemWidget(item, item_widget)
-                    item_count += 1
-
-                if DEBUG: print(f"DEBUG: {self.catalog_name}: Loaded {item_count} items")
+                # Add to list
+                self.item_list.addItem(item)
+                self.item_list.setItemWidget(item, item_widget)
 
             # Now that we've loaded, update the list
             self.update_item_list()

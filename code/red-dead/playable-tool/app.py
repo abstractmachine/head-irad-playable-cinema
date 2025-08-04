@@ -1,4 +1,4 @@
-DEBUG = False  # Set to True to enable debug output
+DEBUG = True  # Set to True to enable debug output
 
 # System
 import sys
@@ -31,6 +31,26 @@ from project import ProjectWindow
 PREFS_PATH = "./preferences/preferences.json"
 DOCK_LAYOUT_FOLDER = "./preferences/layouts/"
 
+class NativeDockWidget(QDockWidget):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.topLevelChanged.connect(self.on_top_level_changed)
+
+    def on_top_level_changed(self, floating):
+        if floating:
+            self.setWindowFlags(Qt.Window)
+            self.show()
+        else:
+            self.setWindowFlags(Qt.Widget)
+            self.show()
+
+    def closeEvent(self, event):
+        # Instead of closing, re-dock the widget
+        event.ignore()
+        self.setFloating(False)
+        # Optionally, you can raise the dock so it's visible
+        self.raise_()
+
 class PlayableCinemaMainWindow(QMainWindow):
     def __init__(self, windows):
         super().__init__()
@@ -41,6 +61,7 @@ class PlayableCinemaMainWindow(QMainWindow):
 
         central = QWidget()
         self.setCentralWidget(central)
+        self.setWindowFlags(Qt.Window)
 
         # Add each analysis widget as a separate dock
         if DEBUG: print("DEBUG: Adding dock: Project")
@@ -76,15 +97,13 @@ class PlayableCinemaMainWindow(QMainWindow):
         central.setFocusPolicy(Qt.ClickFocus)
 
     def add_dock(self, name, widget, area):
-        if DEBUG: print(f"DEBUG: Creating QDockWidget: {name} ({widget})")
-        dock = QDockWidget(name, self)
+        dock = NativeDockWidget(name, self)
         dock.setWidget(widget)
         dock.setObjectName(name)
         dock.setFloating(False)
         dock.setAllowedAreas(Qt.AllDockWidgetAreas)
         dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
         self.addDockWidget(area, dock)
-        if DEBUG: print(f"DEBUG: Added QDockWidget: {name} to area {area}")
         return dock  # Return the dock so it can be tabified
 
 def main():
@@ -143,7 +162,6 @@ def main():
     # Connect playhouse signals for gameplay videos
     windows["playhouse"].video_loaded_with_metadata.connect(windows["playbill"].on_gameplay_loaded_with_metadata)
 
-    # windows["nickelodeon"].new_movie_is_loading.connect(windows["shotlist"].clear_shotlist_table)
     windows["nickelodeon"].video_timecode_changed.connect(windows["shotlist"].clear_table_selection)
     windows["nickelodeon"].video_timecode_changed.connect(windows["shotlist"].set_current_time)
     windows["nickelodeon"].video_timecode_changed.connect(windows["subtitles"].on_timecode_changed)
@@ -355,4 +373,8 @@ def reset_dock_layout(main_window):
 
 # Ensure the main function is called when the script is run
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()

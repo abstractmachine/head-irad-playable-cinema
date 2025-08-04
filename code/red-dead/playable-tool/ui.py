@@ -1,4 +1,4 @@
-DEBUG = False # Set to True to enable debug output
+DEBUG = True # Set to True to enable debug output
 
 from PyQt5.QtGui import QFont, QFontDatabase
 import os
@@ -167,6 +167,10 @@ class UI:
         monospaced_font_name = monospaced_font.family()
         monospaced_font_size = monospaced_font.pointSize()
         monospaced_font_weight = monospaced_font.weight()
+
+        # common highlight color
+        common_highlight_color = "#fff"
+        common_highlight_background = "#f0f"
 
         # dimensions
         button_width = 80
@@ -386,6 +390,14 @@ class UI:
 
         QTableCornerButton::section {{
             border: none;
+        }}
+
+        /* TABLE SELECTION */
+
+        QTableView::item:selected,
+        QTableWidget::item:selected {{
+            background: {common_highlight_background};
+            color: {common_highlight_color};
         }}
 
         /* DROP DOWN */

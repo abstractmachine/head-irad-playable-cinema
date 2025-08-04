@@ -1,4 +1,4 @@
-DEBUG = False  # Set to True to enable debug output
+DEBUG = True  # Set to True to enable debug output
 
 from PyQt5.QtCore import QObject, pyqtSignal, Qt
 from PyQt5.QtWidgets import (
@@ -117,7 +117,7 @@ class ProjectManager(QObject):
             if not os.path.exists(file_path):
                 try:
                     os.makedirs(os.path.dirname(file_path), exist_ok=True)
-                    with open(file_path, 'w') as f:
+                    with open(file_path, 'w', encoding="utf-8") as f:
                         f.write("")  # Create an empty file
                 except Exception as e:
                     self._show_error(f"Failed to create {required_file}:\n{str(e)}")
@@ -129,7 +129,7 @@ class ProjectManager(QObject):
         gitignore_path = os.path.join(folder_path, ".gitignore")
         if not os.path.exists(gitignore_path):
             try:
-                with open(gitignore_path, 'w') as f:
+                with open(gitignore_path, 'w', encoding="utf-8") as f:
                     f.write("# Ignore all files in this folder (Remove this to reactivate git syncing)\n*\n")
             except Exception as e:
                 self._show_error(f"Failed to create .gitignore:\n{str(e)}")

@@ -1,4 +1,4 @@
-DEBUG = False  # Set to True to enable debug output
+DEBUG = True  # Set to True to enable debug output
 
 from PyQt5.QtCore import QObject, pyqtSignal
 import os
@@ -8,6 +8,9 @@ import time
 import re
 import subprocess
 import json
+import unicodedata
+
+from utility import euro_text, yankee_text, html_encode_text, html_decode_text
 
 class MetadataWorker(QObject):
     """Worker class for rebuilding metadata in a separate thread"""
@@ -43,12 +46,12 @@ class MetadataWorker(QObject):
         try:
             # Load TMDB API key
             tmdb_key_path = os.path.join(self.project_folder, 'preferences', 'tmdb_api_key.txt')
-            with open(tmdb_key_path, 'r') as f:
+            with open(tmdb_key_path, 'r', encoding="utf-8") as f:
                 self.tmdb_api_key = f.read().strip()
 
             # Load OpenSubtitles API key
             opensubtitles_key_path = os.path.join(self.project_folder, 'preferences', 'opensubtitles_api_key.txt')
-            with open(opensubtitles_key_path, 'r') as f:
+            with open(opensubtitles_key_path, 'r', encoding="utf-8") as f:
                 self.opensubtitles_api_key = f.read().strip()
                 
             return True
@@ -329,21 +332,22 @@ class MetadataWorker(QObject):
         }
     
     def write_metadata_csv(self, videos_data):
-        """Write metadata to CSV file"""
+        """Write metadata to CSV file with HTML entity encoding"""
         metadata_folder = os.path.join(self.project_folder, "metadata")
         os.makedirs(metadata_folder, exist_ok=True)
         
-        csv_path = os.path.join(metadata_folder, self.metadata_filename)  # Use configurable filename
+        csv_path = os.path.join(metadata_folder, self.metadata_filename)
         fieldnames = ['title', 'year', 'director', 'tmdb', 'imdb', 'filename', 'duration', 'overview', 'tagline']
         
-        # Sort videos alphabetically by title (case-insensitive)
         sorted_videos = sorted(videos_data, key=lambda video: video.get('title', '').lower())
         
         with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames, quoting=csv.QUOTE_ALL)
             writer.writeheader()
             for video in sorted_videos:
-                writer.writerow({field: video.get(field, '') for field in fieldnames})
+                # Encode with HTML entities for safe storage
+                row = {field: html_encode_text(video.get(field, '')) for field in fieldnames}
+                writer.writerow(row)
     
     def generate_missing_thumbnails(self, videos_data):
         """Generate thumbnail images from first frame of gameplay videos"""
@@ -419,3 +423,15 @@ class MetadataWorker(QObject):
             except Exception as e:
                 if DEBUG:
                     print(f"DEBUG: Error generating thumbnail for {filename}: {e}")
+
+# Example function to read and decode CSV data
+def read_metadata_csv(csv_path):
+    """Read metadata CSV and decode HTML entities"""
+    with open(csv_path, 'r', encoding='utf-8') as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            # Decode HTML entities back to Unicode
+            for field in row:
+                row[field] = html_decode_text(row[field])
+            yield row
+

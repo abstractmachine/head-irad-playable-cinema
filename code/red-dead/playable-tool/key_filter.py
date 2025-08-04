@@ -1,8 +1,8 @@
+DEBUG = True  # Or import this from your main module
+
 # Qt
 from PyQt5.QtCore import QObject, QEvent, Qt
 from PyQt5.QtWidgets import QApplication, QLineEdit, QTextEdit, QPlainTextEdit
-
-DEBUG = False  # Or import this from your main module
 
 # Global key filter to handle key events across all windows
 class GlobalKeyFilter(QObject):

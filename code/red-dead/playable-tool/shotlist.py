@@ -1,4 +1,4 @@
-DEBUG = False  # Set to True to enable debug output
+DEBUG = True  # Set to True to enable debug output
 
 import csv
 import os
@@ -42,6 +42,9 @@ class ShotlistWindow(QMainWindow):
         self.ui = ui  # Store UI instance
 
         self.is_dark_mode = self.ui.is_dark_mode()
+
+        # HACK: FIX THIS!
+        self.video_just_loaded = False
 
         self._pending_save_data = {}
         self.setWindowTitle("Shotlist")
@@ -156,7 +159,7 @@ class ShotlistWindow(QMainWindow):
         self.last_current_row = -1  # Track previous row for comparison
 
     def load_scene_detections(self, csv_path):
-        with open(csv_path, "r", newline="") as f:
+        with open(csv_path, "r", newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             rows = list(reader)
         self.scene_table.setRowCount(0)
@@ -197,7 +200,7 @@ class ShotlistWindow(QMainWindow):
         base = os.path.basename(self.video_path)
         name, _ = os.path.splitext(base)
         txt_path = os.path.join(self.detections_folder, f"{name}.txt")
-        with open(txt_path, "w") as txtfile:
+        with open(txt_path, "w", encoding="utf-8") as txtfile:
             txtfile.write(f"{method}\n{weights_text}\n")
         # --- End .txt file writing ---
 
@@ -276,7 +279,7 @@ class ShotlistWindow(QMainWindow):
             base = os.path.basename(self.video_path)
             name, _ = os.path.splitext(base)
             out_path = os.path.join(self.detections_folder, f"{name}.csv")
-            with open(out_path, "w", newline="") as f:
+            with open(out_path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
                 writer.writerow(["Ignore", "Scene", "Start", "End", "Shot_Caption", "Scene_Caption"])
                 writer.writerows(csv_rows)
@@ -287,6 +290,7 @@ class ShotlistWindow(QMainWindow):
 
     def on_row_header_clicked(self, row):
         """Handle clicking on row header (row number on the left)"""
+        if DEBUG: print(f"DEBUG: Row header clicked: {row}")
         # Jump to the start of this shot
         self.jump_to_row_start(row)
         # Emit the caption for this shot
@@ -308,7 +312,8 @@ class ShotlistWindow(QMainWindow):
             self.jump_to_timecode(end_tc, is_last_frame=True)
         elif column_title == "Shot_Caption":
             # Emit the caption for this shot
-            self.emit_shot_caption_for_row(row)
+            self.on_row_header_clicked(row) # changed from previous implementation
+            # self.emit_shot_caption_for_row(row)
         else:
             pass
 
@@ -421,6 +426,8 @@ class ShotlistWindow(QMainWindow):
                 self.delete_button.setEnabled(False)
                 self.detect_button.setEnabled(True)
             # Reset current row tracking when new movie loads
+            # HACK: FIX THIS!
+            self.video_just_loaded = True
             self.current_row = -1
             self.last_current_row = -1
             self.current_time_ms = 0
@@ -435,6 +442,7 @@ class ShotlistWindow(QMainWindow):
             self.current_time_ms = 0
 
         self.shotlist_status.emit(shotlist_exists)
+        if DEBUG: print(f"DEBUG: on_movie_loaded_with_metadata - shotlist_exists: {shotlist_exists}")
         self.send_row_data()
 
     def on_shotlist_loaded(self, rows):
@@ -448,7 +456,6 @@ class ShotlistWindow(QMainWindow):
             scene_caption = row.get("Scene_Caption", "")
             self.add_scene_row(scene_num, start, end, shot_caption, scene_caption, ignore)
         self.delete_button.setEnabled(True)
-        self.select_first_available_shot()
         self.shotlist_status.emit(True)
         self.send_row_data()
 
@@ -545,7 +552,7 @@ class ShotlistWindow(QMainWindow):
     def save_shotlist_to_csv(self):
         if not self.current_csv_path:
             return
-        with open(self.current_csv_path, "w", newline="") as csvfile:
+        with open(self.current_csv_path, "w", newline="", encoding="utf-8") as csvfile:
             writer = csv.writer(csvfile)
             writer.writerow(["Ignore", "Scene", "Start", "End", "Shot_Caption", "Scene_Caption"])
             for row in range(self.scene_table.rowCount()):
@@ -565,7 +572,7 @@ class ShotlistWindow(QMainWindow):
                 writer.writerow([ignore, scene_num, start, end, shot_caption, scene_caption])
 
     def load_shotlist_from_csv(self, path):
-        with open(path, "r") as csvfile:
+        with open(path, "r", encoding="utf-8") as csvfile:
             reader = csv.DictReader(csvfile)
             self.scene_table.setRowCount(0)
             for row in reader:
@@ -610,10 +617,26 @@ class ShotlistWindow(QMainWindow):
 
     def send_row_data(self, row_index = None):
         """Send the data of a specific row to the connected slot."""
+        if DEBUG: print(f"DEBUG: Sending row data for row {row_index if row_index is not None else self.current_row}")
+        # make sure row index is > -1
+        if row_index is None:
+            row_index = self.current_row
+        
+        if row_index < 0 or row_index >= self.scene_table.rowCount():
+            if DEBUG: print("DEBUG: Invalid row index, cannot send data.")
+            return
+        
         row_data = self.get_column_data(row_index)
         self.row_data.emit(row_data)
 
     def set_current_time(self, ms):
+        # HACK: FIX THIS!
+        if self.video_just_loaded:
+            # Only intercept the first call after video load
+            self.select_first_available_shot()
+            self.video_just_loaded = False
+            return
+
         self.current_time_ms = ms
         row_count = self.scene_table.rowCount()
 
@@ -631,6 +654,7 @@ class ShotlistWindow(QMainWindow):
             self.row_did_change.emit(self.current_row)
 
             # send out the current row data
+            if DEBUG: print(f"DEBUG: set_current_time. current_row: {self.current_row}")
             self.send_row_data()
 
             # only emit shot caption when row changes - no table manipulation
@@ -776,6 +800,7 @@ class ShotlistWindow(QMainWindow):
             self.current_row = row
             self.row_did_change.emit(self.current_row)
             # Scroll to the selected row
+            if DEBUG: print(f"DEBUG: on_row_selected - current_row changed to {self.current_row}")
             self.scroll_to_row(row)
 
     def scroll_to_row(self, row):
@@ -993,16 +1018,6 @@ class ShotlistWindow(QMainWindow):
         self.detections_folder = os.path.join(project_folder, "shotlists")
         os.makedirs(self.detections_folder, exist_ok=True)
 
-    def clear_shotlist_table(self):
-        self.scene_table.setRowCount(0)
-        self.current_row = -1
-        self.last_current_row = -1
-        self.current_time_ms = 0
-        self.current_csv_path = None
-        self.delete_button.setEnabled(False)
-        self.shotlist_status.emit(False)
-        self.send_row_data()
-
     def select_first_available_shot(self):
         """Select the first non-ignored shot and update current_row."""
         row_count = self.scene_table.rowCount()
@@ -1032,9 +1047,9 @@ class ShotlistWindow(QMainWindow):
                         # Found first non-ignored shot
                         if DEBUG: print(f"DEBUG: Selecting row {row} as first available shot")
                         self.current_row = row
-                        self.row_did_change.emit(self.current_row)
-                        self.send_row_data(self.current_row)
                         self.scroll_to_row(self.current_row)
+                        self.send_row_data(self.current_row)
+                        self.row_did_change.emit(self.current_row)
                         # Update first/last available shot signals
                         self.is_first_available_shot.emit(self.is_first_non_ignored_row(self.current_row))
                         self.is_last_available_shot.emit(self.is_last_non_ignored_row(self.current_row))

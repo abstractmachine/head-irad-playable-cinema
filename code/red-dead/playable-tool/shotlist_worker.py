@@ -11,7 +11,7 @@ class ShotlistLoadWorker(QObject):
 
     def run(self):
         try:
-            with open(self.csv_path, "r", newline="") as f:
+            with open(self.csv_path, "r", newline="", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
                 rows = list(reader)
             self.finished.emit(rows)
