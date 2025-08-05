@@ -68,3 +68,34 @@ Reboot, then test the hardware installation with :
 ```
 $ hailortcli fw-control identify
 ```
+
+## Elgato 4K Camlink
+Since we don't have the right cable yet for Raspberry PI 5 (see above), we've plugged in a [Elgato 4K Camlink](). But apparently the drivers aren't setup yet, because this gave nothing:
+
+```
+$ rpicam-hello -t 10s
+```
+
+So we're going to try these instructions: [High Resolution Video Capture on the Raspberry Pi](https://blog.j2i.net/2021/11/12/high-resolution-video-capture-on-the-raspberry-pi/). 
+
+```
+$ sudo apt install v4l-utils
+$ 
+```
+
+That all works. Now it appears we can switch to USB Camera in the Hailo Examples from their github, cf. [Hailo RPI5 Examples](https://github.com/hailo-ai/hailo-rpi5-examples). 
+
+To use these examples, we go into the folder, and run first:
+
+```
+$ source setup_env.sh
+```
+
+Then one of the examples, and you can even supply the `--usb` parameter to get the `Elgato CamLink 4k` to input the HDMI video feed:
+
+```
+$ python basic_pipelines/detection_simple.py --usb
+```
+
+This works great. The `yolo` model loads and everything runs super fast thanks to the `AI Hat+ 26T`.
+
