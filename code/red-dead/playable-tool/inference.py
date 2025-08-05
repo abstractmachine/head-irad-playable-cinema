@@ -1,4 +1,4 @@
-DEBUG = True  # Set to True to enable debug output
+DEBUG = False  # Set to True to enable debug output
 
 import os
 from PyQt5.QtCore import Qt, pyqtSignal

@@ -1,4 +1,4 @@
-DEBUG = True  # Set to True to enable debug output
+DEBUG = False  # Set to True to enable debug output
 
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QThread, QTimer
 from PyQt5.QtWidgets import (
@@ -19,6 +19,9 @@ class AbstractCatalogWindow(QMainWindow):
     # Define signals for communication
     request_save = pyqtSignal()
     request_load = pyqtSignal(dict)
+    catalog_started_loading = pyqtSignal()
+    catalog_cleared_contents = pyqtSignal()
+    catalog_finished_loading = pyqtSignal()
     item_selected = pyqtSignal(str, dict)  # Signal to send item path AND metadata
     
     def __init__(self, ui):
@@ -129,6 +132,8 @@ class AbstractCatalogWindow(QMainWindow):
         self.project_folder = project_folder
         
         if project_folder:
+            # Emit signal that catalog is starting to load
+            self.catalog_started_loading.emit()
             # Enable buttons when project is loaded
             self.metadata_button.setEnabled(True)
             # Load catalog data
@@ -138,6 +143,9 @@ class AbstractCatalogWindow(QMainWindow):
             self.item_list.clear()
             self.selected_item_widget = None
             self.metadata_button.setEnabled(False)
+            # Emit signal that catalog contents are cleared
+            self.catalog_cleared_contents.emit()
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: Project folder cleared, catalog contents cleared")
     
     def load_catalog_data(self):
         """Load catalog data from project"""
@@ -166,6 +174,9 @@ class AbstractCatalogWindow(QMainWindow):
         if DEBUG: print(f"DEBUG: {self.catalog_name}: Loading items from: {metadata_path}")
         
         self.item_list.clear()
+        self.catalog_cleared_contents.emit()
+        
+        # Clear previous selection
         self.selected_item_widget = None
         assets_folder = os.path.join(project_folder, self.get_assets_folder_name())
         

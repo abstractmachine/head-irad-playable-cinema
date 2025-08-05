@@ -1,4 +1,4 @@
-DEBUG = True # Set to True to enable debug output
+DEBUG = False # Set to True to enable debug output
 
 from PyQt5.QtGui import QFont, QFontDatabase
 import os

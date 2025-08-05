@@ -1,4 +1,4 @@
-DEBUG = True  # Or import this from your main module
+DEBUG = False  # Or import this from your main module
 
 # Qt
 from PyQt5.QtCore import QObject, QEvent, Qt

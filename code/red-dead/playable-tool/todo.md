@@ -1,5 +1,30 @@
 # TODO
 
+# Prompt Menu
+Three differing drop-down menus:
+1. Mode
+- Tags: Read instructions (Deactivate other drop-down menus below)
+- Prompts: See/edit prompts (Activate prompts drop-down below)
+- Test: Test currently selected prompt type (below)
+2. Type
+- System -> Convert to 'Default' and make read-only. A Very basic prompt, short
+- Shot
+- Scene
+- Gameplay
+- Experiment
+3. Prompts
+- Goal
+- Format
+- Warning
+- Context
+- Image
+
+# Window Layouts
+Similar to the [Unity Layouts Editor](https://learn.unity.com/tutorial/exploring-the-editor-layout), we need a menu + 2 buttons:
+- Dropdown menu to select `Default` layout + any saved layouts
+- `Save` button to save a new layout in preferences file (`Filename` == layout name)
+- `Delete` button delete the currently selected layout in the menu (disabled if `Default`) and set dropdown menu to `-1` index
+
 # Load Time
 There is a speed issue with loading videos that have shotlists. Movies without shotlists load almost immediately.
 

@@ -236,7 +236,7 @@ sudo apt install ffmpeg
 - Ensure proper file permissions
 
 ### Debug Mode
-Set `DEBUG = True` in source files for verbose logging:
+Set `DEBUG = False` in source files for verbose logging:
 - `shotlist.py` line 3
 - `annotate.py` line 5
 

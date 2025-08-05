@@ -1,4 +1,4 @@
-DEBUG = True  # Set to True to enable debug output
+DEBUG = False  # Set to True to enable debug output
 
 # System
 import sys
@@ -26,6 +26,9 @@ from prompt import PromptWindow
 from subtitles import SubtitlesWindow
 from inference import InferenceWindow
 from project import ProjectWindow
+
+# Create the action selector agent thingy
+from selector import Selector
 
 # TODO: Move these to the system default preferences path
 PREFS_PATH = "./preferences/preferences.json"
@@ -195,6 +198,15 @@ def main():
     main_window = PlayableCinemaMainWindow(windows)
     main_window.show()
 
+    # Create the action selector instance
+    selector = Selector()
+
+    # Connect selector signals to the appropriate windows
+    windows["cinematheque"].catalog_started_loading.connect(selector.cinematheque_started_loading)
+    windows["nickelodeon"].new_movie_is_loading.connect(selector.started_loading_new_movie_with_metadata)
+    windows["nickelodeon"].video_loaded_with_metadata.connect(selector.new_movie_loaded_with_metadata)
+    windows["shotlist"].row_did_change.connect(selector.shot_index_changed)
+
     # Install global key filter
     key_filter = GlobalKeyFilter(windows, main_window)
     app.installEventFilter(key_filter)
@@ -208,6 +220,9 @@ def main():
 
     # Load preferences at startup (after main_window is created)
     load_preferences(windows, main_window)
+
+    # Test the weird character encoding/decoding
+    # test_weird_character()
 
     # Save preferences on exit
     app.aboutToQuit.connect(lambda: save_preferences(windows, main_window))
@@ -370,6 +385,17 @@ def reset_dock_layout(main_window):
         os.remove(geometry_file)
     # Restart the app (do NOT call main_window.close())
     os.execl(sys.executable, sys.executable, *sys.argv)
+
+def test_weird_character():
+    # Test in Python console:
+    from utility import html_encode_text, html_decode_text
+
+    # Test with the problematic character from your error
+    test_text = "Some text with ř character"
+    encoded = html_encode_text(test_text)
+    print(f"Encoded: {encoded}")  # Should be ASCII-safe
+    decoded = html_decode_text(encoded)
+    print(f"Decoded: {decoded}")  # Should restore original
 
 # Ensure the main function is called when the script is run
 if __name__ == "__main__":
