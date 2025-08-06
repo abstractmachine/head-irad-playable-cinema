@@ -2,16 +2,6 @@ import unicodedata
 import re
 import html
 
-def yankee_text(text):
-    # Remove non-ASCII characters and normalize whitespace
-    if not isinstance(text, str):
-        return ""
-    # Normalize unicode, remove non-ASCII
-    text = unicodedata.normalize('NFKD', text)
-    text = text.encode('ascii', 'ignore').decode('ascii')
-    # Optionally, strip leading/trailing whitespace
-    return text.strip()
-
 def euro_text(text):
     """Clean text while preserving most Unicode characters"""
     if not isinstance(text, str):
