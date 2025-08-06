@@ -96,13 +96,30 @@ def main():
     # Clean shutdown for VLC players
     def clean_quit():
         """Ensure VLC players terminate properly before app exits"""
+        if DEBUG: print("DEBUG: Starting clean quit sequence")
+        
         try:
-            windows["nickelodeon"].player.terminate()
-            windows["playhouse"].player.terminate()
-        except Exception:
-            pass
-        for window in windows.values():
-            window.close()
+            # Stop VLC players first
+            if "nickelodeon" in windows:
+                windows["nickelodeon"].player.terminate()
+            if "playhouse" in windows:
+                windows["playhouse"].player.terminate()
+        except Exception as e:
+            if DEBUG: print(f"DEBUG: Error stopping VLC players: {e}")
+        
+        # Close all windows properly
+        for name, window in windows.items():
+            try:
+                if DEBUG: print(f"DEBUG: Closing window: {name}")
+                window.close()
+            except Exception as e:
+                if DEBUG: print(f"DEBUG: Error closing window {name}: {e}")
+        
+        # Force garbage collection
+        import gc
+        gc.collect()
+        
+        if DEBUG: print("DEBUG: Clean quit sequence completed")
 
     app.aboutToQuit.connect(clean_quit)
     

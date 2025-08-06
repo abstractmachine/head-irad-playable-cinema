@@ -1,14 +1,10 @@
 DEBUG = False  # Set to True to enable debug output
 
-from PyQt5.QtCore import Qt, pyqtSignal, QSize, QThread, QTimer
+from PyQt5.QtCore import pyqtSignal, QTimer
 from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QPushButton, QListWidget, QListWidgetItem, QLabel, QSizePolicy, 
-    QFileDialog, QMessageBox
+    QHBoxLayout, QPushButton, QMessageBox
 )
-from PyQt5.QtGui import QPixmap, QColor
 import os
-import csv
 from catalog import AbstractCatalogWindow
 from catalog_item import MovieItemWidget
 
@@ -143,32 +139,34 @@ class CinemathequeWindow(AbstractCatalogWindow):
     
     # ---- Bot Methods ----
     
+    def on_selection_will_change(self):
+        """Override to handle bot state when selection is about to change"""
+        self.turn_off_all_bots()
+
+    def on_item_selection_changed(self, item_widget, item_data):
+        """Override to update bot button state after selection"""
+        # Update bot button state with a slight delay
+        QTimer.singleShot(20, self.update_shotlist_bot_button_state)
+
+    def select_next_movie(self):
+        """Select the next movie - delegate to base class"""
+        self.select_next_item()
+
+    def select_previous_movie(self):
+        """Select the previous movie - delegate to base class"""
+        self.select_previous_item()
+
     def shot_bot_finished(self):
         """Handle bot finished signal"""
         if DEBUG: print("DEBUG: Cinematheque: bot finished")
         was_caption_bot_active = self.caption_bot_button.text().startswith("    Caption Bot On")
-        count = self.movie_list.count()
-        if count == 0 or not self.selected_movie_widget:
-            if DEBUG: print("DEBUG: No movies or no selection, returning")
-            self.turn_off_all_bots()
-            return
-
-        for i in range(count):
-            widget = self.movie_list.itemWidget(self.movie_list.item(i))
-            if widget == self.selected_movie_widget:
-                next_index = i + 1
-                if next_index < count:
-                    if DEBUG: print(f"DEBUG: Moving to next movie at index {next_index}")
-                    next_item = self.movie_list.item(next_index)
-                    self._direct_select_item(next_item)
-                    self.scroll_to_item(next_index)
-                    # Start the Caption Bot for the next movie after a short delay
-                    if was_caption_bot_active:
-                        QTimer.singleShot(500, self.start_caption_bot)
-                else:
-                    if DEBUG: print("DEBUG: Already at last movie, turning off bots")
-                    self.turn_off_all_bots()
-                break
+        
+        # Use the base class navigation
+        self.select_next_item()
+        
+        # Start the Caption Bot for the next movie after a short delay
+        if was_caption_bot_active:
+            QTimer.singleShot(500, self.start_caption_bot)
 
     def start_caption_bot(self):
         if self.caption_bot_button.isEnabled():
@@ -241,7 +239,7 @@ class CinemathequeWindow(AbstractCatalogWindow):
             self.turn_off_all_bots()
             first_item = self.item_list.item(0)
             self._direct_select_item(first_item)
-            self.scroll_to_item(0)  # Changed from scroll_to_movie
+            self._scroll_to_selected_item_if_needed()  # Use the smart scrolling method
             return
 
         if count == 0 or not self.selected_item_widget:
@@ -262,7 +260,7 @@ class CinemathequeWindow(AbstractCatalogWindow):
                     next_item = self.item_list.item(next_index)
                     if DEBUG: print(f"DEBUG: About to call _direct_select_item with item: {next_item}")
                     self._direct_select_item(next_item)
-                    self.scroll_to_item(next_index)  # Changed from scroll_to_movie
+                    self._scroll_to_selected_item_if_needed()  # Use the smart scrolling method
                 else:
                     if DEBUG: print("DEBUG: Already at last movie")
                     self.turn_off_all_bots()
@@ -291,7 +289,7 @@ class CinemathequeWindow(AbstractCatalogWindow):
                     prev_item = self.item_list.item(prev_index)
                     if DEBUG: print(f"DEBUG: About to call _direct_select_item with item: {prev_item}")
                     self._direct_select_item(prev_item)
-                    self.scroll_to_item(prev_index)  # Changed from scroll_to_movie
+                    self._scroll_to_selected_item_if_needed()  # Use the smart scrolling method
                 else:
                     if DEBUG: print("DEBUG: Already at first movie")
                 break
@@ -322,6 +320,8 @@ class CinemathequeWindow(AbstractCatalogWindow):
         item_widget.set_selected(True)
         item_widget.update()
         self.selected_item_widget = item_widget
+        
+        # Don't scroll here - let the caller decide if scrolling is needed
         
         # Get item path and emit selection signal
         item_data = item_widget.item_data

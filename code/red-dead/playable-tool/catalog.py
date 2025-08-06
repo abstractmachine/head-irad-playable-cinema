@@ -48,6 +48,12 @@ class AbstractCatalogWindow(QMainWindow):
         self.setup_ui()
         self.setup_connections()
         
+    def setup_connections(self):
+        """Setup signal connections - can be overridden by subclasses"""
+        # Base class has no connections to set up by default
+        # Subclasses can override this to add their own connections
+        pass
+        
     def setup_ui(self):
         """Setup the main UI - can be overridden by subclasses"""
         # Create main widget and layout
@@ -64,7 +70,6 @@ class AbstractCatalogWindow(QMainWindow):
         self.item_list.setAlternatingRowColors(False)
         self.item_list.setSpacing(0)
         self.item_list.setSelectionMode(QListWidget.NoSelection)
-        self.item_list.itemClicked.connect(self.on_item_clicked)
 
         self.item_list.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.item_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -106,12 +111,64 @@ class AbstractCatalogWindow(QMainWindow):
         button_layout.addStretch()
         
         return button_layout
-    
-    def setup_connections(self):
-        """Setup signal connections"""
-        self.request_save.connect(self.on_request_save)
-        self.request_load.connect(self.on_request_load)
-    
+
+    def rebuild_metadata(self):
+        """Rebuild metadata for this catalog"""
+        if not self.project_folder:
+            QMessageBox.warning(self, "No Project", "Please set a project folder first.")
+            return
+
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Starting metadata rebuild")
+        
+        # Start animation
+        self.rebuild_animation_timer.start(500)
+        self.metadata_button.setEnabled(False)
+        
+        # Create worker thread for metadata processing
+        self.metadata_thread = QThread()
+        self.metadata_worker = MetadataWorker(self.project_folder, self.data_folder, self.metadata_file)
+        self.metadata_worker.moveToThread(self.metadata_thread)
+        
+        # Connect signals
+        self.metadata_thread.started.connect(self.metadata_worker.run)
+        self.metadata_worker.finished.connect(self.on_metadata_finished)
+        self.metadata_worker.finished.connect(self.metadata_thread.quit)
+        self.metadata_worker.finished.connect(self.metadata_worker.deleteLater)
+        self.metadata_thread.finished.connect(self.metadata_thread.deleteLater)
+        
+        # Start the thread
+        self.metadata_thread.start()
+
+    def animate_rebuild_button(self):
+        """Animate the rebuild button text while processing"""
+        self.rebuild_dot_count = (self.rebuild_dot_count + 1) % 4
+        dots = "." * self.rebuild_dot_count
+        self.metadata_button.setText(f"Rebuilding{dots}")
+
+    def on_metadata_finished(self, success, message):
+        """Handle when metadata rebuild is finished"""
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Metadata rebuild finished: {success}, {message}")
+        
+        # Stop animation
+        self.rebuild_animation_timer.stop()
+        self.metadata_button.setText("Rebuild Metadata")
+        self.metadata_button.setEnabled(True)
+        
+        if success:
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: Reloading catalog data after successful rebuild")
+            # Reload the catalog data
+            self.load_catalog_data()
+            # Emit signal that catalog has finished loading
+            self.catalog_finished_loading.emit()
+        else:
+            QMessageBox.critical(self, "Error", f"Failed to rebuild metadata:\n{message}")
+
+    def update_item_list(self):
+        """Update the item list display - can be overridden by subclasses"""
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Item list updated with {self.item_list.count()} items")
+        # Emit signal that catalog has finished loading
+        self.catalog_finished_loading.emit()
+
     def create_item_widget(self, item_data, assets_folder):
         """Create an item widget - must be overridden by subclasses"""
         raise NotImplementedError("Subclasses must implement create_item_widget()")
@@ -222,6 +279,9 @@ class AbstractCatalogWindow(QMainWindow):
         item_widget.update()
         self.selected_item_widget = item_widget
         
+        # Scroll to item only if it's offscreen
+        self._scroll_to_selected_item_if_needed()
+        
         # Get item path and emit selection signal
         item_path = self.get_item_path(item_data)
         if item_path and os.path.exists(item_path):
@@ -230,49 +290,6 @@ class AbstractCatalogWindow(QMainWindow):
         else:
             QMessageBox.warning(self, "File Not Found", f"Item file not found:\n{item_path}")
 
-    def update_item_list(self):
-        """Update item list display"""
-        for i in range(self.item_list.count()):
-            item = self.item_list.item(i)
-            if item:
-                item_widget = self.item_list.itemWidget(item)
-                if item_widget:
-                    item_widget.update_background()
-    
-    def on_item_clicked(self, item):
-        """Handle item click with delay to prevent double-clicks"""
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: on_item_clicked called with item: {item}")
-        
-        if item is None:
-            if DEBUG: print(f"DEBUG: {self.catalog_name}: Item is None, returning")
-            return
-            
-        item_widget = self.item_list.itemWidget(item)
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: Item widget: {item_widget}")
-        
-        if not item_widget or not hasattr(item_widget, 'item_data'):
-            if DEBUG: print(f"DEBUG: {self.catalog_name}: No widget or item_data, returning")
-            return
-
-        # Clear previous selection first
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: About to clear previous selection")
-        self._clear_previous_selection()
-        
-        # Set selection after a short delay to ensure clearing is processed
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: Setting timer for new selection")
-        QTimer.singleShot(10, lambda: self._set_new_selection(item_widget))
-
-    def _clear_previous_selection(self):
-        """Clear the previous selection"""
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: _clear_previous_selection called")
-        if self.selected_item_widget:
-            if DEBUG: print(f"DEBUG: {self.catalog_name}: Clearing selection for widget: {self.selected_item_widget}")
-            self.selected_item_widget.set_selected(False)
-            self.selected_item_widget.update()
-            self.selected_item_widget = None
-        else:
-            if DEBUG: print(f"DEBUG: {self.catalog_name}: No previous selection to clear")
-
     def _set_new_selection(self, item_widget):
         """Set the new selection and emit signals"""
         if DEBUG: print(f"DEBUG: {self.catalog_name}: _set_new_selection called with widget: {item_widget}")
@@ -280,6 +297,9 @@ class AbstractCatalogWindow(QMainWindow):
         item_widget.set_selected(True)
         item_widget.update()
         self.selected_item_widget = item_widget
+        
+        # Scroll to item only if it's offscreen
+        self._scroll_to_selected_item_if_needed()
         
         if DEBUG: print(f"DEBUG: {self.catalog_name}: Widget selected, getting item path")
         
@@ -297,86 +317,17 @@ class AbstractCatalogWindow(QMainWindow):
             if DEBUG: print(f"DEBUG: {self.catalog_name}: File not found")
             QMessageBox.warning(self, "File Not Found", f"Item file not found:\n{item_path}")
 
-    def rebuild_metadata(self):
-        """Start metadata rebuild process in worker thread"""
-        if not self.project_folder:
-            QMessageBox.warning(self, "Warning", "Please select a project folder first.")
+    def _scroll_to_selected_item_if_needed(self):
+        """Scroll to the selected item only if it's not fully visible"""
+        if not self.selected_item_widget:
             return
-        
-        # Disable buttons during rebuild
-        self.metadata_button.setText("        Rebuilding")
-        self.metadata_button.setEnabled(False)
-        
-        # Set button text alignment to left during rebuild
-        self.metadata_button.setStyleSheet("QPushButton { text-align: left; }")
-        
-        # Start animated dots
-        self.rebuild_dot_count = 0
-        self.rebuild_animation_timer.start(500)
-        
-        # Clear item list and show progress
-        self.item_list.clear()
-        progress_item = QListWidgetItem("Starting metadata rebuild...")
-        self.item_list.addItem(progress_item)
-        
-        # Create worker thread with proper parameters
-        self.metadata_thread = QThread()
-        self.metadata_worker = MetadataWorker(
-            self.project_folder,
-            data_folder=self.data_folder,
-            metadata_filename=self.metadata_file
-        )
-        self.metadata_worker.moveToThread(self.metadata_thread)
-        
-        # Connect signals
-        self.metadata_thread.started.connect(self.metadata_worker.run)
-        self.metadata_worker.progress.connect(self.on_metadata_progress)
-        self.metadata_worker.error.connect(self.on_metadata_error)
-        self.metadata_worker.finished.connect(self.on_metadata_finished)
-        
-        # Start thread
-        self.metadata_thread.start()
-
-    def animate_rebuild_button(self):
-        """Animate the rebuilding button with dots"""
-        self.rebuild_dot_count = (self.rebuild_dot_count + 1) % 4
-        dots = "." * self.rebuild_dot_count
-        self.metadata_button.setText(f"        Rebuilding{dots}")
-
-    def on_metadata_progress(self, message):
-        """Handle progress updates from metadata worker"""
-        if self.item_list.count() > 0:
-            item = self.item_list.item(0)
-            item.setText(message)
-
-    def on_metadata_error(self, error_message):
-        """Handle errors from metadata worker"""
-        QMessageBox.critical(self, "Metadata Rebuild Error", error_message)
-        self.cleanup_metadata_thread()
-
-    def on_metadata_finished(self, success):
-        """Handle completion of metadata rebuild"""
-        self.cleanup_metadata_thread()
-        
-        if success:
-            self.load_catalog_data()
-        else:
-            QMessageBox.critical(self, "Error", "Metadata rebuild failed.")
-
-    def cleanup_metadata_thread(self):
-        """Clean up the metadata worker thread"""
-        self.rebuild_animation_timer.stop()
-        
-        if self.metadata_thread:
-            self.metadata_thread.quit()
-            self.metadata_thread.wait()
-            self.metadata_thread = None
-            self.metadata_worker = None
-        
-        # Re-enable buttons
-        self.metadata_button.setText("Rebuild Metadata")
-        self.metadata_button.setEnabled(True)
-        self.metadata_button.setStyleSheet("QPushButton { text-align: center; }")
+            
+        # Find the index of the selected item widget
+        for i in range(self.item_list.count()):
+            item = self.item_list.item(i)
+            if item and self.item_list.itemWidget(item) == self.selected_item_widget:
+                self.scroll_to_item(i)
+                return
 
     def scroll_to_item(self, index):
         """Scrolls the item list so the item at 'index' is visible at the top if offscreen."""
@@ -393,14 +344,27 @@ class AbstractCatalogWindow(QMainWindow):
             print(f"DEBUG: {self.catalog_name}: scroll_to_item called for index {index}")
             print(f"DEBUG: {self.catalog_name}: item_rect={item_rect}, viewport_rect={viewport_rect}")
 
-        # If the item is not fully visible, scroll to it
-        if not viewport_rect.contains(item_rect):
+        # Check only vertical visibility (ignore horizontal since items can be wider than viewport)
+        item_top = item_rect.top()
+        item_bottom = item_rect.bottom()
+        viewport_top = viewport_rect.top()
+        viewport_bottom = viewport_rect.bottom()
+        
+        # Item is fully visible vertically if both top and bottom are within viewport
+        is_fully_visible_vertically = (item_top >= viewport_top and item_bottom <= viewport_bottom)
+
+        if DEBUG:
+            print(f"DEBUG: {self.catalog_name}: item vertical span: {item_top}-{item_bottom}, viewport vertical span: {viewport_top}-{viewport_bottom}")
+            print(f"DEBUG: {self.catalog_name}: is_fully_visible_vertically: {is_fully_visible_vertically}")
+
+        # If the item is not fully visible vertically, scroll to it
+        if not is_fully_visible_vertically:
             if DEBUG:
-                print(f"DEBUG: {self.catalog_name}: scrolling to item {index} (not fully visible)")
+                print(f"DEBUG: {self.catalog_name}: scrolling to item {index} (not fully visible vertically)")
             self.item_list.scrollToItem(item, self.item_list.PositionAtTop)
         else:
             if DEBUG:
-                print(f"DEBUG: {self.catalog_name}: item {index} already fully visible, no scroll needed.")
+                print(f"DEBUG: {self.catalog_name}: item {index} already fully visible vertically, no scroll needed.")
 
     def on_item_loaded_with_metadata(self, item_path, metadata):
         """Handle when an item is loaded"""
@@ -414,4 +378,128 @@ class AbstractCatalogWindow(QMainWindow):
     
     def on_request_load(self, data):
         """Load preferences - subclasses can override to handle more data"""
+        pass
+
+    def select_next_item(self):
+        """Select the next item in the catalog"""
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: select_next_item() called")
+        count = self.item_list.count()
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Total item count: {count}")
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Current selected_item_widget: {self.selected_item_widget}")
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Project folder: {self.project_folder}")
+        
+        # If nothing is selected but there are items and a project folder, select the first item
+        if count > 0 and self.project_folder and not self.selected_item_widget:
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: No selection, selecting first item")
+            self.on_selection_will_change()  # Allow subclasses to handle selection change
+            first_item = self.item_list.item(0)
+            self._direct_select_item(first_item)
+            self._scroll_to_selected_item_if_needed()
+            return
+
+        if count == 0 or not self.selected_item_widget:
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: No items or no selection, returning")
+            self.on_selection_will_change()  # Allow subclasses to handle selection change
+            return
+            
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Looking for current selection in list")
+        for i in range(count):
+            widget = self.item_list.itemWidget(self.item_list.item(i))
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: Checking index {i}, widget: {widget}")
+            if widget == self.selected_item_widget:
+                if DEBUG: print(f"DEBUG: {self.catalog_name}: Found current selection at index {i}")
+                next_index = i + 1
+                if next_index < count:
+                    if DEBUG: print(f"DEBUG: {self.catalog_name}: Moving to next index {next_index}")
+                    self.on_selection_will_change()  # Allow subclasses to handle selection change
+                    next_item = self.item_list.item(next_index)
+                    if DEBUG: print(f"DEBUG: {self.catalog_name}: About to call _direct_select_item with item: {next_item}")
+                    self._direct_select_item(next_item)
+                    self._scroll_to_selected_item_if_needed()
+                else:
+                    if DEBUG: print(f"DEBUG: {self.catalog_name}: Already at last item")
+                    self.on_selection_will_change()  # Allow subclasses to handle selection change
+                break
+
+    def select_previous_item(self):
+        """Select the previous item in the catalog"""
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: select_previous_item() called")
+        count = self.item_list.count()
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Total item count: {count}")
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Current selected_item_widget: {self.selected_item_widget}")
+        
+        if count == 0 or not self.selected_item_widget:
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: No items or no selection, returning")
+            return
+            
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Looking for current selection in list")
+        for i in range(count):
+            widget = self.item_list.itemWidget(self.item_list.item(i))
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: Checking index {i}, widget: {widget}")
+            if widget == self.selected_item_widget:
+                if DEBUG: print(f"DEBUG: {self.catalog_name}: Found current selection at index {i}")
+                prev_index = i - 1
+                if prev_index >= 0:
+                    if DEBUG: print(f"DEBUG: {self.catalog_name}: Moving to previous index {prev_index}")
+                    self.on_selection_will_change()  # Allow subclasses to handle selection change
+                    prev_item = self.item_list.item(prev_index)
+                    if DEBUG: print(f"DEBUG: {self.catalog_name}: About to call _direct_select_item with item: {prev_item}")
+                    self._direct_select_item(prev_item)
+                    self._scroll_to_selected_item_if_needed()
+                else:
+                    if DEBUG: print(f"DEBUG: {self.catalog_name}: Already at first item")
+                break
+
+    def _direct_select_item(self, item):
+        """Directly select an item without the delayed mechanism"""
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: _direct_select_item called with item: {item}")
+        
+        if item is None:
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: Item is None, returning")
+            return
+            
+        item_widget = self.item_list.itemWidget(item)
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Item widget: {item_widget}")
+        
+        if not item_widget or not hasattr(item_widget, 'item_data'):
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: No widget or item_data, returning")
+            return
+
+        # Clear previous selection
+        if self.selected_item_widget and self.selected_item_widget != item_widget:
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: Clearing previous selection: {self.selected_item_widget}")
+            self.selected_item_widget.set_selected(False)
+            self.selected_item_widget.update()
+
+        # Set new selection immediately
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Setting new selection: {item_widget}")
+        item_widget.set_selected(True)
+        item_widget.update()
+        self.selected_item_widget = item_widget
+        
+        # Don't scroll here - let the caller decide if scrolling is needed
+        
+        # Get item path and emit selection signal
+        item_data = item_widget.item_data
+        item_path = self.get_item_path(item_data)
+        
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Item path: {item_path}")
+        
+        if item_path and os.path.exists(item_path):
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: Emitting item_selected signal")
+            self.currently_loading_item = item_path
+            self.item_selected.emit(item_path, item_data)
+            
+            # Allow subclasses to handle post-selection logic
+            self.on_item_selection_changed(item_widget, item_data)
+        else:
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: File not found")
+            QMessageBox.warning(self, "File Not Found", f"Item file not found:\n{item_path}")
+
+    def on_selection_will_change(self):
+        """Called before selection changes - can be overridden by subclasses"""
+        pass
+
+    def on_item_selection_changed(self, item_widget, item_data):
+        """Called after an item is selected - can be overridden by subclasses"""
         pass

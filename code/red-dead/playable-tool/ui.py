@@ -294,7 +294,6 @@ class UI:
         }}
 
         QScrollBar::handle {{
-            background: transparent;
             min-height: 32px;
             border: none;
             border-radius: 0px;
@@ -587,6 +586,7 @@ class UI:
         dark_dock_border = DARK_DOCK_BORDER
         dark_cell_border = "#666"
         dark_cell_grid = "#666"
+        dark_scrollbar_color = "#444"
 
         separator_size = 3
 
@@ -644,17 +644,25 @@ class UI:
         }}
 
         QScrollBar::handle {{
-            background: transparent;
+            background: {dark_scrollbar_color};
+        }}
+
+        QScrollBar::handle:hover {{
+            background: {highlight_color};
+        }}
+
+        QScrollBar::handle:pressed {{
+            background: {highlight_color};
         }}
 
         QScrollBar::handle:vertical {{
-            border-top: 1px solid {highlight_color};
-            border-bottom: 1px solid {highlight_color};
+            border-top: 1px solid {dark_scrollbar_color};
+            border-bottom: 1px solid {dark_scrollbar_color};
         }}
 
         QScrollBar::handle:horizontal {{
-            border-left: 1px solid {highlight_color};
-            border-right: 1px solid {highlight_color};
+            border-left: 1px solid {dark_scrollbar_color};
+            border-right: 1px solid {dark_scrollbar_color};
         }}
 
         QScrollBar::add-line:vertical,
@@ -671,12 +679,12 @@ class UI:
 
         QScrollBar::add-page:horizontal,
         QScrollBar::sub-page:horizontal {{
-            border-top: 1px solid {highlight_color};
+            border-top: 1px solid {dark_scrollbar_color};
         }}
 
         QScrollBar::add-page:vertical,
         QScrollBar::sub-page:vertical {{
-            border-left: 1px solid {highlight_color};
+            border-left: 1px solid {dark_scrollbar_color};
         }}
 
         /* LISTS */
@@ -858,6 +866,7 @@ class UI:
         light_dock_border = LIGHT_DOCK_BORDER
         light_cell_border = "#999"
         light_cell_grid = "#999"
+        light_scrollbar_color = "#bbb"
 
         separator_size = 3
 
@@ -916,17 +925,25 @@ class UI:
         }}
 
         QScrollBar::handle {{
-            background: transparent;
+            background: {light_scrollbar_color};
         }}
 
         QScrollBar::handle:vertical {{
-            border-top: 1px solid {highlight_color};
-            border-bottom: 1px solid {highlight_color};
+            border-top: 1px solid {light_scrollbar_color};
+            border-bottom: 1px solid {light_scrollbar_color};
         }}
 
         QScrollBar::handle:horizontal {{
-            border-left: 1px solid {highlight_color};
-            border-right: 1px solid {highlight_color};
+            border-left: 1px solid {light_scrollbar_color};
+            border-right: 1px solid {light_scrollbar_color};
+        }}
+
+        QScrollBar::handle:hover {{
+            background: {highlight_color};
+        }}
+
+        QScrollBar::handle:pressed {{
+            background: {highlight_color};
         }}
 
         QScrollBar::add-line:vertical,
@@ -943,12 +960,12 @@ class UI:
 
         QScrollBar::add-page:horizontal,
         QScrollBar::sub-page:horizontal {{
-            border-top: 1px solid {highlight_color};
+            border-top: 1px solid {light_scrollbar_color};
         }}
 
         QScrollBar::add-page:vertical,
         QScrollBar::sub-page:vertical {{
-            border-left: 1px solid {highlight_color};
+            border-left: 1px solid {light_scrollbar_color};
         }}
 
         /* LISTS */
