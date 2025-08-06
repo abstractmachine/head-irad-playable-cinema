@@ -13,6 +13,7 @@ class Switchboard(QObject):
     Key responsibilities:
     - Project loading/clearing coordination
     - Catalog loading status management
+    - Metadata rebuild tracking
     - Cross-window state synchronization
     """
     
@@ -21,6 +22,10 @@ class Switchboard(QObject):
     
     project_clearing = pyqtSignal()  # Emitted when switching projects to clear old state
     project_loaded = pyqtSignal(str)  # Emitted after project clear to set new project folder
+    
+    # Metadata rebuild coordination signals
+    metadata_rebuilding_started = pyqtSignal()  # Emitted when first catalog starts rebuilding
+    metadata_rebuilding_stopped = pyqtSignal()  # Emitted when last catalog finishes rebuilding
     
     def __init__(self, windows=None):
         """
@@ -34,6 +39,7 @@ class Switchboard(QObject):
         self.current_shot_index = -1  # Track current shot for playback coordination
         self.current_project_folder = None  # Track current project to detect changes
         self.windows = windows  # Reference to all windows for signal routing
+        self.catalogs_rebuilding = []  # Track which catalogs are currently rebuilding metadata
         
         if DEBUG: print("DEBUG: Switchboard initialized")
         
@@ -73,6 +79,13 @@ class Switchboard(QObject):
         self.project_loaded.connect(self.windows["cinematheque"].set_project_folder)
         self.project_loaded.connect(self.windows["playbill"].set_project_folder)
 
+        # ---- METADATA REBUILD COORDINATION ----
+        # These notify the project window about metadata rebuild status
+        
+        # Notify project window when metadata rebuilding starts/stops
+        self.metadata_rebuilding_started.connect(self.windows["project"].on_metadata_rebuilding_started)
+        self.metadata_rebuilding_stopped.connect(self.windows["project"].on_metadata_rebuilding_stopped)
+
         # ---- CATALOG STATUS CONNECTIONS ----
         # These monitor loading states of catalog windows (cinematheque, playbill)
         # and coordinate UI updates and cross-window dependencies
@@ -86,6 +99,19 @@ class Switchboard(QObject):
         self.windows["playbill"].catalog_loading_started.connect(self.on_playbill_loading_started)
         self.windows["playbill"].catalog_loading_finished.connect(self.on_playbill_loading_finished)
         self.windows["playbill"].catalog_contents_cleared.connect(self.on_playbill_contents_cleared)
+
+        # ---- METADATA REBUILD CONNECTIONS ----
+        # These monitor metadata rebuild operations in catalog windows
+        
+        # Cinematheque metadata rebuild monitoring
+        self.windows["cinematheque"].metadata_rebuild_started.connect(lambda: self.on_metadata_rebuild_started("cinematheque"))
+        self.windows["cinematheque"].metadata_rebuild_finished.connect(lambda success: self.on_metadata_rebuild_finished("cinematheque", success))
+        self.windows["cinematheque"].metadata_rebuild_cancelled.connect(lambda: self.on_metadata_rebuild_cancelled("cinematheque"))
+        
+        # Playbill metadata rebuild monitoring
+        self.windows["playbill"].metadata_rebuild_started.connect(lambda: self.on_metadata_rebuild_started("playbill"))
+        self.windows["playbill"].metadata_rebuild_finished.connect(lambda success: self.on_metadata_rebuild_finished("playbill", success))
+        self.windows["playbill"].metadata_rebuild_cancelled.connect(lambda: self.on_metadata_rebuild_cancelled("playbill"))
 
         if DEBUG: print("DEBUG: Switchboard finished setting up connections")
 
@@ -113,6 +139,87 @@ class Switchboard(QObject):
         # Update our tracking and notify all windows of the new project
         self.current_project_folder = project_folder
         self.project_loaded.emit(project_folder)
+
+    # ---- METADATA REBUILD HANDLERS ----
+
+    def on_metadata_rebuild_started(self, catalog_name):
+        """
+        Handle when a catalog starts rebuilding metadata.
+        
+        Args:
+            catalog_name (str): Name of the catalog ("cinematheque" or "playbill")
+        """
+        if DEBUG: print(f"DEBUG: Switchboard: Metadata rebuild started for {catalog_name}")
+        
+        # Check if this is the first catalog to start rebuilding
+        was_empty = len(self.catalogs_rebuilding) == 0
+        
+        # Add to rebuilding list if not already present
+        if catalog_name not in self.catalogs_rebuilding:
+            self.catalogs_rebuilding.append(catalog_name)
+            if DEBUG: print(f"DEBUG: Switchboard: Added {catalog_name} to rebuilding list. Current list: {self.catalogs_rebuilding}")
+        
+        # If this was the first catalog to start rebuilding, emit signal
+        if was_empty and len(self.catalogs_rebuilding) > 0:
+            if DEBUG: print("DEBUG: Switchboard: First catalog started rebuilding - emitting metadata_rebuilding_started")
+            self.metadata_rebuilding_started.emit()
+
+    def on_metadata_rebuild_finished(self, catalog_name, success):
+        """
+        Handle when a catalog finishes rebuilding metadata.
+        
+        Args:
+            catalog_name (str): Name of the catalog ("cinematheque" or "playbill")
+            success (bool): Whether the rebuild was successful
+        """
+        if DEBUG: print(f"DEBUG: Switchboard: Metadata rebuild finished for {catalog_name}, success: {success}")
+        
+        # Remove from rebuilding list
+        if catalog_name in self.catalogs_rebuilding:
+            self.catalogs_rebuilding.remove(catalog_name)
+            if DEBUG: print(f"DEBUG: Switchboard: Removed {catalog_name} from rebuilding list. Current list: {self.catalogs_rebuilding}")
+        
+        # If this was the last catalog rebuilding, emit signal
+        if len(self.catalogs_rebuilding) == 0:
+            if DEBUG: print("DEBUG: Switchboard: Last catalog finished rebuilding - emitting metadata_rebuilding_stopped")
+            self.metadata_rebuilding_stopped.emit()
+
+    def on_metadata_rebuild_cancelled(self, catalog_name):
+        """
+        Handle when a catalog's metadata rebuild is cancelled.
+        
+        Args:
+            catalog_name (str): Name of the catalog ("cinematheque" or "playbill")
+        """
+        if DEBUG: print(f"DEBUG: Switchboard: Metadata rebuild cancelled for {catalog_name}")
+        
+        # Remove from rebuilding list
+        if catalog_name in self.catalogs_rebuilding:
+            self.catalogs_rebuilding.remove(catalog_name)
+            if DEBUG: print(f"DEBUG: Switchboard: Removed {catalog_name} from rebuilding list. Current list: {self.catalogs_rebuilding}")
+        
+        # If this was the last catalog rebuilding, emit signal
+        if len(self.catalogs_rebuilding) == 0:
+            if DEBUG: print("DEBUG: Switchboard: Last catalog cancelled rebuilding - emitting metadata_rebuilding_stopped")
+            self.metadata_rebuilding_stopped.emit()
+
+    def is_any_catalog_rebuilding(self):
+        """
+        Check if any catalog is currently rebuilding metadata.
+        
+        Returns:
+            bool: True if any catalog is rebuilding, False otherwise
+        """
+        return len(self.catalogs_rebuilding) > 0
+
+    def get_rebuilding_catalogs(self):
+        """
+        Get a copy of the list of catalogs currently rebuilding metadata.
+        
+        Returns:
+            list: Copy of catalogs currently rebuilding
+        """
+        return self.catalogs_rebuilding.copy()
 
     # ---- CATALOG EVENT HANDLERS ----
     # These methods respond to loading/clearing events from catalog windows
@@ -195,4 +302,3 @@ class Switchboard(QObject):
         self.windows["playbill"].on_catalog_loading_finished()
 
     # ---- LEGACY/UNUSED HANDLERS ----
-    

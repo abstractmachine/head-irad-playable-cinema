@@ -252,6 +252,9 @@ class ProjectWindow(QMainWindow):
         # Create the project manager
         self.project_manager = ProjectManager(parent=self)
         
+        # Track metadata rebuilding state
+        self.metadata_rebuilding = False
+        
         self.setup_ui()
         self.setup_connections()
     
@@ -320,6 +323,22 @@ class ProjectWindow(QMainWindow):
         if not project_folder:
             self.project_folder_label.setText("No project folder selected")
     
+    # ---- Metadata Rebuild Handlers ----
+    
+    def on_metadata_rebuilding_started(self):
+        """Handle when metadata rebuilding starts across any catalog"""
+        if DEBUG: print("DEBUG: ProjectWindow: Metadata rebuilding started - disabling project button")
+        
+        self.metadata_rebuilding = True
+        self.select_button.setEnabled(False)
+    
+    def on_metadata_rebuilding_stopped(self):
+        """Handle when metadata rebuilding stops across all catalogs"""
+        if DEBUG: print("DEBUG: ProjectWindow: Metadata rebuilding stopped - enabling project button")
+        
+        self.metadata_rebuilding = False
+        self.select_button.setEnabled(True)
+    
     # ---- Project Manager Access ----
     
     @property 
@@ -369,4 +388,8 @@ class ProjectWindow(QMainWindow):
     def clear_project(self):
         """Clear project - for consistency with other windows"""
         # Project window doesn't need to clear anything since it manages the project state
-        if DEBUG: print("DEBUG: ProjectWindow: clear_project called (no action needed)")
+        # But we should reset metadata rebuilding state
+        if DEBUG: print("DEBUG: ProjectWindow: clear_project called")
+        
+        self.metadata_rebuilding = False
+        self.select_button.setEnabled(True)

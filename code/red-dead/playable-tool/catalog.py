@@ -77,6 +77,11 @@ class AbstractCatalogWindow(QMainWindow):
     catalog_contents_cleared = pyqtSignal()
     item_selected = pyqtSignal(str, dict)  # Signal to send item path AND metadata
     
+    # Add metadata rebuild signals
+    metadata_rebuild_started = pyqtSignal()
+    metadata_rebuild_finished = pyqtSignal(bool)  # True for success, False for failure
+    metadata_rebuild_cancelled = pyqtSignal()
+    
     def __init__(self, ui):
         super().__init__()
         self.ui = ui
@@ -143,6 +148,18 @@ class AbstractCatalogWindow(QMainWindow):
         """Clear current project and cancel any ongoing operations"""
         if DEBUG: print(f"DEBUG: {self.catalog_name}: Clearing project")
         
+        # Check if metadata thread is running and emit cancelled signal
+        metadata_was_running = False
+        if hasattr(self, 'metadata_thread') and self.metadata_thread and self.metadata_thread.isRunning():
+            metadata_was_running = True
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: Stopping metadata thread due to project clear")
+            self.metadata_thread.quit()
+            self.metadata_thread.wait(1000)  # Wait up to 1 second
+            if self.metadata_thread.isRunning():
+                if DEBUG: print(f"DEBUG: {self.catalog_name}: Force terminating metadata thread")
+                self.metadata_thread.terminate()
+                self.metadata_thread.wait()
+        
         # Stop any existing loading thread
         if hasattr(self, 'loading_thread') and self.loading_thread and self.loading_thread.isRunning():
             if DEBUG: print(f"DEBUG: {self.catalog_name}: Stopping loading thread due to project clear")
@@ -153,15 +170,9 @@ class AbstractCatalogWindow(QMainWindow):
                 self.loading_thread.terminate()
                 self.loading_thread.wait()
         
-        # Stop any existing metadata thread
-        if hasattr(self, 'metadata_thread') and self.metadata_thread and self.metadata_thread.isRunning():
-            if DEBUG: print(f"DEBUG: {self.catalog_name}: Stopping metadata thread due to project clear")
-            self.metadata_thread.quit()
-            self.metadata_thread.wait(1000)  # Wait up to 1 second
-            if self.metadata_thread.isRunning():
-                if DEBUG: print(f"DEBUG: {self.catalog_name}: Force terminating metadata thread")
-                self.metadata_thread.terminate()
-                self.metadata_thread.wait()
+        # Emit cancelled signal if metadata was running
+        if metadata_was_running:
+            self.metadata_rebuild_cancelled.emit()
         
         # Hide progress label and show metadata button
         if hasattr(self, 'progress_label') and self.progress_label:
@@ -339,6 +350,9 @@ class AbstractCatalogWindow(QMainWindow):
         self.metadata_button.setEnabled(False)
         self.metadata_button.setText("Rebuilding 0%")
         
+        # Emit started signal
+        self.metadata_rebuild_started.emit()
+        
         # Create worker thread
         from metadata import MetadataWorker
         self.metadata_thread = QThread()
@@ -386,6 +400,9 @@ class AbstractCatalogWindow(QMainWindow):
         # Re-enable button and reset text
         self.metadata_button.setEnabled(True)
         self.metadata_button.setText("Rebuild Metadata")
+        
+        # Emit finished signal with success status
+        self.metadata_rebuild_finished.emit(success)
         
         if success:
             # Reload the catalog data after successful metadata rebuild
@@ -658,54 +675,6 @@ class AbstractCatalogWindow(QMainWindow):
             # Simulate click on previous widget
             if hasattr(prev_widget, 'data'):
                 self.on_widget_clicked(prev_widget, prev_widget.data)
-
-    # Remove the duplicate clear_project method
-    def clear_project(self):
-        """Clear current project and cancel any ongoing operations"""
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: Clearing project")
-        
-        # Stop any existing loading thread
-        if hasattr(self, 'loading_thread') and self.loading_thread and self.loading_thread.isRunning():
-            if DEBUG: print(f"DEBUG: {self.catalog_name}: Stopping loading thread due to project clear")
-            self.loading_thread.quit()
-            self.loading_thread.wait(1000)  # Wait up to 1 second
-            if self.loading_thread.isRunning():
-                if DEBUG: print(f"DEBUG: {self.catalog_name}: Force terminating loading thread")
-                self.loading_thread.terminate()
-                self.loading_thread.wait()
-        
-        # Stop any existing metadata thread
-        if hasattr(self, 'metadata_thread') and self.metadata_thread and self.metadata_thread.isRunning():
-            if DEBUG: print(f"DEBUG: {self.catalog_name}: Stopping metadata thread due to project clear")
-            self.metadata_thread.quit()
-            self.metadata_thread.wait(1000)  # Wait up to 1 second
-            if self.metadata_thread.isRunning():
-                if DEBUG: print(f"DEBUG: {self.catalog_name}: Force terminating metadata thread")
-                self.metadata_thread.terminate()
-                self.metadata_thread.wait()
-        
-        # Hide progress label and show metadata button
-        if hasattr(self, 'progress_label') and self.progress_label:
-            self.progress_label.setVisible(False)
-        
-        if hasattr(self, 'metadata_button'):
-            self.metadata_button.setVisible(True)
-            self.metadata_button.setText("Rebuild Metadata")
-            self.metadata_button.setEnabled(False)  # Disabled when no project
-        
-        # Clear UI state
-        self.item_list.clear()
-        self.selected_item_widget = None
-        self.currently_loading_item = None
-        self.loading_progress_item = None
-        
-        # Reset project folder to None (but don't trigger reload)
-        self.project_folder = None
-        
-        # Emit cleared signal
-        self.catalog_contents_cleared.emit()
-        
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: Project cleared")
 
     # Abstract methods that subclasses must implement
     def get_assets_folder_name(self):
