@@ -1,7 +1,18 @@
+
 # PI5 + AI Hat+
-We are going to explore using the following configuration for live captioning via [BLIP](https://huggingface.co/docs/transformers/en/model_doc/blip):
+
+## TL;DR;
+This didn't work. But AI Hat+ is still cool :-).
+
+## Goals
+We ~~are~~ were going to explore using the following configuration for live captioning via [BLIP](https://huggingface.co/docs/transformers/en/model_doc/blip):
+
+The Setup:
 - [Raspberry Pi 5 16GB](https://www.pi-shop.ch/raspberry-pi-5-16gb-ram)
-- [Raspberry AI Hat+ 26 Tops](https://www.pi-shop.ch/raspberry-pi-ai-hat-26t)
+TL;DR; This didn't work. But AI Hat+ is still cool.
+- [Raspberry AI Hat+ 26 Tops](https://www.pi-shop.ch/raspb
+The Setup:
+erry-pi-ai-hat-26t)
     - [AI Hat Documentation](https://www.raspberrypi.com/documentation/accessories/ai-hat-plus.html)
 - [Raspberry Pi Official 5 power supply, 27W USB-C](https://www.galaxus.ch/en/s1/product/raspberry-pi-official-5-power-supply-27w-usb-c-development-board-accessories-38955882?skipAppLink=true) (cf. [Power Delivery](#power-delivery))
 - HDMI Input
