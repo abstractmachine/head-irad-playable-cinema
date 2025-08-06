@@ -634,6 +634,44 @@ class AbstractCatalogWindow(QMainWindow):
         if hasattr(self, 'on_item_selection_changed'):
             self.on_item_selection_changed(widget, data)
 
+    def ensure_item_visible(self, widget):
+        """Ensure the given widget is visible in the viewport, scroll if necessary"""
+        if not widget:
+            return
+            
+        # Find the list item for this widget
+        target_item = None
+        for i in range(self.item_list.count()):
+            item = self.item_list.item(i)
+            if self.item_list.itemWidget(item) == widget:
+                target_item = item
+                break
+        
+        if not target_item:
+            return
+            
+        # Get the item's visual rect in the viewport
+        item_rect = self.item_list.visualItemRect(target_item)
+        viewport_rect = self.item_list.viewport().rect()
+        
+        if DEBUG: 
+            print(f"DEBUG: {self.catalog_name}: Item rect: {item_rect.top()}-{item_rect.bottom()}")
+            print(f"DEBUG: {self.catalog_name}: Viewport rect: {viewport_rect.top()}-{viewport_rect.bottom()}")
+        
+        # Check if item is vertically within viewport bounds
+        item_top = item_rect.top()
+        item_bottom = item_rect.bottom()
+        viewport_top = viewport_rect.top()
+        viewport_bottom = viewport_rect.bottom()
+        
+        # If item is not fully visible vertically, scroll to make it visible
+        if item_top < viewport_top or item_bottom > viewport_bottom:
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: Item not fully visible, scrolling to top")
+            # Scroll so the item appears at the top of the viewport
+            self.item_list.scrollToItem(target_item, QAbstractItemView.PositionAtTop)
+        else:
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: Item already visible, no scrolling needed")
+
     def select_next_item(self):
         """Select the next item in the list"""
         if not self.selected_item_widget or self.item_list.count() == 0:
@@ -648,15 +686,22 @@ class AbstractCatalogWindow(QMainWindow):
                 current_index = i
                 break
         
-        # Move to next item (wrap around to beginning if at end)
+        # Move to next item (stop at end, don't wrap around)
         if current_index >= 0:
-            next_index = (current_index + 1) % self.item_list.count()
+            next_index = current_index + 1
+            # Stop if we're already at the last item
+            if next_index >= self.item_list.count():
+                if DEBUG: print(f"DEBUG: {self.catalog_name}: Already at last item, not moving")
+                return
+                
             next_item = self.item_list.item(next_index)
             next_widget = self.item_list.itemWidget(next_item)
             
             # Simulate click on next widget
-            if hasattr(next_widget, 'data'):
-                self.on_widget_clicked(next_widget, next_widget.data)
+            if hasattr(next_widget, 'item_data'):
+                self.on_widget_clicked(next_widget, next_widget.item_data)
+                # Ensure the newly selected item is visible
+                self.ensure_item_visible(next_widget)
 
     def select_previous_item(self):
         """Select the previous item in the list"""
@@ -672,25 +717,19 @@ class AbstractCatalogWindow(QMainWindow):
                 current_index = i
                 break
         
-        # Move to previous item (wrap around to end if at beginning)
+        # Move to previous item (stop at beginning, don't wrap around)
         if current_index >= 0:
-            prev_index = (current_index - 1) % self.item_list.count()
+            prev_index = current_index - 1
+            # Stop if we're already at the first item
+            if prev_index < 0:
+                if DEBUG: print(f"DEBUG: {self.catalog_name}: Already at first item, not moving")
+                return
+                
             prev_item = self.item_list.item(prev_index)
             prev_widget = self.item_list.itemWidget(prev_item)
             
             # Simulate click on previous widget
-            if hasattr(prev_widget, 'data'):
-                self.on_widget_clicked(prev_widget, prev_widget.data)
-
-    # Abstract methods that subclasses must implement
-    def get_assets_folder_name(self):
-        """Get the name of the assets folder - must be implemented by subclasses"""
-        raise NotImplementedError("Subclasses must implement get_assets_folder_name()")
-    
-    def create_item_widget(self, item_data, assets_folder):
-        """Create a widget for an item - must be implemented by subclasses"""
-        raise NotImplementedError("Subclasses must implement create_item_widget()")
-    
-    def get_item_path(self, item_data):
-        """Get the full path for an item - must be implemented by subclasses"""
-        raise NotImplementedError("Subclasses must implement get_item_path()")
+            if hasattr(prev_widget, 'item_data'):
+                self.on_widget_clicked(prev_widget, prev_widget.item_data)
+                # Ensure the newly selected item is visible
+                self.ensure_item_visible(prev_widget)

@@ -326,8 +326,11 @@ class Switchboard(QObject):
             item_path (str): Path to the selected item
             metadata (dict): Metadata for the selected item
         """
-        if DEBUG: print(f"DEBUG: Switchboard: Cinematheque item selected: {item_path}")
-        if DEBUG: print(f"DEBUG: Switchboard: Cinematheque item metadata: {metadata}")
+
+        # if DEBUG: print(f"DEBUG: Switchboard: Cinematheque item selected: {item_path}")
+        if DEBUG: print(f"DEBUG: Switchboard: Cinematheque item metadata: {metadata['title']}")
+
+        folder = "movies"
         
         # Future: Add cross-window coordination logic here
         # Examples:
@@ -348,8 +351,10 @@ class Switchboard(QObject):
             item_path (str): Path to the selected item
             metadata (dict): Metadata for the selected item
         """
-        if DEBUG: print(f"DEBUG: Switchboard: Playbill item selected: {item_path}")
-        if DEBUG: print(f"DEBUG: Switchboard: Playbill item metadata: {metadata}")
+        # if DEBUG: print(f"DEBUG: Switchboard: Playbill item selected: {item_path}")
+        if DEBUG: print(f"DEBUG: Switchboard: Playbill item metadata: {metadata['title']}")
+
+        folder = "gameplay"
         
         # Future: Add cross-window coordination logic here
         # Examples:

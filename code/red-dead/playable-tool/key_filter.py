@@ -18,14 +18,14 @@ class GlobalKeyFilter(QObject):
             if isinstance(widget, (QLineEdit, QTextEdit, QPlainTextEdit)):
                 return False  # Let the text field handle the key event
 
-            cine = self.windows["cinematheque"]
+            cinematheque = self.windows["cinematheque"]
             if event.key() == Qt.Key_PageDown:
                 if DEBUG: print("DEBUG: PageDown pressed")
-                cine.select_next_item()
+                cinematheque.select_next_item()
                 return True
             elif event.key() == Qt.Key_PageUp:
                 if DEBUG: print("DEBUG: PageUp pressed")
-                cine.select_previous_item()
+                cinematheque.select_previous_item()
                 return True
 
             # Keep all other key handling for shortcuts (A, O, B, N, etc.)
