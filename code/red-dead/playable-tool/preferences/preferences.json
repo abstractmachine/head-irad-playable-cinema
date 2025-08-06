@@ -1,1 +1,27 @@
-{"project": {"project_folder": "/Volumes/PLAYABLE-D/project"}, "inference": {"caption_model": "Caption Model v0.1"}, "captions": {"frame_count": "5"}, "subtitles": {}, "prompt": {}, "playhouse": {}, "playbill": {}, "nickelodeon": {}, "shotlist": {"col0_width": 41, "col1_width": 43, "col2_width": 98, "col3_width": 100, "col4_width": 267, "col5_width": 228, "weights_field": "-t 3.0", "method_selected": "detect-adaptive"}, "cinematheque": {}}
+{
+  "project": {
+    "project_folder": "/Volumes/PLAYABLE-D/project"
+  },
+  "inference": {
+    "caption_model": "Caption Model v0.1"
+  },
+  "captions": {
+    "frame_count": "5"
+  },
+  "subtitles": {},
+  "prompt": {},
+  "playhouse": {},
+  "playbill": {},
+  "nickelodeon": {},
+  "shotlist": {
+    "col0_width": 41,
+    "col1_width": 43,
+    "col2_width": 98,
+    "col3_width": 100,
+    "col4_width": 324,
+    "col5_width": 228,
+    "weights_field": "-t 3.0",
+    "method_selected": "detect-adaptive"
+  },
+  "cinematheque": {}
+}

@@ -27,11 +27,6 @@ class GlobalKeyFilter(QObject):
                 if DEBUG: print("DEBUG: PageUp pressed")
                 cine.select_previous_movie()
                 return True
-            elif event.key() == Qt.Key_W:
-                if DEBUG: print("DEBUG: W pressed (resetting dock layout)")
-                from app import reset_dock_layout  # Import here to avoid circular imports
-                reset_dock_layout(self.main_window)
-                return True
 
             # Keep all other key handling for shortcuts (A, O, B, N, etc.)
             self.windows["nickelodeon"].handle_global_key(event)
