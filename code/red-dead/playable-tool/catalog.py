@@ -604,7 +604,12 @@ class AbstractCatalogWindow(QMainWindow):
 
     def on_widget_clicked(self, widget, data):
         """Handle when an item widget is clicked"""
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: Widget clicked with data: {data}")
+        import traceback
+        if DEBUG: 
+            print(f"DEBUG: {self.catalog_name}: Widget clicked with data: {data}")
+            print(f"DEBUG: {self.catalog_name}: Call stack:")
+            for line in traceback.format_stack()[-5:]:  # Show last 5 stack frames
+                print(f"DEBUG: {self.catalog_name}: {line.strip()}")
         
         # Call selection will change handler if it exists
         if hasattr(self, 'on_selection_will_change'):
@@ -622,6 +627,7 @@ class AbstractCatalogWindow(QMainWindow):
         
         # Emit selection signal with both path and data
         if item_path:
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: Emitting item_selected signal for: {item_path}")
             self.item_selected.emit(item_path, data)
         
         # Call selection changed handler if it exists

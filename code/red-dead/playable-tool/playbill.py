@@ -8,9 +8,6 @@ from gameplay_item import GameplayItemWidget
 
 class PlaybillWindow(AbstractCatalogWindow):
     
-    # Additional signals specific to playbill
-    gameplay_selected = pyqtSignal(str, dict)  # Signal for gameplay selection
-    
     def __init__(self, ui):
         # Set catalog-specific properties before calling super().__init__()
         self.catalog_name = "Playbill"
@@ -19,9 +16,6 @@ class PlaybillWindow(AbstractCatalogWindow):
         
         # Call parent constructor
         super().__init__(ui)
-        
-        # Add gameplay_selected signal as alias for item_selected
-        self.gameplay_selected = self.item_selected
         
     def create_button_layout(self):
         """Create the button layout with playbill-specific buttons"""
@@ -136,3 +130,9 @@ class PlaybillWindow(AbstractCatalogWindow):
     @selected_gameplay_widget.setter
     def selected_gameplay_widget(self, value):
         self.selected_item_widget = value
+
+    # Add this property if you need gameplay_selected for backward compatibility
+    @property
+    def gameplay_selected(self):
+        """Provide access to the item_selected signal for backward compatibility"""
+        return self.item_selected

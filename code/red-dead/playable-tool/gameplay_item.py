@@ -121,14 +121,15 @@ class GameplayItemWidget(AbstractCatalogItemWidget):
         self.thumbnail_label.setStyleSheet("border: 1px solid #666; background-color: #222; color: #888;")
 
     def mousePressEvent(self, event):
-        """Handle mouse click events"""
+        """Handle mouse press events"""
         if event.button() == Qt.LeftButton:
-            if DEBUG:
-                print(f"DEBUG: GameplayItemWidget: Clicked on '{self.item_data.get('title', 'Unknown')}'")
-            # Emit the clicked signal with the item data
+            if DEBUG: print(f"DEBUG: GameplayItemWidget: Mouse press event for {self.item_data.get('filename', 'Unknown')}")
+            
+            # Only emit the signal once - don't call super().mousePressEvent()
             self.clicked.emit(self.item_data)
             
-            # Also handle selection similar to the parent catalog system
-            # This ensures the item gets selected and the signal propagates correctly
-            self.set_selected(True)
-        super().mousePressEvent(event)
+            # Accept the event to prevent further processing
+            event.accept()
+        else:
+            # For non-left clicks, let the parent handle it
+            super().mousePressEvent(event)

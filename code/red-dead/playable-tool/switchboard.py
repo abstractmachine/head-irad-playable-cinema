@@ -100,6 +100,15 @@ class Switchboard(QObject):
         self.windows["playbill"].catalog_loading_finished.connect(self.on_playbill_loading_finished)
         self.windows["playbill"].catalog_contents_cleared.connect(self.on_playbill_contents_cleared)
 
+        # ---- CATALOG ITEM SELECTION CONNECTIONS ----
+        # These monitor item selections in catalog windows and coordinate responses
+        
+        # Cinematheque item selection monitoring
+        self.windows["cinematheque"].item_selected.connect(self.on_cinematheque_item_selected)
+        
+        # Playbill item selection monitoring
+        self.windows["playbill"].item_selected.connect(self.on_playbill_item_selected)
+
         # ---- METADATA REBUILD CONNECTIONS ----
         # These monitor metadata rebuild operations in catalog windows
         
@@ -301,4 +310,51 @@ class Switchboard(QObject):
         # Let playbill handle its own UI state changes
         self.windows["playbill"].on_catalog_loading_finished()
 
-    # ---- LEGACY/UNUSED HANDLERS ----
+    # ---- CATALOG ITEM SELECTION HANDLERS ----
+    # These methods respond to item selections in catalog windows
+    # and coordinate cross-window responses
+
+    def on_cinematheque_item_selected(self, item_path, metadata):
+        """
+        Handle when an item is selected in the cinematheque catalog.
+        
+        This coordinates responses across the application when a movie/video
+        is selected in the cinematheque. Can trigger loading of related data
+        in other windows or update UI states based on the selected item.
+        
+        Args:
+            item_path (str): Path to the selected item
+            metadata (dict): Metadata for the selected item
+        """
+        if DEBUG: print(f"DEBUG: Switchboard: Cinematheque item selected: {item_path}")
+        if DEBUG: print(f"DEBUG: Switchboard: Cinematheque item metadata: {metadata}")
+        
+        # Future: Add cross-window coordination logic here
+        # Examples:
+        # - Load related shots in shotlist window
+        # - Update inference window with movie-specific models
+        # - Enable movie-dependent features in other windows
+        # - Clear incompatible selections in other catalogs
+
+    def on_playbill_item_selected(self, item_path, metadata):
+        """
+        Handle when an item is selected in the playbill catalog.
+        
+        This coordinates responses across the application when a performance/show
+        is selected in the playbill. Can trigger loading of related data
+        in other windows or update UI states based on the selected item.
+        
+        Args:
+            item_path (str): Path to the selected item
+            metadata (dict): Metadata for the selected item
+        """
+        if DEBUG: print(f"DEBUG: Switchboard: Playbill item selected: {item_path}")
+        if DEBUG: print(f"DEBUG: Switchboard: Playbill item metadata: {metadata}")
+        
+        # Future: Add cross-window coordination logic here
+        # Examples:
+        # - Load performance-specific data in other windows
+        # - Update UI to show performance-related options
+        # - Clear conflicting selections in other catalogs
+        # - Enable performance-dependent features
+
