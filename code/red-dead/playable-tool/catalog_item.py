@@ -1,6 +1,6 @@
 DEBUG = False  # Set to True to enable debug output
 
-from PyQt5.QtCore import Qt, pyqtSignal, QSize
+from PyQt5.QtCore import Qt, pyqtSignal, QSize, QTimer
 from PyQt5.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel
 from PyQt5.QtGui import QPixmap
 import os
@@ -99,6 +99,7 @@ class MovieItemWidget(AbstractCatalogItemWidget):
     
     def __init__(self, movie_data, posters_folder, ui):
         self.posters_folder = posters_folder
+        self.poster_loaded = False
         super().__init__(movie_data, ui)
     
     def setup_ui(self):
@@ -114,10 +115,17 @@ class MovieItemWidget(AbstractCatalogItemWidget):
         self.poster_label.setStyleSheet("border: none; padding: 0px 4px 0px 0px; margin: 0px;")
         self.poster_label.setAlignment(Qt.AlignCenter)
         self.poster_label.setScaledContents(True)
-        self.load_poster()
+        
+        # Show placeholder initially
+        self.poster_label.setText("Loading...")
+        self.poster_label.setAlignment(Qt.AlignCenter)
+        
+        # Load poster asynchronously
+        QTimer.singleShot(100, self.load_poster_async)
+        
         layout.addWidget(self.poster_label)
 
-        # Movie info (right side)
+        # Movie info (right side) - same as before
         info_layout = QVBoxLayout()
         info_layout.setSpacing(0)
         info_layout.setContentsMargins(0,0,0,0)
@@ -167,8 +175,11 @@ class MovieItemWidget(AbstractCatalogItemWidget):
         layout.addLayout(info_layout, 0)  # Give info area more space
         self.setLayout(layout)
 
-    def load_poster(self):
-        """Load poster image for this movie"""
+    def load_poster_async(self):
+        """Load poster image asynchronously"""
+        if self.poster_loaded:
+            return
+            
         # Get the exact filename from metadata
         filename = self.item_data.get('filename', '')
         
@@ -177,35 +188,37 @@ class MovieItemWidget(AbstractCatalogItemWidget):
             filename = filename[:-4]
 
         # Try common image extensions
+        poster_found = False
         for ext in ['.jpg', '.jpeg', '.png', '.bmp']:
             poster_path = os.path.join(self.posters_folder, f"{filename}{ext}")
             if os.path.exists(poster_path):
                 pixmap = QPixmap(poster_path)
                 if not pixmap.isNull():
                     self.poster_label.setPixmap(pixmap)
-                    return
-                else:
-                    print(f"✗ Failed to load pixmap from: {poster_path}")
+                    self.poster_loaded = True
+                    poster_found = True
+                    break
 
         # Fallback: try tmdb_id format
-        tmdb_id = self.item_data.get('tmdb_id', '')
-        if tmdb_id:
-            for ext in ['.jpg', '.jpeg', '.png', '.bmp']:
-                poster_path = os.path.join(self.posters_folder, f"{tmdb_id}{ext}")
-                if os.path.exists(poster_path):
-                    pixmap = QPixmap(poster_path)
-                    if not pixmap.isNull():
-                        self.poster_label.setPixmap(pixmap)
-                        return
-                    else:
-                        print(f"✗ Failed to load pixmap from fallback: {poster_path}")
+        if not poster_found:
+            tmdb_id = self.item_data.get('tmdb_id', '')
+            if tmdb_id:
+                for ext in ['.jpg', '.jpeg', '.png', '.bmp']:
+                    poster_path = os.path.join(self.posters_folder, f"{tmdb_id}{ext}")
+                    if os.path.exists(poster_path):
+                        pixmap = QPixmap(poster_path)
+                        if not pixmap.isNull():
+                            self.poster_label.setPixmap(pixmap)
+                            self.poster_loaded = True
+                            poster_found = True
+                            break
 
-        # If no poster found, show placeholder and debug info
-        print(f"✗ No poster found for: {self.item_data.get('title', 'Unknown')}")
-        print(f"  Looked for: {filename}.[jpg|jpeg|png|bmp]")
-        if tmdb_id:
-            print(f"  Also tried: {tmdb_id}.[jpg|jpeg|png|bmp]")
-        print(f"  In folder: {self.posters_folder}")
-        
-        self.poster_label.setText("No\nPoster")
-        self.poster_label.setAlignment(Qt.AlignCenter)
+        # If no poster found, show placeholder
+        if not poster_found:
+            self.poster_label.setText("No\nPoster")
+            self.poster_label.setAlignment(Qt.AlignCenter)
+            self.poster_loaded = True
+
+    def load_poster(self):
+        """Legacy method - now just calls async version"""
+        self.load_poster_async()

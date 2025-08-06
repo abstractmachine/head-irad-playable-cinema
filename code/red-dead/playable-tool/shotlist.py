@@ -571,6 +571,11 @@ class ShotlistWindow(QMainWindow):
                 scene_caption = self.scene_table.item(row, scene_caption_index).text() if scene_caption_index != -1 else ""
                 writer.writerow([ignore, scene_num, start, end, shot_caption, scene_caption])
 
+    def clear_project(self):
+        """Clear project - for consistency with other windows"""
+        # A Placeholder for future functionality
+        if DEBUG: print("DEBUG: ProjectWindow: clear_project called (no action needed)")
+
     def load_shotlist_from_csv(self, path):
         with open(path, "r", encoding="utf-8") as csvfile:
             reader = csv.DictReader(csvfile)

@@ -16,7 +16,7 @@ class MetadataWorker(QObject):
     """Worker class for rebuilding metadata in a separate thread"""
     
     # Signals for communication with main thread
-    progress = pyqtSignal(str)  # Progress message
+    progress = pyqtSignal(int)  # Progress percentage (0-100) - CHANGED FROM STRING TO INT
     finished = pyqtSignal(bool)  # Success/failure
     error = pyqtSignal(str)  # Error message
     
@@ -65,7 +65,7 @@ class MetadataWorker(QObject):
             if not self.load_api_keys():
                 return
             
-            self.progress.emit(f"Scanning {self.data_folder} files...")
+            self.progress.emit(5)  # 5% - Starting scan
             
             # Get list of .mp4 files from data folder (was hardcoded to "movies")
             data_folder_path = os.path.join(self.project_folder, self.data_folder)
@@ -83,12 +83,16 @@ class MetadataWorker(QObject):
                 self.error.emit(f"No .mp4 files found in {self.data_folder} folder")
                 return
                 
-            self.progress.emit(f"Found {len(video_files)} videos")
+            self.progress.emit(10)  # 10% - Found files
             
             # Parse video data and fetch TMDB metadata (if it's a movie)
             videos_data = []
+            total_files = len(video_files)
+            
             for i, filename in enumerate(video_files):
-                self.progress.emit(f"Processing {i+1}/{len(video_files)}: {filename}")
+                # Progress from 10% to 60% for processing files
+                progress = 10 + int((i / total_files) * 50)
+                self.progress.emit(progress)
                 
                 if self.data_folder == "movies":
                     # For movies, parse filename and fetch TMDB data
@@ -115,21 +119,21 @@ class MetadataWorker(QObject):
             
             if self.data_folder == "movies":
                 # Download missing posters and subtitles only for movies
-                self.progress.emit("Checking posters...")
+                self.progress.emit(65)  # 65% - Starting posters
                 self.download_missing_posters(videos_data)
                 
-                self.progress.emit("Checking subtitles...")
+                self.progress.emit(80)  # 80% - Starting subtitles
                 self.download_missing_subtitles(videos_data)
             elif self.data_folder == "gameplay":
                 # Generate thumbnails for gameplay videos
-                self.progress.emit("Generating thumbnails...")
+                self.progress.emit(70)  # 70% - Starting thumbnails
                 self.generate_missing_thumbnails(videos_data)
             
             # Write metadata file
-            self.progress.emit(f"Writing {self.metadata_filename}...")
+            self.progress.emit(95)  # 95% - Writing file
             self.write_metadata_csv(videos_data)
             
-            self.progress.emit("Metadata rebuild complete!")
+            self.progress.emit(100)  # 100% - Complete
             self.finished.emit(True)
             
         except Exception as e:

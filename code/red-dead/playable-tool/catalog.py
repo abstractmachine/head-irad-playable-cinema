@@ -1,10 +1,10 @@
 DEBUG = False  # Set to True to enable debug output
 
-from PyQt5.QtCore import Qt, pyqtSignal, QSize, QThread, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal, QSize, QThread, QTimer, QObject
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QPushButton, QListWidget, QListWidgetItem, QSizePolicy, 
-    QMessageBox, QAbstractItemView
+    QMessageBox, QAbstractItemView, QLabel
 )
 
 # OS Stuff
@@ -13,15 +13,68 @@ import csv
 from metadata import MetadataWorker, read_metadata_csv
 from catalog_item import AbstractCatalogItemWidget, MovieItemWidget, ITEM_HEIGHT
 
+class CatalogLoadingWorker(QObject):
+    """Worker class for loading catalog data in a separate thread"""
+    
+    progress = pyqtSignal(int)  # Progress percentage (0-100)
+    finished = pyqtSignal(list)  # List of item data when finished
+    error = pyqtSignal(str)  # Error message
+    
+    def __init__(self, metadata_path, project_folder, assets_folder_name):
+        super().__init__()
+        self.metadata_path = metadata_path
+        self.project_folder = project_folder
+        self.assets_folder_name = assets_folder_name
+        
+    def run(self):
+        """Load catalog data in background thread"""
+        try:
+            if DEBUG: print(f"DEBUG: CatalogLoadingWorker: Loading from {self.metadata_path}")
+            
+            # First, count total rows for progress calculation
+            self.progress.emit(5)  # 5% - Starting to count rows
+            
+            total_rows = 0
+            with open(self.metadata_path, 'r', encoding='utf-8') as csvfile:
+                reader = csv.DictReader(csvfile)
+                for _ in reader:
+                    total_rows += 1
+            
+            if DEBUG: print(f"DEBUG: CatalogLoadingWorker: Found {total_rows} items to load")
+            self.progress.emit(10)  # 10% - Finished counting
+            
+            # Now load the actual data
+            items_data = []
+            current_row = 0
+            
+            for row in read_metadata_csv(self.metadata_path):
+                items_data.append(row)
+                current_row += 1
+                
+                # Calculate progress (10% to 90% for loading data)
+                if total_rows > 0:
+                    progress = 10 + int((current_row / total_rows) * 80)
+                    self.progress.emit(progress)
+            
+            self.progress.emit(95)  # 95% - Data loaded, finishing up
+            
+            if DEBUG: print(f"DEBUG: CatalogLoadingWorker: Loaded {len(items_data)} items")
+            self.finished.emit(items_data)
+            
+        except Exception as e:
+            if DEBUG: print(f"DEBUG: CatalogLoadingWorker: Error loading data: {str(e)}")
+            self.error.emit(str(e))
+
 class AbstractCatalogWindow(QMainWindow):
     """Abstract base class for catalog windows"""
     
     # Define signals for communication
     request_save = pyqtSignal()
     request_load = pyqtSignal(dict)
-    catalog_started_loading = pyqtSignal()
-    catalog_cleared_contents = pyqtSignal()
-    catalog_finished_loading = pyqtSignal()
+    catalog_loading_started = pyqtSignal()
+    catalog_loading_finished = pyqtSignal()
+    catalog_loading_progress = pyqtSignal(int)  # Add progress signal
+    catalog_contents_cleared = pyqtSignal()
     item_selected = pyqtSignal(str, dict)  # Signal to send item path AND metadata
     
     def __init__(self, ui):
@@ -30,24 +83,109 @@ class AbstractCatalogWindow(QMainWindow):
         self.project_folder = None  # Current project folder
         self.currently_loading_item = None  # Track what item is currently being requested
         self.selected_item_widget = None  # Track currently selected item widget
+        self._pending_save_data = {}  # Initialize this attribute
+        
+        # Loading thread variables
+        self.loading_thread = None
+        self.loading_worker = None
+        self.loading_progress_item = None
         
         if DEBUG:
-            print(f"DEBUG: AbstractCatalogWindow.__init__: metadata_file = '{getattr(self, 'metadata_file', 'NOT_SET')}'")
+            print(f"DEBUG: AbstractCatalogWindow: Initializing {self.__class__.__name__}")
         
         # Only set defaults if not already set by subclass
         if not hasattr(self, 'catalog_name'):
-            self.catalog_name = "Catalog"
+            self.catalog_name = "Unknown Catalog"
         if not hasattr(self, 'data_folder'):
-            self.data_folder = ""
+            self.data_folder = "data"
         if not hasattr(self, 'metadata_file'):
-            self.metadata_file = ""
+            self.metadata_file = "metadata.csv"
             
         if DEBUG:
-            print(f"DEBUG: AbstractCatalogWindow.__init__: After defaults, metadata_file = '{self.metadata_file}'")
+            print(f"DEBUG: AbstractCatalogWindow: catalog_name='{self.catalog_name}', data_folder='{self.data_folder}', metadata_file='{self.metadata_file}'")
         
         self.setup_ui()
         self.setup_connections()
+
+    def closeEvent(self, event):
+        """Clean up threads when window is closing"""
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: closeEvent called")
         
+        # Clean up loading thread
+        if hasattr(self, 'loading_thread') and self.loading_thread:
+            if self.loading_thread.isRunning():
+                if DEBUG: print(f"DEBUG: {self.catalog_name}: Stopping loading thread")
+                self.loading_thread.quit()
+                if not self.loading_thread.wait(3000):  # Wait up to 3 seconds
+                    if DEBUG: print(f"DEBUG: {self.catalog_name}: Force terminating loading thread")
+                    self.loading_thread.terminate()
+                    self.loading_thread.wait()
+        
+        # Clean up metadata thread
+        if hasattr(self, 'metadata_thread') and self.metadata_thread:
+            if self.metadata_thread.isRunning():
+                if DEBUG: print(f"DEBUG: {self.catalog_name}: Stopping metadata thread")
+                self.metadata_thread.quit()
+                if not self.metadata_thread.wait(3000):  # Wait up to 3 seconds
+                    if DEBUG: print(f"DEBUG: {self.catalog_name}: Force terminating metadata thread")
+                    self.metadata_thread.terminate()
+                    self.metadata_thread.wait()
+        
+        # Clean up workers
+        if hasattr(self, 'loading_worker') and self.loading_worker:
+            self.loading_worker = None
+        if hasattr(self, 'metadata_worker') and self.metadata_worker:
+            self.metadata_worker = None
+            
+        super().closeEvent(event)
+
+    def clear_project(self):
+        """Clear current project and cancel any ongoing operations"""
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Clearing project")
+        
+        # Stop any existing loading thread
+        if hasattr(self, 'loading_thread') and self.loading_thread and self.loading_thread.isRunning():
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: Stopping loading thread due to project clear")
+            self.loading_thread.quit()
+            self.loading_thread.wait(1000)  # Wait up to 1 second
+            if self.loading_thread.isRunning():
+                if DEBUG: print(f"DEBUG: {self.catalog_name}: Force terminating loading thread")
+                self.loading_thread.terminate()
+                self.loading_thread.wait()
+        
+        # Stop any existing metadata thread
+        if hasattr(self, 'metadata_thread') and self.metadata_thread and self.metadata_thread.isRunning():
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: Stopping metadata thread due to project clear")
+            self.metadata_thread.quit()
+            self.metadata_thread.wait(1000)  # Wait up to 1 second
+            if self.metadata_thread.isRunning():
+                if DEBUG: print(f"DEBUG: {self.catalog_name}: Force terminating metadata thread")
+                self.metadata_thread.terminate()
+                self.metadata_thread.wait()
+        
+        # Hide progress label and show metadata button
+        if hasattr(self, 'progress_label') and self.progress_label:
+            self.progress_label.setVisible(False)
+        
+        if hasattr(self, 'metadata_button'):
+            self.metadata_button.setVisible(True)
+            self.metadata_button.setText("Rebuild Metadata")
+            self.metadata_button.setEnabled(False)  # Disabled when no project
+        
+        # Clear UI state
+        self.item_list.clear()
+        self.selected_item_widget = None
+        self.currently_loading_item = None
+        self.loading_progress_item = None
+        
+        # Reset project folder to None (but don't trigger reload)
+        self.project_folder = None
+        
+        # Emit cleared signal
+        self.catalog_contents_cleared.emit()
+        
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Project cleared")
+
     def setup_connections(self):
         """Setup signal connections - can be overridden by subclasses"""
         # Base class has no connections to set up by default
@@ -88,11 +226,11 @@ class AbstractCatalogWindow(QMainWindow):
         self.metadata_thread = None
         self.metadata_worker = None
         
-        # Initialize animation timer for rebuilding button
-        self.rebuild_animation_timer = QTimer()
-        self.rebuild_animation_timer.timeout.connect(self.animate_rebuild_button)
-        self.rebuild_dot_count = 0
-    
+        # Remove the animation timer setup since we're using percentage progress instead
+        # self.rebuild_animation_timer = QTimer()
+        # self.rebuild_animation_timer.timeout.connect(self.animate_rebuild_button)
+        # self.rebuild_dot_count = 0
+
     def create_button_layout(self):
         """Create the button layout - can be overridden by subclasses"""
         button_layout = QHBoxLayout()
@@ -100,406 +238,484 @@ class AbstractCatalogWindow(QMainWindow):
         button_layout.setSpacing(0)
         button_width, button_height = self.ui.get_dimensions('button')
 
-        # Metadata rebuild button
+        # Store button height for progress label
+        self.button_height = button_height
+
+        # Metadata rebuild button (always visible)
         self.metadata_button = QPushButton("Rebuild Metadata")
         self.metadata_button.setFont(self.ui.get_font('button'))
         self.metadata_button.clicked.connect(self.rebuild_metadata)
         self.metadata_button.setEnabled(False)
         self.metadata_button.setFixedSize(160, button_height)
 
+        # Progress label spans full width (initially hidden)
+        self.progress_label = QLabel("Loading catalog... 0%")
+        self.progress_label.setFont(self.ui.get_font('button'))
+        self.progress_label.setFixedHeight(button_height)
+        self.progress_label.setAlignment(Qt.AlignCenter)
+        self.progress_label.setStyleSheet("QLabel { padding: 0px 10px 0px 10px; background-color: #f0f; color: #fff; }")
+        self.progress_label.setVisible(False)
+
+        # Add widgets to main layout
         button_layout.addWidget(self.metadata_button)
+        button_layout.addWidget(self.progress_label)
         button_layout.addStretch()
         
         return button_layout
 
-    def rebuild_metadata(self):
-        """Rebuild metadata for this catalog"""
-        if not self.project_folder:
-            QMessageBox.warning(self, "No Project", "Please set a project folder first.")
-            return
+    def on_catalog_loading_started(self):
+        """Handle when catalog starts loading - can be overridden by subclasses"""
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Catalog loading started")
+        # Hide metadata button during loading
+        self.metadata_button.setVisible(False)
+        
+        # Show progress label which will now span full width
+        if self.progress_label:
+            self.progress_label.setText("Loading catalog... 0%")
+            self.progress_label.setVisible(True)
+            if DEBUG: 
+                print(f"DEBUG: {self.catalog_name}: Progress label text set to: '{self.progress_label.text()}'")
+                print(f"DEBUG: {self.catalog_name}: Progress label visible: {self.progress_label.isVisible()}")
+        else:
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: progress_label is None in on_catalog_loading_started!")
 
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: Starting metadata rebuild")
+    def on_catalog_loading_finished(self):
+        """Handle when catalog finishes loading - can be overridden by subclasses"""
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Catalog loading finished")
         
-        # Start animation
-        self.rebuild_animation_timer.start(500)
+        # Hide progress label
+        if self.progress_label:
+            self.progress_label.setVisible(False)
+        
+        # Show metadata button again
+        self.metadata_button.setVisible(True)
+        
+        # Re-enable metadata button after loading completes
+        if self.project_folder:  # Only enable if we have a project
+            self.metadata_button.setEnabled(True)
+
+    def update_loading_progress(self, progress):
+        """Update the loading progress display"""
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Updating progress to {progress}%")
+        if self.progress_label:
+            if progress < 95:
+                # Phase 1: Loading data
+                new_text = f"Loading data... {progress}%"
+            else:
+                # Phase 2: Will be handled by create_next_batch
+                new_text = f"Loading data... {progress}%"
+            
+            old_text = self.progress_label.text()
+            self.progress_label.setText(new_text)
+            
+            if DEBUG:
+                print(f"DEBUG: {self.catalog_name}: Progress label exists: {self.progress_label is not None}")
+                print(f"DEBUG: {self.catalog_name}: Progress label visible: {self.progress_label.isVisible()}")
+                print(f"DEBUG: {self.catalog_name}: Old text: '{old_text}' -> New text: '{new_text}'")
+                print(f"DEBUG: {self.catalog_name}: Actual label text after update: '{self.progress_label.text()}'")
+        else:
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: progress_label is None!")
+
+    def rebuild_metadata(self):
+        """Rebuild metadata for the catalog"""
+        if not self.project_folder:
+            return
+        
+        # Stop any existing metadata thread
+        if hasattr(self, 'metadata_thread') and self.metadata_thread and self.metadata_thread.isRunning():
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: Stopping existing metadata thread")
+            self.metadata_thread.quit()
+            self.metadata_thread.wait()
+        
+        # Clear the catalog items first
+        self.item_list.clear()
+        self.selected_item_widget = None
+        self.catalog_contents_cleared.emit()
+        
+        # Don't add a progress item - just show progress in the button
+        self.loading_progress_item = None
+        
+        # Disable button and start with 0% progress
         self.metadata_button.setEnabled(False)
+        self.metadata_button.setText("Rebuilding 0%")
         
-        # Create worker thread for metadata processing
+        # Create worker thread
+        from metadata import MetadataWorker
         self.metadata_thread = QThread()
         self.metadata_worker = MetadataWorker(self.project_folder, self.data_folder, self.metadata_file)
         self.metadata_worker.moveToThread(self.metadata_thread)
         
-        # Connect signals
+        # Connect signals properly
         self.metadata_thread.started.connect(self.metadata_worker.run)
-        self.metadata_worker.finished.connect(self.on_metadata_finished)
+        self.metadata_worker.progress.connect(self.on_metadata_progress)
+        self.metadata_worker.finished.connect(lambda success: self.on_metadata_finished(success, ""))
+        self.metadata_worker.error.connect(lambda error_msg: self.on_metadata_finished(False, error_msg))
         self.metadata_worker.finished.connect(self.metadata_thread.quit)
         self.metadata_worker.finished.connect(self.metadata_worker.deleteLater)
         self.metadata_thread.finished.connect(self.metadata_thread.deleteLater)
         
+        # Clean up references when thread finishes
+        self.metadata_thread.finished.connect(lambda: setattr(self, 'metadata_thread', None))
+        self.metadata_worker.finished.connect(lambda success: setattr(self, 'metadata_worker', None))
+        
         # Start the thread
         self.metadata_thread.start()
 
-    def animate_rebuild_button(self):
-        """Animate the rebuild button text while processing"""
-        self.rebuild_dot_count = (self.rebuild_dot_count + 1) % 4
-        dots = "." * self.rebuild_dot_count
-        self.metadata_button.setText(f"Rebuilding{dots}")
-
-    def on_metadata_finished(self, success, message):
-        """Handle when metadata rebuild is finished"""
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: Metadata rebuild finished: {success}, {message}")
+    def on_metadata_progress(self, progress):
+        """Handle metadata rebuild progress updates"""
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Metadata progress: {progress}% (type: {type(progress)})")
         
-        # Stop animation
-        self.rebuild_animation_timer.stop()
-        self.metadata_button.setText("Rebuild Metadata")
+        # Convert progress to int if it's a string
+        try:
+            if isinstance(progress, str):
+                progress = int(progress)
+            elif not isinstance(progress, int):
+                progress = int(progress)
+        except (ValueError, TypeError):
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: Could not convert progress to int: {progress}")
+            progress = 0
+        
+        # Update button text with percentage (button remains disabled)
+        if hasattr(self, 'metadata_button'):
+            self.metadata_button.setText(f"Rebuilding {progress}%")
+
+    def on_metadata_finished(self, success, message=""):
+        """Handle metadata rebuild completion"""
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Metadata rebuild finished - success: {success}, message: '{message}'")
+        
+        # Re-enable button and reset text
         self.metadata_button.setEnabled(True)
+        self.metadata_button.setText("Rebuild Metadata")
         
         if success:
-            if DEBUG: print(f"DEBUG: {self.catalog_name}: Reloading catalog data after successful rebuild")
-            # Reload the catalog data
+            # Reload the catalog data after successful metadata rebuild
             self.load_catalog_data()
-            # Emit signal that catalog has finished loading
-            self.catalog_finished_loading.emit()
         else:
-            QMessageBox.critical(self, "Error", f"Failed to rebuild metadata:\n{message}")
+            # Show error message
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Metadata Error", f"Failed to rebuild metadata:\n{message}")
+            # Still emit cleared signal since we cleared the list
+            self.catalog_contents_cleared.emit()
+
+    def load_catalog_data(self):
+        """Load catalog data from metadata file"""
+        if not self.project_folder:
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: No project folder set, cannot load catalog")
+            return
+            
+        # Build path to metadata file (in metadata subfolder)
+        metadata_path = os.path.join(self.project_folder, "metadata", self.metadata_file)
+        
+        if DEBUG: 
+            print(f"DEBUG: {self.catalog_name}: Looking for metadata at: {metadata_path}")
+            # List all CSV files in the metadata folder to see what's actually there
+            try:
+                metadata_folder = os.path.join(self.project_folder, "metadata")
+                if os.path.exists(metadata_folder):
+                    all_files = os.listdir(metadata_folder)
+                    csv_files = [f for f in all_files if f.endswith('.csv')]
+                    print(f"DEBUG: {self.catalog_name}: CSV files found in metadata folder: {csv_files}")
+                else:
+                    print(f"DEBUG: {self.catalog_name}: Metadata folder does not exist: {metadata_folder}")
+            except Exception as e:
+                print(f"DEBUG: {self.catalog_name}: Error listing metadata folder: {e}")
+        
+        if not os.path.exists(metadata_path):
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: Metadata file not found: {metadata_path}")
+            # Clear any existing items and show empty state
+            self.item_list.clear()
+            self.selected_item_widget = None
+            self.catalog_contents_cleared.emit()
+            return
+        
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Metadata file found, starting threaded loading")
+        
+        # Emit loading started signal
+        self.catalog_loading_started.emit()
+            
+        # Load items using threaded loading
+        self.load_items_from_metadata_threaded(metadata_path, self.project_folder)
+
+    def load_items_from_metadata_threaded(self, metadata_path, project_folder):
+        """Load items from metadata file using background thread"""
+        # Stop any existing loading thread
+        if hasattr(self, 'loading_thread') and self.loading_thread and self.loading_thread.isRunning():
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: Stopping existing loading thread")
+            self.loading_thread.quit()
+            self.loading_thread.wait()
+
+        # Clear the list and DON'T show loading progress in the list
+        self.item_list.clear()
+        self.catalog_contents_cleared.emit()
+        self.selected_item_widget = None
+
+        # Create worker thread
+        self.loading_thread = QThread()
+        self.loading_worker = CatalogLoadingWorker(metadata_path, project_folder, self.get_assets_folder_name())
+        self.loading_worker.moveToThread(self.loading_thread)
+        
+        # Connect signals - don't connect to show_loading_progress since we handle it differently
+        self.loading_thread.started.connect(self.loading_worker.run)
+        self.loading_worker.progress.connect(self.catalog_loading_progress.emit)  # Only emit progress signal
+        self.loading_worker.finished.connect(self.on_loading_finished)
+        self.loading_worker.error.connect(self.on_loading_error)
+        self.loading_worker.finished.connect(self.loading_thread.quit)
+        self.loading_worker.finished.connect(self.loading_worker.deleteLater)
+        self.loading_thread.finished.connect(self.loading_thread.deleteLater)
+        
+        # Clean up references when thread finishes
+        self.loading_thread.finished.connect(lambda: setattr(self, 'loading_thread', None))
+        self.loading_worker.finished.connect(lambda items_data: setattr(self, 'loading_worker', None))
+        
+        # Start the thread
+        self.loading_thread.start()
+
+    def on_loading_finished(self, items_data):
+        """Handle when loading is finished"""
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Loading finished with {len(items_data)} items")
+        
+        # Update our progress label to show thumbnail loading phase
+        if self.progress_label:
+            self.progress_label.setText("Loading thumbnails... 0%")
+        
+        # Store the data and start creating widgets in batches
+        self.items_data = items_data
+        self.assets_folder = os.path.join(self.project_folder, self.get_assets_folder_name())
+        self.current_batch_index = 0
+        self.batch_size = 10  # Create 10 widgets at a time
+        self.total_items = len(items_data)
+        
+        # Start creating widgets in batches
+        self.create_next_batch()
+
+    def on_loading_error(self, error_message):
+        """Handle loading errors"""
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Loading error: {error_message}")
+        QMessageBox.critical(self, "Loading Error", f"Failed to load catalog:\n{error_message}")
+        self.catalog_loading_finished.emit()
+
+    def create_next_batch(self):
+        """Create the next batch of item widgets"""
+        if not hasattr(self, 'items_data') or self.current_batch_index >= len(self.items_data):
+            # All batches processed - finish
+            self.catalog_loading_progress.emit(100)
+            self.update_item_list()
+            return
+            
+        start_idx = self.current_batch_index
+        end_idx = min(start_idx + self.batch_size, len(self.items_data))
+        
+        # Calculate thumbnail loading progress (0% to 100%) and update progress label
+        if self.total_items > 0:
+            thumbnail_progress = int((start_idx / self.total_items) * 100)
+            if self.progress_label:
+                self.progress_label.setText(f"Loading thumbnails... {thumbnail_progress}%")
+        
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Creating widgets {start_idx} to {end_idx-1}, thumbnail progress: {thumbnail_progress}%")
+        
+        # Create widgets for this batch
+        for i in range(start_idx, end_idx):
+            item_data = self.items_data[i]
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: Creating widget for: {item_data}")
+            
+            # Create custom widget for this item
+            item_widget = self.create_item_widget(item_data, self.assets_folder)
+            
+            # Connect the widget's clicked signal to handle selection
+            if hasattr(item_widget, 'clicked'):
+                item_widget.clicked.connect(lambda data, widget=item_widget: self.on_widget_clicked(widget, data))
+            
+            # Create list item with fixed height
+            item = QListWidgetItem()
+            item.setSizeHint(QSize(item_widget.width(), ITEM_HEIGHT))
+
+            # Add to list
+            self.item_list.addItem(item)
+            self.item_list.setItemWidget(item, item_widget)
+        
+        # Update batch index
+        self.current_batch_index = end_idx
+        
+        # Process events to ensure UI responsiveness
+        from PyQt5.QtWidgets import QApplication
+        QApplication.processEvents()
+        
+        # Schedule next batch with longer delay to allow UI interaction
+        QTimer.singleShot(100, self.create_next_batch)
 
     def update_item_list(self):
-        """Update the item list display - can be overridden by subclasses"""
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: Item list updated with {self.item_list.count()} items")
-        # Emit signal that catalog has finished loading
-        self.catalog_finished_loading.emit()
+        """Called when all items have been loaded"""
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: All items loaded, finalizing")
+        
+        # Emit the loading finished signal
+        self.catalog_loading_finished.emit()
+        
+        # Clean up temporary data
+        if hasattr(self, 'items_data'):
+            delattr(self, 'items_data')
+        if hasattr(self, 'assets_folder'):
+            delattr(self, 'assets_folder')
 
-    def create_item_widget(self, item_data, assets_folder):
-        """Create an item widget - must be overridden by subclasses"""
-        raise NotImplementedError("Subclasses must implement create_item_widget()")
-    
-    def get_item_path(self, item_data):
-        """Get the full path for an item - must be overridden by subclasses"""
-        raise NotImplementedError("Subclasses must implement get_item_path()")
-    
-    def get_assets_folder_name(self):
-        """Get the name of the assets folder - can be overridden by subclasses"""
-        return "assets"
-    
     def set_project_folder(self, project_folder):
-        """Set project folder and load catalog data"""
-        if DEBUG: 
-            print(f"DEBUG: {self.catalog_name}: Project folder set to: {project_folder}")
+        """Set the project folder and load catalog data"""
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Setting project folder to: {project_folder}")
         
         self.project_folder = project_folder
         
+        # Enable metadata button if we have a project
+        if hasattr(self, 'metadata_button'):
+            self.metadata_button.setEnabled(project_folder is not None)
+        
+        # Load catalog data if project folder is set
         if project_folder:
-            # Emit signal that catalog is starting to load
-            self.catalog_started_loading.emit()
-            # Enable buttons when project is loaded
-            self.metadata_button.setEnabled(True)
-            # Load catalog data
             self.load_catalog_data()
-        else:
-            # Clear current data
-            self.item_list.clear()
-            self.selected_item_widget = None
-            self.metadata_button.setEnabled(False)
-            # Emit signal that catalog contents are cleared
-            self.catalog_cleared_contents.emit()
-            if DEBUG: print(f"DEBUG: {self.catalog_name}: Project folder cleared, catalog contents cleared")
-    
-    def load_catalog_data(self):
-        """Load catalog data from project"""
-        if not self.project_folder:
-            if DEBUG: print(f"DEBUG: {self.catalog_name}: No project folder set")
-            return
-        
-        metadata_path = os.path.join(self.project_folder, "metadata", self.metadata_file)
-        if DEBUG: 
-            print(f"DEBUG: {self.catalog_name}: Looking for metadata file: {metadata_path}")
-            print(f"DEBUG: {self.catalog_name}: metadata_file = '{self.metadata_file}'")
-            print(f"DEBUG: {self.catalog_name}: File exists: {os.path.exists(metadata_path)}")
-        
-        if os.path.exists(metadata_path):
-            if DEBUG: print(f"DEBUG: {self.catalog_name}: Loading items from metadata")
-            self.load_items_from_metadata(metadata_path, self.project_folder)
-        else:
-            if DEBUG: print(f"DEBUG: {self.catalog_name}: No metadata file found, showing placeholder")
-            # No metadata file, show placeholder
-            self.item_list.clear()
-            placeholder_item = QListWidgetItem(f"No {self.metadata_file} found. Click 'Rebuild Metadata' to create it.")
-            self.item_list.addItem(placeholder_item)
-
-    def load_items_from_metadata(self, metadata_path, project_folder):
-        """Load items from metadata file"""
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: Loading items from: {metadata_path}")
-        
-        self.item_list.clear()
-        self.catalog_cleared_contents.emit()
-        
-        # Clear previous selection
-        self.selected_item_widget = None
-        assets_folder = os.path.join(project_folder, self.get_assets_folder_name())
-        
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: Assets folder: {assets_folder}")
-        
-        try:
-            # Use the read_metadata_csv function to read the CSV file
-            for row in read_metadata_csv(metadata_path):
-                if DEBUG: print(f"DEBUG: {self.catalog_name}: Processing row: {row}")
-                # Create custom widget for this item
-                item_widget = self.create_item_widget(row, assets_folder)
-                
-                # Connect the widget's clicked signal to handle selection
-                if hasattr(item_widget, 'clicked'):
-                    item_widget.clicked.connect(lambda data, widget=item_widget: self.on_widget_clicked(widget, data))
-                
-                # Create list item with fixed height
-                item = QListWidgetItem()
-                item.setSizeHint(QSize(item_widget.width(), ITEM_HEIGHT))
-
-                # Add to list
-                self.item_list.addItem(item)
-                self.item_list.setItemWidget(item, item_widget)
-
-            # Now that we've loaded, update the list
-            self.update_item_list()
-
-        except Exception as e:
-            if DEBUG: print(f"DEBUG: {self.catalog_name}: Error loading metadata: {str(e)}")
-            QMessageBox.critical(self, "Error", f"Failed to load {self.metadata_file}:\n{str(e)}")
-
-    def on_widget_clicked(self, item_widget, item_data):
-        """Handle clicks from custom item widgets"""
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: Widget clicked with data: {item_data}")
-        
-        # Clear previous selection
-        if self.selected_item_widget and self.selected_item_widget != item_widget:
-            self.selected_item_widget.set_selected(False)
-            self.selected_item_widget.update()
-        
-        # Set new selection
-        item_widget.set_selected(True)
-        item_widget.update()
-        self.selected_item_widget = item_widget
-        
-        # Scroll to item only if it's offscreen
-        self._scroll_to_selected_item_if_needed()
-        
-        # Get item path and emit selection signal
-        item_path = self.get_item_path(item_data)
-        if item_path and os.path.exists(item_path):
-            self.currently_loading_item = item_path
-            self.item_selected.emit(item_path, item_data)
-        else:
-            QMessageBox.warning(self, "File Not Found", f"Item file not found:\n{item_path}")
-
-    def _set_new_selection(self, item_widget):
-        """Set the new selection and emit signals"""
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: _set_new_selection called with widget: {item_widget}")
-        
-        item_widget.set_selected(True)
-        item_widget.update()
-        self.selected_item_widget = item_widget
-        
-        # Scroll to item only if it's offscreen
-        self._scroll_to_selected_item_if_needed()
-        
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: Widget selected, getting item path")
-        
-        # Get item path and emit selection signal
-        item_data = item_widget.item_data
-        item_path = self.get_item_path(item_data)
-        
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: Item path: {item_path}")
-        
-        if item_path and os.path.exists(item_path):
-            if DEBUG: print(f"DEBUG: {self.catalog_name}: Emitting item_selected signal")
-            self.currently_loading_item = item_path
-            self.item_selected.emit(item_path, item_data)
-        else:
-            if DEBUG: print(f"DEBUG: {self.catalog_name}: File not found")
-            QMessageBox.warning(self, "File Not Found", f"Item file not found:\n{item_path}")
-
-    def _scroll_to_selected_item_if_needed(self):
-        """Scroll to the selected item only if it's not fully visible"""
-        if not self.selected_item_widget:
-            return
-            
-        # Find the index of the selected item widget
-        for i in range(self.item_list.count()):
-            item = self.item_list.item(i)
-            if item and self.item_list.itemWidget(item) == self.selected_item_widget:
-                self.scroll_to_item(i)
-                return
-
-    def scroll_to_item(self, index):
-        """Scrolls the item list so the item at 'index' is visible at the top if offscreen."""
-        item = self.item_list.item(index)
-        if not item:
-            if DEBUG:
-                print(f"DEBUG: {self.catalog_name}: scroll_to_item: No item at index {index}")
-            return
-
-        item_rect = self.item_list.visualItemRect(item)
-        viewport_rect = self.item_list.viewport().rect()
-
-        if DEBUG:
-            print(f"DEBUG: {self.catalog_name}: scroll_to_item called for index {index}")
-            print(f"DEBUG: {self.catalog_name}: item_rect={item_rect}, viewport_rect={viewport_rect}")
-
-        # Check only vertical visibility (ignore horizontal since items can be wider than viewport)
-        item_top = item_rect.top()
-        item_bottom = item_rect.bottom()
-        viewport_top = viewport_rect.top()
-        viewport_bottom = viewport_rect.bottom()
-        
-        # Item is fully visible vertically if both top and bottom are within viewport
-        is_fully_visible_vertically = (item_top >= viewport_top and item_bottom <= viewport_bottom)
-
-        if DEBUG:
-            print(f"DEBUG: {self.catalog_name}: item vertical span: {item_top}-{item_bottom}, viewport vertical span: {viewport_top}-{viewport_bottom}")
-            print(f"DEBUG: {self.catalog_name}: is_fully_visible_vertically: {is_fully_visible_vertically}")
-
-        # If the item is not fully visible vertically, scroll to it
-        if not is_fully_visible_vertically:
-            if DEBUG:
-                print(f"DEBUG: {self.catalog_name}: scrolling to item {index} (not fully visible vertically)")
-            self.item_list.scrollToItem(item, self.item_list.PositionAtTop)
-        else:
-            if DEBUG:
-                print(f"DEBUG: {self.catalog_name}: item {index} already fully visible vertically, no scroll needed.")
-
-    def on_item_loaded_with_metadata(self, item_path, metadata):
-        """Handle when an item is loaded"""
-        self.currently_loading_item = None
-
-    # ---- Save/Load Preferences ----
 
     def on_request_save(self):
-        """Save preferences - subclasses can override to add more data"""
-        self._pending_save_data = {}
-    
-    def on_request_load(self, data):
-        """Load preferences - subclasses can override to handle more data"""
+        """Handle save requests - can be overridden by subclasses"""
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Save requested")
+        # Base implementation provides empty save data
         pass
+
+    def on_request_load(self, data):
+        """Handle load requests - can be overridden by subclasses"""
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Load requested with data: {data}")
+        # Base implementation does nothing - subclasses can override
+        if data and "project_folder" in data:
+            # Don't automatically set project folder from preferences
+            # Let the switchboard handle project coordination
+            pass
+
+    def on_widget_clicked(self, widget, data):
+        """Handle when an item widget is clicked"""
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Widget clicked with data: {data}")
+        
+        # Call selection will change handler if it exists
+        if hasattr(self, 'on_selection_will_change'):
+            self.on_selection_will_change()
+        
+        # Update selected widget
+        if self.selected_item_widget:
+            self.selected_item_widget.set_selected(False)
+        
+        self.selected_item_widget = widget
+        widget.set_selected(True)
+        
+        # Get the item path
+        item_path = self.get_item_path(data)
+        
+        # Emit selection signal with both path and data
+        if item_path:
+            self.item_selected.emit(item_path, data)
+        
+        # Call selection changed handler if it exists
+        if hasattr(self, 'on_item_selection_changed'):
+            self.on_item_selection_changed(widget, data)
 
     def select_next_item(self):
-        """Select the next item in the catalog"""
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: select_next_item() called")
-        count = self.item_list.count()
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: Total item count: {count}")
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: Current selected_item_widget: {self.selected_item_widget}")
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: Project folder: {self.project_folder}")
+        """Select the next item in the list"""
+        if not self.selected_item_widget or self.item_list.count() == 0:
+            return
         
-        # If nothing is selected but there are items and a project folder, select the first item
-        if count > 0 and self.project_folder and not self.selected_item_widget:
-            if DEBUG: print(f"DEBUG: {self.catalog_name}: No selection, selecting first item")
-            self.on_selection_will_change()  # Allow subclasses to handle selection change
-            first_item = self.item_list.item(0)
-            self._direct_select_item(first_item)
-            self._scroll_to_selected_item_if_needed()
-            return
-
-        if count == 0 or not self.selected_item_widget:
-            if DEBUG: print(f"DEBUG: {self.catalog_name}: No items or no selection, returning")
-            self.on_selection_will_change()  # Allow subclasses to handle selection change
-            return
-            
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: Looking for current selection in list")
-        for i in range(count):
-            widget = self.item_list.itemWidget(self.item_list.item(i))
-            if DEBUG: print(f"DEBUG: {self.catalog_name}: Checking index {i}, widget: {widget}")
+        # Find current selected item index
+        current_index = -1
+        for i in range(self.item_list.count()):
+            item = self.item_list.item(i)
+            widget = self.item_list.itemWidget(item)
             if widget == self.selected_item_widget:
-                if DEBUG: print(f"DEBUG: {self.catalog_name}: Found current selection at index {i}")
-                next_index = i + 1
-                if next_index < count:
-                    if DEBUG: print(f"DEBUG: {self.catalog_name}: Moving to next index {next_index}")
-                    self.on_selection_will_change()  # Allow subclasses to handle selection change
-                    next_item = self.item_list.item(next_index)
-                    if DEBUG: print(f"DEBUG: {self.catalog_name}: About to call _direct_select_item with item: {next_item}")
-                    self._direct_select_item(next_item)
-                    self._scroll_to_selected_item_if_needed()
-                else:
-                    if DEBUG: print(f"DEBUG: {self.catalog_name}: Already at last item")
-                    self.on_selection_will_change()  # Allow subclasses to handle selection change
+                current_index = i
                 break
+        
+        # Move to next item (wrap around to beginning if at end)
+        if current_index >= 0:
+            next_index = (current_index + 1) % self.item_list.count()
+            next_item = self.item_list.item(next_index)
+            next_widget = self.item_list.itemWidget(next_item)
+            
+            # Simulate click on next widget
+            if hasattr(next_widget, 'data'):
+                self.on_widget_clicked(next_widget, next_widget.data)
 
     def select_previous_item(self):
-        """Select the previous item in the catalog"""
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: select_previous_item() called")
-        count = self.item_list.count()
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: Total item count: {count}")
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: Current selected_item_widget: {self.selected_item_widget}")
-        
-        if count == 0 or not self.selected_item_widget:
-            if DEBUG: print(f"DEBUG: {self.catalog_name}: No items or no selection, returning")
+        """Select the previous item in the list"""
+        if not self.selected_item_widget or self.item_list.count() == 0:
             return
-            
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: Looking for current selection in list")
-        for i in range(count):
-            widget = self.item_list.itemWidget(self.item_list.item(i))
-            if DEBUG: print(f"DEBUG: {self.catalog_name}: Checking index {i}, widget: {widget}")
+        
+        # Find current selected item index
+        current_index = -1
+        for i in range(self.item_list.count()):
+            item = self.item_list.item(i)
+            widget = self.item_list.itemWidget(item)
             if widget == self.selected_item_widget:
-                if DEBUG: print(f"DEBUG: {self.catalog_name}: Found current selection at index {i}")
-                prev_index = i - 1
-                if prev_index >= 0:
-                    if DEBUG: print(f"DEBUG: {self.catalog_name}: Moving to previous index {prev_index}")
-                    self.on_selection_will_change()  # Allow subclasses to handle selection change
-                    prev_item = self.item_list.item(prev_index)
-                    if DEBUG: print(f"DEBUG: {self.catalog_name}: About to call _direct_select_item with item: {prev_item}")
-                    self._direct_select_item(prev_item)
-                    self._scroll_to_selected_item_if_needed()
-                else:
-                    if DEBUG: print(f"DEBUG: {self.catalog_name}: Already at first item")
+                current_index = i
                 break
-
-    def _direct_select_item(self, item):
-        """Directly select an item without the delayed mechanism"""
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: _direct_select_item called with item: {item}")
         
-        if item is None:
-            if DEBUG: print(f"DEBUG: {self.catalog_name}: Item is None, returning")
-            return
+        # Move to previous item (wrap around to end if at beginning)
+        if current_index >= 0:
+            prev_index = (current_index - 1) % self.item_list.count()
+            prev_item = self.item_list.item(prev_index)
+            prev_widget = self.item_list.itemWidget(prev_item)
             
-        item_widget = self.item_list.itemWidget(item)
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: Item widget: {item_widget}")
-        
-        if not item_widget or not hasattr(item_widget, 'item_data'):
-            if DEBUG: print(f"DEBUG: {self.catalog_name}: No widget or item_data, returning")
-            return
+            # Simulate click on previous widget
+            if hasattr(prev_widget, 'data'):
+                self.on_widget_clicked(prev_widget, prev_widget.data)
 
-        # Clear previous selection
-        if self.selected_item_widget and self.selected_item_widget != item_widget:
-            if DEBUG: print(f"DEBUG: {self.catalog_name}: Clearing previous selection: {self.selected_item_widget}")
-            self.selected_item_widget.set_selected(False)
-            self.selected_item_widget.update()
+    # Remove the duplicate clear_project method
+    def clear_project(self):
+        """Clear current project and cancel any ongoing operations"""
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Clearing project")
+        
+        # Stop any existing loading thread
+        if hasattr(self, 'loading_thread') and self.loading_thread and self.loading_thread.isRunning():
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: Stopping loading thread due to project clear")
+            self.loading_thread.quit()
+            self.loading_thread.wait(1000)  # Wait up to 1 second
+            if self.loading_thread.isRunning():
+                if DEBUG: print(f"DEBUG: {self.catalog_name}: Force terminating loading thread")
+                self.loading_thread.terminate()
+                self.loading_thread.wait()
+        
+        # Stop any existing metadata thread
+        if hasattr(self, 'metadata_thread') and self.metadata_thread and self.metadata_thread.isRunning():
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: Stopping metadata thread due to project clear")
+            self.metadata_thread.quit()
+            self.metadata_thread.wait(1000)  # Wait up to 1 second
+            if self.metadata_thread.isRunning():
+                if DEBUG: print(f"DEBUG: {self.catalog_name}: Force terminating metadata thread")
+                self.metadata_thread.terminate()
+                self.metadata_thread.wait()
+        
+        # Hide progress label and show metadata button
+        if hasattr(self, 'progress_label') and self.progress_label:
+            self.progress_label.setVisible(False)
+        
+        if hasattr(self, 'metadata_button'):
+            self.metadata_button.setVisible(True)
+            self.metadata_button.setText("Rebuild Metadata")
+            self.metadata_button.setEnabled(False)  # Disabled when no project
+        
+        # Clear UI state
+        self.item_list.clear()
+        self.selected_item_widget = None
+        self.currently_loading_item = None
+        self.loading_progress_item = None
+        
+        # Reset project folder to None (but don't trigger reload)
+        self.project_folder = None
+        
+        # Emit cleared signal
+        self.catalog_contents_cleared.emit()
+        
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Project cleared")
 
-        # Set new selection immediately
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: Setting new selection: {item_widget}")
-        item_widget.set_selected(True)
-        item_widget.update()
-        self.selected_item_widget = item_widget
-        
-        # Don't scroll here - let the caller decide if scrolling is needed
-        
-        # Get item path and emit selection signal
-        item_data = item_widget.item_data
-        item_path = self.get_item_path(item_data)
-        
-        if DEBUG: print(f"DEBUG: {self.catalog_name}: Item path: {item_path}")
-        
-        if item_path and os.path.exists(item_path):
-            if DEBUG: print(f"DEBUG: {self.catalog_name}: Emitting item_selected signal")
-            self.currently_loading_item = item_path
-            self.item_selected.emit(item_path, item_data)
-            
-            # Allow subclasses to handle post-selection logic
-            self.on_item_selection_changed(item_widget, item_data)
-        else:
-            if DEBUG: print(f"DEBUG: {self.catalog_name}: File not found")
-            QMessageBox.warning(self, "File Not Found", f"Item file not found:\n{item_path}")
-
-    def on_selection_will_change(self):
-        """Called before selection changes - can be overridden by subclasses"""
-        pass
-
-    def on_item_selection_changed(self, item_widget, item_data):
-        """Called after an item is selected - can be overridden by subclasses"""
-        pass
+    # Abstract methods that subclasses must implement
+    def get_assets_folder_name(self):
+        """Get the name of the assets folder - must be implemented by subclasses"""
+        raise NotImplementedError("Subclasses must implement get_assets_folder_name()")
+    
+    def create_item_widget(self, item_data, assets_folder):
+        """Create a widget for an item - must be implemented by subclasses"""
+        raise NotImplementedError("Subclasses must implement create_item_widget()")
+    
+    def get_item_path(self, item_data):
+        """Get the full path for an item - must be implemented by subclasses"""
+        raise NotImplementedError("Subclasses must implement get_item_path()")

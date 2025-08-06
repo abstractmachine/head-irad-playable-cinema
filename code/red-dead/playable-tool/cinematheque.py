@@ -2,8 +2,9 @@ DEBUG = False  # Set to True to enable debug output
 
 from PyQt5.QtCore import pyqtSignal, QTimer
 from PyQt5.QtWidgets import (
-    QHBoxLayout, QPushButton, QMessageBox
+    QHBoxLayout, QPushButton, QMessageBox, QLabel, QWidget, QStackedWidget
 )
+from PyQt5.QtCore import Qt
 import os
 from catalog import AbstractCatalogWindow
 from catalog_item import MovieItemWidget
@@ -27,6 +28,9 @@ class CinemathequeWindow(AbstractCatalogWindow):
         # Call parent constructor
         super().__init__(ui)
         
+        # Connect progress signal to update method
+        self.catalog_loading_progress.connect(self.update_loading_progress)
+        
         if DEBUG: 
             print(f"DEBUG: CinemathequeWindow: After super().__init__(), metadata_file = '{self.metadata_file}'")
         
@@ -36,26 +40,15 @@ class CinemathequeWindow(AbstractCatalogWindow):
         self.shotlist_bot_anim_timer.timeout.connect(self.animate_shotlist_bot)
         self.shotlist_bot_dots = 0
         
-        # Add movie_selected signal as alias for item_selected
-        self.movie_selected = self.item_selected
-        
     def create_button_layout(self):
         """Create the button layout with cinematheque-specific buttons"""
-        button_layout = QHBoxLayout()
-        button_layout.setContentsMargins(0, 0, 0, 0)
-        button_layout.setSpacing(0)
+        # Get the base button layout (metadata button + progress label)
+        button_layout = super().create_button_layout()
         
         # Get button dimensions
         button_width, button_height = self.ui.get_dimensions('button')
         
-        # Metadata rebuild button
-        self.metadata_button = QPushButton("Rebuild Metadata")
-        self.metadata_button.setFont(self.ui.get_font('button'))
-        self.metadata_button.clicked.connect(self.rebuild_metadata)
-        self.metadata_button.setEnabled(False)
-        self.metadata_button.setFixedSize(160, button_height)
-        
-        # Bot buttons
+        # Add cinematheque-specific bot buttons after the metadata button
         self.shotlist_bot_button = QPushButton("Shotlist Bot Off")
         self.shotlist_bot_button.setFont(self.ui.get_font('button'))
         self.shotlist_bot_button.setFixedSize(140, button_height)
@@ -74,14 +67,21 @@ class CinemathequeWindow(AbstractCatalogWindow):
         self.caption_bot_button.setEnabled(False)
         self.caption_bot_button.clicked.connect(self.handle_caption_bot)
 
-        button_layout.addWidget(self.metadata_button)
+        # Insert bot buttons before the progress label and stretch
+        # The layout should be: [metadata_button] [bot_buttons] [progress_label] [stretch]
+        # Remove the stretch first
+        stretch_item = button_layout.takeAt(button_layout.count() - 1)
+        
+        # Add bot buttons
         button_layout.addWidget(self.shotlist_bot_button)
         button_layout.addWidget(self.scene_bot_button)
         button_layout.addWidget(self.caption_bot_button)
-        button_layout.addStretch()
+        
+        # Add stretch back
+        button_layout.addItem(stretch_item)
         
         return button_layout
-    
+
     def get_assets_folder_name(self):
         """Get the name of the assets folder"""
         return "posters"
@@ -97,64 +97,179 @@ class CinemathequeWindow(AbstractCatalogWindow):
             return os.path.join(self.project_folder, "movies", filename)
         return None
 
-    # Override the item list to use movie_list for backward compatibility
-    @property
-    def movie_list(self):
-        return self.item_list
-    
-    @property
-    def currently_loading_video(self):
-        return self.currently_loading_item
-    
-    @currently_loading_video.setter
-    def currently_loading_video(self, value):
-        self.currently_loading_item = value
-    
-    @property
-    def selected_movie_widget(self):
-        return self.selected_item_widget
-    
-    @selected_movie_widget.setter
-    def selected_movie_widget(self, value):
-        self.selected_item_widget = value
-    
-    def on_movie_clicked(self, item):
-        """Handle movie item click - alias for on_item_clicked"""
-        if DEBUG: print(f"DEBUG: on_movie_clicked called with item: {item}")
-        self.turn_off_all_bots()
-        self.on_item_clicked(item)
-    
-    def _set_new_selection(self, item_widget):
-        """Override to update bot button state after selection"""
-        super()._set_new_selection(item_widget)
-        QTimer.singleShot(20, self.update_shotlist_bot_button_state)
-    
-    def update_movie_list(self):
-        """Update movie list - alias for update_item_list"""
-        self.update_item_list()
-    
-    def load_movies_from_metadata(self, metadata_path, project_folder):
-        """Load movies from metadata - alias for load_items_from_metadata"""
-        self.load_items_from_metadata(metadata_path, project_folder)
-    
     # ---- Bot Methods ----
     
+    def on_catalog_loading_started(self):
+        """Override to handle cinematheque-specific behavior when loading starts"""
+        if DEBUG: print(f"DEBUG: Cinematheque: Catalog loading started")
+        
+        # Call parent method to handle progress label
+        super().on_catalog_loading_started()
+        
+        # Hide cinematheque-specific bot buttons during loading
+        if hasattr(self, 'shotlist_bot_button'):
+            self.shotlist_bot_button.setVisible(False)
+        if hasattr(self, 'scene_bot_button'):
+            self.scene_bot_button.setVisible(False)
+        if hasattr(self, 'caption_bot_button'):
+            self.caption_bot_button.setVisible(False)
+
+    def on_catalog_loading_finished(self):
+        """Override to handle cinematheque-specific behavior when loading finishes"""
+        if DEBUG: print(f"DEBUG: Cinematheque: Catalog loading finished")
+        
+        # Call parent method to handle progress label
+        super().on_catalog_loading_finished()
+        
+        # Show cinematheque-specific bot buttons again
+        if hasattr(self, 'shotlist_bot_button'):
+            self.shotlist_bot_button.setVisible(True)
+        if hasattr(self, 'scene_bot_button'):
+            self.scene_bot_button.setVisible(True)
+        if hasattr(self, 'caption_bot_button'):
+            self.caption_bot_button.setVisible(True)
+        
+        # Update bot button states after loading completes
+        if self.project_folder:  # Only enable if we have a project
+            self.update_shotlist_bot_button_state()
+
+    def load_items_from_metadata_threaded(self, metadata_path, project_folder):
+        """Load items from metadata file using background thread - override to disable list progress"""
+        # Stop any existing loading thread
+        if hasattr(self, 'loading_thread') and self.loading_thread and self.loading_thread.isRunning():
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: Stopping existing loading thread")
+            self.loading_thread.quit()
+            self.loading_thread.wait()
+
+        # Clear the list and DON'T show loading progress in the list
+        self.item_list.clear()
+        self.catalog_contents_cleared.emit()
+        self.selected_item_widget = None
+
+        # Create worker thread
+        from PyQt5.QtCore import QThread
+        from catalog import CatalogLoadingWorker
+        self.loading_thread = QThread()
+        self.loading_worker = CatalogLoadingWorker(metadata_path, project_folder, self.get_assets_folder_name())
+        self.loading_worker.moveToThread(self.loading_thread)
+        
+        # Connect signals - don't connect to show_loading_progress since we handle it differently
+        self.loading_thread.started.connect(self.loading_worker.run)
+        self.loading_worker.progress.connect(self.catalog_loading_progress.emit)  # Only emit progress signal
+        self.loading_worker.finished.connect(self.on_loading_finished)
+        self.loading_worker.error.connect(self.on_loading_error)
+        self.loading_worker.finished.connect(self.loading_thread.quit)
+        self.loading_worker.finished.connect(self.loading_worker.deleteLater)
+        self.loading_thread.finished.connect(self.loading_thread.deleteLater)
+        
+        # Clean up references when thread finishes
+        self.loading_thread.finished.connect(lambda: setattr(self, 'loading_thread', None))
+        self.loading_worker.finished.connect(lambda items_data: setattr(self, 'loading_worker', None))
+        
+        # Start the thread
+        self.loading_thread.start()
+
+    def on_loading_finished(self, items_data):
+        """Handle when loading is finished - override to not show thumbnails progress in list"""
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Loading finished with {len(items_data)} items")
+        
+        # Update our button progress label to show thumbnail loading phase
+        if self.progress_label:
+            self.progress_label.setText("Loading thumbnails... 0%")
+        
+        # Store the data and start creating widgets in batches
+        self.items_data = items_data
+        self.assets_folder = os.path.join(self.project_folder, self.get_assets_folder_name())
+        self.current_batch_index = 0
+        self.batch_size = 10  # Create 10 widgets at a time
+        self.total_items = len(items_data)
+        
+        # Start creating widgets in batches
+        self.create_next_batch()
+
+    def create_next_batch(self):
+        """Create the next batch of item widgets - override to update button progress"""
+        if not hasattr(self, 'items_data') or self.current_batch_index >= len(self.items_data):
+            # All batches processed - finish
+            self.catalog_loading_progress.emit(100)
+            self.update_item_list()
+            return
+            
+        start_idx = self.current_batch_index
+        end_idx = min(start_idx + self.batch_size, len(self.items_data))
+        
+        # Calculate thumbnail loading progress (0% to 100%) and update button progress
+        if self.total_items > 0:
+            thumbnail_progress = int((start_idx / self.total_items) * 100)
+            if self.progress_label:
+                self.progress_label.setText(f"Loading thumbnails... {thumbnail_progress}%")
+        
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Creating widgets {start_idx} to {end_idx-1}, thumbnail progress: {thumbnail_progress}%")
+        
+        # Create widgets for this batch
+        for i in range(start_idx, end_idx):
+            item_data = self.items_data[i]
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: Creating widget for: {item_data}")
+            
+            # Create custom widget for this item
+            item_widget = self.create_item_widget(item_data, self.assets_folder)
+            
+            # Connect the widget's clicked signal to handle selection
+            if hasattr(item_widget, 'clicked'):
+                item_widget.clicked.connect(lambda data, widget=item_widget: self.on_widget_clicked(widget, data))
+            
+            # Create list item with fixed height
+            from PyQt5.QtCore import QSize
+            from PyQt5.QtWidgets import QListWidgetItem
+            from catalog_item import ITEM_HEIGHT
+            item = QListWidgetItem()
+            item.setSizeHint(QSize(item_widget.width(), ITEM_HEIGHT))
+
+            # Add to list
+            self.item_list.addItem(item)
+            self.item_list.setItemWidget(item, item_widget)
+        
+        # Update batch index
+        self.current_batch_index = end_idx
+        
+        # Process events to ensure UI responsiveness
+        from PyQt5.QtWidgets import QApplication
+        QApplication.processEvents()
+        
+        # Schedule next batch with longer delay to allow UI interaction
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(100, self.create_next_batch)  # Increased from 50ms to 100ms
+
+    def update_loading_progress(self, progress):
+        """Update the loading progress display"""
+        if DEBUG: print(f"DEBUG: Cinematheque: Updating progress to {progress}%")
+        if self.progress_label:
+            if progress < 95:
+                # Phase 1: Loading data
+                new_text = f"Loading data... {progress}%"
+            else:
+                # Phase 2: Will be handled by create_next_batch
+                new_text = f"Loading data... {progress}%"
+            
+            old_text = self.progress_label.text()
+            self.progress_label.setText(new_text)
+            
+            if DEBUG:
+                print(f"DEBUG: Cinematheque: Progress label exists: {self.progress_label is not None}")
+                print(f"DEBUG: Cinematheque: Progress label visible: {self.progress_label.isVisible()}")
+                print(f"DEBUG: Cinematheque: Old text: '{old_text}' -> New text: '{new_text}'")
+                print(f"DEBUG: Cinematheque: Actual label text after update: '{self.progress_label.text()}'")
+        else:
+            if DEBUG: print(f"DEBUG: Cinematheque: progress_label is None!")
+
     def on_selection_will_change(self):
         """Override to handle bot state when selection is about to change"""
         self.turn_off_all_bots()
 
     def on_item_selection_changed(self, item_widget, item_data):
         """Override to update bot button state after selection"""
-        # Update bot button state with a slight delay
-        QTimer.singleShot(20, self.update_shotlist_bot_button_state)
-
-    def select_next_movie(self):
-        """Select the next movie - delegate to base class"""
-        self.select_next_item()
-
-    def select_previous_movie(self):
-        """Select the previous movie - delegate to base class"""
-        self.select_previous_item()
+        # Update bot button state immediately
+        self.update_shotlist_bot_button_state()
 
     def shot_bot_finished(self):
         """Handle bot finished signal"""
@@ -164,13 +279,13 @@ class CinemathequeWindow(AbstractCatalogWindow):
         # Use the base class navigation
         self.select_next_item()
         
-        # Start the Caption Bot for the next movie after a short delay
+        # Start the Caption Bot for the next item if it was active
         if was_caption_bot_active:
-            QTimer.singleShot(500, self.start_caption_bot)
+            self.start_caption_bot()
 
     def start_caption_bot(self):
         if self.caption_bot_button.isEnabled():
-            if DEBUG: print("DEBUG: Starting Caption Bot for next movie")
+            if DEBUG: print("DEBUG: Starting Caption Bot for next item")
             self.request_caption_bot_autostart.emit()
             self.caption_bot_button.click()
 
@@ -190,8 +305,8 @@ class CinemathequeWindow(AbstractCatalogWindow):
         self.enable_shotlist_bot_button()
 
     def enable_shotlist_bot_button(self):
-        # Enable only if a movie is currently selected
-        self.shotlist_bot_button.setEnabled(self.selected_movie_widget is not None)
+        # Enable only if an item is currently selected
+        self.shotlist_bot_button.setEnabled(self.selected_item_widget is not None)
 
     def disable_shotlist_bot_button(self):
         self.shotlist_bot_button.setEnabled(False)
@@ -220,132 +335,32 @@ class CinemathequeWindow(AbstractCatalogWindow):
     def on_shotlist_status(self, finished):
         # Called by shotlist.py when detection is finished
         if finished and self.shotlist_bot_active:
-            # Select next movie in the list
-            self.select_next_movie()
+            # Select next item in the list
+            self.select_next_item()
         elif not finished:
             # Detection is still running, keep animating
             pass
 
-    def select_next_movie(self):
-        if DEBUG: print("DEBUG: select_next_movie() called")
-        count = self.item_list.count()
-        if DEBUG: print(f"DEBUG: Total movie count: {count}")
-        if DEBUG: print(f"DEBUG: Current selected_item_widget: {self.selected_item_widget}")
-        if DEBUG: print(f"DEBUG: Project folder: {self.project_folder}")
-        
-        # If nothing is selected but there are movies and a project folder, select the first movie
-        if count > 0 and self.project_folder and not self.selected_item_widget:
-            if DEBUG: print("DEBUG: No selection, selecting first movie")
-            self.turn_off_all_bots()
-            first_item = self.item_list.item(0)
-            self._direct_select_item(first_item)
-            self._scroll_to_selected_item_if_needed()  # Use the smart scrolling method
-            return
-
-        if count == 0 or not self.selected_item_widget:
-            if DEBUG: print("DEBUG: No movies or no selection, returning")
-            self.turn_off_all_bots()
-            return
-            
-        if DEBUG: print("DEBUG: Looking for current selection in list")
-        for i in range(count):
-            widget = self.item_list.itemWidget(self.item_list.item(i))
-            if DEBUG: print(f"DEBUG: Checking index {i}, widget: {widget}")
-            if widget == self.selected_movie_widget:
-                if DEBUG: print(f"DEBUG: Found current selection at index {i}")
-                next_index = i + 1
-                if next_index < count:
-                    if DEBUG: print(f"DEBUG: Moving to next index {next_index}")
-                    self.turn_off_all_bots()
-                    next_item = self.item_list.item(next_index)
-                    if DEBUG: print(f"DEBUG: About to call _direct_select_item with item: {next_item}")
-                    self._direct_select_item(next_item)
-                    self._scroll_to_selected_item_if_needed()  # Use the smart scrolling method
-                else:
-                    if DEBUG: print("DEBUG: Already at last movie")
-                    self.turn_off_all_bots()
-                break
-
-    def select_previous_movie(self):
-        if DEBUG: print("DEBUG: select_previous_movie() called")
-        count = self.item_list.count()
-        if DEBUG: print(f"DEBUG: Total movie count: {count}")
-        if DEBUG: print(f"DEBUG: Current selected_item_widget: {self.selected_movie_widget}")
-        
-        if count == 0 or not self.selected_movie_widget:
-            if DEBUG: print("DEBUG: No movies or no selection, returning")
-            return
-            
-        if DEBUG: print("DEBUG: Looking for current selection in list")
-        for i in range(count):
-            widget = self.item_list.itemWidget(self.item_list.item(i))
-            if DEBUG: print(f"DEBUG: Checking index {i}, widget: {widget}")
-            if widget == self.selected_movie_widget:
-                if DEBUG: print(f"DEBUG: Found current selection at index {i}")
-                prev_index = i - 1
-                if prev_index >= 0:
-                    if DEBUG: print(f"DEBUG: Moving to previous index {prev_index}")
-                    self.turn_off_all_bots()
-                    prev_item = self.item_list.item(prev_index)
-                    if DEBUG: print(f"DEBUG: About to call _direct_select_item with item: {prev_item}")
-                    self._direct_select_item(prev_item)
-                    self._scroll_to_selected_item_if_needed()  # Use the smart scrolling method
-                else:
-                    if DEBUG: print("DEBUG: Already at first movie")
-                break
-
-    def _direct_select_item(self, item):
-        """Directly select an item without the delayed mechanism"""
-        if DEBUG: print(f"DEBUG: _direct_select_item called with item: {item}")
-        
-        if item is None:
-            if DEBUG: print(f"DEBUG: Item is None, returning")
-            return
-            
-        item_widget = self.item_list.itemWidget(item)
-        if DEBUG: print(f"DEBUG: Item widget: {item_widget}")
-        
-        if not item_widget or not hasattr(item_widget, 'item_data'):
-            if DEBUG: print(f"DEBUG: No widget or item_data, returning")
-            return
-
-        # Clear previous selection
-        if self.selected_item_widget and self.selected_item_widget != item_widget:
-            if DEBUG: print(f"DEBUG: Clearing previous selection: {self.selected_item_widget}")
-            self.selected_item_widget.set_selected(False)
-            self.selected_item_widget.update()
-
-        # Set new selection immediately
-        if DEBUG: print(f"DEBUG: Setting new selection: {item_widget}")
-        item_widget.set_selected(True)
-        item_widget.update()
-        self.selected_item_widget = item_widget
-        
-        # Don't scroll here - let the caller decide if scrolling is needed
-        
-        # Get item path and emit selection signal
-        item_data = item_widget.item_data
-        item_path = self.get_item_path(item_data)
-        
-        if DEBUG: print(f"DEBUG: Item path: {item_path}")
-        
-        if item_path and os.path.exists(item_path):
-            if DEBUG: print(f"DEBUG: Emitting item_selected signal")
-            self.currently_loading_item = item_path
-            self.item_selected.emit(item_path, item_data)
-            
-            # Update bot button state
-            QTimer.singleShot(20, self.update_shotlist_bot_button_state)
-        else:
-            if DEBUG: print(f"DEBUG: File not found")
-            QMessageBox.warning(self, "File Not Found", f"Item file not found:\n{item_path}")
-
-    def on_movie_loaded_with_metadata(self, movie_path, metadata):
-        """Handle when a movie is loaded - alias for on_item_loaded_with_metadata"""
-        self.on_item_loaded_with_metadata(movie_path, metadata)
-        # If bot is still active, start detection again
-        if self.shotlist_bot_active:
-            self.shotlist_bot_start.emit()
-
     def handle_caption_bot(self):
         print("Caption Bot button pressed.")
+
+    def clear_project(self):
+        """Clear current project and cancel any ongoing operations - override to handle cinematheque-specific state"""
+        if DEBUG: print(f"DEBUG: Cinematheque: Clearing project")
+        
+        # Turn off all bots first
+        self.turn_off_all_bots()
+        
+        # Call parent clear method (which handles progress label visibility)
+        super().clear_project()
+        
+        # Show cinematheque-specific buttons and disable bot buttons
+        if hasattr(self, 'shotlist_bot_button'):
+            self.shotlist_bot_button.setVisible(True)
+            self.disable_shotlist_bot_button()
+        if hasattr(self, 'scene_bot_button'):
+            self.scene_bot_button.setVisible(True)
+        if hasattr(self, 'caption_bot_button'):
+            self.caption_bot_button.setVisible(True)
+        
+        if DEBUG: print(f"DEBUG: Cinematheque: Project cleared")

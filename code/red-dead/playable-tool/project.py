@@ -365,3 +365,8 @@ class ProjectWindow(QMainWindow):
     def on_request_load(self, data):
         """Load preferences"""
         self.project_manager.load_preferences_data(data)
+    
+    def clear_project(self):
+        """Clear project - for consistency with other windows"""
+        # Project window doesn't need to clear anything since it manages the project state
+        if DEBUG: print("DEBUG: ProjectWindow: clear_project called (no action needed)")

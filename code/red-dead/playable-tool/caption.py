@@ -335,6 +335,11 @@ class CaptionWindow(QWidget):
         text = self.caption_field.toPlainText()
         self.shot_caption_submitted.emit(text)
 
+    def clear_project(self):
+        """Clear project - for consistency with other windows"""
+        # A Placeholder for future functionality
+        if DEBUG: print("DEBUG: ProjectWindow: clear_project called (no action needed)")
+
     def set_project_folder(self, project_folder):
         """Set the project folder when cinema window loads a project"""
         self.project_folder = project_folder

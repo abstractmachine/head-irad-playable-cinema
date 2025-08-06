@@ -98,6 +98,11 @@ class SubtitlesWindow(QWidget):
         """Set the project folder when cinema window loads a project"""
         self.project_folder = project_folder
 
+    def clear_project(self):
+        """Clear project - for consistency with other windows"""
+        # A Placeholder for future functionality
+        if DEBUG: print("DEBUG: ProjectWindow: clear_project called (no action needed)")
+        
     def on_movie_loaded_with_metadata(self, movie_path, metadata):
         """Called when a new movie is loaded in the player"""
         movie_filename = os.path.basename(movie_path)

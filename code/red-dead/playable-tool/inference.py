@@ -107,6 +107,11 @@ class InferenceWindow(QWidget):
         self.project_folder = project_folder
         if DEBUG: print(f"Inference: Project folder set to {project_folder}")
 
+    def clear_project(self):
+        """Clear project - for consistency with other windows"""
+        # A Placeholder for future functionality
+        if DEBUG: print("DEBUG: ProjectWindow: clear_project called (no action needed)")
+        
     def on_movie_loaded(self, movie_path):
         """Called when a new movie is loaded in the player"""
         movie_filename = os.path.basename(movie_path)

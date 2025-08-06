@@ -21,11 +21,11 @@ class GlobalKeyFilter(QObject):
             cine = self.windows["cinematheque"]
             if event.key() == Qt.Key_PageDown:
                 if DEBUG: print("DEBUG: PageDown pressed")
-                cine.select_next_movie()
+                cine.select_next_item()
                 return True
             elif event.key() == Qt.Key_PageUp:
                 if DEBUG: print("DEBUG: PageUp pressed")
-                cine.select_previous_movie()
+                cine.select_previous_item()
                 return True
 
             # Keep all other key handling for shortcuts (A, O, B, N, etc.)
