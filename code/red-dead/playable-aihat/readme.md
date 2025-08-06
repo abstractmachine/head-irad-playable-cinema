@@ -99,3 +99,7 @@ $ python basic_pipelines/detection_simple.py --usb
 
 This works great. The `yolo` model loads and everything runs super fast thanks to the `AI Hat+ 26T`.
 
+## Results
+Well, sort of a good news/bad news scenario. This configuration works great for `Yolo`-type models. It's fast. We're getting a solid 30fps and can easily treat the incoming frames without much lag.
+
+But our project has now evolved into using multi-stage AI models, specifically [BLIP](https://github.com/salesforce/BLIP) and/or other captioning-type tools. And these apparently will not easily be able to run through the [Hailo compiler](https://pub.towardsai.net/custom-dataset-with-hailo-ai-hat-yolo-raspberry-pi-5-and-docker-0d88ef5eb70f) that makes the AI Hat+ work. This would be a project in-and-of-itself, so we will have to put a pin in this for now and move on to another hardware solution for this project.
