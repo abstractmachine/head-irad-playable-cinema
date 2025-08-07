@@ -1,21 +1,14 @@
-DEBUG = True  # Set to True to enable debug output
+DEBUG = False  # Set to True to enable debug output
 
-from PyQt5.QtCore import QObject, pyqtSignal
+# Python imports
 import os  # Add this import at the top
+import random
+# Qt imports
+from PyQt5.QtCore import QObject, pyqtSignal
 
 class Switchboard(QObject):
     """
     Central coordinator that listens for various system events and manages state.
-    
-    The Switchboard acts as a hub for all inter-window communication, preventing
-    direct dependencies between windows and ensuring clean separation of concerns.
-    It manages project lifecycle events and coordinates responses across all windows.
-    
-    Key responsibilities:
-    - Project loading/clearing coordination
-    - Catalog loading status management
-    - Metadata rebuild tracking
-    - Cross-window state synchronization
     """
     
     # ---- SIGNALS ----
@@ -24,18 +17,14 @@ class Switchboard(QObject):
     project_clearing = pyqtSignal()  # Emitted when switching projects to clear old state
     project_loaded = pyqtSignal(str)  # Emitted after project clear to set new project folder
     
+    # Chaos event signal
+    chaos_event = pyqtSignal()  # Emitted when chaos event occurs (from gremlins window)
+
     # Metadata rebuild coordination signals
     metadata_rebuilding_started = pyqtSignal()  # Emitted when first catalog starts rebuilding
     metadata_rebuilding_stopped = pyqtSignal()  # Emitted when last catalog finishes rebuilding
     
     def __init__(self, windows=None):
-        """
-        Initialize the switchboard with references to all application windows.
-        
-        Args:
-            windows (dict): Dictionary mapping window names to window instances
-                          e.g., {"project": ProjectWindow(), "cinematheque": CinemathequeWindow()}
-        """
         super().__init__()
         self.current_shot_index = -1  # Track current shot for playback coordination
         self.current_project_folder = None  # Track current project to detect changes
@@ -49,12 +38,6 @@ class Switchboard(QObject):
             self.setup_connections()
 
     def setup_connections(self):
-        """
-        Set up all signal connections between windows through the switchboard.
-        
-        This is the central hub where all inter-window communication is established.
-        All signals flow through the switchboard to maintain clean architecture.
-        """
         if DEBUG: print("DEBUG: Switchboard setting up connections")
         
         # ---- PROJECT LIFECYCLE CONNECTIONS ----
@@ -70,6 +53,7 @@ class Switchboard(QObject):
         self.project_clearing.connect(self.windows["inference"].clear_project)
         self.project_clearing.connect(self.windows["cinematheque"].clear_project)
         self.project_clearing.connect(self.windows["playbill"].clear_project)
+        self.project_clearing.connect(self.windows["gremlins"].clear_project)
         
         # Add player clearing connections
         self.project_clearing.connect(self.windows["nickelodeon"].clear_project)
@@ -83,6 +67,7 @@ class Switchboard(QObject):
         self.project_loaded.connect(self.windows["prompt"].set_project_folder)
         self.project_loaded.connect(self.windows["cinematheque"].set_project_folder)
         self.project_loaded.connect(self.windows["playbill"].set_project_folder)
+        self.project_loaded.connect(self.windows["gremlins"].set_project_folder)
 
         # ---- METADATA REBUILD COORDINATION ----
         # These notify the project window about metadata rebuild status
@@ -128,6 +113,10 @@ class Switchboard(QObject):
         self.windows["playbill"].metadata_rebuild_started.connect(lambda: self.metadata_rebuild_started("playbill"))
         self.windows["playbill"].metadata_rebuild_finished.connect(lambda success: self.metadata_rebuild_finished("playbill", success))
         self.windows["playbill"].metadata_rebuild_cancelled.connect(lambda: self.metadata_rebuild_cancelled("playbill"))
+
+        # ---- CHAOS EVENT CONNECTIONS ----
+        # Listen for chaos events from gremlins window
+        self.windows["gremlins"].chaos.connect(self.on_chaos_event)
 
         if DEBUG: print("DEBUG: Switchboard finished setting up connections")
 
@@ -285,3 +274,15 @@ class Switchboard(QObject):
         
         # Enable buttons when an item is selected
         self.windows["playbill"].enable_bot_buttons()
+
+    # Add this method at the end of the class:
+    def on_chaos_event(self):
+        """Handle chaos events from the gremlins window"""
+        # Choose randomly from Playbill or Cinematheque
+        if random.choice([True, False]):
+            if DEBUG: print("DEBUG: Chaos event - triggering Cinematheque")
+            self.windows["cinematheque"].emit_chaos_event()
+        else:
+            if DEBUG: print("DEBUG: Chaos event - triggering Playbill")
+            self.windows["playbill"].emit_chaos_event()
+

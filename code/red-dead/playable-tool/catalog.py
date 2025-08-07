@@ -10,6 +10,7 @@ from PyQt5.QtWidgets import (
 # OS Stuff
 import os
 import csv
+import random
 from metadata import MetadataWorker, read_metadata_csv
 from catalog_item import AbstractCatalogItemWidget, MovieItemWidget, ITEM_HEIGHT
 
@@ -612,6 +613,9 @@ class AbstractCatalogWindow(QMainWindow):
         self.selected_item_widget = widget
         widget.set_selected(True)
         
+        # Ensure the selected item is visible in the viewport
+        self.ensure_item_visible(widget)
+        
         # Get the item path
         item_path = self.get_item_path(data)
 
@@ -686,8 +690,6 @@ class AbstractCatalogWindow(QMainWindow):
             # Simulate click on next widget
             if hasattr(next_widget, 'item_data'):
                 self.on_widget_clicked(next_widget, next_widget.item_data)
-                # Ensure the newly selected item is visible
-                self.ensure_item_visible(next_widget)
 
     def select_previous_item(self):
         """Select the previous item in the list"""
@@ -717,8 +719,6 @@ class AbstractCatalogWindow(QMainWindow):
             # Simulate click on previous widget
             if hasattr(prev_widget, 'item_data'):
                 self.on_widget_clicked(prev_widget, prev_widget.item_data)
-                # Ensure the newly selected item is visible
-                self.ensure_item_visible(prev_widget)
 
     def enable_bot_buttons(self):
         """Subclasses can override to enable shotlist bot button - called by switchboard"""
@@ -727,3 +727,24 @@ class AbstractCatalogWindow(QMainWindow):
     def disable_bot_buttons(self):
         """Subclasses can override to disable shotlist bot button - called by switchboard"""
         pass
+
+    def emit_chaos_event(self):
+        """Handle chaos events from switchboard - can be overridden by subclasses"""
+        if DEBUG: print(f"🎲 DEBUG: {self.catalog_name}: Received chaos event!")
+        # make sure we have items to select
+        if self.item_list.count() == 0:
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: No items to select for chaos event")
+            return
+        # Choose a random time from 0% to 100% and put it in a percentage format
+        percentage_str = f"{random.randint(0, 100)}%"
+        # percentage_str = None  # No timecode for chaos events for now
+        # Select a random item from the list
+        random_index = random.randint(0, self.item_list.count() - 1)
+        random_item = self.item_list.item(random_index)
+        random_widget = self.item_list.itemWidget(random_item)
+        # grab the item data from the widget (all we need is the filepath)
+        if hasattr(random_widget, 'item_data'):
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: Chaos event selecting item: {random_widget.item_data}")
+            self.on_widget_clicked(random_widget, random_widget.item_data, percentage_str)
+        else:
+            if DEBUG: print(f"DEBUG: {self.catalog_name}: Chaos event widget has no item_data attribute!")

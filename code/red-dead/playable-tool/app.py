@@ -5,6 +5,7 @@ import sys
 
 # Qt
 from PyQt5.QtWidgets import QApplication
+from PyQt5.QtMultimedia import QMediaContent
 
 # UI and styling
 from ui import UI
@@ -21,6 +22,7 @@ from prompt import PromptWindow
 from subtitles import SubtitlesWindow
 from inference import InferenceWindow
 from project import ProjectWindow
+from gremlins import GremlinsWindow
 
 # Layout and coordination
 from layout import (
@@ -59,6 +61,7 @@ def main():
         "nickelodeon": NickelodeonWindow(ui),
         "shotlist": ShotlistWindow(ui),
         "cinematheque": CinemathequeWindow(ui),
+        "gremlins": GremlinsWindow(ui),
     }
 
     # === Signal Setup ===
@@ -93,19 +96,25 @@ def main():
     app.aboutToQuit.connect(lambda: save_dock_layout(main_window))
     app.aboutToQuit.connect(lambda: save_window_geometry(main_window))
 
-    # Clean shutdown for VLC players
+    # Clean shutdown for media players
     def clean_quit():
-        """Ensure VLC players terminate properly before app exits"""
+        """Ensure media players terminate properly before app exits"""
         if DEBUG: print("DEBUG: Starting clean quit sequence")
         
         try:
-            # Stop VLC players first
+            # Stop QMediaPlayer instances first
             if "nickelodeon" in windows:
-                windows["nickelodeon"].player.terminate()
+                if hasattr(windows["nickelodeon"], 'player') and windows["nickelodeon"].player:
+                    if DEBUG: print("DEBUG: Stopping Nickelodeon media player")
+                    windows["nickelodeon"].player.media_player.stop()
+                    windows["nickelodeon"].player.media_player.setMedia(QMediaContent())
             if "playhouse" in windows:
-                windows["playhouse"].player.terminate()
+                if hasattr(windows["playhouse"], 'player') and windows["playhouse"].player:
+                    if DEBUG: print("DEBUG: Stopping Playhouse media player")
+                    windows["playhouse"].player.media_player.stop()
+                    windows["playhouse"].player.media_player.setMedia(QMediaContent())
         except Exception as e:
-            if DEBUG: print(f"DEBUG: Error stopping VLC players: {e}")
+            if DEBUG: print(f"DEBUG: Error stopping media players: {e}")
         
         # Close all windows properly
         for name, window in windows.items():

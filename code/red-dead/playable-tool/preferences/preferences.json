@@ -23,5 +23,6 @@
     "weights_field": "-t 3.0",
     "method_selected": "detect-adaptive"
   },
-  "cinematheque": {}
+  "cinematheque": {},
+  "gremlins": {}
 }

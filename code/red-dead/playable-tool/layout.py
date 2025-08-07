@@ -91,6 +91,7 @@ class PlayableCinemaMainWindow(QMainWindow):
         self.add_dock("Shotlist", windows["shotlist"], Qt.BottomDockWidgetArea)
         self.add_dock("Cinemathèque", windows["cinematheque"], Qt.BottomDockWidgetArea)
         self.add_dock("Playbill", windows["playbill"], Qt.BottomDockWidgetArea)
+        self.add_dock("Gremlins", windows["gremlins"], Qt.BottomDockWidgetArea)  # Add this line
 
         central.setFocusPolicy(Qt.ClickFocus)
 

@@ -2,6 +2,8 @@ import unicodedata
 import re
 import html
 
+minimum_load_interval = 0.25  # Minimum time between loads in seconds
+
 def euro_text(text):
     """Clean text while preserving most Unicode characters"""
     if not isinstance(text, str):
@@ -36,16 +38,35 @@ def html_decode_text(text):
     
     return html.unescape(text)
 
-def timecode_to_milliseconds(timecode):
-    """
-    Convert timecode string (HH:MM:SS or HH:MM:SS.sss) to milliseconds.
+def pct_to_milliseconds(pct, duration):
+    """Convert percentage to milliseconds based on duration"""
+    if not isinstance(duration, (int, float)) or duration <= 0:
+        return None
     
-    Args:
-        timecode (str): Timecode in format "HH:MM:SS" or "HH:MM:SS.sss"
-        
-    Returns:
-        int: Time in milliseconds, or None if invalid format
-    """
+    # Handle string percentages like "84%"
+    if isinstance(pct, str):
+        if pct.endswith('%'):
+            try:
+                pct_value = float(pct[:-1])  # Remove % and convert to float
+            except ValueError:
+                return None
+        else:
+            try:
+                pct_value = float(pct)
+            except ValueError:
+                return None
+    elif isinstance(pct, (int, float)):
+        pct_value = float(pct)
+    else:
+        return None
+    
+    # Clamp percentage to valid range
+    pct_value = max(0.0, min(100.0, pct_value))
+    
+    return int((pct_value / 100.0) * duration)
+
+def timecode_to_milliseconds(timecode):
+
     if not isinstance(timecode, str):
         return None
         
