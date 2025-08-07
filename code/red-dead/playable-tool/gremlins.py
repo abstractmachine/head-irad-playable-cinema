@@ -2,7 +2,7 @@ DEBUG = False  # Set to True to enable debug output
 
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QLineEdit, QPushButton
+    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QLineEdit, QPushButton
 )
 
 from utility import minimum_load_interval
@@ -42,7 +42,7 @@ class GremlinsWindow(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         
-        layout = QHBoxLayout()
+        layout = QVBoxLayout()
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(10)
         
@@ -56,17 +56,16 @@ class GremlinsWindow(QMainWindow):
         self.interval_field.setText(str(self.interval_seconds))
         self.interval_field.setPlaceholderText("seconds")
         self.interval_field.setFixedSize(button_width, button_height)
-        # style text field centered
         self.interval_field.setAlignment(Qt.AlignCenter)
         self.interval_field.textChanged.connect(self.on_interval_changed)
         self.interval_field.setToolTip("Set chaos interval in seconds")
-        layout.addWidget(self.interval_field)
+        layout.addWidget(self.interval_field, alignment=Qt.AlignCenter)
         
         # On/Off toggle button
         self.toggle_button = QPushButton("Off")
         self.toggle_button.setFixedSize(button_width, button_height)
         self.toggle_button.clicked.connect(self.toggle_chaos)
-        layout.addWidget(self.toggle_button)
+        layout.addWidget(self.toggle_button, alignment=Qt.AlignCenter)
         
         # Spacer
         layout.addStretch()
