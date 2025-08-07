@@ -6,8 +6,8 @@ from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QTextEdit, QSizePolicy
 
 class SubtitlesWindow(QWidget):
-    request_save = pyqtSignal()
-    request_load = pyqtSignal(dict)
+    preferences_save = pyqtSignal()
+    preferences_load = pyqtSignal(dict)
 
     def __init__(self, ui):
         super().__init__()
@@ -211,14 +211,14 @@ class SubtitlesWindow(QWidget):
         
         return "\n".join(all_text)
 
-    def on_request_save(self):
+    def on_preferences_save(self):
         """Save window preferences"""
         geo = self.geometry()
         self._pending_save_data = {
         }
         return self._pending_save_data
 
-    def on_request_load(self, data):
+    def on_preferences_load(self, data):
         """Load window preferences"""
         if data:
             # do nothing for now

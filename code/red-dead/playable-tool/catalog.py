@@ -69,8 +69,8 @@ class AbstractCatalogWindow(QMainWindow):
     """Abstract base class for catalog windows"""
     
     # Define signals for communication
-    request_save = pyqtSignal()
-    request_load = pyqtSignal(dict)
+    preferences_save = pyqtSignal()
+    preferences_load = pyqtSignal(dict)
     catalog_loading_started = pyqtSignal()
     catalog_loading_finished = pyqtSignal()
     catalog_loading_progress = pyqtSignal(int)  # Add progress signal
@@ -583,13 +583,13 @@ class AbstractCatalogWindow(QMainWindow):
         if project_folder:
             self.load_catalog_data()
 
-    def on_request_save(self):
+    def on_preferences_save(self):
         """Handle save requests - can be overridden by subclasses"""
         if DEBUG: print(f"DEBUG: {self.catalog_name}: Save requested")
         # Base implementation provides empty save data
         pass
 
-    def on_request_load(self, data):
+    def on_preferences_load(self, data):
         """Handle load requests - can be overridden by subclasses"""
         if DEBUG: print(f"DEBUG: {self.catalog_name}: Load requested with data: {data}")
         # Base implementation does nothing - subclasses can override

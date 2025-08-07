@@ -113,7 +113,7 @@ def save_preferences(windows, main_window):
     """Save window-specific preferences to JSON file"""
     prefs = {}
     for key, win in windows.items():
-        win.request_save.emit()
+        win.preferences_save.emit()
         prefs[key] = win._pending_save_data
 
     # Ensure preferences directory exists
@@ -128,11 +128,11 @@ def load_preferences(windows, main_window):
         with open(PREFS_PATH, "r") as f:
             prefs = json.load(f)
         for key, win in windows.items():
-            win.request_load.emit(prefs.get(key, {}))
+            win.preferences_load.emit(prefs.get(key, {}))
     else:
         # Send empty dict if no preferences file exists
         for win in windows.values():
-            win.request_load.emit({})
+            win.preferences_load.emit({})
 
 # ================================================================
 # WINDOW LAYOUT PERSISTENCE

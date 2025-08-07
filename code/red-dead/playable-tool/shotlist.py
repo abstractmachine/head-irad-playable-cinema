@@ -23,8 +23,8 @@ JUMP_FRAME_PADDING_DETECTION = 5  # Number of frames to pad when jumping in dete
 class ShotlistWindow(QMainWindow):
 
     # define the signals we are going to send out
-    request_save = pyqtSignal()
-    request_load = pyqtSignal(dict)
+    preferences_save = pyqtSignal()
+    preferences_load = pyqtSignal(dict)
     jump_to_timecode_signal = pyqtSignal(str, bool)
     shotlist_status = pyqtSignal(bool)
     shot_timecodes = pyqtSignal(str, list)  # start_tc, timecodes
@@ -149,8 +149,8 @@ class ShotlistWindow(QMainWindow):
         self.video_path = None
         self.current_csv_path = None
 
-        self.request_save.connect(self.on_request_save)
-        self.request_load.connect(self.on_request_load)
+        self.preferences_save.connect(self.on_preferences_save)
+        self.preferences_load.connect(self.on_preferences_load)
         self.thread = None
         self.scene_table.itemChanged.connect(self.on_scene_table_item_changed)
 
@@ -360,7 +360,7 @@ class ShotlistWindow(QMainWindow):
 
     # ------- Load/Save Preferences -------
 
-    def on_request_save(self):
+    def on_preferences_save(self):
         pos = self.pos()
         size = self.size()
         self._pending_save_data = {
@@ -374,7 +374,7 @@ class ShotlistWindow(QMainWindow):
             "method_selected": self.method_dropdown.currentText()
         }
 
-    def on_request_load(self, data):
+    def on_preferences_load(self, data):
         if "col0_width" in data:
             self.scene_table.setColumnWidth(0, data["col0_width"])
         if "col1_width" in data:

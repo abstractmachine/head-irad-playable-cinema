@@ -1,6 +1,7 @@
 DEBUG = True  # Set to True to enable debug output
 
 from PyQt5.QtCore import QObject, pyqtSignal
+import os  # Add this import at the top
 
 class Switchboard(QObject):
     """
@@ -69,6 +70,10 @@ class Switchboard(QObject):
         self.project_clearing.connect(self.windows["inference"].clear_project)
         self.project_clearing.connect(self.windows["cinematheque"].clear_project)
         self.project_clearing.connect(self.windows["playbill"].clear_project)
+        
+        # Add player clearing connections
+        self.project_clearing.connect(self.windows["nickelodeon"].clear_project)
+        self.project_clearing.connect(self.windows["playhouse"].clear_project)
         
         # After clearing, set the new project folder in all windows
         self.project_loaded.connect(self.windows["shotlist"].set_project_folder)
@@ -238,9 +243,16 @@ class Switchboard(QObject):
                 print(f"DEBUG: Switchboard: Cinematheque item selected: {metadata['title']} with timecode int {timecode}")
             elif isinstance(timecode, float):
                 print(f"DEBUG: Switchboard: Cinematheque item selected: {metadata['title']} with timecode float {timecode}")
-
-        # we're going to send the folder name to the player
-        folder = "movies"
+        
+        # Load video in Nickelodeon player
+        filename = metadata.get('filename', '')
+        if filename and self.current_project_folder:
+            movie_path = os.path.join(self.current_project_folder, "movies", filename)
+            if os.path.exists(movie_path):
+                if DEBUG: print(f"DEBUG: Loading movie in Nickelodeon: {movie_path}")
+                self.windows["nickelodeon"].load_video(movie_path, metadata, timecode)
+            else:
+                if DEBUG: print(f"DEBUG: Movie file not found: {movie_path}")
         
         # Enable buttons when an item is selected
         self.windows["cinematheque"].enable_bot_buttons()
@@ -253,16 +265,23 @@ class Switchboard(QObject):
     def playbill_item_selected(self, metadata, timecode=None):
         if DEBUG:
             if timecode is None:
-                print(f"DEBUG: Switchboard: Cinematheque item selected: {metadata['title']} with no timecode")
+                print(f"DEBUG: Switchboard: Playbill item selected: {metadata['title']} with no timecode")
             elif isinstance(timecode, str):
-                print(f"DEBUG: Switchboard: Cinematheque item selected: {metadata['title']} with timecode string {timecode}")
+                print(f"DEBUG: Switchboard: Playbill item selected: {metadata['title']} with timecode string {timecode}")
             elif isinstance(timecode, int):
-                print(f"DEBUG: Switchboard: Cinematheque item selected: {metadata['title']} with timecode int {timecode}")
+                print(f"DEBUG: Switchboard: Playbill item selected: {metadata['title']} with timecode int {timecode}")
             elif isinstance(timecode, float):
-                print(f"DEBUG: Switchboard: Cinematheque item selected: {metadata['title']} with timecode float {timecode}")
-
-        # we're going to send the folder name to the player
-        folder = "gameplay"
+                print(f"DEBUG: Switchboard: Playbill item selected: {metadata['title']} with timecode float {timecode}")
+        
+        # Load video in Playhouse player
+        filename = metadata.get('filename', '')
+        if filename and self.current_project_folder:
+            gameplay_path = os.path.join(self.current_project_folder, "gameplay", filename)
+            if os.path.exists(gameplay_path):
+                if DEBUG: print(f"DEBUG: Loading gameplay in Playhouse: {gameplay_path}")
+                self.windows["playhouse"].load_video(gameplay_path, metadata, timecode)
+            else:
+                if DEBUG: print(f"DEBUG: Gameplay file not found: {gameplay_path}")
         
         # Enable buttons when an item is selected
         self.windows["playbill"].enable_bot_buttons()

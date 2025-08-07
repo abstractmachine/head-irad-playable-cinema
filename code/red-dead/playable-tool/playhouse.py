@@ -7,19 +7,19 @@ class PlayhouseWindow(AbstractPlayerWindow):
 
     def seek_back(self):
         """Override to use SEEK_FAST for gameplay videos"""
-        if not self.current_video_path or not self.vlc_player:
+        if not self.current_video_path:
             return
         seek_amount = SEEK_FAST  # Use fast seek instead of normal
         self.seek_video(-seek_amount)
 
     def seek_forward(self):
         """Override to use SEEK_FAST for gameplay videos"""
-        if not self.current_video_path or not self.vlc_player:
+        if not self.current_video_path:
             return
         seek_amount = SEEK_FAST  # Use fast seek instead of normal
         self.seek_video(seek_amount)
 
     def handle_global_key(self, event):
         """Handle global key events"""
-        #key = event.key()
-        #modifiers = event.modifiers()
+        # Placeholder for future key handling
+        pass

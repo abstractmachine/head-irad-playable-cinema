@@ -5,6 +5,7 @@ PyQt5
 Pillow
 opencv-python
 python-vlc
+python-mpv
 
 # Scene detection
 scenedetect[opencv]

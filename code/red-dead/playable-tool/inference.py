@@ -7,8 +7,8 @@ from PyQt5.QtWidgets import (
 )
 
 class InferenceWindow(QWidget):
-    request_save = pyqtSignal()
-    request_load = pyqtSignal(dict)
+    preferences_save = pyqtSignal()
+    preferences_load = pyqtSignal(dict)
 
     def __init__(self, ui):
         super().__init__()
@@ -153,14 +153,14 @@ class InferenceWindow(QWidget):
         # In the future, this could trigger real-time inference
         # self.inference_field.setPlainText(f"Current timecode: {timecode_str}")
 
-    def on_request_save(self):
+    def on_preferences_save(self):
         """Save window preferences"""
         self._pending_save_data = {
             "caption_model": self.caption_model
         }
         return self._pending_save_data
 
-    def on_request_load(self, data):
+    def on_preferences_load(self, data):
         """Load window preferences"""
         if data:
             # Load saved model

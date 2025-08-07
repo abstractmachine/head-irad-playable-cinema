@@ -64,8 +64,8 @@ def main():
     # === Signal Setup ===
     # Connect preference save/load signals for all windows
     for win in windows.values():
-        win.request_save.connect(win.on_request_save)
-        win.request_load.connect(win.on_request_load)
+        win.preferences_save.connect(win.on_preferences_save)
+        win.preferences_load.connect(win.on_preferences_load)
 
     # === Main Window Setup ===
     main_window = PlayableCinemaMainWindow(windows)

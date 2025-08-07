@@ -126,8 +126,8 @@ class SystemPromptEdit(QTextEdit):
         super().focusOutEvent(event)
 
 class CaptionWindow(QWidget):
-    request_save = pyqtSignal()
-    request_load = pyqtSignal(dict)
+    preferences_save = pyqtSignal()
+    preferences_load = pyqtSignal(dict)
     shot_caption_submitted = pyqtSignal(str)
     request_current_shot = pyqtSignal(int)
     request_next_shot = pyqtSignal()
@@ -303,14 +303,14 @@ class CaptionWindow(QWidget):
         else:
             super().keyPressEvent(event)
 
-    def on_request_save(self):
+    def on_preferences_save(self):
         geo = self.geometry()
         self._pending_save_data = {
             "frame_count": self.frame_count_field.text()  # Save frame count
         }
         return self._pending_save_data
 
-    def on_request_load(self, data):
+    def on_preferences_load(self, data):
         if data:
             # Load frame count
             if "frame_count" in data:

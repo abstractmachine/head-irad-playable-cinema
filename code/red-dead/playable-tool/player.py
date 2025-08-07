@@ -1,4 +1,6 @@
-from PyQt5.QtCore import Qt, pyqtSignal, QTimer
+DEBUG = True  # Add this at the top
+
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QLineEdit, QSizePolicy, QSlider
@@ -14,11 +16,11 @@ SEEK_FAST = 30
 
 class AbstractPlayerWindow(QMainWindow):
     # Signals for saving/loading preferences on application close/open
-    request_save = pyqtSignal()
-    request_load = pyqtSignal(dict)
+    preferences_save = pyqtSignal()
+    preferences_load = pyqtSignal(dict)
     # Signals for communication
-    video_loaded_with_metadata = pyqtSignal(str, dict)
-    new_movie_is_loading = pyqtSignal()
+    video_is_loading = pyqtSignal()
+    video_did_load = pyqtSignal(str, dict)
     # Signals for Image Extraction
     frames_extracted = pyqtSignal(list)
     # Signals for playback
@@ -34,6 +36,7 @@ class AbstractPlayerWindow(QMainWindow):
         self.current_video_path = None
         self.duration_seconds = None
         self._slider_is_active = False
+        self._pending_timecode = None  # Store timecode to jump to when ready
 
         # Set a minimum height for the player window
         self.setMinimumHeight(300)
@@ -121,8 +124,8 @@ class AbstractPlayerWindow(QMainWindow):
         container.setLayout(layout)
         self.setCentralWidget(container)
 
-        # Duration polling
-        self.duration_timer = None
+        # Remove duration polling timer - we'll use VLC events instead
+        # self.duration_timer = None
 
     def update_window_title(self):
         """Update window title to show {title} ({year})"""
@@ -140,12 +143,17 @@ class AbstractPlayerWindow(QMainWindow):
             titlebar_string = f"Player | {self.video_title}"
         self.setWindowTitle(titlebar_string)
 
-    def load_video_from_path_with_metadata(self, file_path, metadata=None):
-        """Load video from a specific file path with metadata"""
+    def load_video(self, file_path, metadata=None, timecode=None):
+        """Simple method for loading video with metadata and optional timecode"""
         if file_path and os.path.exists(file_path):
-            self.new_movie_is_loading.emit()  # <--- Emit signal before loading
+            self.video_is_loading.emit()
             if hasattr(self, 'current_video_path') and self.current_video_path == file_path:
+                if DEBUG: print("DEBUG: Video already loaded, skipping reload")
                 return
+            
+            # Store pending timecode for when video is ready
+            self._pending_timecode = timecode
+            
             self.movie_metadata = metadata
             self._load_video_file(file_path)
         else:
@@ -155,19 +163,19 @@ class AbstractPlayerWindow(QMainWindow):
         """Internal method to handle the actual video loading process"""
         self.timeline.setValue(0)
         self.set_timecode("00:00:00")
+        
+        # Stop current video if playing
         if hasattr(self, 'vlc_player') and self.vlc_player:
             self.vlc_player.stop()
-        if hasattr(self, 'duration_timer') and self.duration_timer is not None:
-            try:
-                self.duration_timer.stop()
-                self.duration_timer.deleteLater()
-            except RuntimeError:
-                pass
-            self.duration_timer = None
+            
         self.video_title = os.path.basename(file_path)
         self.update_window_title()
+        
+        # Load new media
         media = self.vlc_instance.media_new(file_path)
         self.vlc_player.set_media(media)
+        
+        # Set video output window
         win_id = int(self.video_widget.winId())
         if platform.system() == "Windows":
             self.vlc_player.set_hwnd(win_id)
@@ -175,69 +183,88 @@ class AbstractPlayerWindow(QMainWindow):
             self.vlc_player.set_nsobject(win_id)
         else:
             self.vlc_player.set_xwindow(win_id)
+            
         self.current_video_path = file_path
+        
+        # Enable controls
         self.play_pause_button.setEnabled(True)
         self.back_button.setEnabled(True)
         self.forward_button.setEnabled(True)
         self.timeline.setEnabled(True)
-        # self.vlc_player.play()
         self.play_pause_button.setText("⏵")
         self.is_playing = False
 
-        # Prime VLC so seeking works before first play
+        # Set up VLC events BEFORE playing
+        self._setup_vlc_events()
+        
+        # Start playing to initialize the media, then pause immediately
         self.vlc_player.play()
-        QTimer.singleShot(100, self.vlc_player.pause)
 
-        QTimer.singleShot(500, self._start_duration_polling)
-        self.video_loaded_with_metadata.emit(self.current_video_path, self.movie_metadata)
-
-        # VLC event: emit timecode signal as video plays
+    def _setup_vlc_events(self):
+        """Set up all VLC event handlers"""
         event_manager = self.vlc_player.event_manager()
-        event_manager.event_attach(
-            vlc.EventType.MediaPlayerTimeChanged,
-            self._on_vlc_time_changed
-        )
+        
+        # Media events
+        event_manager.event_attach(vlc.EventType.MediaPlayerLengthChanged, self._on_duration_changed)
+        event_manager.event_attach(vlc.EventType.MediaPlayerPositionChanged, self._on_position_changed)
+        event_manager.event_attach(vlc.EventType.MediaPlayerPlaying, self._on_video_playing)
+        event_manager.event_attach(vlc.EventType.MediaPlayerPaused, self._on_video_paused)
+        
+        # Time events
+        event_manager.event_attach(vlc.EventType.MediaPlayerTimeChanged, self._on_vlc_time_changed)
 
-    def _start_duration_polling(self):
-        """Start duration polling"""
-        if hasattr(self, 'duration_timer') and self.duration_timer is not None:
-            try:
-                self.duration_timer.stop()
-                self.duration_timer.deleteLater()
-            except RuntimeError:
-                pass
-        self.duration_timer = QTimer(self)
-        self.duration_timer.setInterval(200)
-        self.duration_timer.timeout.connect(self.check_duration)
-        self.duration_timer.start()
-
-    def check_duration(self):
+    def _on_duration_changed(self, event):
+        """Called when VLC determines the video duration"""
         duration = self.vlc_player.get_length()
         if duration and duration > 0:
             self.timeline.setRange(0, duration)
             self.duration_seconds = duration // 1000
             self.update_window_title()
-            self._update_timecode_display(self.vlc_player.get_time())
-            if hasattr(self, 'duration_timer') and self.duration_timer is not None:
-                try:
-                    self.duration_timer.stop()
-                    self.duration_timer.deleteLater()
-                except RuntimeError:
-                    pass
-                self.duration_timer = None
+            if DEBUG: print(f"DEBUG: Duration set: {self.duration_seconds}s")
 
-    def set_timecode(self, timecode):
-        self.timecode = timecode
+    def _on_position_changed(self, event):
+        """Called when VLC position changes - video is ready for seeking"""
+        if hasattr(self, '_pending_timecode') and self._pending_timecode is not None:
+            if DEBUG: print(f"DEBUG: Position changed, video ready for seeking")
+            # Video is ready, pause it immediately
+            self.vlc_player.pause()
+            # Handle pending timecode
+            self._handle_pending_timecode()
+
+    def _on_video_playing(self, event):
+        """Called when video starts playing"""
+        self.play_pause_button.setText("⏸")
+        self.is_playing = True
+        if DEBUG: print("DEBUG: Video playing")
+
+    def _on_video_paused(self, event):
+        """Called when video is paused"""
+        self.play_pause_button.setText("⏵")
+        self.is_playing = False
+        if DEBUG: print("DEBUG: Video paused")
+
+    def _handle_pending_timecode(self):
+        """Handle timecode jump when video is ready"""
+        if self._pending_timecode is not None:
+            if DEBUG: print(f"DEBUG: Jumping to pending timecode: {self._pending_timecode}")
+            
+            timecode = self._pending_timecode
+            self._pending_timecode = None  # Clear pending timecode
+            
+            # Jump to timecode
+            if isinstance(timecode, str):
+                self.jump_to_timecode(timecode)
+            elif isinstance(timecode, (int, float)):
+                self.set_video_time(int(timecode))
+            
+            # Emit that video is loaded
+            self.video_did_load.emit(self.current_video_path, self.movie_metadata)
 
     def toggle_play_pause(self):
         if self.vlc_player.is_playing():
             self.vlc_player.pause()
-            self.play_pause_button.setText("⏵")
-            self.is_playing = False
         else:
             self.vlc_player.play()
-            self.play_pause_button.setText("⏸")
-            self.is_playing = True
 
     def seek_back(self):
         if not self.current_video_path or not self.vlc_player:
@@ -263,7 +290,7 @@ class AbstractPlayerWindow(QMainWindow):
             time_ms = max(0, min(time_ms, duration))
         self.vlc_player.set_time(time_ms)
         self.timeline.setValue(time_ms)
-        self._update_timecode_display(time_ms)
+        self.set_timecode(time_ms)
         self.emit_timecode_changed(time_ms)
 
     def jump_to_timecode(self, timecode, is_last_frame=False):
@@ -274,10 +301,18 @@ class AbstractPlayerWindow(QMainWindow):
         else:
             print(f"Invalid timecode format: {timecode}")
 
+    def set_timecode(self, timecode):
+        """Set the current timecode display"""
+        self.timecode = timecode
+
+    def get_timecode(self):
+        """Get the current timecode"""
+        return self.timecode
+
     def _update_timecode_display(self, time_ms):
         # Use utility function to convert milliseconds to timecode
         current_timecode = milliseconds_to_timecode(time_ms)
-        self.set_timecode(current_timecode)
+        self.set_timecode(current_timecode)  # This calls the method above
         
         duration_seconds = getattr(self, "duration_seconds", None)
         if duration_seconds is not None and duration_seconds > 0:
@@ -338,21 +373,25 @@ class AbstractPlayerWindow(QMainWindow):
             self.normal_seek.setText("1")
             
     def _on_vlc_time_changed(self, event):
-        """Emit signal when VLC time changes (for subtitles, etc.)"""
-        position = self.vlc_player.get_time()
-        self.timeline.setValue(position)
-        self._update_timecode_display(position)
-        self.emit_timecode_changed(position)
+        """Called when VLC time position changes"""
+        if not self._slider_is_active:  # Don't update during scrubbing
+            position = self.vlc_player.get_time()
+            self.timeline.setValue(position)
+            self.set_timecode(position)
+            self.emit_timecode_changed(position)
 
     def closeEvent(self, event):
         try:
             if hasattr(self, 'vlc_player') and self.vlc_player:
                 self.vlc_player.stop()
-            if hasattr(self, 'vlc_player') and self.vlc_player:
+                # Detach all events
                 event_manager = self.vlc_player.event_manager()
                 if event_manager:
                     event_manager.event_detach(vlc.EventType.MediaPlayerTimeChanged)
                     event_manager.event_detach(vlc.EventType.MediaPlayerPlaying)
+                    event_manager.event_detach(vlc.EventType.MediaPlayerPaused)
+                    event_manager.event_detach(vlc.EventType.MediaPlayerLengthChanged)
+                    event_manager.event_detach(vlc.EventType.MediaPlayerPositionChanged)
                 self.vlc_player.release()
                 self.vlc_player = None
             if hasattr(self, 'vlc_instance') and self.vlc_instance:
@@ -363,13 +402,45 @@ class AbstractPlayerWindow(QMainWindow):
         finally:
             super().closeEvent(event)
 
-    def on_request_save(self):
+    def on_preferences_save(self):
         pos = self.pos()
         size = self.size()
         self._pending_save_data = {}
 
-    def on_request_load(self, data):
+    def on_preferences_load(self, data):
         pass
+
+    def clear_project(self):
+        """Clear current project - unload video and reset state"""
+        if DEBUG: print("DEBUG: Player clearing project - unloading video")
+        
+        # Stop and clear current video
+        if hasattr(self, 'vlc_player') and self.vlc_player:
+            self.vlc_player.stop()
+        
+        # Reset all state
+        self.current_video_path = None
+        self.video_title = ""
+        self.movie_metadata = None
+        self.duration_seconds = None
+        self._pending_timecode = None
+        
+        # Reset UI
+        self.timeline.setValue(0)
+        self.timeline.setRange(0, 100)
+        self.timeline.setEnabled(False)
+        self.set_timecode("00:00:00")
+        self._update_timecode_display(0)
+        
+        # Disable controls
+        self.play_pause_button.setEnabled(False)
+        self.back_button.setEnabled(False)
+        self.forward_button.setEnabled(False)
+        self.play_pause_button.setText("⏵")
+        self.is_playing = False
+        
+        # Update window title
+        self.update_window_title()
 
 class JumpSlider(QSlider):
     def __init__(self, orientation):
@@ -415,6 +486,5 @@ class JumpSlider(QSlider):
                 self.player_window.set_video_time(value)
             else:
                 self.setValue(value)
-                self.player_window._update_timecode_display(value)
+                self.player_window.set_timecode(value)
                 self.player_window.emit_timecode_changed(value)
-                self.player_window.vlc_player.set_time(value)

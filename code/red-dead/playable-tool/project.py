@@ -242,8 +242,8 @@ class ProjectWindow(QMainWindow):
     """Project management window"""
     
     # Define signals for communication
-    request_save = pyqtSignal()
-    request_load = pyqtSignal(dict)
+    preferences_save = pyqtSignal()
+    preferences_load = pyqtSignal(dict)
     
     def __init__(self, ui):
         super().__init__()
@@ -295,8 +295,8 @@ class ProjectWindow(QMainWindow):
     
     def setup_connections(self):
         """Setup signal connections"""
-        self.request_save.connect(self.on_request_save)
-        self.request_load.connect(self.on_request_load)
+        self.preferences_save.connect(self.on_preferences_save)
+        self.preferences_load.connect(self.on_preferences_load)
         
         # Connect to project manager signals
         self.project_manager.project_loaded.connect(self.on_project_loaded)
@@ -377,11 +377,11 @@ class ProjectWindow(QMainWindow):
     
     # ---- Save/Load Preferences ----
     
-    def on_request_save(self):
+    def on_preferences_save(self):
         """Save preferences"""
         self._pending_save_data = self.project_manager.get_preferences_data()
     
-    def on_request_load(self, data):
+    def on_preferences_load(self, data):
         """Load preferences"""
         self.project_manager.load_preferences_data(data)
     

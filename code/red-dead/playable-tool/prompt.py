@@ -13,8 +13,8 @@ from PyQt5.QtWidgets import (
 )
 
 class PromptWindow(QMainWindow):
-    request_save = pyqtSignal()
-    request_load = pyqtSignal(dict)
+    preferences_save = pyqtSignal()
+    preferences_load = pyqtSignal(dict)
 
     def __init__(self, ui, subtitles_window=None):
         super().__init__()
@@ -274,16 +274,16 @@ class PromptWindow(QMainWindow):
             if DEBUG: print(f"DEBUG: Could not save {filename}: {e}")
 
     # Preferences handling
-    def on_request_save(self):
+    def on_preferences_save(self):
         geo = self.geometry()
-        if DEBUG: print(f"DEBUG: on_request_save called, geometry={geo}")
+        if DEBUG: print(f"DEBUG: on_preferences_save called, geometry={geo}")
         self._pending_save_data = {
         }
         return self._pending_save_data
 
     # Preferences handling
-    def on_request_load(self, data):
-        if DEBUG: print(f"DEBUG: on_request_load called with {data}")
+    def on_preferences_load(self, data):
+        if DEBUG: print(f"DEBUG: on_preferences_load called with {data}")
         if data:
             # do nothing
             pass
