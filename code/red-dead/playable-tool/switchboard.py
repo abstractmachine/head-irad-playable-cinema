@@ -278,8 +278,10 @@ class Switchboard(QObject):
     # Add this method at the end of the class:
     def on_chaos_event(self):
         """Handle chaos events from the gremlins window"""
+        # choice = random.choice(["cinematheque", "playbill"])
+        choice = "cinematheque" # force to Cinematheque for testing
         # Choose randomly from Playbill or Cinematheque
-        if random.choice([True, False]):
+        if choice == "cinematheque":
             if DEBUG: print("DEBUG: Chaos event - triggering Cinematheque")
             self.windows["cinematheque"].emit_chaos_event()
         else:
