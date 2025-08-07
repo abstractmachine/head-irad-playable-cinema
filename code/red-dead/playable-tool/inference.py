@@ -111,24 +111,6 @@ class InferenceWindow(QWidget):
         """Clear project - for consistency with other windows"""
         # A Placeholder for future functionality
         if DEBUG: print("DEBUG: ProjectWindow: clear_project called (no action needed)")
-        
-    def on_movie_loaded(self, movie_path):
-        """Called when a new movie is loaded in the player"""
-        movie_filename = os.path.basename(movie_path)
-        
-        # Don't reload if it's the same movie
-        if self.current_movie_filename == movie_filename:
-            return
-            
-        self.current_movie_filename = movie_filename
-        
-        # Update window title to show current movie
-        movie_name = os.path.splitext(movie_filename)[0]
-        self.setWindowTitle(f"Inference - {movie_name}")
-        
-        # Clear inference field for new movie
-        self.matched_caption.setPlainText(f"{movie_name}")
-        if DEBUG: print(f"Inference: Movie loaded - {movie_filename}")
 
     def on_movie_loaded_with_metadata(self, movie_path, metadata=None):
         """

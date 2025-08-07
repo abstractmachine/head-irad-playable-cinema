@@ -13,13 +13,16 @@ SEEK_NORMAL = 1
 SEEK_FAST = 30
 
 class AbstractPlayerWindow(QMainWindow):
-    # Signals for communication
-    video_loaded_with_metadata = pyqtSignal(str, dict)
-    video_timecode_changed = pyqtSignal(int)
-    frames_extracted = pyqtSignal(list)
+    # Signals for saving/loading preferences on application close/open
     request_save = pyqtSignal()
     request_load = pyqtSignal(dict)
+    # Signals for communication
+    video_loaded_with_metadata = pyqtSignal(str, dict)
     new_movie_is_loading = pyqtSignal()
+    # Signals for Image Extraction
+    frames_extracted = pyqtSignal(list)
+    # Signals for playback
+    video_timecode_changed = pyqtSignal(int)
 
     def __init__(self, ui):
         super().__init__()

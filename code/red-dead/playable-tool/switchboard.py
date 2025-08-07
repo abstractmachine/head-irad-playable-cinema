@@ -91,38 +91,38 @@ class Switchboard(QObject):
         # and coordinate UI updates and cross-window dependencies
         
         # Cinematheque catalog status monitoring
-        self.windows["cinematheque"].catalog_loading_started.connect(self.on_cinematheque_loading_started)
-        self.windows["cinematheque"].catalog_loading_finished.connect(self.on_cinematheque_loading_finished)
-        self.windows["cinematheque"].catalog_contents_cleared.connect(self.on_cinematheque_contents_cleared)
+        self.windows["cinematheque"].catalog_loading_started.connect(self.cinematheque_loading_started)
+        self.windows["cinematheque"].catalog_loading_finished.connect(self.cinematheque_loading_finished)
+        self.windows["cinematheque"].catalog_contents_cleared.connect(self.cinematheque_contents_cleared)
         
         # Playbill catalog status monitoring
-        self.windows["playbill"].catalog_loading_started.connect(self.on_playbill_loading_started)
-        self.windows["playbill"].catalog_loading_finished.connect(self.on_playbill_loading_finished)
-        self.windows["playbill"].catalog_contents_cleared.connect(self.on_playbill_contents_cleared)
+        self.windows["playbill"].catalog_loading_started.connect(self.playbill_loading_started)
+        self.windows["playbill"].catalog_loading_finished.connect(self.playbill_loading_finished)
+        self.windows["playbill"].catalog_contents_cleared.connect(self.playbill_contents_cleared)
 
         # ---- CATALOG ITEM SELECTION CONNECTIONS ----
         # These monitor item selections in catalog windows and coordinate responses
         
         # Cinematheque item selection monitoring
-        self.windows["cinematheque"].item_might_change.connect(self.on_cinematheque_item_might_change)
-        self.windows["cinematheque"].item_selected.connect(self.on_cinematheque_item_selected)
+        self.windows["cinematheque"].item_might_change.connect(self.cinematheque_item_might_change)
+        self.windows["cinematheque"].item_selected.connect(self.cinematheque_item_selected)
         
         # Playbill item selection monitoring
-        self.windows["playbill"].item_might_change.connect(self.on_playbill_item_might_change)
-        self.windows["playbill"].item_selected.connect(self.on_playbill_item_selected)
+        self.windows["playbill"].item_might_change.connect(self.playbill_item_might_change)
+        self.windows["playbill"].item_selected.connect(self.playbill_item_selected)
 
         # ---- METADATA REBUILD CONNECTIONS ----
         # These monitor metadata rebuild operations in catalog windows
         
         # Cinematheque metadata rebuild monitoring
-        self.windows["cinematheque"].metadata_rebuild_started.connect(lambda: self.on_metadata_rebuild_started("cinematheque"))
-        self.windows["cinematheque"].metadata_rebuild_finished.connect(lambda success: self.on_metadata_rebuild_finished("cinematheque", success))
-        self.windows["cinematheque"].metadata_rebuild_cancelled.connect(lambda: self.on_metadata_rebuild_cancelled("cinematheque"))
+        self.windows["cinematheque"].metadata_rebuild_started.connect(lambda: self.metadata_rebuild_started("cinematheque"))
+        self.windows["cinematheque"].metadata_rebuild_finished.connect(lambda success: self.metadata_rebuild_finished("cinematheque", success))
+        self.windows["cinematheque"].metadata_rebuild_cancelled.connect(lambda: self.metadata_rebuild_cancelled("cinematheque"))
         
         # Playbill metadata rebuild monitoring
-        self.windows["playbill"].metadata_rebuild_started.connect(lambda: self.on_metadata_rebuild_started("playbill"))
-        self.windows["playbill"].metadata_rebuild_finished.connect(lambda success: self.on_metadata_rebuild_finished("playbill", success))
-        self.windows["playbill"].metadata_rebuild_cancelled.connect(lambda: self.on_metadata_rebuild_cancelled("playbill"))
+        self.windows["playbill"].metadata_rebuild_started.connect(lambda: self.metadata_rebuild_started("playbill"))
+        self.windows["playbill"].metadata_rebuild_finished.connect(lambda success: self.metadata_rebuild_finished("playbill", success))
+        self.windows["playbill"].metadata_rebuild_cancelled.connect(lambda: self.metadata_rebuild_cancelled("playbill"))
 
         if DEBUG: print("DEBUG: Switchboard finished setting up connections")
 
@@ -144,7 +144,7 @@ class Switchboard(QObject):
 
     # ---- METADATA REBUILD HANDLERS ----
 
-    def on_metadata_rebuild_started(self, catalog_name):
+    def metadata_rebuild_started(self, catalog_name):
         if DEBUG: print(f"DEBUG: Switchboard: Metadata rebuild started for {catalog_name}")
         
         # Check if this is the first catalog to start rebuilding
@@ -160,7 +160,7 @@ class Switchboard(QObject):
             if DEBUG: print("DEBUG: Switchboard: First catalog started rebuilding - emitting metadata_rebuilding_started")
             self.metadata_rebuilding_started.emit()
 
-    def on_metadata_rebuild_finished(self, catalog_name, success):
+    def metadata_rebuild_finished(self, catalog_name, success):
         if DEBUG: print(f"DEBUG: Switchboard: Metadata rebuild finished for {catalog_name}, success: {success}")
         
         # Remove from rebuilding list
@@ -173,7 +173,7 @@ class Switchboard(QObject):
             if DEBUG: print("DEBUG: Switchboard: Last catalog finished rebuilding - emitting metadata_rebuilding_stopped")
             self.metadata_rebuilding_stopped.emit()
 
-    def on_metadata_rebuild_cancelled(self, catalog_name):
+    def metadata_rebuild_cancelled(self, catalog_name):
         if DEBUG: print(f"DEBUG: Switchboard: Metadata rebuild cancelled for {catalog_name}")
         
         # Remove from rebuilding list
@@ -188,34 +188,34 @@ class Switchboard(QObject):
 
     # ---- CATALOG EVENT HANDLERS ----
 
-    def on_cinematheque_contents_cleared(self):
+    def cinematheque_contents_cleared(self):
         if DEBUG: print("DEBUG: Switchboard: Cinematheque contents cleared")
         
         # Disable cinematheque-specific buttons when contents are cleared
         self.windows["cinematheque"].disable_shotlist_bot_button()
 
-    def on_playbill_contents_cleared(self):
+    def playbill_contents_cleared(self):
         if DEBUG: print("DEBUG: Switchboard: Playbill contents cleared")
 
-    def on_cinematheque_loading_started(self):
+    def cinematheque_loading_started(self):
         if DEBUG: print("DEBUG: Switchboard: Cinematheque started loading")
 
         # Let cinematheque handle its own UI state changes
         self.windows["cinematheque"].on_catalog_loading_started()
 
-    def on_cinematheque_loading_finished(self):
+    def cinematheque_loading_finished(self):
         if DEBUG: print("DEBUG: Switchboard: Cinematheque finished loading")
 
         # Let cinematheque handle its own UI state changes
         self.windows["cinematheque"].on_catalog_loading_finished()
 
-    def on_playbill_loading_started(self):
+    def playbill_loading_started(self):
         if DEBUG: print("DEBUG: Switchboard: Playbill started loading")
 
         # Let playbill handle its own UI state changes
         self.windows["playbill"].on_catalog_loading_started()
 
-    def on_playbill_loading_finished(self):
+    def playbill_loading_finished(self):
         if DEBUG: print("DEBUG: Switchboard: Playbill finished loading")
 
         # Let playbill handle its own UI state changes
@@ -223,12 +223,12 @@ class Switchboard(QObject):
 
     # ---- CATALOG ITEM SELECTION HANDLERS ----
 
-    def on_cinematheque_item_might_change(self, metadata):
+    def cinematheque_item_might_change(self, metadata):
         if DEBUG: print(f"DEBUG: Switchboard: Cinematheque item might change: {metadata['title']}")
 
         self.windows["cinematheque"].disable_bot_buttons()
 
-    def on_cinematheque_item_selected(self, metadata, timecode=None):
+    def cinematheque_item_selected(self, metadata, timecode=None):
         if DEBUG:
             if timecode is None:
                 print(f"DEBUG: Switchboard: Cinematheque item selected: {metadata['title']} with no timecode")
@@ -245,12 +245,12 @@ class Switchboard(QObject):
         # Enable buttons when an item is selected
         self.windows["cinematheque"].enable_bot_buttons()
 
-    def on_playbill_item_might_change(self, metadata):
+    def playbill_item_might_change(self, metadata):
         if DEBUG: print(f"DEBUG: Switchboard: Playbill item might change: {metadata['title']}")
 
         self.windows["playbill"].disable_bot_buttons()
 
-    def on_playbill_item_selected(self, metadata, timecode=None):
+    def playbill_item_selected(self, metadata, timecode=None):
         if DEBUG:
             if timecode is None:
                 print(f"DEBUG: Switchboard: Cinematheque item selected: {metadata['title']} with no timecode")
