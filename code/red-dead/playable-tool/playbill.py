@@ -60,31 +60,25 @@ class PlaybillWindow(AbstractCatalogWindow):
             return os.path.join(self.project_folder, self.data_folder, filename)
         return None
 
-    def on_catalog_loading_started(self):
-        """Override to handle playbill-specific behavior when loading starts"""
-        if DEBUG: print(f"DEBUG: Playbill: Catalog loading started")
-        
-        # Call parent method to handle progress label
-        super().on_catalog_loading_started()
-        
-        # Hide playbill-specific export button during loading
-        if hasattr(self, 'export_button'):
-            self.export_button.setVisible(False)
-
-    def on_catalog_loading_finished(self):
-        """Override to handle playbill-specific behavior when loading finishes"""
-        if DEBUG: print(f"DEBUG: Playbill: Catalog loading finished")
-        
-        # Call parent method to handle progress label
-        super().on_catalog_loading_finished()
-        
+    def enable_bot_buttons(self):
+        """Handle this subclass-specific enabling of bot buttons - called by switchboard"""
+        if DEBUG: print("DEBUG: Playbill: Enabling bot buttons")       
         # Show playbill-specific export button again
-        if hasattr(self, 'export_button'):
-            self.export_button.setVisible(True)
-        
-        # Update export button state after loading completes
-        if self.project_folder:  # Only enable if we have a project
-            self.export_button.setEnabled(True)
+        self.enable_export_button()
+
+    def disable_bot_buttons(self):
+        """Handle this subclass-specific disabling of bot buttons - called by switchboard"""
+        if DEBUG: print("DEBUG: Playbill: Disabling bot buttons")
+        # Hide playbill-specific export button
+        self.disable_export_button()
+
+    def enable_export_button(self):
+        """Enable export button - called by switchboard"""
+        self.export_button.setEnabled(True)
+
+    def disable_export_button(self):
+        """Disable export button - called by switchboard"""
+        self.export_button.setEnabled(False)
 
     def clear_project(self):
         """Clear current project and cancel any ongoing operations - override to handle playbill-specific state"""
@@ -110,29 +104,3 @@ class PlaybillWindow(AbstractCatalogWindow):
             
         # Placeholder for future export functionality
         QMessageBox.information(self, "Export Gameplay", "Export functionality coming soon!")
-
-    # Remove all these methods since they're handled by the parent class now:
-    # - update_loading_progress (use parent version)
-    # - load_items_from_metadata_threaded (use parent version)
-    # - on_loading_finished (use parent version)
-    # - create_next_batch (use parent version)
-    # - set_project_folder (use parent version)
-    
-    # Keep only these aliases for backward compatibility if other code depends on them:
-    @property
-    def gameplay_list(self):
-        return self.item_list
-    
-    @property
-    def selected_gameplay_widget(self):
-        return self.selected_item_widget
-    
-    @selected_gameplay_widget.setter
-    def selected_gameplay_widget(self, value):
-        self.selected_item_widget = value
-
-    # Add this property if you need gameplay_selected for backward compatibility
-    @property
-    def gameplay_selected(self):
-        """Provide access to the item_selected signal for backward compatibility"""
-        return self.item_selected

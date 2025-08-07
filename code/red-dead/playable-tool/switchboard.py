@@ -104,9 +104,11 @@ class Switchboard(QObject):
         # These monitor item selections in catalog windows and coordinate responses
         
         # Cinematheque item selection monitoring
+        self.windows["cinematheque"].item_might_change.connect(self.on_cinematheque_item_might_change)
         self.windows["cinematheque"].item_selected.connect(self.on_cinematheque_item_selected)
         
         # Playbill item selection monitoring
+        self.windows["playbill"].item_might_change.connect(self.on_playbill_item_might_change)
         self.windows["playbill"].item_selected.connect(self.on_playbill_item_selected)
 
         # ---- METADATA REBUILD CONNECTIONS ----
@@ -127,15 +129,6 @@ class Switchboard(QObject):
     # ---- PROJECT LIFECYCLE HANDLERS ----
 
     def project_folder_loaded(self, project_folder):
-        """
-        Handle when a new project folder is loaded from the project window.
-        
-        This is the central coordination point for project changes. It ensures
-        clean transitions by clearing old project state before loading new state.
-        
-        Args:
-            project_folder (str): Path to the new project folder
-        """
         if DEBUG: print(f"DEBUG: Switchboard: Project folder loaded: {project_folder}")
         
         # If switching between different projects (not just initial load)
@@ -152,12 +145,6 @@ class Switchboard(QObject):
     # ---- METADATA REBUILD HANDLERS ----
 
     def on_metadata_rebuild_started(self, catalog_name):
-        """
-        Handle when a catalog starts rebuilding metadata.
-        
-        Args:
-            catalog_name (str): Name of the catalog ("cinematheque" or "playbill")
-        """
         if DEBUG: print(f"DEBUG: Switchboard: Metadata rebuild started for {catalog_name}")
         
         # Check if this is the first catalog to start rebuilding
@@ -174,13 +161,6 @@ class Switchboard(QObject):
             self.metadata_rebuilding_started.emit()
 
     def on_metadata_rebuild_finished(self, catalog_name, success):
-        """
-        Handle when a catalog finishes rebuilding metadata.
-        
-        Args:
-            catalog_name (str): Name of the catalog ("cinematheque" or "playbill")
-            success (bool): Whether the rebuild was successful
-        """
         if DEBUG: print(f"DEBUG: Switchboard: Metadata rebuild finished for {catalog_name}, success: {success}")
         
         # Remove from rebuilding list
@@ -194,12 +174,6 @@ class Switchboard(QObject):
             self.metadata_rebuilding_stopped.emit()
 
     def on_metadata_rebuild_cancelled(self, catalog_name):
-        """
-        Handle when a catalog's metadata rebuild is cancelled.
-        
-        Args:
-            catalog_name (str): Name of the catalog ("cinematheque" or "playbill")
-        """
         if DEBUG: print(f"DEBUG: Switchboard: Metadata rebuild cancelled for {catalog_name}")
         
         # Remove from rebuilding list
@@ -212,154 +186,83 @@ class Switchboard(QObject):
             if DEBUG: print("DEBUG: Switchboard: Last catalog cancelled rebuilding - emitting metadata_rebuilding_stopped")
             self.metadata_rebuilding_stopped.emit()
 
-    def is_any_catalog_rebuilding(self):
-        """
-        Check if any catalog is currently rebuilding metadata.
-        
-        Returns:
-            bool: True if any catalog is rebuilding, False otherwise
-        """
-        return len(self.catalogs_rebuilding) > 0
-
-    def get_rebuilding_catalogs(self):
-        """
-        Get a copy of the list of catalogs currently rebuilding metadata.
-        
-        Returns:
-            list: Copy of catalogs currently rebuilding
-        """
-        return self.catalogs_rebuilding.copy()
-
     # ---- CATALOG EVENT HANDLERS ----
-    # These methods respond to loading/clearing events from catalog windows
-    # and can coordinate cross-window responses
 
     def on_cinematheque_contents_cleared(self):
-        """
-        Handle when cinematheque catalog contents are cleared.
-        
-        This happens during:
-        - Project switching
-        - Metadata rebuilds
-        - Manual clearing operations
-        
-        Can be used to disable UI elements in other windows that depend
-        on cinematheque selections (e.g., movie-specific buttons).
-        """
         if DEBUG: print("DEBUG: Switchboard: Cinematheque contents cleared")
-        # Future: Add cross-window coordination logic here
-        # Example: Disable movie-dependent buttons in other windows
+        
+        # Disable cinematheque-specific buttons when contents are cleared
+        self.windows["cinematheque"].disable_shotlist_bot_button()
 
     def on_playbill_contents_cleared(self):
-        """
-        Handle when playbill catalog contents are cleared.
-        
-        Similar to cinematheque clearing, but for playbill-specific content.
-        Can coordinate UI updates in windows that depend on playbill selections.
-        """
         if DEBUG: print("DEBUG: Switchboard: Playbill contents cleared")
-        # Future: Add cross-window coordination logic here
-        # Example: Clear related data in other windows
 
     def on_cinematheque_loading_started(self):
-        """
-        Handle when cinematheque starts loading catalog data.
-        
-        Delegates to the cinematheque window's own loading started handler
-        to manage button states, progress display, etc. The switchboard
-        can also coordinate related actions in other windows if needed.
-        """
         if DEBUG: print("DEBUG: Switchboard: Cinematheque started loading")
+
         # Let cinematheque handle its own UI state changes
         self.windows["cinematheque"].on_catalog_loading_started()
-        # Future: Add cross-window coordination if needed
 
     def on_cinematheque_loading_finished(self):
-        """
-        Handle when cinematheque finishes loading catalog data.
-        
-        Delegates to the cinematheque window's own loading finished handler
-        to restore button states, hide progress, etc. Can also trigger
-        dependent operations in other windows.
-        """
         if DEBUG: print("DEBUG: Switchboard: Cinematheque finished loading")
+
         # Let cinematheque handle its own UI state changes
         self.windows["cinematheque"].on_catalog_loading_finished()
-        # Future: Enable dependent features in other windows
 
     def on_playbill_loading_started(self):
-        """
-        Handle when playbill starts loading catalog data.
-        
-        Similar to cinematheque loading started, but for playbill content.
-        Manages playbill-specific loading state and coordinates any
-        cross-window dependencies.
-        """
         if DEBUG: print("DEBUG: Switchboard: Playbill started loading")
+
         # Let playbill handle its own UI state changes
         self.windows["playbill"].on_catalog_loading_started()
 
     def on_playbill_loading_finished(self):
-        """
-        Handle when playbill finishes loading catalog data.
-        
-        Similar to cinematheque loading finished, but for playbill content.
-        Restores playbill UI state and can trigger dependent operations.
-        """
         if DEBUG: print("DEBUG: Switchboard: Playbill finished loading")
+
         # Let playbill handle its own UI state changes
         self.windows["playbill"].on_catalog_loading_finished()
 
     # ---- CATALOG ITEM SELECTION HANDLERS ----
-    # These methods respond to item selections in catalog windows
-    # and coordinate cross-window responses
 
-    def on_cinematheque_item_selected(self, item_path, metadata):
-        """
-        Handle when an item is selected in the cinematheque catalog.
-        
-        This coordinates responses across the application when a movie/video
-        is selected in the cinematheque. Can trigger loading of related data
-        in other windows or update UI states based on the selected item.
-        
-        Args:
-            item_path (str): Path to the selected item
-            metadata (dict): Metadata for the selected item
-        """
+    def on_cinematheque_item_might_change(self, metadata):
+        if DEBUG: print(f"DEBUG: Switchboard: Cinematheque item might change: {metadata['title']}")
 
-        # if DEBUG: print(f"DEBUG: Switchboard: Cinematheque item selected: {item_path}")
-        if DEBUG: print(f"DEBUG: Switchboard: Cinematheque item metadata: {metadata['title']}")
+        self.windows["cinematheque"].disable_bot_buttons()
 
+    def on_cinematheque_item_selected(self, metadata, timecode=None):
+        if DEBUG:
+            if timecode is None:
+                print(f"DEBUG: Switchboard: Cinematheque item selected: {metadata['title']} with no timecode")
+            elif isinstance(timecode, str):
+                print(f"DEBUG: Switchboard: Cinematheque item selected: {metadata['title']} with timecode string {timecode}")
+            elif isinstance(timecode, int):
+                print(f"DEBUG: Switchboard: Cinematheque item selected: {metadata['title']} with timecode int {timecode}")
+            elif isinstance(timecode, float):
+                print(f"DEBUG: Switchboard: Cinematheque item selected: {metadata['title']} with timecode float {timecode}")
+
+        # we're going to send the folder name to the player
         folder = "movies"
         
-        # Future: Add cross-window coordination logic here
-        # Examples:
-        # - Load related shots in shotlist window
-        # - Update inference window with movie-specific models
-        # - Enable movie-dependent features in other windows
-        # - Clear incompatible selections in other catalogs
+        # Enable buttons when an item is selected
+        self.windows["cinematheque"].enable_bot_buttons()
 
-    def on_playbill_item_selected(self, item_path, metadata):
-        """
-        Handle when an item is selected in the playbill catalog.
-        
-        This coordinates responses across the application when a performance/show
-        is selected in the playbill. Can trigger loading of related data
-        in other windows or update UI states based on the selected item.
-        
-        Args:
-            item_path (str): Path to the selected item
-            metadata (dict): Metadata for the selected item
-        """
-        # if DEBUG: print(f"DEBUG: Switchboard: Playbill item selected: {item_path}")
-        if DEBUG: print(f"DEBUG: Switchboard: Playbill item metadata: {metadata['title']}")
+    def on_playbill_item_might_change(self, metadata):
+        if DEBUG: print(f"DEBUG: Switchboard: Playbill item might change: {metadata['title']}")
 
+        self.windows["playbill"].disable_bot_buttons()
+
+    def on_playbill_item_selected(self, metadata, timecode=None):
+        if DEBUG:
+            if timecode is None:
+                print(f"DEBUG: Switchboard: Cinematheque item selected: {metadata['title']} with no timecode")
+            elif isinstance(timecode, str):
+                print(f"DEBUG: Switchboard: Cinematheque item selected: {metadata['title']} with timecode string {timecode}")
+            elif isinstance(timecode, int):
+                print(f"DEBUG: Switchboard: Cinematheque item selected: {metadata['title']} with timecode int {timecode}")
+            elif isinstance(timecode, float):
+                print(f"DEBUG: Switchboard: Cinematheque item selected: {metadata['title']} with timecode float {timecode}")
+
+        # we're going to send the folder name to the player
         folder = "gameplay"
         
-        # Future: Add cross-window coordination logic here
-        # Examples:
-        # - Load performance-specific data in other windows
-        # - Update UI to show performance-related options
-        # - Clear conflicting selections in other catalogs
-        # - Enable performance-dependent features
-
+        # Enable buttons when an item is selected
+        self.windows["playbill"].enable_bot_buttons()

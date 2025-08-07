@@ -75,8 +75,9 @@ class AbstractCatalogWindow(QMainWindow):
     catalog_loading_finished = pyqtSignal()
     catalog_loading_progress = pyqtSignal(int)  # Add progress signal
     catalog_contents_cleared = pyqtSignal()
-    item_selected = pyqtSignal(str, dict)  # Signal to send item path AND metadata
-    
+    item_might_change = pyqtSignal(dict)  # Signal to notify item change
+    item_selected = pyqtSignal(dict, object)  # Signal to send metadata and timecode
+
     # Add metadata rebuild signals
     metadata_rebuild_started = pyqtSignal()
     metadata_rebuild_finished = pyqtSignal(bool)  # True for success, False for failure
@@ -236,11 +237,6 @@ class AbstractCatalogWindow(QMainWindow):
         # Initialize thread variables
         self.metadata_thread = None
         self.metadata_worker = None
-        
-        # Remove the animation timer setup since we're using percentage progress instead
-        # self.rebuild_animation_timer = QTimer()
-        # self.rebuild_animation_timer.timeout.connect(self.animate_rebuild_button)
-        # self.rebuild_dot_count = 0
 
     def create_button_layout(self):
         """Create the button layout - can be overridden by subclasses"""
@@ -280,7 +276,7 @@ class AbstractCatalogWindow(QMainWindow):
         # Hide metadata button during loading
         self.metadata_button.setVisible(False)
         
-        # Show progress label which will now span full width
+        # Show progress label
         if self.progress_label:
             self.progress_label.setText("Loading catalog... 0%")
             self.progress_label.setVisible(True)
@@ -602,18 +598,12 @@ class AbstractCatalogWindow(QMainWindow):
             # Let the switchboard handle project coordination
             pass
 
-    def on_widget_clicked(self, widget, data):
+    def on_widget_clicked(self, widget, data, timecode=None):
         """Handle when an item widget is clicked"""
-        import traceback
-        if DEBUG: 
-            print(f"DEBUG: {self.catalog_name}: Widget clicked with data: {data}")
-            print(f"DEBUG: {self.catalog_name}: Call stack:")
-            for line in traceback.format_stack()[-5:]:  # Show last 5 stack frames
-                print(f"DEBUG: {self.catalog_name}: {line.strip()}")
-        
-        # Call selection will change handler if it exists
-        if hasattr(self, 'on_selection_will_change'):
-            self.on_selection_will_change()
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Widget clicked with data: {data} and timecode: {timecode}")
+
+        # Signal that the item might change
+        self.item_might_change.emit(data)
         
         # Update selected widget
         if self.selected_item_widget:
@@ -624,15 +614,11 @@ class AbstractCatalogWindow(QMainWindow):
         
         # Get the item path
         item_path = self.get_item_path(data)
-        
-        # Emit selection signal with both path and data
+
+        # Emit selection signal with both path, data, and (possibly) timecode
         if item_path:
             if DEBUG: print(f"DEBUG: {self.catalog_name}: Emitting item_selected signal for: {item_path}")
-            self.item_selected.emit(item_path, data)
-        
-        # Call selection changed handler if it exists
-        if hasattr(self, 'on_item_selection_changed'):
-            self.on_item_selection_changed(widget, data)
+            self.item_selected.emit(data, timecode)
 
     def ensure_item_visible(self, widget):
         """Ensure the given widget is visible in the viewport, scroll if necessary"""
@@ -733,3 +719,11 @@ class AbstractCatalogWindow(QMainWindow):
                 self.on_widget_clicked(prev_widget, prev_widget.item_data)
                 # Ensure the newly selected item is visible
                 self.ensure_item_visible(prev_widget)
+
+    def enable_bot_buttons(self):
+        """Subclasses can override to enable shotlist bot button - called by switchboard"""
+        pass
+
+    def disable_bot_buttons(self):
+        """Subclasses can override to disable shotlist bot button - called by switchboard"""
+        pass

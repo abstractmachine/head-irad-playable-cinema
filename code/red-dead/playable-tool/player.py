@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import (
 import os
 import platform
 import vlc
+from utility import timecode_to_milliseconds, milliseconds_to_timecode
 
 SEEK_NORMAL = 1
 SEEK_FAST = 30
@@ -264,31 +265,23 @@ class AbstractPlayerWindow(QMainWindow):
 
     def jump_to_timecode(self, timecode, is_last_frame=False):
         """Jump to specific timecode"""
-        parts = timecode.split(":")
-        if len(parts) == 3:
-            h = int(parts[0])
-            m = int(parts[1])
-            s = float(parts[2])
-            time_ms = int((h * 3600 + m * 60 + s) * 1000)
+        time_ms = timecode_to_milliseconds(timecode)
+        if time_ms is not None:
             self.set_video_time(time_ms)
         else:
             print(f"Invalid timecode format: {timecode}")
 
     def _update_timecode_display(self, time_ms):
-        seconds = time_ms // 1000
-        h = seconds // 3600
-        m = (seconds % 3600) // 60
-        s = seconds % 60
-        self.set_timecode(f"{h:02}:{m:02}:{s:02}")
+        # Use utility function to convert milliseconds to timecode
+        current_timecode = milliseconds_to_timecode(time_ms)
+        self.set_timecode(current_timecode)
+        
         duration_seconds = getattr(self, "duration_seconds", None)
         if duration_seconds is not None and duration_seconds > 0:
-            dh = duration_seconds // 3600
-            dm = (duration_seconds % 3600) // 60
-            ds = duration_seconds % 60
-            duration_str = f"{dh:02}:{dm:02}:{ds:02}"
-            self.timecode_label.setText(f"{h:02}:{m:02}:{s:02} | {duration_str}")
+            duration_timecode = milliseconds_to_timecode(duration_seconds * 1000)
+            self.timecode_label.setText(f"{current_timecode} | {duration_timecode}")
         else:
-            self.timecode_label.setText(f"{h:02}:{m:02}:{s:02} | 00:00:00")
+            self.timecode_label.setText(f"{current_timecode} | 00:00:00")
 
     def handle_shot_timecodes(self, start_timecode, timecodes_list):
         """Handle shot timecodes from shotlist for frame extraction"""
@@ -305,14 +298,9 @@ class AbstractPlayerWindow(QMainWindow):
         cap = cv2.VideoCapture(self.current_video_path)
         
         for i, timecode in enumerate(timecodes_list):
-            # Convert timecode to milliseconds
-            parts = timecode.split(":")
-            if len(parts) == 3:
-                h = int(parts[0])
-                m = int(parts[1])
-                s = float(parts[2])
-                time_ms = int((h * 3600 + m * 60 + s) * 1000)
-                                
+            # Convert timecode to milliseconds using utility function
+            time_ms = timecode_to_milliseconds(timecode)
+            if time_ms is not None:
                 # Extract frame at this timecode
                 cap.set(cv2.CAP_PROP_POS_MSEC, time_ms)
                 ret, frame = cap.read()
