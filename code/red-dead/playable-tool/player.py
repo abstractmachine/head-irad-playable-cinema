@@ -36,6 +36,7 @@ class AbstractPlayerWindow(QMainWindow):
         self.duration_seconds = None
         self._slider_is_active = False
         self._pending_timecode = None  # Store timecode to jump to after loading
+        self._pending_initial_timecode = None  # Store initial timecode for new videos
         
         # Add loading state management
         self._media_loading = False
@@ -49,13 +50,25 @@ class AbstractPlayerWindow(QMainWindow):
         # Store timer references to cancel them if needed
         self._pending_timers = []
 
+        # Dual media player setup
+        self.current_player_index = 0  # 0 or 1
+        self.next_player_index = 1
+        self._pending_switch_data = None  # Store data for pending switch
+        
         # Set a minimum height for the player window
         self.setMinimumHeight(300)
 
-        # PyQt Media Player setup
-        self.media_player = QMediaPlayer(None, QMediaPlayer.VideoSurface)
+        # Create two media players
+        self.media_players = [
+            QMediaPlayer(None, QMediaPlayer.VideoSurface),
+            QMediaPlayer(None, QMediaPlayer.VideoSurface)
+        ]
+        
+        # Create video widget (shared between both players)
         self.video_widget = QVideoWidget()
-        self.media_player.setVideoOutput(self.video_widget)
+        
+        # Set the initial player output
+        self.media_players[self.current_player_index].setVideoOutput(self.video_widget)
 
         if ui.is_dark_mode():
             self.video_widget.setStyleSheet("background-color: #111;")
@@ -129,16 +142,45 @@ class AbstractPlayerWindow(QMainWindow):
         container.setLayout(layout)
         self.setCentralWidget(container)
 
-        # Setup media player connections
+        # Setup media player connections for both players
         self._setup_media_connections()
 
+    @property
+    def media_player(self):
+        """Get the currently active media player"""
+        return self.media_players[self.current_player_index]
+
+    @property
+    def next_media_player(self):
+        """Get the next media player (for loading)"""
+        return self.media_players[self.next_player_index]
+
     def _setup_media_connections(self):
-        """Set up all QMediaPlayer signal connections"""
-        self.media_player.stateChanged.connect(self._on_state_changed)
-        self.media_player.mediaStatusChanged.connect(self._on_media_status_changed)
-        self.media_player.durationChanged.connect(self._on_duration_changed)
-        self.media_player.positionChanged.connect(self._on_position_changed)
-        self.media_player.error.connect(self._on_error)
+        """Set up all QMediaPlayer signal connections for both players"""
+        for i, player in enumerate(self.media_players):
+            player.stateChanged.connect(lambda state, idx=i: self._on_state_changed(state, idx))
+            player.mediaStatusChanged.connect(lambda status, idx=i: self._on_media_status_changed(status, idx))
+            player.durationChanged.connect(lambda duration, idx=i: self._on_duration_changed(duration, idx))
+            player.positionChanged.connect(lambda position, idx=i: self._on_position_changed(position, idx))
+            player.error.connect(lambda error, idx=i: self._on_error(error, idx))
+
+    def _switch_to_next_player(self):
+        """Switch from current player to next player"""
+        if DEBUG: print(f"DEBUG: Switching from player {self.current_player_index} to {self.next_player_index}")
+        
+        # Stop the current player
+        self.media_players[self.current_player_index].stop()
+        
+        # Switch indices
+        self.current_player_index, self.next_player_index = self.next_player_index, self.current_player_index
+        
+        # Set video output to new current player
+        self.media_player.setVideoOutput(self.video_widget)
+        
+        # Clear the old player's video output
+        self.media_players[self.next_player_index].setVideoOutput(None)
+        
+        if DEBUG: print(f"DEBUG: Switch complete - now using player {self.current_player_index}")
 
     def update_window_title(self):
         """Update window title to show {title} ({year})"""
@@ -180,377 +222,248 @@ class AbstractPlayerWindow(QMainWindow):
             self._pending_load_request = (file_path, metadata, timecode)
             return
 
-        # Check if same video is already loaded
+        # Check if same video is already loaded on current player
         if hasattr(self, 'current_video_path') and self.current_video_path == file_path:
             if DEBUG: print("DEBUG: Video already loaded, handling timecode only")
             # Handle timecode directly for already loaded video
             if timecode is not None:
                 self._jump_to_timecode_direct(timecode)
+            else:
+                # If no timecode specified, go to beginning
+                self.set_video_time(0)
             return
 
         # Start loading - record timestamp
         self._last_load_time = current_time
-        if DEBUG: print(f"DEBUG: Starting media load for: {os.path.basename(file_path)}")
+        if DEBUG: print(f"DEBUG: Starting media load for: {os.path.basename(file_path)} on next player {self.next_player_index}")
         self._media_loading = True
         self._pending_load_request = None
         self.video_is_loading.emit()
         
-        self.movie_metadata = metadata
+        # Store switch data for when loading completes
+        self._pending_switch_data = {
+            'file_path': file_path,
+            'metadata': metadata,
+            'timecode': timecode
+        }
+        
         self._load_video_file(file_path, timecode)
 
     def _load_video_file(self, file_path, timecode=None):
         """Internal method to handle the actual video loading process"""
-        self.timeline.setValue(0)
-        self.set_timecode("00:00:00")
+        # Load on the next player (not the currently active one)
+        next_player = self.next_media_player
         
         # Store pending timecode for when video is ready
         self._pending_timecode = timecode
         
-        # Stop current video if playing
-        self.media_player.stop()
-            
-        self.video_title = os.path.basename(file_path)
-        self.update_window_title()
+        # Stop next player if it's playing
+        next_player.stop()
         
-        # Load new media
+        # Load new media on next player
         media_content = QMediaContent(QUrl.fromLocalFile(file_path))
-        self.media_player.setMedia(media_content)
+        next_player.setMedia(media_content)
         
-        # Pause playing immediately after loading
-        self.media_player.pause()
-            
-        self.current_video_path = file_path
-        
-        # Enable controls
-        self.play_pause_button.setEnabled(True)
-        self.back_button.setEnabled(True)
-        self.forward_button.setEnabled(True)
-        self.timeline.setEnabled(True)
+        # Pause next player immediately after loading
+        next_player.pause()
 
-    def _on_state_changed(self, state):
+    def _on_state_changed(self, state, player_index):
         """Called when media player state changes"""
-        if state == QMediaPlayer.PlayingState:
-            self.play_pause_button.setText("⏸")
-            self.is_playing = True
-            if DEBUG: print("DEBUG: Video playing")
-            
-            # Mark loading as complete and process pending
-            if self._media_loading:
-                if DEBUG: print("DEBUG: Video playing - media loading complete")
-                self._media_loading = False
-                self._process_pending_load()
+        # Only respond to events from the current player for UI updates
+        if player_index == self.current_player_index:
+            if state == QMediaPlayer.PlayingState:
+                self.play_pause_button.setText("⏸")
+                self.is_playing = True
+                if DEBUG: print(f"DEBUG: Player {player_index} playing")
                 
-        elif state == QMediaPlayer.PausedState:
-            self.play_pause_button.setText("⏵")
-            self.is_playing = False
-            if DEBUG: print("DEBUG: Video paused")
-            
-        elif state == QMediaPlayer.StoppedState:
-            self.play_pause_button.setText("⏵")
-            self.is_playing = False
-            if DEBUG: print("DEBUG: Video stopped")
+            elif state == QMediaPlayer.PausedState:
+                self.play_pause_button.setText("⏵")
+                self.is_playing = False
+                if DEBUG: print(f"DEBUG: Player {player_index} paused")
+                
+            elif state == QMediaPlayer.StoppedState:
+                self.play_pause_button.setText("⏵")
+                self.is_playing = False
+                if DEBUG: print(f"DEBUG: Player {player_index} stopped")
 
-    def _on_media_status_changed(self, status):
+    def _on_media_status_changed(self, status, player_index):
         """Called when media status changes"""
+        if DEBUG: print(f"DEBUG: Player {player_index} status: {status}")
+        
         if status == QMediaPlayer.LoadedMedia:
-            if DEBUG: print("DEBUG: Media loaded - ready for playback")
+            if DEBUG: print(f"DEBUG: Player {player_index} media loaded - ready for playback")
             
         elif status == QMediaPlayer.BufferedMedia:
-            if DEBUG: print("DEBUG: Media buffered")
+            if DEBUG: print(f"DEBUG: Player {player_index} media buffered")
             
-            # Only mark loading complete and handle timecode when buffered AND we have duration
-            if self._media_loading and self.media_player.duration() > 0:
-                if DEBUG: print("DEBUG: Media buffered with duration - media loading complete")
-                self._media_loading = False
-                
-                # Use QTimer to delay the timecode jump slightly
-                if self._pending_timecode is not None:
-                    if DEBUG: print(f"DEBUG: Scheduling jump to pending timecode: {self._pending_timecode}")
-                    QTimer.singleShot(100, lambda: self._execute_pending_timecode_jump())
-                else:
-                    self._process_pending_load()
-        
+            # Only handle buffered event for the next player when we're loading
+            if player_index == self.next_player_index and self._media_loading:
+                next_player = self.next_media_player
+                if next_player.duration() > 0:
+                    if DEBUG: print(f"DEBUG: Next player {player_index} buffered with duration - ready for switch")
+                    
+                    # Jump to timecode on next player if specified
+                    if self._pending_timecode is not None:
+                        if DEBUG: print(f"DEBUG: Jumping next player to timecode: {self._pending_timecode}")
+                        self._jump_to_timecode_on_player(next_player, self._pending_timecode)
+                        # Give more time for seeking to complete before verification
+                        QTimer.singleShot(300, lambda: self._verify_and_switch())
+                    else:
+                        # No timecode to jump to, switch immediately
+                        QTimer.singleShot(150, lambda: self._verify_and_switch())
+    
         elif status == QMediaPlayer.InvalidMedia:
-            if DEBUG: print("DEBUG: Invalid media")
-            self._media_loading = False
-            self._pending_timecode = None  # Clear on error
+            if DEBUG: print(f"DEBUG: Player {player_index} invalid media")
+            if player_index == self.next_player_index:
+                self._media_loading = False
+                self._pending_timecode = None
 
-    def _execute_pending_timecode_jump(self):
-        """Execute the pending timecode jump with proper timing"""
-        # Check if we're closing
-        if self._is_closing:
-            if DEBUG: print("DEBUG: Skipping timecode jump - player is closing")
-            return
-            
-        if self._pending_timecode is not None:
-            if DEBUG: print(f"DEBUG: Executing delayed jump to: {self._pending_timecode}")
-            timecode = self._pending_timecode
-            self._pending_timecode = None  # Clear before jumping
-            
-            # Jump without auto-playing first
-            if '%' in str(timecode):
-                duration = self.media_player.duration() if self.media_player else 0
-                if duration > 0:
-                    time_ms = pct_to_milliseconds(timecode, duration)
-                    if time_ms is not None:
-                        if DEBUG: print(f"DEBUG: Jumping to {time_ms}ms based on percentage {timecode} (duration: {duration}ms)")
-                        if not self._is_closing and self.media_player:
-                            self.set_video_time(time_ms)
-                            # Delay the play command slightly
-                            from PyQt5.QtCore import QTimer
-                            timer = QTimer()
-                            timer.singleShot(50, lambda: self._start_playback_after_seek())
-                            self._pending_timers.append(timer)
-            else:
-                # Handle direct timecode strings or millisecond values
-                if isinstance(timecode, str):
-                    time_ms = timecode_to_milliseconds(timecode)
-                    if DEBUG: print(f"DEBUG: Jumping to {time_ms}ms based on timecode {timecode}")
-                else:
-                    if DEBUG: print(f"DEBUG: Jumping to {timecode}ms directly")
-                    time_ms = int(timecode)
-                
+    def _jump_to_timecode_on_player(self, player, timecode):
+        """Jump to timecode on a specific player"""
+        if '%' in str(timecode):
+            duration = player.duration()
+            if duration > 0:
+                time_ms = pct_to_milliseconds(timecode, duration)
                 if time_ms is not None:
-                    if DEBUG: print(f"DEBUG: Jumping to {time_ms}ms")
-                    if not self._is_closing and self.media_player:
-                        self.set_video_time(time_ms)
-                        # Delay the play command slightly
-                        from PyQt5.QtCore import QTimer
-                        timer = QTimer()
-                        timer.singleShot(50, lambda: self._start_playback_after_seek())
-                        self._pending_timers.append(timer)
-        
-        # Process any pending loads after handling timecode
-        if not self._is_closing:
-            self._process_pending_load()
-
-    def _start_playback_after_seek(self):
-        """Start playback after seeking, with validation"""
-        # Check if we're closing
-        if self._is_closing:
-            if DEBUG: print("DEBUG: Skipping playback start - player is closing")
-            return
-            
-        if DEBUG: print("DEBUG: Starting playback after seek")
-        if self.media_player and self.media_player.state() != QMediaPlayer.PlayingState:
-            self.media_player.play()
-        elif DEBUG:
-            print("DEBUG: Already playing, no need to start")
-
-    def update_window_title(self):
-        """Update window title to show {title} ({year})"""
-        titlebar_string = "Player"
-        if self.video_title == "":
-            titlebar_string = "Player"
-        elif self.movie_metadata:
-            title = self.movie_metadata.get('title', 'Unknown Title')
-            year = self.movie_metadata.get('year', '')
-            if year:
-                titlebar_string = f"{title} ({year})"
-            else:
-                titlebar_string = title
+                    if DEBUG: print(f"DEBUG: Setting player position to {time_ms}ms based on percentage {timecode}")
+                    # Play the player briefly to allow seeking, then pause
+                    player.play()
+                    QTimer.singleShot(50, lambda: player.setPosition(time_ms))
+                    QTimer.singleShot(100, lambda: player.pause())
         else:
-            titlebar_string = f"Player | {self.video_title}"
-        self.setWindowTitle(titlebar_string)
-
-    def load_video(self, file_path, metadata=None, timecode=None):
-        """Simple method for loading video with metadata and optional timecode"""
-        if not file_path or not os.path.exists(file_path):
-            print(f"Cannot load video: file not found at {file_path}")
-            return
-
-        # Check cooldown period - require n seconds between loads
-        import time
-        current_time = time.time()
-        time_since_last_load = abs(current_time - self._last_load_time)
-
-        if time_since_last_load < self.minimum_load_interval:
-            if DEBUG: print(f"DEBUG: Load blocked - only {time_since_last_load:.1f}s since last load (need {self.minimum_load_interval:.1f}s)")
-            # Store as pending request instead of blocking entirely
-            self._pending_load_request = (file_path, metadata, timecode)
-            return
-
-        # Check if we're currently loading
-        if self._media_loading:
-            if DEBUG: print(f"DEBUG: Media player busy loading, REPLACING queued request with: {os.path.basename(file_path)}")
-            # Replace any pending request with the new one (latest wins)
-            self._pending_load_request = (file_path, metadata, timecode)
-            return
-
-        # Check if same video is already loaded
-        if hasattr(self, 'current_video_path') and self.current_video_path == file_path:
-            if DEBUG: print("DEBUG: Video already loaded, handling timecode only")
-            # Handle timecode directly for already loaded video
-            if timecode is not None:
-                self._jump_to_timecode_direct(timecode)
-            return
-
-        # Start loading - record timestamp
-        self._last_load_time = current_time
-        if DEBUG: print(f"DEBUG: Starting media load for: {os.path.basename(file_path)}")
-        self._media_loading = True
-        self._pending_load_request = None
-        self.video_is_loading.emit()
-        
-        self.movie_metadata = metadata
-        self._load_video_file(file_path, timecode)
-
-    def _load_video_file(self, file_path, timecode=None):
-        """Internal method to handle the actual video loading process"""
-        self.timeline.setValue(0)
-        self.set_timecode("00:00:00")
-        
-        # Store pending timecode for when video is ready
-        self._pending_timecode = timecode
-        
-        # Stop current video if playing
-        self.media_player.stop()
+            # Handle direct timecode strings or millisecond values
+            if isinstance(timecode, str):
+                time_ms = timecode_to_milliseconds(timecode)
+            else:
+                time_ms = int(timecode)
             
-        self.video_title = os.path.basename(file_path)
-        self.update_window_title()
-        
-        # Load new media
-        media_content = QMediaContent(QUrl.fromLocalFile(file_path))
-        self.media_player.setMedia(media_content)
-        
-        # Pause playing immediately after loading
-        self.media_player.pause()
+            if time_ms is not None:
+                if DEBUG: print(f"DEBUG: Setting player position to {time_ms}ms")
+                # Play the player briefly to allow seeking, then pause
+                player.play()
+                QTimer.singleShot(50, lambda: player.setPosition(time_ms))
+                QTimer.singleShot(100, lambda: player.pause())
+
+    def _verify_and_switch(self):
+        """Verify the next player is at correct position and switch if ready"""
+        if self._is_closing or not self._media_loading:
+            return
             
-        self.current_video_path = file_path
+        next_player = self.next_media_player
+        expected_time = None
+        
+        # Calculate expected time
+        if self._pending_timecode is not None:
+            if '%' in str(self._pending_timecode):
+                duration = next_player.duration()
+                if duration > 0:
+                    expected_time = pct_to_milliseconds(self._pending_timecode, duration)
+            else:
+                if isinstance(self._pending_timecode, str):
+                    expected_time = timecode_to_milliseconds(self._pending_timecode)
+                else:
+                    expected_time = int(self._pending_timecode)
+        
+        current_time = next_player.position()
+        
+        # Check if position is correct (within 500ms tolerance for better reliability)
+        if expected_time is None or abs(current_time - expected_time) <= 500:
+            if DEBUG: print(f"DEBUG: Position verified ({current_time}ms), executing switch")
+            self._execute_switch()
+        else:
+            # If we've been retrying for too long, just proceed with the switch
+            if not hasattr(self, '_verify_retry_count'):
+                self._verify_retry_count = 0
+            
+            self._verify_retry_count += 1
+            
+            if self._verify_retry_count > 20:  # Max 20 retries (about 1 second)
+                if DEBUG: print(f"DEBUG: Position verification timeout after {self._verify_retry_count} retries, proceeding with switch anyway")
+                self._verify_retry_count = 0
+                self._execute_switch()
+            else:
+                if DEBUG: print(f"DEBUG: Position not ready - expected: {expected_time}ms, actual: {current_time}ms, retrying... ({self._verify_retry_count}/20)")
+                # Retry after a short delay
+                QTimer.singleShot(50, lambda: self._verify_and_switch())
+
+    def _execute_switch(self):
+        """Execute the actual switch between players"""
+        if self._is_closing:
+            return
+        
+        # Reset retry counter
+        self._verify_retry_count = 0
+            
+        # Update metadata and paths
+        pending_timecode = None
+        if self._pending_switch_data:
+            self.current_video_path = self._pending_switch_data['file_path']
+            self.video_title = os.path.basename(self.current_video_path)
+            self.movie_metadata = self._pending_switch_data['metadata']
+            pending_timecode = self._pending_switch_data['timecode']
+            self._pending_switch_data = None
+        
+        # Switch players
+        self._switch_to_next_player()
+        
+        # Reset timeline to prevent position issues
+        if self.media_player.duration() > 0:
+            self.timeline.setRange(0, self.media_player.duration())
+            # If no timecode specified, start at beginning
+            if pending_timecode is None:
+                if DEBUG: print("DEBUG: No timecode specified, starting at beginning")
+                self.media_player.setPosition(0)
+                self.timeline.setValue(0)
+                self._update_timecode_display(0)
+            else:
+                # The position should already be set from the previous player
+                current_pos = self.media_player.position()
+                if DEBUG: print(f"DEBUG: Timecode was specified, current position after switch: {current_pos}ms")
+                self.timeline.setValue(current_pos)
+                self._update_timecode_display(current_pos)
+        else:
+            # Duration not ready yet, store for later
+            self._pending_initial_timecode = pending_timecode
+
+        # Start playback on new current player
+        self.media_player.play()
+        
+        # Mark loading complete
+        self._media_loading = False
+        self._pending_timecode = None
         
         # Enable controls
         self.play_pause_button.setEnabled(True)
         self.back_button.setEnabled(True)
         self.forward_button.setEnabled(True)
         self.timeline.setEnabled(True)
-
-    def _on_state_changed(self, state):
-        """Called when media player state changes"""
-        if state == QMediaPlayer.PlayingState:
-            self.play_pause_button.setText("⏸")
-            self.is_playing = True
-            if DEBUG: print("DEBUG: Video playing")
-            
-            # Mark loading as complete and process pending
-            if self._media_loading:
-                if DEBUG: print("DEBUG: Video playing - media loading complete")
-                self._media_loading = False
-                self._process_pending_load()
-                
-        elif state == QMediaPlayer.PausedState:
-            self.play_pause_button.setText("⏵")
-            self.is_playing = False
-            if DEBUG: print("DEBUG: Video paused")
-            
-        elif state == QMediaPlayer.StoppedState:
-            self.play_pause_button.setText("⏵")
-            self.is_playing = False
-            if DEBUG: print("DEBUG: Video stopped")
-
-    def _on_media_status_changed(self, status):
-        """Called when media status changes"""
-        if status == QMediaPlayer.LoadedMedia:
-            if DEBUG: print("DEBUG: Media loaded - ready for playback")
-            
-        elif status == QMediaPlayer.BufferedMedia:
-            if DEBUG: print("DEBUG: Media buffered")
-            
-            # Only mark loading complete and handle timecode when buffered AND we have duration
-            if self._media_loading and self.media_player.duration() > 0:
-                if DEBUG: print("DEBUG: Media buffered with duration - media loading complete")
-                self._media_loading = False
-                
-                # Use QTimer to delay the timecode jump slightly
-                if self._pending_timecode is not None:
-                    if DEBUG: print(f"DEBUG: Scheduling jump to pending timecode: {self._pending_timecode}")
-                    from PyQt5.QtCore import QTimer
-                    QTimer.singleShot(100, lambda: self._execute_pending_timecode_jump())
-                else:
-                    self._process_pending_load()
         
-        elif status == QMediaPlayer.InvalidMedia:
-            if DEBUG: print("DEBUG: Invalid media")
-            self._media_loading = False
-            self._pending_timecode = None  # Clear on error
-
-    def _execute_pending_timecode_jump(self):
-        """Execute the pending timecode jump with proper timing"""
-        # Check if we're closing
-        if self._is_closing:
-            if DEBUG: print("DEBUG: Skipping timecode jump - player is closing")
-            return
-            
-        if self._pending_timecode is not None:
-            if DEBUG: print(f"DEBUG: Executing delayed jump to: {self._pending_timecode}")
-            timecode = self._pending_timecode
-            self._pending_timecode = None  # Clear before jumping
-            
-            # Jump without auto-playing first
-            if '%' in str(timecode):
-                duration = self.media_player.duration() if self.media_player else 0
-                if duration > 0:
-                    time_ms = pct_to_milliseconds(timecode, duration)
-                    if time_ms is not None:
-                        if DEBUG: print(f"DEBUG: Jumping to {time_ms}ms based on percentage {timecode} (duration: {duration}ms)")
-                        if not self._is_closing and self.media_player:
-                            self.set_video_time(time_ms)
-                            # Delay the play command slightly
-                            from PyQt5.QtCore import QTimer
-                            timer = QTimer()
-                            timer.singleShot(100, lambda: self._start_playback_after_seek())
-                            self._pending_timers.append(timer)
-            else:
-                # Handle direct timecode strings or millisecond values
-                if isinstance(timecode, str):
-                    time_ms = timecode_to_milliseconds(timecode)
-                    if DEBUG: print(f"DEBUG: Jumping to {time_ms}ms based on timecode {timecode}")
-                else:
-                    if DEBUG: print(f"DEBUG: Jumping to {timecode}ms directly")
-                    time_ms = int(timecode)
-                
-                if time_ms is not None:
-                    if DEBUG: print(f"DEBUG: Jumping to {time_ms}ms")
-                    if not self._is_closing and self.media_player:
-                        self.set_video_time(time_ms)
-                        # Delay the play command slightly
-                        from PyQt5.QtCore import QTimer
-                        timer = QTimer()
-                        timer.singleShot(100, lambda: self._start_playback_after_seek())
-                        self._pending_timers.append(timer)
+        # Update UI
+        self.update_window_title()
         
-        # Process any pending loads after handling timecode
-        if not self._is_closing:
-            self._process_pending_load()
-
-    def _start_playback_after_seek(self):
-        """Start playback after seeking, with validation"""
-        # Check if we're closing
-        if self._is_closing:
-            if DEBUG: print("DEBUG: Skipping playback start - player is closing")
-            return
-            
-        if DEBUG: print("DEBUG: Starting playback after seek")
-        if self.media_player and self.media_player.state() != QMediaPlayer.PlayingState:
-            self.media_player.play()
-        elif DEBUG:
-            print("DEBUG: Already playing, no need to start")
+        # Process any pending loads
+        self._process_pending_load()
 
     def _jump_to_timecode_direct(self, timecode):
         """Jump to timecode directly - handles both percentage and timecode strings"""
         if DEBUG: print(f"DEBUG: Jumping to timecode: {timecode}")
         
+        # Check if we have a valid duration first
+        duration = self.media_player.duration()
+        if duration <= 0:
+            if DEBUG: print(f"DEBUG: No duration available yet, storing timecode for later: {timecode}")
+            self._pending_initial_timecode = timecode
+            return
+        
         if '%' in str(timecode):
-            duration = self.media_player.duration()
-            if duration > 0:
-                time_ms = pct_to_milliseconds(timecode, duration)
-                if time_ms is not None:
-                    if DEBUG: print(f"DEBUG: Jumping to {time_ms}ms based on percentage {timecode} (duration: {duration}ms)")
-                    self.set_video_time(time_ms)
-                    # Use delayed playback
-                    from PyQt5.QtCore import QTimer
-                    QTimer.singleShot(50, lambda: self._start_playback_after_seek())
+            time_ms = pct_to_milliseconds(timecode, duration)
+            if time_ms is not None:
+                if DEBUG: print(f"DEBUG: Jumping to {time_ms}ms based on percentage {timecode} (duration: {duration}ms)")
+                self.set_video_time(time_ms)
+                # Use delayed playback
+                QTimer.singleShot(50, lambda: self._start_playback_after_seek())
             else:
-                if DEBUG: print(f"DEBUG: Cannot jump to percentage - no duration available yet")
+                if DEBUG: print(f"DEBUG: Cannot jump to percentage - invalid percentage: {timecode}")
         else:
             # Handle direct timecode strings or millisecond values
             if isinstance(timecode, str):
@@ -564,28 +477,49 @@ class AbstractPlayerWindow(QMainWindow):
                 if DEBUG: print(f"DEBUG: Jumping to {time_ms}ms")
                 self.set_video_time(time_ms)
                 # Use delayed playback
-                from PyQt5.QtCore import QTimer
                 QTimer.singleShot(50, lambda: self._start_playback_after_seek())
 
-    def _on_duration_changed(self, duration):
+    def _start_playback_after_seek(self):
+        """Start playback after seeking, with validation"""
+        # Check if we're closing
+        if self._is_closing:
+            if DEBUG: print("DEBUG: Skipping playback start - player is closing")
+            return
+            
+        if DEBUG: print("DEBUG: Starting playback after seek")
+        if self.media_player and self.media_player.state() != QMediaPlayer.PlayingState:
+            self.media_player.play()
+        elif DEBUG:
+            print("DEBUG: Already playing, no need to start")
+
+    def _on_duration_changed(self, duration, player_index):
         """Called when media duration is determined"""
-        if duration > 0:
+        # Only respond to duration changes from current player
+        if player_index == self.current_player_index and duration > 0:
             self.timeline.setRange(0, duration)
             self.duration_seconds = duration // 1000
             self.update_window_title()
-            if DEBUG: print(f"DEBUG: Duration set: {self.duration_seconds}s")
+            if DEBUG: print(f"DEBUG: Duration set: {self.duration_seconds}s for player {player_index}")
+            
+            # If we have a pending timecode to jump to, handle it now that duration is known
+            if hasattr(self, '_pending_initial_timecode') and self._pending_initial_timecode is not None:
+                if DEBUG: print(f"DEBUG: Processing pending initial timecode: {self._pending_initial_timecode}")
+                self._jump_to_timecode_direct(self._pending_initial_timecode)
+                self._pending_initial_timecode = None
 
-    def _on_position_changed(self, position):
+    def _on_position_changed(self, position, player_index):
         """Called when playback position changes"""
-        if not self._slider_is_active:  # Don't update during scrubbing
+        # Only respond to position changes from current player
+        if player_index == self.current_player_index and not self._slider_is_active:
             self.timeline.setValue(position)
-            self._update_timecode_display(position)  # Changed from set_timecode to _update_timecode_display
+            self._update_timecode_display(position)
             self.emit_timecode_changed(position)
 
-    def _on_error(self, error):
+    def _on_error(self, error, player_index):
         """Called when media player encounters an error"""
-        if DEBUG: print(f"DEBUG: Media player error: {error}")
-        self._media_loading = False
+        if DEBUG: print(f"DEBUG: Media player {player_index} error: {error}")
+        if player_index == self.next_player_index:
+            self._media_loading = False
 
     def _process_pending_load(self):
         """Process any pending load requests immediately"""
@@ -626,7 +560,7 @@ class AbstractPlayerWindow(QMainWindow):
             time_ms = max(0, min(time_ms, duration))
         self.media_player.setPosition(time_ms)
         self.timeline.setValue(time_ms)
-        self._update_timecode_display(time_ms)  # Changed from set_timecode to _update_timecode_display
+        self._update_timecode_display(time_ms)
         self.emit_timecode_changed(time_ms)
 
     def jump_to_timecode(self, timecode, is_last_frame=False):
@@ -653,7 +587,7 @@ class AbstractPlayerWindow(QMainWindow):
     def _update_timecode_display(self, time_ms):
         # Use utility function to convert milliseconds to timecode
         current_timecode = milliseconds_to_timecode(time_ms)
-        self.set_timecode(current_timecode)  # This calls the method above
+        self.set_timecode(current_timecode)
         
         duration_seconds = getattr(self, "duration_seconds", None)
         if duration_seconds is not None and duration_seconds > 0:
@@ -731,19 +665,20 @@ class AbstractPlayerWindow(QMainWindow):
             self._media_loading = False
             self._pending_load_request = None
             self._pending_timecode = None
+            self._pending_switch_data = None
             
-            if hasattr(self, 'media_player') and self.media_player:
-                if DEBUG: print(f"DEBUG: Found media player, current state: {self.media_player.state()}")
-                
-                # Just set to None - let Qt handle all cleanup
-                if DEBUG: print("DEBUG: Setting media_player to None (letting Qt handle cleanup)")
-                self.media_player = None
-                if DEBUG: print("DEBUG: Media player set to None successfully")
-                
+            # Clean up both media players
+            for i, player in enumerate(self.media_players):
+                if player:
+                    if DEBUG: print(f"DEBUG: Cleaning up media player {i}")
+                    player.stop()
+                    player.setVideoOutput(None)
+            
+            self.media_players = [None, None]
+            
             if hasattr(self, 'video_widget') and self.video_widget:
                 if DEBUG: print("DEBUG: Setting video_widget to None")
                 self.video_widget = None
-                if DEBUG: print("DEBUG: Video widget set to None successfully")
                 
             if DEBUG: print("DEBUG: About to call super().closeEvent(event)")
             
@@ -774,15 +709,28 @@ class AbstractPlayerWindow(QMainWindow):
         """Clear current project - unload video and reset state"""
         if DEBUG: print("DEBUG: Player clearing project - unloading video")
         
-        # Stop and clear current video
-        if hasattr(self, 'media_player') and self.media_player:
-            self.media_player.stop()
+        # Stop both players
+        for player in self.media_players:
+            if player:
+                player.stop()
         
         # Reset loading state and cooldown
         self._media_loading = False
         self._pending_load_request = None
-        self._pending_timecode = None  # Clear pending timecode
-        self._last_load_time = 0  # Reset cooldown when clearing project
+        self._pending_timecode = None
+        self._pending_switch_data = None
+        self._pending_initial_timecode = None  # Add this
+        self._last_load_time = 0
+        
+        # Reset player indices
+        self.current_player_index = 0
+        self.next_player_index = 1
+        
+        # Set video output back to first player
+        if self.media_players[0]:
+            self.media_players[0].setVideoOutput(self.video_widget)
+        if self.media_players[1]:
+            self.media_players[1].setVideoOutput(None)
         
         # Reset all state
         self.current_video_path = None
@@ -790,7 +738,7 @@ class AbstractPlayerWindow(QMainWindow):
         self.movie_metadata = None
         self.duration_seconds = None
         
-        # Reset UI
+        # Reset UI properly
         self.timeline.setValue(0)
         self.timeline.setRange(0, 100)
         self.timeline.setEnabled(False)
@@ -812,7 +760,7 @@ class JumpSlider(QSlider):
         super().__init__(orientation)
         self.player_window = None
         self.is_scrubbing = False
-        self.was_playing_before_scrub = False  # Track playback state before scrubbing
+        self.was_playing_before_scrub = False
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -843,7 +791,7 @@ class JumpSlider(QSlider):
                 self.player_window.media_player.play()
                 if DEBUG: print("DEBUG: Resumed playback after scrubbing")
             
-            self.was_playing_before_scrub = False  # Reset state
+            self.was_playing_before_scrub = False
         super().mouseReleaseEvent(event)
 
     def _jump_to_mouse_position(self, event, immediate=False):
