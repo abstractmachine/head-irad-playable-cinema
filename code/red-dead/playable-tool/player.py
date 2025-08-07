@@ -168,17 +168,17 @@ class AbstractPlayerWindow(QMainWindow):
         """Switch from current player to next player"""
         if DEBUG: print(f"DEBUG: Switching from player {self.current_player_index} to {self.next_player_index}")
         
-        # Stop the current player
-        self.media_players[self.current_player_index].stop()
+        # IMPORTANT: Stop and clear the current player BEFORE switching
+        current_player = self.media_players[self.current_player_index]
+        current_player.stop()
+        current_player.setVideoOutput(None)
+        if DEBUG: print(f"DEBUG: Stopped and cleared video output for player {self.current_player_index}")
         
         # Switch indices
         self.current_player_index, self.next_player_index = self.next_player_index, self.current_player_index
         
         # Set video output to new current player
         self.media_player.setVideoOutput(self.video_widget)
-        
-        # Clear the old player's video output
-        self.media_players[self.next_player_index].setVideoOutput(None)
         
         if DEBUG: print(f"DEBUG: Switch complete - now using player {self.current_player_index}")
 
@@ -306,17 +306,35 @@ class AbstractPlayerWindow(QMainWindow):
                     if self._pending_timecode is not None:
                         if DEBUG: print(f"DEBUG: Jumping next player to timecode: {self._pending_timecode}")
                         self._jump_to_timecode_on_player(next_player, self._pending_timecode)
-                        # Give more time for seeking to complete before verification
-                        QTimer.singleShot(300, lambda: self._verify_and_switch())
+                        # Give more time for larger seeks
+                        delay = 300 if self._is_large_timecode(self._pending_timecode) else 150
+                        QTimer.singleShot(delay, lambda: self._verify_and_switch())
                     else:
                         # No timecode to jump to, switch immediately
-                        QTimer.singleShot(150, lambda: self._verify_and_switch())
+                        QTimer.singleShot(100, lambda: self._verify_and_switch())
     
         elif status == QMediaPlayer.InvalidMedia:
             if DEBUG: print(f"DEBUG: Player {player_index} invalid media")
             if player_index == self.next_player_index:
                 self._media_loading = False
                 self._pending_timecode = None
+
+    def _is_large_timecode(self, timecode):
+        """Check if this is a large timecode that needs more time to seek"""
+        if '%' in str(timecode):
+            # For percentages > 10%, consider it large
+            try:
+                pct = float(str(timecode).replace('%', ''))
+                return pct > 10
+            except:
+                return False
+        else:
+            # For direct timecodes, check if > 10 seconds
+            if isinstance(timecode, str):
+                time_ms = timecode_to_milliseconds(timecode)
+                return time_ms and time_ms > 10000
+            else:
+                return int(timecode) > 10000
 
     def _jump_to_timecode_on_player(self, player, timecode):
         """Jump to timecode on a specific player"""
@@ -326,10 +344,8 @@ class AbstractPlayerWindow(QMainWindow):
                 time_ms = pct_to_milliseconds(timecode, duration)
                 if time_ms is not None:
                     if DEBUG: print(f"DEBUG: Setting player position to {time_ms}ms based on percentage {timecode}")
-                    # Play the player briefly to allow seeking, then pause
-                    player.play()
-                    QTimer.singleShot(50, lambda: player.setPosition(time_ms))
-                    QTimer.singleShot(100, lambda: player.pause())
+                    # Simplified approach - just set position directly
+                    player.setPosition(time_ms)
         else:
             # Handle direct timecode strings or millisecond values
             if isinstance(timecode, str):
@@ -339,20 +355,19 @@ class AbstractPlayerWindow(QMainWindow):
             
             if time_ms is not None:
                 if DEBUG: print(f"DEBUG: Setting player position to {time_ms}ms")
-                # Play the player briefly to allow seeking, then pause
-                player.play()
-                QTimer.singleShot(50, lambda: player.setPosition(time_ms))
-                QTimer.singleShot(100, lambda: player.pause())
+                # Simplified approach - just set position directly
+                player.setPosition(time_ms)
 
     def _verify_and_switch(self):
-        """Verify the next player is at correct position and switch if ready"""
+        """Verify the next player has moved from zero and switch if ready"""
         if self._is_closing or not self._media_loading:
             return
             
         next_player = self.next_media_player
-        expected_time = None
+        current_time = next_player.position()
         
-        # Calculate expected time
+        # Determine what position we're expecting
+        expected_time = None
         if self._pending_timecode is not None:
             if '%' in str(self._pending_timecode):
                 duration = next_player.duration()
@@ -364,27 +379,49 @@ class AbstractPlayerWindow(QMainWindow):
                 else:
                     expected_time = int(self._pending_timecode)
         
-        current_time = next_player.position()
-        
-        # Check if position is correct (within 500ms tolerance for better reliability)
-        if expected_time is None or abs(current_time - expected_time) <= 500:
-            if DEBUG: print(f"DEBUG: Position verified ({current_time}ms), executing switch")
+        # Simple verification logic
+        if expected_time is None:
+            # No timecode specified - should be at or near zero
+            if DEBUG: print(f"DEBUG: No timecode specified, position is {current_time}ms - proceeding with switch")
             self._execute_switch()
-        else:
-            # If we've been retrying for too long, just proceed with the switch
-            if not hasattr(self, '_verify_retry_count'):
-                self._verify_retry_count = 0
-            
-            self._verify_retry_count += 1
-            
-            if self._verify_retry_count > 20:  # Max 20 retries (about 1 second)
-                if DEBUG: print(f"DEBUG: Position verification timeout after {self._verify_retry_count} retries, proceeding with switch anyway")
-                self._verify_retry_count = 0
+        elif expected_time <= 3000:  # If seeking to first 3 seconds
+            # For small timecodes, just verify we've moved from zero
+            if current_time > 100:  # Moved at least 100ms from start
+                if DEBUG: print(f"DEBUG: Small timecode verified - moved to {current_time}ms (expected around {expected_time}ms)")
                 self._execute_switch()
             else:
-                if DEBUG: print(f"DEBUG: Position not ready - expected: {expected_time}ms, actual: {current_time}ms, retrying... ({self._verify_retry_count}/20)")
-                # Retry after a short delay
-                QTimer.singleShot(50, lambda: self._verify_and_switch())
+                # Still at zero, retry
+                if not hasattr(self, '_verify_retry_count'):
+                    self._verify_retry_count = 0
+                
+                self._verify_retry_count += 1
+                
+                if self._verify_retry_count > 5:  # Much shorter retry for simple check
+                    if DEBUG: print(f"DEBUG: Small timecode timeout - proceeding anyway (at {current_time}ms)")
+                    self._verify_retry_count = 0
+                    self._execute_switch()
+                else:
+                    if DEBUG: print(f"DEBUG: Small timecode not ready - still at {current_time}ms, retrying... ({self._verify_retry_count}/5)")
+                    QTimer.singleShot(100, lambda: self._verify_and_switch())
+        else:
+            # For larger timecodes, verify we've moved significantly from zero
+            if current_time > 3000:  # Moved at least 3 seconds from start
+                if DEBUG: print(f"DEBUG: Large timecode verified - moved to {current_time}ms (expected {expected_time}ms)")
+                self._execute_switch()
+            else:
+                # Haven't moved far enough yet
+                if not hasattr(self, '_verify_retry_count'):
+                    self._verify_retry_count = 0
+                
+                self._verify_retry_count += 1
+                
+                if self._verify_retry_count > 8:  # Reasonable retry limit
+                    if DEBUG: print(f"DEBUG: Large timecode timeout - proceeding anyway (at {current_time}ms, expected {expected_time}ms)")
+                    self._verify_retry_count = 0
+                    self._execute_switch()
+                else:
+                    if DEBUG: print(f"DEBUG: Large timecode not ready - at {current_time}ms (need >3000ms), retrying... ({self._verify_retry_count}/8)")
+                    QTimer.singleShot(100, lambda: self._verify_and_switch())
 
     def _execute_switch(self):
         """Execute the actual switch between players"""
@@ -667,21 +704,17 @@ class AbstractPlayerWindow(QMainWindow):
             self._pending_timecode = None
             self._pending_switch_data = None
             
-            # Clean up both media players
+            # Clean up both media players properly
             for i, player in enumerate(self.media_players):
                 if player:
                     if DEBUG: print(f"DEBUG: Cleaning up media player {i}")
-                    player.stop()
-                    player.setVideoOutput(None)
-            
-            self.media_players = [None, None]
-            
-            if hasattr(self, 'video_widget') and self.video_widget:
-                if DEBUG: print("DEBUG: Setting video_widget to None")
-                self.video_widget = None
-                
-            if DEBUG: print("DEBUG: About to call super().closeEvent(event)")
-            
+                    try:
+                        player.stop()
+                        player.setVideoOutput(None)
+                        # Don't delete the player objects here to avoid segfault
+                    except Exception as e:
+                        if DEBUG: print(f"DEBUG: Error cleaning up player {i}: {e}")
+        
         except Exception as e:
             if DEBUG: print(f"DEBUG: Error during player cleanup: {e}")
             import traceback
@@ -709,19 +742,28 @@ class AbstractPlayerWindow(QMainWindow):
         """Clear current project - unload video and reset state"""
         if DEBUG: print("DEBUG: Player clearing project - unloading video")
         
-        # Stop both players
-        for player in self.media_players:
+        # Stop both players properly
+        for i, player in enumerate(self.media_players):
             if player:
-                player.stop()
-        
+                try:
+                    player.stop()
+                    player.setVideoOutput(None)
+                    if DEBUG: print(f"DEBUG: Cleared project - stopped player {i}")
+                except Exception as e:
+                    if DEBUG: print(f"DEBUG: Error stopping player {i}: {e}")
+    
         # Reset loading state and cooldown
         self._media_loading = False
         self._pending_load_request = None
         self._pending_timecode = None
         self._pending_switch_data = None
-        self._pending_initial_timecode = None  # Add this
+        self._pending_initial_timecode = None
         self._last_load_time = 0
         
+        # Reset retry counter
+        if hasattr(self, '_verify_retry_count'):
+            self._verify_retry_count = 0
+    
         # Reset player indices
         self.current_player_index = 0
         self.next_player_index = 1
@@ -729,9 +771,7 @@ class AbstractPlayerWindow(QMainWindow):
         # Set video output back to first player
         if self.media_players[0]:
             self.media_players[0].setVideoOutput(self.video_widget)
-        if self.media_players[1]:
-            self.media_players[1].setVideoOutput(None)
-        
+    
         # Reset all state
         self.current_video_path = None
         self.video_title = ""
