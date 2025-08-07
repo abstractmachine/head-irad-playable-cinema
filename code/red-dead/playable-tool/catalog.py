@@ -735,9 +735,9 @@ class AbstractCatalogWindow(QMainWindow):
         if self.item_list.count() == 0:
             if DEBUG: print(f"DEBUG: {self.catalog_name}: No items to select for chaos event")
             return
-        # Choose a random time from 0% to 100% and put it in a percentage format
-        percentage_str = f"{random.randint(0, 100)}%"
-        # percentage_str = None  # No timecode for chaos events for now
+        # Choose a random time from 10% to 90% and put it in a percentage format
+        percentage_str = f"{random.randint(10, 90)}%"
+        # The player will convert this to a timecode later when duration is known
         # Select a random item from the list
         random_index = random.randint(0, self.item_list.count() - 1)
         random_item = self.item_list.item(random_index)

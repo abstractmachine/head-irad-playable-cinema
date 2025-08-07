@@ -1,6 +1,6 @@
 DEBUG = True  # Add this at the top
 
-from PyQt5.QtCore import Qt, pyqtSignal, QUrl
+from PyQt5.QtCore import Qt, pyqtSignal, QUrl, QTimer
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSlider
 )
@@ -266,7 +266,6 @@ class AbstractPlayerWindow(QMainWindow):
                 # Use QTimer to delay the timecode jump slightly
                 if self._pending_timecode is not None:
                     if DEBUG: print(f"DEBUG: Scheduling jump to pending timecode: {self._pending_timecode}")
-                    from PyQt5.QtCore import QTimer
                     QTimer.singleShot(100, lambda: self._execute_pending_timecode_jump())
                 else:
                     self._process_pending_load()
@@ -300,7 +299,7 @@ class AbstractPlayerWindow(QMainWindow):
                             # Delay the play command slightly
                             from PyQt5.QtCore import QTimer
                             timer = QTimer()
-                            timer.singleShot(100, lambda: self._start_playback_after_seek())
+                            timer.singleShot(50, lambda: self._start_playback_after_seek())
                             self._pending_timers.append(timer)
             else:
                 # Handle direct timecode strings or millisecond values
@@ -318,7 +317,7 @@ class AbstractPlayerWindow(QMainWindow):
                         # Delay the play command slightly
                         from PyQt5.QtCore import QTimer
                         timer = QTimer()
-                        timer.singleShot(100, lambda: self._start_playback_after_seek())
+                        timer.singleShot(50, lambda: self._start_playback_after_seek())
                         self._pending_timers.append(timer)
         
         # Process any pending loads after handling timecode
