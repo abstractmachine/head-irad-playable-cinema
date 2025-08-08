@@ -1,4 +1,4 @@
-DEBUG = True  # Add this at the top
+DEBUG = False  # Add this at the top
 
 from PyQt5.QtCore import Qt, pyqtSignal, QUrl, QTimer
 from PyQt5.QtWidgets import (
@@ -9,6 +9,7 @@ from PyQt5.QtMultimediaWidgets import QVideoWidget
 
 import os
 from utility import pct_to_milliseconds, timecode_to_milliseconds, milliseconds_to_timecode, minimum_load_interval
+import sip
 
 SEEK_NORMAL = 1
 SEEK_FAST = 30
@@ -217,42 +218,19 @@ class AbstractPlayerWindow(QMainWindow):
         player.error.connect(lambda error: self._on_error(error, is_next_player))
 
     def _destroy_player(self, player):
-        """Safely destroy a media player"""
+        """Safely destroy a media player with extra DEBUG and defensive checks"""
         if player:
-            if DEBUG: print(f"DEBUG: Destroying media player: {id(player)}")
+            if DEBUG: print(f"DEBUG: _destroy_player called for: {id(player)}")
             try:
-                # Stop and clear media first
                 player.stop()
-                player.setVideoOutput(None)
+                # Only detach if widget is not deleted and player is not already detached
+                if self.video_widget and not sip.isdeleted(self.video_widget):
+                    if player.videoOutput() == self.video_widget:
+                        player.setVideoOutput(None)
                 player.setMedia(QMediaContent())
-                
-                # Disconnect signals more safely
-                try:
-                    player.stateChanged.disconnect()
-                except (RuntimeError, TypeError):
-                    pass
-                try:
-                    player.mediaStatusChanged.disconnect()
-                except (RuntimeError, TypeError):
-                    pass
-                try:
-                    player.durationChanged.disconnect()
-                except (RuntimeError, TypeError):
-                    pass
-                try:
-                    player.positionChanged.disconnect()
-                except (RuntimeError, TypeError):
-                    pass
-                try:
-                    player.error.disconnect()
-                except (RuntimeError, TypeError):
-                    pass
-                
-                # Schedule for deletion
                 player.deleteLater()
-                
             except Exception as e:
-                if DEBUG: print(f"DEBUG: Error destroying player: {e}")
+                if DEBUG: print(f"DEBUG: Error destroying player: {id(player)}: {e}")
 
     @property
     def media_player(self):
@@ -684,6 +662,7 @@ class AbstractPlayerWindow(QMainWindow):
         current_time = self.current_player.position()
         new_time = current_time + int(seconds * 1000)
         self.set_video_time(new_time)
+        if DEBUG: print(f"DEBUG: Seeking video {'backward' if seconds < 0 else 'forward'} by {abs(seconds)} seconds to {new_time}ms")
 
     def set_video_time(self, time_ms):
         time_ms = int(time_ms)
@@ -782,46 +761,40 @@ class AbstractPlayerWindow(QMainWindow):
             # Set closing flag first to prevent any new operations
             self._is_closing = True
             
-            # Stop any pending loads immediately
-            self._media_loading = False
-            self._pending_load_request = None
-            self._pending_timecode = None
-            self._pending_switch_data = None
-            
             # Cancel any pending timers
             if DEBUG: print("DEBUG: Cancelling pending timers")
             for timer in self._pending_timers:
                 try:
                     timer.stop()
                     timer.deleteLater()
-                except:
-                    pass
+                except Exception as e:
+                    if DEBUG: print(f"DEBUG: Error stopping/deleting timer: {e}")
             self._pending_timers.clear()
             
-            # Clean up media players properly - ensure they're stopped first
-            if self.current_player:
-                if DEBUG: print("DEBUG: Stopping and cleaning up current player")
-                try:
-                    self.current_player.stop()
-                    # Small delay to ensure stop completes
-                    self.current_player.setVideoOutput(None)
-                except:
-                    pass
-                self._destroy_player(self.current_player)
-                self.current_player = None
+            # Reset loading state
+            if DEBUG: print("DEBUG: Resetting loading state")
+            self._media_loading = False
+            self._pending_load_request = None
+            self._pending_timecode = None
             
-            if self.next_player:
-                if DEBUG: print("DEBUG: Stopping and cleaning up next player")
-                try:
-                    self.next_player.stop()
-                    self.next_player.setVideoOutput(None)
-                except:
-                    pass
-                self._destroy_player(self.next_player)
-                self.next_player = None
-        
+            # Let Qt handle cleanup by removing references
+            if hasattr(self, 'current_player') and self.current_player:
+                if DEBUG: print(f"DEBUG: Found current player, state: {self.current_player.state()}")
+                if DEBUG: print("DEBUG: Setting current_player to None (letting Qt handle cleanup)")
+                self.current_player = None
+                if DEBUG: print("DEBUG: current_player set to None successfully")
+                    
+            if hasattr(self, 'video_widget') and self.video_widget:
+                if DEBUG: print("DEBUG: Setting video_widget to None")
+                self.video_widget = None
+                if DEBUG: print("DEBUG: Video widget set to None successfully")
+                
+            if DEBUG: print("DEBUG: About to call super().closeEvent(event)")
+                
         except Exception as e:
             if DEBUG: print(f"DEBUG: Error during player cleanup: {e}")
+            import traceback
+            if DEBUG: print(f"DEBUG: Traceback: {traceback.format_exc()}")
         finally:
             if DEBUG: print("DEBUG: In finally block, calling parent closeEvent")
             try:
@@ -830,7 +803,9 @@ class AbstractPlayerWindow(QMainWindow):
                 if DEBUG: print("DEBUG: Parent closeEvent completed successfully")
             except Exception as e:
                 if DEBUG: print(f"DEBUG: Error in parent closeEvent: {e}")
-                
+                import traceback
+                if DEBUG: print(f"DEBUG: Parent closeEvent traceback: {traceback.format_exc()}")
+
     def on_preferences_save(self):
         pos = self.pos()
         size = self.size()
