@@ -2,14 +2,12 @@ DEBUG = False  # Set to True to enable debug output
 
 import csv
 import os
-from re import S
 
-from PyQt5.QtCore import QObject, pyqtSignal
-from PyQt5.QtCore import Qt, QThread, QTimer
+from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QBrush, QPalette
 from PyQt5.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QHBoxLayout, QLineEdit, QMainWindow,
-    QPushButton, QTableWidget, QTableWidgetItem, QTextEdit,
+    QCheckBox, QComboBox, QHBoxLayout, QLineEdit, QMainWindow,
+    QPushButton, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget
 )
 
@@ -20,6 +18,34 @@ from utility import timecode_to_milliseconds, HIGHLIGHT_BACKGROUND_COLOR, HIGHLI
 
 JUMP_FRAME_PADDING_PLAYBACK = 0  # Number of frames to pad when jumping in playback mode
 JUMP_FRAME_PADDING_DETECTION = 5  # Number of frames to pad when jumping in detection mode
+
+# --------------- SHOTLIST IMPORTER ---------------
+
+class ShotlistImportWorker(QThread):
+    finished = pyqtSignal()
+
+    def __init__(self, project_folder, shotlist_db):
+        super().__init__()
+        self.project_folder = project_folder
+        self.shotlist_db = shotlist_db
+
+    def run(self):
+        detections_folder = os.path.join(self.project_folder, "shotlists")
+        os.makedirs(detections_folder, exist_ok=True)
+        self.shotlist_db.clear()
+        for fname in os.listdir(detections_folder):
+            if fname.endswith(".csv"):
+                base_name = os.path.splitext(fname)[0]
+                csv_path = os.path.join(detections_folder, fname)
+                try:
+                    with open(csv_path, "r", encoding="utf-8") as csvfile:
+                        reader = csv.DictReader(csvfile)
+                        self.shotlist_db[base_name] = [row for row in reader]
+                except Exception as e:
+                    if DEBUG: print(f"DEBUG: Failed to load {csv_path}: {e}")
+        self.finished.emit()
+
+# --------------- SHOWTLIST WINDOW ---------------
 
 class ShotlistWindow(QMainWindow):
 
@@ -169,35 +195,6 @@ class ShotlistWindow(QMainWindow):
         # Initialize shotlist database
         self.shotlist_db = {}  # Maps movie base name to list of shotlist rows
 
-    def load_scene_detections(self, csv_path):
-        with open(csv_path, "r", newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            rows = list(reader)
-        self.scene_table.setRowCount(0)
-        for row in rows:
-            ignore = row.get("Ignore", "No") == "Yes"
-            scene_num = row.get("Scene", "")
-            start = row.get("Start", "")
-            end = row.get("End", "")
-            shot_caption = row.get("Shot_Caption", "")
-            scene_caption = row.get("Scene_Caption", "")
-            self.add_scene_row(scene_num, start, end, shot_caption, scene_caption, ignore)
-        self.current_csv_path = csv_path
-        self.delete_button.setEnabled(True)
-
-    def on_scene_detections_loaded(self, rows):
-        self.scene_table.setRowCount(0)
-        for row in rows:
-            ignore = row.get("Ignore", "No") == "Yes"
-            scene_num = row.get("Scene", "")
-            start = row.get("Start", "")
-            end = row.get("End", "")
-            shot_caption = row.get("Shot_Caption", "")
-            scene_caption = row.get("Scene_Caption", "")
-            self.add_scene_row(scene_num, start, end, shot_caption, scene_caption, ignore)
-        self.delete_button.setEnabled(True)
-        self.current_csv_path = self._scene_loader_worker.csv_path
-
     def on_detect_scenes(self):
         self.shotlist_status.emit(False)
         self.detect_button.setEnabled(False)
@@ -334,35 +331,8 @@ class ShotlistWindow(QMainWindow):
             pass
 
     def jump_to_timecode(self, timecode, is_last_frame=False):
-        parts = timecode.split(":")
-        if len(parts) == 3:
-            h = int(parts[0])
-            m = int(parts[1])
-            s = float(parts[2])
-            ms = int((h * 3600 + m * 60 + s) * 1000)
-            fps = 25
-            if self.video_path:
-                try:
-                    from scenedetect import open_video
-                    video = open_video(self.video_path)
-                    if hasattr(video, "frame_rate"):
-                        fps = video.frame_rate
-                except Exception:
-                    pass
-            frame_duration = int(1000 / fps)
-            jump_frame_padding = JUMP_FRAME_PADDING_PLAYBACK * frame_duration
-            if is_last_frame:
-                ms = max(ms - jump_frame_padding, 0)
-            else:
-                ms = ms + jump_frame_padding
-            total_seconds = ms / 1000.0
-            h_new = int(total_seconds // 3600)
-            m_new = int((total_seconds % 3600) // 60)
-            s_new = total_seconds % 60
-            padded_timecode = f"{h_new:02}:{m_new:02}:{s_new:06.3f}"
-            self.jump_to_timecode_signal.emit(padded_timecode, is_last_frame)
-        else:
-            self.jump_to_timecode_signal.emit(timecode, is_last_frame)
+        # send out signal to jump to this timecode
+        self.jump_to_timecode_signal.emit(timecode, is_last_frame)
 
     # ------- Shotlist Bot -------
 
@@ -413,6 +383,11 @@ class ShotlistWindow(QMainWindow):
     # ------- Video Processing -------
 
     def on_movie_loaded(self, video_path, metadata):
+        # Prevent table creation or access if shotlist DB is not loaded
+        if not self.shotlist_db_loaded:
+            if DEBUG: print("DEBUG: Shotlist DB not loaded yet, skipping on_movie_loaded.")
+            return
+
         shotlist_exists = False
         self.video_path = video_path
         if video_path:
@@ -1016,23 +991,23 @@ class ShotlistWindow(QMainWindow):
         print("Detect Scenes button pressed (dummy method).")
 
     def set_project_folder(self, project_folder):
-        """Set the project folder and update detections folder, preload all shotlists."""
+        """Set the project folder and update detections folder, preload all shotlists (threaded)."""
         self.project_folder = project_folder
         self.detections_folder = os.path.join(project_folder, "shotlists")
-        os.makedirs(self.detections_folder, exist_ok=True)
+        self.project_folder = project_folder
+        self.shotlist_db_loaded = False
         self.shotlist_db = {}  # Clear previous cache
 
-        # Preload all CSVs in the shotlists folder
-        for fname in os.listdir(self.detections_folder):
-            if fname.endswith(".csv"):
-                base_name = os.path.splitext(fname)[0]
-                csv_path = os.path.join(self.detections_folder, fname)
-                try:
-                    with open(csv_path, "r", encoding="utf-8") as csvfile:
-                        reader = csv.DictReader(csvfile)
-                        self.shotlist_db[base_name] = [row for row in reader]
-                except Exception as e:
-                    if DEBUG: print(f"DEBUG: Failed to load {csv_path}: {e}")
+        # Start worker thread to load shotlists
+        self.worker = ShotlistImportWorker(project_folder, self.shotlist_db)
+        self.worker.finished.connect(self.shotlist_finished_loading)
+        self.worker.start()
+
+    def shotlist_finished_loading(self):
+        """Called when shotlist DB has finished loading"""
+        self.shotlist_db_loaded = True
+        if DEBUG: print("DEBUG: Shotlist DB finished loading.")
+        # Optionally, update UI or emit a signal here
 
     def select_first_available_shot(self):
         """Select the first non-ignored shot and update current_row."""
