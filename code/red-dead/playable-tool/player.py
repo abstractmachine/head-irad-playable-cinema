@@ -14,6 +14,8 @@ import sip
 SEEK_NORMAL = 1
 SEEK_FAST = 30
 
+QTIMER_DELAY = 10
+
 # --------------- JumpSlider ---------------
 
 class JumpSlider(QSlider):
@@ -380,12 +382,13 @@ class AbstractPlayerWindow(QMainWindow):
                         if DEBUG: print(f"DEBUG: Jumping next player to timecode: {self._pending_timecode}")
                         self._jump_to_timecode_on_player(self.next_player, self._pending_timecode)
                         # Give more time for larger seeks
-                        delay = 300 if self._is_large_timecode(self._pending_timecode) else 150
+                        # delay = 300 if self._is_large_timecode(self._pending_timecode) else 150
+                        delay = QTIMER_DELAY
                         QTimer.singleShot(delay, lambda: self._verify_and_switch())
                     else:
                         # No timecode to jump to, switch immediately
-                        QTimer.singleShot(100, lambda: self._verify_and_switch())
-    
+                        QTimer.singleShot(QTIMER_DELAY, lambda: self._verify_and_switch())
+
         elif status == QMediaPlayer.InvalidMedia:
             if DEBUG: print(f"DEBUG: {player_type} player invalid media")
             if is_next_player:
@@ -472,7 +475,7 @@ class AbstractPlayerWindow(QMainWindow):
                     self._execute_switch()
                 else:
                     if DEBUG: print(f"DEBUG: Small timecode not ready - still at {current_time}ms, retrying... ({self._verify_retry_count}/5)")
-                    QTimer.singleShot(100, lambda: self._verify_and_switch())
+                    QTimer.singleShot(QTIMER_DELAY, lambda: self._verify_and_switch())
         else:
             # For larger timecodes, verify we've moved significantly from zero
             if current_time > 3000:  # Moved at least 3 seconds from start
@@ -491,7 +494,7 @@ class AbstractPlayerWindow(QMainWindow):
                     self._execute_switch()
                 else:
                     if DEBUG: print(f"DEBUG: Large timecode not ready - at {current_time}ms (need >3000ms), retrying... ({self._verify_retry_count}/8)")
-                    QTimer.singleShot(100, lambda: self._verify_and_switch())
+                    QTimer.singleShot(QTIMER_DELAY, lambda: self._verify_and_switch())
 
     def _execute_switch(self):
         """Execute the actual switch between players"""
@@ -577,7 +580,7 @@ class AbstractPlayerWindow(QMainWindow):
                 if DEBUG: print(f"DEBUG: Jumping to {time_ms}ms based on percentage {timecode} (duration: {duration}ms)")
                 self.set_video_time(time_ms)
                 # Use delayed playback
-                QTimer.singleShot(50, lambda: self._start_playback_after_seek())
+                QTimer.singleShot(QTIMER_DELAY, lambda: self._start_playback_after_seek())
             else:
                 if DEBUG: print(f"DEBUG: Cannot jump to percentage - invalid percentage: {timecode}")
         else:
@@ -593,7 +596,7 @@ class AbstractPlayerWindow(QMainWindow):
                 if DEBUG: print(f"DEBUG: Jumping to {time_ms}ms")
                 self.set_video_time(time_ms)
                 # Use delayed playback
-                QTimer.singleShot(50, lambda: self._start_playback_after_seek())
+                QTimer.singleShot(QTIMER_DELAY, lambda: self._start_playback_after_seek())
 
     def _start_playback_after_seek(self):
         """Start playback after seeking, with validation"""

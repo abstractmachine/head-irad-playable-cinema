@@ -4,7 +4,7 @@ import csv
 import os
 from re import S
 
-from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtCore import QObject, pyqtSignal
 from PyQt5.QtCore import Qt, QThread, QTimer
 from PyQt5.QtGui import QColor, QBrush, QPalette
 from PyQt5.QtWidgets import (
@@ -137,8 +137,8 @@ class ShotlistWindow(QMainWindow):
         self.detect_scenes_button.clicked.connect(self.handle_detect_scenes)
 
         button_layout = QHBoxLayout()
-        button_layout.setContentsMargins(0, 0, 0, 0)  # Set margins to 0
-        button_layout.setSpacing(0)                   # Set spacing to 0
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        button_layout.setSpacing(0)
         button_layout.addStretch()
         button_layout.addWidget(self.method_dropdown)
         button_layout.addWidget(self.weights_field)
@@ -166,6 +166,9 @@ class ShotlistWindow(QMainWindow):
         self.clear_selection_timer.setSingleShot(True)
         self.clear_selection_timer.timeout.connect(self.clear_table_selection)
 
+        # Initialize shotlist database
+        self.shotlist_db = {}  # Maps movie base name to list of shotlist rows
+
     def load_scene_detections(self, csv_path):
         with open(csv_path, "r", newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
@@ -181,6 +184,19 @@ class ShotlistWindow(QMainWindow):
             self.add_scene_row(scene_num, start, end, shot_caption, scene_caption, ignore)
         self.current_csv_path = csv_path
         self.delete_button.setEnabled(True)
+
+    def on_scene_detections_loaded(self, rows):
+        self.scene_table.setRowCount(0)
+        for row in rows:
+            ignore = row.get("Ignore", "No") == "Yes"
+            scene_num = row.get("Scene", "")
+            start = row.get("Start", "")
+            end = row.get("End", "")
+            shot_caption = row.get("Shot_Caption", "")
+            scene_caption = row.get("Scene_Caption", "")
+            self.add_scene_row(scene_num, start, end, shot_caption, scene_caption, ignore)
+        self.delete_button.setEnabled(True)
+        self.current_csv_path = self._scene_loader_worker.csv_path
 
     def on_detect_scenes(self):
         self.shotlist_status.emit(False)
@@ -402,33 +418,25 @@ class ShotlistWindow(QMainWindow):
         if video_path:
             base = os.path.basename(video_path)
             name, _ = os.path.splitext(base)
-            csv_path = os.path.join(self.detections_folder, f"{name}.csv")
-            if os.path.exists(csv_path):
-                # Start threaded shotlist loading
-                self.scene_table.setRowCount(0)
-                self.current_csv_path = csv_path
-                self.delete_button.setEnabled(False)
-                self.detect_button.setEnabled(True)
-                self._shotlist_thread = QThread()
-                self._shotlist_worker = ShotlistLoadWorker(csv_path)
-                self._shotlist_worker.moveToThread(self._shotlist_thread)
-                self._shotlist_thread.started.connect(self._shotlist_worker.run)
-                self._shotlist_worker.finished.connect(self.on_shotlist_loaded)
-                self._shotlist_worker.error.connect(self.on_shotlist_load_error)
-                self._shotlist_worker.finished.connect(self._shotlist_thread.quit)
-                self._shotlist_worker.finished.connect(self._shotlist_worker.deleteLater)
-                self._shotlist_thread.finished.connect(self._shotlist_thread.deleteLater)
-                self._shotlist_thread.start()
+            # Use preloaded shotlist if available
+            if name in self.shotlist_db:
                 shotlist_exists = True
+                self.scene_table.setRowCount(0)
+                for row in self.shotlist_db[name]:
+                    ignore = row.get("Ignore", "No") == "Yes"
+                    scene_num = row.get("Scene", "")
+                    start = row.get("Start", "")
+                    end = row.get("End", "")
+                    shot_caption = row.get("Shot_Caption", "")
+                    scene_caption = row.get("Scene_Caption", "")
+                    self.add_scene_row(scene_num, start, end, shot_caption, scene_caption, ignore)
+                self.current_csv_path = os.path.join(self.detections_folder, f"{name}.csv")
+                self.delete_button.setEnabled(True)
             else:
                 self.scene_table.setRowCount(0)
                 self.current_csv_path = None
                 self.delete_button.setEnabled(False)
                 self.detect_button.setEnabled(True)
-            # Reset current row tracking when new movie loads
-            self.current_row = -1
-            self.last_current_row = -1
-            self.current_time_ms = 0
         else:
             self.video_path = None
             self.scene_table.setRowCount(0)
@@ -1008,10 +1016,23 @@ class ShotlistWindow(QMainWindow):
         print("Detect Scenes button pressed (dummy method).")
 
     def set_project_folder(self, project_folder):
-        """Set the project folder and update detections folder"""
+        """Set the project folder and update detections folder, preload all shotlists."""
         self.project_folder = project_folder
         self.detections_folder = os.path.join(project_folder, "shotlists")
         os.makedirs(self.detections_folder, exist_ok=True)
+        self.shotlist_db = {}  # Clear previous cache
+
+        # Preload all CSVs in the shotlists folder
+        for fname in os.listdir(self.detections_folder):
+            if fname.endswith(".csv"):
+                base_name = os.path.splitext(fname)[0]
+                csv_path = os.path.join(self.detections_folder, fname)
+                try:
+                    with open(csv_path, "r", encoding="utf-8") as csvfile:
+                        reader = csv.DictReader(csvfile)
+                        self.shotlist_db[base_name] = [row for row in reader]
+                except Exception as e:
+                    if DEBUG: print(f"DEBUG: Failed to load {csv_path}: {e}")
 
     def select_first_available_shot(self):
         """Select the first non-ignored shot and update current_row."""
