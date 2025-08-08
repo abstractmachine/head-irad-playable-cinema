@@ -71,28 +71,39 @@ def pct_to_milliseconds(pct, duration):
     return int((pct_value / 100.0) * duration)
 
 def timecode_to_milliseconds(timecode):
-
     if not isinstance(timecode, str):
         return None
-        
+
+    # Accept both ',' and '.' as millisecond separators
+    timecode = timecode.replace(',', '.')
+
     try:
         parts = timecode.split(":")
         if len(parts) != 3:
             return None
-            
+
         h = int(parts[0])
         m = int(parts[1])
         s = float(parts[2])
-        
+
         # Validate ranges
         if h < 0 or m < 0 or m >= 60 or s < 0 or s >= 60:
             return None
-            
+
         time_ms = int((h * 3600 + m * 60 + s) * 1000)
         return time_ms
-        
+
     except (ValueError, IndexError):
         return None
+    
+def parse_srt_time(self, time_str):
+    """Convert SRT time format (HH:MM:SS,mmm or HH:MM:SS.mmm) to milliseconds"""
+    # Replace ',' with '.' for compatibility
+    time_str = time_str.replace(',', '.')
+    ms = timecode_to_milliseconds(time_str)
+    if ms is None:
+        raise ValueError(f"Invalid SRT time format: '{time_str}'")
+    return ms
 
 def milliseconds_to_timecode(milliseconds, include_milliseconds=True):
     """
