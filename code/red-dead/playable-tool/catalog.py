@@ -13,6 +13,7 @@ import csv
 import random
 from metadata import MetadataWorker, read_metadata_csv
 from catalog_item import AbstractCatalogItemWidget, MovieItemWidget, ITEM_HEIGHT
+from utility import HIGHLIGHT_BACKGROUND_COLOR, HIGHLIGHT_COLOR
 
 class CatalogLoadingWorker(QObject):
     """Worker class for loading catalog data in a separate thread"""
@@ -261,7 +262,7 @@ class AbstractCatalogWindow(QMainWindow):
         self.progress_label.setFont(self.ui.get_font('button'))
         self.progress_label.setFixedHeight(button_height)
         self.progress_label.setAlignment(Qt.AlignCenter)
-        self.progress_label.setStyleSheet("QLabel { padding: 0px 10px 0px 10px; background-color: #f0f; color: #fff; }")
+        self.progress_label.setStyleSheet(f"QLabel {{ padding: 0px 10px 0px 10px; background-color: {HIGHLIGHT_BACKGROUND_COLOR}; color: {HIGHLIGHT_COLOR}; }}")
         self.progress_label.setVisible(False)
 
         # Add widgets to main layout

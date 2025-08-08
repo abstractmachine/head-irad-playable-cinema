@@ -4,8 +4,7 @@ from PyQt5.QtGui import QFont, QFontDatabase
 import os
 import subprocess
 
-DARK_DOCK_BORDER = "#111"
-LIGHT_DOCK_BORDER = "#eee"
+from utility import HIGHLIGHT_BACKGROUND_COLOR, HIGHLIGHT_COLOR, DARK_DOCK_BORDER, LIGHT_DOCK_BORDER
 
 class UI:
     def __init__(self):
@@ -169,8 +168,8 @@ class UI:
         monospaced_font_weight = monospaced_font.weight()
 
         # common highlight color
-        common_highlight_color = "#fff"
-        common_highlight_background = "#f0f"
+        common_highlight_color = HIGHLIGHT_COLOR
+        common_highlight_background = HIGHLIGHT_BACKGROUND_COLOR
 
         # dimensions
         button_width = 80
@@ -395,8 +394,16 @@ class UI:
 
         QTableView::item:selected,
         QTableWidget::item:selected {{
-            background: {common_highlight_background};
-            color: {common_highlight_color};
+            background: {common_highlight_background} !important;
+            color: {common_highlight_color} !important;
+            selection-background-color: {common_highlight_background} !important;
+            selection-color: {common_highlight_color} !important;
+        }}
+
+        QTableView::item:focus,
+        QTableWidget::item:focus {{
+            background: transparent;
+            outline: none;
         }}
 
         /* DROP DOWN */
@@ -573,7 +580,7 @@ class UI:
     # -------------------------------------------------------
         
     def get_dark_style_sheet(self):
-        highlight_color = "#f0f"
+        highlight_color = HIGHLIGHT_BACKGROUND_COLOR
         dark_background = "#111"
         dark_color = "#eee"
         dark_window_background = "#222"
@@ -612,7 +619,7 @@ class UI:
         }}
 
         QMainWindow {{
-            /* background: #f0f;
+            /* background: {HIGHLIGHT_BACKGROUND_COLOR};
             color: #ff0; */
         }}
 
@@ -758,7 +765,7 @@ class UI:
         }}
 
         QComboBox QAbstractItemView {{
-            /*background: #f0f;
+            /*background: {HIGHLIGHT_BACKGROUND_COLOR};
             border: none;*/
         }}
 
@@ -853,7 +860,7 @@ class UI:
     # -------------------------------------------------------
 
     def get_light_style_sheet(self):
-        highlight_color = "#f0f"
+        highlight_color = HIGHLIGHT_BACKGROUND_COLOR
         light_background = "#eee"
         light_color = "#111"
         light_window_background = "#ddd"
@@ -892,8 +899,8 @@ class UI:
         }}
 
         QMainWindow {{
-            /* background: #f0f;
-            color: #ff0; */
+            /* background: {HIGHLIGHT_BACKGROUND_COLOR};
+            color: {HIGHLIGHT_COLOR}; */
         }}
 
         /* WIDGETS */

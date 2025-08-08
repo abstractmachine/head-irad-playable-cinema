@@ -4,6 +4,11 @@ import html
 
 minimum_load_interval = 0.25  # Minimum time between loads in seconds
 
+HIGHLIGHT_BACKGROUND_COLOR = "#FF00FF" # Fuchsia
+HIGHLIGHT_COLOR = "#FFFFFF" # White
+DARK_DOCK_BORDER = "#111"
+LIGHT_DOCK_BORDER = "#eee"
+
 def euro_text(text):
     """Clean text while preserving most Unicode characters"""
     if not isinstance(text, str):

@@ -5,11 +5,12 @@ from PyQt5.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel
 from PyQt5.QtGui import QPixmap
 import os
 
+from utility import HIGHLIGHT_BACKGROUND_COLOR, HIGHLIGHT_COLOR
+
 # Common dimensions and colors
 POSTER_WIDTH = 40
 POSTER_HEIGHT = 60
 ITEM_HEIGHT = 63
-HIGHLIGHT_COLOR = "#f0f"
 DARK_ITEM_BACKGROUND = "#333"
 LIGHT_ITEM_BACKGROUND = "#ddd"
 DARK_TEXT_COLOR = "#fff"
@@ -39,6 +40,7 @@ class AbstractCatalogItemWidget(QWidget):
         self.is_selected = selected
         self.update_background()
     
+    # TODO: Fix this in UI Stylesheet, not here
     def update_background(self):
         """Update the background color based on selection state"""
         # Depending on light/dark mode, set text color
@@ -51,7 +53,7 @@ class AbstractCatalogItemWidget(QWidget):
         
         # If selected, highlight with fuchsia background
         if self.is_selected:
-            self.highlight_background('white', HIGHLIGHT_COLOR)
+            self.highlight_background(HIGHLIGHT_COLOR, HIGHLIGHT_BACKGROUND_COLOR)
         else:
             self.setStyleSheet(f"""
                 background-color: {background_color};
@@ -60,6 +62,7 @@ class AbstractCatalogItemWidget(QWidget):
             self.setAutoFillBackground(True)
         self.repaint()
 
+    # TODO: Fix this in UI Stylesheet, not here
     def highlight_background(self, color, background):
         """Highlight the background with a specific color"""
         self.setStyleSheet(f"""
@@ -75,6 +78,7 @@ class AbstractCatalogItemWidget(QWidget):
         self.setAutoFillBackground(True)
         self.repaint()
     
+    # TODO: Fix this in UI Stylesheet, not here
     def remove_background(self):
         """Remove background color"""
         self.setStyleSheet("""

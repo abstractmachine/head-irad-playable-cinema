@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QLineEdit, QPushButton
 )
 
-from utility import minimum_load_interval
+from utility import minimum_load_interval, HIGHLIGHT_BACKGROUND_COLOR, HIGHLIGHT_COLOR
 
 class GremlinsWindow(QMainWindow):
     """
@@ -137,8 +137,8 @@ class GremlinsWindow(QMainWindow):
         original_style = self.interval_field.styleSheet()
         
         # Set blink style (fuchsia background)
-        self.interval_field.setStyleSheet("QLineEdit { color: #fff; background-color: #f0f; }")
-        
+        self.interval_field.setStyleSheet(f"QLineEdit {{ color: {HIGHLIGHT_COLOR}; background-color: {HIGHLIGHT_BACKGROUND_COLOR}; }}")
+
         # Reset to original style after 90ms
         QTimer.singleShot(90, lambda: self.interval_field.setStyleSheet(original_style))
         

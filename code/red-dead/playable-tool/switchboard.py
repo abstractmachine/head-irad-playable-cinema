@@ -41,18 +41,13 @@ class Switchboard(QObject):
         if DEBUG: print("DEBUG: Switchboard setting up connections")
         
         # ---- PROJECT LIFECYCLE CONNECTIONS ----
-        # These handle the core project loading/clearing workflow
         
         # Listen for project changes from the project window
         self.windows["project"].project_loaded.connect(self.project_folder_loaded)
         
         # When clearing projects, notify all windows to clean up their state
-        self.project_clearing.connect(self.windows["shotlist"].clear_project)
         self.project_clearing.connect(self.windows["captions"].clear_project)
-        self.project_clearing.connect(self.windows["subtitles"].clear_project)
         self.project_clearing.connect(self.windows["inference"].clear_project)
-        self.project_clearing.connect(self.windows["cinematheque"].clear_project)
-        self.project_clearing.connect(self.windows["playbill"].clear_project)
         self.project_clearing.connect(self.windows["gremlins"].clear_project)
         
         # Add player clearing connections
@@ -60,32 +55,27 @@ class Switchboard(QObject):
         self.project_clearing.connect(self.windows["playhouse"].clear_project)
         
         # After clearing, set the new project folder in all windows
-        self.project_loaded.connect(self.windows["shotlist"].set_project_folder)
         self.project_loaded.connect(self.windows["captions"].set_project_folder)
-        self.project_loaded.connect(self.windows["subtitles"].set_project_folder)
         self.project_loaded.connect(self.windows["inference"].set_project_folder)
         self.project_loaded.connect(self.windows["prompt"].set_project_folder)
-        self.project_loaded.connect(self.windows["cinematheque"].set_project_folder)
-        self.project_loaded.connect(self.windows["playbill"].set_project_folder)
         self.project_loaded.connect(self.windows["gremlins"].set_project_folder)
 
         # ---- METADATA REBUILD COORDINATION ----
-        # These notify the project window about metadata rebuild status
         
         # Notify project window when metadata rebuilding starts/stops
         self.metadata_rebuilding_started.connect(self.windows["project"].on_metadata_rebuilding_started)
         self.metadata_rebuilding_stopped.connect(self.windows["project"].on_metadata_rebuilding_stopped)
 
         # ---- CATALOG STATUS CONNECTIONS ----
-        # These monitor loading states of catalog windows (cinematheque, playbill)
-        # and coordinate UI updates and cross-window dependencies
-        
-        # Cinematheque catalog status monitoring
+
+        self.project_clearing.connect(self.windows["cinematheque"].clear_project)
+        self.project_clearing.connect(self.windows["playbill"].clear_project)
         self.windows["cinematheque"].catalog_loading_started.connect(self.cinematheque_loading_started)
         self.windows["cinematheque"].catalog_loading_finished.connect(self.cinematheque_loading_finished)
         self.windows["cinematheque"].catalog_contents_cleared.connect(self.cinematheque_contents_cleared)
         
-        # Playbill catalog status monitoring
+        self.project_loaded.connect(self.windows["cinematheque"].set_project_folder)
+        self.project_loaded.connect(self.windows["playbill"].set_project_folder)
         self.windows["playbill"].catalog_loading_started.connect(self.playbill_loading_started)
         self.windows["playbill"].catalog_loading_finished.connect(self.playbill_loading_finished)
         self.windows["playbill"].catalog_contents_cleared.connect(self.playbill_contents_cleared)
@@ -102,7 +92,6 @@ class Switchboard(QObject):
         self.windows["playbill"].item_selected.connect(self.playbill_item_selected)
 
         # ---- METADATA REBUILD CONNECTIONS ----
-        # These monitor metadata rebuild operations in catalog windows
         
         # Cinematheque metadata rebuild monitoring
         self.windows["cinematheque"].metadata_rebuild_started.connect(lambda: self.metadata_rebuild_started("cinematheque"))
@@ -114,9 +103,21 @@ class Switchboard(QObject):
         self.windows["playbill"].metadata_rebuild_finished.connect(lambda success: self.metadata_rebuild_finished("playbill", success))
         self.windows["playbill"].metadata_rebuild_cancelled.connect(lambda: self.metadata_rebuild_cancelled("playbill"))
 
-        # ---- PLAYER CONNECTIONS ----
+        # ---- SUBTITLE CONNECTIONS ----
+        self.project_clearing.connect(self.windows["subtitles"].clear_project)
+        self.project_loaded.connect(self.windows["subtitles"].set_project_folder)
         self.windows["nickelodeon"].video_did_load.connect(self.windows["subtitles"].on_movie_loaded)
         self.windows["nickelodeon"].timecode_changed.connect(self.windows["subtitles"].on_timecode_changed)
+
+        # ---- SHOTLIST CONNECTIONS ----
+        self.project_clearing.connect(self.windows["shotlist"].clear_project)
+        self.project_loaded.connect(self.windows["shotlist"].set_project_folder)
+        self.windows["nickelodeon"].video_did_load.connect(self.windows["shotlist"].on_movie_loaded)
+        self.windows["nickelodeon"].timecode_changed.connect(self.windows["shotlist"].on_timecode_changed)
+        self.windows["shotlist"].jump_to_timecode_signal.connect(self.windows["nickelodeon"].jump_to_timecode)
+
+        # ---- CAPTION CONNECTIONS ----
+        self.windows["shotlist"].shot_caption_selected.connect(self.windows["captions"].set_shot_caption_field)
 
         # ---- CHAOS EVENT CONNECTIONS ----
         # Listen for chaos events from gremlins window

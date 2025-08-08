@@ -212,48 +212,6 @@ class CaptionWindow(QWidget):
 
         button_layout.addLayout(frame_count_row)
 
-        # Replace separate Previous and Next buttons with a double button
-        nav_button_layout = QHBoxLayout()
-        nav_button_layout.setContentsMargins(0, 0, 0, 0)
-        nav_button_layout.setSpacing(0)  # No space between buttons
-
-        self.previous_button = QPushButton("▲")
-        self.previous_button.setEnabled(False)
-        self.previous_button.setFont(self.ui.get_font('button'))
-        self.previous_button.setFixedSize(52, button_height)  # Half width
-        self.previous_button.setToolTip("Jump to previous shot")
-
-        self.next_button = QPushButton("▼")
-        self.next_button.setEnabled(False)
-        self.next_button.setFont(self.ui.get_font('button'))
-        self.next_button.setFixedSize(52, button_height)  # Half width
-        self.next_button.setToolTip("Jump to next shot")
-
-        # Style to make them look like one button
-        self.previous_button.setStyleSheet("""
-            QPushButton {
-                margin: 5px 0px 0px 0px;
-                border: none;
-                border-top-right-radius: 0px;
-                border-bottom-right-radius: 0px;
-                border-right: 0px;
-            }
-        """)
-
-        self.next_button.setStyleSheet("""
-            QPushButton {
-                margin: 5px 0px 0px 0px;
-                border: none;
-                border-top-left-radius: 0px;
-                border-bottom-left-radius: 0px;
-                border-left: 0px;
-            }
-        """)
-
-        nav_button_layout.addWidget(self.previous_button)
-        nav_button_layout.addWidget(self.next_button)
-        button_layout.addLayout(nav_button_layout)
-
         button_layout.addStretch()
         main_layout.addLayout(button_layout, stretch=0)
 
@@ -267,8 +225,6 @@ class CaptionWindow(QWidget):
         self.api_button.clicked.connect(self.handle_api_button)
 
         self.current_timecodes = []
-        self.next_button.clicked.connect(self.handle_next_button)
-        self.previous_button.clicked.connect(self.handle_previous_button)
 
         # Bot functionality
         self.bot_active = False
@@ -294,12 +250,6 @@ class CaptionWindow(QWidget):
             self.annotate_button.click()
         elif key == Qt.Key_O:
             self.api_button.click()
-        elif key == Qt.Key_B:
-            self.bot_button.click()
-        elif key == Qt.Key_Up:
-            self.previous_button.click()
-        elif key == Qt.Key_Down:
-            self.next_button.click()
         else:
             super().keyPressEvent(event)
 
@@ -321,8 +271,6 @@ class CaptionWindow(QWidget):
         self.shotlist_loaded = loaded
         self.api_button.setEnabled(loaded)
         self.annotate_button.setEnabled(loaded)
-        self.next_button.setEnabled(loaded)
-        self.previous_button.setEnabled(loaded)
         self.bot_button.setEnabled(loaded)
         if loaded and self.auto_start_bot and self.bot_active:
             if DEBUG: print("DEBUG: Auto-starting bot after shotlist loaded")
@@ -388,7 +336,7 @@ class CaptionWindow(QWidget):
         self.caption_field.clear()
         self.api_button.setText("")
         # Do NOT disable self.bot_button here!
-        for btn in [self.annotate_button, self.api_button, self.next_button, self.previous_button]:
+        for btn in [self.annotate_button, self.api_button]:
             btn.setEnabled(False)
 
         # Get frame count from input field
@@ -423,8 +371,6 @@ class CaptionWindow(QWidget):
             self.api_button.setText("API")
         for btn in [self.annotate_button, self.api_button]:
             btn.setEnabled(True)
-        self.next_button.setEnabled(not self.is_last_row)
-        self.previous_button.setEnabled(not self.is_first_row)
         self.caption_field.setPlainText(result)
         if DEBUG: print("DEBUG: About to call handle_bot_after_api_result")
         self.handle_bot_after_api_result()
@@ -434,7 +380,8 @@ class CaptionWindow(QWidget):
         if self.bot_active:
             self.annotate_button.click()
             if not self.is_last_row:
-                self.next_button.click()
+                # TODO: Implement logic to move to next shot
+                print("DEBUG: Bot needs to move to next shot")
             else:
                 if DEBUG: print("DEBUG: Bot reached last row, moving to next movie")
                 self.auto_start_bot = True  # <-- Add this line
@@ -457,8 +404,6 @@ class CaptionWindow(QWidget):
         self.api_button.setText("API")
         for btn in [self.annotate_button, self.api_button]:
             btn.setEnabled(True)
-        self.next_button.setEnabled(not self.is_last_row)
-        self.previous_button.setEnabled(not self.is_first_row)
         
         # Show error message in caption field
         self.caption_field.setPlainText(f"API aborted: {message}")
@@ -469,14 +414,6 @@ class CaptionWindow(QWidget):
 
     def set_shot_caption_field(self, caption):
         self.caption_field.setPlainText(caption)
-
-    def handle_next_button(self):
-        if DEBUG: print("DEBUG: handle_next_button called")
-        self.request_next_shot.emit()
-
-    def handle_previous_button(self):
-        if DEBUG: print("DEBUG: handle_previous_button called")
-        self.request_previous_shot.emit()
 
     def enable_auto_start_bot(self):
         if DEBUG: print(f"DEBUG: enable_auto_start_bot called, bot_active={self.bot_active}")
@@ -523,7 +460,6 @@ class CaptionWindow(QWidget):
     def handle_is_last_available_shot(self, is_last):
         if DEBUG: print(f"DEBUG: handle_is_last_available_shot called - is_last={is_last}, bot_active={self.bot_active}, api_running={self.api_running}")
         self.is_last_row = is_last
-        self.next_button.setEnabled(not is_last and not self.api_running)
 
         # Bot loop logic
         if self.bot_active and not self.api_running:
@@ -534,7 +470,6 @@ class CaptionWindow(QWidget):
         """Handle whether this is the first available shot"""
         if DEBUG: print(f"DEBUG: handle_is_first_available_shot called - is_first={is_first}")
         self.is_first_row = is_first
-        self.previous_button.setEnabled(not is_first and not self.api_running)
 
     def validate_frame_count(self):
         """Validate frame count input"""

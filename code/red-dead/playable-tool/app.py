@@ -9,7 +9,7 @@ from PyQt5.QtMultimedia import QMediaContent
 
 # UI and styling
 from ui import UI
-from key_filter import GlobalKeyFilter
+from keyboard import GlobalKeyFilter
 
 # Window imports
 from nickelodeon import NickelodeonWindow
@@ -80,8 +80,8 @@ def main():
 
     # === Input Handling ===
     # Global keyboard shortcuts
-    key_filter = GlobalKeyFilter(windows, main_window)
-    app.installEventFilter(key_filter)
+    keyboard = GlobalKeyFilter(windows, main_window)
+    app.installEventFilter(keyboard)
 
     # === Window State Restoration ===
     # Restore saved window layout and preferences

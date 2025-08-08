@@ -1,4 +1,4 @@
-DEBUG = False  # Set to True to enable debug output
+DEBUG = True  # Set to True to enable debug output
 
 import csv
 import os
@@ -6,7 +6,7 @@ from re import S
 
 from PyQt5.QtCore import pyqtSignal
 from PyQt5.QtCore import Qt, QThread, QTimer
-from PyQt5.QtGui import QColor, QBrush
+from PyQt5.QtGui import QColor, QBrush, QPalette
 from PyQt5.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QHBoxLayout, QLineEdit, QMainWindow,
     QPushButton, QTableWidget, QTableWidgetItem, QTextEdit,
@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (
 from scenedetect import open_video
 from detector import ShotDetectWorker
 from shotlist_worker import ShotlistLoadWorker
-from utility import timecode_to_milliseconds
+from utility import timecode_to_milliseconds, HIGHLIGHT_BACKGROUND_COLOR, HIGHLIGHT_COLOR
 
 JUMP_FRAME_PADDING_PLAYBACK = 0  # Number of frames to pad when jumping in playback mode
 JUMP_FRAME_PADDING_DETECTION = 5  # Number of frames to pad when jumping in detection mode
@@ -43,9 +43,6 @@ class ShotlistWindow(QMainWindow):
         self.ui = ui  # Store UI instance
 
         self.is_dark_mode = self.ui.is_dark_mode()
-
-        # HACK: FIX THIS!
-        self.video_just_loaded = False
 
         self._pending_save_data = {}
         self.setWindowTitle("Shotlist")
@@ -75,6 +72,12 @@ class ShotlistWindow(QMainWindow):
         self.scene_table.cellClicked.connect(self.on_table_cell_clicked)
         
         self.scene_table.verticalHeader().sectionClicked.connect(self.on_row_header_clicked)
+
+        # set the selection color to a custom color
+        palette = self.scene_table.palette()
+        palette.setColor(QPalette.Highlight, QColor(HIGHLIGHT_BACKGROUND_COLOR))
+        palette.setColor(QPalette.HighlightedText, QColor(HIGHLIGHT_COLOR))
+        self.scene_table.setPalette(palette)
 
         # Set column header font using UI 'collumn' style
         header_font = self.ui.get_font('collumn')
@@ -158,6 +161,10 @@ class ShotlistWindow(QMainWindow):
         self.current_time_ms = 0
         self.current_row = -1  # Track current row
         self.last_current_row = -1  # Track previous row for comparison
+
+        self.clear_selection_timer = QTimer(self)
+        self.clear_selection_timer.setSingleShot(True)
+        self.clear_selection_timer.timeout.connect(self.clear_table_selection)
 
     def load_scene_detections(self, csv_path):
         with open(csv_path, "r", newline="", encoding="utf-8") as f:
@@ -389,7 +396,7 @@ class ShotlistWindow(QMainWindow):
 
     # ------- Video Processing -------
 
-    def on_movie_loaded_with_metadata(self, video_path, metadata):
+    def on_movie_loaded(self, video_path, metadata):
         shotlist_exists = False
         self.video_path = video_path
         if video_path:
@@ -419,8 +426,6 @@ class ShotlistWindow(QMainWindow):
                 self.delete_button.setEnabled(False)
                 self.detect_button.setEnabled(True)
             # Reset current row tracking when new movie loads
-            # HACK: FIX THIS!
-            self.video_just_loaded = True
             self.current_row = -1
             self.last_current_row = -1
             self.current_time_ms = 0
@@ -435,7 +440,7 @@ class ShotlistWindow(QMainWindow):
             self.current_time_ms = 0
 
         self.shotlist_status.emit(shotlist_exists)
-        if DEBUG: print(f"DEBUG: on_movie_loaded_with_metadata - shotlist_exists: {shotlist_exists}")
+        if DEBUG: print(f"DEBUG: on_movie_loaded - shotlist_exists: {shotlist_exists}")
         self.send_row_data()
 
     def on_shotlist_loaded(self, rows):
@@ -480,9 +485,34 @@ class ShotlistWindow(QMainWindow):
         self.scene_table.clearSelection()
 
     def handle_global_key(self, event):
-        focus_widget = QApplication.focusWidget()
-        if not isinstance(focus_widget, QTextEdit):
-            self.keyPressEvent(event)
+        """Handle global key events"""
+
+        key = event.key()
+        modifiers = event.modifiers()
+
+        if key == Qt.Key_Up:
+
+            if DEBUG: print(f"DEBUG: KeyUp pressed, modifiers: {modifiers}")
+            if modifiers & Qt.ShiftModifier:
+                pass
+            self.jump_to_previous_shot()
+            if DEBUG: print("DEBUG: Jumping to previous shot")
+            pass
+
+        elif key == Qt.Key_Down:
+            if DEBUG: print(f"DEBUG: KeyDown pressed, modifiers: {modifiers}")
+            if modifiers & Qt.ShiftModifier:
+                pass
+            self.jump_to_next_shot()
+            if DEBUG: print("DEBUG: Jumping to next shot")
+            pass
+        else:
+            super().keyPressEvent(event)
+
+    # def handle_global_key(self, event):
+    #     focus_widget = QApplication.focusWidget()
+    #     if not isinstance(focus_widget, QTextEdit):
+    #         self.keyPressEvent(event)
 
     def add_scene_row(self, scene_num, start_tc, end_tc, shot_caption, scene_caption, ignore=False):
         row = self.scene_table.rowCount()
@@ -627,13 +657,14 @@ class ShotlistWindow(QMainWindow):
         row_data = self.get_column_data(row_index)
         self.row_data.emit(row_data)
 
+    # timecode change from player
+    def on_timecode_changed(self, timecode):
+        # call the internal set_current_time method
+        self.set_current_time(timecode)
+        # clear any current interface selections
+        self.clear_selection_timer.start(100)
+
     def set_current_time(self, ms):
-        # HACK: FIX THIS!
-        if self.video_just_loaded:
-            # Only intercept the first call after video load
-            self.select_first_available_shot()
-            self.video_just_loaded = False
-            return
 
         self.current_time_ms = ms
         row_count = self.scene_table.rowCount()
@@ -690,8 +721,8 @@ class ShotlistWindow(QMainWindow):
             if scene_col != -1:
                 index_item = self.scene_table.item(self.current_row, scene_col)
                 if index_item:
-                    index_item.setBackground(QColor("#f0f"))
-                    index_item.setForeground(QBrush(QColor("#fff")))
+                    index_item.setBackground(QColor(HIGHLIGHT_BACKGROUND_COLOR))
+                    index_item.setForeground(QBrush(QColor(HIGHLIGHT_COLOR)))
 
     def is_first_non_ignored_row(self, current_row):
         """Check if there are any non-ignored shots before the current position"""
@@ -953,30 +984,24 @@ class ShotlistWindow(QMainWindow):
     def find_closest_row(self, ms):
         """Find the row index closest to the given time in ms"""
         row_count = self.scene_table.rowCount()
-        
         if row_count == 0:
             return -1
-        
-        # Start with the first row as candidate
+
         new_row = 0
-        
-        # Get the Start column index by name
         start_col = self.get_column_index_by_name("Start")
         if start_col == -1:
             return -1  # Start column not found
-        
+
         for row in range(row_count):
-            # Get the Begin (Start) time for this row
             start_tc = self.scene_table.item(row, start_col).text()
             start_ms = timecode_to_milliseconds(start_tc)
-            
-            # If this Begin time is equal to or before our current ms
+            if start_ms is None:
+                continue  # Skip invalid or empty timecodes
             if start_ms <= ms:
                 new_row = row
             else:
-                # Begin time is after our ms, so we found our row
                 break
-        
+
         return new_row
     
     def handle_detect_scenes(self):
