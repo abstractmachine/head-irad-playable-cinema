@@ -22,7 +22,7 @@ class GremlinsWindow(QMainWindow):
         super().__init__()
         self.ui = ui
         self.setWindowTitle("Gremlins")
-        self.setMinimumSize(200, 80)
+        self.setMinimumSize(125, 70)
 
         # Add this for preferences compatibility
         self._pending_save_data = {}
@@ -43,8 +43,8 @@ class GremlinsWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         
         layout = QVBoxLayout()
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(10)
+        layout.setContentsMargins(0, 10, 0, 10)
+        layout.setSpacing(2)
         
         # Spacer
         layout.addStretch()

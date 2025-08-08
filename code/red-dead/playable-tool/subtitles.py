@@ -87,9 +87,6 @@ class SubtitlesWindow(QWidget):
         super().__init__()
         self.ui = ui  # Store UI instance
 
-        # Set a small minimum height if desired
-        self.setMinimumHeight(80)
-
         # Initialize variables
         self.project_folder = None
         self.current_movie_filename = None

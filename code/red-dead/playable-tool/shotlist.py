@@ -975,6 +975,7 @@ class ShotlistWindow(QMainWindow):
         if start_col == -1:
             return -1  # Start column not found
 
+        # Iterate through rows to find the closest start time less than or equal
         for row in range(row_count):
             start_tc = self.scene_table.item(row, start_col).text()
             start_ms = timecode_to_milliseconds(start_tc)
