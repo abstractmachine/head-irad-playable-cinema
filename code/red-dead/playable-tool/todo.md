@@ -1,5 +1,8 @@
 # TODO
 
+# Subtitles
+- Remove all [BOM](https://en.wikipedia.org/wiki/Byte_order_mark) from subtitles, and verify we're in `utf-8` encoding.
+
 # Prompt Menu
 Three differing drop-down menus:
 1. Mode

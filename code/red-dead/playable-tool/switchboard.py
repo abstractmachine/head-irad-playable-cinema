@@ -114,6 +114,10 @@ class Switchboard(QObject):
         self.windows["playbill"].metadata_rebuild_finished.connect(lambda success: self.metadata_rebuild_finished("playbill", success))
         self.windows["playbill"].metadata_rebuild_cancelled.connect(lambda: self.metadata_rebuild_cancelled("playbill"))
 
+        # ---- PLAYER CONNECTIONS ----
+        self.windows["nickelodeon"].video_did_load.connect(self.windows["subtitles"].on_movie_loaded)
+        self.windows["nickelodeon"].timecode_changed.connect(self.windows["subtitles"].on_timecode_changed)
+
         # ---- CHAOS EVENT CONNECTIONS ----
         # Listen for chaos events from gremlins window
         self.windows["gremlins"].chaos.connect(self.on_chaos_event)

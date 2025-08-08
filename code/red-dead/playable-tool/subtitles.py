@@ -54,43 +54,40 @@ class SubtitlesWindow(QWidget):
     def parse_srt_content(self, content):
         """Parse SRT file content into subtitle entries"""
         self.subtitles_data = []
-        
+        if DEBUG: print(f"DEBUG: Parsing SRT content, length={len(content)}")
         # Split into subtitle blocks
         blocks = re.split(r'\n\s*\n', content.strip())
-        
+        if DEBUG: print(f"DEBUG: Found {len(blocks)} subtitle blocks")
         for block in blocks:
             lines = block.strip().split('\n')
             if len(lines) < 3:
+                if DEBUG: print(f"DEBUG: Skipping block with insufficient lines: {lines}")
                 continue
-                
             try:
-                # Parse subtitle number
                 number = int(lines[0])
-                
-                # Parse time range
                 time_line = lines[1]
                 start_time, end_time = time_line.split(' --> ')
                 start_ms = self.parse_srt_time(start_time.strip())
                 end_ms = self.parse_srt_time(end_time.strip())
-                
-                # Parse subtitle text (can be multiple lines)
                 text = '\n'.join(lines[2:])
-                
                 self.subtitles_data.append({
                     'number': number,
                     'start_ms': start_ms,
                     'end_ms': end_ms,
                     'text': text
                 })
-                
+                if DEBUG: print(f"DEBUG: Parsed subtitle #{number}: {start_ms}-{end_ms} '{text[:30]}'")
             except (ValueError, IndexError) as e:
                 print(f"Error parsing subtitle block: {e}")
+                if DEBUG: print(f"DEBUG: Block parse error: {block}")
                 continue
 
     def find_current_subtitle(self, current_time_ms):
         """Find the subtitle that should be displayed at the current time"""
         for subtitle in self.subtitles_data:
+            if DEBUG: print(f"DEBUG: Checking subtitle #{subtitle['number']} {subtitle['start_ms']}–{subtitle['end_ms']} for time {current_time_ms}")
             if subtitle['start_ms'] <= current_time_ms <= subtitle['end_ms']:
+                if DEBUG: print(f"DEBUG: MATCH subtitle #{subtitle['number']} for time {current_time_ms}")
                 return subtitle
         return None
 
@@ -103,19 +100,22 @@ class SubtitlesWindow(QWidget):
         # A Placeholder for future functionality
         if DEBUG: print("DEBUG: ProjectWindow: clear_project called (no action needed)")
         
-    def on_movie_loaded_with_metadata(self, movie_path, metadata):
+    def on_movie_loaded(self, movie_path, metadata):
         """Called when a new movie is loaded in the player"""
         movie_filename = os.path.basename(movie_path)
         
+        if DEBUG: print(f"DEBUG: Subtitles: Movie loaded with metadata: {movie_filename}")
+
         # Don't reload if it's the same movie
         if self.current_movie_filename == movie_filename:
+            if DEBUG: print("DEBUG: Subtitles: Same movie already loaded, skipping reload")
             return
             
         self.current_movie_filename = movie_filename
         # print(f"Subtitles: Movie loaded - {movie_filename}")
         
         if not self.project_folder:
-            print("Warning: No project folder set in subtitles window")
+            print("Warning: No project folder set. Subtitles will not be loaded.")
             return
         
         # Transform filename: whatever-the-filename-is.mp4 -> whatever-the-filename-is.srt
@@ -130,6 +130,8 @@ class SubtitlesWindow(QWidget):
         # Update window title to show current movie
         movie_name = os.path.splitext(movie_filename)[0]
         self.setWindowTitle(f"Subtitles - {movie_name}")
+
+        if DEBUG: print(f"DEBUG: Subtitles path set to {self.current_subtitle_path}")
         
         # Load the subtitles for this movie
         self.load_movie_subtitles()
@@ -137,52 +139,43 @@ class SubtitlesWindow(QWidget):
     def load_movie_subtitles(self):
         """Load the subtitles for the current movie"""
         if not self.current_subtitle_path:
+            if DEBUG: print("DEBUG: No subtitle path set")
             return
-            
-        # Check if movie-specific subtitle file exists
         if os.path.exists(self.current_subtitle_path):
-            # Load existing movie subtitles
             try:
+                if DEBUG: print(f"DEBUG: Loading subtitles from {self.current_subtitle_path}")
                 with open(self.current_subtitle_path, "r", encoding="utf-8") as f:
                     content = f.read()
-                    
-                # Parse the SRT content
                 self.parse_srt_content(content)
-                # print(f"Loaded {len(self.subtitles_data)} subtitle entries from: {self.current_subtitle_path}")
-                
-                # Display initial message
+                if DEBUG: print(f"DEBUG: Loaded {len(self.subtitles_data)} subtitle entries")
                 self.subtitles_field.setPlainText("")
-                
             except Exception as e:
                 print(f"Error loading movie subtitles: {e}")
+                if DEBUG: print(f"DEBUG: Exception: {e}")
                 self.subtitles_field.setPlainText("")
                 self.subtitles_data = []
         else:
-            # Movie subtitles don't exist
             self.subtitles_data = []
             self.subtitles_field.setPlainText("No subtitle file found for this movie.")
             print(f"No existing subtitles found for: {self.current_movie_filename}")
+            if DEBUG: print(f"DEBUG: Subtitle file not found: {self.current_subtitle_path}")
 
     def on_timecode_changed(self, timecode_ms):
         """Called whenever the video timecode changes"""
-        # Convert milliseconds to HH:MM:SS format for display
         seconds = timecode_ms // 1000
         h = seconds // 3600
         m = (seconds % 3600) // 60
         s = seconds % 60
-        
         timecode_str = f"{h:02}:{m:02}:{s:02}"
-        
-        # Find and display current subtitle
         current_subtitle = self.find_current_subtitle(timecode_ms)
-        
+        if DEBUG: print(f"DEBUG: Timecode changed: {timecode_ms} ({timecode_str})")
         if current_subtitle:
-            # Display the current subtitle
             display_text = f"{current_subtitle['text']}"
             self.subtitles_field.setPlainText(display_text)
+            if DEBUG: print(f"DEBUG: Displaying subtitle: {display_text[:30]}")
         else:
-            # No subtitle at this time
             self.subtitles_field.setPlainText(f"")
+            if DEBUG: print("DEBUG: No subtitle at this time")
 
     def get_subtitles_between(self, timecode_start, timecode_end):
         """Return all subtitles text between start_ms and end_ms (inclusive)."""

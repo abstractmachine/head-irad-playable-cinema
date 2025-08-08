@@ -16,6 +16,7 @@ from PyQt5.QtWidgets import (
 from scenedetect import open_video
 from detector import ShotDetectWorker
 from shotlist_worker import ShotlistLoadWorker
+from utility import timecode_to_milliseconds
 
 JUMP_FRAME_PADDING_PLAYBACK = 0  # Number of frames to pad when jumping in playback mode
 JUMP_FRAME_PADDING_DETECTION = 5  # Number of frames to pad when jumping in detection mode
@@ -254,16 +255,8 @@ class ShotlistWindow(QMainWindow):
         for i, scene in enumerate(scene_list):
             start_tc = scene[0].get_timecode()
             end_tc = scene[1].get_timecode()
-            def tc_to_ms(tc):
-                parts = tc.split(":")
-                if len(parts) == 3:
-                    h = int(parts[0])
-                    m = int(parts[1])
-                    s = float(parts[2])
-                    return int((h * 3600 + m * 60 + s) * 1000)
-                return 0
-            start_ms = tc_to_ms(start_tc)
-            end_ms = tc_to_ms(end_tc)
+            start_ms = timecode_to_milliseconds(start_tc)
+            end_ms = timecode_to_milliseconds(end_tc)
             padded_start_ms = start_ms + start_padding
             padded_end_ms = max(end_ms - end_padding, 0)
             def ms_to_tc(ms):
@@ -750,19 +743,9 @@ class ShotlistWindow(QMainWindow):
         if not start_tc or not end_tc:
             self.abort_api.emit("Invalid shot timecodes.")
             return
-                
-        # Generate timecodes for frame extraction
-        def tc_to_ms(tc):
-            parts = tc.split(":")
-            if len(parts) == 3:
-                h = int(parts[0])
-                m = int(parts[1])
-                s = float(parts[2])
-                return int((h * 3600 + m * 60 + s) * 1000)
-            return 0
             
-        start_ms = tc_to_ms(start_tc)
-        end_ms = tc_to_ms(end_tc)
+        start_ms = timecode_to_milliseconds(start_tc)
+        end_ms = timecode_to_milliseconds(end_tc)
         total_steps = count + 2
         step_size = (end_ms - start_ms) / total_steps
         timecodes = []
@@ -899,21 +882,12 @@ class ShotlistWindow(QMainWindow):
         if row_count == 0:
             return -1
         
-        def tc_to_ms(tc):
-            parts = tc.split(":")
-            if len(parts) == 3:
-                h = int(parts[0])
-                m = int(parts[1])
-                s = float(parts[2])
-                return int((h * 3600 + m * 60 + s) * 1000)
-            return 0
-        
         # Get the start time of the first shot for comparison
         start_index = self.get_column_index_by_name("Start")
         if start_index == -1:
             return -1
         
-        first_shot_start = tc_to_ms(self.scene_table.item(0, start_index).text())
+        first_shot_start = timecode_to_milliseconds(self.scene_table.item(0, start_index).text())
         
         # If we're before the first shot, return the first shot
         if ms < first_shot_start:
@@ -927,9 +901,9 @@ class ShotlistWindow(QMainWindow):
 
             start_tc = self.scene_table.item(row, start_index).text()
             end_tc = self.scene_table.item(row, end_index).text()
-            start_ms = tc_to_ms(start_tc)
-            end_ms = tc_to_ms(end_tc)
-            
+            start_ms = timecode_to_milliseconds(start_tc)
+            end_ms = timecode_to_milliseconds(end_tc)
+
             if start_ms <= ms < end_ms:
                 return row
         
@@ -983,15 +957,6 @@ class ShotlistWindow(QMainWindow):
         if row_count == 0:
             return -1
         
-        def tc_to_ms(tc):
-            parts = tc.split(":")
-            if len(parts) == 3:
-                h = int(parts[0])
-                m = int(parts[1])
-                s = float(parts[2])
-                return int((h * 3600 + m * 60 + s) * 1000)
-            return 0
-        
         # Start with the first row as candidate
         new_row = 0
         
@@ -1003,7 +968,7 @@ class ShotlistWindow(QMainWindow):
         for row in range(row_count):
             # Get the Begin (Start) time for this row
             start_tc = self.scene_table.item(row, start_col).text()
-            start_ms = tc_to_ms(start_tc)
+            start_ms = timecode_to_milliseconds(start_tc)
             
             # If this Begin time is equal to or before our current ms
             if start_ms <= ms:

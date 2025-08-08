@@ -87,7 +87,7 @@ class AbstractPlayerWindow(QMainWindow):
     # Signals for Image Extraction
     frames_extracted = pyqtSignal(list)
     # Signals for playback
-    video_timecode_changed = pyqtSignal(int)
+    timecode_changed = pyqtSignal(int)
 
     def __init__(self, ui):
         super().__init__()
@@ -367,11 +367,12 @@ class AbstractPlayerWindow(QMainWindow):
             if DEBUG: print(f"DEBUG: {player_type} player media loaded - ready for playback")
             
         elif status == QMediaPlayer.BufferedMedia:
-            if DEBUG: print(f"DEBUG: {player_type} player media buffered")
-            
-            # Only handle buffered event for the next player when we're loading
             if is_next_player and self._media_loading:
-                if self.next_player.duration() > 0:
+                duration = self.next_player.duration()
+                if duration > 0:
+                    # Force duration update for UI
+                    if not is_next_player:
+                        self._on_duration_changed(duration, is_next_player)
                     if DEBUG: print(f"DEBUG: Next player buffered with duration - ready for switch")
                     
                     # Jump to timecode on next player if specified
@@ -517,6 +518,9 @@ class AbstractPlayerWindow(QMainWindow):
         
         # Reset timeline to prevent position issues
         if self.current_player.duration() > 0:
+            # Set the duration of the timeline slider
+            self._on_duration_changed(self.current_player.duration(), is_next_player=False)
+            # Reset timeline range
             self.timeline.setRange(0, self.current_player.duration())
             # If no timecode specified, start at beginning
             if pending_timecode is None:
@@ -552,6 +556,9 @@ class AbstractPlayerWindow(QMainWindow):
         
         # Process any pending loads
         self._process_pending_load()
+
+        # Notify that video has loaded, so subtitles can update
+        self.video_did_load.emit(self.current_video_path, self.movie_metadata)
 
     def _jump_to_timecode_direct(self, timecode):
         """Jump to timecode directly - handles both percentage and timecode strings"""
@@ -738,7 +745,7 @@ class AbstractPlayerWindow(QMainWindow):
             self.frames_extracted.emit(frames)
 
     def emit_timecode_changed(self, position):
-        self.video_timecode_changed.emit(position)
+        self.timecode_changed.emit(position)
 
     def on_slider_pressed(self):
         self._slider_is_active = True
@@ -829,6 +836,7 @@ class AbstractPlayerWindow(QMainWindow):
         # Create fresh current player
         self.current_player = self._create_fresh_player()
         self.current_player.setVideoOutput(self.video_widget)
+        self._setup_player_connections(self.current_player, is_next_player=False)  # <-- Add this line
         
         # Reset loading state and cooldown
         self._media_loading = False
