@@ -193,6 +193,51 @@ class RobotsWindow(QMainWindow):
         layout.setAlignment(chaos_layout, Qt.AlignLeft)
         layout.setAlignment(Qt.AlignTop)
 
+        # --- Third row: Shotlist buttons ---
+        shotlist_layout = QHBoxLayout()
+        shotlist_layout.setContentsMargins(0, 0, 0, 0)
+        shotlist_layout.setSpacing(2)
+
+        # Method dropdown
+        self.method_dropdown = QComboBox()
+        self.method_dropdown.addItems([
+            "detect-adaptive",
+            "detect-content",
+            "detect-hist",
+            "detect-threshold"
+        ])
+        self.method_dropdown.setFixedSize(130, ui.get_dimensions('button')[1])
+        self.method_dropdown.setFont(ui.get_font('button'))
+        shotlist_layout.addWidget(self.method_dropdown)
+
+        # Weights field
+        self.weights_field = QLineEdit("-t 3.0")
+        self.weights_field.setAlignment(Qt.AlignCenter)
+        self.weights_field.setFont(ui.get_font('tiny-condensed'))
+        self.weights_field.setFixedSize(80, ui.get_dimensions('tiny')[1])
+        shotlist_layout.addWidget(self.weights_field)
+
+        # Detect Shots button
+        self.detect_button = QPushButton("Shots")
+        self.detect_button.setFixedSize(80, ui.get_dimensions('button')[1])
+        self.detect_button.setFont(ui.get_font('button'))
+        shotlist_layout.addWidget(self.detect_button)
+
+        # Detect Scenes button
+        self.detect_scenes_button = QPushButton("Scenes")
+        self.detect_scenes_button.setFixedSize(80, ui.get_dimensions('button')[1])
+        self.detect_scenes_button.setFont(ui.get_font('button'))
+        shotlist_layout.addWidget(self.detect_scenes_button)
+
+        # Delete button
+        self.delete_button_shotlist = QPushButton("Delete")
+        self.delete_button_shotlist.setFixedSize(ui.get_dimensions('button')[0], ui.get_dimensions('button')[1])
+        self.delete_button_shotlist.setFont(ui.get_font('button'))
+        shotlist_layout.addWidget(self.delete_button_shotlist)
+
+        layout.addLayout(shotlist_layout)
+        layout.setAlignment(shotlist_layout, Qt.AlignLeft)
+
         # --- Console at the bottom ---
         self.console = QTextEdit()
         self.console.setReadOnly(True)
@@ -443,6 +488,14 @@ class RobotsWindow(QMainWindow):
 
     def on_preferences_save(self):
         self._pending_save_data = self.project_manager.get_preferences_data()
+        self._pending_save_data["weights_field"] = self.weights_field.text()
+        self._pending_save_data["method_selected"] = self.method_dropdown.currentText()
 
     def on_preferences_load(self, data):
         self.project_manager.load_preferences_data(data)
+        if "weights_field" in data:
+            self.weights_field.setText(data["weights_field"])
+        if "method_selected" in data:
+            idx = self.method_dropdown.findText(data["method_selected"])
+            if idx != -1:
+                self.method_dropdown.setCurrentIndex(idx)

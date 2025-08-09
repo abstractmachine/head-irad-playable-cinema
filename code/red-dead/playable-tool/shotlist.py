@@ -6,8 +6,8 @@ import os
 from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QBrush, QPalette
 from PyQt5.QtWidgets import (
-    QCheckBox, QComboBox, QHBoxLayout, QLineEdit, QMainWindow,
-    QPushButton, QTableWidget, QTableWidgetItem,
+    QCheckBox, QHBoxLayout, QMainWindow,
+    QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget
 )
 
@@ -73,8 +73,6 @@ class ShotlistWindow(QMainWindow):
         self._pending_save_data = {}
         self.setWindowTitle("Shotlist")
         self.setGeometry(200, 200, 600, 400)
-
-        button_width, button_height = self.ui.get_dimensions('button')
         
         # Initialize detections_folder to None - will be set when project loads
         self.detections_folder = None
@@ -121,59 +119,8 @@ class ShotlistWindow(QMainWindow):
         self.scene_table.verticalHeader().setDefaultAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.scene_table.setAlternatingRowColors(False)
 
-        self.method_dropdown = QComboBox()
-        self.method_dropdown.addItems([
-            "detect-adaptive",
-            "detect-content",
-            "detect-hist",
-            "detect-threshold"
-        ])
-        self.method_dropdown.setFixedSize(130, button_height)
-        self.method_dropdown.setToolTip("Select the detection method.\nSee documentation for details.")
-        self.method_dropdown.setCurrentIndex(0)
-        self.method_dropdown.setFont(self.ui.get_font('button'))
-        # push this button using margins
-        self.method_dropdown.setContentsMargins(0, 0, 0, 0)
-
         tiny_width, tiny_height = self.ui.get_dimensions('tiny')
 
-        self.weights_field = QLineEdit("-t 3.0")
-        self.weights_field.setAlignment(Qt.AlignCenter)
-        self.weights_field.setToolTip("Set PySceneDetect parameters.\nSee documentation for details.\nExamples:\nweights: -w 1.0 1.0 1.0 0.0\nthreshold: -t 3.2")
-        self.weights_field.setFont(self.ui.get_font('tiny-condensed'))
-        self.weights_field.setStyleSheet("QLineEdit { margin: 0px 10px 0px 15px; }")
-        self.weights_field.setFixedSize(120, tiny_height)
-
-        self.delete_button = QPushButton("Delete")
-        self.delete_button.setFixedSize(button_width, button_height)
-        self.delete_button.setFont(self.ui.get_font('button'))
-        self.delete_button.setEnabled(False)
-        self.delete_button.clicked.connect(self.delete_scene_csv)
-
-        self.detect_button = QPushButton("Detect Shots")
-        self.detect_button.setFixedSize(120, button_height)
-        self.detect_button.setFont(self.ui.get_font('button'))
-        self.detect_button.setEnabled(False)
-
-        # New Detect Scenes button
-        self.detect_scenes_button = QPushButton("Detect Scenes")
-        self.detect_scenes_button.setFixedSize(120, button_height)
-        self.detect_scenes_button.setFont(self.ui.get_font('button'))
-        self.detect_scenes_button.setEnabled(False)  # Inactive for now
-        self.detect_scenes_button.clicked.connect(self.handle_detect_scenes)
-
-        button_layout = QHBoxLayout()
-        button_layout.setContentsMargins(0, 0, 0, 0)
-        button_layout.setSpacing(0)
-        button_layout.addStretch()
-        button_layout.addWidget(self.method_dropdown)
-        button_layout.addWidget(self.weights_field)
-        button_layout.addWidget(self.detect_button)
-        button_layout.addWidget(self.detect_scenes_button)
-        button_layout.addWidget(self.delete_button)
-        button_layout.addStretch()
-        layout.addLayout(button_layout)
-        self.detect_button.clicked.connect(self.on_detect_scenes)
         self.setCentralWidget(central_widget)
 
         self.video_path = None
@@ -197,22 +144,9 @@ class ShotlistWindow(QMainWindow):
 
     def on_detect_scenes(self):
         self.shotlist_status.emit(False)
-        self.detect_button.setEnabled(False)
-        self.detecting_dots = 0
-        self.detect_button.setText("        Detecting")
-        self.detect_button.setStyleSheet(
-            "text-align: left;"
-        )
-        self.detecting_timer.start(500)
         self.scene_table.setRowCount(0)
         if not self.video_path or not os.path.exists(self.video_path):
             self.scene_table.setRowCount(1)
-            self.detect_button.setEnabled(True)
-            self.detect_button.setText("Detect Shots")
-            self.detect_button.setStyleSheet(
-                "text-align: center;"
-            )
-            self.detecting_timer.stop()
             return
         method = self.method_dropdown.currentText()
         weights_text = self.weights_field.text().strip()
@@ -238,25 +172,14 @@ class ShotlistWindow(QMainWindow):
 
     def animate_detecting(self):
         self.detecting_dots = (self.detecting_dots + 1) % 4
-        self.detect_button.setText("        Detecting" + "." * self.detecting_dots)
-        self.detect_button.setStyleSheet(
-            "text-align: left;"
-        )
 
     def on_detection_finished(self):
-        self.detect_button.setEnabled(True)
-        self.detect_button.setText("Detect Shots")
-        self.detect_button.setStyleSheet(
-            "text-align: center;"
-        )
         self.detecting_timer.stop()
 
     def on_scene_detected(self, scene_list):
         self.on_detection_finished()
         if not scene_list or (isinstance(scene_list[0], str) and scene_list[0].startswith("Error:")):
             self.scene_table.setRowCount(0)  # Clear all rows
-            self.delete_button.setEnabled(False)
-            # Notify AnnotateWindow to disable buttons
             self.shotlist_status.emit(False)
             return
         fps = 25
@@ -297,7 +220,6 @@ class ShotlistWindow(QMainWindow):
                 writer.writerow(["Ignore", "Scene", "Start", "End", "Shot_Caption", "Scene_Caption"])
                 writer.writerows(csv_rows)
             self.current_csv_path = out_path
-            self.delete_button.setEnabled(True)
             self.load_shotlist_from_csv(out_path)
             self.shotlist_status.emit(True)
 
@@ -337,12 +259,7 @@ class ShotlistWindow(QMainWindow):
     # ------- Shotlist Bot -------
 
     def start_shotlist_bot(self):
-        # Only start if Detect Shots button is enabled (not already running)
-        if self.detect_button.isEnabled():
-            self.detect_button.click()
-        else:
-            # Already running, do nothing
-            pass
+        pass
 
     # ------- Load/Save Preferences -------
 
@@ -355,9 +272,7 @@ class ShotlistWindow(QMainWindow):
             "col2_width": self.scene_table.columnWidth(2),
             "col3_width": self.scene_table.columnWidth(3),
             "col4_width": self.scene_table.columnWidth(4),
-            "col5_width": self.scene_table.columnWidth(5),
-            "weights_field": self.weights_field.text(),
-            "method_selected": self.method_dropdown.currentText()
+            "col5_width": self.scene_table.columnWidth(5)
         }
 
     def on_preferences_load(self, data):
@@ -373,12 +288,6 @@ class ShotlistWindow(QMainWindow):
             self.scene_table.setColumnWidth(4, data["col4_width"])
         if "col5_width" in data:
             self.scene_table.setColumnWidth(5, data["col5_width"])
-        if "weights_field" in data:
-            self.weights_field.setText(data["weights_field"])
-        if "method_selected" in data:
-            idx = self.method_dropdown.findText(data["method_selected"])
-            if idx != -1:
-                self.method_dropdown.setCurrentIndex(idx)
 
     # ------- Video Processing -------
 
@@ -386,8 +295,6 @@ class ShotlistWindow(QMainWindow):
         if DEBUG: print("DEBUG: Shotlist is loading video...")
         self.scene_table.setRowCount(0)
         self.current_csv_path = None
-        self.delete_button.setEnabled(False)
-        self.detect_button.setEnabled(False)
 
     def on_movie_loaded(self, video_path, metadata):
         # Prevent table creation or access if shotlist DB is not loaded
@@ -413,18 +320,13 @@ class ShotlistWindow(QMainWindow):
                     scene_caption = row.get("Scene_Caption", "")
                     self.add_scene_row(scene_num, start, end, shot_caption, scene_caption, ignore)
                 self.current_csv_path = os.path.join(self.detections_folder, f"{name}.csv")
-                self.delete_button.setEnabled(True)
             else:
                 self.scene_table.setRowCount(0)
                 self.current_csv_path = None
-                self.delete_button.setEnabled(False)
-                self.detect_button.setEnabled(True)
         else:
             self.video_path = None
             self.scene_table.setRowCount(0)
             self.current_csv_path = None
-            self.delete_button.setEnabled(False)
-            self.detect_button.setEnabled(False)
             self.current_row = -1
             self.last_current_row = -1
             self.current_time_ms = 0
@@ -443,13 +345,11 @@ class ShotlistWindow(QMainWindow):
             shot_caption = row.get("Shot_Caption", "")
             scene_caption = row.get("Scene_Caption", "")
             self.add_scene_row(scene_num, start, end, shot_caption, scene_caption, ignore)
-        self.delete_button.setEnabled(True)
         self.shotlist_status.emit(True)
         self.send_row_data()
 
     def on_shotlist_load_error(self, error_msg):
         self.scene_table.setRowCount(0)
-        self.delete_button.setEnabled(False)
         self.shotlist_status.emit(False)
         # Optionally, show error to user
         if DEBUG:
@@ -467,8 +367,6 @@ class ShotlistWindow(QMainWindow):
                 os.remove(txt_path)
         self.scene_table.setRowCount(0)
         self.current_csv_path = None
-        self.delete_button.setEnabled(False)
-        # Notify AnnotateWindow to disable buttons
         self.shotlist_status.emit(False)
 
     def clear_table_selection(self):
@@ -996,7 +894,8 @@ class ShotlistWindow(QMainWindow):
         return new_row
     
     def handle_detect_scenes(self):
-        print("Detect Scenes button pressed (dummy method).")
+        """Handle the Detect Scenes button press."""
+        pass
 
     def on_project_folder_loaded(self, project_folder):
         """Set the project folder and update detections folder, preload all shotlists (threaded)."""

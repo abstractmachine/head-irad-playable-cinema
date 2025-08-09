@@ -10,20 +10,20 @@
   },
   "playbill": {},
   "nickelodeon": {
-    "visible_ui": false
+    "visible_ui": true
   },
   "shotlist": {
-    "col0_width": 41,
-    "col1_width": 43,
-    "col2_width": 98,
-    "col3_width": 100,
-    "col4_width": 108,
-    "col5_width": 126,
-    "weights_field": "-t 3.0",
-    "method_selected": "detect-adaptive"
+    "col0_width": 36,
+    "col1_width": 34,
+    "col2_width": 95,
+    "col3_width": 94,
+    "col4_width": 77,
+    "col5_width": 79
   },
   "cinematheque": {},
   "robots": {
-    "project_folder": "/Volumes/PLAYABLE-D/project"
+    "project_folder": "/Volumes/PLAYABLE-D/project",
+    "weights_field": "-t 3.0 ",
+    "method_selected": "detect-adaptive"
   }
 }
