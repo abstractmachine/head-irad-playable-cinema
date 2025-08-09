@@ -1,7 +1,5 @@
 {
-  "inference": {
-    "caption_model": "Caption Model v0.1"
-  },
+  "inference": {},
   "captions": {
     "frame_count": "5"
   },

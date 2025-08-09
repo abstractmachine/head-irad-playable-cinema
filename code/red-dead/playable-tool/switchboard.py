@@ -123,6 +123,11 @@ class Switchboard(QObject):
         # ---- CHAOS EVENT CONNECTIONS ----
         self.windows["robots"].chaos.connect(self.on_chaos_event)
 
+        # --- Inference Buttons from Robots ---
+        self.windows["robots"].caption_model_requested.connect(self.windows["inference"].select_caption_model)
+        self.windows["robots"].search_model_requested.connect(self.windows["inference"].select_search_model)
+        self.windows["robots"].inference_off_requested.connect(self.windows["inference"].turn_off_inference)
+
         if DEBUG: print("DEBUG: Switchboard finished setting up connections")
 
     # ---- PROJECT LIFECYCLE HANDLERS ----

@@ -72,7 +72,12 @@ class RobotsWindow(QMainWindow):
 
     # Gremlins
     chaos = pyqtSignal()
-    
+
+    # Inference buttons
+    caption_model_requested = pyqtSignal()
+    search_model_requested = pyqtSignal()
+    inference_off_requested = pyqtSignal()
+
     def __init__(self, ui):
         super().__init__()
         self.ui = ui
@@ -164,6 +169,25 @@ class RobotsWindow(QMainWindow):
         self.interval_field.textChanged.connect(self.on_interval_changed)
         self.interval_field.setToolTip("Chaos interval in seconds")
         chaos_layout.addWidget(self.interval_field)
+
+        # --- Inference Buttons ---
+        self.caption_model_button = QPushButton("BLIP")
+        self.caption_model_button.setFixedSize(80, button_height)
+        self.caption_model_button.setFont(self.ui.get_font('button'))
+        self.caption_model_button.clicked.connect(self.caption_model_requested.emit)
+        chaos_layout.addWidget(self.caption_model_button)
+
+        self.search_model_button = QPushButton("FAISS")
+        self.search_model_button.setFixedSize(80, button_height)
+        self.search_model_button.setFont(self.ui.get_font('button'))
+        self.search_model_button.clicked.connect(self.search_model_requested.emit)
+        chaos_layout.addWidget(self.search_model_button)
+
+        self.off_button = QPushButton("Off")
+        self.off_button.setFixedSize(80, button_height)
+        self.off_button.setFont(self.ui.get_font('button'))
+        self.off_button.clicked.connect(self.inference_off_requested.emit)
+        chaos_layout.addWidget(self.off_button)
 
         layout.addLayout(chaos_layout)
         layout.setAlignment(chaos_layout, Qt.AlignLeft)

@@ -53,53 +53,25 @@ class InferenceWindow(QWidget):
         top_layout.addLayout(left_col, stretch=1)
         top_layout.addLayout(right_col, stretch=1)
 
-        # --- Button area: Vertical on the right ---
-        button_layout = QVBoxLayout()
-        button_layout.setSpacing(2)
-        button_layout.setContentsMargins(0, 0, 0, 0)
-        button_layout.setAlignment(Qt.AlignTop)
-        button_width, button_height = self.ui.get_dimensions('button')
-
-        self.caption_model_button = QPushButton("Caption")
-        self.caption_model_button.clicked.connect(self.select_caption_model)
-        self.caption_model_button.setFixedSize(80, button_height)
-        self.caption_model_button.setFont(self.ui.get_font('button'))
-        button_layout.addWidget(self.caption_model_button)
-
-        self.off_button = QPushButton("Off")
-        self.off_button.clicked.connect(self.turn_off_inference)
-        self.off_button.setFixedSize(80, button_height)
-        self.off_button.setFont(self.ui.get_font('button'))
-        button_layout.addWidget(self.off_button)
-
-        self.search_model_button = QPushButton("Search")
-        self.search_model_button.clicked.connect(self.select_search_model)
-        self.search_model_button.setFixedSize(80, button_height)
-        self.search_model_button.setFont(self.ui.get_font('button'))
-        button_layout.addWidget(self.search_model_button)
-
-        # Assemble main layout: text fields (stretch=2), then vertical buttons (stretch=0)
-        main_layout.addLayout(top_layout, stretch=2)
-        main_layout.addLayout(button_layout, stretch=0)
+        # Only add the text fields, no buttons
+        main_layout.addLayout(top_layout, stretch=1)
 
         self.setLayout(main_layout)
 
+    # Remove button methods, but keep these for switchboard:
     def turn_off_inference(self):
-        """Handle Off button click"""
         self.gameplay_inference.setPlainText("")
         self.matched_caption.setPlainText("")
         if DEBUG: print("Inference: Turned off")
 
     def select_caption_model(self):
-        """Handle Inference Model button click"""
-        self.caption_model = "Caption Model v0.1"
-        self.gameplay_inference.setPlainText("Caption Model loaded: " + self.caption_model)
+        self.caption_model = "BLIP not yet implemented"
+        self.gameplay_inference.setPlainText("Captioning model: " + self.caption_model)
         if DEBUG: print(f"Caption: Model selected - {self.caption_model}")
 
     def select_search_model(self):
-        """Handle Search Model button click"""
-        self.search_model = "Search Model v0.1"
-        self.matched_caption.setPlainText("Search model loaded: " + self.search_model)
+        self.search_model = "FAISS not yet implemented"
+        self.matched_caption.setPlainText("Search model: " + self.search_model)
         if DEBUG: print(f"Inference: Search model selected - {self.search_model}")
 
     def on_project_folder_loaded(self, project_folder):
@@ -156,7 +128,6 @@ class InferenceWindow(QWidget):
     def on_preferences_save(self):
         """Save window preferences"""
         self._pending_save_data = {
-            "caption_model": self.caption_model
         }
         return self._pending_save_data
 
@@ -164,6 +135,7 @@ class InferenceWindow(QWidget):
         """Load window preferences"""
         if data:
             # Load saved model
-            saved_model = data.get("caption_model", "")
-            self.caption_model = saved_model
-            self.gameplay_inference.setPlainText(self.caption_model)
+            pass
+            # saved_model = data.get("caption_model", "")
+            # self.caption_model = saved_model
+            # self.gameplay_inference.setPlainText(self.caption_model)
