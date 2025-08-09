@@ -127,60 +127,66 @@ def load_preferences(windows, main_window):
 # WINDOW LAYOUT PERSISTENCE
 # ================================================================
 
-def save_window_geometry(main_window, filename="previous.geometry"):
+def save_window_geometry(main_window, filename=""):
     """Save main window size and position to binary file"""
     if DEBUG: print("DEBUG: save_window_geometry called")
+    
+    if filename is None or filename == "":
+        if not os.path.exists(DOCK_LAYOUT_FOLDER):
+            os.makedirs(DOCK_LAYOUT_FOLDER)
+        filename = os.path.join(DOCK_LAYOUT_FOLDER, "previous.geometry")
+
     if DEBUG: report_window_and_dock_geometry(main_window, label="BEFORE SAVE")
     
-    if not os.path.exists(DOCK_LAYOUT_FOLDER):
-        os.makedirs(DOCK_LAYOUT_FOLDER)
-    
-    geometry_file = os.path.join(DOCK_LAYOUT_FOLDER, filename)
     geometry = main_window.saveGeometry()
-    with open(geometry_file, "wb") as f:
+    with open(filename, "wb") as f:
         f.write(geometry.data())
-    
-    if DEBUG: print(f"DEBUG: Window geometry saved to {geometry_file}")
+
+    if DEBUG: print(f"DEBUG: Window geometry saved to {filename}")
     if DEBUG: report_window_and_dock_geometry(main_window, label="AFTER SAVE")
 
-def save_dock_layout(main_window, filename="previous.layout"):
+def save_dock_layout(main_window, filename=""):
     """Save dock arrangement and visibility to binary file"""
     if DEBUG: print("DEBUG: save_dock_layout called")
+
+    if filename is None or filename == "":
+        if not os.path.exists(DOCK_LAYOUT_FOLDER):
+            os.makedirs(DOCK_LAYOUT_FOLDER)
+        filename = os.path.join(DOCK_LAYOUT_FOLDER, "previous.layout")
+
     if DEBUG: report_window_and_dock_geometry(main_window, label="BEFORE SAVE")
-    
-    if not os.path.exists(DOCK_LAYOUT_FOLDER):
-        os.makedirs(DOCK_LAYOUT_FOLDER)
-    
-    dock_layout_file = os.path.join(DOCK_LAYOUT_FOLDER, filename)
-    if os.path.exists(dock_layout_file):
-        if DEBUG: print(f"DEBUG: Removing old layout file: {dock_layout_file}")
-        os.remove(dock_layout_file)
-    
+
+    if os.path.exists(filename):
+        if DEBUG: print(f"DEBUG: Removing old layout file: {filename}")
+        os.remove(filename)
+
     state = main_window.saveState()
-    with open(dock_layout_file, "wb") as f:
+    with open(filename, "wb") as f:
         f.write(state.data())
-    
-    if DEBUG: print(f"DEBUG: Dock layout saved to {dock_layout_file}")
+
+    if DEBUG: print(f"DEBUG: Dock layout saved to {filename}")
     if DEBUG: report_window_and_dock_geometry(main_window, label="AFTER SAVE")
 
-def load_window_geometry(main_window, filename="previous.geometry"):
+def load_window_geometry(main_window, filename=""):
     """Restore main window size and position from binary file"""
-    geometry_file = os.path.join(DOCK_LAYOUT_FOLDER, filename)
-    if os.path.exists(geometry_file):
-        if DEBUG: print(f"DEBUG: Loading window geometry from {geometry_file}")
-        with open(geometry_file, "rb") as f:
+    if filename is None or filename == "":
+        filename = os.path.join(DOCK_LAYOUT_FOLDER, "previous.geometry")
+    if os.path.exists(filename):
+        if DEBUG: print(f"DEBUG: Loading window geometry from {filename}")
+        with open(filename, "rb") as f:
             geometry = f.read()
             ok = main_window.restoreGeometry(geometry)
             if DEBUG: print(f"DEBUG: restoreGeometry returned {ok}")
     else:
         if DEBUG: print("DEBUG: No window geometry file found to load.")
 
-def load_dock_layout(main_window, filename="previous.layout"):
+def load_dock_layout(main_window, filename=""):
     """Restore dock arrangement and visibility from binary file"""
-    dock_layout_file = os.path.join(DOCK_LAYOUT_FOLDER, filename)
-    if os.path.exists(dock_layout_file):
-        size = os.path.getsize(dock_layout_file)
-        with open(dock_layout_file, "rb") as f:
+    if filename is None or filename == "":
+        filename = os.path.join(DOCK_LAYOUT_FOLDER, "previous.layout")
+    if os.path.exists(filename):
+        size = os.path.getsize(filename)
+        with open(filename, "rb") as f:
             state = f.read()
             h = hashlib.sha256(state).hexdigest()
             if DEBUG: print(f"DEBUG: Layout file size: {size}, sha256: {h}")
@@ -189,7 +195,7 @@ def load_dock_layout(main_window, filename="previous.layout"):
             check_all_docks_hidden(main_window)
             if not ok:
                 print("WARNING: Failed to restore dock layout. Removing layout file.")
-                os.remove(dock_layout_file)
+                os.remove(filename)
     else:
         if DEBUG: print("DEBUG: No dock layout file found to load.")
 

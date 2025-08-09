@@ -2,8 +2,8 @@ DEBUG = False  # Set to True to enable debug output
 
 # Qt stuff
 from PyQt5.QtCore import QObject, pyqtSignal, Qt
-from PyQt5.QtWidgets import QMessageBox
 from PyQt5.QtGui import QPixmap
+from PyQt5.QtWidgets import QFileDialog, QMessageBox
 
 # Python stuff
 import os
@@ -11,14 +11,16 @@ import os
 class ProjectManager(QObject):
     """Core project management logic (non-UI)"""
     
-    # Signals
-    project_loaded = pyqtSignal(str)  # Emitted when project folder is set/loaded
-    project_changed = pyqtSignal(str)  # Emitted when project folder changes
-    
     def __init__(self, parent=None):
         super().__init__(parent)
         self.project_folder = None
         self.parent_widget = parent  # For showing message boxes
+
+    def select_project_folder(self):
+        """Open folder dialog and set project folder"""
+        folder = QFileDialog.getExistingDirectory(self.parent_widget, "Select Project Folder")
+        if folder:
+            self.set_project_folder(folder)
     
     def set_project_folder(self, folder):
         """Set the project folder and validate its structure"""
@@ -30,7 +32,7 @@ class ProjectManager(QObject):
             if DEBUG: 
                 print(f"DEBUG: ProjectManager: Project folder already set to this folder, skipping reload")
             # Only emit project_loaded, not project_changed
-            self.project_loaded.emit(folder)
+            self.parent_widget.project_folder_was_set.emit(folder)
             return True
         
         # Validate and setup project structure
@@ -40,9 +42,9 @@ class ProjectManager(QObject):
             
             # Emit signals only if folder changed
             if old_folder != folder:
-                self.project_changed.emit(folder)
-            self.project_loaded.emit(folder)
-            
+                self.parent_widget.project_folder_was_changed.emit(folder)
+            self.parent_widget.project_folder_was_set.emit(folder)
+
             return True
         return False
     
@@ -140,6 +142,7 @@ class ProjectManager(QObject):
         return [
             "datasets", 
             "gameplay", 
+            "layouts",
             "metadata", 
             "movies", 
             "posters", 
@@ -237,4 +240,4 @@ class ProjectManager(QObject):
             else:
                 # Project folder no longer exists, reset
                 self.project_folder = None
-                self.project_changed.emit("")
+                self.parent_widget.project_folder_was_changed.emit("")

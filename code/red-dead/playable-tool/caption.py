@@ -132,7 +132,6 @@ class CaptionWindow(QWidget):
     request_current_shot = pyqtSignal(int)
     request_next_shot = pyqtSignal()
     request_previous_shot = pyqtSignal()
-    shot_bot_finished = pyqtSignal()
 
     def __init__(self, ui, subtitles_window):
         super().__init__()
@@ -194,12 +193,6 @@ class CaptionWindow(QWidget):
         
         frame_count_row.addWidget(self.api_button)
 
-        self.bot_button = QPushButton("Caption Bot Off")
-        self.bot_button.setEnabled(False)
-        self.bot_button.setFont(self.ui.get_font('button'))
-        self.bot_button.setFixedSize(120, button_height)
-        button_layout.addWidget(self.bot_button)
-
         self.frame_count_field = QLineEdit("5")
         self.frame_count_field.setFont(self.ui.get_font('tiny'))
         self.frame_count_field.setFixedSize(24, 24)
@@ -226,22 +219,11 @@ class CaptionWindow(QWidget):
 
         self.current_timecodes = []
 
-        # Bot functionality
-        self.bot_active = False
-        self.bot_anim_timer = QTimer(self)
-        self.bot_anim_timer.timeout.connect(self.animate_bot_button)
-        self.bot_anim_dots = 0
-
-        self.bot_button.clicked.connect(self.toggle_bot)
-
         self.is_last_row = False
         self.is_first_row = True  # Add this line
         self.api_running = False
         self.project_folder = None
         self.current_movie_filename = None
-
-        # New attribute to control auto-start behavior
-        self.auto_start_bot = False
 
     def keyPressEvent(self, event):
         # Only handle hotkeys, not ENTER
@@ -267,16 +249,9 @@ class CaptionWindow(QWidget):
                 self.frame_count_field.setText(data["frame_count"])
 
     def set_shotlist_status(self, loaded):
-        if DEBUG: print(f"DEBUG: set_shotlist_status called, loaded={loaded}, auto_start_bot={self.auto_start_bot}, bot_active={self.bot_active}")
         self.shotlist_loaded = loaded
         self.api_button.setEnabled(loaded)
         self.annotate_button.setEnabled(loaded)
-        self.bot_button.setEnabled(loaded)
-        if loaded and self.auto_start_bot and self.bot_active:
-            if DEBUG: print("DEBUG: Auto-starting bot after shotlist loaded")
-            self.auto_start_bot = False
-            self.jump_to_first_available_shot()  # <-- Ensure valid shot selection
-            QTimer.singleShot(100, self.start_bot_loop)  # Start bot after jump
 
     def submit_caption(self):
         if DEBUG: print("DEBUG: submit_caption called")
@@ -288,7 +263,7 @@ class CaptionWindow(QWidget):
         # A Placeholder for future functionality
         if DEBUG: print("DEBUG: ProjectWindow: clear_project called (no action needed)")
 
-    def project_folder_was_set(self, project_folder):
+    def on_project_folder_loaded(self, project_folder):
         """Set the project folder when cinema window loads a project"""
         self.project_folder = project_folder
         self.caption_field.clear()  # Clear the text field when project_folder is set
@@ -335,7 +310,6 @@ class CaptionWindow(QWidget):
         self.api_running = True
         self.caption_field.clear()
         self.api_button.setText("")
-        # Do NOT disable self.bot_button here!
         for btn in [self.annotate_button, self.api_button]:
             btn.setEnabled(False)
 
@@ -372,20 +346,6 @@ class CaptionWindow(QWidget):
         for btn in [self.annotate_button, self.api_button]:
             btn.setEnabled(True)
         self.caption_field.setPlainText(result)
-        if DEBUG: print("DEBUG: About to call handle_bot_after_api_result")
-        self.handle_bot_after_api_result()
-
-    def handle_bot_after_api_result(self):
-        if DEBUG: print(f"DEBUG: handle_bot_after_api_result called - bot_active={self.bot_active}")
-        if self.bot_active:
-            self.annotate_button.click()
-            if not self.is_last_row:
-                # TODO: Implement logic to move to next shot
-                print("DEBUG: Bot needs to move to next shot")
-            else:
-                if DEBUG: print("DEBUG: Bot reached last row, moving to next movie")
-                self.auto_start_bot = True  # <-- Add this line
-                self.handle_bot_finished()
 
     def handle_api_abort(self, message):
         self.api_running = False
@@ -408,63 +368,11 @@ class CaptionWindow(QWidget):
         # Show error message in caption field
         self.caption_field.setPlainText(f"API aborted: {message}")
 
-    def handle_bot_finished(self):
-        if DEBUG: print("DEBUG: handle_bot_finished called")
-        self.shot_bot_finished.emit()
-
     def set_shot_caption_field(self, caption):
         self.caption_field.setPlainText(caption)
 
-    def enable_auto_start_bot(self):
-        if DEBUG: print(f"DEBUG: enable_auto_start_bot called, bot_active={self.bot_active}")
-        self.auto_start_bot = True
-
-    def toggle_bot(self):
-        if DEBUG: print(f"DEBUG: toggle_bot called, bot_active={self.bot_active}")
-        if not self.bot_active:
-            if DEBUG: print("DEBUG: Starting bot")
-            self.bot_active = True
-            self.bot_button.setText("    Caption Bot On")
-            self.bot_button.setStyleSheet("text-align: left;")
-            self.bot_anim_timer.start(500)
-            self.start_bot_loop()
-        else:
-            if DEBUG: print("DEBUG: Stopping bot")
-            self.stop_bot()
-
-    def stop_bot(self):
-        if DEBUG: print("DEBUG: stop_bot called")
-        self.bot_active = False
-        self.bot_anim_timer.stop()
-        self.bot_button.setText("Caption Bot Off")
-        self.bot_button.setStyleSheet("text-align: center;")
-
-    def start_bot_loop(self):
-        if not self.shotlist_loaded:
-            if DEBUG: print("DEBUG: Bot waiting for shotlist to load")
-            self.auto_start_bot = True
-            return
-        if DEBUG: print(f"DEBUG: start_bot_loop called - bot_active={self.bot_active}, api_running={self.api_running}")
-        if not self.bot_active or self.api_running:
-            if DEBUG: print("DEBUG: Bot loop aborted - bot not active or API running")
-            return
-        # Step 2: Press API button
-        if DEBUG: print("DEBUG: Bot clicking API button")
-        self.api_button.click()
-
-    def animate_bot_button(self):
-        self.bot_anim_dots = (self.bot_anim_dots + 1) % 4
-        self.bot_button.setText("    Caption Bot On" + "." * self.bot_anim_dots)
-        self.bot_button.setStyleSheet("text-align: left;")
-
     def handle_is_last_available_shot(self, is_last):
-        if DEBUG: print(f"DEBUG: handle_is_last_available_shot called - is_last={is_last}, bot_active={self.bot_active}, api_running={self.api_running}")
         self.is_last_row = is_last
-
-        # Bot loop logic
-        if self.bot_active and not self.api_running:
-            if DEBUG: print("DEBUG: Bot continuing loop via handle_is_last_available_shot")
-            QTimer.singleShot(100, self.start_bot_loop)
 
     def handle_is_first_available_shot(self, is_first):
         """Handle whether this is the first available shot"""

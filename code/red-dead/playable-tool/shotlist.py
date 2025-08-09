@@ -991,7 +991,7 @@ class ShotlistWindow(QMainWindow):
     def handle_detect_scenes(self):
         print("Detect Scenes button pressed (dummy method).")
 
-    def project_folder_was_set(self, project_folder):
+    def on_project_folder_loaded(self, project_folder):
         """Set the project folder and update detections folder, preload all shotlists (threaded)."""
         self.project_folder = project_folder
         self.detections_folder = os.path.join(project_folder, "shotlists")

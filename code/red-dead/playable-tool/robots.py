@@ -1,13 +1,16 @@
-DEBUG = False  # Set to True to enable debug output
+DEBUG = True  # Set to True to enable debug output
 ERROR = True  # Set to True to enable error output
 
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QLineEdit, QPushButton, QLabel, QFileDialog
+    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QLineEdit, QPushButton, QTextEdit, QComboBox
 )
+from PyQt5.QtGui import QTextCursor
+import random
+import os
 
 from utility import minimum_load_interval, HIGHLIGHT_BACKGROUND_COLOR, HIGHLIGHT_COLOR
-from project import ProjectManager  # <-- Import ProjectManager
+from project import ProjectManager
 
 class RobotsWindow(QMainWindow):
     """
@@ -18,7 +21,13 @@ class RobotsWindow(QMainWindow):
     # Signals
     preferences_save = pyqtSignal()
     preferences_load = pyqtSignal(dict)
-    chaos = pyqtSignal()  # The chaos event signal
+
+    # Project
+    project_folder_was_set = pyqtSignal(str)
+    project_folder_was_changed = pyqtSignal(str)  # Emitted when project folder changes
+
+    # Gremlins
+    chaos = pyqtSignal()
     
     def __init__(self, ui):
         super().__init__()
@@ -31,8 +40,6 @@ class RobotsWindow(QMainWindow):
 
         # Project management
         self.project_manager = ProjectManager(parent=self)
-        self.project_manager.project_loaded.connect(self.on_project_loaded)
-        self.project_manager.project_changed.connect(self.on_project_changed)
 
         # State
         self.is_running = False
@@ -41,6 +48,10 @@ class RobotsWindow(QMainWindow):
         # Timer for chaos events
         self.chaos_timer = QTimer()
         self.chaos_timer.timeout.connect(self.emit_chaos)
+
+        # Layout variable
+        self.layout_index = -1
+        self.saved_layouts = []
         
         self.setup_ui(ui)
         
@@ -53,24 +64,51 @@ class RobotsWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
 
-        # --- Top-left buttons layout ---
         button_width, button_height = ui.get_dimensions("button")
+
+        # --- Top row: Project Folder button, Layouts dropdown, Save/Delete buttons ---
         top_buttons_layout = QHBoxLayout()
         top_buttons_layout.setContentsMargins(0, 0, 0, 0)
         top_buttons_layout.setSpacing(2)
 
         self.select_button = QPushButton("Project Folder")
         self.select_button.setFont(self.ui.get_font('button'))
-        self.select_button.clicked.connect(self.select_project_folder)
+        self.select_button.clicked.connect(self.project_manager.select_project_folder)
         self.select_button.setFixedSize(120, button_height)
         top_buttons_layout.addWidget(self.select_button)
+
+        self.layouts_dropdown = QComboBox()
+        self.layouts_dropdown.setFixedHeight(button_height)
+        self.layouts_dropdown.setMinimumWidth(120)
+        self.layouts_dropdown.setCurrentIndex(-1)
+        self.layouts_dropdown.currentIndexChanged.connect(self.layout_selected)
+        top_buttons_layout.addWidget(self.layouts_dropdown)
+
+        self.save_button = QPushButton("Save")
+        self.save_button.setFixedSize(60, button_height)
+        self.save_button.setStyleSheet("padding: 0px 5px 0px 5px;")
+        self.save_button.setEnabled(False)
+        top_buttons_layout.addWidget(self.save_button)
+
+        self.delete_button = QPushButton("Delete")
+        self.delete_button.setFixedSize(60, button_height)
+        self.delete_button.setStyleSheet("padding: 0px 5px 0px 5px;")
+        self.delete_button.setEnabled(False)
+        top_buttons_layout.addWidget(self.delete_button)
+
+        layout.addLayout(top_buttons_layout)
+        layout.setAlignment(top_buttons_layout, Qt.AlignLeft)
+
+        # --- Second row: Gremlins button and interval field ---
+        chaos_layout = QHBoxLayout()
+        chaos_layout.setContentsMargins(0, 0, 0, 0)
+        chaos_layout.setSpacing(2)
 
         self.toggle_button = QPushButton("Gremlins")
         self.toggle_button.setFixedSize(button_width, button_height)
         self.toggle_button.clicked.connect(self.toggle_chaos)
-        # set padding with stylesheet
         self.toggle_button.setStyleSheet("padding: 0px 5px 0px 5px;")
-        top_buttons_layout.addWidget(self.toggle_button)
+        chaos_layout.addWidget(self.toggle_button)
 
         self.interval_field = QLineEdit()
         self.interval_field.setText(str(self.interval_seconds))
@@ -79,63 +117,87 @@ class RobotsWindow(QMainWindow):
         self.interval_field.setAlignment(Qt.AlignCenter)
         self.interval_field.textChanged.connect(self.on_interval_changed)
         self.interval_field.setToolTip("Chaos interval in seconds")
-        top_buttons_layout.addWidget(self.interval_field)
+        chaos_layout.addWidget(self.interval_field)
 
-        layout.addLayout(top_buttons_layout)
-        layout.setAlignment(top_buttons_layout, Qt.AlignLeft)
-        layout.setAlignment(Qt.AlignTop)  # Align the QVBoxLayout to the top
+        layout.addLayout(chaos_layout)
+        layout.setAlignment(chaos_layout, Qt.AlignLeft)
+        layout.setAlignment(Qt.AlignTop)
+
+        # --- Console at the bottom ---
+        self.console = QTextEdit()
+        self.console.setReadOnly(True)
+        self.console.setMinimumHeight(60)
+        font = ui.get_font('console')
+        self.console.setStyleSheet(f"font-family: {font.family()}; font-size: {font.pointSize()}px;")
+        layout.addWidget(self.console)
+
         central_widget.setLayout(layout)
 
     # --------- PROJECT MANAGEMENT ---------
 
-    def set_project_folder(self, folder):
-        """Set the project folder via ProjectManager"""
-        return self.project_manager.set_project_folder(folder)
-
-    def select_project_folder(self):
-        """Open folder dialog and set project folder"""
-        folder = QFileDialog.getExistingDirectory(self, "Select Project Folder")
-        if folder:
-            self.project_manager.set_project_folder(folder)
-
-    def project_folder_was_set(self, folder):
+    def on_project_folder_loaded(self, folder):
         """Project folder was set (no label to update)"""
         if DEBUG: print(f"DEBUG: Project folder was set: {folder}")
+        message = f"Project folder set: {folder}" if folder else "No project folder selected"
+        self.console_write(message)
+        self.get_layouts()  # Populate layouts dropdown when project folder is loaded
 
-    def on_project_loaded(self, project_folder):
-        """Project loaded (no label to update)"""
-        if DEBUG: print(f"DEBUG: Project loaded: {project_folder}")
+    # --------- LAYOUT MANAGEMENT ---------
 
-    def on_project_changed(self, project_folder):
-        """Project changed (no label to update)"""
-        if not project_folder:
-            if ERROR: print("ERROR: No project folder selected")
+    def get_layouts(self):
+        """Populate the layouts dropdown with .layout files from the project's layouts folder, ignoring dotfiles and stripping extension"""
+        self.saved_layouts = []
+        project_folder = self.project_manager.get_project_folder()
+        if project_folder:
+            layouts_folder = os.path.join(project_folder, "layouts")
+            if os.path.isdir(layouts_folder):
+                for fname in os.listdir(layouts_folder):
+                    if fname.startswith('.'):
+                        continue
+                    if fname.endswith(".layout"):
+                        layout_name = fname[:-7]  # Remove '.layout'
+                        self.saved_layouts.append(layout_name)
+        self.layouts_dropdown.blockSignals(True)
+        self.layouts_dropdown.clear()
+        self.layouts_dropdown.addItem("Default")
+        for layout_name in self.saved_layouts:
+            self.layouts_dropdown.addItem(layout_name)
+        self.layouts_dropdown.setCurrentIndex(-1)
+        self.layouts_dropdown.blockSignals(False)
 
-    @property
-    def project_loaded(self):
-        return self.project_manager.project_loaded
+    def layout_selected(self, index):
+        """Handle layout selection changes"""
+        if index < 0:
+            return  # Ignore signal when nothing is selected
+        layout_name = self.layouts_dropdown.itemText(index)
+        if DEBUG: print(f"DEBUG: Layout selected: {layout_name}")
+        # self.project_manager.set_current_layout(layout_name)
 
-    @property
-    def project_changed(self):
-        return self.project_manager.project_changed
+    # @property
+    # def project_loaded(self):
+    #     return self.project_manager.project_loaded
 
-    def get_project_folder(self):
-        return self.project_manager.get_project_folder()
+    # @property
+    # def project_changed(self):
+    #     return self.project_manager.project_changed
 
-    def get_folder_path(self, folder_name):
-        return self.project_manager.get_folder_path(folder_name)
+    # def get_project_folder(self):
+    #     return self.project_manager.get_project_folder()
 
-    def get_file_path(self, file_path):
-        return self.project_manager.get_file_path(file_path)
+    # def get_folder_path(self, folder_name):
+    #     return self.project_manager.get_folder_path(folder_name)
 
-    def folder_exists(self, folder_name):
-        return self.project_manager.folder_exists(folder_name)
+    # def get_file_path(self, file_path):
+    #     return self.project_manager.get_file_path(file_path)
 
-    def file_exists(self, file_path):
-        return self.project_manager.file_exists(file_path)
+    # def folder_exists(self, folder_name):
+    #     return self.project_manager.folder_exists(folder_name)
 
-    def get_required_files(self):
-        return self.project_manager.get_required_files()
+    # def file_exists(self, file_path):
+    #     return self.project_manager.file_exists(file_path)
+
+    # def get_required_files(self):
+    #     return self.project_manager.get_required_files()
     
     # ------ GREMLINS ---------
 
@@ -231,7 +293,19 @@ class RobotsWindow(QMainWindow):
         if DEBUG:
             print("DEBUG: RobotsWindow received metadata_rebuilding_stopped")
 
-    # ---- Save/Load Preferences ----
+    # -------------- CONSOLE ---------------
+
+    def console_write(self, text):
+        """Write text to the console, managing history size"""
+        current_text = self.console.toPlainText()
+        lines = current_text.split('\n') if current_text else []
+        lines.append(str(text))
+        if len(lines) > 1000:
+            lines = ['{…}'] + lines[-900:]
+        self.console.setPlainText('\n'.join(lines))
+        self.console.moveCursor(QTextCursor.End)
+
+    # ------------ PREFERENCES -------------
 
     def on_preferences_save(self):
         self._pending_save_data = self.project_manager.get_preferences_data()

@@ -24,6 +24,7 @@ class UI:
             'italic':   ('Hanken Grotesk', 14, QFont.Normal, True),
             'black':    ('Roboto Serif', 16, QFont.Black, False),
             'prompt':   ('Roboto Mono', 12, QFont.Normal, False),
+            'console':  ('Roboto Mono', 11, QFont.Normal, False),
             'monospace':('Roboto Mono', 14, QFont.Normal, False),
             'title':    ('Roboto Slab', 11, QFont.Black, False),
             'year':     ('Roboto Slab', 11, QFont.Normal, False),

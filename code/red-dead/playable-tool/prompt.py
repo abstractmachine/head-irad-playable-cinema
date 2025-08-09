@@ -288,7 +288,7 @@ class PromptWindow(QMainWindow):
             # do nothing
             pass
 
-    def project_folder_was_set(self, project_folder):
+    def on_project_folder_loaded(self, project_folder):
         """Set the current project folder and update paths for prompt files."""
         self.project_folder = project_folder
 

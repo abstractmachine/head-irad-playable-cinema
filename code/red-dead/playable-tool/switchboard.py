@@ -14,7 +14,7 @@ class Switchboard(QObject):
     # ---- SIGNALS ----
     # These signals are emitted by the switchboard to coordinate state across windows
     
-    project_clearing = pyqtSignal()  # Emitted when switching projects to clear old state
+    project_cleared = pyqtSignal()  # Emitted when switching projects to clear old state
     project_loaded = pyqtSignal(str)  # Emitted after project clear to set new project folder
     
     # Chaos event signal
@@ -43,21 +43,26 @@ class Switchboard(QObject):
         # ---- PROJECT LIFECYCLE CONNECTIONS ----
         
         # Listen for project changes from the robots window
-        self.windows["robots"].project_loaded.connect(self.project_folder_loaded)
-        
+        self.windows["robots"].project_folder_was_set.connect(self.project_folder_loaded)
+
         # When clearing projects, notify all windows to clean up their state
-        self.project_clearing.connect(self.windows["captions"].clear_project)
-        self.project_clearing.connect(self.windows["inference"].clear_project)
-        self.project_clearing.connect(self.windows["robots"].clear_project)
-        
+        self.project_cleared.connect(self.windows["captions"].clear_project)
+        self.project_cleared.connect(self.windows["inference"].clear_project)
+        self.project_cleared.connect(self.windows["robots"].clear_project)
+
         # Add player clearing connections
-        self.project_clearing.connect(self.windows["nickelodeon"].clear_project)
-        self.project_clearing.connect(self.windows["playhouse"].clear_project)
-        
+        self.project_cleared.connect(self.windows["nickelodeon"].clear_project)
+        self.project_cleared.connect(self.windows["playhouse"].clear_project)
+
         # After clearing, set the new project folder in all windows
-        self.project_loaded.connect(self.windows["captions"].project_folder_was_set)
-        self.project_loaded.connect(self.windows["inference"].project_folder_was_set)
-        self.project_loaded.connect(self.windows["prompt"].project_folder_was_set)
+        self.project_loaded.connect(self.windows["captions"].on_project_folder_loaded)
+        self.project_loaded.connect(self.windows["inference"].on_project_folder_loaded)
+        self.project_loaded.connect(self.windows["prompt"].on_project_folder_loaded)
+        self.project_loaded.connect(self.windows["cinematheque"].on_project_folder_loaded)
+        self.project_loaded.connect(self.windows["playbill"].on_project_folder_loaded)
+        self.project_loaded.connect(self.windows["shotlist"].on_project_folder_loaded)
+        self.project_loaded.connect(self.windows["subtitles"].on_project_folder_loaded)
+        self.project_loaded.connect(self.windows["robots"].on_project_folder_loaded)
 
         # ---- METADATA REBUILD COORDINATION ----
         
@@ -67,14 +72,12 @@ class Switchboard(QObject):
 
         # ---- CATALOG STATUS CONNECTIONS ----
 
-        self.project_clearing.connect(self.windows["cinematheque"].clear_project)
-        self.project_clearing.connect(self.windows["playbill"].clear_project)
+        self.project_cleared.connect(self.windows["cinematheque"].clear_project)
+        self.project_cleared.connect(self.windows["playbill"].clear_project)
         self.windows["cinematheque"].catalog_loading_started.connect(self.cinematheque_loading_started)
         self.windows["cinematheque"].catalog_loading_finished.connect(self.cinematheque_loading_finished)
         self.windows["cinematheque"].catalog_contents_cleared.connect(self.cinematheque_contents_cleared)
         
-        self.project_loaded.connect(self.windows["cinematheque"].project_folder_was_set)
-        self.project_loaded.connect(self.windows["playbill"].project_folder_was_set)
         self.windows["playbill"].catalog_loading_started.connect(self.playbill_loading_started)
         self.windows["playbill"].catalog_loading_finished.connect(self.playbill_loading_finished)
         self.windows["playbill"].catalog_contents_cleared.connect(self.playbill_contents_cleared)
@@ -103,14 +106,12 @@ class Switchboard(QObject):
         self.windows["playbill"].metadata_rebuild_cancelled.connect(lambda: self.metadata_rebuild_cancelled("playbill"))
 
         # ---- SUBTITLE CONNECTIONS ----
-        self.project_clearing.connect(self.windows["subtitles"].clear_project)
-        self.project_loaded.connect(self.windows["subtitles"].project_folder_was_set)
+        self.project_cleared.connect(self.windows["subtitles"].clear_project)
         self.windows["nickelodeon"].video_did_load.connect(self.windows["subtitles"].on_movie_loaded)
         self.windows["nickelodeon"].timecode_changed.connect(self.windows["subtitles"].on_timecode_changed)
 
         # ---- SHOTLIST CONNECTIONS ----
-        self.project_clearing.connect(self.windows["shotlist"].clear_project)
-        self.project_loaded.connect(self.windows["shotlist"].project_folder_was_set)
+        self.project_cleared.connect(self.windows["shotlist"].clear_project)
         self.windows["nickelodeon"].video_did_load.connect(self.windows["shotlist"].on_movie_loaded)
         self.windows["nickelodeon"].timecode_changed.connect(self.windows["shotlist"].on_timecode_changed)
         self.windows["shotlist"].jump_to_timecode_signal.connect(self.windows["nickelodeon"].jump_to_timecode)
@@ -125,7 +126,7 @@ class Switchboard(QObject):
 
     # ---- PROJECT LIFECYCLE HANDLERS ----
 
-    def project_folder_loaded(self, project_folder):
+    def project_load_folder(self, project_folder):
         if DEBUG: print(f"DEBUG: Switchboard: Project folder loaded: {project_folder}")
         
         # If switching between different projects (not just initial load)
@@ -134,9 +135,14 @@ class Switchboard(QObject):
             # First, tell all windows to clear their old project state
             # This stops any ongoing operations and resets UI
             self.project_clearing.emit()
+
+    def project_folder_loaded(self, project_folder):
+        if DEBUG: print(f"DEBUG: Switchboard: Project folder loaded: {project_folder}")
         
-        # Update our tracking and notify all windows of the new project
+        # First update our tracking
         self.current_project_folder = project_folder
+
+        # Then notify all windows of the new project folder
         self.project_loaded.emit(project_folder)
 
     # ---- METADATA REBUILD HANDLERS ----
