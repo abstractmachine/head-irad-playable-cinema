@@ -11,10 +11,6 @@ from catalog_item import MovieItemWidget
 
 class CinemathequeWindow(AbstractCatalogWindow):
     
-    # Additional signals specific to cinematheque
-    shotlist_bot_start = pyqtSignal()  # Signal to start shotlist bot
-    request_caption_bot_autostart = pyqtSignal()
-    
     def __init__(self, ui):
         # Set catalog-specific properties before calling super().__init__()
         self.catalog_name = "Cinemathèque"
@@ -33,59 +29,15 @@ class CinemathequeWindow(AbstractCatalogWindow):
         
         if DEBUG: 
             print(f"DEBUG: CinemathequeWindow: After super().__init__(), metadata_file = '{self.metadata_file}'")
-        
-        # Bot-related properties
-        self.shotlist_bot_active = False
-        self.shotlist_bot_anim_timer = QTimer()
-        self.shotlist_bot_anim_timer.timeout.connect(self.animate_shotlist_bot)
-        self.shotlist_bot_dots = 0
-        
-    def create_button_layout(self):
-        """Create the button layout with cinematheque-specific buttons"""
-        # Get the base button layout (metadata button + progress label)
-        button_layout = super().create_button_layout()
-        
-        # Get button dimensions
-        button_width, button_height = self.ui.get_dimensions('button')
-        
-        # Add cinematheque-specific bot buttons after the metadata button
-        self.shotlist_bot_button = QPushButton("Shotlist Bot Off")
-        self.shotlist_bot_button.setFont(self.ui.get_font('button'))
-        self.shotlist_bot_button.setFixedSize(140, button_height)
-        self.shotlist_bot_button.clicked.connect(self.handle_shotlist_bot)
-        self.disable_shotlist_bot_button()
 
-        self.scene_bot_button = QPushButton("Scene Bot Off")
-        self.scene_bot_button.setFont(self.ui.get_font('button'))
-        self.scene_bot_button.setFixedSize(140, button_height)
-        self.scene_bot_button.setEnabled(False)
-        self.scene_bot_button.clicked.connect(self.handle_caption_bot)
-
-        self.caption_bot_button = QPushButton("Caption Bot Off")
-        self.caption_bot_button.setFont(self.ui.get_font('button'))
-        self.caption_bot_button.setFixedSize(140, button_height)
-        self.caption_bot_button.setEnabled(False)
-        self.caption_bot_button.clicked.connect(self.handle_caption_bot)
-
-        # Insert bot buttons before the progress label and stretch
-        # The layout should be: [metadata_button] [bot_buttons] [progress_label] [stretch]
-        # Remove the stretch first
-        stretch_item = button_layout.takeAt(button_layout.count() - 1)
-        
-        # Add bot buttons
-        button_layout.addWidget(self.shotlist_bot_button)
-        button_layout.addWidget(self.scene_bot_button)
-        button_layout.addWidget(self.caption_bot_button)
-        
-        # Add stretch back
-        button_layout.addItem(stretch_item)
-        
-        return button_layout
+    # ---- Project ----
 
     def get_assets_folder_name(self):
         """Get the name of the assets folder"""
         return "posters"
     
+    # ---- Item ----
+
     def create_item_widget(self, item_data, assets_folder):
         """Create a movie item widget"""
         return MovieItemWidget(item_data, assets_folder, self.ui)
@@ -227,123 +179,3 @@ class CinemathequeWindow(AbstractCatalogWindow):
                 print(f"DEBUG: Cinematheque: Actual label text after update: '{self.progress_label.text()}'")
         else:
             if DEBUG: print(f"DEBUG: Cinematheque: progress_label is None!")
-
-    def enable_bot_buttons(self):
-        """Handle this subclass-specific enabling of bot buttons - called by switchboard"""
-        if DEBUG: print("DEBUG: Cinematheque: Enabling bot buttons")
-        pass
-
-    def disable_bot_buttons(self):
-        """Handle this subclass-specific disabling of bot buttons - called by switchboard"""
-        if DEBUG: print("DEBUG: Cinematheque: Disabling bot buttons")
-        self.disable_shotlist_bot_button()
-        self.disable_scene_bot_button()
-        self.disable_caption_bot_button()
-
-    def enable_shotlist_bot_button(self):
-        """Enable shotlist bot button - called by switchboard"""
-        self.shotlist_bot_button.setEnabled(self.selected_item_widget is not None)
-
-    def disable_shotlist_bot_button(self):
-        """Disable shotlist bot button - called by switchboard"""
-        self.shotlist_bot_button.setEnabled(False)
-
-    def enable_scene_bot_button(self):
-        """Enable scene bot button - called by switchboard"""
-        self.scene_bot_button.setEnabled(self.selected_item_widget is not None)
-
-    def disable_scene_bot_button(self):
-        """Disable scene bot button - called by switchboard"""
-        self.scene_bot_button.setEnabled(False)
-
-    def enable_caption_bot_button(self):
-        """Enable caption bot button - called by switchboard"""
-        self.caption_bot_button.setEnabled(self.selected_item_widget is not None)
-
-    def disable_caption_bot_button(self):
-        """Disable caption bot button - called by switchboard"""
-        self.caption_bot_button.setEnabled(False)
-
-    def shot_bot_finished(self):
-        """Handle bot finished signal"""
-        if DEBUG: print("DEBUG: Cinematheque: bot finished")
-        was_caption_bot_active = self.caption_bot_button.text().startswith("    Caption Bot On")
-        
-        # Use the base class navigation
-        self.select_next_item()
-        
-        # Start the Caption Bot for the next item if it was active
-        if was_caption_bot_active:
-            self.start_caption_bot()
-
-    def start_caption_bot(self):
-        if self.caption_bot_button.isEnabled():
-            if DEBUG: print("DEBUG: Starting Caption Bot for next item")
-            self.request_caption_bot_autostart.emit()
-            self.caption_bot_button.click()
-
-    def turn_off_all_bots(self):
-        """Turn off all running bots and reset their buttons."""
-        if self.shotlist_bot_active:
-            self.shotlist_bot_active = False
-            self.shotlist_bot_button.setText("Shotlist Bot Off")
-            self.shotlist_bot_button.setStyleSheet("QPushButton { text-align: center; }")
-            self.shotlist_bot_anim_timer.stop()
-        self.scene_bot_button.setText("Scene Bot Off")
-        self.scene_bot_button.setStyleSheet("QPushButton { text-align: center; }")
-        self.caption_bot_button.setText("Caption Bot Off")
-        self.caption_bot_button.setStyleSheet("QPushButton { text-align: center; }")
-
-    def handle_shotlist_bot(self):
-        if not self.shotlist_bot_active:
-            self.shotlist_bot_active = True
-            self.shotlist_bot_button.setText("      Shotlist Bot On")
-            self.shotlist_bot_button.setStyleSheet("QPushButton { text-align: left; }")
-            self.shotlist_bot_anim_timer.start(500)
-            # Send signal to shotlist to start detection
-            self.shotlist_bot_start.emit()
-        else:
-            # Optionally allow stopping the bot
-            self.shotlist_bot_active = False
-            self.shotlist_bot_button.setText("Shotlist Bot Off")
-            self.shotlist_bot_button.setStyleSheet("QPushButton { text-align: center; }")
-            self.shotlist_bot_anim_timer.stop()
-
-    def animate_shotlist_bot(self):
-        self.shotlist_bot_dots = (self.shotlist_bot_dots + 1) % 4
-        dots = "." * self.shotlist_bot_dots
-        self.shotlist_bot_button.setText(f"      Shotlist Bot On{dots}")
-        self.shotlist_bot_button.setStyleSheet("QPushButton { text-align: left; }")
-
-    def on_shotlist_status(self, finished):
-        # Called by shotlist.py when detection is finished
-        if finished and self.shotlist_bot_active:
-            # Select next item in the list
-            self.select_next_item()
-        elif not finished:
-            # Detection is still running, keep animating
-            pass
-
-    def handle_caption_bot(self):
-        print("Caption Bot button pressed.")
-
-    def clear_project(self):
-        """Clear current project and cancel any ongoing operations - override to handle cinematheque-specific state"""
-        if DEBUG: print(f"DEBUG: Cinematheque: Clearing project")
-        
-        # Turn off all bots first
-        self.turn_off_all_bots()
-        
-        # Call parent clear method (which handles progress label visibility)
-        super().clear_project()
-        
-        # Show cinematheque-specific buttons and disable bot buttons
-        if hasattr(self, 'shotlist_bot_button'):
-            self.shotlist_bot_button.setVisible(True)
-            self.disable_shotlist_bot_button()
-        if hasattr(self, 'scene_bot_button'):
-            self.scene_bot_button.setVisible(True)
-        if hasattr(self, 'caption_bot_button'):
-            self.caption_bot_button.setVisible(True)
-        
-        if DEBUG: print(f"DEBUG: Cinematheque: Project cleared")

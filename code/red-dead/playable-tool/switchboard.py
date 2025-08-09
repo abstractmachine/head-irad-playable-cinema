@@ -187,9 +187,6 @@ class Switchboard(QObject):
 
     def cinematheque_contents_cleared(self):
         if DEBUG: print("DEBUG: Switchboard: Cinematheque contents cleared")
-        
-        # Disable cinematheque-specific buttons when contents are cleared
-        self.windows["cinematheque"].disable_shotlist_bot_button()
 
     def playbill_contents_cleared(self):
         if DEBUG: print("DEBUG: Switchboard: Playbill contents cleared")

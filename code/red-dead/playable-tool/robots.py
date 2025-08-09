@@ -1,4 +1,5 @@
 DEBUG = False  # Set to True to enable debug output
+ERROR = True  # Set to True to enable error output
 
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtWidgets import (
@@ -49,42 +50,40 @@ class RobotsWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         
         layout = QVBoxLayout()
-        layout.setContentsMargins(0, 10, 0, 10)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
 
-        # Project folder display
-        self.project_folder_label = QLabel("No project folder selected")
-        self.project_folder_label.setFont(self.ui.get_font('tiny-condensed'))
-        self.project_folder_label.setWordWrap(True)
-        self.project_folder_label.setAlignment(Qt.AlignCenter)
-        self.project_folder_label.setStyleSheet("border: none;")
-        layout.addWidget(self.project_folder_label)
-
-        # Select project folder button
+        # --- Top-left buttons layout ---
         button_width, button_height = ui.get_dimensions("button")
+        top_buttons_layout = QHBoxLayout()
+        top_buttons_layout.setContentsMargins(0, 0, 0, 0)
+        top_buttons_layout.setSpacing(2)
+
         self.select_button = QPushButton("Project Folder")
         self.select_button.setFont(self.ui.get_font('button'))
         self.select_button.clicked.connect(self.select_project_folder)
         self.select_button.setFixedSize(120, button_height)
-        layout.addWidget(self.select_button, alignment=Qt.AlignCenter)
+        top_buttons_layout.addWidget(self.select_button)
 
-        # Spacer
-        layout.addStretch()
+        self.toggle_button = QPushButton("Gremlins")
+        self.toggle_button.setFixedSize(button_width, button_height)
+        self.toggle_button.clicked.connect(self.toggle_chaos)
+        # set padding with stylesheet
+        self.toggle_button.setStyleSheet("padding: 0px 5px 0px 5px;")
+        top_buttons_layout.addWidget(self.toggle_button)
+
         self.interval_field = QLineEdit()
         self.interval_field.setText(str(self.interval_seconds))
         self.interval_field.setPlaceholderText("seconds")
         self.interval_field.setFixedSize(button_width, button_height)
         self.interval_field.setAlignment(Qt.AlignCenter)
         self.interval_field.textChanged.connect(self.on_interval_changed)
-        self.interval_field.setToolTip("Set chaos interval in seconds")
-        layout.addWidget(self.interval_field, alignment=Qt.AlignCenter)
+        self.interval_field.setToolTip("Chaos interval in seconds")
+        top_buttons_layout.addWidget(self.interval_field)
 
-        self.toggle_button = QPushButton("Off")
-        self.toggle_button.setFixedSize(button_width, button_height)
-        self.toggle_button.clicked.connect(self.toggle_chaos)
-        layout.addWidget(self.toggle_button, alignment=Qt.AlignCenter)
-
-        layout.addStretch()
+        layout.addLayout(top_buttons_layout)
+        layout.setAlignment(top_buttons_layout, Qt.AlignLeft)
+        layout.setAlignment(Qt.AlignTop)  # Align the QVBoxLayout to the top
         central_widget.setLayout(layout)
 
     # --------- PROJECT MANAGEMENT ---------
@@ -100,19 +99,17 @@ class RobotsWindow(QMainWindow):
             self.project_manager.set_project_folder(folder)
 
     def project_folder_was_set(self, folder):
-        """Update label when project folder is set"""
-        self.project_folder_label.setText(f"{folder}")
+        """Project folder was set (no label to update)"""
         if DEBUG: print(f"DEBUG: Project folder was set: {folder}")
 
     def on_project_loaded(self, project_folder):
-        """Update label when project is loaded"""
-        self.project_folder_label.setText(f"{project_folder}")
+        """Project loaded (no label to update)"""
         if DEBUG: print(f"DEBUG: Project loaded: {project_folder}")
 
     def on_project_changed(self, project_folder):
-        """Update label when project changes"""
+        """Project changed (no label to update)"""
         if not project_folder:
-            self.project_folder_label.setText("No project folder selected")
+            if ERROR: print("ERROR: No project folder selected")
 
     @property
     def project_loaded(self):
@@ -173,7 +170,7 @@ class RobotsWindow(QMainWindow):
     def start_chaos(self):
         """Start generating chaos events"""
         self.is_running = True
-        self.toggle_button.setText("On")
+        self.toggle_button.setText("Chaos!")
         
         # Start the timer
         interval_ms = int(self.interval_seconds * 1000)
@@ -184,8 +181,8 @@ class RobotsWindow(QMainWindow):
     def stop_chaos(self):
         """Stop generating chaos events"""
         self.is_running = False
-        self.toggle_button.setText("Off")
-        
+        self.toggle_button.setText("Gremlins")
+
         # Stop the timer
         self.chaos_timer.stop()
         
@@ -216,7 +213,6 @@ class RobotsWindow(QMainWindow):
         if self.is_running:
             self.stop_chaos()
         # Reset project manager state if needed
-        self.project_folder_label.setText("No project folder selected")
         self.select_button.setEnabled(True)
 
     def closeEvent(self, event):
