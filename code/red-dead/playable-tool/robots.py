@@ -1,17 +1,60 @@
-DEBUG = True  # Set to True to enable debug output
+DEBUG = False  # Set to True to enable debug output
 ERROR = True  # Set to True to enable error output
 
+# Qt stuff
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QLineEdit, QPushButton, QTextEdit, QComboBox
+    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QLineEdit, QPushButton, QTextEdit, QComboBox,
+    QDialog, QVBoxLayout, QLabel
 )
+from PyQt5.QtGui import QPixmap
 from PyQt5.QtGui import QTextCursor
-import random
+
+# System stuff
 import os
 
+# Our methods
 from utility import minimum_load_interval, HIGHLIGHT_BACKGROUND_COLOR, HIGHLIGHT_COLOR
 from project import ProjectManager
 from layout import load_window_geometry, load_dock_layout
+
+
+class SaveLayoutDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Save Layout")
+        self.setMinimumWidth(320)
+        layout = QVBoxLayout()
+        # Icon
+        icon = QPixmap("ui/icons/cowgirl_writing.png")
+        icon_label = QLabel()
+        icon_size = 256
+        icon_label.setPixmap(icon.scaled(icon_size, icon_size))
+        icon_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(icon_label)
+        # Text box
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("Enter layout name")
+        self.name_edit.setFixedSize(360, 32)
+        self.name_edit.setMaxLength(16)  # Limit to 16 characters
+        # Center Text Box Horizontally in Window
+        self.name_edit.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.name_edit)
+        # Buttons
+        button_layout = QHBoxLayout()
+        self.save_btn = QPushButton("Save")
+        self.cancel_btn = QPushButton("Cancel")
+        button_layout.addWidget(self.save_btn)
+        button_layout.addWidget(self.cancel_btn)
+        layout.addLayout(button_layout)
+        self.setLayout(layout)
+        # Connections
+        self.save_btn.clicked.connect(self.accept)
+        self.cancel_btn.clicked.connect(self.reject)
+
+    def get_name(self):
+        return self.name_edit.text().strip()
+
 
 class RobotsWindow(QMainWindow):
     """
@@ -88,13 +131,15 @@ class RobotsWindow(QMainWindow):
         self.save_button = QPushButton("Save")
         self.save_button.setFixedSize(60, button_height)
         self.save_button.setStyleSheet("padding: 0px 5px 0px 5px;")
-        self.save_button.setEnabled(False)
+        self.save_button.setEnabled(True)
+        self.save_button.clicked.connect(self.save_layout)
         top_buttons_layout.addWidget(self.save_button)
 
         self.delete_button = QPushButton("Delete")
         self.delete_button.setFixedSize(60, button_height)
         self.delete_button.setStyleSheet("padding: 0px 5px 0px 5px;")
         self.delete_button.setEnabled(False)
+        self.delete_button.clicked.connect(self.delete_layout)
         top_buttons_layout.addWidget(self.delete_button)
 
         layout.addLayout(top_buttons_layout)
@@ -169,21 +214,26 @@ class RobotsWindow(QMainWindow):
     def layout_selected(self, index):
         """Handle layout selection changes"""
         if index < 0:
+            self.delete_button.setEnabled(False)
             return  # Ignore signal when nothing is selected
         layout_name = self.layouts_dropdown.itemText(index)
         if DEBUG: print(f"DEBUG: Layout selected: {layout_name}")
+
+        # Enable delete button only for non-Default layouts
+        self.delete_button.setEnabled(index != 0)
 
         main_window = self.window()
         app_folder = os.path.dirname(os.path.abspath(__file__))
 
         if layout_name == "Default":
             layout_folder = os.path.join(app_folder, "preferences", "layouts")
-            geometry_file = os.path.join(layout_folder, "Default.geometry")
-            layout_file = os.path.join(layout_folder, "Default.layout")
+            geometry_file = os.path.join(layout_folder, "default.geometry")
+            layout_file = os.path.join(layout_folder, "default.layout")
             if DEBUG: print(f"DEBUG: Loading geometry from {geometry_file}")
             if DEBUG: print(f"DEBUG: Loading dock layout from {layout_file}")
             load_window_geometry(main_window, geometry_file)
             load_dock_layout(main_window, layout_file)
+            self.layouts_dropdown.setCurrentIndex(-1)
         else:
             # Load from project folder's layouts directory
             project_folder = self.project_manager.get_project_folder()
@@ -194,7 +244,71 @@ class RobotsWindow(QMainWindow):
             if DEBUG: print(f"DEBUG: Loading dock layout from {layout_file}")
             load_window_geometry(main_window, geometry_file)
             load_dock_layout(main_window, layout_file)
-                
+
+    def delete_layout(self):
+        """Delete the selected layout from the project folder"""
+        index = self.layouts_dropdown.currentIndex()
+        if index <= 0:
+            return  # Don't delete Default or nothing
+        layout_name = self.layouts_dropdown.itemText(index)
+        project_folder = self.project_manager.get_project_folder()
+        layout_folder = os.path.join(project_folder, "layouts")
+        # Use layout.py utility to delete files
+        from layout import delete_layout_files
+        deleted_files = delete_layout_files(layout_folder, layout_name)
+        self.console_write(f"Deleted: {layout_name}")
+        # Refresh the dropdown
+        self.get_layouts()
+        # Turn off Delete button
+        self.delete_button.setEnabled(False)
+
+    def save_layout(self):
+        """Show dialog to get layout name and handle save logic"""
+        # Show dialog
+        dialog = SaveLayoutDialog(self)
+        result = dialog.exec_()
+        if result != QDialog.Accepted:
+            return  # User cancelled
+        
+        self.console_write(f"Save layout request: {dialog.get_name()}")
+
+        parsed_name = self.parse_layout_save_name(dialog.get_name())
+        if not parsed_name:
+            return  # Error already handled
+        self.console_write(f"Parsed layout name: {parsed_name}")
+        # save this layout
+        main_window = self.window()
+        project_folder = self.project_manager.get_project_folder()
+        layout_folder = os.path.join(project_folder, "layouts")
+        if not os.path.exists(layout_folder):
+            os.makedirs(layout_folder)
+        geometry_file = os.path.join(layout_folder, f"{parsed_name}.geometry")
+        layout_file = os.path.join(layout_folder, f"{parsed_name}.layout")
+        from layout import save_window_geometry, save_dock_layout
+        save_window_geometry(main_window, geometry_file)
+        save_dock_layout(main_window, layout_file)
+        self.console_write(f"Saved layout: {parsed_name}")
+        self.get_layouts()
+
+    def parse_layout_save_name(self, name):
+        """Parse and validate layout save name according to rules"""
+        if not name:
+            self.console_write("No filename provided")
+            return None
+        if name.lower() == "default":
+            self.console_write("Invalid filename")
+            return None
+        # Replace spaces with '_'
+        name = name.replace(' ', '_')
+        # Replace any character not AZaz09-_ with '-'
+        import re
+        name = re.sub(r'[^A-Za-z0-9\-_]', '-', name)
+        # Check first character
+        if not re.match(r'^[A-Za-z0-9]', name):
+            self.console_write("Invalid filename")
+            return None
+        return name
+
     # ------ GREMLINS ---------
 
     def on_interval_changed(self, text):

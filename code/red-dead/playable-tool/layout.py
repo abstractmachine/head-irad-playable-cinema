@@ -263,3 +263,15 @@ def reset_dock_layout(main_window):
     
     # Restart the application to get default layout
     os.execl(sys.executable, sys.executable, *sys.argv)
+
+def delete_layout_files(layout_folder, layout_name):
+    """Delete .geometry and .layout files for a given layout name in the specified folder."""
+    import os
+    deleted = []
+    geometry_file = os.path.join(layout_folder, f"{layout_name}.geometry")
+    layout_file = os.path.join(layout_folder, f"{layout_name}.layout")
+    for f in [geometry_file, layout_file]:
+        if os.path.exists(f):
+            os.remove(f)
+            deleted.append(f)
+    return deleted

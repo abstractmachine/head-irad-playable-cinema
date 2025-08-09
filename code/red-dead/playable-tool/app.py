@@ -116,6 +116,13 @@ def main():
         
         # Close all windows properly
         for name, window in windows.items():
+
+            if hasattr(window, "shutdown") and callable(getattr(window, "shutdown")):
+                try:
+                    window.shutdown()
+                except Exception as e:
+                    print(f"[shutdown] {w.__class__.__name__}: {e}")
+            
             try:
                 if DEBUG: print(f"DEBUG: Closing window: {name}")
                 window.close()

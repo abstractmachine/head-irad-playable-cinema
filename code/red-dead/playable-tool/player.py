@@ -827,6 +827,16 @@ class AbstractPlayerWindow(QMainWindow):
         """Clear current project - unload video and reset state"""
         if DEBUG: print("DEBUG: Player clearing project - unloading video")
         
+        self.current_player.stop()
+        self.current_player.setMedia(QMediaContent())  # release backend
+        self.current_player.deleteLater()
+
+        self.next_player.stop()
+        self.next_player.setMedia(QMediaContent())  # release backend
+        self.next_player.deleteLater()
+
+        self.video_widget.deleteLater()
+
         # Clean up players
         if self.current_player:
             self._destroy_player(self.current_player)
