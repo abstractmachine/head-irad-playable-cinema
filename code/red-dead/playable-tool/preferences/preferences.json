@@ -1,7 +1,4 @@
 {
-  "project": {
-    "project_folder": "/Volumes/PLAYABLE-D/project"
-  },
   "inference": {
     "caption_model": "Caption Model v0.1"
   },
@@ -24,5 +21,7 @@
     "method_selected": "detect-adaptive"
   },
   "cinematheque": {},
-  "gremlins": {}
+  "robots": {
+    "project_folder": "/Volumes/PLAYABLE-D/project"
+  }
 }

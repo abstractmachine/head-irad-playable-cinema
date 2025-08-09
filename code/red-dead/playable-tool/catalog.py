@@ -571,7 +571,7 @@ class AbstractCatalogWindow(QMainWindow):
         if hasattr(self, 'assets_folder'):
             delattr(self, 'assets_folder')
 
-    def set_project_folder(self, project_folder):
+    def project_folder_was_set(self, project_folder):
         """Set the project folder and load catalog data"""
         if DEBUG: print(f"DEBUG: {self.catalog_name}: Setting project folder to: {project_folder}")
         

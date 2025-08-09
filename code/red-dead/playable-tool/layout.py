@@ -62,21 +62,9 @@ class PlayableCinemaMainWindow(QMainWindow):
         self.setWindowFlags(Qt.Window)
 
         # === LEFT SIDE: Analysis and Control Panels (Tabbed) ===
-        # These are the primary work areas that users switch between frequently
-        if DEBUG: print("DEBUG: Setting up left-side tabbed panels")
-        dock_project = self.add_dock("Project", windows["project"], Qt.LeftDockWidgetArea)
-        dock_inference = self.add_dock("Inference", windows["inference"], Qt.LeftDockWidgetArea)
-        dock_prompts = self.add_dock("Prompts", windows["prompt"], Qt.LeftDockWidgetArea)
-        dock_captions = self.add_dock("Captions", windows["captions"], Qt.LeftDockWidgetArea)
-
-        # Tab them together for space efficiency
-        if DEBUG: print("DEBUG: Tabifying left-side panels")
-        self.tabifyDockWidget(dock_project, dock_inference)
-        self.tabifyDockWidget(dock_project, dock_captions)
-        self.tabifyDockWidget(dock_project, dock_prompts)
-
-        # Project should be the default visible tab
-        dock_project.raise_()
+        self.add_dock("Inference", windows["inference"], Qt.LeftDockWidgetArea)
+        self.add_dock("Prompts", windows["prompt"], Qt.LeftDockWidgetArea)
+        self.add_dock("Captions", windows["captions"], Qt.LeftDockWidgetArea)
 
         # === OTHER AREAS: Supporting panels ===
         if DEBUG: print("DEBUG: Setting up supporting panels")
@@ -91,7 +79,7 @@ class PlayableCinemaMainWindow(QMainWindow):
         self.add_dock("Shotlist", windows["shotlist"], Qt.BottomDockWidgetArea)
         self.add_dock("Cinemathèque", windows["cinematheque"], Qt.BottomDockWidgetArea)
         self.add_dock("Playbill", windows["playbill"], Qt.BottomDockWidgetArea)
-        self.add_dock("Gremlins", windows["gremlins"], Qt.BottomDockWidgetArea)  # Add this line
+        self.add_dock("Robots", windows["robots"], Qt.BottomDockWidgetArea)  # Add this line
 
         central.setFocusPolicy(Qt.ClickFocus)
 

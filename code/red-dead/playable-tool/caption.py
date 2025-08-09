@@ -288,7 +288,7 @@ class CaptionWindow(QWidget):
         # A Placeholder for future functionality
         if DEBUG: print("DEBUG: ProjectWindow: clear_project called (no action needed)")
 
-    def set_project_folder(self, project_folder):
+    def project_folder_was_set(self, project_folder):
         """Set the project folder when cinema window loads a project"""
         self.project_folder = project_folder
         self.caption_field.clear()  # Clear the text field when project_folder is set

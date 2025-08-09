@@ -1,11 +1,11 @@
 DEBUG = False  # Set to True to enable debug output
 
+# Qt stuff
 from PyQt5.QtCore import QObject, pyqtSignal, Qt
-from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QPushButton, QLabel, QMessageBox, QFileDialog
-)
-from PyQt5.QtGui import QPixmap, QFont
+from PyQt5.QtWidgets import QMessageBox
+from PyQt5.QtGui import QPixmap
+
+# Python stuff
 import os
 
 class ProjectManager(QObject):
@@ -29,6 +29,7 @@ class ProjectManager(QObject):
         if self.project_folder == folder:
             if DEBUG: 
                 print(f"DEBUG: ProjectManager: Project folder already set to this folder, skipping reload")
+            # Only emit project_loaded, not project_changed
             self.project_loaded.emit(folder)
             return True
         
@@ -37,7 +38,7 @@ class ProjectManager(QObject):
             old_folder = self.project_folder
             self.project_folder = folder
             
-            # Emit signals
+            # Emit signals only if folder changed
             if old_folder != folder:
                 self.project_changed.emit(folder)
             self.project_loaded.emit(folder)
@@ -237,159 +238,3 @@ class ProjectManager(QObject):
                 # Project folder no longer exists, reset
                 self.project_folder = None
                 self.project_changed.emit("")
-
-class ProjectWindow(QMainWindow):
-    """Project management window"""
-    
-    # Define signals for communication
-    preferences_save = pyqtSignal()
-    preferences_load = pyqtSignal(dict)
-    
-    def __init__(self, ui):
-        super().__init__()
-        self.ui = ui
-        
-        # Create the project manager
-        self.project_manager = ProjectManager(parent=self)
-        
-        # Track metadata rebuilding state
-        self.metadata_rebuilding = False
-        
-        self.setup_ui()
-        self.setup_connections()
-    
-    def setup_ui(self):
-        """Setup the project window UI"""
-        # Create main widget and layout
-        main_widget = QWidget()
-        self.setCentralWidget(main_widget)
-        
-        layout = QVBoxLayout()
-        layout.setSpacing(10)
-        layout.setContentsMargins(0,0,0,0)
-        
-        # Current project folder display
-        self.project_folder_label = QLabel("No project folder selected")
-        self.project_folder_label.setFont(self.ui.get_font('tiny-condensed'))
-        self.project_folder_label.setWordWrap(True)
-        self.project_folder_label.setAlignment(Qt.AlignCenter)
-        self.project_folder_label.setStyleSheet("border: none;")
-        layout.addWidget(self.project_folder_label)
-        
-        # Button layout
-        button_layout = QHBoxLayout()
-        button_width, button_height = self.ui.get_dimensions('button')
-        
-        # Select project folder button
-        button_width, button_height = self.ui.get_dimensions('button')
-        self.select_button = QPushButton("Project Folder")
-        self.select_button.setFont(self.ui.get_font('button'))
-        self.select_button.clicked.connect(self.select_project_folder)
-        self.select_button.setFixedSize(120, button_height)
-        button_layout.addWidget(self.select_button)
-        
-        layout.addLayout(button_layout)
-        layout.addStretch()
-        
-        main_widget.setLayout(layout)
-    
-    def setup_connections(self):
-        """Setup signal connections"""
-        self.preferences_save.connect(self.on_preferences_save)
-        self.preferences_load.connect(self.on_preferences_load)
-        
-        # Connect to project manager signals
-        self.project_manager.project_loaded.connect(self.on_project_loaded)
-        self.project_manager.project_changed.connect(self.on_project_changed)
-    
-    def select_project_folder(self):
-        """Open folder dialog and set project folder"""
-        folder = QFileDialog.getExistingDirectory(self, "Select Project Folder")
-        if folder:  # User didn't cancel
-            self.project_manager.set_project_folder(folder)
-    
-    def on_project_loaded(self, project_folder):
-        """Handle when project is loaded"""
-        if DEBUG: 
-            print(f"DEBUG: ProjectWindow: Project loaded: {project_folder}")
-        
-        self.project_folder_label.setText(f"{project_folder}")
-    
-    def on_project_changed(self, project_folder):
-        """Handle when project folder changes"""
-        if DEBUG: 
-            print(f"DEBUG: ProjectWindow: Project changed: {project_folder}")
-        
-        if not project_folder:
-            self.project_folder_label.setText("No project folder selected")
-    
-    # ---- Metadata Rebuild Handlers ----
-    
-    def on_metadata_rebuilding_started(self):
-        """Handle when metadata rebuilding starts across any catalog"""
-        if DEBUG: print("DEBUG: ProjectWindow: Metadata rebuilding started - disabling project button")
-        
-        self.metadata_rebuilding = True
-        self.select_button.setEnabled(False)
-    
-    def on_metadata_rebuilding_stopped(self):
-        """Handle when metadata rebuilding stops across all catalogs"""
-        if DEBUG: print("DEBUG: ProjectWindow: Metadata rebuilding stopped - enabling project button")
-        
-        self.metadata_rebuilding = False
-        self.select_button.setEnabled(True)
-    
-    # ---- Project Manager Access ----
-    
-    @property 
-    def project_loaded(self):
-        """Expose project_loaded signal"""
-        return self.project_manager.project_loaded
-    
-    @property
-    def project_changed(self):
-        """Expose project_changed signal"""
-        return self.project_manager.project_changed
-    
-    def get_project_folder(self):
-        """Get current project folder"""
-        return self.project_manager.get_project_folder()
-    
-    def get_folder_path(self, folder_name):
-        """Get folder path within project"""
-        return self.project_manager.get_folder_path(folder_name)
-    
-    def get_file_path(self, file_path):
-        """Get file path within project"""
-        return self.project_manager.get_file_path(file_path)
-    
-    def folder_exists(self, folder_name):
-        """Check if folder exists in project"""
-        return self.project_manager.folder_exists(folder_name)
-    
-    def file_exists(self, file_path):
-        """Check if file exists in project"""
-        return self.project_manager.file_exists(file_path)
-    
-    def get_required_files(self):
-        """Get required files list"""
-        return self.project_manager.get_required_files()
-    
-    # ---- Save/Load Preferences ----
-    
-    def on_preferences_save(self):
-        """Save preferences"""
-        self._pending_save_data = self.project_manager.get_preferences_data()
-    
-    def on_preferences_load(self, data):
-        """Load preferences"""
-        self.project_manager.load_preferences_data(data)
-    
-    def clear_project(self):
-        """Clear project - for consistency with other windows"""
-        # Project window doesn't need to clear anything since it manages the project state
-        # But we should reset metadata rebuilding state
-        if DEBUG: print("DEBUG: ProjectWindow: clear_project called")
-        
-        self.metadata_rebuilding = False
-        self.select_button.setEnabled(True)

@@ -102,7 +102,7 @@ class InferenceWindow(QWidget):
         self.matched_caption.setPlainText("Search model loaded: " + self.search_model)
         if DEBUG: print(f"Inference: Search model selected - {self.search_model}")
 
-    def set_project_folder(self, project_folder):
+    def project_folder_was_set(self, project_folder):
         """Set the project folder when cinematheque window loads a project"""
         self.project_folder = project_folder
         if DEBUG: print(f"Inference: Project folder set to {project_folder}")

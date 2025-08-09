@@ -124,7 +124,7 @@ class SubtitlesWindow(QWidget):
                 return subtitle
         return None
 
-    def set_project_folder(self, project_folder):
+    def project_folder_was_set(self, project_folder):
         """Set the project folder when cinema window loads a project"""
         self.project_folder = project_folder
         # reset flag

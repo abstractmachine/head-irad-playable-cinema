@@ -21,8 +21,7 @@ from cinematheque import CinemathequeWindow
 from prompt import PromptWindow
 from subtitles import SubtitlesWindow
 from inference import InferenceWindow
-from project import ProjectWindow
-from gremlins import GremlinsWindow
+from robots import RobotsWindow
 
 # Layout and coordination
 from layout import (
@@ -51,7 +50,6 @@ def main():
 
     # Create all application windows
     windows = {
-        "project": ProjectWindow(ui),
         "inference": InferenceWindow(ui),
         "captions": CaptionWindow(ui, subtitles_window),
         "subtitles": subtitles_window,
@@ -61,7 +59,7 @@ def main():
         "nickelodeon": NickelodeonWindow(ui),
         "shotlist": ShotlistWindow(ui),
         "cinematheque": CinemathequeWindow(ui),
-        "gremlins": GremlinsWindow(ui),
+        "robots": RobotsWindow(ui),
     }
 
     # === Signal Setup ===

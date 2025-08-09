@@ -2,12 +2,13 @@ DEBUG = False  # Set to True to enable debug output
 
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QLineEdit, QPushButton
+    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QLineEdit, QPushButton, QLabel, QFileDialog
 )
 
 from utility import minimum_load_interval, HIGHLIGHT_BACKGROUND_COLOR, HIGHLIGHT_COLOR
+from project import ProjectManager  # <-- Import ProjectManager
 
-class GremlinsWindow(QMainWindow):
+class RobotsWindow(QMainWindow):
     """
     Chaos generator window that sends random events at specified intervals.
     Used for testing application robustness and simulating unpredictable user behavior.
@@ -26,7 +27,12 @@ class GremlinsWindow(QMainWindow):
 
         # Add this for preferences compatibility
         self._pending_save_data = {}
-        
+
+        # Project management
+        self.project_manager = ProjectManager(parent=self)
+        self.project_manager.project_loaded.connect(self.on_project_loaded)
+        self.project_manager.project_changed.connect(self.on_project_changed)
+
         # State
         self.is_running = False
         self.interval_seconds = 3.0
@@ -45,13 +51,25 @@ class GremlinsWindow(QMainWindow):
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 10, 0, 10)
         layout.setSpacing(2)
-        
+
+        # Project folder display
+        self.project_folder_label = QLabel("No project folder selected")
+        self.project_folder_label.setFont(self.ui.get_font('tiny-condensed'))
+        self.project_folder_label.setWordWrap(True)
+        self.project_folder_label.setAlignment(Qt.AlignCenter)
+        self.project_folder_label.setStyleSheet("border: none;")
+        layout.addWidget(self.project_folder_label)
+
+        # Select project folder button
+        button_width, button_height = ui.get_dimensions("button")
+        self.select_button = QPushButton("Project Folder")
+        self.select_button.setFont(self.ui.get_font('button'))
+        self.select_button.clicked.connect(self.select_project_folder)
+        self.select_button.setFixedSize(120, button_height)
+        layout.addWidget(self.select_button, alignment=Qt.AlignCenter)
+
         # Spacer
         layout.addStretch()
-        
-        button_width, button_height = ui.get_dimensions("button")
-
-        # Interval input field
         self.interval_field = QLineEdit()
         self.interval_field.setText(str(self.interval_seconds))
         self.interval_field.setPlaceholderText("seconds")
@@ -60,18 +78,70 @@ class GremlinsWindow(QMainWindow):
         self.interval_field.textChanged.connect(self.on_interval_changed)
         self.interval_field.setToolTip("Set chaos interval in seconds")
         layout.addWidget(self.interval_field, alignment=Qt.AlignCenter)
-        
-        # On/Off toggle button
+
         self.toggle_button = QPushButton("Off")
         self.toggle_button.setFixedSize(button_width, button_height)
         self.toggle_button.clicked.connect(self.toggle_chaos)
         layout.addWidget(self.toggle_button, alignment=Qt.AlignCenter)
-        
-        # Spacer
+
         layout.addStretch()
-        
         central_widget.setLayout(layout)
-        
+
+    # --------- PROJECT MANAGEMENT ---------
+
+    def set_project_folder(self, folder):
+        """Set the project folder via ProjectManager"""
+        return self.project_manager.set_project_folder(folder)
+
+    def select_project_folder(self):
+        """Open folder dialog and set project folder"""
+        folder = QFileDialog.getExistingDirectory(self, "Select Project Folder")
+        if folder:
+            self.project_manager.set_project_folder(folder)
+
+    def project_folder_was_set(self, folder):
+        """Update label when project folder is set"""
+        self.project_folder_label.setText(f"{folder}")
+        if DEBUG: print(f"DEBUG: Project folder was set: {folder}")
+
+    def on_project_loaded(self, project_folder):
+        """Update label when project is loaded"""
+        self.project_folder_label.setText(f"{project_folder}")
+        if DEBUG: print(f"DEBUG: Project loaded: {project_folder}")
+
+    def on_project_changed(self, project_folder):
+        """Update label when project changes"""
+        if not project_folder:
+            self.project_folder_label.setText("No project folder selected")
+
+    @property
+    def project_loaded(self):
+        return self.project_manager.project_loaded
+
+    @property
+    def project_changed(self):
+        return self.project_manager.project_changed
+
+    def get_project_folder(self):
+        return self.project_manager.get_project_folder()
+
+    def get_folder_path(self, folder_name):
+        return self.project_manager.get_folder_path(folder_name)
+
+    def get_file_path(self, file_path):
+        return self.project_manager.get_file_path(file_path)
+
+    def folder_exists(self, folder_name):
+        return self.project_manager.folder_exists(folder_name)
+
+    def file_exists(self, file_path):
+        return self.project_manager.file_exists(file_path)
+
+    def get_required_files(self):
+        return self.project_manager.get_required_files()
+    
+    # ------ GREMLINS ---------
+
     def on_interval_changed(self, text):
         """Handle interval field changes"""
         try:
@@ -143,24 +213,32 @@ class GremlinsWindow(QMainWindow):
         QTimer.singleShot(90, lambda: self.interval_field.setStyleSheet(original_style))
         
     def clear_project(self):
-        """Clear project - stop chaos when switching projects"""
         if self.is_running:
             self.stop_chaos()
-            
-    def set_project_folder(self, project_folder):
-        """Set project folder - no specific action needed"""
-        pass
-        
-    def on_preferences_save(self):
-        """Save preferences"""
-        pass
-        
-    def on_preferences_load(self, prefs):
-        """Load preferences"""
-        pass
-                            
+        # Reset project manager state if needed
+        self.project_folder_label.setText("No project folder selected")
+        self.select_button.setEnabled(True)
+
     def closeEvent(self, event):
         """Handle window close"""
         if self.is_running:
             self.stop_chaos()
         super().closeEvent(event)
+
+    # --------- METADATA REBUILDING ---------
+
+    def on_metadata_rebuilding_started(self):
+        if DEBUG:
+            print("DEBUG: RobotsWindow received metadata_rebuilding_started")
+
+    def on_metadata_rebuilding_stopped(self):
+        if DEBUG:
+            print("DEBUG: RobotsWindow received metadata_rebuilding_stopped")
+
+    # ---- Save/Load Preferences ----
+
+    def on_preferences_save(self):
+        self._pending_save_data = self.project_manager.get_preferences_data()
+
+    def on_preferences_load(self, data):
+        self.project_manager.load_preferences_data(data)

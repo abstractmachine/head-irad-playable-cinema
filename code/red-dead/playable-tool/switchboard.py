@@ -18,7 +18,7 @@ class Switchboard(QObject):
     project_loaded = pyqtSignal(str)  # Emitted after project clear to set new project folder
     
     # Chaos event signal
-    chaos_event = pyqtSignal()  # Emitted when chaos event occurs (from gremlins window)
+    chaos_event = pyqtSignal()  # Emitted when chaos event occurs (from gremlins robots)
 
     # Metadata rebuild coordination signals
     metadata_rebuilding_started = pyqtSignal()  # Emitted when first catalog starts rebuilding
@@ -42,29 +42,28 @@ class Switchboard(QObject):
         
         # ---- PROJECT LIFECYCLE CONNECTIONS ----
         
-        # Listen for project changes from the project window
-        self.windows["project"].project_loaded.connect(self.project_folder_loaded)
+        # Listen for project changes from the robots window
+        self.windows["robots"].project_loaded.connect(self.project_folder_loaded)
         
         # When clearing projects, notify all windows to clean up their state
         self.project_clearing.connect(self.windows["captions"].clear_project)
         self.project_clearing.connect(self.windows["inference"].clear_project)
-        self.project_clearing.connect(self.windows["gremlins"].clear_project)
+        self.project_clearing.connect(self.windows["robots"].clear_project)
         
         # Add player clearing connections
         self.project_clearing.connect(self.windows["nickelodeon"].clear_project)
         self.project_clearing.connect(self.windows["playhouse"].clear_project)
         
         # After clearing, set the new project folder in all windows
-        self.project_loaded.connect(self.windows["captions"].set_project_folder)
-        self.project_loaded.connect(self.windows["inference"].set_project_folder)
-        self.project_loaded.connect(self.windows["prompt"].set_project_folder)
-        self.project_loaded.connect(self.windows["gremlins"].set_project_folder)
+        self.project_loaded.connect(self.windows["captions"].project_folder_was_set)
+        self.project_loaded.connect(self.windows["inference"].project_folder_was_set)
+        self.project_loaded.connect(self.windows["prompt"].project_folder_was_set)
 
         # ---- METADATA REBUILD COORDINATION ----
         
-        # Notify project window when metadata rebuilding starts/stops
-        self.metadata_rebuilding_started.connect(self.windows["project"].on_metadata_rebuilding_started)
-        self.metadata_rebuilding_stopped.connect(self.windows["project"].on_metadata_rebuilding_stopped)
+        # Notify robots window when metadata rebuilding starts/stops
+        self.metadata_rebuilding_started.connect(self.windows["robots"].on_metadata_rebuilding_started)
+        self.metadata_rebuilding_stopped.connect(self.windows["robots"].on_metadata_rebuilding_stopped)
 
         # ---- CATALOG STATUS CONNECTIONS ----
 
@@ -74,8 +73,8 @@ class Switchboard(QObject):
         self.windows["cinematheque"].catalog_loading_finished.connect(self.cinematheque_loading_finished)
         self.windows["cinematheque"].catalog_contents_cleared.connect(self.cinematheque_contents_cleared)
         
-        self.project_loaded.connect(self.windows["cinematheque"].set_project_folder)
-        self.project_loaded.connect(self.windows["playbill"].set_project_folder)
+        self.project_loaded.connect(self.windows["cinematheque"].project_folder_was_set)
+        self.project_loaded.connect(self.windows["playbill"].project_folder_was_set)
         self.windows["playbill"].catalog_loading_started.connect(self.playbill_loading_started)
         self.windows["playbill"].catalog_loading_finished.connect(self.playbill_loading_finished)
         self.windows["playbill"].catalog_contents_cleared.connect(self.playbill_contents_cleared)
@@ -105,13 +104,13 @@ class Switchboard(QObject):
 
         # ---- SUBTITLE CONNECTIONS ----
         self.project_clearing.connect(self.windows["subtitles"].clear_project)
-        self.project_loaded.connect(self.windows["subtitles"].set_project_folder)
+        self.project_loaded.connect(self.windows["subtitles"].project_folder_was_set)
         self.windows["nickelodeon"].video_did_load.connect(self.windows["subtitles"].on_movie_loaded)
         self.windows["nickelodeon"].timecode_changed.connect(self.windows["subtitles"].on_timecode_changed)
 
         # ---- SHOTLIST CONNECTIONS ----
         self.project_clearing.connect(self.windows["shotlist"].clear_project)
-        self.project_loaded.connect(self.windows["shotlist"].set_project_folder)
+        self.project_loaded.connect(self.windows["shotlist"].project_folder_was_set)
         self.windows["nickelodeon"].video_did_load.connect(self.windows["shotlist"].on_movie_loaded)
         self.windows["nickelodeon"].timecode_changed.connect(self.windows["shotlist"].on_timecode_changed)
         self.windows["shotlist"].jump_to_timecode_signal.connect(self.windows["nickelodeon"].jump_to_timecode)
@@ -120,8 +119,7 @@ class Switchboard(QObject):
         self.windows["shotlist"].shot_caption_selected.connect(self.windows["captions"].set_shot_caption_field)
 
         # ---- CHAOS EVENT CONNECTIONS ----
-        # Listen for chaos events from gremlins window
-        self.windows["gremlins"].chaos.connect(self.on_chaos_event)
+        self.windows["robots"].chaos.connect(self.on_chaos_event)
 
         if DEBUG: print("DEBUG: Switchboard finished setting up connections")
 
@@ -280,9 +278,11 @@ class Switchboard(QObject):
         # Enable buttons when an item is selected
         self.windows["playbill"].enable_bot_buttons()
 
+    # --------- GREMLINS --------------
+
     # Add this method at the end of the class:
     def on_chaos_event(self):
-        """Handle chaos events from the gremlins window"""
+        """Handle chaos events from the gremlins robots"""
         # choice = random.choice(["cinematheque", "playbill"])
         choice = "cinematheque" # force to Cinematheque for testing
         # Choose randomly from Playbill or Cinematheque
