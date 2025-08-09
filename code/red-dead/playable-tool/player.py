@@ -1,6 +1,6 @@
 DEBUG = False  # Add this at the top
 
-from PyQt5.QtCore import Qt, pyqtSignal, QUrl, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal, QUrl, QTimer, QPoint
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSlider
 )
@@ -8,6 +8,7 @@ from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
 from PyQt5.QtMultimediaWidgets import QVideoWidget
 # QSizePolicy
 from PyQt5.QtWidgets import QSizePolicy
+from PyQt5.QtGui import QGuiApplication
 
 import os
 from utility import pct_to_milliseconds, timecode_to_milliseconds, milliseconds_to_timecode, minimum_load_interval
@@ -105,6 +106,7 @@ class AbstractPlayerWindow(QMainWindow):
         self._slider_is_active = False
         self._pending_timecode = None  # Store timecode to jump to after loading
         self._pending_initial_timecode = None  # Store initial timecode for new videos
+        self.visible_ui = True
         
         # Add loading state management
         self._media_loading = False
@@ -174,6 +176,12 @@ class AbstractPlayerWindow(QMainWindow):
         self.forward_button.setFont(self.ui.get_font('button'))
         self.forward_button.setFixedSize(60, button_height)
 
+        # Fullscreen button
+        self.fullscreen_button = QPushButton("⛶")
+        self.fullscreen_button.setFont(self.ui.get_font('button'))
+        self.fullscreen_button.setFixedSize(60, button_height)
+        self.fullscreen_button.clicked.connect(self.fullscreen_toggle_ui)
+
         # Timecode display
         self.timecode_label = QLabel("00:00:00 | 00:00:00")
         self.timecode_label.setFont(self.ui.get_font('monospace'))
@@ -189,6 +197,7 @@ class AbstractPlayerWindow(QMainWindow):
         controls_layout.addWidget(self.play_pause_button)
         controls_layout.addWidget(self.back_button)
         controls_layout.addWidget(self.forward_button)
+        controls_layout.addWidget(self.fullscreen_button)
         controls_layout.addStretch()  # Stretch between buttons and timecode label
         controls_layout.addWidget(self.timecode_label)
         controls_layout.addStretch()  # Stretch to the right of
@@ -763,6 +772,69 @@ class AbstractPlayerWindow(QMainWindow):
         except ValueError:
             self.normal_seek.setText("1")
 
+
+    # ---------- FULLSCREEN HANDLING --------------
+
+    def enterEvent(self, event):
+        if not self.visible_ui:
+            self.fullscreen_show_ui()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        if not self.visible_ui:
+            self.fullscreen_hide_ui()
+        super().leaveEvent(event)
+
+    def fullscreen_toggle_ui(self):
+        self.visible_ui = not self.visible_ui
+        if self.visible_ui:
+            self.fullscreen_show_ui()
+            self.fullscreen_button_on()
+        else:
+            self.fullscreen_hide_ui()
+            self.fullscreen_button_off()
+
+    def fullscreen_hide_ui(self):
+        # Hide controls and expand video to fill window
+        self.timeline.hide()
+        self.play_pause_button.hide()
+        self.back_button.hide()
+        self.forward_button.hide()
+        self.fullscreen_button.hide()
+        self.timecode_label.hide()
+        # Remove margins from layout
+        container = self.centralWidget()
+        if container:
+            layout = container.layout()
+            if layout:
+                layout.setContentsMargins(0, 0, 0, 0)
+
+    def fullscreen_show_ui(self):
+        # Show controls and restore layout margins
+        self.timeline.show()
+        self.play_pause_button.show()
+        self.back_button.show()
+        self.forward_button.show()
+        self.fullscreen_button.show()
+        self.timecode_label.show()
+        container = self.centralWidget()
+        if container:
+            layout = container.layout()
+            if layout:
+                layout.setContentsMargins(0, 0, 0, 10)  # Restore original margin
+
+    def fullscreen_button_on(self):
+        self.fullscreen_button.setStyleSheet(
+                ""
+            )
+        
+    def fullscreen_button_off(self):
+        self.fullscreen_button.setStyleSheet(
+                "QPushButton { color: #777; }"
+            )
+
+    # ------------ APP HANDLING -----------------
+
     def closeEvent(self, event):
         try:
             if DEBUG: print("DEBUG: Player closeEvent called")
@@ -818,25 +890,35 @@ class AbstractPlayerWindow(QMainWindow):
     def on_preferences_save(self):
         pos = self.pos()
         size = self.size()
-        self._pending_save_data = {}
+        self._pending_save_data = {
+            # "window_pos": (pos.x(), pos.y()),
+            # "window_size": (size.width(), size.height()),
+            "visible_ui": self.visible_ui,  # Save UI visibility state
+        }
 
     def on_preferences_load(self, data):
-        pass
+        if not data:
+            return
+        # Restore window position and size if present
+        if "window_pos" in data and "window_size" in data:
+            x, y = data["window_pos"]
+            w, h = data["window_size"]
+            self.move(x, y)
+            self.resize(w, h)
+        # Restore UI visibility state
+        if "visible_ui" in data:
+            self.visible_ui = data["visible_ui"]
+            if self.visible_ui:
+                self.fullscreen_show_ui()
+                self.fullscreen_button_on()
+            else:
+                self.fullscreen_hide_ui()
+                self.fullscreen_button_off()
 
     def clear_project(self):
         """Clear current project - unload video and reset state"""
         if DEBUG: print("DEBUG: Player clearing project - unloading video")
         
-        self.current_player.stop()
-        self.current_player.setMedia(QMediaContent())  # release backend
-        self.current_player.deleteLater()
-
-        self.next_player.stop()
-        self.next_player.setMedia(QMediaContent())  # release backend
-        self.next_player.deleteLater()
-
-        self.video_widget.deleteLater()
-
         # Clean up players
         if self.current_player:
             self._destroy_player(self.current_player)

@@ -4,6 +4,7 @@ class PlayhouseWindow(AbstractPlayerWindow):
     def __init__(self, ui):
         super().__init__(ui)
         self.setWindowTitle("Playhouse")
+        self.setObjectName("Playhouse")
 
     def seek_back(self):
         """Override to use SEEK_FAST for gameplay videos"""

@@ -5,6 +5,7 @@ class NickelodeonWindow(AbstractPlayerWindow):
     def __init__(self, ui):
         super().__init__(ui)
         self.setWindowTitle("Nickelodeon")
+        self.setObjectName("Nickelodeon")
 
     def handle_global_key(self, event):
         """Handle global key events"""

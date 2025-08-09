@@ -7,16 +7,20 @@
   },
   "subtitles": {},
   "prompt": {},
-  "playhouse": {},
+  "playhouse": {
+    "visible_ui": true
+  },
   "playbill": {},
-  "nickelodeon": {},
+  "nickelodeon": {
+    "visible_ui": false
+  },
   "shotlist": {
     "col0_width": 41,
     "col1_width": 43,
     "col2_width": 98,
     "col3_width": 100,
-    "col4_width": 189,
-    "col5_width": 143,
+    "col4_width": 108,
+    "col5_width": 126,
     "weights_field": "-t 3.0",
     "method_selected": "detect-adaptive"
   },
