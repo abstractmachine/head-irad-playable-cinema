@@ -11,6 +11,7 @@ import os
 
 from utility import minimum_load_interval, HIGHLIGHT_BACKGROUND_COLOR, HIGHLIGHT_COLOR
 from project import ProjectManager
+from layout import load_window_geometry, load_dock_layout
 
 class RobotsWindow(QMainWindow):
     """
@@ -171,34 +172,29 @@ class RobotsWindow(QMainWindow):
             return  # Ignore signal when nothing is selected
         layout_name = self.layouts_dropdown.itemText(index)
         if DEBUG: print(f"DEBUG: Layout selected: {layout_name}")
-        # self.project_manager.set_current_layout(layout_name)
 
-    # @property
-    # def project_loaded(self):
-    #     return self.project_manager.project_loaded
+        main_window = self.window()
+        app_folder = os.path.dirname(os.path.abspath(__file__))
 
-    # @property
-    # def project_changed(self):
-    #     return self.project_manager.project_changed
-
-    # def get_project_folder(self):
-    #     return self.project_manager.get_project_folder()
-
-    # def get_folder_path(self, folder_name):
-    #     return self.project_manager.get_folder_path(folder_name)
-
-    # def get_file_path(self, file_path):
-    #     return self.project_manager.get_file_path(file_path)
-
-    # def folder_exists(self, folder_name):
-    #     return self.project_manager.folder_exists(folder_name)
-
-    # def file_exists(self, file_path):
-    #     return self.project_manager.file_exists(file_path)
-
-    # def get_required_files(self):
-    #     return self.project_manager.get_required_files()
-    
+        if layout_name == "Default":
+            layout_folder = os.path.join(app_folder, "preferences", "layouts")
+            geometry_file = os.path.join(layout_folder, "Default.geometry")
+            layout_file = os.path.join(layout_folder, "Default.layout")
+            if DEBUG: print(f"DEBUG: Loading geometry from {geometry_file}")
+            if DEBUG: print(f"DEBUG: Loading dock layout from {layout_file}")
+            load_window_geometry(main_window, geometry_file)
+            load_dock_layout(main_window, layout_file)
+        else:
+            # Load from project folder's layouts directory
+            project_folder = self.project_manager.get_project_folder()
+            layout_folder = os.path.join(project_folder, "layouts")
+            geometry_file = os.path.join(layout_folder, f"{layout_name}.geometry")
+            layout_file = os.path.join(layout_folder, f"{layout_name}.layout")
+            if DEBUG: print(f"DEBUG: Loading geometry from {geometry_file}")
+            if DEBUG: print(f"DEBUG: Loading dock layout from {layout_file}")
+            load_window_geometry(main_window, geometry_file)
+            load_dock_layout(main_window, layout_file)
+                
     # ------ GREMLINS ---------
 
     def on_interval_changed(self, text):
