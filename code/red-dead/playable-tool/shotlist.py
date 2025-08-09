@@ -382,6 +382,13 @@ class ShotlistWindow(QMainWindow):
 
     # ------- Video Processing -------
 
+    def on_movie_loading(self):
+        if DEBUG: print("DEBUG: Shotlist is loading video...")
+        self.scene_table.setRowCount(0)
+        self.current_csv_path = None
+        self.delete_button.setEnabled(False)
+        self.detect_button.setEnabled(False)
+
     def on_movie_loaded(self, video_path, metadata):
         # Prevent table creation or access if shotlist DB is not loaded
         if not self.shotlist_db_loaded:

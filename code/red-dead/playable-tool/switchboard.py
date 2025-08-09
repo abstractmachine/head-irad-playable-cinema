@@ -112,6 +112,7 @@ class Switchboard(QObject):
 
         # ---- SHOTLIST CONNECTIONS ----
         self.project_cleared.connect(self.windows["shotlist"].clear_project)
+        self.windows["nickelodeon"].video_is_loading.connect(self.nickelodeon_is_loading)
         self.windows["nickelodeon"].video_did_load.connect(self.windows["shotlist"].on_movie_loaded)
         self.windows["nickelodeon"].timecode_changed.connect(self.windows["shotlist"].on_timecode_changed)
         self.windows["shotlist"].jump_to_timecode_signal.connect(self.windows["nickelodeon"].jump_to_timecode)
@@ -220,6 +221,14 @@ class Switchboard(QObject):
 
         # Let playbill handle its own UI state changes
         self.windows["playbill"].on_catalog_loading_finished()
+
+    # ----------- PLAYER HANDLERS -------------
+
+    def nickelodeon_is_loading(self):
+        if DEBUG: print("DEBUG: Switchboard: Nickelodeon started loading")
+
+        # Let nickelodeon handle its own UI state changes
+        self.windows["shotlist"].on_movie_loading()
 
     # ---- CATALOG ITEM SELECTION HANDLERS ----
 
