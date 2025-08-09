@@ -20,7 +20,7 @@ class UI:
             'cell-tiny':('Roboto', 12, QFont.Thin, False),
             'cell-text':('Roboto Condensed', 13, QFont.Normal, False),
             'cell-mono':('Roboto Mono', 12, QFont.Normal, False),
-            'text':     ('Hanken Grotesk', 16, QFont.Normal, False),
+            'text':     ('Hanken Grotesk', 14, QFont.Normal, False),
             'italic':   ('Hanken Grotesk', 14, QFont.Normal, True),
             'black':    ('Roboto Serif', 16, QFont.Black, False),
             'prompt':   ('Roboto Mono', 12, QFont.Normal, False),

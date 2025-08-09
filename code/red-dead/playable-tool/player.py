@@ -6,6 +6,8 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
 from PyQt5.QtMultimediaWidgets import QVideoWidget
+# QSizePolicy
+from PyQt5.QtWidgets import QSizePolicy
 
 import os
 from utility import pct_to_milliseconds, timecode_to_milliseconds, milliseconds_to_timecode, minimum_load_interval
@@ -129,14 +131,11 @@ class AbstractPlayerWindow(QMainWindow):
         
         # Create video widget (shared between players)
         self.video_widget = QVideoWidget()
-        
+        # get the window's width
+        self.video_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
         # Set the initial player output
         self.current_player.setVideoOutput(self.video_widget)
-
-        if ui.is_dark_mode():
-            self.video_widget.setStyleSheet("background-color: #111;")
-        else:
-            self.video_widget.setStyleSheet("background-color: #eee;")
 
         # Timeline slider
         self.timeline = JumpSlider(Qt.Horizontal)

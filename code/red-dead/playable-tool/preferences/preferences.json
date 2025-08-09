@@ -18,7 +18,7 @@
     "col1_width": 43,
     "col2_width": 98,
     "col3_width": 100,
-    "col4_width": 323,
+    "col4_width": 355,
     "col5_width": 228,
     "weights_field": "-t 3.0",
     "method_selected": "detect-adaptive"
