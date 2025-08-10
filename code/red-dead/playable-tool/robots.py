@@ -183,8 +183,8 @@ class RobotsWindow(QMainWindow):
         self.search_model_button.clicked.connect(self.search_model_requested.emit)
         chaos_layout.addWidget(self.search_model_button)
 
-        self.off_button = QPushButton("Off")
-        self.off_button.setFixedSize(80, button_height)
+        self.off_button = QPushButton("Inference")
+        self.off_button.setFixedSize(button_width, button_height)
         # self.off_button.setFont(self.ui.get_font('button'))
         self.off_button.clicked.connect(self.inference_off_requested.emit)
         chaos_layout.addWidget(self.off_button)
@@ -451,7 +451,7 @@ class RobotsWindow(QMainWindow):
     def start_chaos(self):
         """Start generating chaos events"""
         self.is_running = True
-        self.toggle_button.setText("Chaos!")
+        self.toggle_button.setText("Gremlins")
         self.toggle_button.setStyleSheet("background-color: #f0f; color: #fff;")
         
         # Start the timer
