@@ -9,10 +9,10 @@ from PyQt5.QtMultimediaWidgets import QVideoWidget
 # QSizePolicy
 from PyQt5.QtWidgets import QSizePolicy
 from PyQt5.QtGui import QGuiApplication
+from PyQt5 import sip
 
 import os
 from utility import pct_to_milliseconds, timecode_to_milliseconds, milliseconds_to_timecode, minimum_load_interval
-import sip
 
 SEEK_NORMAL = 1
 SEEK_FAST = 30

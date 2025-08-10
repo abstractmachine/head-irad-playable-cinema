@@ -77,6 +77,7 @@ class PlayableCinemaMainWindow(QMainWindow):
         
         # Bottom: Content libraries and timelines
         self.add_dock("Shotlist", windows["shotlist"], Qt.BottomDockWidgetArea)
+        self.add_dock("Playlist", windows["playlist"], Qt.BottomDockWidgetArea)
         self.add_dock("Cinemathèque", windows["cinematheque"], Qt.BottomDockWidgetArea)
         self.add_dock("Playbill", windows["playbill"], Qt.BottomDockWidgetArea)
         self.add_dock("Robots", windows["robots"], Qt.BottomDockWidgetArea)  # Add this line

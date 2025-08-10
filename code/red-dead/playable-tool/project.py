@@ -145,6 +145,7 @@ class ProjectManager(QObject):
             "layouts",
             "metadata", 
             "movies", 
+            "playlists",
             "posters", 
             "preferences", 
             "prompts", 

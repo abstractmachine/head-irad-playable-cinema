@@ -55,12 +55,13 @@ class Switchboard(QObject):
         self.project_cleared.connect(self.windows["playhouse"].clear_project)
 
         # After clearing, set the new project folder in all windows
-        self.project_loaded.connect(self.windows["captions"].on_project_folder_loaded)
-        self.project_loaded.connect(self.windows["inference"].on_project_folder_loaded)
-        self.project_loaded.connect(self.windows["prompt"].on_project_folder_loaded)
         self.project_loaded.connect(self.windows["cinematheque"].on_project_folder_loaded)
         self.project_loaded.connect(self.windows["playbill"].on_project_folder_loaded)
         self.project_loaded.connect(self.windows["shotlist"].on_project_folder_loaded)
+        self.project_loaded.connect(self.windows["playlist"].on_project_folder_loaded)
+        self.project_loaded.connect(self.windows["captions"].on_project_folder_loaded)
+        self.project_loaded.connect(self.windows["inference"].on_project_folder_loaded)
+        self.project_loaded.connect(self.windows["prompt"].on_project_folder_loaded)
         self.project_loaded.connect(self.windows["subtitles"].on_project_folder_loaded)
         self.project_loaded.connect(self.windows["robots"].on_project_folder_loaded)
 
@@ -74,6 +75,7 @@ class Switchboard(QObject):
 
         self.project_cleared.connect(self.windows["cinematheque"].clear_project)
         self.project_cleared.connect(self.windows["playbill"].clear_project)
+
         self.windows["cinematheque"].catalog_loading_started.connect(self.cinematheque_loading_started)
         self.windows["cinematheque"].catalog_loading_finished.connect(self.cinematheque_loading_finished)
         self.windows["cinematheque"].catalog_contents_cleared.connect(self.cinematheque_contents_cleared)
@@ -105,20 +107,28 @@ class Switchboard(QObject):
         self.windows["playbill"].metadata_rebuild_finished.connect(lambda success: self.metadata_rebuild_finished("playbill", success))
         self.windows["playbill"].metadata_rebuild_cancelled.connect(lambda: self.metadata_rebuild_cancelled("playbill"))
 
-        # ---- SUBTITLE CONNECTIONS ----
+        # ---- SUBTITLE CONNECTIONS (ONLY CONCERNS MOVIES) ----
         self.project_cleared.connect(self.windows["subtitles"].clear_project)
         self.windows["nickelodeon"].video_did_load.connect(self.windows["subtitles"].on_movie_loaded)
         self.windows["nickelodeon"].timecode_changed.connect(self.windows["subtitles"].on_timecode_changed)
 
-        # ---- SHOTLIST CONNECTIONS ----
+        # ---- LIST CONNECTIONS ----
         self.project_cleared.connect(self.windows["shotlist"].clear_project)
+        self.project_cleared.connect(self.windows["playlist"].clear_project)
+
         self.windows["nickelodeon"].video_is_loading.connect(self.nickelodeon_is_loading)
+        self.windows["playhouse"].video_is_loading.connect(self.playhouse_is_loading)
         self.windows["nickelodeon"].video_did_load.connect(self.windows["shotlist"].on_movie_loaded)
+        self.windows["playhouse"].video_did_load.connect(self.windows["playlist"].on_movie_loaded)
         self.windows["nickelodeon"].timecode_changed.connect(self.windows["shotlist"].on_timecode_changed)
+        self.windows["playhouse"].timecode_changed.connect(self.windows["playlist"].on_timecode_changed)
+        
         self.windows["shotlist"].jump_to_timecode_signal.connect(self.windows["nickelodeon"].jump_to_timecode)
+        self.windows["playlist"].jump_to_timecode_signal.connect(self.windows["playhouse"].jump_to_timecode)
 
         # ---- CAPTION CONNECTIONS ----
         self.windows["shotlist"].shot_caption_selected.connect(self.windows["captions"].set_shot_caption_field)
+        self.windows["shotlist"].scene_caption_selected.connect(self.windows["captions"].set_scene_caption_field)
 
         # ---- CHAOS EVENT CONNECTIONS ----
         self.windows["robots"].chaos.connect(self.on_chaos_event)
@@ -232,8 +242,14 @@ class Switchboard(QObject):
     def nickelodeon_is_loading(self):
         if DEBUG: print("DEBUG: Switchboard: Nickelodeon started loading")
 
-        # Let nickelodeon handle its own UI state changes
+        # Let shotlist handle its own UI state changes
         self.windows["shotlist"].on_movie_loading()
+
+    def playhouse_is_loading(self):
+        if DEBUG: print("DEBUG: Switchboard: Playhouse started loading")
+
+        # Let playlist handle its own UI state changes
+        self.windows["playlist"].on_movie_loading()
 
     # ---- CATALOG ITEM SELECTION HANDLERS ----
 
@@ -241,6 +257,11 @@ class Switchboard(QObject):
         if DEBUG: print(f"DEBUG: Switchboard: Cinematheque item might change: {metadata['title']}")
 
         self.windows["cinematheque"].disable_bot_buttons()
+
+    def playbill_item_might_change(self, metadata):
+        if DEBUG: print(f"DEBUG: Switchboard: Playbill item might change: {metadata['title']}")
+
+        self.windows["playbill"].disable_bot_buttons()
 
     def cinematheque_item_selected(self, metadata, timecode=None):
         if DEBUG:
@@ -265,11 +286,6 @@ class Switchboard(QObject):
         
         # Enable buttons when an item is selected
         self.windows["cinematheque"].enable_bot_buttons()
-
-    def playbill_item_might_change(self, metadata):
-        if DEBUG: print(f"DEBUG: Switchboard: Playbill item might change: {metadata['title']}")
-
-        self.windows["playbill"].disable_bot_buttons()
 
     def playbill_item_selected(self, metadata, timecode=None):
         if DEBUG:

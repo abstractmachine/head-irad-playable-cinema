@@ -1,5 +1,8 @@
 DEBUG = False  # Set to True to enable debug output
 
+from PyQt5 import sip
+sip.setdestroyonexit(False)
+
 # System
 import sys
 
@@ -14,13 +17,14 @@ from keyboard import GlobalKeyFilter
 # Window imports
 from nickelodeon import NickelodeonWindow
 from playhouse import PlayhouseWindow
-from playbill import PlaybillWindow
 from shotlist import ShotlistWindow
-from caption import CaptionWindow
+from playlist import PlaylistWindow
 from cinematheque import CinemathequeWindow
+from playbill import PlaybillWindow
 from prompt import PromptWindow
 from subtitles import SubtitlesWindow
 from inference import InferenceWindow
+from caption import CaptionWindow
 from robots import RobotsWindow
 
 # Layout and coordination
@@ -58,6 +62,7 @@ def main():
         "playbill": PlaybillWindow(ui),
         "nickelodeon": NickelodeonWindow(ui),
         "shotlist": ShotlistWindow(ui),
+        "playlist": PlaylistWindow(ui),
         "cinematheque": CinemathequeWindow(ui),
         "robots": RobotsWindow(ui),
     }
@@ -96,9 +101,9 @@ def main():
 
     # Clean shutdown for media players
     def clean_quit():
-        """Ensure media players terminate properly before app exits"""
+        """Ensure media players and threads terminate properly before app exits"""
         if DEBUG: print("DEBUG: Starting clean quit sequence")
-        
+
         try:
             # Stop QMediaPlayer instances first
             if "nickelodeon" in windows:
@@ -111,21 +116,34 @@ def main():
                     if DEBUG: print("DEBUG: Stopping Playhouse media player")
                     windows["playhouse"].player.media_player.stop()
                     windows["playhouse"].player.media_player.setMedia(QMediaContent())
+
+            # Stop catalog/cinematheque threads
+            for win_name in ("cinematheque", "playbill"):  # adjust to actual keys using Catalog
+                win = windows.get(win_name)
+                if not win:
+                    continue
+                for t in (
+                    getattr(win, "metadata_thread", None),
+                    getattr(win, "loading_thread", None)
+                ):
+                    if t and t.isRunning():
+                        if DEBUG: print(f"DEBUG: Stopping thread in {win_name}")
+                        t.quit()
+                        t.wait()
+
         except Exception as e:
-            if DEBUG: print(f"DEBUG: Error stopping media players: {e}")
-        
-        # Close all windows properly
+            if DEBUG: print(f"DEBUG: Error during quit cleanup: {e}")
+
+        # Close all windows
         for name, window in windows.items():
             try:
                 if DEBUG: print(f"DEBUG: Closing window: {name}")
                 window.close()
             except Exception as e:
                 if DEBUG: print(f"DEBUG: Error closing window {name}: {e}")
-        
-        # Force garbage collection
+
         import gc
         gc.collect()
-        
         if DEBUG: print("DEBUG: Clean quit sequence completed")
 
     app.aboutToQuit.connect(clean_quit)

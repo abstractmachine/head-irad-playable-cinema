@@ -224,6 +224,9 @@ class CaptionWindow(QWidget):
     def set_shot_caption_field(self, caption):
         self.shot_caption_field.setPlainText(caption)
 
+    def set_scene_caption_field(self, caption):
+        self.scene_caption_field.setPlainText(caption)
+
     def handle_is_last_available_shot(self, is_last):
         self.is_last_row = is_last
 

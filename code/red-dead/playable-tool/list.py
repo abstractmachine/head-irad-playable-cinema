@@ -11,6 +11,8 @@ from PyQt5.QtWidgets import (
 
 from utility import timecode_to_milliseconds, HIGHLIGHT_BACKGROUND_COLOR, HIGHLIGHT_COLOR
 
+LOADING_DELAY = 1000
+
 class AbstractListImportWorker(QThread):
     finished = pyqtSignal()
 
@@ -47,7 +49,8 @@ class AbstractListWindow(QMainWindow):
     list_status = pyqtSignal(bool)
     timecodes_signal = pyqtSignal(str, list)
     abort_api = pyqtSignal(str)
-    caption_selected = pyqtSignal(str)
+    shot_caption_selected = pyqtSignal(str)
+    scene_caption_selected = pyqtSignal(str)
     row_did_change = pyqtSignal(int)
     row_data = pyqtSignal(dict)
     is_last_available_row = pyqtSignal(bool)
@@ -155,10 +158,9 @@ class AbstractListWindow(QMainWindow):
         self.table.setRowCount(0)
         self.current_csv_path = None
 
-    def on_movie_loaded(self, video_path, metadata):
+    def on_movie_loaded(self, video_path=None, metadata=None, delay=LOADING_DELAY):
         if not self.db_loaded:
             return
-        delay = 1000
         QTimer.singleShot(delay, lambda: self.load_movie_list_after_delay(video_path, metadata))
 
     def load_movie_list_after_delay(self, video_path, metadata):
@@ -362,9 +364,9 @@ class AbstractListWindow(QMainWindow):
                 caption_col = self.get_column_index_by_name("Shot_Caption")
                 if caption_col != -1:
                     caption = self.table.item(self.current_row, caption_col).text()
-                    self.caption_selected.emit(caption)
+                    self.shot_caption_selected.emit(caption)
             else:
-                self.caption_selected.emit("")
+                self.shot_caption_selected.emit("")
         last_non_ignored = self.is_last_non_ignored_row(self.current_row)
         self.is_last_available_row.emit(last_non_ignored)
         first_non_ignored = self.is_first_non_ignored_row(self.current_row)
@@ -445,7 +447,7 @@ class AbstractListWindow(QMainWindow):
         self.table.clearSelection()
         self.table.blockSignals(False)
         caption = self.table.item(row, caption_index).text()
-        self.caption_selected.emit(caption)
+        self.shot_caption_selected.emit(caption)
         if row != self.current_row:
             self.current_row = row
             self.row_did_change.emit(self.current_row)
@@ -543,7 +545,7 @@ class AbstractListWindow(QMainWindow):
     def emit_caption_for_row(self, row):
         caption_index = self.get_column_index_by_name("Shot_Caption")
         caption = self.table.item(row, caption_index).text()
-        self.caption_selected.emit(caption)
+        self.shot_caption_selected.emit(caption)
 
     def find_closest_row(self, ms):
         row_count = self.table.rowCount()
