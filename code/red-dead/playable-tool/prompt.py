@@ -28,16 +28,34 @@ class PromptWindow(QMainWindow):
 
         if DEBUG: print("DEBUG: PromptWindow initialized")
 
-        # Main layout: horizontal (buttons left, text right)
-        main_layout = QHBoxLayout()
+        # Put the main layout in a vertical box layout
+        main_layout = QVBoxLayout()
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
+        
+
         # Left: vertical buttons
         button_width, button_height = self.ui.get_dimensions('button')
-        button_layout = QVBoxLayout()
-        button_layout.setSpacing(0)
+        button_layout = QHBoxLayout()
+        button_layout.setSpacing(10)
         button_layout.setContentsMargins(0, 0, 0, 0)
+
+        # These are going to be the text fields
+        ilk_fields = [
+            "Tags",
+            "Test",
+            "Prompt"
+        ]
+
+        # Create a first drop-down menu that determines what type of action
+        self.prompt_ilk_dropdown = QComboBox()
+        self.prompt_ilk_dropdown.addItems(ilk_fields)
+        self.prompt_ilk_dropdown.setCurrentIndex(0)
+        self.prompt_ilk_dropdown.setFont(self.ui.get_font('button'))
+        self.prompt_ilk_dropdown.setFixedHeight(button_height)
+        self.prompt_ilk_dropdown.setMinimumWidth(110)
+        self.prompt_ilk_dropdown.setMaximumWidth(130)
 
         # Map prompt types to filenames
         self.prompt_file_map = {
@@ -49,7 +67,8 @@ class PromptWindow(QMainWindow):
             "Shot": "shot.txt",
             "Scene": "scene.txt",
             "Gameplay": "gameplay.txt",
-            "Image": "image.txt"
+            "Image": "image.txt",
+            "Experimental": "experimental.txt"
         }
 
         # These are going to be the text fields
@@ -64,29 +83,30 @@ class PromptWindow(QMainWindow):
             "Format": None,
             "Warning": None,
             "Context": None,
-            "Image": None
+            "Image": None,
+            "Experimental": None
         }
 
         # Dropdown Menu
-        self.prompt_type_dropdown = QComboBox()
+        self.prompt_name_dropdown = QComboBox()
         # use self.text_fields.keys() to populate the dropdown
-        self.prompt_type_dropdown.addItems(self.text_fields.keys())
-        self.prompt_type_dropdown.setCurrentIndex(0)  # Default to "System"
-        # UI Stuff
-        self.prompt_type_dropdown.setFont(self.ui.get_font('button'))
-        self.prompt_type_dropdown.setFixedSize(80, button_height)
+        self.prompt_name_dropdown.addItems(self.text_fields.keys())
+        self.prompt_name_dropdown.setCurrentIndex(0)  # Default to "System"
         
         # Connect both signals for different behaviors
-        self.prompt_type_dropdown.currentIndexChanged.connect(self.handle_prompt_type_changed)
-        self.prompt_type_dropdown.activated.connect(self.handle_prompt_type_activated)
-        
-        button_layout.addWidget(self.prompt_type_dropdown)
+        self.prompt_name_dropdown.currentIndexChanged.connect(self.handle_prompt_name_changed)
+        self.prompt_name_dropdown.activated.connect(self.handle_prompt_name_activated)
 
-        # align button_layout to the right
-        self.prompt_type_dropdown.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self.prompt_type_dropdown.setStyleSheet("QComboBox { padding: 0px 0px 0px 10px; margin: 0px 0px 0px 10px; }")
+        # UI Stuff
+        self.prompt_name_dropdown.setFont(self.ui.get_font('button'))
+        self.prompt_name_dropdown.setFixedHeight(button_height)
+        self.prompt_name_dropdown.setMinimumWidth(110)
+        self.prompt_name_dropdown.setMaximumWidth(130)
 
+        button_layout.addWidget(self.prompt_ilk_dropdown)
+        button_layout.addWidget(self.prompt_name_dropdown)
         button_layout.addStretch()
+
         main_layout.addLayout(button_layout, stretch=0)
 
         # Stacked Layout
@@ -127,18 +147,18 @@ class PromptWindow(QMainWindow):
         self.prompt_type = None
 
         # Set dropdown to none selected initially
-        self.prompt_type_dropdown.setCurrentIndex(-1)
+        self.prompt_name_dropdown.setCurrentIndex(-1)
 
-    def handle_prompt_type_activated(self, idx):
-        """Handle prompt type activation (including re-selection of same item)."""
-        if DEBUG: print(f"DEBUG: Prompt type activated at index {idx}")
-        
+    def handle_prompt_name_activated(self, idx):
+        """Handle prompt name activation (including re-selection of same item)."""
+        if DEBUG: print(f"DEBUG: Prompt name activated at index {idx}")
+
         # Simply call the existing handler - it will handle all the logic
-        self.handle_prompt_type_changed(idx)
+        self.handle_prompt_name_changed(idx)
 
-    def handle_prompt_type_changed(self, idx):
-        """Handle prompt type change from dropdown."""
-        
+    def handle_prompt_name_changed(self, idx):
+        """Handle prompt name change from dropdown."""
+
         # Handle unselected case
         if idx == -1:
             self.prompt_type = None
@@ -146,7 +166,7 @@ class PromptWindow(QMainWindow):
             return
 
         # Update prompt type based on selection
-        self.prompt_type = self.prompt_type_dropdown.itemText(idx)
+        self.prompt_type = self.prompt_name_dropdown.itemText(idx)
         if DEBUG: print(f"DEBUG: Prompt type changed to {self.prompt_type}")
 
         # Set the index of the stacked layout to match the selected prompt type
@@ -294,7 +314,7 @@ class PromptWindow(QMainWindow):
 
         # List of required files
         required_files = [
-            'context.txt', 'format.txt', 'gameplay.txt', 'goal.txt', 'image.txt', 'scene.txt', 'shot.txt', 'system.txt', 'tags.txt', 'warning.txt'
+            'context.txt', 'experimental.txt', 'format.txt', 'gameplay.txt', 'goal.txt', 'image.txt', 'scene.txt', 'shot.txt', 'system.txt', 'tags.txt', 'warning.txt'
         ]
 
         # Preferences source directory (now in prompts subdirectory)

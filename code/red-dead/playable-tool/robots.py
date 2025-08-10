@@ -207,6 +207,8 @@ class RobotsWindow(QMainWindow):
             "detect-threshold"
         ])
         self.method_dropdown.setFixedHeight(button_height)
+        self.method_dropdown.setMinimumWidth(110)
+        self.method_dropdown.setMaximumWidth(130)
         # self.method_dropdown.setFont(ui.get_font('button'))
         shotlist_layout.addWidget(self.method_dropdown)
 
