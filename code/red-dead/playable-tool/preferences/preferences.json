@@ -4,19 +4,19 @@
   "subtitles": {},
   "prompt": {},
   "playhouse": {
-    "visible_ui": true
+    "visible_ui": false
   },
   "playbill": {},
   "nickelodeon": {
-    "visible_ui": true
+    "visible_ui": false
   },
   "shotlist": {
     "col0_width": 36,
     "col1_width": 34,
     "col2_width": 95,
     "col3_width": 94,
-    "col4_width": 115,
-    "col5_width": 168
+    "col4_width": 95,
+    "col5_width": 107
   },
   "cinematheque": {},
   "robots": {

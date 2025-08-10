@@ -452,6 +452,7 @@ class RobotsWindow(QMainWindow):
         """Start generating chaos events"""
         self.is_running = True
         self.toggle_button.setText("Chaos!")
+        self.toggle_button.setStyleSheet("background-color: #f0f; color: #fff;")
         
         # Start the timer
         interval_ms = int(self.interval_seconds * 1000)
@@ -463,6 +464,7 @@ class RobotsWindow(QMainWindow):
         """Stop generating chaos events"""
         self.is_running = False
         self.toggle_button.setText("Gremlins")
+        self.toggle_button.setStyleSheet("")
 
         # Stop the timer
         self.chaos_timer.stop()
