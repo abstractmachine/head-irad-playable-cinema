@@ -5,12 +5,10 @@ import tempfile
 import base64
 import mimetypes
 import openai
-import re
 
-from PyQt5.QtGui import QTextOption
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal, QObject
 from PyQt5.QtWidgets import (
-    QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QLineEdit, QTextEdit, QPushButton, QSizePolicy, QLabel, QComboBox
+    QGridLayout, QWidget, QTextEdit, QLabel
 )
 
 from prompt import parse_system_prompt_files
@@ -128,60 +126,49 @@ class SystemPromptEdit(QTextEdit):
 class CaptionWindow(QWidget):
     preferences_save = pyqtSignal()
     preferences_load = pyqtSignal(dict)
-    shot_caption_submitted = pyqtSignal(str)
-    request_current_shot = pyqtSignal(int)
-    request_next_shot = pyqtSignal()
-    request_previous_shot = pyqtSignal()
+    captions_submitted = pyqtSignal(str, str, str, str)
 
     def __init__(self, ui, subtitles_window):
         super().__init__()
-        self.ui = ui  # Store UI instance
-        self.subtitles_window = subtitles_window  # Store reference to subtitles window
+        self.ui = ui
+        self.subtitles_window = subtitles_window
 
-        self.setMinimumHeight(80)
+        self.setMinimumHeight(160)
 
-        # Main horizontal layout, no margins or spacing
-        main_layout = QHBoxLayout()
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
+        # Create all four caption fields
+        self.movie_shot_caption_field = QTextEdit()
+        self.movie_shot_caption_field.setPlaceholderText("{movie-shot}")
+        self.movie_shot_caption_field.setFont(self.ui.get_font('text'))
 
-        # Shot caption field (multi-line widget)
-        self.shot_caption_field = QTextEdit()
-        self.shot_caption_field.setPlaceholderText("Shot captions")
-        self.shot_caption_field.setFont(self.ui.get_font('text'))
-        self.shot_caption_field.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.shot_caption_field.setWordWrapMode(QTextOption.WordWrap)
-        if ui.is_dark_mode():
-            self.shot_caption_field.setStyleSheet(f"QTextEdit {{ border: none; border-right: 2px solid {DARK_DOCK_BORDER}; padding: 0px; margin: 0px; }}")
-        else:
-            self.shot_caption_field.setStyleSheet(f"QTextEdit {{ border: none; border-right: 2px solid {LIGHT_DOCK_BORDER}; padding: 0px; margin: 0px; }}")
+        self.movie_scene_caption_field = QTextEdit()
+        self.movie_scene_caption_field.setPlaceholderText("{movie-scene}")
+        self.movie_scene_caption_field.setFont(self.ui.get_font('text'))
 
-        main_layout.addWidget(self.shot_caption_field, stretch=1)
+        self.play_shot_caption_field = QTextEdit()
+        self.play_shot_caption_field.setPlaceholderText("{play-shot}")
+        self.play_shot_caption_field.setFont(self.ui.get_font('text'))
 
-        # Scene caption field (multi-line widget)
-        self.scene_caption_field = QTextEdit()
-        self.scene_caption_field.setPlaceholderText("Scene captions")
-        self.scene_caption_field.setFont(self.ui.get_font('text'))
-        self.scene_caption_field.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.scene_caption_field.setWordWrapMode(QTextOption.WordWrap)
-        if ui.is_dark_mode():
-            self.scene_caption_field.setStyleSheet(f"QTextEdit {{ border: none; border-left: 2px solid {DARK_DOCK_BORDER}; padding: 0px; margin: 0px; }}")
-        else:
-            self.scene_caption_field.setStyleSheet(f"QTextEdit {{ border: none; border-left: 2px solid {LIGHT_DOCK_BORDER}; padding: 0px; margin: 0px; }}")
+        self.play_scene_caption_field = QTextEdit()
+        self.play_scene_caption_field.setPlaceholderText("{play-scene}")
+        self.play_scene_caption_field.setFont(self.ui.get_font('text'))
 
+        # Layout: 2x2 grid
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(2)
 
-        main_layout.addWidget(self.scene_caption_field, stretch=1)
+        # Remove all QLabel widgets, only add QTextEdit fields
+        grid.addWidget(self.movie_shot_caption_field, 0, 0)
+        grid.addWidget(self.movie_scene_caption_field, 0, 1)
+        grid.addWidget(self.play_shot_caption_field, 1, 0)
+        grid.addWidget(self.play_scene_caption_field, 1, 1)
 
-        self.setLayout(main_layout)
+        self.setLayout(grid)
 
         # Ensure main window has focus at startup
         self.setFocus()
         self.setFocusPolicy(Qt.StrongFocus)
 
-        self.current_timecodes = []
-        self.is_last_row = False
-        self.is_first_row = True
-        self.api_running = False
         self.project_folder = None
         self.current_movie_filename = None
 
@@ -189,9 +176,7 @@ class CaptionWindow(QWidget):
         super().keyPressEvent(event)
 
     def on_preferences_save(self):
-        geo = self.geometry()
         self._pending_save_data = {
-            # No frame_count to save anymore
         }
         return self._pending_save_data
 
@@ -201,38 +186,71 @@ class CaptionWindow(QWidget):
     def set_shotlist_status(self, loaded):
         pass  # No buttons to enable/disable
 
-    def submit_caption(self):
-        text = self.shot_caption_field.toPlainText()
-        self.shot_caption_submitted.emit(text)
+    def on_project_folder_loaded(self, project_folder):
+        # Called when a new project folder is loaded
+        self.clear_captions()
+
+    def on_movie_loaded(self):
+        if DEBUG: print("DEBUG: ProjectWindow: on_movie_loaded called")
+        self.clear_captions()
 
     def clear_project(self):
         if DEBUG: print("DEBUG: ProjectWindow: clear_project called (no action needed)")
+        self.clear_captions()
 
-    def on_project_folder_loaded(self, project_folder):
-        self.project_folder = project_folder
-        self.shot_caption_field.clear()
+    def clear_captions(self):
+        if DEBUG: print("DEBUG: ProjectWindow: clear_captions called (no action needed)")
+        self.set_caption("movie", "shot", "")
+        self.set_caption("movie", "scene", "")
+        self.set_caption("play", "shot", "")
+        self.set_caption("play", "scene", "")
 
-    def on_movie_loaded_with_metadata(self, movie_path, metadata):
-        movie_filename = os.path.basename(movie_path)
-        self.metadata = metadata
-        self.current_movie_filename = movie_filename
+    def submit_captions(self):
+        movie_shot_text = self.get_caption("movie", "shot")
+        movie_scene_text = self.get_caption("movie", "scene")
+        play_shot_text = self.get_caption("play", "shot")
+        play_scene_text = self.get_caption("play", "scene")
 
-    def handle_row_data(self, row_data):
-        self.row_data = row_data
-        if DEBUG: print(f"DEBUG Caption: Received row data: {row_data}")
+        self.captions_submitted.emit(movie_shot_text, movie_scene_text, play_shot_text, play_scene_text)
 
-    def set_shot_caption_field(self, caption):
-        self.shot_caption_field.setPlainText(caption)
+    def receive_captions(self, movie_shot, movie_scene, play_shot, play_scene):
+        self.set_caption("movie", "shot", movie_shot)
+        self.set_caption("movie", "scene", movie_scene)
+        self.set_caption("play", "shot", play_shot)
+        self.set_caption("play", "scene", play_scene)
 
-    def set_scene_caption_field(self, caption):
-        self.scene_caption_field.setPlainText(caption)
+    def set_caption(self, source, level, text):
+        """
+        source: 'movie' or 'play'
+        level: 'shot' or 'scene'
+        text: caption string
+        """
 
-    def handle_is_last_available_shot(self, is_last):
-        self.is_last_row = is_last
+        # Update the correct field
+        if source == "movie" and level == "shot":
+            self.movie_shot_caption_field.setPlainText(text)
+        elif source == "movie" and level == "scene":
+            self.movie_scene_caption_field.setPlainText(text)
+        elif source == "play" and level == "shot":
+            self.play_shot_caption_field.setPlainText(text)
+        elif source == "play" and level == "scene":
+            self.play_scene_caption_field.setPlainText(text)
 
-    def handle_is_first_available_shot(self, is_first):
-        if DEBUG: print(f"DEBUG: handle_is_first_available_shot called - is_first={is_first}")
-        self.is_first_row = is_first
+    def get_caption(self, source, level):
+        """
+        source: 'movie' or 'play'
+        level: 'shot' or 'scene'
+        """
+        if source == "movie" and level == "shot":
+            return self.movie_shot_caption_field.toPlainText()
+        elif source == "movie" and level == "scene":
+            return self.movie_scene_caption_field.toPlainText()
+        elif source == "play" and level == "shot":
+            return self.play_shot_caption_field.toPlainText()
+        elif source == "play" and level == "scene":
+            return self.play_scene_caption_field.toPlainText()
+        return ""
 
-    def jump_to_first_available_shot(self):
-        self.request_current_shot.emit(0)  # No frame count field anymore
+    # Example usage:
+    # self.set_caption("movie", "shot", "This is a movie shot caption")
+    # self.set_caption("play", "scene", "This is a play scene caption")

@@ -4,7 +4,7 @@
   "subtitles": {},
   "prompt": {},
   "playhouse": {
-    "visible_ui": true
+    "visible_ui": false
   },
   "playbill": {},
   "nickelodeon": {
@@ -15,16 +15,16 @@
     "col1_width": 44,
     "col2_width": 95,
     "col3_width": 94,
-    "col4_width": 114,
-    "col5_width": 109
+    "col4_width": 160,
+    "col5_width": 176
   },
   "playlist": {
     "col0_width": 43,
-    "col1_width": 38,
-    "col2_width": 108,
-    "col3_width": 107,
-    "col4_width": 83,
-    "col5_width": 85
+    "col1_width": 40,
+    "col2_width": 96,
+    "col3_width": 94,
+    "col4_width": 151,
+    "col5_width": 206
   },
   "cinematheque": {},
   "robots": {

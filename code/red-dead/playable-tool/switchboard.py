@@ -127,8 +127,18 @@ class Switchboard(QObject):
         self.windows["playlist"].jump_to_timecode_signal.connect(self.windows["playhouse"].jump_to_timecode)
 
         # ---- CAPTION CONNECTIONS ----
-        self.windows["shotlist"].shot_caption_selected.connect(self.windows["captions"].set_shot_caption_field)
-        self.windows["shotlist"].scene_caption_selected.connect(self.windows["captions"].set_scene_caption_field)
+        self.windows["shotlist"].shot_caption_selected.connect(
+            lambda caption: self.windows["captions"].set_caption("movie", "shot", caption)
+        )
+        self.windows["shotlist"].scene_caption_selected.connect(
+            lambda caption: self.windows["captions"].set_caption("movie", "scene", caption)
+        )
+        self.windows["playlist"].shot_caption_selected.connect(
+            lambda caption: self.windows["captions"].set_caption("play", "shot", caption)
+        )
+        self.windows["playlist"].scene_caption_selected.connect(
+            lambda caption: self.windows["captions"].set_caption("play", "scene", caption)
+        )
 
         # ---- CHAOS EVENT CONNECTIONS ----
         self.windows["robots"].chaos.connect(self.on_chaos_event)
