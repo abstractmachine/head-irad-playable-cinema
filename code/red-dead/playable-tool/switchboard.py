@@ -148,6 +148,9 @@ class Switchboard(QObject):
         self.windows["robots"].search_model_requested.connect(self.windows["inference"].select_search_model)
         self.windows["robots"].inference_off_requested.connect(self.windows["inference"].turn_off_inference)
 
+        # Caption changes from Captions window
+        self.windows["captions"].caption_was_edited.connect(self.on_caption_edited)
+
         if DEBUG: print("DEBUG: Switchboard finished setting up connections")
 
     # ---- PROJECT LIFECYCLE HANDLERS ----
@@ -336,3 +339,11 @@ class Switchboard(QObject):
             if DEBUG: print("DEBUG: Chaos event - triggering Playbill")
             self.windows["playbill"].emit_chaos_event()
 
+    def on_caption_edited(self, source, caption_type, text):
+        # Handle caption edits here
+        if DEBUG: print(f"DEBUG: Caption edited: {source} {caption_type}: {text}")
+        # Route this to other windows or save as needed
+        if source == "movie":
+            self.windows["shotlist"].caption_was_edited(caption_type, text)
+        elif source == "play":
+            self.windows["playlist"].caption_was_edited(caption_type, text)

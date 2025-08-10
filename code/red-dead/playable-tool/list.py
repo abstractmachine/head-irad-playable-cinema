@@ -157,6 +157,8 @@ class AbstractListWindow(QMainWindow):
     def on_movie_loading(self):
         self.table.setRowCount(0)
         self.current_csv_path = None
+        self.shot_caption_selected.emit("")
+        self.scene_caption_selected.emit("")
 
     def on_movie_loaded(self, video_path=None, metadata=None, delay=LOADING_DELAY):
         if not self.db_loaded:
@@ -214,6 +216,8 @@ class AbstractListWindow(QMainWindow):
         self.table.setRowCount(0)
         self.list_status.emit(False)
         print(f"List load error: {error_msg}")
+        self.shot_caption_selected.emit("")
+        self.scene_caption_selected.emit("")
 
     def clear_table_selection(self):
         self.table.clearSelection()
@@ -291,6 +295,12 @@ class AbstractListWindow(QMainWindow):
     def clear_project(self):
         pass
 
+    def caption_was_edited(self, caption_type, caption_text):
+        if caption_type == "shot":
+            self.update_caption_for_current_row(caption_text, "Shot_Caption")
+        elif caption_type == "scene":
+            self.update_caption_for_current_row(caption_text, "Scene_Caption")
+
     def update_caption_for_current_row(self, caption_text, column_name="Shot_Caption"):
         row = self.find_closest_row(self.current_time_ms)
         if row is not None:
@@ -353,6 +363,9 @@ class AbstractListWindow(QMainWindow):
             self.current_row = -1
             self.is_last_available_row.emit(True)
             self.is_first_available_row.emit(True)
+            # Emit empty captions when no rows
+            self.shot_caption_selected.emit("")
+            self.scene_caption_selected.emit("")
             return
         new_current_row = self.find_closest_row(ms)
         if new_current_row != self.current_row:
@@ -361,12 +374,15 @@ class AbstractListWindow(QMainWindow):
             self.send_row_data()
             if self.current_row >= 0:
                 self.scroll_to_row(self.current_row)
-                caption_col = self.get_column_index_by_name("Shot_Caption")
-                if caption_col != -1:
-                    caption = self.table.item(self.current_row, caption_col).text()
-                    self.shot_caption_selected.emit(caption)
+                shot_caption_col = self.get_column_index_by_name("Shot_Caption")
+                scene_caption_col = self.get_column_index_by_name("Scene_Caption")
+                shot_caption = self.table.item(self.current_row, shot_caption_col).text() if shot_caption_col != -1 else ""
+                scene_caption = self.table.item(self.current_row, scene_caption_col).text() if scene_caption_col != -1 else ""
+                self.shot_caption_selected.emit(shot_caption)
+                self.scene_caption_selected.emit(scene_caption)
             else:
                 self.shot_caption_selected.emit("")
+                self.scene_caption_selected.emit("")
         last_non_ignored = self.is_last_non_ignored_row(self.current_row)
         self.is_last_available_row.emit(last_non_ignored)
         first_non_ignored = self.is_first_non_ignored_row(self.current_row)
@@ -441,13 +457,16 @@ class AbstractListWindow(QMainWindow):
         start_col = self.get_column_index_by_name("Start")
         start_tc = self.table.item(row, start_col).text()
         self.jump_to_timecode(start_tc)
-        caption_index = self.get_column_index_by_name("Shot_Caption")
+        shot_caption_index = self.get_column_index_by_name("Shot_Caption")
+        scene_caption_index = self.get_column_index_by_name("Scene_Caption")
         self.table.blockSignals(True)
-        self.table.setCurrentCell(row, caption_index)
+        self.table.setCurrentCell(row, shot_caption_index)
         self.table.clearSelection()
         self.table.blockSignals(False)
-        caption = self.table.item(row, caption_index).text()
-        self.shot_caption_selected.emit(caption)
+        shot_caption = self.table.item(row, shot_caption_index).text()
+        scene_caption = self.table.item(row, scene_caption_index).text()
+        self.shot_caption_selected.emit(shot_caption)
+        self.scene_caption_selected.emit(scene_caption)
         if row != self.current_row:
             self.current_row = row
             self.row_did_change.emit(self.current_row)

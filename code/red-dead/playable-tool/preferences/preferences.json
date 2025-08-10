@@ -15,16 +15,16 @@
     "col1_width": 44,
     "col2_width": 95,
     "col3_width": 94,
-    "col4_width": 160,
-    "col5_width": 176
+    "col4_width": 100,
+    "col5_width": 129
   },
   "playlist": {
     "col0_width": 43,
     "col1_width": 40,
     "col2_width": 96,
     "col3_width": 94,
-    "col4_width": 151,
-    "col5_width": 206
+    "col4_width": 99,
+    "col5_width": 134
   },
   "cinematheque": {},
   "robots": {

@@ -127,6 +127,7 @@ class CaptionWindow(QWidget):
     preferences_save = pyqtSignal()
     preferences_load = pyqtSignal(dict)
     captions_submitted = pyqtSignal(str, str, str, str)
+    caption_was_edited = pyqtSignal(str, str, str)
 
     def __init__(self, ui, subtitles_window):
         super().__init__()
@@ -171,6 +172,11 @@ class CaptionWindow(QWidget):
 
         self.project_folder = None
         self.current_movie_filename = None
+
+        self.movie_shot_caption_field.textChanged.connect(self._on_movie_shot_caption_edited)
+        self.movie_scene_caption_field.textChanged.connect(self._on_movie_scene_caption_edited)
+        self.play_shot_caption_field.textChanged.connect(self._on_play_shot_caption_edited)
+        self.play_scene_caption_field.textChanged.connect(self._on_play_scene_caption_edited)
 
     def keyPressEvent(self, event):
         super().keyPressEvent(event)
@@ -219,37 +225,53 @@ class CaptionWindow(QWidget):
         self.set_caption("play", "shot", play_shot)
         self.set_caption("play", "scene", play_scene)
 
-    def set_caption(self, source, level, text):
+    def set_caption(self, source, caption_type, text):
         """
         source: 'movie' or 'play'
-        level: 'shot' or 'scene'
+        caption_type: 'shot' or 'scene'
         text: caption string
         """
 
         # Update the correct field
-        if source == "movie" and level == "shot":
+        if source == "movie" and caption_type == "shot":
             self.movie_shot_caption_field.setPlainText(text)
-        elif source == "movie" and level == "scene":
+        elif source == "movie" and caption_type == "scene":
             self.movie_scene_caption_field.setPlainText(text)
-        elif source == "play" and level == "shot":
+        elif source == "play" and caption_type == "shot":
             self.play_shot_caption_field.setPlainText(text)
-        elif source == "play" and level == "scene":
+        elif source == "play" and caption_type == "scene":
             self.play_scene_caption_field.setPlainText(text)
 
-    def get_caption(self, source, level):
+    def get_caption(self, source, caption_type):
         """
         source: 'movie' or 'play'
-        level: 'shot' or 'scene'
+        caption_type: 'shot' or 'scene'
         """
-        if source == "movie" and level == "shot":
+        if source == "movie" and caption_type == "shot":
             return self.movie_shot_caption_field.toPlainText()
-        elif source == "movie" and level == "scene":
+        elif source == "movie" and caption_type == "scene":
             return self.movie_scene_caption_field.toPlainText()
-        elif source == "play" and level == "shot":
+        elif source == "play" and caption_type == "shot":
             return self.play_shot_caption_field.toPlainText()
-        elif source == "play" and level == "scene":
+        elif source == "play" and caption_type == "scene":
             return self.play_scene_caption_field.toPlainText()
         return ""
+
+    def _on_movie_shot_caption_edited(self):
+        text = self.movie_shot_caption_field.toPlainText()
+        self.caption_was_edited.emit("movie", "shot", text)
+
+    def _on_movie_scene_caption_edited(self):
+        text = self.movie_scene_caption_field.toPlainText()
+        self.caption_was_edited.emit("movie", "scene", text)
+
+    def _on_play_shot_caption_edited(self):
+        text = self.play_shot_caption_field.toPlainText()
+        self.caption_was_edited.emit("play", "shot", text)
+
+    def _on_play_scene_caption_edited(self):
+        text = self.play_scene_caption_field.toPlainText()
+        self.caption_was_edited.emit("play", "scene", text)
 
     # Example usage:
     # self.set_caption("movie", "shot", "This is a movie shot caption")
