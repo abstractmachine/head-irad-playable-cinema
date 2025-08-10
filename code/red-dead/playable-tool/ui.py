@@ -589,7 +589,7 @@ class UI:
         dark_button_color = "#fff"
         dark_button_disabled_background = "#444"
         dark_button_disabled_color = "#888"
-        dark_title_background = "#222"
+        dark_title_background = "#111"
         dark_title_color = "#ccc"
         dark_dock_border = DARK_DOCK_BORDER
         dark_cell_border = "#666"
@@ -712,7 +712,7 @@ class UI:
 
         QTableView {{
             gridline-color: {dark_cell_grid};
-            border-bottom: 1px solid {dark_cell_border};
+            /*border-bottom: 1px solid {dark_cell_border};*/
         }}
 
         QHeaderView::section:horizontal {{
@@ -869,7 +869,7 @@ class UI:
         light_button_color = "#eee"
         light_button_disabled_background = "#ccc"
         light_button_disabled_color = "#888"
-        light_title_background = "#ddd"
+        light_title_background = "#eee"
         light_title_color = "#333"
         light_dock_border = LIGHT_DOCK_BORDER
         light_cell_border = "#999"
@@ -993,7 +993,7 @@ class UI:
 
         QTableView {{
             gridline-color: {light_cell_grid};
-            border-bottom: 1px solid {light_cell_border};
+            /*border-bottom: 1px solid {light_cell_border};*/
         }}
 
         QHeaderView::section:horizontal {{

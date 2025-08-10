@@ -121,7 +121,7 @@ class RobotsWindow(QMainWindow):
         top_buttons_layout.setSpacing(2)
 
         self.select_button = QPushButton("Project Folder")
-        self.select_button.setFont(self.ui.get_font('button'))
+        # self.select_button.setFont(self.ui.get_font('button'))
         self.select_button.clicked.connect(self.project_manager.select_project_folder)
         self.select_button.setFixedSize(120, button_height)
         top_buttons_layout.addWidget(self.select_button)
@@ -135,14 +135,14 @@ class RobotsWindow(QMainWindow):
 
         self.save_button = QPushButton("Save")
         self.save_button.setFixedSize(60, button_height)
-        self.save_button.setStyleSheet("padding: 0px 5px 0px 5px;")
+        # self.save_button.setStyleSheet("padding: 0px 5px 0px 5px;")
         self.save_button.setEnabled(True)
         self.save_button.clicked.connect(self.save_layout)
         top_buttons_layout.addWidget(self.save_button)
 
         self.delete_button = QPushButton("Delete")
         self.delete_button.setFixedSize(60, button_height)
-        self.delete_button.setStyleSheet("padding: 0px 5px 0px 5px;")
+        # self.delete_button.setStyleSheet("padding: 0px 5px 0px 5px;")
         self.delete_button.setEnabled(False)
         self.delete_button.clicked.connect(self.delete_layout)
         top_buttons_layout.addWidget(self.delete_button)
@@ -158,12 +158,12 @@ class RobotsWindow(QMainWindow):
         self.toggle_button = QPushButton("Gremlins")
         self.toggle_button.setFixedSize(button_width, button_height)
         self.toggle_button.clicked.connect(self.toggle_chaos)
-        self.toggle_button.setStyleSheet("padding: 0px 5px 0px 5px;")
+        # self.toggle_button.setStyleSheet("padding: 0px 5px 0px 5px;")
         chaos_layout.addWidget(self.toggle_button)
 
         self.interval_field = QLineEdit()
         self.interval_field.setText(str(self.interval_seconds))
-        self.interval_field.setPlaceholderText("seconds")
+        self.interval_field.setPlaceholderText("5.0")
         self.interval_field.setFixedSize(button_width, button_height)
         self.interval_field.setAlignment(Qt.AlignCenter)
         self.interval_field.textChanged.connect(self.on_interval_changed)
@@ -173,19 +173,19 @@ class RobotsWindow(QMainWindow):
         # --- Inference Buttons ---
         self.caption_model_button = QPushButton("BLIP")
         self.caption_model_button.setFixedSize(80, button_height)
-        self.caption_model_button.setFont(self.ui.get_font('button'))
+        # self.caption_model_button.setFont(self.ui.get_font('button'))
         self.caption_model_button.clicked.connect(self.caption_model_requested.emit)
         chaos_layout.addWidget(self.caption_model_button)
 
         self.search_model_button = QPushButton("FAISS")
         self.search_model_button.setFixedSize(80, button_height)
-        self.search_model_button.setFont(self.ui.get_font('button'))
+        # self.search_model_button.setFont(self.ui.get_font('button'))
         self.search_model_button.clicked.connect(self.search_model_requested.emit)
         chaos_layout.addWidget(self.search_model_button)
 
         self.off_button = QPushButton("Off")
         self.off_button.setFixedSize(80, button_height)
-        self.off_button.setFont(self.ui.get_font('button'))
+        # self.off_button.setFont(self.ui.get_font('button'))
         self.off_button.clicked.connect(self.inference_off_requested.emit)
         chaos_layout.addWidget(self.off_button)
 
@@ -206,37 +206,80 @@ class RobotsWindow(QMainWindow):
             "detect-hist",
             "detect-threshold"
         ])
-        self.method_dropdown.setFixedSize(130, ui.get_dimensions('button')[1])
-        self.method_dropdown.setFont(ui.get_font('button'))
+        self.method_dropdown.setFixedHeight(button_height)
+        # self.method_dropdown.setFont(ui.get_font('button'))
         shotlist_layout.addWidget(self.method_dropdown)
 
         # Weights field
         self.weights_field = QLineEdit("-t 3.0")
         self.weights_field.setAlignment(Qt.AlignCenter)
         self.weights_field.setFont(ui.get_font('tiny-condensed'))
-        self.weights_field.setFixedSize(80, ui.get_dimensions('tiny')[1])
+        self.weights_field.setFixedSize(80, button_height)
         shotlist_layout.addWidget(self.weights_field)
 
         # Detect Shots button
         self.detect_button = QPushButton("Shots")
-        self.detect_button.setFixedSize(80, ui.get_dimensions('button')[1])
-        self.detect_button.setFont(ui.get_font('button'))
+        self.detect_button.setFixedSize(80, button_height)
+        # self.detect_button.setFont(ui.get_font('button'))
         shotlist_layout.addWidget(self.detect_button)
 
         # Detect Scenes button
         self.detect_scenes_button = QPushButton("Scenes")
-        self.detect_scenes_button.setFixedSize(80, ui.get_dimensions('button')[1])
-        self.detect_scenes_button.setFont(ui.get_font('button'))
+        self.detect_scenes_button.setFixedSize(80, button_height)
+        # self.detect_scenes_button.setFont(ui.get_font('button'))
         shotlist_layout.addWidget(self.detect_scenes_button)
 
         # Delete button
         self.delete_button_shotlist = QPushButton("Delete")
-        self.delete_button_shotlist.setFixedSize(ui.get_dimensions('button')[0], ui.get_dimensions('button')[1])
-        self.delete_button_shotlist.setFont(ui.get_font('button'))
+        self.delete_button_shotlist.setFixedSize(button_width, button_height)
+        # self.delete_button_shotlist.setFont(ui.get_font('button'))
         shotlist_layout.addWidget(self.delete_button_shotlist)
 
         layout.addLayout(shotlist_layout)
         layout.setAlignment(shotlist_layout, Qt.AlignLeft)
+
+        # --- Fourth row: Caption buttons ---
+        caption_layout = QHBoxLayout()
+        caption_layout.setContentsMargins(0, 0, 0, 0)
+        caption_layout.setSpacing(2)
+
+        # System dropdown
+        self.prompt_type_dropdown = QComboBox()
+        self.prompt_type_dropdown.addItems(["System", "Shot", "Scene", "Gameplay"])
+        self.prompt_type_dropdown.setCurrentIndex(0)
+        self.prompt_type_dropdown.setFont(self.ui.get_font('tiny-condensed'))
+        self.prompt_type_dropdown.setFixedSize(115, button_height)
+        caption_layout.addWidget(self.prompt_type_dropdown)
+
+        # Annotate button
+        self.annotate_button = QPushButton("Annotate")
+        self.annotate_button.setEnabled(False)
+        # self.annotate_button.setFont(self.ui.get_font('button'))
+        self.annotate_button.setFixedSize(115, button_height)
+        self.annotate_button.setToolTip("Rewrite current caption into current 'Caption' cell\nShortcut: A")
+        caption_layout.addWidget(self.annotate_button)
+
+        # API button
+        self.api_button = QPushButton("API")
+        self.api_button.setEnabled(False)
+        self.api_button.setFont(self.ui.get_font('tiny'))
+        self.api_button.setFixedSize(80, button_height)
+        self.api_button.setToolTip("Send current shot to AI API and receive a caption\nShortcut: O")
+        caption_layout.addWidget(self.api_button)
+
+        # Frame count field
+        self.frame_count_field = QLineEdit("5")
+        self.frame_count_field.setFont(self.ui.get_font('tiny'))
+        self.frame_count_field.setFixedSize(24, 24)
+        self.frame_count_field.setAlignment(Qt.AlignCenter)
+        self.frame_count_field.setToolTip("Number of image frames to send to API (0 = none)")
+        self.frame_count_field.setStyleSheet("QLineEdit { margin: 0px 0px 0px 0px; }")
+        caption_layout.addWidget(self.frame_count_field)
+
+        caption_layout.addStretch()
+
+        layout.addLayout(caption_layout)
+        layout.setAlignment(caption_layout, Qt.AlignLeft)
 
         # --- Console at the bottom ---
         self.console = QTextEdit()
@@ -325,7 +368,7 @@ class RobotsWindow(QMainWindow):
         # Use layout.py utility to delete files
         from layout import delete_layout_files
         deleted_files = delete_layout_files(layout_folder, layout_name)
-        self.console_write(f"Deleted: {layout_name}")
+        self.console_write(f"Deleted layout: {layout_name}")
         # Refresh the dropdown
         self.get_layouts()
         # Turn off Delete button
@@ -338,13 +381,10 @@ class RobotsWindow(QMainWindow):
         result = dialog.exec_()
         if result != QDialog.Accepted:
             return  # User cancelled
-        
-        self.console_write(f"Save layout request: {dialog.get_name()}")
 
         parsed_name = self.parse_layout_save_name(dialog.get_name())
         if not parsed_name:
             return  # Error already handled
-        self.console_write(f"Parsed layout name: {parsed_name}")
         # save this layout
         main_window = self.window()
         project_folder = self.project_manager.get_project_folder()

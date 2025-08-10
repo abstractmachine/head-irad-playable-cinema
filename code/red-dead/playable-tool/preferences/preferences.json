@@ -1,8 +1,6 @@
 {
   "inference": {},
-  "captions": {
-    "frame_count": "5"
-  },
+  "captions": {},
   "subtitles": {},
   "prompt": {},
   "playhouse": {
@@ -17,8 +15,8 @@
     "col1_width": 34,
     "col2_width": 95,
     "col3_width": 94,
-    "col4_width": 77,
-    "col5_width": 79
+    "col4_width": 115,
+    "col5_width": 168
   },
   "cinematheque": {},
   "robots": {

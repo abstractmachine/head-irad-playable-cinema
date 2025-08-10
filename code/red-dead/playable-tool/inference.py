@@ -6,6 +6,8 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton, QLabel
 )
 
+from utility import DARK_DOCK_BORDER, LIGHT_DOCK_BORDER
+
 class InferenceWindow(QWidget):
     preferences_save = pyqtSignal()
     preferences_load = pyqtSignal(dict)
@@ -27,7 +29,7 @@ class InferenceWindow(QWidget):
 
         # --- Top area: Two columns (each with QTextEdit) ---
         top_layout = QHBoxLayout()
-        top_layout.setSpacing(2)  # 2px space between the two text fields
+        top_layout.setSpacing(0)  # 2px space between the two text fields
 
         # Left column (gameplay_inference)
         left_col = QVBoxLayout()
@@ -36,7 +38,10 @@ class InferenceWindow(QWidget):
         self.gameplay_inference.setPlaceholderText("No caption model loaded.")
         self.gameplay_inference.setReadOnly(True)
         self.gameplay_inference.setFont(self.ui.get_font('text'))
-        self.gameplay_inference.setStyleSheet("QTextEdit { border: none; padding: 0px; margin: 0px; }")
+        if ui.is_dark_mode():
+            self.gameplay_inference.setStyleSheet(f"QTextEdit {{ border: none; border-right: 2px solid {DARK_DOCK_BORDER}; padding: 0px; margin: 0px; }}")
+        else:
+            self.gameplay_inference.setStyleSheet(f"QTextEdit {{ border: none; border-right: 2px solid {LIGHT_DOCK_BORDER}; padding: 0px; margin: 0px; }}")
         left_col.addWidget(self.gameplay_inference, stretch=1)
 
         # Right column (matched_caption)
@@ -46,7 +51,10 @@ class InferenceWindow(QWidget):
         self.matched_caption.setPlaceholderText("No search model loaded.")
         self.matched_caption.setReadOnly(True)
         self.matched_caption.setFont(self.ui.get_font('text'))
-        self.matched_caption.setStyleSheet("QTextEdit { border: none; padding: 0px; margin: 0px; }")
+        if ui.is_dark_mode():
+            self.matched_caption.setStyleSheet(f"QTextEdit {{ border: none; border-left: 2px solid {DARK_DOCK_BORDER}; padding: 0px; margin: 0px; }}")
+        else:
+            self.matched_caption.setStyleSheet(f"QTextEdit {{ border: none; border-left: 2px solid {LIGHT_DOCK_BORDER}; padding: 0px; margin: 0px; }}")
         right_col.addWidget(self.matched_caption, stretch=1)
 
         # Add columns to top_layout
@@ -55,6 +63,8 @@ class InferenceWindow(QWidget):
 
         # Only add the text fields, no buttons
         main_layout.addLayout(top_layout, stretch=1)
+
+        # Set Text Color
 
         self.setLayout(main_layout)
 
