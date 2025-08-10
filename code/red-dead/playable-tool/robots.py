@@ -78,6 +78,9 @@ class RobotsWindow(QMainWindow):
     search_model_requested = pyqtSignal()
     inference_off_requested = pyqtSignal()
 
+    # API Button
+    api_start_call = pyqtSignal(str, str)
+
     def __init__(self, ui):
         super().__init__()
         self.ui = ui
@@ -101,6 +104,12 @@ class RobotsWindow(QMainWindow):
         # Layout variable
         self.layout_index = -1
         self.saved_layouts = []
+
+        # Lists
+        self.shotlist_status = "Waiting" # "Waiting", "Empty", "Loaded"
+        self.playlist_status = "Waiting" # "Waiting", "Empty", "Loaded"
+
+        self.prompt_type = None
         
         self.setup_ui(ui)
         
@@ -133,19 +142,19 @@ class RobotsWindow(QMainWindow):
         self.layouts_dropdown.currentIndexChanged.connect(self.layout_selected)
         top_buttons_layout.addWidget(self.layouts_dropdown)
 
-        self.save_button = QPushButton("Save")
-        self.save_button.setFixedSize(60, button_height)
-        # self.save_button.setStyleSheet("padding: 0px 5px 0px 5px;")
-        self.save_button.setEnabled(True)
-        self.save_button.clicked.connect(self.save_layout)
-        top_buttons_layout.addWidget(self.save_button)
+        self.save_button_layouts = QPushButton("Save")
+        self.save_button_layouts.setFixedSize(60, button_height)
+        # self.save_button_layouts.setStyleSheet("padding: 0px 5px 0px 5px;")
+        self.save_button_layouts.setEnabled(True)
+        self.save_button_layouts.clicked.connect(self.save_layout)
+        top_buttons_layout.addWidget(self.save_button_layouts)
 
-        self.delete_button = QPushButton("Delete")
-        self.delete_button.setFixedSize(60, button_height)
+        self.delete_button_layouts = QPushButton("Delete")
+        self.delete_button_layouts.setFixedSize(60, button_height)
         # self.delete_button.setStyleSheet("padding: 0px 5px 0px 5px;")
-        self.delete_button.setEnabled(False)
-        self.delete_button.clicked.connect(self.delete_layout)
-        top_buttons_layout.addWidget(self.delete_button)
+        self.delete_button_layouts.setEnabled(False)
+        self.delete_button_layouts.clicked.connect(self.delete_layout)
+        top_buttons_layout.addWidget(self.delete_button_layouts)
 
         layout.addLayout(top_buttons_layout)
         layout.setAlignment(top_buttons_layout, Qt.AlignLeft)
@@ -175,18 +184,21 @@ class RobotsWindow(QMainWindow):
         self.caption_model_button.setFixedSize(80, button_height)
         # self.caption_model_button.setFont(self.ui.get_font('button'))
         self.caption_model_button.clicked.connect(self.caption_model_requested.emit)
+        self.caption_model_button.setEnabled(False)
         chaos_layout.addWidget(self.caption_model_button)
 
         self.search_model_button = QPushButton("FAISS")
         self.search_model_button.setFixedSize(80, button_height)
         # self.search_model_button.setFont(self.ui.get_font('button'))
         self.search_model_button.clicked.connect(self.search_model_requested.emit)
+        self.search_model_button.setEnabled(False)
         chaos_layout.addWidget(self.search_model_button)
 
         self.off_button = QPushButton("Inference")
         self.off_button.setFixedSize(button_width, button_height)
         # self.off_button.setFont(self.ui.get_font('button'))
         self.off_button.clicked.connect(self.inference_off_requested.emit)
+        self.off_button.setEnabled(False)
         chaos_layout.addWidget(self.off_button)
 
         layout.addLayout(chaos_layout)
@@ -198,18 +210,31 @@ class RobotsWindow(QMainWindow):
         shotlist_layout.setContentsMargins(0, 0, 0, 0)
         shotlist_layout.setSpacing(2)
 
-        # Method dropdown
-        self.method_dropdown = QComboBox()
-        self.method_dropdown.addItems([
-            "detect-adaptive",
-            "detect-content",
-            "detect-hist",
-            "detect-threshold"
-        ])
-        self.method_dropdown.setFixedHeight(button_height)
-        self.method_dropdown.setMaximumWidth(130)
-        # self.method_dropdown.setFont(ui.get_font('button'))
-        shotlist_layout.addWidget(self.method_dropdown)
+        self.detection_method = "detect-adaptive"
+
+        # create a dropdown to select "Play" or "Movie"
+        self.list_type = "Play"
+        self.list_type_dropdown = QComboBox()
+        self.list_type_dropdown.addItems(["Play", "Movie"])
+        self.list_type_dropdown.setCurrentIndex(0)
+        self.list_type_dropdown.setFont(ui.get_font('tiny-condensed'))
+        self.list_type_dropdown.setFixedSize(80, button_height)
+        # on change, update the detection method
+        self.list_type_dropdown.currentIndexChanged.connect(self.on_list_type_changed)
+        shotlist_layout.addWidget(self.list_type_dropdown)
+
+        # # Method dropdown
+        # self.method_dropdown = QComboBox()
+        # self.method_dropdown.addItems([
+        #     "detect-adaptive",
+        #     "detect-content",
+        #     "detect-hist",
+        #     "detect-threshold"
+        # ])
+        # self.method_dropdown.setFixedHeight(button_height)
+        # self.method_dropdown.setMaximumWidth(130)
+        # # self.method_dropdown.setFont(ui.get_font('button'))
+        # shotlist_layout.addWidget(self.method_dropdown)
 
         # Weights field
         self.weights_field = QLineEdit("-t 3.0")
@@ -219,22 +244,26 @@ class RobotsWindow(QMainWindow):
         shotlist_layout.addWidget(self.weights_field)
 
         # Detect Shots button
-        self.detect_button = QPushButton("Shots")
-        self.detect_button.setFixedSize(80, button_height)
-        # self.detect_button.setFont(ui.get_font('button'))
-        shotlist_layout.addWidget(self.detect_button)
+        self.detect_shots_button = QPushButton("Shots")
+        self.detect_shots_button.setFixedSize(80, button_height)
+        # self.detect_shots_button.setFont(ui.get_font('button'))
+        self.detect_shots_button.setEnabled(False)
+        shotlist_layout.addWidget(self.detect_shots_button)
 
         # Detect Scenes button
         self.detect_scenes_button = QPushButton("Scenes")
         self.detect_scenes_button.setFixedSize(80, button_height)
         # self.detect_scenes_button.setFont(ui.get_font('button'))
+        self.detect_scenes_button.setEnabled(False)
         shotlist_layout.addWidget(self.detect_scenes_button)
 
         # Delete button
-        self.delete_button_shotlist = QPushButton("Delete")
-        self.delete_button_shotlist.setFixedSize(button_width, button_height)
-        # self.delete_button_shotlist.setFont(ui.get_font('button'))
-        shotlist_layout.addWidget(self.delete_button_shotlist)
+        self.delete_button_lists = QPushButton("Delete")
+        self.delete_button_lists.setFixedSize(button_width, button_height)
+        self.delete_button_lists.setEnabled(False)
+        shotlist_layout.addWidget(self.delete_button_lists)
+        # set the action
+        self.delete_button_lists.clicked.connect(self.on_delete_button_clicked)
 
         layout.addLayout(shotlist_layout)
         layout.setAlignment(shotlist_layout, Qt.AlignLeft)
@@ -245,20 +274,16 @@ class RobotsWindow(QMainWindow):
         caption_layout.setSpacing(2)
 
         # System dropdown
+        self.prompt_type = "Shot"
         self.prompt_type_dropdown = QComboBox()
-        self.prompt_type_dropdown.addItems(["System", "Shot", "Scene", "Gameplay"])
+        self.prompt_type_dropdown.addItems(["Shot", "Scene"])
         self.prompt_type_dropdown.setCurrentIndex(0)
         self.prompt_type_dropdown.setFont(self.ui.get_font('tiny-condensed'))
-        self.prompt_type_dropdown.setFixedSize(115, button_height)
+        self.prompt_type_dropdown.setFixedSize(80, button_height)
+        # self.prompt_type_dropdown.setFixedSize(115, button_height)
+        # on change, update the detection method
+        self.prompt_type_dropdown.currentIndexChanged.connect(self.on_prompt_type_changed)
         caption_layout.addWidget(self.prompt_type_dropdown)
-
-        # Annotate button
-        self.annotate_button = QPushButton("Annotate")
-        self.annotate_button.setEnabled(False)
-        # self.annotate_button.setFont(self.ui.get_font('button'))
-        self.annotate_button.setFixedSize(115, button_height)
-        self.annotate_button.setToolTip("Rewrite current caption into current 'Caption' cell\nShortcut: A")
-        caption_layout.addWidget(self.annotate_button)
 
         # API button
         self.api_button = QPushButton("API")
@@ -266,6 +291,8 @@ class RobotsWindow(QMainWindow):
         self.api_button.setFont(self.ui.get_font('tiny'))
         self.api_button.setFixedSize(80, button_height)
         self.api_button.setToolTip("Send current shot to AI API and receive a caption\nShortcut: O")
+        # set action when enabled + clicked
+        self.api_button.clicked.connect(self.api_button_clicked)
         caption_layout.addWidget(self.api_button)
 
         # Frame count field
@@ -327,13 +354,15 @@ class RobotsWindow(QMainWindow):
     def layout_selected(self, index):
         """Handle layout selection changes"""
         if index < 0:
-            self.delete_button.setEnabled(False)
+            self.delete_button_layouts.setEnabled(False)
             return  # Ignore signal when nothing is selected
         layout_name = self.layouts_dropdown.itemText(index)
         if DEBUG: print(f"DEBUG: Layout selected: {layout_name}")
 
         # Enable delete button only for non-Default layouts
-        self.delete_button.setEnabled(index != 0)
+        self.delete_button_layouts.setEnabled(index != 0)
+
+        self.clear_button_focus()
 
         main_window = self.window()
         app_folder = os.path.dirname(os.path.abspath(__file__))
@@ -373,7 +402,7 @@ class RobotsWindow(QMainWindow):
         # Refresh the dropdown
         self.get_layouts()
         # Turn off Delete button
-        self.delete_button.setEnabled(False)
+        self.delete_button_layouts.setEnabled(False)
 
     def save_layout(self):
         """Show dialog to get layout name and handle save logic"""
@@ -505,6 +534,109 @@ class RobotsWindow(QMainWindow):
             self.stop_chaos()
         super().closeEvent(event)
 
+    # ----------- VIDEO + LIST STATUS -------------
+
+    def on_shotlist_status_changed(self, loaded):
+        if loaded:
+            self.shotlist_status = "Loaded"
+        else:
+            self.shotlist_status = "Empty"
+        # udpate status
+        self.update_detector_buttons()
+        self.update_api_button()
+
+    def on_playlist_status_changed(self, loaded):
+        if loaded:
+            self.playlist_status = "Loaded"
+        else:
+            self.playlist_status = "Empty"
+        # udpate status
+        self.update_detector_buttons()
+        self.update_api_button()
+
+    def on_video_loaded(self, source):
+        # the video finished loading (actually, we don't care)
+        self.update_detector_buttons()
+        self.update_api_button()
+
+    def on_video_loading(self, source):
+        # we started loading the video
+        if source == "Movie":
+            self.shotlist_status = "Waiting"
+        elif source == "Play":
+            self.playlist_status = "Waiting"
+        # udpate status
+        self.update_detector_buttons()
+        self.update_api_button()
+
+    # ------------- DETECTORS ---------------
+
+    def update_detector_buttons(self):
+        # first assume the button is off
+        self.delete_button_lists.setEnabled(False)
+        # based on the list type selector
+        if self.list_type == "Play" and self.playlist_status == "Loaded":
+            self.delete_button_lists.setEnabled(True)
+        elif self.list_type == "Movie" and self.shotlist_status == "Loaded":
+            self.delete_button_lists.setEnabled(True)
+
+    def on_delete_button_clicked(self):
+        # Handle delete button click
+        self.console_write(f"Delete {self.list_type}list not yet implemented")
+
+    # --------- BUTTONS ------------
+
+    def clear_button_focus(self):
+        """Clear focus from all buttons"""
+        self.api_button.clearFocus()
+        self.layouts_dropdown.clearFocus()
+        self.prompt_type_dropdown.clearFocus()
+
+    # ------ API MANAGEMENT ---------
+
+    def on_list_type_changed(self, index):
+        """Handle list type dropdown changes"""
+        if index < 0:
+            return  # Ignore invalid index
+        self.list_type = self.list_type_dropdown.itemText(index)
+        # user changed the list type, check if we need to update buttons
+        self.update_detector_buttons()
+        self.update_api_button()
+        # turn off focus
+        self.clear_button_focus()
+
+    def on_prompt_type_changed(self, index):
+        """Handle prompt type dropdown changes"""
+        if index < 0:
+            return  # Ignore invalid index
+        self.prompt_type = self.prompt_type_dropdown.itemText(index)
+        # user changed prompt type, check if we need to update buttons
+        self.update_detector_buttons()
+        self.update_api_button()
+        # turn off focus
+        self.clear_button_focus()
+
+    def update_api_button(self):
+        # Start with assumption that API button is disabled
+        self.api_button.setEnabled(False)
+        # based on the list type selector
+        if self.list_type == "Play" and self.playlist_status == "Loaded":
+            self.api_button.setEnabled(True)
+        elif self.list_type == "Movie" and self.shotlist_status == "Loaded":
+            self.api_button.setEnabled(True)
+        # clear focus
+        self.clear_button_focus()
+
+    def api_button_clicked(self):
+        # remember the current list type ("Play" or "Movie")
+        api_type = self.list_type
+        # remember if we are shot or scene
+        api_ilk = self.prompt_type
+        # emit a signal with the current list type and ilk
+        self.api_start_call.emit(api_type, api_ilk)
+        if DEBUG: print(f"DEBUG: API button clicked - type: {api_type}, ilk: {api_ilk}")
+        
+
     # --------- METADATA REBUILDING ---------
 
     def on_metadata_rebuilding_started(self):
@@ -532,13 +664,13 @@ class RobotsWindow(QMainWindow):
     def on_preferences_save(self):
         self._pending_save_data = self.project_manager.get_preferences_data()
         self._pending_save_data["weights_field"] = self.weights_field.text()
-        self._pending_save_data["method_selected"] = self.method_dropdown.currentText()
+        # self._pending_save_data["method_selected"] = self.method_dropdown.currentText()
 
     def on_preferences_load(self, data):
         self.project_manager.load_preferences_data(data)
         if "weights_field" in data:
             self.weights_field.setText(data["weights_field"])
-        if "method_selected" in data:
-            idx = self.method_dropdown.findText(data["method_selected"])
-            if idx != -1:
-                self.method_dropdown.setCurrentIndex(idx)
+        # if "method_selected" in data:
+        #     idx = self.method_dropdown.findText(data["method_selected"])
+        #     if idx != -1:
+        #         self.method_dropdown.setCurrentIndex(idx)

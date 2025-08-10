@@ -4,32 +4,31 @@
   "subtitles": {},
   "prompt": {},
   "playhouse": {
-    "visible_ui": false
+    "visible_ui": true
   },
   "playbill": {},
   "nickelodeon": {
-    "visible_ui": false
+    "visible_ui": true
   },
   "shotlist": {
     "col0_width": 44,
     "col1_width": 44,
     "col2_width": 95,
     "col3_width": 94,
-    "col4_width": 100,
-    "col5_width": 129
+    "col4_width": 83,
+    "col5_width": 88
   },
   "playlist": {
     "col0_width": 43,
     "col1_width": 40,
     "col2_width": 96,
     "col3_width": 94,
-    "col4_width": 99,
-    "col5_width": 134
+    "col4_width": 91,
+    "col5_width": 104
   },
   "cinematheque": {},
   "robots": {
     "project_folder": "/Volumes/PLAYABLE-D/project",
-    "weights_field": "-t 3.0",
-    "method_selected": "detect-adaptive"
+    "weights_field": "-t 3.0"
   }
 }

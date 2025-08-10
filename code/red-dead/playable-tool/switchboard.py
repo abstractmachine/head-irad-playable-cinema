@@ -140,6 +140,9 @@ class Switchboard(QObject):
             lambda caption: self.windows["captions"].set_caption("play", "scene", caption)
         )
 
+        # --------- API CONNECTION ------------
+        self.windows["robots"].api_start_call.connect(self.on_api_start_call)
+
         # ---- CHAOS EVENT CONNECTIONS ----
         self.windows["robots"].chaos.connect(self.on_chaos_event)
 
@@ -150,6 +153,30 @@ class Switchboard(QObject):
 
         # Caption changes from Captions window
         self.windows["captions"].caption_was_edited.connect(self.on_caption_edited)
+
+        # Notify robots when shotlist/playlist status changes
+        self.windows["shotlist"].list_status.connect(
+            lambda loaded: self.windows["robots"].on_shotlist_status_changed(loaded)
+        )
+        self.windows["playlist"].list_status.connect(
+            lambda loaded: self.windows["robots"].on_playlist_status_changed(loaded)
+        )
+
+        # Notify robots when movie is loaded in either player
+        self.windows["nickelodeon"].video_did_load.connect(
+            lambda *args, **kwargs: self.windows["robots"].on_video_loaded("movie")
+        )
+        self.windows["playhouse"].video_did_load.connect(
+            lambda *args, **kwargs: self.windows["robots"].on_video_loaded("play")
+        )
+
+        # Notify robots when movie is loading
+        self.windows["nickelodeon"].video_is_loading.connect(
+            lambda: self.windows["robots"].on_video_loading("movie")
+        )
+        self.windows["playhouse"].video_is_loading.connect(
+            lambda: self.windows["robots"].on_video_loading("play")
+        )
 
         if DEBUG: print("DEBUG: Switchboard finished setting up connections")
 
@@ -323,6 +350,13 @@ class Switchboard(QObject):
         
         # Enable buttons when an item is selected
         self.windows["playbill"].enable_bot_buttons()
+
+
+    # ----------- API --------------------
+
+    def on_api_start_call(self, api_type, api_ilk):
+        if DEBUG: print(f"DEBUG: API start call - type: {api_type}, ilk: {api_ilk}")
+        print(f"DEBUG: API start call - type: {api_type}, ilk: {api_ilk}")
 
     # --------- GREMLINS --------------
 

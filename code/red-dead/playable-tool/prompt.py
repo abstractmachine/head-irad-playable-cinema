@@ -33,29 +33,38 @@ class PromptWindow(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        
-
         # Left: vertical buttons
         button_width, button_height = self.ui.get_dimensions('button')
         button_layout = QHBoxLayout()
         button_layout.setSpacing(10)
         button_layout.setContentsMargins(0, 0, 0, 0)
 
+        self.prompt_sources = [
+            "play",
+            "movie"
+        ]
+
+        self.prompt_sources_dropdown = QComboBox()
+        self.prompt_sources_dropdown.addItems(self.prompt_sources)
+        self.prompt_sources_dropdown.setCurrentIndex(0)
+        self.prompt_sources_dropdown.setFont(self.ui.get_font('button'))
+        self.prompt_sources_dropdown.setFixedHeight(button_height)
+        self.prompt_sources_dropdown.setMaximumWidth(130)
+
         # These are going to be the text fields
-        ilk_fields = [
+        prompt_tags_list = [
             "Tags",
             "Test",
             "Prompt"
         ]
 
         # Create a first drop-down menu that determines what type of action
-        self.prompt_ilk_dropdown = QComboBox()
-        self.prompt_ilk_dropdown.addItems(ilk_fields)
-        self.prompt_ilk_dropdown.setCurrentIndex(0)
-        self.prompt_ilk_dropdown.setFont(self.ui.get_font('button'))
-        self.prompt_ilk_dropdown.setFixedHeight(button_height)
-        self.prompt_ilk_dropdown.setMinimumWidth(110)
-        self.prompt_ilk_dropdown.setMaximumWidth(130)
+        self.prompt_tags_dropdown = QComboBox()
+        self.prompt_tags_dropdown.addItems(prompt_tags_list)
+        self.prompt_tags_dropdown.setCurrentIndex(0)
+        self.prompt_tags_dropdown.setFont(self.ui.get_font('button'))
+        self.prompt_tags_dropdown.setFixedHeight(button_height)
+        self.prompt_tags_dropdown.setMaximumWidth(130)
 
         # Map prompt types to filenames
         self.prompt_file_map = {
@@ -103,7 +112,8 @@ class PromptWindow(QMainWindow):
         self.prompt_name_dropdown.setMinimumWidth(110)
         self.prompt_name_dropdown.setMaximumWidth(130)
 
-        button_layout.addWidget(self.prompt_ilk_dropdown)
+        button_layout.addWidget(self.prompt_tags_dropdown)
+        button_layout.addWidget(self.prompt_sources_dropdown)
         button_layout.addWidget(self.prompt_name_dropdown)
         button_layout.addStretch()
 

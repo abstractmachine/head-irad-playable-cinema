@@ -31,6 +31,5 @@ class GlobalKeyFilter(QObject):
             # Keep all other key handling for shortcuts (A, O, B, N, etc.)
             self.windows["nickelodeon"].handle_global_key(event)
             self.windows["shotlist"].handle_global_key(event)
-            self.windows["captions"].keyPressEvent(event)
             return True
         return False
