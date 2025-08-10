@@ -301,6 +301,11 @@ class ShotlistWindow(QMainWindow):
         if not self.shotlist_db_loaded:
             if DEBUG: print("DEBUG: Shotlist DB not loaded yet, skipping on_movie_loaded.")
             return
+        # wait a second then load this
+        delay = 1000
+        QTimer.singleShot(delay, lambda: self.load_movie_shotlist_after_delay(video_path, metadata))
+
+    def load_movie_shotlist_after_delay(self, video_path, metadata):
 
         shotlist_exists = False
         self.video_path = video_path
