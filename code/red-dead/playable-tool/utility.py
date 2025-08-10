@@ -42,6 +42,15 @@ def html_decode_text(text):
         return ""
     
     return html.unescape(text)
+    
+def parse_srt_time(self, time_str):
+    """Convert SRT time format (HH:MM:SS,mmm or HH:MM:SS.mmm) to milliseconds"""
+    # Replace ',' with '.' for compatibility
+    time_str = time_str.replace(',', '.')
+    ms = timecode_to_milliseconds(time_str)
+    if ms is None:
+        raise ValueError(f"Invalid SRT time format: '{time_str}'")
+    return ms
 
 def pct_to_milliseconds(pct, duration):
     """Convert percentage to milliseconds based on duration"""
@@ -95,15 +104,6 @@ def timecode_to_milliseconds(timecode):
 
     except (ValueError, IndexError):
         return None
-    
-def parse_srt_time(self, time_str):
-    """Convert SRT time format (HH:MM:SS,mmm or HH:MM:SS.mmm) to milliseconds"""
-    # Replace ',' with '.' for compatibility
-    time_str = time_str.replace(',', '.')
-    ms = timecode_to_milliseconds(time_str)
-    if ms is None:
-        raise ValueError(f"Invalid SRT time format: '{time_str}'")
-    return ms
 
 def milliseconds_to_timecode(milliseconds, include_milliseconds=True):
     """

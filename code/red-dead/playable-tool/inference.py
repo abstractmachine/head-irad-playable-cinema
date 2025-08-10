@@ -35,7 +35,7 @@ class InferenceWindow(QWidget):
         left_col = QVBoxLayout()
         left_col.setSpacing(0)
         self.gameplay_inference = QTextEdit()
-        self.gameplay_inference.setPlaceholderText("No caption model loaded.")
+        self.gameplay_inference.setPlaceholderText("Caption model")
         self.gameplay_inference.setReadOnly(True)
         self.gameplay_inference.setFont(self.ui.get_font('text'))
         if ui.is_dark_mode():
@@ -48,7 +48,7 @@ class InferenceWindow(QWidget):
         right_col = QVBoxLayout()
         right_col.setSpacing(0)
         self.matched_caption = QTextEdit()
-        self.matched_caption.setPlaceholderText("No search model loaded.")
+        self.matched_caption.setPlaceholderText("Search model")
         self.matched_caption.setReadOnly(True)
         self.matched_caption.setFont(self.ui.get_font('text'))
         if ui.is_dark_mode():

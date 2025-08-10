@@ -84,3 +84,13 @@ Train a model (cf. [FAISS](https://huggingface.co/docs/datasets/en/faiss_es) on 
 - ~~Play for a second before shotlist jumping. There is a weird hack I have to do in tool where you have to play/pause video after it has loaded, in order to get the timecode to align correctly in the shotlist. Otherwise the timings are off.~~
 - ~~Sometimes the shotlist can't find a closest shot~~
 - ~~Abstract class Player still doesn't implement all the previous timeline scrubbing, load signlaing, etc~~
+
+## Missing Subtitles
+```
+DEBUG: No subtitles found for movie 'The-Jayhawkers(1959){tmdb-6587}'
+DEBUG: No subtitles found for movie 'The-Iron-Horse(1924){tmdb-71068}'
+DEBUG: No subtitles found for movie 'Dirty-Little-Billy(1972){tmdb-56966}'
+DEBUG: No subtitles found for movie 'The-Jayhawkers(1959){tmdb-6587}'
+DEBUG: No subtitles found for movie 'Hell-Bent(1918){tmdb-302894}'
+DEBUG: No subtitles found for movie 'Terror-In-a-Texas-Town(1958){tmdb-46681}'
+```

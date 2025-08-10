@@ -1,4 +1,5 @@
 DEBUG = False  # Set to True to enable debug output
+ERROR = True  # Set to True to enable error output
 
 import csv
 import os
@@ -11,9 +12,6 @@ from PyQt5.QtWidgets import (
     QVBoxLayout, QWidget
 )
 
-from scenedetect import open_video
-from detector import ShotDetectWorker
-from shotlist_worker import ShotlistLoadWorker
 from utility import timecode_to_milliseconds, HIGHLIGHT_BACKGROUND_COLOR, HIGHLIGHT_COLOR
 
 JUMP_FRAME_PADDING_PLAYBACK = 0  # Number of frames to pad when jumping in playback mode
@@ -78,9 +76,9 @@ class ShotlistWindow(QMainWindow):
         self.detections_folder = None
         self.project_folder = None
 
-        self.detecting_timer = QTimer()
-        self.detecting_timer.timeout.connect(self.animate_detecting)
-        self.detecting_dots = 0
+        self.shotlist_db_loaded = False
+
+        self.basename = None  # Base name of the current movie file
 
         central_widget = QWidget()
         layout = QVBoxLayout(central_widget)
@@ -129,7 +127,6 @@ class ShotlistWindow(QMainWindow):
         self.preferences_save.connect(self.on_preferences_save)
         self.preferences_load.connect(self.on_preferences_load)
         self.thread = None
-        self.scene_table.itemChanged.connect(self.on_scene_table_item_changed)
 
         self.current_time_ms = 0
         self.current_row = -1  # Track current row
@@ -142,86 +139,7 @@ class ShotlistWindow(QMainWindow):
         # Initialize shotlist database
         self.shotlist_db = {}  # Maps movie base name to list of shotlist rows
 
-    def on_detect_scenes(self):
-        self.shotlist_status.emit(False)
-        self.scene_table.setRowCount(0)
-        if not self.video_path or not os.path.exists(self.video_path):
-            self.scene_table.setRowCount(1)
-            return
-        method = self.method_dropdown.currentText()
-        weights_text = self.weights_field.text().strip()
-
-        # --- Write method and weights to .txt file ---
-        base = os.path.basename(self.video_path)
-        name, _ = os.path.splitext(base)
-        txt_path = os.path.join(self.detections_folder, f"{name}.txt")
-        with open(txt_path, "w", encoding="utf-8") as txtfile:
-            txtfile.write(f"{method}\n{weights_text}\n")
-        # --- End .txt file writing ---
-
-        self.shot_worker = ShotDetectWorker(self.video_path, method, weights_text)
-        self.thread = QThread()
-        self.shot_worker.moveToThread(self.thread)
-        self.thread.started.connect(self.shot_worker.run)
-        self.shot_worker.finished.connect(self.on_scene_detected)
-        self.shot_worker.finished.connect(self.thread.quit)
-        self.shot_worker.finished.connect(self.shot_worker.deleteLater)
-        self.thread.finished.connect(self.thread.deleteLater)
-        self.thread.finished.connect(self.on_detection_finished)
-        self.thread.start()
-
-    def animate_detecting(self):
-        self.detecting_dots = (self.detecting_dots + 1) % 4
-
-    def on_detection_finished(self):
-        self.detecting_timer.stop()
-
-    def on_scene_detected(self, scene_list):
-        self.on_detection_finished()
-        if not scene_list or (isinstance(scene_list[0], str) and scene_list[0].startswith("Error:")):
-            self.scene_table.setRowCount(0)  # Clear all rows
-            self.shotlist_status.emit(False)
-            return
-        fps = 25
-        if self.video_path:
-            try:
-                video = open_video(self.video_path)
-                if hasattr(video, "frame_rate"):
-                    fps = video.frame_rate
-            except Exception:
-                pass
-        frame_duration = int(1000 / fps)
-        start_padding = JUMP_FRAME_PADDING_DETECTION * frame_duration
-        end_padding = JUMP_FRAME_PADDING_DETECTION * frame_duration
-        self.scene_table.setRowCount(len(scene_list))
-        csv_rows = []
-        for i, scene in enumerate(scene_list):
-            start_tc = scene[0].get_timecode()
-            end_tc = scene[1].get_timecode()
-            start_ms = timecode_to_milliseconds(start_tc)
-            end_ms = timecode_to_milliseconds(end_tc)
-            padded_start_ms = start_ms + start_padding
-            padded_end_ms = max(end_ms - end_padding, 0)
-            def ms_to_tc(ms):
-                total_seconds = ms / 1000.0
-                h = int(total_seconds // 3600)
-                m = int((total_seconds % 3600) // 60)
-                s = total_seconds % 60
-                return f"{h:02}:{m:02}:{s:06.3f}"
-            padded_start_tc = ms_to_tc(padded_start_ms)
-            padded_end_tc = ms_to_tc(padded_end_ms)
-            csv_rows.append(["No", 0, padded_start_tc, padded_end_tc, "", ""])
-        if self.video_path:
-            base = os.path.basename(self.video_path)
-            name, _ = os.path.splitext(base)
-            out_path = os.path.join(self.detections_folder, f"{name}.csv")
-            with open(out_path, "w", newline="", encoding="utf-8") as f:
-                writer = csv.writer(f)
-                writer.writerow(["Ignore", "Scene", "Start", "End", "Shot_Caption", "Scene_Caption"])
-                writer.writerows(csv_rows)
-            self.current_csv_path = out_path
-            self.load_shotlist_from_csv(out_path)
-            self.shotlist_status.emit(True)
+        self.column_indices = {}  # Cache for column indices
 
     def on_row_header_clicked(self, row):
         """Handle clicking on row header (row number on the left)"""
@@ -256,16 +174,9 @@ class ShotlistWindow(QMainWindow):
         # send out signal to jump to this timecode
         self.jump_to_timecode_signal.emit(timecode, is_last_frame)
 
-    # ------- Shotlist Bot -------
-
-    def start_shotlist_bot(self):
-        pass
-
     # ------- Load/Save Preferences -------
 
     def on_preferences_save(self):
-        pos = self.pos()
-        size = self.size()
         self._pending_save_data = {
             "col0_width": self.scene_table.columnWidth(0),
             "col1_width": self.scene_table.columnWidth(1),
@@ -306,12 +217,12 @@ class ShotlistWindow(QMainWindow):
         QTimer.singleShot(delay, lambda: self.load_movie_shotlist_after_delay(video_path, metadata))
 
     def load_movie_shotlist_after_delay(self, video_path, metadata):
-
         shotlist_exists = False
         self.video_path = video_path
         if video_path:
             base = os.path.basename(video_path)
             name, _ = os.path.splitext(base)
+            self.basename = name
             # Use preloaded shotlist if available
             if name in self.shotlist_db:
                 shotlist_exists = True
@@ -330,6 +241,7 @@ class ShotlistWindow(QMainWindow):
                 self.current_csv_path = None
         else:
             self.video_path = None
+            self.basename = None
             self.scene_table.setRowCount(0)
             self.current_csv_path = None
             self.current_row = -1
@@ -357,22 +269,8 @@ class ShotlistWindow(QMainWindow):
         self.scene_table.setRowCount(0)
         self.shotlist_status.emit(False)
         # Optionally, show error to user
-        if DEBUG:
+        if ERROR:
             print(f"Shotlist load error: {error_msg}")
-
-    def delete_scene_csv(self):
-        # Delete CSV file
-        if self.current_csv_path and os.path.exists(self.current_csv_path):
-            os.remove(self.current_csv_path)
-            # Also delete the corresponding .txt file
-            base = os.path.basename(self.current_csv_path)
-            name, _ = os.path.splitext(base)
-            txt_path = os.path.join(self.detections_folder, f"{name}.txt")
-            if os.path.exists(txt_path):
-                os.remove(txt_path)
-        self.scene_table.setRowCount(0)
-        self.current_csv_path = None
-        self.shotlist_status.emit(False)
 
     def clear_table_selection(self):
         self.scene_table.clearSelection()
@@ -402,15 +300,27 @@ class ShotlistWindow(QMainWindow):
         else:
             super().keyPressEvent(event)
 
-    # def handle_global_key(self, event):
-    #     focus_widget = QApplication.focusWidget()
-    #     if not isinstance(focus_widget, QTextEdit):
-    #         self.keyPressEvent(event)
+    def cache_column_indices(self):
+        """Cache column indices for faster access."""
+        self.column_indices = {}
+        for col in range(self.scene_table.columnCount()):
+            header_item = self.scene_table.horizontalHeaderItem(col)
+            if header_item:
+                self.column_indices[header_item.text()] = col
+
+    def get_column_index_by_name(self, column_name):
+        """Find the column index by header name, using cache if available."""
+        return self.column_indices.get(column_name, -1)
 
     def add_scene_row(self, scene_num, start_tc, end_tc, shot_caption, scene_caption, ignore=False):
+        # Cache column indices before adding rows (call once before bulk insert)
+        if not self.column_indices:
+            self.cache_column_indices()
+
         row = self.scene_table.rowCount()
         self.scene_table.insertRow(row)
         # Ignore column (checkbox)
+        ignore_col = self.get_column_index_by_name("Ignore")
         checkbox = QCheckBox()
         checkbox.setChecked(ignore)
         checkbox.stateChanged.connect(lambda state, r=row: self.on_ignore_checkbox_changed(r, state))
@@ -420,7 +330,6 @@ class ShotlistWindow(QMainWindow):
         layout.setAlignment(Qt.AlignCenter)
         layout.setContentsMargins(0, 0, 0, 0)
         widget.setLayout(layout)
-        ignore_col = self.get_column_index_by_name("Ignore")
         self.scene_table.setCellWidget(row, ignore_col, widget)
 
         # Scene number column
@@ -459,60 +368,53 @@ class ShotlistWindow(QMainWindow):
         self.scene_table.setItem(row, scene_caption_col, scene_caption_item)
 
     def on_ignore_checkbox_changed(self, row, state):
+        self.update_shotlist_db_row(row)
         self.save_shotlist_to_csv()
-
-    def on_scene_table_item_changed(self, item):
-        # Only needed if you allow editing other columns
-        pass
-
-    def save_shotlist_to_csv(self):
-        if not self.current_csv_path:
-            return
-        with open(self.current_csv_path, "w", newline="", encoding="utf-8") as csvfile:
-            writer = csv.writer(csvfile)
-            writer.writerow(["Ignore", "Scene", "Start", "End", "Shot_Caption", "Scene_Caption"])
-            for row in range(self.scene_table.rowCount()):
-                widget = self.scene_table.cellWidget(row, 0)
-                checkbox = widget.findChild(QCheckBox)
-                ignore = "Yes" if checkbox.isChecked() else "No"
-                scene_index = self.get_column_index_by_name("Scene")
-                scene_num = self.scene_table.item(row, scene_index).text()
-                start_index = self.get_column_index_by_name("Start")
-                start = self.scene_table.item(row, start_index).text()
-                end_index = self.get_column_index_by_name("End")
-                end = self.scene_table.item(row, end_index).text()
-                shot_caption_index = self.get_column_index_by_name("Shot_Caption")
-                shot_caption = self.scene_table.item(row, shot_caption_index).text() if shot_caption_index != -1 else ""
-                scene_caption_index = self.get_column_index_by_name("Scene_Caption")
-                scene_caption = self.scene_table.item(row, scene_caption_index).text() if scene_caption_index != -1 else ""
-                writer.writerow([ignore, scene_num, start, end, shot_caption, scene_caption])
 
     def clear_project(self):
         """Clear project - for consistency with other windows"""
         # A Placeholder for future functionality
         if DEBUG: print("DEBUG: ProjectWindow: clear_project called (no action needed)")
 
-    def load_shotlist_from_csv(self, path):
-        with open(path, "r", encoding="utf-8") as csvfile:
-            reader = csv.DictReader(csvfile)
-            self.scene_table.setRowCount(0)
-            for row in reader:
-                ignore = row.get("Ignore", "No") == "Yes"
-                scene_num = row.get("Scene", "")
-                start = row.get("Start", "")
-                end = row.get("End", "")
-                shot_caption = row.get("Shot_Caption", "")
-                scene_caption = row.get("Scene_Caption", "")
-                self.add_scene_row(scene_num, start, end, shot_caption, scene_caption, ignore)
-
     def update_shot_caption_for_current_shot(self, shot_caption_text):
         row = self.find_closest_row(self.current_time_ms)
         if row is not None:
             shot_caption_col = self.get_column_index_by_name("Shot_Caption")
-            self.scene_table.item(row, shot_caption_col).setText(shot_caption_text)
-            self.save_shotlist_to_csv()
+            item = self.scene_table.item(row, shot_caption_col)
+            if item:
+                item.setText(shot_caption_text)
+                self.update_shotlist_db_row(row)
+                self.save_shotlist_to_csv()
+            else:
+                if DEBUG: print("DEBUG: No shot caption item found.")
         else:
             pass
+
+    def save_shotlist_to_csv(self):
+        """Save the current table contents to the CSV file."""
+        if not self.current_csv_path:
+            if DEBUG: print("DEBUG: No CSV path set, cannot save shotlist.")
+            return
+
+        row_count = self.scene_table.rowCount()
+        col_count = self.scene_table.columnCount()
+        headers = [self.scene_table.horizontalHeaderItem(i).text() for i in range(col_count)]
+
+        with open(self.current_csv_path, "w", newline="", encoding="utf-8") as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(headers)
+            for row in range(row_count):
+                row_data = []
+                for col in range(col_count):
+                    if headers[col] == "Ignore":
+                        widget = self.scene_table.cellWidget(row, col)
+                        checkbox = widget.findChild(QCheckBox) if widget else None
+                        row_data.append("Yes" if checkbox and checkbox.isChecked() else "No")
+                    else:
+                        item = self.scene_table.item(row, col)
+                        row_data.append(item.text() if item else "")
+                writer.writerow(row_data)
+        if DEBUG: print(f"DEBUG: Shotlist saved to {self.current_csv_path}")
 
     def get_column_data(self, row_index = None):
         """Get all data for a specific row as a dictionary."""
@@ -705,7 +607,7 @@ class ShotlistWindow(QMainWindow):
         
         # Emit the caption text to AnnotateWindow
         shot_caption = self.scene_table.item(row, shot_caption_index).text()
-        self.caption_selected.emit(shot_caption)
+        self.shot_caption_selected.emit(shot_caption)
 
         # Update current row and emit change signal
         if row != self.current_row:
@@ -897,16 +799,11 @@ class ShotlistWindow(QMainWindow):
                 break
 
         return new_row
-    
-    def handle_detect_scenes(self):
-        """Handle the Detect Scenes button press."""
-        pass
 
     def on_project_folder_loaded(self, project_folder):
         """Set the project folder and update detections folder, preload all shotlists (threaded)."""
         self.project_folder = project_folder
         self.detections_folder = os.path.join(project_folder, "shotlists")
-        self.project_folder = project_folder
         self.shotlist_db_loaded = False
         self.shotlist_db = {}  # Clear previous cache
 
@@ -965,3 +862,32 @@ class ShotlistWindow(QMainWindow):
         self.send_row_data()
         self.is_first_available_shot.emit(True)
         self.is_last_available_shot.emit(True)
+
+    def update_shotlist_db_row(self, row):
+        """Update the shotlist_db for the given row index."""
+        if not self.basename:
+            return
+        name = self.basename
+        if name not in self.shotlist_db:
+            return
+        if row < 0 or row >= len(self.shotlist_db[name]):
+            return
+
+        # Get current values from table
+        ignore_col = self.get_column_index_by_name("Ignore")
+        scene_col = self.get_column_index_by_name("Scene")
+        start_col = self.get_column_index_by_name("Start")
+        end_col = self.get_column_index_by_name("End")
+        shot_caption_col = self.get_column_index_by_name("Shot_Caption")
+        scene_caption_col = self.get_column_index_by_name("Scene_Caption")
+
+        widget = self.scene_table.cellWidget(row, ignore_col)
+        checkbox = widget.findChild(QCheckBox) if widget else None
+        ignore_val = "Yes" if checkbox and checkbox.isChecked() else "No"
+
+        self.shotlist_db[name][row]["Ignore"] = ignore_val
+        self.shotlist_db[name][row]["Scene"] = self.scene_table.item(row, scene_col).text()
+        self.shotlist_db[name][row]["Start"] = self.scene_table.item(row, start_col).text()
+        self.shotlist_db[name][row]["End"] = self.scene_table.item(row, end_col).text()
+        self.shotlist_db[name][row]["Shot_Caption"] = self.scene_table.item(row, shot_caption_col).text()
+        self.shotlist_db[name][row]["Scene_Caption"] = self.scene_table.item(row, scene_caption_col).text()

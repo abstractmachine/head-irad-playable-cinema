@@ -21,7 +21,7 @@
   "cinematheque": {},
   "robots": {
     "project_folder": "/Volumes/PLAYABLE-D/project",
-    "weights_field": "-t 3.0 ",
+    "weights_field": "-t 3.0",
     "method_selected": "detect-adaptive"
   }
 }
