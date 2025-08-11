@@ -634,8 +634,9 @@ class RobotsWindow(QMainWindow):
         api_ilk = self.prompt_type
         # emit a signal with the current list type and ilk
         self.api_start_call.emit(api_type, api_ilk)
-        if DEBUG: print(f"DEBUG: API button clicked - type: {api_type}, ilk: {api_ilk}")
-        
+        if DEBUG: print(f"DEBUG: API call started - type: {api_type}, ilk: {api_ilk}")
+        # write to console
+        self.console.write(f"API request: {api_type} / {api_ilk}")
 
     # --------- METADATA REBUILDING ---------
 
