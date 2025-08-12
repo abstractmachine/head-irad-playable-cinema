@@ -10,6 +10,7 @@ class GlobalKeyFilter(QObject):
     # signal we want to change text size
     increase_text_size = pyqtSignal()
     decrease_text_size = pyqtSignal()
+    delete_button_pressed = pyqtSignal()
 
     def __init__(self, windows, main_window):
         super().__init__()
@@ -23,14 +24,21 @@ class GlobalKeyFilter(QObject):
             if isinstance(widget, (QLineEdit, QTextEdit, QPlainTextEdit)):
                 return False  # Let the text field handle the key event
 
-            cinematheque = self.windows["cinematheque"]
             if event.key() == Qt.Key_PageDown:
                 if DEBUG: print("DEBUG: PageDown pressed")
-                cinematheque.select_next_item()
+                self.windows["cinematheque"].select_next_item()
                 return True
             elif event.key() == Qt.Key_PageUp:
                 if DEBUG: print("DEBUG: PageUp pressed")
-                cinematheque.select_previous_item()
+                self.windows["cinematheque"].select_previous_item()
+                return True
+            elif event.key() == Qt.Key_Tab:
+                if DEBUG: print("DEBUG: Tab pressed")
+                self.windows["robots"].break_scene()
+                return True
+            elif event.key() == Qt.Key_Delete or event.key() == Qt.Key_Backspace:
+                if DEBUG: print("DEBUG: Delete pressed")
+                self.delete_button_pressed.emit()
                 return True
             elif event.key() == Qt.Key_Plus or (event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_Equal):
                 if DEBUG: print("DEBUG: Increase text size")

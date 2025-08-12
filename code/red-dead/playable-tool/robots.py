@@ -78,6 +78,9 @@ class RobotsWindow(QMainWindow):
     search_model_requested = pyqtSignal()
     inference_off_requested = pyqtSignal()
 
+    # Break Scene
+    break_scene_of_type = pyqtSignal(str)
+
     # API Button
     api_start_call = pyqtSignal(str, str)
 
@@ -213,9 +216,9 @@ class RobotsWindow(QMainWindow):
         self.detection_method = "detect-adaptive"
 
         # create a dropdown to select "Play" or "Movie"
-        self.list_type = "Play"
+        self.list_type = "Movie"
         self.list_type_dropdown = QComboBox()
-        self.list_type_dropdown.addItems(["Play", "Movie"])
+        self.list_type_dropdown.addItems(["Movie", "Play"])
         self.list_type_dropdown.setCurrentIndex(0)
         self.list_type_dropdown.setFont(ui.get_font('tiny-condensed'))
         self.list_type_dropdown.setFixedSize(80, button_height)
@@ -318,6 +321,16 @@ class RobotsWindow(QMainWindow):
         layout.addWidget(self.console)
 
         central_widget.setLayout(layout)
+
+    # ------ SCENE SHOT MANAGEMENT ---------
+
+    def break_scene(self):
+        """Break the current scene"""
+        # First figure out if we're "play" or "movie"
+        play_or_movie = self.list_type_dropdown.currentText().lower()
+        if DEBUG: print(f"DEBUG: Break scene triggered for {play_or_movie}")
+        # emit signal
+        self.break_scene_of_type.emit(play_or_movie)
 
     # --------- PROJECT MANAGEMENT ---------
 

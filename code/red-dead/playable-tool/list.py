@@ -1,3 +1,5 @@
+DEBUG = True # Set to True to enable debug output
+
 import csv
 import os
 
@@ -114,6 +116,80 @@ class AbstractListWindow(QMainWindow):
 
         self.preferences_save.connect(self.on_preferences_save)
         self.preferences_load.connect(self.on_preferences_load)
+
+    def on_break_scene(self):
+        # first figure out if we have a loaded list
+        if not self.db_loaded or self.table.rowCount() == 0:
+            if DEBUG: print("DEBUG: No loaded list to break scene")
+            return
+
+        current_row = self.current_row
+        if current_row is None or current_row < 0 or current_row >= self.table.rowCount():
+            if DEBUG: print("DEBUG: No valid current row for break scene")
+            return
+
+        scene_col = self.get_column_index_by_name("Scene")
+        if scene_col == -1:
+            if DEBUG: print("DEBUG: Scene column not found")
+            return
+
+        # Get previous scene value
+        prev_scene_val = 0
+        if current_row > 0:
+            prev_item = self.table.item(current_row - 1, scene_col)
+            try:
+                prev_scene_val = int(prev_item.text()) if prev_item and prev_item.text().isdigit() else 0
+            except Exception:
+                prev_scene_val = 0
+
+        new_scene_val = prev_scene_val + 1
+
+        # Start from current row and loop forward
+        row_count = self.table.rowCount()
+        cur_val = new_scene_val
+        for row in range(current_row, row_count):
+            item = self.table.item(row, scene_col)
+            if item:
+                try:
+                    scene_val = int(item.text()) if item.text().isdigit() else 0
+                except Exception:
+                    scene_val = 0
+                if scene_val == 0:
+                    item.setText(str(cur_val))
+                    self.update_db_row(row)
+                else:
+                    cur_val += 1
+                    item.setText(str(cur_val))
+                    self.update_db_row(row)
+            else:
+                continue
+
+    def delete_selected(self):
+        # Verify that a list is loaded
+        if not self.db_loaded or self.table.rowCount() == 0:
+            return
+
+        # Check if a column header is selected
+        selected_items = self.table.selectedItems()
+        if not selected_items:
+            if DEBUG: print("DEBUG: No column selected")
+            return
+
+        # Find the selected column index and print its name
+        selected_col = selected_items[0].column()
+        header_item = self.table.horizontalHeaderItem(selected_col)
+        col_name = header_item.text() if header_item else f"Column {selected_col}"
+        
+        # If the selected column is "Scene", set all values to 0
+        if col_name.lower() == "scene":
+            scene_col = self.get_column_index_by_name("Scene")
+            for row in range(self.table.rowCount()):
+                item = self.table.item(row, scene_col)
+                if item:
+                    item.setText("0")
+                    self.update_db_row(row)
+            self.save_list_to_csv()
+            print("DEBUG: All Scene values set to 0")
 
     def on_row_header_clicked(self, row):
         self.jump_to_row_start(row)

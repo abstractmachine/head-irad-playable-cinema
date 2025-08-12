@@ -2,6 +2,14 @@
 
 # Subtitles
 - Remove all [BOM](https://en.wikipedia.org/wiki/Byte_order_mark) from subtitles, and verify we're in `utf-8` encoding.
+- Currently there are 182 Movies in the `Project/Movies` list
+    - Currently there 227 Subtitles covering all movies except for High Noon
+        - We need to find the subtitles that match our copy of High Noon
+    - We also have an extra 118 Movies that are waiting to be subtitled
+        - Some of the current subtitles in the `Project/Movies` list are from this new list
+        - The extras movies have about 45% of their subtitles all ready
+- The subtitles need to have all extraneous characters removed, example `<i>` and `</i>`
+- We need to decide what the license is for sharing subtitles from *Open*Subtitles
 
 # Prompt Menu
 Three differing drop-down menus:

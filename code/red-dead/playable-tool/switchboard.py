@@ -150,6 +150,10 @@ class Switchboard(QObject):
             lambda caption: self.windows["captions"].set_caption("play", "scene", caption)
         )
 
+        # ----------- SCENE BREAK -------------
+        self.windows["robots"].break_scene_of_type.connect(self.on_break_scene_of_type)
+        self.keyboard.delete_button_pressed.connect(self.on_delete_button_pressed)
+
         # --------- API CONNECTION ------------
         self.windows["robots"].api_start_call.connect(self.on_api_start_call)
 
@@ -254,6 +258,24 @@ class Switchboard(QObject):
         if len(self.catalogs_rebuilding) == 0:
             if DEBUG: print("DEBUG: Switchboard: Last catalog cancelled rebuilding - emitting metadata_rebuilding_stopped")
             self.metadata_rebuilding_stopped.emit()
+
+    # --------- SCENE BREAK ----------
+
+    def on_break_scene_of_type(self, play_or_movie):
+        if DEBUG: print(f"DEBUG: Switchboard: Breaking scene for {play_or_movie}")
+        # based on type
+        if play_or_movie == "play":
+            self.windows["playlist"].on_break_scene()
+        elif play_or_movie == "movie":
+            self.windows["shotlist"].on_break_scene()
+        else:
+            if DEBUG: print(f"DEBUG: Switchboard: Unknown type for breaking scene: {play_or_movie}")
+
+    def on_delete_button_pressed(self):
+        if DEBUG: print("DEBUG: Switchboard: Delete button pressed")
+        # check to see if there is a row that needs to be deleted in the two lists
+        self.windows["shotlist"].delete_selected()
+        self.windows["playlist"].delete_selected()
 
     # ---- CATALOG EVENT HANDLERS ----
 
