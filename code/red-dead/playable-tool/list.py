@@ -117,6 +117,9 @@ class AbstractListWindow(QMainWindow):
         self.preferences_save.connect(self.on_preferences_save)
         self.preferences_load.connect(self.on_preferences_load)
 
+        # Connect textChanged signal for Scene_Caption column
+        self.table.itemChanged.connect(self.handle_scene_caption_changed)
+
     def on_break_scene(self):
         # first figure out if we have a loaded list
         if not self.db_loaded or self.table.rowCount() == 0:
@@ -434,6 +437,40 @@ class AbstractListWindow(QMainWindow):
         scene_caption_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         scene_caption_item.setFont(self.ui.get_font('cell-text'))
         self.table.setItem(row, scene_caption_col, scene_caption_item)
+
+    def handle_scene_caption_changed(self, item):
+        scene_caption_col = self.get_column_index_by_name("Scene_Caption")
+        scene_col = self.get_column_index_by_name("Scene")
+        if item.column() != scene_caption_col:
+            return  # Only handle changes in Scene_Caption column
+
+        changed_row = item.row()
+        new_caption = item.text()
+        scene_val_item = self.table.item(changed_row, scene_col)
+        try:
+            scene_val = int(scene_val_item.text()) if scene_val_item and scene_val_item.text().isdigit() else 0
+        except Exception:
+            scene_val = 0
+
+        if scene_val <= 0:
+            return
+
+        # Propagate caption to all rows with the same Scene value (>0)
+        for row in range(self.table.rowCount()):
+            if row == changed_row:
+                continue
+            other_scene_item = self.table.item(row, scene_col)
+            try:
+                other_scene_val = int(other_scene_item.text()) if other_scene_item and other_scene_item.text().isdigit() else 0
+            except Exception:
+                other_scene_val = 0
+            if other_scene_val == scene_val and other_scene_val > 0:
+                other_caption_item = self.table.item(row, scene_caption_col)
+                if other_caption_item.text() != new_caption:
+                    other_caption_item.setText(new_caption)
+                    self.update_db_row(row)
+        self.update_db_row(changed_row)
+        self.save_list_to_csv()
 
     def on_ignore_checkbox_changed(self, row, state):
         self.update_db_row(row)
