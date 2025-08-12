@@ -26,9 +26,12 @@ class PromptWindow(QMainWindow):
         self.metadata = {}
         self.row_data = {}
         
+        # Project folder
+        self.project_folder = None
         self.action = None
         self.source = None
         self.list_type = None
+        self.prompt_name = None
 
         if DEBUG: print("DEBUG: PromptWindow initialized")
 
@@ -67,6 +70,7 @@ class PromptWindow(QMainWindow):
         self.prompt_list_type_dropdown.addItem("System")
         self.prompt_list_type_dropdown.addItem("Shot")
         self.prompt_list_type_dropdown.addItem("Scene")
+        self.prompt_list_type_dropdown.addItem("Experiment")
         self.prompt_list_type_dropdown.setCurrentIndex(0)
         self.prompt_list_type_dropdown.setFont(self.ui.get_font('button'))
         self.prompt_list_type_dropdown.setFixedHeight(button_height)
@@ -88,7 +92,7 @@ class PromptWindow(QMainWindow):
             "warning": None,
             "context": None,
             "image": None,
-            "experimental": None
+            "experiment": None
         }
 
         # Map text fields to filenames
@@ -99,12 +103,12 @@ class PromptWindow(QMainWindow):
             "movie-system": "movie-system.txt",
             "movie-shot": "movie-shot.txt",
             "movie-scene": "movie-scene.txt",
+            "experiment": "experiment.txt",
             "goal": "goal.txt", 
             "format": "format.txt",
             "warning": "warning.txt",
             "context": "context.txt",
-            "experiment": "experiment.txt",
-            "Image": "image.txt"
+            "image": "image.txt"
         }
 
         # Dropdown Menu
@@ -177,10 +181,6 @@ class PromptWindow(QMainWindow):
         container.setLayout(main_layout)
         self.setCentralWidget(container)
 
-        # Project folder
-        self.project_folder = None
-        self.prompt_type = None
-
         # Set dropdown to none selected initially
         self.prompt_name_dropdown.setCurrentIndex(-1)
 
@@ -232,6 +232,29 @@ class PromptWindow(QMainWindow):
 
     # -------------- DROP-DOWN CHANGES -----------------
 
+    def define_button_states(self):
+
+        # action type
+        action_index = self.prompt_action_dropdown.currentIndex()
+        if action_index != -1:
+            self.action = self.prompt_action_dropdown.itemText(action_index).lower()
+        else:
+            self.action = None
+
+        # source
+        source_index = self.prompt_sources_dropdown.currentIndex()
+        if source_index != -1:
+            self.source = self.prompt_sources_dropdown.itemText(source_index).lower()
+        else:
+            self.source = None
+
+        # list_type
+        list_type_index = self.prompt_list_type_dropdown.currentIndex()
+        if list_type_index != -1:
+            self.list_type = self.prompt_list_type_dropdown.itemText(list_type_index).lower()
+        else:
+            self.list_type = None
+
     def handle_prompt_action_changed(self, idx):
         """Handle prompt action change from dropdown."""
         # if DEBUG: print(f"DEBUG: Prompt action changed at index {idx}")
@@ -258,8 +281,10 @@ class PromptWindow(QMainWindow):
             self.prompt_name_dropdown.setCurrentIndex(-1)
             self.prompt_name_dropdown.setEnabled(False)
         elif action == "prompt":
+            # we need to clear the stack
+            self.set_stack(None)
             self.prompt_sources_dropdown.setCurrentIndex(-1)
-            self.prompt_sources_dropdown.setEnabled(False)
+            self.prompt_sources_dropdown.setEnabled(True)
             self.prompt_list_type_dropdown.setCurrentIndex(-1)
             self.prompt_list_type_dropdown.setEnabled(False)
             self.prompt_name_dropdown.setCurrentIndex(-1)
@@ -287,6 +312,9 @@ class PromptWindow(QMainWindow):
         if action == "test":
             self.prompt_list_type_dropdown.setEnabled(True)
             self.prompt_list_type_dropdown.setCurrentIndex(-1)
+        elif action == "prompt":
+            self.prompt_name_dropdown.setEnabled(True)
+            self.prompt_name_dropdown.setCurrentIndex(-1)
         else:
             pass
 
@@ -304,48 +332,6 @@ class PromptWindow(QMainWindow):
         else:
             pass
 
-    def define_button_states(self):
-
-        # action type
-        action_index = self.prompt_action_dropdown.currentIndex()
-        if action_index != -1:
-            self.action = self.prompt_action_dropdown.itemText(action_index).lower()
-        else:
-            self.action = None
-
-        # source
-        source_index = self.prompt_sources_dropdown.currentIndex()
-        if source_index != -1:
-            self.source = self.prompt_sources_dropdown.itemText(source_index).lower()
-        else:
-            self.source = None
-
-        # list_type
-        list_type_index = self.prompt_list_type_dropdown.currentIndex()
-        if list_type_index != -1:
-            self.list_type = self.prompt_list_type_dropdown.itemText(list_type_index).lower()
-        else:
-            self.list_type = None
-
-    def handle_prompt_name_changed(self, idx):
-        """Handle prompt name change from dropdown."""
-
-        # Handle unselected case
-        if idx == -1:
-            self.prompt_type = None
-            if DEBUG: print(f"DEBUG: Prompt type changed to unselected")
-            return
-
-        # Update prompt type based on selection
-        self.prompt_type = self.prompt_name_dropdown.itemText(idx)
-        if DEBUG: print(f"DEBUG: Prompt type changed to {self.prompt_type}")
-
-        # Set the index of the stacked layout to match the selected prompt type
-        self.stacked_layout.setCurrentIndex(idx)
-
-        # Load the prompt for the selected type
-        self.load_prompt()
-
     # -------------- DROP-DOWN ACTIONS -----------------
 
     def handle_prompt_action_tags(self):
@@ -353,13 +339,6 @@ class PromptWindow(QMainWindow):
         self.set_stack("tags")
         # Load the tags cheatsheet when switching to Tags view
         self.load_tags()
-
-    def handle_prompt_name_activated(self, idx):
-        """Handle prompt name activation (including re-selection of same item)."""
-        if DEBUG: print(f"DEBUG: Prompt name activated at index {idx}")
-
-        # # Simply call the existing handler - it will handle all the logic
-        # self.handle_prompt_name_changed(idx)
 
     def handle_test_button(self):
         """Test the current system prompt parsing."""
@@ -369,7 +348,11 @@ class PromptWindow(QMainWindow):
         if self.source is None or self.list_type is None:
             return
 
-        prompt_key = f"{self.source}-{self.list_type}"
+        # there is only one experimental file
+        if (self.list_type.lower() == "experiment"):
+            prompt_key = f"{self.list_type}"
+        else:
+            prompt_key = f"{self.source}-{self.list_type}"
 
         # is this key in the prompt_file_map?
         if prompt_key not in self.prompt_file_map:
@@ -414,6 +397,67 @@ class PromptWindow(QMainWindow):
 
     # ----------------------------------------------
 
+    def handle_prompt_name_activated(self, idx):
+        """Handle prompt name activation (including re-selection of same item)."""
+        if DEBUG: print(f"DEBUG: Prompt name activated at index {idx}")
+
+        # Handle unselected case
+        if idx == -1:
+            self.prompt_name = None
+            if DEBUG: print(f"DEBUG: Prompt name changed to unselected")
+            return
+
+        # Update prompt name based on selection
+        self.prompt_name = self.prompt_name_dropdown.itemText(idx)
+        if DEBUG: print(f"DEBUG: Prompt name changed to {self.prompt_name}")
+
+        # figure out the name of the prompt based on menu selection
+        self.define_button_states()
+
+        # if one of these names is selected, we need to append the key
+        if self.prompt_name.lower() in ["system", "shot", "scene"]:
+            prompt_key = f"{self.source}-{self.prompt_name.lower()}"
+        else:
+            prompt_key = self.prompt_name.lower()
+            
+        # now find the filename related to that key
+        if prompt_key in self.prompt_file_map:
+            filename = self.prompt_file_map[prompt_key]
+        else:
+            if DEBUG: print(f"DEBUG: No filename found for prompt key: {prompt_key}")
+            return
+        
+        if DEBUG: print(f"DEBUG: Loading prompt for {prompt_key} with filename {filename}")
+
+        # Load the prompt for the selected type
+        self.load_prompt(prompt_key, filename)
+
+    def load_prompt(self, key, filename):
+        """Load the appropriate prompt file based on current prompt type."""
+
+        # Set the index of the stacked layout to match the selected prompt type
+        self.set_stack(key)
+
+        # make sure there is a text field for this key
+        if key not in self.text_fields:
+            if DEBUG: print(f"DEBUG: No text field found for key: {key}")
+            return
+
+        # create a filepath based on filename
+        file_path = os.path.join(self.prompts_directory, filename)
+        
+        # Ok, do the loading thing
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            self.text_fields[key].setPlainText(content)
+            if DEBUG: print(f"DEBUG: Loaded {filename}")
+        except Exception as e:
+            if DEBUG: print(f"DEBUG: Could not load {filename}: {e}")
+            self.text_fields[key].setPlainText(f"ERROR: Could not load {filename}")
+
+    # ----------------------------------------------
+
     def handle_row_data(self, row_data):
         """Handle row data emitted from shotlist."""
         self.row_data = row_data or {}
@@ -422,7 +466,7 @@ class PromptWindow(QMainWindow):
     def handle_row_did_change(self, row_data):
         """Handle row data change emitted from shotlist."""
         # if the prompt type is test, re-run the test with new row data
-        if self.prompt_type == "test":
+        if self.action == "test":
             if DEBUG: print("DEBUG Prompt: Row data changed, re-running test")
             self.handle_test_button()
 
@@ -431,33 +475,9 @@ class PromptWindow(QMainWindow):
         self.current_metadata = metadata
         
         # If test is currently selected, re-run the test with new metadata
-        if self.prompt_type == "test":
+        if self.action == "test":
             if DEBUG: print("DEBUG Prompt: test is selected, re-running test with new metadata")
             self.handle_test_button()
-
-    def load_prompt(self):
-        """Load the appropriate prompt file based on current prompt type."""
-        if DEBUG: print(f"DEBUG: load_prompt called for {self.prompt_type}")
-        # make sure we have a project folder and prompt type set
-        if not self.project_folder or not self.prompt_type:
-            if DEBUG: print("DEBUG: No project folder or prompt type set, cannot load prompt")
-            return
-        # Check if the prompt type is valid
-        if self.prompt_type not in self.prompt_file_map:
-            if DEBUG: print(f"DEBUG: Invalid prompt type: {self.prompt_type}")
-            return
-
-        filename = self.prompt_file_map[self.prompt_type]
-        file_path = os.path.join(self.prompts_directory, filename)
-        
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            self.text_fields[self.prompt_type].setPlainText(content)
-            if DEBUG: print(f"DEBUG: Loaded {filename}")
-        except Exception as e:
-            if DEBUG: print(f"DEBUG: Could not load {filename}: {e}")
-            self.text_fields[self.prompt_type].setPlainText(f"ERROR: Could not load {filename}")
 
     def save_current_prompt(self, field_name):
         """Save the current prompt field to its corresponding file."""
@@ -509,7 +529,7 @@ class PromptWindow(QMainWindow):
             'movie-shot.txt',
             'movie-scene.txt',
             'context.txt',
-            'experimental.txt',
+            'experiment.txt',
             'format.txt',
             'goal.txt',
             'image.txt',
