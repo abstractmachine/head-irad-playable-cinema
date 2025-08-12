@@ -147,6 +147,8 @@ class AbstractListWindow(QMainWindow):
         # Start from current row and loop forward
         row_count = self.table.rowCount()
         cur_val = new_scene_val
+        prev_scene_val = cur_val
+
         for row in range(current_row, row_count):
             item = self.table.item(row, scene_col)
             if item:
@@ -154,13 +156,17 @@ class AbstractListWindow(QMainWindow):
                     scene_val = int(item.text()) if item.text().isdigit() else 0
                 except Exception:
                     scene_val = 0
+
                 if scene_val == 0:
                     item.setText(str(cur_val))
                     self.update_db_row(row)
                 else:
-                    cur_val += 1
+                    # Only increment if the scene value is greater than the previous
+                    if scene_val > prev_scene_val:
+                        cur_val += 1
                     item.setText(str(cur_val))
                     self.update_db_row(row)
+                prev_scene_val = scene_val if scene_val != 0 else cur_val
             else:
                 continue
 
@@ -171,25 +177,90 @@ class AbstractListWindow(QMainWindow):
 
         # Check if a column header is selected
         selected_items = self.table.selectedItems()
-        if not selected_items:
+
+        if len(selected_items) == 1:
+            selected_item = selected_items[0]
+            row = selected_item.row()
+            col = selected_item.column()
+            header_item = self.table.horizontalHeaderItem(col)
+            col_name = header_item.text() if header_item else f"Column {col}"
+            print(f"DEBUG: Single cell selected at row {row}, column '{col_name}'")
+            self.delete_selected_cell(row, col)
+            return
+        elif not selected_items:
             if DEBUG: print("DEBUG: No column selected")
             return
 
         # Find the selected column index and print its name
         selected_col = selected_items[0].column()
         header_item = self.table.horizontalHeaderItem(selected_col)
-        col_name = header_item.text() if header_item else f"Column {selected_col}"
-        
-        # If the selected column is "Scene", set all values to 0
-        if col_name.lower() == "scene":
-            scene_col = self.get_column_index_by_name("Scene")
-            for row in range(self.table.rowCount()):
-                item = self.table.item(row, scene_col)
-                if item:
-                    item.setText("0")
-                    self.update_db_row(row)
-            self.save_list_to_csv()
-            print("DEBUG: All Scene values set to 0")
+        # if the selected type is a column header
+        if header_item and header_item.text() == "Scene":
+            self.delete_selected_scene_column()
+
+
+    def delete_selected_scene_column(self):
+        # delete all values in the "Scene" column
+        scene_col = self.get_column_index_by_name("Scene")
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, scene_col)
+            if item:
+                item.setText("0")
+                self.update_db_row(row)
+        self.save_list_to_csv()
+        print("DEBUG: All Scene values set to 0")
+
+
+    def delete_selected_cell(self, row, col):
+        header_item = self.table.horizontalHeaderItem(col)
+        col_name = header_item.text() if header_item else f"Column {col}"
+        if col_name != "Scene":
+            if DEBUG: print(f"DEBUG: Selected cell is not in Scene column")
+            return
+
+        scene_col = col
+        current_item = self.table.item(row, scene_col)
+        try:
+            current_val = int(current_item.text()) if current_item and current_item.text().isdigit() else 0
+        except Exception:
+            current_val = 0
+
+        # Find previous value above (smaller than current_val)
+        prev_val = 0
+        for r in range(row - 1, -1, -1):
+            item = self.table.item(r, scene_col)
+            try:
+                val = int(item.text()) if item and item.text().isdigit() else 0
+            except Exception:
+                val = 0
+            if val < current_val:
+                prev_val = val
+                break
+
+        # Set current cell to previous value
+        current_item.setText(str(prev_val))
+        self.update_db_row(row)
+
+        # Now adjust all following rows
+        row_count = self.table.rowCount()
+        for r in range(row + 1, row_count):
+            item = self.table.item(r, scene_col)
+            try:
+                val = int(item.text()) if item and item.text().isdigit() else 0
+            except Exception:
+                val = 0
+            if val == current_val:
+                # If same as original, set to new current value
+                item.setText(str(prev_val))
+                self.update_db_row(r)
+            elif val > current_val:
+                # If incremented, descend by 1
+                item.setText(str(val - 1))
+                self.update_db_row(r)
+            # else: leave untouched
+
+        self.save_list_to_csv()
+        print(f"DEBUG: Scene value at row {row} set to previous value {prev_val}, adjusted following values.")
 
     def on_row_header_clicked(self, row):
         self.jump_to_row_start(row)
@@ -728,3 +799,4 @@ class AbstractListWindow(QMainWindow):
         self.db[name][row]["End"] = self.table.item(row, end_col).text()
         self.db[name][row]["Shot_Caption"] = self.table.item(row, shot_caption_col).text()
         self.db[name][row]["Scene_Caption"] = self.table.item(row, scene_caption_col).text()
+
