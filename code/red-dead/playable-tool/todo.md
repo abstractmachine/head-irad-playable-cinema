@@ -57,6 +57,7 @@ Train a model (cf. [FAISS](https://huggingface.co/docs/datasets/en/faiss_es) on 
 
 
 # Bugs
+- After the new video loading system with buffered video in the background, we had our first crash when going up quickly (with UpArrow) in the `shotlist`. It got stuck in some sort of infinite loop where the rest of the interface froze.
 - There is a off-by-one bug in the `shotlist` data retrieval. Verify all the code that requests row data
 - When a film is still loading if we try to load another, crash
 - Fix `.csv` filter to allow for accents

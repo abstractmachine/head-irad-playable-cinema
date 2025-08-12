@@ -1,7 +1,5 @@
 The main prompt sent to the API is the System Prompt. This prompt can include any (or none) of the following tags. Each tag will be replaced with its related content.
 
-All prompts other than the main 'System' prompt can include tags to other prompts. Please note that recursive loops are blocked: a tag cannot include itself, or be included in any sub-tags that it calls upon. Any recursion of this sort will invaldate the entire 'System' prompt and produce a warning in the console. Please 'Test' your system prompts to make sure they are valid.
-
 {goal-prompt}
 This is the part of the prompt that clearly defines what we want from the API. Define what content we are seeking. Example: 'These are captions of a western movie.'
 
@@ -34,3 +32,5 @@ NOT YET IMPLEMENTED
 
 {movie-subtitles}
 The full contents of the subtitles from the entire movie.
+
+* Please note that recursive loops are blocked: a tag cannot include itself, or be included in any sub-tags that it calls upon. Any recursion of this sort will invaldate the entire 'System' prompt and produce a warning in the console. Please 'Test' your system prompts to make sure they are valid.

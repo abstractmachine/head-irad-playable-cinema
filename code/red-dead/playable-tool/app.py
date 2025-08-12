@@ -77,14 +77,14 @@ def main():
     main_window = PlayableCinemaMainWindow(windows)
     main_window.show()
 
-    # === Central Coordination ===
-    # Switchboard handles all inter-window communication
-    switchboard = Switchboard(windows)
-
     # === Input Handling ===
     # Global keyboard shortcuts
     keyboard = GlobalKeyFilter(windows, main_window)
     app.installEventFilter(keyboard)
+
+    # === Central Coordination ===
+    # Switchboard handles all inter-window communication
+    switchboard = Switchboard(windows, ui, keyboard)
 
     # === Window State Restoration ===
     # Restore saved window layout and preferences

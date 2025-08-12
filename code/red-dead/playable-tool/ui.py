@@ -1,13 +1,26 @@
 DEBUG = False # Set to True to enable debug output
 
+from email.mime import image
 from PyQt5.QtGui import QFont, QFontDatabase
 import os
 import subprocess
 
 from utility import HIGHLIGHT_BACKGROUND_COLOR, HIGHLIGHT_COLOR, DARK_DOCK_BORDER, LIGHT_DOCK_BORDER
 
-class UI:
+# Signal import for pyqtSigal
+from PyQt5.QtCore import QObject, pyqtSignal
+
+class UI(QObject):
+
+    # signal that text size changed
+    text_size_changed = pyqtSignal(int)
+
     def __init__(self):
+        super().__init__()
+
+        # a global text size control
+        self.main_text_size = 12
+
         # Map styles to font file paths and default sizes
         self.fonts = {
             # style: (family, size, weight, italic)
@@ -63,6 +76,25 @@ class UI:
             './ui/fonts/Roboto_Slab/static/RobotoSlab-Thin.ttf', 
         ]
         self._load_fonts()
+
+    def set_main_text_size(self, size):
+        self.main_text_size = size
+        if DEBUG: print(f"[UI] Set main text size to {self.main_text_size}")
+        self.text_size_changed.emit(self.main_text_size)
+
+    def get_main_text_size(self):
+        return self.main_text_size
+
+    def increase_text_size(self):
+        self.main_text_size += int(1 + (self.main_text_size / 10))
+        if DEBUG: print(f"[UI] Increased text size to {self.main_text_size}")
+        self.text_size_changed.emit(self.main_text_size)
+
+    def decrease_text_size(self):
+        self.main_text_size -= 1
+        self.main_text_size = max(self.main_text_size, 6)
+        if DEBUG: print(f"[UI] Decreased text size to {self.main_text_size}")
+        self.text_size_changed.emit(self.main_text_size)
 
     def _load_fonts(self):
         for path in self.font_paths:
@@ -427,6 +459,7 @@ class UI:
         }}
 
         QComboBox:disabled {{
+            image: none;
         }}
 
         QComboBox::drop-down {{
@@ -475,13 +508,13 @@ class UI:
 
         QTabBar::tab:first {{
             margin: 0px 0px 4px 3px;
-            border-top-left-radius: 10%;
-            border-bottom-left-radius: 10%;
+            border-top-left-radius: 5%;
+            border-bottom-left-radius: 5%;
         }}
 
         QTabBar::tab:last {{
-            border-top-right-radius: 10%;
-            border-bottom-right-radius: 10%;
+            border-top-right-radius: 5%;
+            border-bottom-right-radius: 5%;
         }}
 
         QTabBar::tab {{
@@ -755,11 +788,15 @@ class UI:
 
         QComboBox:disabled {{
             background: {dark_button_disabled_background};
-            color: {dark_button_disabled_color};
+            color: {dark_button_disabled_background};
         }}
 
         QComboBox::drop-down {{
             background: {dark_button_background};
+        }}
+
+        QComboBox::drop-down:disabled {{
+            background: {dark_button_disabled_background};
         }}
 
         QComboBox::down-arrow {{
@@ -1059,11 +1096,15 @@ class UI:
 
         QComboBox:disabled {{
             background: {light_button_disabled_background};
-            color: {light_button_disabled_color};
+            color: {light_button_disabled_background};
         }}
 
         QComboBox::drop-down {{
             background: {light_button_background};
+        }}
+
+        QComboBox::drop-down:disabled {{
+            background: {light_button_disabled_background};
         }}
 
         QComboBox::down-arrow {{

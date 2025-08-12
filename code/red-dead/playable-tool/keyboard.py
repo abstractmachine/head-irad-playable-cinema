@@ -1,11 +1,16 @@
 DEBUG = False  # Or import this from your main module
 
 # Qt
-from PyQt5.QtCore import QObject, QEvent, Qt
+from PyQt5.QtCore import QObject, QEvent, Qt, pyqtSignal
 from PyQt5.QtWidgets import QApplication, QLineEdit, QTextEdit, QPlainTextEdit
 
 # Global key filter to handle key events across all windows
 class GlobalKeyFilter(QObject):
+
+    # signal we want to change text size
+    increase_text_size = pyqtSignal()
+    decrease_text_size = pyqtSignal()
+
     def __init__(self, windows, main_window):
         super().__init__()
         self.windows = windows  # This is now a dict
@@ -26,6 +31,14 @@ class GlobalKeyFilter(QObject):
             elif event.key() == Qt.Key_PageUp:
                 if DEBUG: print("DEBUG: PageUp pressed")
                 cinematheque.select_previous_item()
+                return True
+            elif event.key() == Qt.Key_Plus or (event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_Equal):
+                if DEBUG: print("DEBUG: Increase text size")
+                self.increase_text_size.emit()  # Emit signal to increase text size
+                return True
+            elif event.key() == Qt.Key_Minus or (event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_Underscore):
+                if DEBUG: print("DEBUG: Decrease text size")
+                self.decrease_text_size.emit()  # Emit signal to decrease text size
                 return True
 
             # Keep all other key handling for shortcuts (A, O, B, N, etc.)

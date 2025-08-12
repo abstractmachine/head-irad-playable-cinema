@@ -23,9 +23,13 @@ class Switchboard(QObject):
     # Metadata rebuild coordination signals
     metadata_rebuilding_started = pyqtSignal()  # Emitted when first catalog starts rebuilding
     metadata_rebuilding_stopped = pyqtSignal()  # Emitted when last catalog finishes rebuilding
-    
-    def __init__(self, windows=None):
+
+    def __init__(self, windows=None, ui=None, keyboard=None):
         super().__init__()
+
+        self.ui = ui  # Store UI reference for styling and preferences
+        self.keyboard = keyboard  # Store keyboard reference for global shortcuts
+
         self.current_shot_index = -1  # Track current shot for playback coordination
         self.current_project_folder = None  # Track current project to detect changes
         self.windows = windows  # Reference to all windows for signal routing
@@ -64,6 +68,12 @@ class Switchboard(QObject):
         self.project_loaded.connect(self.windows["prompt"].on_project_folder_loaded)
         self.project_loaded.connect(self.windows["subtitles"].on_project_folder_loaded)
         self.project_loaded.connect(self.windows["robots"].on_project_folder_loaded)
+
+        # --------- TEXT SIZE CHANGES ------------
+
+        self.keyboard.increase_text_size.connect(self.ui.increase_text_size)
+        self.keyboard.decrease_text_size.connect(self.ui.decrease_text_size)
+        self.ui.text_size_changed.connect(self.windows["captions"].set_text_size)
 
         # ---- METADATA REBUILD COORDINATION ----
         

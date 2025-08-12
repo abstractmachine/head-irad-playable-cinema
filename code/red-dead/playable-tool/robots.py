@@ -635,7 +635,7 @@ class RobotsWindow(QMainWindow):
         # emit a signal with the current list type and ilk
         self.api_start_call.emit(api_type, api_ilk)
         if DEBUG: print(f"DEBUG: API call started - type: {api_type}, ilk: {api_ilk}")
-        # write to console
+        # write to consolel
         self.console.write(f"API request: {api_type} / {api_ilk}")
 
     # --------- METADATA REBUILDING ---------
@@ -665,12 +665,15 @@ class RobotsWindow(QMainWindow):
     def on_preferences_save(self):
         self._pending_save_data = self.project_manager.get_preferences_data()
         self._pending_save_data["weights_field"] = self.weights_field.text()
+        self._pending_save_data["main_text_size"] = self.ui.get_main_text_size()
         # self._pending_save_data["method_selected"] = self.method_dropdown.currentText()
 
     def on_preferences_load(self, data):
         self.project_manager.load_preferences_data(data)
         if "weights_field" in data:
             self.weights_field.setText(data["weights_field"])
+        if "main_text_size" in data:
+            self.ui.set_main_text_size(data["main_text_size"])
         # if "method_selected" in data:
         #     idx = self.method_dropdown.findText(data["method_selected"])
         #     if idx != -1:

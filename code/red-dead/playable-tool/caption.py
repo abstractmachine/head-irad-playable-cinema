@@ -38,6 +38,8 @@ class CaptionWindow(QWidget):
         self.play_scene_caption_field.setPlaceholderText("{play-scene}")
         self.play_scene_caption_field.setFont(self.ui.get_font('text'))
 
+        self.set_text_size(self.ui.main_text_size)
+
         # Layout: 2x2 grid
         grid = QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
@@ -62,6 +64,17 @@ class CaptionWindow(QWidget):
         self.movie_scene_caption_field.textChanged.connect(self._on_movie_scene_caption_edited)
         self.play_shot_caption_field.textChanged.connect(self._on_play_shot_caption_edited)
         self.play_scene_caption_field.textChanged.connect(self._on_play_scene_caption_edited)
+
+    def set_text_size(self, new_size):
+        self.movie_shot_caption_field.setFontPointSize(new_size)
+        self.movie_scene_caption_field.setFontPointSize(new_size)
+        self.play_shot_caption_field.setFontPointSize(new_size)
+        self.play_scene_caption_field.setFontPointSize(new_size)
+        # reset text with new text sizes
+        self.movie_shot_caption_field.setPlainText(self.movie_shot_caption_field.toPlainText())
+        self.movie_scene_caption_field.setPlainText(self.movie_scene_caption_field.toPlainText())
+        self.play_shot_caption_field.setPlainText(self.play_shot_caption_field.toPlainText())
+        self.play_scene_caption_field.setPlainText(self.play_scene_caption_field.toPlainText())
 
     def keyPressEvent(self, event):
         super().keyPressEvent(event)

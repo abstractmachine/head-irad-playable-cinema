@@ -1,2 +1,2 @@
-# Experimental
+# Experiment
 This is an experimental prompt for testing out ideas
