@@ -120,6 +120,7 @@ We also tried Google's [Gemma3 4B](https://huggingface.co/google/gemma-3-4b-it) 
 > Do you want me to delve into a specific aspect of the image in more detail, like the symbolism or Leone's directorial choices?
 
 ### Test No.2
-Gave similar results from above.
+Gave similar results from above. If this is indicative of its future functioning, this detail could be significant: meaning that we could count on the regularity of its output across all the films. To be confirmed, though.
 
-## 
+## JSON Formatted Results
+Similar to the OpenAI API, we can get JSON-formatted results from our Gemma3 queries. Cf. [A Practical Guide: Getting Structured JSON from Gemma 3 and Ollama](https://www.linkedin.com/pulse/structured-output-gemma3-ali-afshar-nadae) & [Structured Outputs](https://ollama.com/blog/structured-outputs) from the Ollama Blog.

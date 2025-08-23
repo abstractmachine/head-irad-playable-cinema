@@ -51,7 +51,6 @@ class SubtitlesImportWorker(QThread):
         for block in blocks:
             lines = block.strip().split('\n')
             if len(lines) < 3:
-                # if DEBUG: print(f"DEBUG: Skipping block with insufficient lines: {lines}")
                 continue
             try:
                 number_line = lines[0].lstrip('\ufeff').strip()
@@ -59,6 +58,10 @@ class SubtitlesImportWorker(QThread):
                     continue
                 number = int(number_line)
                 time_line = lines[1]
+                # Add error handling here:
+                if ' --> ' not in time_line:
+                    print(f"Error parsing {srt_file} subtitle block: missing timecode separator in line '{time_line}'")
+                    continue
                 start_time, end_time = time_line.split(' --> ')
                 start_ms = timecode_to_milliseconds(start_time.strip())
                 end_ms = timecode_to_milliseconds(end_time.strip())
@@ -72,7 +75,6 @@ class SubtitlesImportWorker(QThread):
                     'end_ms': end_ms,
                     'text': text
                 })
-                # if DEBUG: print(f"DEBUG: Parsed subtitle #{number}: {start_ms}-{end_ms} '{text[:30]}'")
             except (ValueError, IndexError) as e:
                 print(f"Error parsing {srt_file} subtitle block: {e}")
                 if DEBUG: print(f"DEBUG: Block parse error in {srt_file}: {block}")

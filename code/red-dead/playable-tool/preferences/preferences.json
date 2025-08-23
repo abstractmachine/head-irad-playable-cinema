@@ -16,20 +16,20 @@
     "col2_width": 95,
     "col3_width": 94,
     "col4_width": 98,
-    "col5_width": 125
+    "col5_width": 90
   },
   "playlist": {
     "col0_width": 43,
     "col1_width": 40,
     "col2_width": 96,
-    "col3_width": 94,
-    "col4_width": 273,
-    "col5_width": 247
+    "col3_width": 67,
+    "col4_width": 98,
+    "col5_width": 131
   },
   "cinematheque": {},
   "robots": {
     "project_folder": "/Volumes/PLAYABLE-D/project",
     "weights_field": "-t 3.0",
-    "main_text_size": 16
+    "main_text_size": 13
   }
 }
