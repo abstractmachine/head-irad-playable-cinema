@@ -1,4 +1,5 @@
 DEBUG = True
+IMAGE_COUNT = 3
 
 import sys
 import json
@@ -86,16 +87,21 @@ def main(model: str = "gemma3:4b"):
     image_prep_s = 0.0
     if img_dir.exists():
         t_img0 = perf_counter()
-        # Load all .jpg files in the folder (sorted for deterministic order)
-        for p in sorted(img_dir.glob("*.jpg")):
-            if p.is_file():
-                try:
-                    b = p.read_bytes()  # measure local I/O / upload-prep cost
-                    imgs.append(str(p))
-                    image_info.append({"name": p.name, "bytes": len(b)})
-                except Exception as e:
-                    if DEBUG:
-                        print(f"[DEBUG] failed reading {p}: {e}", file=sys.stderr)
+        # gather all .jpg files then pick a random subset of size IMAGE_COUNT
+        all_imgs = [p for p in sorted(img_dir.glob("*.jpg")) if p.is_file()]
+        import random
+        take = min(IMAGE_COUNT, len(all_imgs))
+        chosen = random.sample(all_imgs, k=take) if take and take < len(all_imgs) else list(all_imgs)
+        if DEBUG:
+            print(json.dumps({"debug": "image_selection", "requested": IMAGE_COUNT, "available": len(all_imgs), "chosen": [p.name for p in chosen]}), file=sys.stderr)
+        for p in chosen:
+            try:
+                b = p.read_bytes()  # measure local I/O / upload-prep cost
+                imgs.append(str(p))
+                image_info.append({"name": p.name, "bytes": len(b)})
+            except Exception as e:
+                if DEBUG:
+                    print(f"[DEBUG] failed reading {p}: {e}", file=sys.stderr)
         image_prep_s = perf_counter() - t_img0
 
     user_msg = {"role": "user", "content": user_text}
