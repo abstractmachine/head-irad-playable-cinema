@@ -1,10 +1,18 @@
 DEBUG = True
-IMAGE_COUNT = 3
+IMAGE_COUNT = 20
+
+MODEL_NAME = "gemma3:12b"
+# MODEL_NAME = "gemma3:4b"
+# MODEL_NAME = "llava"
+# MODEL_NAME = "llama3.2-vision"
+# MODEL_NAME = "mistral-small3.2"
+MAX_DIM = 896
 
 import sys
 import json
 from time import perf_counter
 from pathlib import Path
+from PIL import Image
 # Ollama is for local AI model inferencing
 from ollama import chat
 # JSON formatting
@@ -60,7 +68,7 @@ class Scene(BaseModel):
 class AnnotationResponse(BaseModel):
     scene: Scene
 
-def main(model: str = "gemma3:4b"):
+def main(model: str = MODEL_NAME):
     # quick debug: report Metal/MPS status
     if DEBUG:
       ok, reason = _check_metal_gpu()
@@ -94,14 +102,33 @@ def main(model: str = "gemma3:4b"):
         chosen = random.sample(all_imgs, k=take) if take and take < len(all_imgs) else list(all_imgs)
         if DEBUG:
             print(json.dumps({"debug": "image_selection", "requested": IMAGE_COUNT, "available": len(all_imgs), "chosen": [p.name for p in chosen]}), file=sys.stderr)
+        # --- Resize images to MAX_DIM before inferencing ---
         for p in chosen:
             try:
-                b = p.read_bytes()  # measure local I/O / upload-prep cost
-                imgs.append(str(p))
-                image_info.append({"name": p.name, "bytes": len(b)})
+                img = Image.open(p)
+                w, h = img.size
+                scale = min(MAX_DIM / w, MAX_DIM / h, 1.0)
+                if scale < 1.0:
+                    new_size = (int(w * scale), int(h * scale))
+                    img = img.resize(new_size, Image.LANCZOS)
+                    # Save to a temporary file in memory
+                    from io import BytesIO
+                    buf = BytesIO()
+                    img.save(buf, format="JPEG")
+                    buf.seek(0)
+                    # Write resized image to a temp file
+                    tmp_path = p.parent / f"resized_{p.name}"
+                    with open(tmp_path, "wb") as f:
+                        f.write(buf.read())
+                    imgs.append(str(tmp_path))
+                    image_info.append({"name": tmp_path.name, "bytes": tmp_path.stat().st_size, "resized": True})
+                else:
+                    b = p.read_bytes()
+                    imgs.append(str(p))
+                    image_info.append({"name": p.name, "bytes": len(b), "resized": False})
             except Exception as e:
                 if DEBUG:
-                    print(f"[DEBUG] failed reading {p}: {e}", file=sys.stderr)
+                    print(f"[DEBUG] failed reading/resizing {p}: {e}", file=sys.stderr)
         image_prep_s = perf_counter() - t_img0
 
     user_msg = {"role": "user", "content": user_text}

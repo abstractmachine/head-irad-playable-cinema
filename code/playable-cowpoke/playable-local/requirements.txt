@@ -1,3 +1,6 @@
+# Image
+Pillow
+
 # AI
 ollama
 pydantic
