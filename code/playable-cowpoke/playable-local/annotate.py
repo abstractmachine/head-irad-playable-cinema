@@ -1,7 +1,8 @@
 DEBUG = True
-IMAGE_COUNT = 20
+IMAGE_COUNT = 47
 
-MODEL_NAME = "gemma3:12b"
+MODEL_NAME = "gemma3:27b"
+#MODEL_NAME = "gemma3:12b"
 # MODEL_NAME = "gemma3:4b"
 # MODEL_NAME = "llava"
 # MODEL_NAME = "llama3.2-vision"
@@ -22,18 +23,6 @@ from typing import List, Optional, Literal
 
 from metal import _check_metal_gpu
 
-class DialogueLine(BaseModel):
-    character: str
-    line: str
-
-class Characters(BaseModel):
-    primary: List[str] = Field(
-        description="The main characters in the scene"
-    )
-    secondary: Optional[List[str]] = Field(
-        description="The background characters in the scene"
-    )
-
 class Scene(BaseModel):
     location_type: Literal["EXTERIOR", "INTERIOR"] | str
     time_of_day: str = Field(
@@ -42,10 +31,15 @@ class Scene(BaseModel):
     setting: str = Field(
         description="Minimal description of the setting"
     )
-    shot_type: str = Field(
-        description="A cinematographic term that describes the type of shot being used"
+    shot_type: List[str] = Field(
+        description="A cinematographic term that describes the type of shot(s) being used"
     )
-    characters: Characters
+    primary_characters: List[str] = Field(
+        description="The main characters in the scene"
+    )
+    secondary_characters: Optional[List[str]] = Field(
+        description="The background characters in the scene"
+    )
     animals: Optional[List[str]] = Field(
         description="A list of animals present in the scene"
     )
@@ -58,8 +52,8 @@ class Scene(BaseModel):
     action: Optional[List[str]] = Field(
         description="A list of actions taking place in the scene"
     )
-    dialogue: Optional[List[DialogueLine]] = Field(
-        description="Direct dialogue summary only. If no subtitles are provided, this field is said to be ignored"
+    dialogue: Optional[List[str]] = Field(
+        description="Direct dialogue summary only, no quotes. If no subtitles are provided, ignore"
     )
     reasoning: List[str] = Field(
         description="A step-by-step explanation of how the answer was determined"
@@ -95,11 +89,18 @@ def main(model: str = MODEL_NAME):
     image_prep_s = 0.0
     if img_dir.exists():
         t_img0 = perf_counter()
-        # gather all .jpg files then pick a random subset of size IMAGE_COUNT
-        all_imgs = [p for p in sorted(img_dir.glob("*.jpg")) if p.is_file()]
+        # Gather all .jpg files and sort numerically by filename
+        def numeric_key(p):
+            # Extract leading number from filename, fallback to 0
+            import re
+            m = re.match(r"(\d+)", p.stem)
+            return int(m.group(1)) if m else 0
+        all_imgs = sorted([p for p in img_dir.glob("*.jpg") if p.is_file()], key=numeric_key)
         import random
+        # Shuffle the sorted list for random distribution
+        random.shuffle(all_imgs)
         take = min(IMAGE_COUNT, len(all_imgs))
-        chosen = random.sample(all_imgs, k=take) if take and take < len(all_imgs) else list(all_imgs)
+        chosen = all_imgs[:take]
         if DEBUG:
             print(json.dumps({"debug": "image_selection", "requested": IMAGE_COUNT, "available": len(all_imgs), "chosen": [p.name for p in chosen]}), file=sys.stderr)
         # --- Resize images to MAX_DIM before inferencing ---
@@ -111,12 +112,10 @@ def main(model: str = MODEL_NAME):
                 if scale < 1.0:
                     new_size = (int(w * scale), int(h * scale))
                     img = img.resize(new_size, Image.LANCZOS)
-                    # Save to a temporary file in memory
                     from io import BytesIO
                     buf = BytesIO()
                     img.save(buf, format="JPEG")
                     buf.seek(0)
-                    # Write resized image to a temp file
                     tmp_path = p.parent / f"resized_{p.name}"
                     with open(tmp_path, "wb") as f:
                         f.write(buf.read())
@@ -142,8 +141,13 @@ def main(model: str = MODEL_NAME):
 
     # measure inference separately
     start = perf_counter()
+    print(json.dumps({"debug": "ollama_model_requested", "model": model}), file=sys.stderr)
     try:
         resp = chat(model=model, messages=messages, format=AnnotationResponse.model_json_schema())
+        # Print actual model used if available in response
+        actual_model = getattr(resp, "model", None)
+        if actual_model:
+            print(json.dumps({"debug": "ollama_model_used", "model": actual_model}), file=sys.stderr)
     except Exception as e:
         print(json.dumps({"error": str(e), "image_prep_s": image_prep_s}), ensure_ascii=False)
         sys.exit(1)

@@ -1,8 +1,96 @@
 # Test Results
 Here are the test results for the various models:
 
+## Gemma3:27b
+Amazingly, Gemma3 27B also runs on Douglas' MacBook Pro M1 Max 64GB.
+
+### Test No.1
+Images used:
+![resized_27](images/scene/resized_27.jpg)
+![3](images/scene/3.jpg)
+![15](images/scene/15.jpg)
+![9](images/scene/9.jpg)
+![resized_39](images/scene/resized_39.jpg)
+![resized_19](images/scene/resized_19.jpg)
+![resized_22](images/scene/resized_22.jpg)
+![45](images/scene/45.jpg)
+![39](images/scene/39.jpg)
+![24](images/scene/24.jpg)
+![resized_4](images/scene/resized_4.jpg)
+![resized_5](images/scene/resized_5.jpg)
+![resized_6](images/scene/resized_6.jpg)
+![resized_9](images/scene/resized_9.jpg)
+![resized_3](images/scene/resized_3.jpg)
+![30](images/scene/30.jpg)
+![resized_10](images/scene/resized_10.jpg)
+![resized_12](images/scene/resized_12.jpg)
+![resized_21](images/scene/resized_21.jpg)
+![resized_47](images/scene/resized_47.jpg)
+
+```
+% python annotate.py
+{"debug": "metal_gpu", "enabled": true, "reason": "ggml_metal_init & offloaded_layers & device_metal & library_metal in server.log"}
+{"debug": "image_selection", "requested": 20, "available": 91, "chosen": ["resized_27.jpg", "3.jpg", "15.jpg", "9.jpg", "resized_39.jpg", "resized_19.jpg", "resized_22.jpg", "45.jpg", "39.jpg", "24.jpg", "resized_4.jpg", "resized_5.jpg", "resized_6.jpg", "resized_9.jpg", "resized_3.jpg", "30.jpg", "resized_10.jpg", "resized_12.jpg", "resized_21.jpg", "resized_47.jpg"]}
+{"debug": "ollama_model_requested", "model": "gemma3:27b"}
+{"debug": "ollama_model_used", "model": "gemma3:27b"}
+{
+  "scene": {
+    "location_type": "riverside",
+    "time_of_day": "daytime",
+    "setting": "A wide, sandy riverbank with lush vegetation on the opposite side.  The setting appears to be a remote, western landscape, likely within a valley or canyon. A large group of soldiers and wagons are present, suggesting a military expedition or journey.",
+    "shot_type": [
+      "wide shot",
+      "medium shot",
+      "close-up"
+    ],
+    "primary_characters": [
+      "Union soldiers",
+      "civilian(s) in pink shirt",
+      "horse riders",
+      "wagon drivers"
+    ],
+    "secondary_characters": [
+      "horses",
+      "wagons",
+      "background figures"
+    ],
+    "animals": [
+      "horses"
+    ],
+    "props": [
+      "wagons",
+      "horses",
+      "saddles",
+      "military equipment",
+      "river"
+    ],
+    "mood": "tense",
+    "action": [
+      "a large group of Union soldiers crossing a river.",
+      "Civilian(s) in pink shirt overseeing the crossing.",
+      "A possible ambush is about to take place, based on the position and facial expressions in some images.",
+      "Horses in the river",
+      "Soldiers struggling with the horses.",
+      "Soldiers falling off of their horses."
+    ],
+    "dialogue": [
+      "likely dialogue about crossing the river.",
+      "possible tension surrounding the ambush."
+    ],
+    "reasoning": [
+      "A large group of Union soldiers are crossing a river with wagons. ",
+      "Some civilians are with them in the procession.",
+      "A potential conflict is escalating, as the characters are tensed.",
+      "Some soldiers are falling off of their horses."
+    ]
+  },
+  "elapsed_time_seconds": 241.43632712506223,
+  "image_preparation_seconds": 0.21938241692259908
+}
+```
+
 ## Gemma3:12b
-As it turns out Gemma3 12b runs fine on Douglas’ Macbook Pro M1 Max 64GB (shared memory GPU/CPU). Not blazingly fast, but enough to get the job done. The results were better than 4B (cf. below).
+Gemma3 12b runs on Douglas’ MacBook Pro M1 Max 64GB (shared memory GPU/CPU). Not blazingly fast, but enough to get the job done. The results were better than 4B (cf. below).
 
 *Note: we had moved to using JSON for this test, so it is not a good A/B test in relation to the others. Nevertheless, the results seem more promising.
 
