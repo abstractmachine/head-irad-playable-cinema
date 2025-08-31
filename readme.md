@@ -13,6 +13,9 @@ A [training and playback tool](./code/red-dead/playable-tool/) is currently in d
 ## Hardware
 There is a [physical object/installation](./hardware/) is currently in developement.
 
+## Cinemathèque
+There is a [list of the western films](./cineclub/README.md) we are using to train the deep learning models of this project.
+
 ## Current Status & Timeline
 - **Test Phase (Q2 2025):** Annotating sequences from *Inside* using Roboflow and SAM tools.
 - **Training Prototype Model (Q3 2025):** Building initial inference pipeline and testing labeling workflow.
