@@ -34,11 +34,8 @@ class Scene(BaseModel):
     shot_type: List[str] = Field(
         description="A cinematographic term that describes the type of shot(s) being used"
     )
-    primary_characters: List[str] = Field(
-        description="The main characters in the scene"
-    )
-    secondary_characters: Optional[List[str]] = Field(
-        description="The background characters in the scene"
+    characters: List[str] = Field(
+        description="The important characters in the scene"
     )
     animals: Optional[List[str]] = Field(
         description="A list of animals present in the scene"
@@ -53,7 +50,7 @@ class Scene(BaseModel):
         description="A list of actions taking place in the scene"
     )
     dialogue: Optional[List[str]] = Field(
-        description="Direct dialogue summary only, no quotes. If no subtitles are provided, ignore"
+        description="Direct dialogue summary only. No quotes. If no subtitles are provided, say 'no dialogue'."
     )
     reasoning: List[str] = Field(
         description="A step-by-step explanation of how the answer was determined"
@@ -61,6 +58,16 @@ class Scene(BaseModel):
 
 class AnnotationResponse(BaseModel):
     scene: Scene
+
+def scene_to_text(scene: dict) -> str:
+    """Convert scene dictionary to key: value text output."""
+    lines = []
+    for key, value in scene.items():
+        if isinstance(value, list):
+            lines.append(f"{key}: {', '.join(value)}")
+        else:
+            lines.append(f"{key}: {value}")
+    return "\n".join(lines)
 
 def main(model: str = MODEL_NAME):
     # quick debug: report Metal/MPS status
@@ -162,22 +169,32 @@ def main(model: str = MODEL_NAME):
         print(json.dumps({"error": "no content", "duration_s": elapsed}, ensure_ascii=False))
         sys.exit(1)
 
+    txt_output = ""
     try:
         query = AnnotationResponse.model_validate_json(content)
         out = query.model_dump()
         out["elapsed_time_seconds"] = elapsed
         out["image_preparation_seconds"] = image_prep_s
-        print(json.dumps(out, indent=2, ensure_ascii=False))
+        # Convert scene to text output
+        txt_output = scene_to_text(out["scene"])
+        print(txt_output)
         return
     except Exception:
         pass
 
     try:
         parsed = json.loads(content)
-        print(json.dumps({"result": parsed, "elapsed": elapsed, "image_info": image_info}, indent=2, ensure_ascii=False))
+        # If scene key exists, convert to text
+        if "scene" in parsed:
+            txt_output = scene_to_text(parsed["scene"])
+            print(txt_output)
+        else:
+            print(json.dumps({"result": parsed, "elapsed": elapsed, "image_info": image_info}, indent=2, ensure_ascii=False))
     except Exception:
         print(json.dumps({"error": "invalid response", "raw": content, "duration": elapsed, "image_info": image_info}, ensure_ascii=False))
         sys.exit(1)
+
+    # txt_output is available as a variable here if needed elsewhere
 
 if __name__ == "__main__":
     main()

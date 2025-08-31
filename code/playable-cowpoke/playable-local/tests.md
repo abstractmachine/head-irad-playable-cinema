@@ -1,7 +1,7 @@
 # Test Results
 Here are the test results for the various models:
 
-## Gemma3:27b
+## Gemma3 27b
 Amazingly, Gemma3 27B also runs on Douglas' MacBook Pro M1 Max 64GB.
 
 ### Test No.1
@@ -89,7 +89,7 @@ Images used:
 }
 ```
 
-## Gemma3:12b
+## Gemma3 12b
 Gemma3 12b runs on Douglas’ MacBook Pro M1 Max 64GB (shared memory GPU/CPU). Not blazingly fast, but enough to get the job done. The results were better than 4B (cf. below).
 
 *Note: we had moved to using JSON for this test, so it is not a good A/B test in relation to the others. Nevertheless, the results seem more promising.
