@@ -10,6 +10,8 @@
 ## Software
 A [training and playback tool](./code/red-dead/playable-tool/) is currently in development.
 
+![Playable-Cinema-Tool](./code/playable-cowpoke/playable-tool/screenshots/playable-cinema-tool-2025-09-09.png)
+
 ## Cabin
 A cabin is currently in production that integrates all the parts of the project.
 
