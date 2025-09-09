@@ -3,6 +3,14 @@ The cowpoke cabin is the physical manifestation of the Playable Cinema project, 
 
 ![Cowpoke Cabin - Side View](./images/cowpoke-cabin-2025-09-09-0390.png)
 
+## STEP File
+You can download the latest 3D model of the cabin in two formats:
+- [head-irad-cowpoke-cabin-2025-09-09.shapr](./models/head-irad-cowpoke-cabin-2025-09-09.shapr) 
+- [head-irad-cowpoke-cabin-2025-09-09.step](./models/head-irad-cowpoke-cabin-2025-09-09.step)
+
+Note: The original Shapr3D file contains modular parametric varibles that can adjust various aspects of the design.
+
+## Brief
 - Structure. Wood-framed structure (wood source TBD).
 - Joints. A color-coded (metal? wood? ABS?) joint system allowing for this structure to be assembled-dissassembled for various exhibitions of the project. This color-coding system should be visible to the public visiting the installation
 - Troughs. Cable-troughs are cut into the beams of the structure to allow the 230V power to the Cowpoke Console, the screens, the HDMI image cables leading to the integrated Stand, and the USB cable connecting the Cowpoke Controller to the console. The cables and the troughs should be visible to the public standing outside of the structure. The artifice of the electronics should be visible, similar to how the “backstage” of a theatre, with all of  its cables, wires, and pulleys has its own sort of aesthetic charm. These cable troughs are not as prominent while sitting inside of the Structure.
