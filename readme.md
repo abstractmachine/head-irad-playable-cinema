@@ -13,7 +13,7 @@ A [training and playback tool](./code/red-dead/playable-tool/) is currently in d
 ![Playable-Cinema-Tool](./code/playable-cowpoke/playable-tool/screenshots/playable-cinema-tool-2025-09-09.png)
 
 ## Cabin
-A cabin is currently in production that integrates all the parts of the project.
+A [cabin](./hardware/cabin/readme.md) is currently in production that integrates all the parts of the project.
 
 ![Cowpoke Cabin - Side View](/hardware/cabin/images/cowpoke-cabin-2025-09-09-0390.png)
 
