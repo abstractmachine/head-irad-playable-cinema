@@ -1,6 +1,6 @@
 # Playable Cinema
 
-**Playable Cinema** is an experimental research project that explores how machine learning can be used to reconfigure moving images from cinema and video games into interactive audiovisual experiences. Using computer vision techniques such as semantic segmentation and visual inference, the project builds a dataset that connects patterns between dystopian cinema and the award-winning indie game *Inside* (Playdead, 2016). This testbed serves as a prototype for a larger-scale dataset comparing Western films and *Red Dead Redemption 2*.
+**Playable Cinema** is an experimental research project that explores how machine learning can be used to reconfigure moving images from cinema and video games into interactive audiovisual experiences. Using computer vision techniques such as semantic segmentation and visual inference, the project began by building a dataset that connects patterns between dystopian cinema and the award-winning indie game *Inside* (Playdead, 2016). This testbed serves as a prototype for a larger-scale dataset comparing Western films and *Red Dead Redemption 2*.
 
 ## Team
 - [Douglas Edric Stanley](https://abstractmachine.net), Project Lead
@@ -10,8 +10,13 @@
 ## Software
 A [training and playback tool](./code/red-dead/playable-tool/) is currently in development.
 
+## Cabin
+A cabin is currently in production that integrates all the parts of the project.
+
+![Cowpoke Cabin - Side View](/hardware/cabin/images/cowpoke-cabin-2025-09-09-0390.png)
+
 ## Hardware
-There is a [physical object/installation](./hardware/) is currently in developement.
+There is a [physical object](./hardware/) is currently in developement.
 
 ## Westerns
 There is a [list of the western films](./cineclub/README.md) we are using to train the deep learning models of this project.

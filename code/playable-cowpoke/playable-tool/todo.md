@@ -1,5 +1,12 @@
 # TODO
 
+# 2025-09-02
+- Translate subtitles (FR > EN) for :
+    + ~~Bugles-In-The-Afternoon(1952){tmdb-059041}~~
+    + ~~The-Man-From-Bitter-Ridge(1955){tmdb-210673}~~
+    + ~~Winnetou-The-Last-Shot(1965){tmdb-007085}~~
+    + ~~Zachariah(1971){tmdb-065134}~~
+
 # Subtitles
 - Remove all [BOM](https://en.wikipedia.org/wiki/Byte_order_mark) from subtitles, and verify we're in `utf-8` encoding.
 - Currently there are 182 Movies in the `Project/Movies` list

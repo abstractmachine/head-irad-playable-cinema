@@ -1,5 +1,5 @@
 DEBUG = True
-IMAGE_COUNT = 47
+IMAGE_COUNT = 3
 
 MODEL_NAME = "gemma3:27b"
 #MODEL_NAME = "gemma3:12b"
