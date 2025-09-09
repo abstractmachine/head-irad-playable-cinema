@@ -27,3 +27,4 @@ Note: The original Shapr3D file contains modular parametric varibles that can ad
 
 ## Dimensions
 ![Cowpoke Cabin](./images/cowpoke-cabin-2025-09-09-0394.jpg)
+![Cowpoke Cabin](./images/cowpoke-cabin-2025-09-09-0395.jpg)
