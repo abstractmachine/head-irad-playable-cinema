@@ -8,19 +8,19 @@
 - [Guillaume Stagnaro](https://www.stagnaro.net), [Cowpoke Controller](./hardware/cowpoke-controller/) Developer
 
 ## Software
-A [training and playback tool](./code/red-dead/playable-tool/) is currently in development.
+A [training and playback tool](./code/playable-cowpoke/playable-tool/) is currently in development.
 
 ![Playable-Cinema-Tool](./code/playable-cowpoke/playable-tool/screenshots/playable-cinema-tool-2025-09-09.png)
 
 ## Cabin
-A [cabin](./hardware/cabin/readme.md) is currently in production that integrates all the parts of the project.
+A [cabin](./hardware/cowpoke-cabin/readme.md) is currently in production that integrates all the parts of the project.
 
 ![Cowpoke Cabin - Side View](./hardware/cowpoke-cabin/images/cowpoke-cabin-2025-09-09-0390.png)
 
 Blueprints to build this cabin can be found in this repository at: [cowpoke-cabin](./hardware/cowpoke-cabin/blueprints/)
 
 ## Hardware
-There is a [physical object](./hardware/) is currently in developement.
+There is a [physical object](./hardware/cowpoke-controller/readme.md) is currently in developement.
 
 ![Cowpoke Controller render](./hardware/cowpoke-controller/images/cowpoke-controller-render-2025-09-15.png)
 
