@@ -33,7 +33,7 @@ This is the current list of films we are exploring in this project.
 - [Blood Red](https://www.themoviedb.org/movie/135643) (1989)
 - [Blue Steel](https://www.themoviedb.org/movie/53828) (1934)
 - [Boot Hill](https://www.themoviedb.org/movie/12529) (1969)
-- [Boss Nigger](https://www.themoviedb.org/movie/26905) (1975)
+- [Boss](https://www.themoviedb.org/movie/26905) (1975)
 - [Breakheart Pass](https://www.themoviedb.org/movie/8043) (1975)
 - [Bring Me The Head Of Alfredo Garcia](https://www.themoviedb.org/movie/11942) (1974)
 - [Brokeback Mountain](https://www.themoviedb.org/movie/142) (2005)
