@@ -15,6 +15,9 @@ For now we will be using the GP2040 in standard HID PC Joystick mode, which requ
 
 We will also use their [JLC-3DP](https://jlc3dp.com) service to cutout the physical controller frame in stainless steel (frame) and solid wood (stock handles). Guillaume is using a hybrid KiCAD + [Rhino3D](https://www.rhino3d.com) solution to integrate these two layers (circuit design + object design). Douglas is using [Shapr3D](https://www.shapr3d.com) based on Guillaume's [STEP](https://en.wikipedia.org/wiki/ISO_10303-21) files generated in Rhino3D, and constant test printing using [PrusaSlicer](https://www.prusa3d.com/page/prusaslicer_424/) and a [Prusa MK4S](https://www.prusa3d.com) / [Prusa One](https://www.prusa3d.com/product/prusa-core-one-kit).
 
+# CAD Models
+Although we have successfully used the mockups to make our choices concerning dimensions and fundamental shapes, there is still a lot of fine tuning required with the KiCAD circuit diagram and component selection and layout. Here is a folder with some of the latest mockups used to make our design decisions: [Cowpoke Controller models](./models/).
+
 ## Circuit
 Current the circuit has the following components:
 
