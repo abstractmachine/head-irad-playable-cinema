@@ -59,4 +59,4 @@ Current the circuit has the following components:
     - 4 x Triangle, Circle, Square, Cross
     - 4 x Triggers (R1, R2, L1, L2)
 - [Foster Vibration Actuator](https://www.foster-electric.com/products/vibration_actuator/)
-- 
+- {TBD…}
