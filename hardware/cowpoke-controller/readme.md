@@ -11,9 +11,11 @@ A more recent render:
 
 ## User tests
 Quick animation of hand movement test:
+
 ![Cowpoke Controller user tests - 2025-09-16](./images/cowpoke-controller-user-tests-9243.gif)
 
 Excerpts of other hand tests:
+
 ![Cowpoke Controller user tests - 2025-09-16](./images/cowpoke-controller-user-tests-9264.jpg)
 ![Cowpoke Controller user tests - 2025-09-16](./images/cowpoke-controller-user-tests-9227.jpg)
 ![Cowpoke Controller user tests - 2025-09-16](./images/cowpoke-controller-user-tests-0352.jpg)
