@@ -1,8 +1,29 @@
 # Controller
 Joystick, gamepad, joypad, stick, controller, call it whatever you want: we are going to build a custom controller for this project.
 
-## Mockup
+## Early Mockup
 ![Cowpoke Controller Mockup](./images/Cowpoke-Controller-2025-09-12-a.jpg)
+
+## Render
+A more recent render:
+
+![Cowpoke Controller Mockup](./images/cowpoke-controller-render-2025-09-15.png)
+
+## User tests
+Some tests in people's hands:
+
+![Cowpoke Controller user tests - 2025-09-16](./images/cowpoke-controller-user-tests-9264.jpg)
+![Cowpoke Controller user tests - 2025-09-16](./images/cowpoke-controller-user-tests-9243.gif)
+![Cowpoke Controller user tests - 2025-09-16](./images/cowpoke-controller-user-tests-9227.jpg)
+![Cowpoke Controller user tests - 2025-09-16](./images/cowpoke-controller-user-tests-0352.jpg)
+![Cowpoke Controller user tests - 2025-09-16](./images/cowpoke-controller-user-tests-0399.PNG)
+![Cowpoke Controller user tests - 2025-09-16](./images/cowpoke-controller-user-tests-9248.jpg)
+![Cowpoke Controller user tests - 2025-09-16](./images/cowpoke-controller-user-tests-9261.jpg)
+![Cowpoke Controller user tests - 2025-09-16](./images/cowpoke-controller-user-tests-9259.jpg)
+
+Based on these tests, we are advancing with the 1.1x size, i.e. starting with the general outline of the Derringer frame, but multiplied 1.1x.
+
+![Cowpoke Controller user tests - 2025-09-16](./images/cowpoke-controller-user-tests-9226.jpg)
 
 ## GP2040-CE
 Thanks to a suggestion by [ChatGPT 4o](https://openai.com/index/hello-gpt-4o/), we will start with the [GP2040-CE](https://gp2040-ce.info), a [Raspberry Pi](https://www.raspberrypi.com)-based project from [OpenStickCommunity](https://github.com/OpenStickCommunity). This project was designed to convert a Raspberry Pi into a low-latency USB controller. According to the [GP2040-CE Gitbub page](https://github.com/OpenStickCommunity/GP2040-CE), it can already emulate PS4 and PS5 controllers.
