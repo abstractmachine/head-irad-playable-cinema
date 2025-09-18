@@ -22,6 +22,8 @@ Blueprints to build this cabin can be found in this repository at: [cowpoke-cabi
 ## Hardware
 There is a [physical object](./hardware/) is currently in developement.
 
+![Cowpoke Controller render](./hardware/cowpoke-controller/images/cowpoke-controller-render-2025-09-15.png)
+
 CAD model files and KiCAT circuit diagram can be found at [cowpoke-controller](./hardware/cowpoke-controller/)
 
 ## Westerns
