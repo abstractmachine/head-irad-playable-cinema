@@ -24,7 +24,6 @@ Excerpts of other hand tests:
 ![Cowpoke Controller user tests - 2025-09-16](./images/cowpoke-controller-user-tests-9264.jpg)
 ![Cowpoke Controller user tests - 2025-09-16](./images/cowpoke-controller-user-tests-9227.jpg)
 ![Cowpoke Controller user tests - 2025-09-16](./images/cowpoke-controller-user-tests-9261.jpg)
-![Cowpoke Controller user tests - 2025-09-16](./images/cowpoke-controller-user-tests-9259.jpg)
 
 Based on these tests, we are advancing with the 1.1x size, i.e. starting with the general outline of the Derringer frame, but multiplied 1.1x.
 
