@@ -3,6 +3,9 @@ The cowpoke cabin is the physical manifestation of the Playable Cinema project, 
 
 ![Cowpoke Cabin - Side View](./images/cowpoke-cabin-2025-09-09-0390.png)
 
+## Blueprints
+Blueprints to build the cabin can be found in this folder at: [cowpoke-cabin](./blueprints/)
+
 ## STEP File
 You can download the latest 3D model of the cabin in two formats:
 - [head-irad-cowpoke-cabin-2025-09-09.shapr](./models/head-irad-cowpoke-cabin-2025-09-09.shapr) 

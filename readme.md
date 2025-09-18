@@ -5,7 +5,7 @@
 ## Team
 - [Douglas Edric Stanley](https://abstractmachine.net), Project Lead
 - [Faust Perillaud](https://2024.head-geneve.show/en/projects/spectral-yard-fp-100e1), Research Assistant, training & labelling
-- TBD, Research Assistant, model development
+- [Guillaume Stagnaro](https://www.stagnaro.net), [Cowpoke Controller](./hardware/cowpoke-controller/) Developer
 
 ## Software
 A [training and playback tool](./code/red-dead/playable-tool/) is currently in development.
@@ -17,8 +17,12 @@ A [cabin](./hardware/cabin/readme.md) is currently in production that integrates
 
 ![Cowpoke Cabin - Side View](/hardware/cabin/images/cowpoke-cabin-2025-09-09-0390.png)
 
+Blueprints to build this cabin can be found in this repository at: [cowpoke-cabin](./hardware/cowpoke-cabin/blueprints/)
+
 ## Hardware
 There is a [physical object](./hardware/) is currently in developement.
+
+CAD model files and KiCAT circuit diagram can be found at [cowpoke-controller](./hardware/cowpoke-controller/)
 
 ## Westerns
 There is a [list of the western films](./cineclub/README.md) we are using to train the deep learning models of this project.
@@ -34,9 +38,9 @@ There is a [list of the western films](./cineclub/README.md) we are using to tra
 - [Teaser video (Inside Inside)](https://vimeo.com/589844238)  
 - [GIFF Festival installation (2021)](https://www.giff.ch/archives/2021/)
 
-## HEAD – Genève
-- [Anthony Masure](https://www.anthonymasure.com), Dean of Research, [IRAD](https://www.hesge.ch/head/en/programs-research/research), [HEAD – Genève](https://www.hesge.ch/head/en)
-- [Christelle Granite-Noble](https://www.hesge.ch/head/annuaire/christelle-granite-noble), Administrative Coordination, [IRAD](https://www.hesge.ch/head/en/programs-research/research)
+## HEAD – Genève
+- [Anthony Masure](https://www.anthonymasure.com), Dean of Research, [IRAD](https://www.hesge.ch/head/en/programs-research/research), [HEAD – Genève](https://www.hesge.ch/head/en), [HES-SO](https://www.hes-so.ch/)
+- [Christelle Granite-Noble](https://www.hesge.ch/head/annuaire/christelle-granite-noble), Administrative Coordination, [IRAD](https://www.hesge.ch/head/en/programs-research/research), [HEAD – Genève](https://www.hesge.ch/head/en), [HES-SO](https://www.hes-so.ch/)
 
 ## Financing
 This project was financed with a research grant from the [Network of Expertise in Design and Visual Arts](https://www.hesge.ch/head/en/programs-research/research) / [Réseau de compétences Design et Arts visuels](https://www.hesge.ch/head/formations-recherche/recherche).

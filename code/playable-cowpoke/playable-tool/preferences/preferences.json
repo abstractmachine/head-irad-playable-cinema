@@ -28,7 +28,7 @@
   },
   "cinematheque": {},
   "robots": {
-    "project_folder": "/Volumes/PLAYABLE-D/project",
+    "project_folder": "/Volumes/PLAYABLE/project",
     "weights_field": "-t 3.0",
     "main_text_size": 13
   }
