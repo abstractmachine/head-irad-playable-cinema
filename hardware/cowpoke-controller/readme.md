@@ -10,10 +10,11 @@ A more recent render:
 ![Cowpoke Controller Mockup](./images/cowpoke-controller-render-2025-09-15.png)
 
 ## User tests
-Some tests in people's hands:
-
-![Cowpoke Controller user tests - 2025-09-16](./images/cowpoke-controller-user-tests-9264.jpg)
+Quick animation of hand movement test:
 ![Cowpoke Controller user tests - 2025-09-16](./images/cowpoke-controller-user-tests-9243.gif)
+
+Excerpts of other hand tests:
+![Cowpoke Controller user tests - 2025-09-16](./images/cowpoke-controller-user-tests-9264.jpg)
 ![Cowpoke Controller user tests - 2025-09-16](./images/cowpoke-controller-user-tests-9227.jpg)
 ![Cowpoke Controller user tests - 2025-09-16](./images/cowpoke-controller-user-tests-0352.jpg)
 ![Cowpoke Controller user tests - 2025-09-16](./images/cowpoke-controller-user-tests-0399.PNG)
