@@ -24,7 +24,7 @@ There is a [physical object](./hardware/cowpoke-controller/readme.md) is current
 
 ![Cowpoke Controller render](./hardware/cowpoke-controller/images/cowpoke-controller-render-2025-09-15.png)
 
-CAD model files and KiCAT circuit diagram can be found at [cowpoke-controller](./hardware/cowpoke-controller/)
+CAD model files and KiCAD circuit diagram can be found at [cowpoke-controller](./hardware/cowpoke-controller/)
 
 ## Westerns
 There is a [list of the western films](./cineclub/README.md) we are using to train the deep learning models of this project.
