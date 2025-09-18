@@ -15,7 +15,7 @@ A [training and playback tool](./code/red-dead/playable-tool/) is currently in d
 ## Cabin
 A [cabin](./hardware/cabin/readme.md) is currently in production that integrates all the parts of the project.
 
-![Cowpoke Cabin - Side View](/hardware/cabin/images/cowpoke-cabin-2025-09-09-0390.png)
+![Cowpoke Cabin - Side View](./hardware/cowpoke-cabin/images/cowpoke-cabin-2025-09-09-0390.png)
 
 Blueprints to build this cabin can be found in this repository at: [cowpoke-cabin](./hardware/cowpoke-cabin/blueprints/)
 
