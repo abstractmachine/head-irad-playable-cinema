@@ -26,4 +26,4 @@ Note: The original Shapr3D file contains modular parametric varibles that can ad
 ![Cowpoke Cabin](./images/cowpoke-cabin-2025-09-30-corner-view.png)
 
 ## Dimensions
-Les dimensions risquent d'être encore modifiés ces prochains jours.
+Final dimensions still TBD…
