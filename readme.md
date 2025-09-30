@@ -15,7 +15,7 @@ A [training and playback tool](./code/playable-cowpoke/playable-tool/) is curren
 ## Cabin
 A [cabin](./hardware/cowpoke-cabin/readme.md) is currently in production that integrates all the parts of the project.
 
-![Cowpoke Cabin - Side View](./hardware/cowpoke-cabin/images/cowpoke-cabin-2025-09-09-0390.png)
+![Cowpoke Cabin - Side View](./hardware/cowpoke-cabin/images/cowpoke-cabin-2025-09-30-side-view.png)
 
 Blueprints to build this cabin can be found in this repository at: [cowpoke-cabin](./hardware/cowpoke-cabin/blueprints/)
 

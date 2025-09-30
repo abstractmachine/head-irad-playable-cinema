@@ -1,0 +1,15 @@
+
+DADA Simplex 12
+
+
+d [mm]
+M12
+
+P [mm]
+22
+
+L [mm]
+54
+
+pcs.
+200
