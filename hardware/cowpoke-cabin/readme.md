@@ -1,15 +1,15 @@
 # Cowpoke Cabin
 The cowpoke cabin is the physical manifestation of the Playable Cinema project, and regroups all the various components into a single installation.
 
-![Cowpoke Cabin - Side View](./images/cowpoke-cabin-2025-09-09-0390.png)
+![Cowpoke Cabin - Side View](./images/cowpoke-cabin-2025-09-30-side-view.png)
 
 ## Blueprints
 Blueprints to build the cabin can be found in this folder at: [cowpoke-cabin](./blueprints/)
 
 ## STEP File
 You can download the latest 3D model of the cabin in two formats:
-- [head-irad-cowpoke-cabin-2025-09-09.shapr](./models/head-irad-cowpoke-cabin-2025-09-09.shapr) 
-- [head-irad-cowpoke-cabin-2025-09-09.step](./models/head-irad-cowpoke-cabin-2025-09-09.step)
+- [head-irad-cowpoke-cabin-2025-09-29.shapr](./models/head-irad-cowpoke-cabin-2025-09-29.shapr) 
+- [head-irad-cowpoke-cabin-2025-09-29.step](./models/head-irad-cowpoke-cabin-2025-09-29.step)
 
 Note: The original Shapr3D file contains modular parametric varibles that can adjust various aspects of the design.
 
@@ -23,11 +23,7 @@ Note: The original Shapr3D file contains modular parametric varibles that can ad
 - A Color-Coding System identifies the connections between the joints, structure, wires, and electronic components of the cabin, controller and console. These joints should be visible to visitors of the installation, and are a part of the playful western-in-a-kit concept of the overall design philosophy.
 
 ## Renders
-
-![Cowpoke Cabin](./images/cowpoke-cabin-2025-09-09-0391.png)
-![Cowpoke Cabin](./images/cowpoke-cabin-2025-09-09-0392.png)
-![Cowpoke Cabin](./images/cowpoke-cabin-2025-09-09-0393.png)
+![Cowpoke Cabin](./images/cowpoke-cabin-2025-09-30-corner-view.png)
 
 ## Dimensions
-![Cowpoke Cabin](./images/cowpoke-cabin-2025-09-09-0394.jpg)
-![Cowpoke Cabin](./images/cowpoke-cabin-2025-09-09-0395.jpg)
+Les dimensions risquent d'être encore modifiés ces prochains jours.
