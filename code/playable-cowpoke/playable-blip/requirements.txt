@@ -1,0 +1,10 @@
+# AI
+torch
+torchvision
+transformers
+
+# Computer Vision
+opencv-python
+
+# To install the requirements using pip:
+# pip install --upgrade -r requirements.txt

@@ -1,0 +1,5 @@
+# Ignore Hugging Face models
+models/
+models-*/
+*.bin
+*.safetensors
