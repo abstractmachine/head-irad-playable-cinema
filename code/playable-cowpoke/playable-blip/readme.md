@@ -20,7 +20,7 @@ pyenv activate playable-blip
 ## Results
 I've created script to load a model from Huggingface (`model-downloader.py`) and another to test the downloaded blip model using a definable folder and movie file (`blip.py`).
 
-Here is the file of the results: [](./result-2025-10-01-18-11-00.txt)
+Here is the file of the results: [result-2025-10-01-18-11-00.txt](./result-2025-10-01-18-11-00.txt)
 
 ![Blip test results](./images/Screenshot-2025-10-01-18.19.36.png)
 ![Blip test preview](./images/Screenshot-2025-10-01-18.19.28.png)
