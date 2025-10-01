@@ -22,5 +22,13 @@ I've created script to load a model from Huggingface (`model-downloader.py`) and
 
 Here is the file of the results: [result-2025-10-01-18-11-00.txt](./result-2025-10-01-18-11-00.txt)
 
+And the timing scores on an M1-Macbook-Pro-Max-64GB:
+
+```
+--- Inference timing ---
+Samples timed: 41
+Avg latency per caption: 0.420s
+```
+
 ![Blip test results](./images/Screenshot-2025-10-01-18.19.36.png)
 ![Blip test preview](./images/Screenshot-2025-10-01-18.19.28.png)
