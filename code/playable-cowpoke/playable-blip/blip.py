@@ -1,6 +1,18 @@
 import cv2, torch, time
 from transformers import BlipProcessor, BlipForConditionalGeneration
 
+import os
+
+# (optionnel) utile pour éviter les erreurs quand un op n'existe pas sur MPS,
+# mais ATTENTION: tout fallback CPU peut ralentir fortement.
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
+USE_MPS = torch.backends.mps.is_built() and torch.backends.mps.is_available()
+device = "mps" if USE_MPS else ("cuda" if torch.cuda.is_available() else "cpu")
+
+print(f"[device] {device} | mps_built={torch.backends.mps.is_built()} "
+      f"| mps_available={torch.backends.mps.is_available()}")
+
 # --- settings ---
 MOVIES_DIR = "/Volumes/PLAYABLE-D/project/movies/"
 MOVIE_FILE = "3-10-To-Yuma(1957){tmdb-14168}.mp4"

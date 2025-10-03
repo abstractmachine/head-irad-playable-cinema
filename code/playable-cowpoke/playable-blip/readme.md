@@ -5,9 +5,12 @@ We're going to start a quick and dirty prototype to test the BLIP models and the
 
 ### Installation
 
+If you are on macOS, make sure you first have [Homebrew](http://brew.sh) installed and from homebrew, `pyenv` should be installed (`brew install pyenv` & `brew install pyenv-virtualenv`). On Windows, wedonno how all this works, sorry :-(
+
 1. Create Python Environment
 ```
-cd ~/your-folder-path-to/playable-blip
+% cd ~/your-folder-path-to/playable-blip
+pyenv install 3.11.9
 pyenv virtualenv 3.11.9 playable-blip
 pyenv activate playable-blip
 ```
