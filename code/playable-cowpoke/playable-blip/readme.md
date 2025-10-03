@@ -23,7 +23,7 @@ pyenv activate playable-blip
 ## Results
 I've created script to load a model from Huggingface (`model-downloader.py`) and another to test the downloaded blip model using a definable folder and movie file (`blip.py`).
 
-Here is the file of the results: [result-2025-10-01-18-11-00.txt](./result-2025-10-01-18-11-00.txt)
+Here is the file of the first results (): [output-mac-m1-max-64Gb-2025-10-01-18-11-00.txt](./output-mac-m1-max-64Gb-2025-10-01-18-11-00.txt)
 
 And the timing scores on an M1-Macbook-Pro-Max-64GB:
 
@@ -31,6 +31,14 @@ And the timing scores on an M1-Macbook-Pro-Max-64GB:
 --- Inference timing ---
 Samples timed: 41
 Avg latency per caption: 0.420s
+```
+
+And the second results (M4) : [output-mac-m4-24Gb-2025-10-03-16-18-00.txt](./output-mac-m4-24Gb-2025-10-03-16-18-00.txt)
+
+```
+--- Inference timing ---
+Samples timed: 101
+Avg latency per caption: 0.298s
 ```
 
 ![Blip test results](./images/Screenshot-2025-10-01-18.19.36.png)
