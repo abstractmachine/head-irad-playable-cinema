@@ -25,6 +25,12 @@ I've created script to load a model from Huggingface (`model-downloader.py`) and
 
 Here is the output of an Ubuntu + NVidia GeForece 4070 Ti 12Gb: [output-ubuntu-nvidia-geforce-rtx-4070-Ti-12Gb-2025-10-03-17-40-00.txt](./output-ubuntu-nvidia-geforce-rtx-4070-Ti-12Gb-2025-10-03-17-40-00.txt)
 
+```
+--- Inference timing ---
+Samples timed: 2256
+Avg latency per caption: 0.072s
+```
+
 
 Here is output of a M1-Macbook-Pro-Max-64GB: [output-mac-m1-max-64Gb-2025-10-01-18-11-00.txt](./output-mac-m1-max-64Gb-2025-10-01-18-11-00.txt)
 
