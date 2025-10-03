@@ -42,7 +42,7 @@ Samples timed: 41
 Avg latency per caption: 0.420s
 ```
 
-And the second results (M4) : [output-mac-m4-24Gb-2025-10-03-16-18-00.txt](./output-mac-m4-24Gb-2025-10-03-16-18-00.txt)
+And the second results M4-MacMini-24Gb : [output-mac-m4-24Gb-2025-10-03-16-18-00.txt](./output-mac-m4-24Gb-2025-10-03-16-18-00.txt)
 
 ```
 --- Inference timing ---
