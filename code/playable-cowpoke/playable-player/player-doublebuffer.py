@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Double-buffer video switcher using two embedded mpv processes controlled via JSON IPC.
-# Robust IPC: request_id matching, persistent read buffer, retries, and --idle=yes.
+# Adds robust IPC error handling + auto-relaunch on socket failure.
 import os, sys, csv, random, json, socket, subprocess, tempfile, time
 from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget
 from PyQt5.QtCore import Qt, QTimer
@@ -66,16 +66,25 @@ class MpvProc:
         self.target_ms = 0
         self.current_file = None
 
-        # UNIX socket for JSON IPC
-        self.sock_path = os.path.join(tempfile.gettempdir(), f"mpv_{label}_{os.getpid()}.sock")
-        try: os.unlink(self.sock_path)
-        except OSError: pass
+        # IPC / process state
+        self.sock_path = self._make_sock_path()
         self.proc = None
         self.sock = None
         self._buf = b""
         self._req_id = 1  # monotonically increasing id
+        self._ipc_broken = False
+
+    def _make_sock_path(self):
+        return os.path.join(
+            tempfile.gettempdir(),
+            f"mpv_{self.label}_{os.getpid()}_{int(time.time()*1000)}.sock"
+        )
 
     def start(self):
+        # clean any stale socket path (best-effort)
+        try: os.unlink(self.sock_path)
+        except OSError: pass
+
         wid = int(self.win.winId())
 
         # Force numeric C locale for mpv (avoids libmpv locale crash)
@@ -115,6 +124,8 @@ class MpvProc:
             try:
                 self.sock.connect(self.sock_path)
                 self.sock.setblocking(False)
+                self._ipc_broken = False
+                self._buf = b""
                 break
             except (ConnectionRefusedError, OSError) as e:
                 last_err = e
@@ -124,15 +135,17 @@ class MpvProc:
 
     # ---- IPC helpers ----
     def _send(self, obj):
-        if not self.sock: return
+        if not self.sock or self._ipc_broken: return
         data = (json.dumps(obj) + "\n").encode("utf-8")
         try:
             self.sock.sendall(data)
         except (BrokenPipeError, OSError):
-            pass
+            self._ipc_broken = True
 
     def _drain_until(self, predicate, timeout=0.5):
         """Read lines until predicate(msg) returns True; return that msg or None."""
+        if not self.sock or self._ipc_broken:
+            return None
         end = time.time() + timeout
         while time.time() < end:
             try:
@@ -143,6 +156,10 @@ class MpvProc:
                     time.sleep(0.01)
             except BlockingIOError:
                 time.sleep(0.01)
+            except OSError:
+                # socket died
+                self._ipc_broken = True
+                return None
 
             while b"\n" in self._buf:
                 line, self._buf = self._buf.split(b"\n", 1)
@@ -159,6 +176,8 @@ class MpvProc:
 
     def request(self, command_list, timeout=0.5):
         """Send a command with a unique request_id and wait for the matching reply."""
+        if self._ipc_broken:
+            return None
         rid = self._req_id; self._req_id += 1
         self._send({"command": command_list, "request_id": rid})
 
@@ -171,6 +190,8 @@ class MpvProc:
         self.request(["set_property", name, value], timeout=0.3)
 
     def get_property(self, name):
+        if self._ipc_broken:
+            return None
         reply = self.request(["get_property", name], timeout=0.4)
         if not reply or reply.get("error") != "success":
             return None
@@ -191,6 +212,12 @@ class MpvProc:
         QTimer.singleShot(30, self._prepare_seek)
 
     def _prepare_seek(self):
+        # if IPC died, try relaunch then retry
+        if self._ipc_broken:
+            self.relaunch()
+            QTimer.singleShot(60, self._prepare_seek)
+            return
+
         dur = self.get_property("duration")  # seconds (float) or None
         if not dur:
             QTimer.singleShot(40, self._prepare_seek)
@@ -210,6 +237,12 @@ class MpvProc:
         QTimer.singleShot(120, self._poll_ready)
 
     def _poll_ready(self):
+        # if IPC died, relaunch and try again later
+        if self._ipc_broken:
+            self.relaunch()
+            QTimer.singleShot(150, self._poll_ready)
+            return
+
         pos = self.get_property("time-pos")  # seconds float
         if pos is None:
             QTimer.singleShot(50, self._poll_ready); return
@@ -231,6 +264,57 @@ class MpvProc:
     def go_hidden(self):
         self.set_property("mute", True)
         self.set_property("pause", False)
+
+    def relaunch(self):
+        """Tear down and restart mpv/IPC, attempting to restore current clip."""
+        print(f"[{self.label}] IPC lost; relaunching mpv...")
+        cur = self.current_file
+        tgt = self.target_ms
+
+        # close existing
+        try:
+            if self.sock:
+                try: self._send({"command": ["quit"]})
+                except Exception: pass
+                self.sock.close()
+        except Exception:
+            pass
+        try:
+            if self.proc:
+                self.proc.terminate()
+                try: self.proc.wait(timeout=0.8)
+                except subprocess.TimeoutExpired:
+                    self.proc.kill()
+        except Exception:
+            pass
+        try:
+            if os.path.exists(self.sock_path):
+                os.unlink(self.sock_path)
+        except Exception:
+            pass
+
+        # new IPC path to avoid stale handles
+        self.sock_path = self._make_sock_path()
+        self.sock = None
+        self._buf = b""
+        self._ipc_broken = False
+
+        # start fresh
+        try:
+            self.start()
+        except Exception as e:
+            print(f"[{self.label}] relaunch failed: {e}")
+            self._ipc_broken = True
+            return
+
+        # restore clip if we had one
+        if cur:
+            self.current_file = None  # force load
+            self.load_file(cur)
+            if tgt and tgt > 0:
+                self.target_ms = tgt
+                self.command("seek", self.target_ms / 1000.0, "absolute", "exact")
+                self.set_property("pause", False)
 
     def close(self):
         try:
