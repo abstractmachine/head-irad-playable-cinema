@@ -2,7 +2,9 @@
 This is the still-in-progress presskit for the research project [Playable Cinema](https://www.hesge.ch/head/projets/2024/institut%20de%20recherche%20en%20art%20et%20en%20design%2Cresearch/all), [IRAD](https://www.hesge.ch/head/en/programs-research/research), [HEAD - Genève](http://head-geneve.ch), [HES-SO](https://www.hes-so.ch/accueil).
 
 ## About
-…
+Playable Cinema is a research project that investigates how artificial intelligence can bridge the narrative mythology of cinema and video games. Through large-scale, visual and thematic analysis of Western film archives, it constructs a system that synchronizes cinematic imagery with the interactive environments of the video game Red Dead Redemption. The project serves as a laboratory for studying how algorithmic processes can reimagine montage, remix, and the evolution of storytelling across media.
+
+At Istituto Svizzero, the team will present their evolving methodology, and discuss how new AI tools are changing the nature of image curation.
 
 ## Team
 - [Douglas Edric Stanley](https://abstractmachine.net), Project Lead
