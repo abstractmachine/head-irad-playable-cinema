@@ -1,7 +1,11 @@
 # Player
 
 ## Raspberry Pi 5
-Here are the note for the Rasperry Pi 5 video playback tests.
+Here are the note for the Rasperry Pi 5 video playback device.
+
+### Hardware
+- [Raspberry Pi 5 Model B 16Gb](https://www.raspberrypi.com/products/raspberry-pi-5/)
+- [Rasbperry Pi Active Cooler](https://www.raspberrypi.com/products/active-cooler/)
 
 With the help of `ChatGPT 5` we have a script [player-doublebuffer.py](../../code/playable-cowpoke/playable-player/player-doublebuffer.py) that works great with correct audio playback and no visible artifacts on a Raspberry PI 5.
 

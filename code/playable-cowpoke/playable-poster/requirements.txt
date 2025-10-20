@@ -1,0 +1,5 @@
+pillow
+PySide6
+
+# To install the requirements using pip:
+# pip install --upgrade -r requirements.txt
