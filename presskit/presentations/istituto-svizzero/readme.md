@@ -7,6 +7,7 @@
 ## Team
 - [Douglas Edric Stanley](https://www.hesge.ch/head/annuaire/douglas-edric-stanley), Maître d'enseignement, [HEAD – Genève](https://www.hesge.ch/head/), HES-SO
 - Faust Perillaud, Assistante de recherche, [HEAD – Genève](https://www.hesge.ch/head/), HES-SO
+- [Guillaume Stagnaro](https://stagnaro.net), Cowpoke Controller Developer
 
 ## Presentation
 Cowpokes riding through the ghost town of an abandoned Western landscape. At its heart, an isolated cabin with two solitary frames staring out onto the flickering plains of a mythology as it fades to red. A crossroads, two mediums staring the other down, revolvers drawn, caught in a deadly standoff.
