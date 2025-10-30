@@ -23,3 +23,6 @@ Cowpoke Controller, Playable Cinema Project, IRAD, HEAD – Genève
 ![Playable Cinema - Cowpoke Controller - Screenshot](./images/playable-cinema-cowpoke-controller-drunkard.jpg)
 Cowpoke Controller, Playable Cinema Project, IRAD, HEAD – Genève
 
+![Playable Cinema - Cowpoke Cabin - Simulation](./images/playable-cinema-cowpoke-cabin.jpg)
+
+Cowpoke Controller, Playable Cinema Project, IRAD, HEAD – Genève
