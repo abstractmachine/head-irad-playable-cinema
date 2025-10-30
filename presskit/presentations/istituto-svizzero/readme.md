@@ -20,7 +20,7 @@ Cowpoke Controller, Playable Cinema Project, IRAD, HEAD – Genève
 
 ![Playable Cinema - Cowpoke Cabin - Simulation](./images/playable-cinema-cowpoke-cabin.jpg)
 
-Cowpoke Controller, Playable Cinema Project, IRAD, HEAD – Genève
+Cowpoke Cabin, Playable Cinema Project, IRAD, HEAD – Genève
 
 ## Team
 - [Douglas Edric Stanley](https://abstractmachine.net/en/biography), [Maître d'enseignement](https://www.hesge.ch/head/annuaire/douglas-edric-stanley), [HEAD – Genève](https://www.hesge.ch/head/), HES-SO
