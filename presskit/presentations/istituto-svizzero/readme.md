@@ -1,4 +1,5 @@
 # Playable Cinema
+- [Douglas Edric Stanley](https://abstractmachine.net/en/biography) & Faust Perillaud
 - Conference
 - [From Mimesis To Machine](https://www.istitutosvizzero.it/conferenza/from-mimesis-to-machine/)
 - Istituto Svizzero, Roma
@@ -22,7 +23,7 @@ Cowpoke Controller, Playable Cinema Project, IRAD, HEAD – Genève
 Cowpoke Controller, Playable Cinema Project, IRAD, HEAD – Genève
 
 ## Team
-- [Douglas Edric Stanley](https://www.hesge.ch/head/annuaire/douglas-edric-stanley), Maître d'enseignement, [HEAD – Genève](https://www.hesge.ch/head/), HES-SO
+- [Douglas Edric Stanley](https://abstractmachine.net/en/biography), [Maître d'enseignement](https://www.hesge.ch/head/annuaire/douglas-edric-stanley), [HEAD – Genève](https://www.hesge.ch/head/), HES-SO
 - Faust Perillaud, Research Assistant, [HEAD – Genève](https://www.hesge.ch/head/), HES-SO
 - [Guillaume Stagnaro](https://stagnaro.net), Cowpoke Controller Development
 
