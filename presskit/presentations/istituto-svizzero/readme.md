@@ -4,11 +4,6 @@
 - Istituto Svizzero, Roma
 - November 27, 2025
 
-## Team
-- [Douglas Edric Stanley](https://www.hesge.ch/head/annuaire/douglas-edric-stanley), Maître d'enseignement, [HEAD – Genève](https://www.hesge.ch/head/), HES-SO
-- Faust Perillaud, Assistante de recherche, [HEAD – Genève](https://www.hesge.ch/head/), HES-SO
-- [Guillaume Stagnaro](https://stagnaro.net), Cowpoke Controller Developer
-
 ## Presentation
 Cowpokes riding through the ghost town of an abandoned Western landscape. At its heart, an isolated cabin with two solitary frames staring out onto the flickering plains of a mythology as it fades to red. A crossroads, two mediums staring the other down, revolvers drawn, caught in a deadly standoff.
 
@@ -26,3 +21,15 @@ Cowpoke Controller, Playable Cinema Project, IRAD, HEAD – Genève
 ![Playable Cinema - Cowpoke Cabin - Simulation](./images/playable-cinema-cowpoke-cabin.jpg)
 
 Cowpoke Controller, Playable Cinema Project, IRAD, HEAD – Genève
+
+## Team
+- [Douglas Edric Stanley](https://www.hesge.ch/head/annuaire/douglas-edric-stanley), Maître d'enseignement, [HEAD – Genève](https://www.hesge.ch/head/), HES-SO
+- Faust Perillaud, Research Assistant, [HEAD – Genève](https://www.hesge.ch/head/), HES-SO
+- [Guillaume Stagnaro](https://stagnaro.net), Cowpoke Controller Development
+
+## Financing
+This project was financed with a research grant from the [Network of Expertise in Design and Visual Arts](https://www.hesge.ch/head/en/programs-research/research) / [Réseau de compétences Design et Arts visuels](https://www.hesge.ch/head/formations-recherche/recherche).
+
+## HEAD – Genève
+- [Anthony Masure](https://www.anthonymasure.com), Dean of Research, [IRAD](https://www.hesge.ch/head/en/programs-research/research), [HEAD – Genève](https://www.hesge.ch/head/en), [HES-SO](https://www.hes-so.ch/)
+- [Christelle Granite-Noble](https://www.hesge.ch/head/annuaire/christelle-granite-noble), Administrative Coordination, [IRAD](https://www.hesge.ch/head/en/programs-research/research), [HEAD – Genève](https://www.hesge.ch/head/en), [HES-SO](https://www.hes-so.ch/)
