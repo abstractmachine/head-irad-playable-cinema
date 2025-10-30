@@ -1,4 +1,7 @@
 # Slideshow
+This is still a work in progress.
+
+## Notes
 While we've started with a simple [Google Slides template](./istituto-svizzero/head-irad-playable-cinema-istituto-svizzero.gslides), the goal is to quickly move to a quicker and more open-source solution, using [Markdown](https://en.wikipedia.org/wiki/Markdown) + [MARP](https://marp.app). This workflow has the added bonus of being the fastest way we know to write and generate slides and PDFs. We will use the provided Google Slide template as our design guide.
 
 ## MARP

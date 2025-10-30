@@ -19,7 +19,8 @@ This project was financed with a research grant from the [Network of Expertise i
 - [Christelle Granite-Noble](https://www.hesge.ch/head/annuaire/christelle-granite-noble), Administrative Coordination, [IRAD](https://www.hesge.ch/head/en/programs-research/research), [HEAD – Genève](https://www.hesge.ch/head/en), [HES-SO](https://www.hes-so.ch/)
 
 ## Presentations
-- [Playable Cinema](./presentations/istituto-svizzero/), Istituto Svizzero, Rome, 27 November 2025
+- [Playable Cinema](./presentations/istituto-svizzero/readme.md), Istituto Svizzero, Rome, 27 November 2025
+- TBA
 
 ## Tools
 More information on our presentation workflow can be found here: [Presentations](./presentations/readme.md).
