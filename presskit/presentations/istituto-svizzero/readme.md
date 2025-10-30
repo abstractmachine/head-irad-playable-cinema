@@ -23,7 +23,7 @@ Cowpoke Controller, Playable Cinema Project, IRAD, HEAD – Genève
 Cowpoke Cabin, Playable Cinema Project, IRAD, HEAD – Genève
 
 ## Team
-- [Douglas Edric Stanley](https://abstractmachine.net/en/biography), [Maître d'enseignement](https://www.hesge.ch/head/annuaire/douglas-edric-stanley), [HEAD – Genève](https://www.hesge.ch/head/), HES-SO
+- [Douglas Edric Stanley](https://abstractmachine.net/en/biography), Project Lead, [Maître d'enseignement](https://www.hesge.ch/head/annuaire/douglas-edric-stanley), [HEAD – Genève](https://www.hesge.ch/head/), HES-SO
 - Faust Perillaud, Research Assistant, [HEAD – Genève](https://www.hesge.ch/head/), HES-SO
 - [Guillaume Stagnaro](https://stagnaro.net), Cowpoke Controller Development
 
