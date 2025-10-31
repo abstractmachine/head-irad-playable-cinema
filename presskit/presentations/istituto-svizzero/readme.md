@@ -15,6 +15,9 @@ At Istituto Svizzero, the team will show the behind-the-scenes logic of their au
 ![Playable Cinema - Cowpoke Controller - Screenshot](./images/playable-cinema-cowpoke-controller-cheat.jpg)
 Cowpoke Controller, Playable Cinema Project, IRAD, HEAD – Genève
 
+![Playable Cinema - Cowpoke Controller - Screenshot](./images/playable-cinema-cowpoke-controller-bar.jpg)
+Cowpoke Controller, Playable Cinema Project, IRAD, HEAD – Genève
+
 ![Playable Cinema - Cowpoke Controller - Screenshot](./images/playable-cinema-cowpoke-controller-drunkard.jpg)
 Cowpoke Controller, Playable Cinema Project, IRAD, HEAD – Genève
 
