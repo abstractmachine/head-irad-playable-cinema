@@ -18,6 +18,9 @@ Cowpoke Controller, Playable Cinema Project, IRAD, HEAD – Genève
 ![Playable Cinema - Cowpoke Controller - Screenshot](./images/playable-cinema-cowpoke-controller-bar.jpg)
 Cowpoke Controller, Playable Cinema Project, IRAD, HEAD – Genève
 
+![Playable Cinema - Cowpoke Controller - Screenshot](./images/playable-cinema-cowpoke-controller-widow.jpg)
+Cowpoke Controller, Playable Cinema Project, IRAD, HEAD – Genève
+
 ![Playable Cinema - Cowpoke Controller - Screenshot](./images/playable-cinema-cowpoke-controller-drunkard.jpg)
 Cowpoke Controller, Playable Cinema Project, IRAD, HEAD – Genève
 
