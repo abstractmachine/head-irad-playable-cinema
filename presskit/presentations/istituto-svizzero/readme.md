@@ -28,7 +28,7 @@ Cowpoke Controller, Playable Cinema Project, IRAD, HEAD – Genève
 
 Cowpoke Cabin, Playable Cinema Project, IRAD, HEAD – Genève
 
-![Playable Cinema - Cowpoke Cabin - Simulation](./images/cowpoke-cabin-back-view.jpg)
+![Playable Cinema - Cowpoke Cabin - Simulation](./images/playable-cinema-cowpoke-cabin-back-view.jpg)
 
 Cowpoke Cabin, Playable Cinema Project, IRAD, HEAD – Genève
 
