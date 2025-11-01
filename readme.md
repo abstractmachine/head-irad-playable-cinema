@@ -40,7 +40,7 @@ A [cabin](./hardware/cowpoke-cabin/readme.md) is currently in production that in
 Blueprints to build this cabin can be found in this repository at: [cowpoke-cabin](./hardware/cowpoke-cabin/blueprints/)
 
 ## Hardware
-There is a [physical object](./hardware/cowpoke-controller/readme.md) is currently in developement.
+A [physical object](./hardware/cowpoke-controller/readme.md) is currently in developement. This allows visitors to interact with the installation.
 
 ![Cowpoke Controller render](./hardware/cowpoke-controller/images/cowpoke-controller-render-2025-09-15.png)
 
