@@ -12,23 +12,23 @@ Playable Cinema is a research project exploring how artificial intelligence can 
 At Istituto Svizzero, the team will show the behind-the-scenes logic of their audiovisual remix engine, and explore the new curatorial methodologies that are beginning to emerge as generative tools collaborate with humans in assembling the haunted archive of our shared hallucinations of the West.
 
 ## Images
-![Playable Cinema - Cowpoke Controller - Screenshot](./images/playable-cinema-cowpoke-controller-cheat.jpg)
+![Playable Cinema - Cowpoke Controller - Screenshot](../../images/playable-cinema-cowpoke-controller-cheat.jpg)
 Cowpoke Controller, Playable Cinema Project, IRAD, HEAD – Genève
 
-![Playable Cinema - Cowpoke Controller - Screenshot](./images/playable-cinema-cowpoke-controller-bar.jpg)
+![Playable Cinema - Cowpoke Controller - Screenshot](../../images/playable-cinema-cowpoke-controller-bar.jpg)
 Cowpoke Controller, Playable Cinema Project, IRAD, HEAD – Genève
 
-![Playable Cinema - Cowpoke Controller - Screenshot](./images/playable-cinema-cowpoke-controller-widow.jpg)
+![Playable Cinema - Cowpoke Controller - Screenshot](../../images/playable-cinema-cowpoke-controller-widow.jpg)
 Cowpoke Controller, Playable Cinema Project, IRAD, HEAD – Genève
 
-![Playable Cinema - Cowpoke Controller - Screenshot](./images/playable-cinema-cowpoke-controller-drunkard.jpg)
+![Playable Cinema - Cowpoke Controller - Screenshot](../../images/playable-cinema-cowpoke-controller-drunkard.jpg)
 Cowpoke Controller, Playable Cinema Project, IRAD, HEAD – Genève
 
-![Playable Cinema - Cowpoke Cabin - Simulation](./images/playable-cinema-cowpoke-cabin-side-view.jpg)
+![Playable Cinema - Cowpoke Cabin - Simulation](../../images/playable-cinema-cowpoke-cabin-side-view.jpg)
 
 Cowpoke Cabin, Playable Cinema Project, IRAD, HEAD – Genève
 
-![Playable Cinema - Cowpoke Cabin - Simulation](./images/playable-cinema-cowpoke-cabin-back-view.jpg)
+![Playable Cinema - Cowpoke Cabin - Simulation](../../images/playable-cinema-cowpoke-cabin-back-view.jpg)
 
 Cowpoke Cabin, Playable Cinema Project, IRAD, HEAD – Genève
 
