@@ -5,7 +5,7 @@
 ## Teaser
 Cowpokes riding through the ghost town of an abandoned Western landscape. At its heart, an isolated cabin with two solitary frames staring out onto the flickering plains of a mythology as it fades to red. A crossroads, two mediums staring the other down, revolvers drawn, caught in a deadly standoff.
 
-![Playable Cinema Research Project, IRAD, HEAD – Genève](./presskit/images/playable-cinema-cowpoke-controller-cheat.jpg)
+![Cowpoke Cabin - Side View](./presskit/images/playable-cinema-cowpoke-cabin-side-view.jpg)
 
 ## Project
 Playable Cinema is a research project exploring how artificial intelligence can ride the invisible frontier between cinema history and interactive gameplay. By using machine learning to analyze hundreds of Westerns, the project constructs a generative database where fragments of film history and the streams of live gameplay bleed into one another; where the joystick becomes an editing tool for an infinite Western fever dream looping through the ghosts of cinematic history.
@@ -17,6 +17,8 @@ The project began by building a dataset that connects patterns between dystopian
 ![Playable Cinema Research Project, IRAD, HEAD – Genève](./presskit/images/playable-cinema-cowpoke-controller-bar.jpg)
 
 In this current form, the project explores how hybrid strategies can emerge new curatorial methodologies as generative tools collaborate with humans in assembling the haunted archive of our shared hallucinations of the West.
+
+![Playable Cinema Research Project, IRAD, HEAD – Genève](./presskit/images/playable-cinema-cowpoke-controller-cheat.jpg)
 
 ![Playable Cinema Research Project, IRAD, HEAD – Genève](./presskit/images/playable-cinema-cowpoke-controller-drunkard.jpg)
 
@@ -33,7 +35,7 @@ A [training and playback tool](./code/playable-cowpoke/playable-tool/) is curren
 ## Cabin
 A [cabin](./hardware/cowpoke-cabin/readme.md) is currently in production that integrates all the parts of the project.
 
-![Cowpoke Cabin - Side View](./presskit/images/playable-cinema-cowpoke-cabin-side-view.jpg)
+![Cowpoke Cabin - Side View](./presskit/images/playable-cinema-cowpoke-cabin-back-view.jpg)
 
 Blueprints to build this cabin can be found in this repository at: [cowpoke-cabin](./hardware/cowpoke-cabin/blueprints/)
 
