@@ -37,14 +37,14 @@ A [cabin](./hardware/cowpoke-cabin/readme.md) is currently in production that in
 
 ![Cowpoke Cabin - Side View](./presskit/images/playable-cinema-cowpoke-cabin-back-view.jpg)
 
-Blueprints to build this cabin can be found in this repository at: [cowpoke-cabin](./hardware/cowpoke-cabin/blueprints/)
+Blueprints to build this cabin can be found in the repository [hardware/cowpoke-cabin](./hardware/cowpoke-cabin/blueprints/)
 
 ## Hardware
 A [physical object](./hardware/cowpoke-controller/readme.md) is currently in developement. This allows visitors to interact with the installation.
 
 ![Cowpoke Controller render](./hardware/cowpoke-controller/images/cowpoke-controller-render-2025-09-15.png)
 
-CAD model files and KiCAD circuit diagram can be found at [cowpoke-controller](./hardware/cowpoke-controller/)
+CAD model files and KiCAD circuit diagram can be found in [hardware/cowpoke-controller](./hardware/cowpoke-controller/)
 
 ## Westerns
 There is a [list of the western films](./cineclub/README.md) we are using to train the deep learning models of this project.
