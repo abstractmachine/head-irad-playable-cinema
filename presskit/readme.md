@@ -1,14 +1,24 @@
 # *Playable Cinema* Presskit
 This is the still-in-progress presskit for the research project [Playable Cinema](https://www.hesge.ch/head/projets/2024/institut%20de%20recherche%20en%20art%20et%20en%20design%2Cresearch/all), [IRAD](https://www.hesge.ch/head/en/programs-research/research), [HEAD - Genève](http://head-geneve.ch), [HES-SO](https://www.hes-so.ch/accueil).
 
-## About
-Playable Cinema is a research project that investigates how artificial intelligence can bridge the narrative mythology of cinema and video games. Through large-scale, visual and thematic analysis of Western film archives, it constructs a system that synchronizes cinematic imagery with the interactive environments of the video game Red Dead Redemption. The project serves as a laboratory for studying how algorithmic processes can reimagine montage, remix, and the evolution of storytelling across media.
+## Project
+Cowpokes riding through the ghost town of an abandoned Western. The isolated cabin — solitary frames, staring out onto the flickering plains of a mythology fading to red. A crossroads. Two mediums staring the other down, revolvers drawn, caught in a deadly standoff.
 
-![Cowpoke Cabin](./images/playable-cinema-cowpoke-cabin-side-view.jpg)
+![Cowpoke Cabin - Side View](./images/playable-cinema-cowpoke-cabin-side-view.jpg)
 
-<img src="./images/playable-cinema-cowpoke-controller-bar.jpg" widtgh="45%" alt="Playable Cinema - Cowpoke Controller - Screengrab" /> <img src="./images/playable-cinema-cowpoke-controller-cheat.jpg" widtgh="45%" alt="Playable Cinema - Cowpoke Controller - Screengrab" />
+Playable Cinema is a research project exploring how artificial intelligence can ride the invisible frontier between cinema history and interactive gameplay. By using machine learning to analyze hundreds of Westerns, the project constructs a generative database where fragments of film history and the streams of live gameplay bleed into one another; where the joystick becomes an editing tool for an infinite Western fever dream looping through the ghosts of cinematic history.
 
-<img src="./images/playable-cinema-cowpoke-controller-widow.jpg" widtgh="45%" alt="Playable Cinema - Cowpoke Controller - Screengrab" /> <img src="./images/playable-cinema-cowpoke-controller-drunkard.jpg" widtgh="45%" alt="Playable Cinema - Cowpoke Controller - Screengrab" />
+![Inside Inside, Douglas Edric Stanley, installation view](./images/insideinside-DouglasEdricStanley-Installation.jpg)
+
+The project began by building a dataset that connects patterns between dystopian cinema and the award-winning indie game *Inside* (Playdead, 2016). This installation has been exibited in various locations and contexts (San Francisco, Lausanne, Marseille, Genève, …). This testbed served as a prototype for a larger-scale dataset comparing Western films and the iconic western video game, *Red Dead Redemption 2*.
+
+![Playable Cinema Research Project, IRAD, HEAD – Genève](./images/playable-cinema-cowpoke-controller-bar.jpg)
+
+In this current form, the project explores how hybrid strategies can emerge new curatorial methodologies as generative tools collaborate with humans in assembling the haunted archive of our shared hallucinations of the West.
+
+![Playable Cinema Research Project, IRAD, HEAD – Genève](./images/playable-cinema-cowpoke-controller-cheat.jpg)
+
+![Playable Cinema Research Project, IRAD, HEAD – Genève](./images/playable-cinema-cowpoke-controller-drunkard.jpg)
 
 ## Team
 - [Douglas Edric Stanley](https://abstractmachine.net), Project Lead
@@ -27,4 +37,4 @@ This project was financed with a research grant from the [Network of Expertise i
 - TBA
 
 ## Tools
-More information on our presentation workflow can be found here: [Presentations](./presentations/readme.md).
+More information on our presentation workflow can be found here: [/code](../code/), [/hardware](../hardware/).
