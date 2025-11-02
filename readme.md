@@ -1,9 +1,9 @@
 # Playable Cinema
-Cowpokes riding through the ghost town of an abandoned Western. The isolated cabin — solitary frames, staring out onto the flickering plains of a mythology fading to red. A crossroads. Two mediums staring the other down, revolvers drawn, caught in a deadly standoff.
-
 ![Playable Cinema Research Project, IRAD, HEAD – Genève](./presskit/images/playable-cinema-cowpoke-controller-widow.jpg)
 
 ## Project
+Cowpokes riding through the ghost town of an abandoned Western. The isolated cabin — solitary frames, staring out onto the flickering plains of a mythology fading to red. A crossroads. Two mediums staring the other down, revolvers drawn, caught in a deadly standoff.
+
 ![Cowpoke Cabin - Side View](./presskit/images/playable-cinema-cowpoke-cabin-side-view.jpg)
 
 Playable Cinema is a research project exploring how artificial intelligence can ride the invisible frontier between cinema history and interactive gameplay. By using machine learning to analyze hundreds of Westerns, the project constructs a generative database where fragments of film history and the streams of live gameplay bleed into one another; where the joystick becomes an editing tool for an infinite Western fever dream looping through the ghosts of cinematic history.
