@@ -2,7 +2,7 @@
 This is the still-in-progress presskit for the research project [Playable Cinema](https://www.hesge.ch/head/projets/2024/institut%20de%20recherche%20en%20art%20et%20en%20design%2Cresearch/all), [IRAD](https://www.hesge.ch/head/en/programs-research/research), [HEAD - Genève](http://head-geneve.ch), [HES-SO](https://www.hes-so.ch/accueil).
 
 ## Project
-Cowpokes riding through the ghost town of an abandoned Western. The isolated cabin — solitary frames, staring out onto the flickering plains of a mythology fading to red. A crossroads. Two mediums staring the other down, revolvers drawn, caught in a deadly standoff.
+Cowpokes riding through the ghost town of an abandoned Western. Isolated cabin, solitary frames, staring out onto the flickering plains of a mythology fading to red. A crossroads. Two mediums staring the other down, revolvers drawn, caught in a deadly standoff.
 
 ![Cowpoke Cabin - Side View](./images/playable-cinema-cowpoke-cabin-side-view.jpg)
 
