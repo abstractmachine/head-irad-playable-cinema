@@ -40,7 +40,7 @@ Blueprints to build this cabin can be found in the repository [hardware/cowpoke-
 ## Hardware
 A [physical object](./hardware/cowpoke-controller/readme.md) is currently in developement. This allows visitors to interact with the installation.
 
-![Cowpoke Controller render](./hardware/cowpoke-controller/images/cowpoke-controller-render-2025-09-15.png)
+![Cowpoke Controller render](./presskit/images/head-irad-cowpoke-controller-front-2025-11-03.png)
 
 CAD model files and KiCAD circuit diagram can be found in [hardware/cowpoke-controller](./hardware/cowpoke-controller/)
 

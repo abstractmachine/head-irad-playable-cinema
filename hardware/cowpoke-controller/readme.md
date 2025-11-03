@@ -1,7 +1,7 @@
 # Controller
-Joystick, gamepad, joypad, stick, controller, call it whatever you want: we are going to build a custom controller for this project.
+Joystick, gamepad, joypad, stick, controller, call it whatever you want: we are building a custom controller for this project.
 
-![Cowpoke Controller 2025-11-02](./images/cowpoke-controller-front.png)
+![Cowpoke Controller 2025-11-02](../../presskit/images/head-irad-cowpoke-controller-front-2025-11-03.png)
 
 ## Design
 After many failed [experiments](./experiments/) by Douglas, Faust made the following drawing which placed us on the right path of exploring the shape of [Derringer](https://en.wikipedia.org/wiki/Derringer) pistols, as opposed to the [Colt](https://en.wikipedia.org/wiki/Colt_Single_Action_Army) family of pistols along with all it's bretheren.
@@ -49,6 +49,11 @@ We will also use their [JLC-3DP](https://jlc3dp.com) service to cutout the physi
 
 # CAD Models
 Although we have successfully used the mockups to make our choices concerning dimensions and fundamental shapes, there is still a lot of fine tuning required with the KiCAD circuit diagram and component selection and layout. Here is a folder with some of the latest mockups used to make our design decisions: [Cowpoke Controller models](./models/).
+
+The latest model is:
+
+- [cowpoke-controller-2025-11-03-des.step](./models/cowpoke-controller-2025-11-03-des.step)
+- [cowpoke-controller-2025-11-03-des.shapr](./models/cowpoke-controller-2025-11-03-des.shapr)
 
 ## Circuit
 Current the circuit has the following components:
