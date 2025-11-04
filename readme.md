@@ -2,7 +2,7 @@
 ![Playable Cinema Research Project, IRAD, HEAD – Genève](./presskit/images/playable-cinema-cowpoke-controller-widow.jpg)
 
 ## Project
-Cowpokes riding through the ghost town of an abandoned Western. Isolated cabin, solitary frames, staring out onto the flickering plains of a mythology fading to red. A crossroads. Two mediums staring the other down, revolvers drawn, caught in a deadly standoff.
+Cowpokes riding through the ghost town of an abandoned Western. Isolated cabin, solitary frames, staring out onto the flickering plains of a mythology fading to red. A crossroads. Two mediums, revolvers drawn, caught in a deadly standoff.
 
 ![Cowpoke Cabin - Side View](./presskit/images/playable-cinema-cowpoke-cabin-side-view.jpg)
 
