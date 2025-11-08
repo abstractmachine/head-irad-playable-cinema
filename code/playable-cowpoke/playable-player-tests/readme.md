@@ -1,6 +1,11 @@
 # Player
 This is a video player that has been optimized to run on a Raspberry Pi 5. It accepts `NDJSON` over `TCP` via a locally run server listening to port `6666`.
 
+## Local IP
+```
+$ hostname -I
+```
+
 ## Installation
 ```
 % pyenv virtualenv 3.11.9 playable-player 

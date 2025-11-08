@@ -1,0 +1,9 @@
+# System dependencies (install first):
+# sudo apt-get install python3-pyqt5
+
+ffmpeg-python
+
+# Setup:
+# python3 -m venv --system-site-packages playable-cinematheque
+# source playable-cinematheque/bin/activate
+# pip install -r requirements.txt
