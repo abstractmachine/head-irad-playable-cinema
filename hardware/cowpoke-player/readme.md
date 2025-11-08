@@ -1,13 +1,18 @@
 # Player
 
 ## Raspberry Pi 5
-Here are the note for the Rasperry Pi 5 video playback device.
+Here are the notes for our Rasperry Pi 5 video playback device.
 
 ### Hardware
 - [Raspberry Pi 5 Model B 16Gb](https://www.raspberrypi.com/products/raspberry-pi-5/)
 - [Rasbperry Pi Active Cooler](https://www.raspberrypi.com/products/active-cooler/)
 
 With the help of `ChatGPT 5` we have a script [player-doublebuffer.py](../../code/playable-cowpoke/playable-player/player-doublebuffer.py) that works great with correct audio playback and no visible artifacts on a Raspberry PI 5.
+
+We've also added a local SSD for fast/stable playback of the videos (cf. [playable-tool](../../code/playable-cowpoke/playable-playback/)) :
+
+- [Raspberry Pi M.2 Hat+](https://www.raspberrypi.com/products/m2-hat-plus/)
+- [Transcend SSD PCIe M.2 MTE400S 1000Gb](https://www.transcend-info.com/product/internal-ssd/mte400s?srsltid=AfmBOorRtRqtcqO50wC2VchsMloFy5TofPaR3_qWkYREFl-lQRbBAg9D)
 
 ### Installation
 Based on the above code, here are the dependencies that need to be installed:
@@ -20,10 +25,88 @@ sudo apt install -y mesa-utils libvulkan1 gstreamer1.0-libav
 sudo apt install -y gstreamer1.0-pipewire gstreamer1.0-pulseaudio
 ```
 
-### Previous Installation Tests
-Cf. [playable-aihat](../../code/playable-cowpoke/playable-aihat/).
+### SSD Configuration
+Once the SSD Hat + SSD drive have been installed:
 
-Starting from the above configuration, we're adding:
+```
+$ lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT,LABEL
+
+NAME        SIZE    FSTYPE  MOUNTPOINT      LABEL
+mmcblk0     59.5G   
+|-mmcblk0p1 512M    vfat    /boot/formware  bootfs
+|-mmcblk0p2 59G     ext4    /               rootfs
+nvme0n1     953.9G
+```
+
+Meaning that our new drive isn't formatted yet.
+
+```
+$ sudo fdisk /dev/nvme0n1
+```
+
+Follow prompts:
+```
+g      # create a new GPT partition table (wipes drive)
+n      # create a new partition
+Enter  # accept default partition number (1)
+Enter  # accept default first sector
+Enter  # accept default last sector (uses full drive)
+w      # write changes and exit
+```
+
+Lots of info but most important:
+
+```
+Created a new partition 1 of type `Linux filesystem` and of size 953.9 GiB
+```
+
+Creating mount:
+
+```
+$ sudo mkfs.ext4 /dev/nvme0n1p1 -L ssd
+$ sudo mkdir -p /media/ssd
+$ sudo mount /dev/nvme0n1p1 /media/ssd
+$ df -h
+```
+
+#### Mount
+Mount at every startup:
+
+```
+$ sudo blkid /dev/nvme0n1p1
+```
+
+Note `UUID` and other info.
+
+```
+$ sudo nano /etc/fstab
+```
+
+Enter a new line using that info:
+
+```
+UUID=##########-####-####-####-##########  /media/ssd  ext4  defaults,noatime  0  2
+```
+
+#### Permissions
+```
+$ sudo chown -R playback:playback /media/ssd
+```
+
+### Path
+The final path for the project folder is:
+
+```
+/media/ssd/playable/project
+```
+
+### Space
+There is approximately 900Gb of space available for films. This is a little more than enough for our current list of 317 films (cf. [Cineclub](../../cineclub/README.md)) which is at about 850Gb due to the fast-seek compression we used when formatting each film (cf. [video-converter](../../code/playable-cowpoke/video-converter/)).
+
+### Previous Installation Tests
+Previously, we tried installing the Raspberry AI Hat+ platform. Cf. [playable-aihat](../../code/playable-cowpoke/playable-aihat/).
+
+Starting from this configuration, we're adding:
 
 ```
 sudo apt update
