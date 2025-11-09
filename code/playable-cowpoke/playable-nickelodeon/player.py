@@ -7,10 +7,10 @@ import time
 import tempfile
 import random
 from PyQt5.QtWidgets import QMainWindow, QWidget
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QGuiApplication
 
-from cinematheque import get_movies, fullpath
+from cinematheque import fullpath
 from switcher import gremlin_get, gremlin_tick
 
 # --- Behavior ---
@@ -287,6 +287,11 @@ class MpvProc:
 
 # --- Main window with double-buffer ---
 class DoubleBufferMPV(QMainWindow):
+    # Signal for thread-safe play requests (filepath, start_ms, index, title)
+    play_requested = pyqtSignal(str, int, int, str)
+    # NEW: signal to toggle gremlin safely from non-Qt threads
+    gremlin_requested = pyqtSignal(bool)
+    
     def __init__(self):
         super().__init__()
         
@@ -314,14 +319,40 @@ class DoubleBufferMPV(QMainWindow):
         self.current = self.a
         self.preload = self.b
         
+        # Metadata/status cache
+        self._pending_index = -1
+        self._pending_title = ""
+        self._last_index = -1
+        self._last_title = ""
+        self._last_pos_ms = 0
+        
+        # Connect signals
+        self.play_requested.connect(self._play_internal)
+        self.gremlin_requested.connect(self._apply_gremlin)  # thread-safe gremlin
+        
         # Gremlin timer
         self.gremlin_timer = QTimer(self)
         self.gremlin_timer.timeout.connect(self._gremlin_tick)
         
+        # Status sampler (updates _last_pos_ms)
+        self.status_timer = QTimer(self)
+        self.status_timer.timeout.connect(self._sample_status)
+        self.status_timer.start(250)
+        
         print("[player] double-buffer initialized")
     
     def play(self, filepath: str, start_ms: int = 0):
-        """Load into preload slot and switch when ready."""
+        """Compatibility: play without metadata."""
+        self.play_with_meta(filepath, start_ms, -1, "")
+    
+    def play_with_meta(self, filepath: str, start_ms: int, index: int, title: str):
+        """Thread-safe play that carries selection metadata."""
+        self.play_requested.emit(filepath, int(start_ms or 0), int(index or -1), title or "")
+    
+    def _play_internal(self, filepath: str, start_ms: int, index: int, title: str):
+        """Internal play method - runs in Qt main thread."""
+        self._pending_index = index
+        self._pending_title = title
         self.preload.load_file(filepath, start_ms)
         QTimer.singleShot(200, self._wait_and_switch)
     
@@ -330,12 +361,40 @@ class DoubleBufferMPV(QMainWindow):
             self.preload.go_live()
             self.current.go_hidden()
             self.current, self.preload = self.preload, self.current
+            # Commit metadata to "current"
+            if self._pending_index != -1 or self._pending_title:
+                self._last_index = self._pending_index
+                self._last_title = self._pending_title
             print(f"[player] switched → {self.current.label} live")
         else:
             QTimer.singleShot(50, self._wait_and_switch)
     
+    def _sample_status(self):
+        """Sample current playback time into cache."""
+        if not self.current:
+            return
+        pos = self.current.get_property("time-pos")
+        if pos is None:
+            return
+        try:
+            self._last_pos_ms = int(float(pos) * 1000)
+        except Exception:
+            pass
+    
+    def get_status(self):
+        """Return (index, title, current_pos_ms) from cached values."""
+        return self._last_index, self._last_title, self._last_pos_ms
+    
     def set_gremlin(self, enabled: bool):
-        """Enable/disable gremlin auto-switching."""
+        """Main-thread gremlin control (keyboard)."""
+        self._apply_gremlin(enabled)
+    
+    def set_gremlin_threadsafe(self, enabled: bool):
+        """Background-thread safe gremlin control (server)."""
+        self.gremlin_requested.emit(enabled)
+    
+    def _apply_gremlin(self, enabled: bool):
+        """Internal: start/stop timer using current interval from switcher."""
         if enabled:
             _, interval_s = gremlin_get()
             self.gremlin_timer.start(interval_s * 1000)
@@ -349,7 +408,7 @@ class DoubleBufferMPV(QMainWindow):
             idx, title, start_ms = sel
             if idx >= 0 and title:
                 print(f"[switcher] GREMLIN → index={idx} title={title} start={start_ms}ms")
-                self.play(fullpath(title), start_ms)
+                self.play_with_meta(fullpath(title), start_ms, idx, title)
     
     def closeEvent(self, event):
         self.a.close()
