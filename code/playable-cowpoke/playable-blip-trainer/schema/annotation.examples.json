@@ -1,0 +1,141 @@
+[
+  {
+    "Protagonists": [
+      "townspeople",
+      "horses"
+    ],
+    "Place": [
+      "town",
+      "plains",
+      "railway"
+    ],
+    "Actions": [
+      "walking to cabin"
+    ],
+    "Objects": []
+  },
+  {
+    "Protagonists": [
+      "townperson"
+    ],
+    "Place": [
+      "wooden house"
+    ],
+    "Actions": [
+      "entering",
+      "sitting"
+    ],
+    "Objects": [
+      "telegraph"
+    ]
+  },
+  {
+    "Protagonists": [
+      "townperson"
+    ],
+    "Place": [
+      "wooden house"
+    ],
+    "Actions": [
+      "street crossing",
+      "knocking"
+    ],
+    "Objects": []
+  },
+  {
+    "Protagonists": [
+      "townperson",
+      "prostitute"
+    ],
+    "Place": [
+      "wooden house"
+    ],
+    "Actions": [
+      "talking"
+    ],
+    "Objects": []
+  },
+  {
+    "Protagonists": [],
+    "Place": [
+      "railway",
+      "mountains"
+    ],
+    "Actions": [
+      "train rolling"
+    ],
+    "Objects": [
+      "train",
+      "steam"
+    ]
+  },
+  {
+    "Protagonists": [
+      "rich person",
+      "soldier"
+    ],
+    "Place": [
+      "train corridor"
+    ],
+    "Actions": [
+      "walking"
+    ],
+    "Objects": []
+  },
+  {
+    "Protagonists": [],
+    "Place": [
+      "railway",
+      "mountains"
+    ],
+    "Actions": [
+      "train rolling"
+    ],
+    "Objects": [
+      "sign",
+      "train",
+      "steam"
+    ]
+  },
+  {
+    "Protagonists": [
+      "townperson"
+    ],
+    "Place": [
+      "telegraph post"
+    ],
+    "Actions": [
+      "writing"
+    ],
+    "Objects": [
+      "telegraph"
+    ]
+  },
+  {
+    "Protagonists": [],
+    "Place": [
+      "railway",
+      "mountains",
+      "town"
+    ],
+    "Actions": [
+      "train stopping"
+    ],
+    "Objects": [
+      "train",
+      "steam"
+    ]
+  },
+  {
+    "Protagonists": [
+      "traveller"
+    ],
+    "Place": [
+      "train"
+    ],
+    "Actions": [
+      "jumping off"
+    ],
+    "Objects": []
+  }
+]

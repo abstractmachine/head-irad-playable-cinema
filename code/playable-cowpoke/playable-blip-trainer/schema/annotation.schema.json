@@ -1,0 +1,36 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "Protagonists",
+    "Place",
+    "Actions",
+    "Objects"
+  ],
+  "properties": {
+    "Protagonists": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "Place": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "Actions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "Objects": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

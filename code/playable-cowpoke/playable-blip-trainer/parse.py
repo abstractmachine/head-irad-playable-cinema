@@ -1,4 +1,5 @@
 import argparse
+import sys
 
 def parse_arguments():
     """
@@ -26,5 +27,28 @@ def parse_arguments():
         choices=['scene', 'shot'],
         help="Type of caption to operate on (scene or shot)"
     )
-    
+    # New options
+    parser.add_argument(
+        "--model",
+        default="gemma3:27b",
+        help="Ollama model to use (default: gemma3:27b)"
+    )
+    parser.add_argument(
+        "--shot_index",
+        type=int,
+        default=1,
+        help="Starting shot index (1-based) for annotation"
+    )
+    parser.add_argument(
+        "--annotation_count",
+        type=int,
+        default=None,
+        help="How many shots to annotate (default: until end)"
+    )
+
+    # If no args were provided, print help and exit
+    if len(sys.argv) == 1:
+        parser.print_help()
+        parser.exit()
+
     return parser.parse_args()

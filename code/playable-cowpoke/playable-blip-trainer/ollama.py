@@ -3,33 +3,27 @@ import json
 import base64
 from typing import Optional, Dict, Any, List
 
+# use the `gemma3:27b` model by default
+
 class OllamaClient:
     """
-    Simple client to interact with local Ollama instance.
+    Simple client to interact with local Ollama instance (vision + JSON).
     """
-    def __init__(self, base_url: str = "http://localhost:11434", model: str = "llava:latest"):
+    def __init__(self, base_url: str = "http://localhost:11434", model: str = "gemma3:27b"):
         self.base_url = base_url
         self.model = model
     
     def generate(self, prompt: str, stream: bool = False) -> Optional[str]:
-        """
-        Send a prompt to the model and get a response.
-        Returns the response text or None if there was an error.
-        """
         url = f"{self.base_url}/api/generate"
-        
         payload = {
             "model": self.model,
             "prompt": prompt,
             "stream": stream
         }
-        
         try:
             response = requests.post(url, json=payload)
             response.raise_for_status()
-            
             if stream:
-                # Handle streaming response
                 full_response = ""
                 for line in response.iter_lines():
                     if line:
@@ -38,10 +32,8 @@ class OllamaClient:
                             full_response += data['response']
                 return full_response
             else:
-                # Handle non-streaming response
                 data = response.json()
                 return data.get('response', '')
-                
         except requests.exceptions.RequestException as e:
             print(f"Error connecting to Ollama: {e}")
             return None
@@ -49,15 +41,18 @@ class OllamaClient:
             print(f"Error parsing Ollama response: {e}")
             return None
     
-    def generate_with_images(self, prompt: str, image_paths: List[str], stream: bool = False) -> Optional[str]:
+    def generate_with_images(
+        self,
+        prompt: str,
+        image_paths: List[str],
+        stream: bool = False,
+        system: Optional[str] = None,
+        schema: Optional[dict] = None
+    ) -> Optional[str]:
         """
-        Send a prompt with images to the model and get a response.
-        Images are encoded as base64.
-        Returns the response text or None if there was an error.
+        Send a prompt with images; optional system prompt + JSON schema.
         """
         url = f"{self.base_url}/api/generate"
-        
-        # Encode images as base64
         images = []
         for image_path in image_paths:
             try:
@@ -67,36 +62,35 @@ class OllamaClient:
             except Exception as e:
                 print(f"Error reading image {image_path}: {e}")
                 continue
-        
         if not images:
             print("No images could be loaded")
             return None
-        
         payload = {
             "model": self.model,
             "prompt": prompt,
+            "stream": stream,
             "images": images,
-            "stream": stream
         }
-        
+        if system:
+            payload["system"] = system
+        if schema is not None:
+            payload["format"] = schema
+        else:
+            payload["format"] = "json"
         try:
             response = requests.post(url, json=payload)
             response.raise_for_status()
-            
             if stream:
-                # Handle streaming response
                 full_response = ""
                 for line in response.iter_lines():
                     if line:
                         data = json.loads(line)
                         if 'response' in data:
                             full_response += data['response']
-                return full_response
+                return self._extract_json(full_response)
             else:
-                # Handle non-streaming response
                 data = response.json()
-                return data.get('response', '')
-                
+                return self._extract_json(data.get('response', ''))
         except requests.exceptions.RequestException as e:
             print(f"Error connecting to Ollama: {e}")
             return None
@@ -105,12 +99,29 @@ class OllamaClient:
             return None
     
     def test_connection(self) -> bool:
-        """
-        Test if we can connect to Ollama and the model is available.
-        """
         try:
             response = self.generate("Hi")
             return response is not None
         except Exception as e:
             print(f"Connection test failed: {e}")
             return False
+    
+    @staticmethod
+    def _extract_json(text: str) -> Optional[str]:
+        if not text:
+            return None
+        try:
+            json.loads(text)
+            return text.strip()
+        except Exception:
+            pass
+        start = text.find('{')
+        end = text.rfind('}')
+        if start != -1 and end != -1 and end > start:
+            candidate = text[start:end+1]
+            try:
+                json.loads(candidate)
+                return candidate
+            except Exception:
+                return None
+        return None
