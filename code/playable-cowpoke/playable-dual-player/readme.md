@@ -3,7 +3,9 @@ This is the first working dual-player that uses real-time [FAISS](https://ai.met
 
 Here is a video demo recording of this tool in action:
 
-![[](https://youtu.be/aycAulC_B_A)](images/playable-dual-player-screenshot-2025-11-13.png)
+[![](images/playable-dual-player-screenshot-2025-11-13.png)](https://youtu.be/aycAulC_B_A))
+
+[Playable-Cinema-FAISS-Test-2025-11-13](https://youtu.be/aycAulC_B_A) (YouTube unlisted video)
 
 ## Conversion
 There is a tool that converts individual captions inside of `shotlists/movie-name.csv` (JSON) → `shotlists/movie-name.txt` (single-line raw text) → `shotlists/movie-name.npy` (vectors).
