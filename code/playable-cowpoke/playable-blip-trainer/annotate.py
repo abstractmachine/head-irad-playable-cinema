@@ -1,6 +1,7 @@
 import os
 import cv2
 import json
+import time
 from datetime import datetime
 from typing import List, Dict, Optional
 from ollama import OllamaClient
@@ -126,22 +127,30 @@ def annotate_shot(
     project_root: str,
     print_prompt: bool = False,
     ndjson_path: Optional[str] = None
-) -> str:
+) -> tuple[str, float]:
+    """
+    Annotate a single shot with Shot_Caption.
+    
+    Returns:
+        tuple[str, float]: (caption, duration_seconds)
+    """
+    start_time = time.time()
+    
     if shot.get('Ignore', '').strip().lower() == 'yes':
         shot['Shot_Caption'] = ""
-        return ""
+        return "", 0.0
     start_tc = shot.get('Start', '')
     end_tc = shot.get('End', '')
     if not start_tc or not end_tc:
         shot['Shot_Caption'] = ""
-        return ""
+        return "", 0.0
     movie_filename = film.get('filename', '')
     movie_base = os.path.splitext(movie_filename)[0]
     image_paths = extract_frames_for_shot(video_path, start_tc, end_tc, frames_dir, movie_base, index-1)
     image_count = len(image_paths)
     if image_count == 0:
         shot['Shot_Caption'] = ""
-        return ""
+        return "", 0.0
     system_text = load_system_prompt(project_root, image_count, film)
     # Do not print the system prompt anymore
     # if print_prompt:  # removed
@@ -160,7 +169,8 @@ def annotate_shot(
     )
     if response is None:
         shot['Shot_Caption'] = ""
-        return ""
+        duration = time.time() - start_time
+        return "", duration
     try:
         data = json.loads(response)
         data = _ensure_list_fields(data)
@@ -184,7 +194,9 @@ def annotate_shot(
     except Exception as e:
         print(f"[warn] JSON parse/validate failed for shot {index}: {e}")
         shot['Shot_Caption'] = ""
-    return shot['Shot_Caption']
+    
+    duration = time.time() - start_time
+    return shot['Shot_Caption'], duration
 
 def annotate_shots(
     shotlist: List[Dict],
@@ -208,6 +220,8 @@ def annotate_shots(
 
     processed = 0
     total = len(shotlist)
+    total_start_time = time.time()
+    
     for i, shot in enumerate(shotlist, start=1):
         # Skip shots before the requested starting index
         if i < max(1, start_index):
@@ -221,13 +235,26 @@ def annotate_shots(
             continue
 
         print(f"Processing shot {i}/{total}...")
-        caption = annotate_shot(
+        caption, duration = annotate_shot(
             shot, i, video_path, film, ollama, frames_dir, project_root,
             print_prompt=False, ndjson_path=ndjson_path
         )
         if caption is not None:
             shot['Shot_Caption'] = caption
+        
+        print(f"  ✓ Completed in {duration:.2f}s")
         processed += 1
+
+    total_duration = time.time() - total_start_time
+    
+    if processed > 0:
+        avg_duration = total_duration / processed
+        print(f"\n{'='*60}")
+        print(f"Annotation Summary:")
+        print(f"  Total shots annotated: {processed}")
+        print(f"  Total time: {total_duration:.2f}s ({total_duration/60:.2f} minutes)")
+        print(f"  Average time per shot: {avg_duration:.2f}s")
+        print(f"{'='*60}\n")
 
     return shotlist
 

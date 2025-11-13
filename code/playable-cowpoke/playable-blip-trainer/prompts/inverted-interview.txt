@@ -1,0 +1,248 @@
+Here are our answers:
+
+	1.	Vocabulary policy
+
+	•	Open vs. closed lists
+	- Open, but all words should be coherent with the historical context of westerns, cowpokes, and frontier landscapes and culture	
+
+	2.	Token form & normalization
+
+	•	Casing: lowercase only?
+Yes, lowercase only
+
+	•	Word boundaries: allow multiword tokens like "fur coat"
+Yes, multi-words, separated by commas, as short as possible. For example: "fur coat, gun, journal, confederate hat"
+
+	•	Singular/plural normalization (e.g., "horse" vs "horses")?
+Both:
+- single when a single person or item
+- plural when there are more than one
+
+	•	Lemmas vs. surface forms (e.g., "ride" vs "riding" for Actions)?
+Examples: "riding", "walking", "staring", "fighting", …
+
+	•	ASCII-only or allow diacritics?
+ASCII-only
+
+	3.	Synonymy & canonical choices
+
+	•	Choose one canonical: "gunfight" vs. "shootout", "cowpoke" vs. "cowboy", "saloon" vs. "bar".
+Gunfight
+Cowpoke
+Saloon
+
+	•	Provide 5–10 canonical pairs per category if possible.
+
+	- Protagonists
+		- "cowboy" vs "cowpoke" → "cowpoke"
+		- "lady" vs "rich woman" → "lady"
+		- "gentelman" vs "well-dressed man" → "gentleman"
+		- "prostitute" vs "sex worker" → "prostitute"
+		- "townspeople" vs "people" vs "citizens" → "townspeople"
+	- Place
+		- "saloon" vs "bar" → "saloon"
+		- "wooden house" vs "wooden structure" → "wooden house"
+		- "empty field" vs "plains" → "plains"
+		- "wooden train bridge" vs "rail trestle" → "rail trestle"
+	- Actions
+		- "staring" vs "gazing" → "staring"
+		- "riding" vs "on horseback" → "riding"
+		- "approaching" vs "walking to house" → "approaching"
+		- "coming out" vs "exiting" → "exiting"
+	- Objects
+		- "cowpoke hat" vs "hat" → "cowpoke hat"
+		- "fur hat" vs "hat" → "fur hat"
+		- "confederate hat" vs "hat" → "confederate hat"
+		- "magazine" vs "catalogue" → "catalogue"
+		- "steam" vs "train with steam coming out" → "steam"
+
+	•	Should the system deduplicate near-synonyms automatically and keep only the canonical term?
+
+	Absolutely yes
+
+	4.	Protagonists (who counts)
+
+	•	Humans only, or also animals (you mentioned yes when integral): do we also include groups/crowds tokens like "posse", "townsfolk", "bandits"?
+	→ Yes humans and animals
+
+	•	Role vs. attire: do tokens like "sheriff", "outlaw", "bartender", "card dealer", "preacher", "soldier" belong here?
+	→ Yes absolutely. Yehaw!
+
+	•	Exclusions: forbid proper names, ethnic descriptors, age, or sensitive attributes?
+	→ Forbidden
+	→ When important (old man = important, boy = important, age of adults are not important)
+	→ Yes, sensitive attribute if you mean "one-armed man" or "sick man" yes they should be described
+
+	•	When ambiguous silhouettes/background extras: include "bystanders" or leave []?
+	- Silhoutte if part of scene
+	- If too ambiguous, leave `[]`
+
+	5.	Place (granularity & composition)
+
+	•	Scene vs. locale vs. sub-locale: is "interior","saloon" acceptable together? What about "interior","train","caboose"?
+	→ "interior", "saloon" are both good
+	→ "interior", "train", "caboose" is also good
+
+	•	Outdoors typology: "desert", "mesa", "canyon", "plains", "forest", "riverside", "main street"—confirm allowed patterns.
+	→ All these are great
+
+	•	Built environments: "sheriff office", "rail depot", "homestead", "mineshaft", "gallows"—acceptable?
+	→ All these are great
+
+	•	If location is unclear but clearly indoor/outdoor, do we still emit "interior" or "exterior" or leave []?
+	→ if unclear, just leave `[]`
+
+	6.	Actions (scope & limits)
+
+	•	Strictly visible, present-tense, 1–2 words (your rule) — confirm verbs vs. event nouns: "shooting" vs. "shootout".
+	→ When possible, choose "shooting"
+		
+	•	Atomic vs. composite: allow both "walking","talking" together?
+	→ Yes, they sometimes define the particularity of the situation when together
+
+	•	Camera-driven actions (e.g., "embracing", "reloading", "holstering", "staring", "riding", "lassoing", "brawling", "pursuit") — confirm canonical set for 20–40 common actions.
+	→ All these are good: "embracing", "reloading", "holstering", "staring", "riding", "lassoing", "brawling", "pursuit", "shooting", "sleeping", "smiling", "falling", "pouring", "pointing", "loading", "attaching", "climbing", "walking", "running", "jumping", …
+
+
+	•	When multiple micro-actions occur, cap list length (e.g., max 4)?
+	→ Choose the most important
+	→ Put in order of importance
+	→ No more than 4
+
+	7.	Objects (salience thresholds)
+
+	•	Salience rule: only objects central to the shot’s meaning or clearly legible above some size/visibility threshold?
+	→ Yes
+
+	•	Canonicalization: "revolver" vs. "gun"; "rifle", "shotgun", "winchester" — how specific?
+	→ "revolver"
+	→ "rifle"
+	→ "winchester"
+	→ "gun" is okay sometimes when not important what type (several types of guns, for example)
+
+	•	Apparel & props: include "hat", "duster", "spurs", "badge", "lasso", "canteen", "saddle"?
+	- "hat", "badge", "lasso", "canteen", "saddle" are all good but also be more specific when possible (e.g., "cowpoke hat", "confederate hat", "fur hat", etc.)
+
+	•	Printed matter/signage: "wanted poster", "telegraph", "newspaper", "ledger" — allowed?
+	→ Yes all good
+	
+	•	Natural objects vs. manmade: include "cactus", "rock", "tree", "river"?
+	→ Yes all good
+
+	•	Vehicles/animals as objects when not protagonists: "horse", "stagecoach", "train"?
+	→ Yes, sometimes they are just objects
+
+	•	Cap list length?
+	→ No more than 4 items is a good rule
+
+	8.	Ordering & cardinality
+
+	•	Should arrays be sorted (e.g., alpha) or salience-ranked (most important first)?
+	→ Salience-ranked (most important first)
+
+	•	Any hard caps per array (e.g., Protagonists ≤ 3, Objects ≤ 8)?
+	→ Protagonists ≤ 4
+	→ Place ≤ 3
+	→ Actions ≤ 3
+	→ Objects ≤ 3
+
+	If there are multiple soldiers, for example, we  say "soldiers" instead of listing each one individually.
+
+	9.	Ambiguity & abstention policy
+
+	•	Confirm: if ambiguous/irrelevant → return [] for that category
+	→ Yes, absolutely return `[]` for category when ambiguous/irrelevant
+
+	•	Must output all four keys
+	
+	•	Confidence threshold: do you want a hard abstain unless ≥ some internal confidence, or just the visible best guess?
+	→ Not sure what you mean by internal confidence, but we want the best guess based on visible information. Maybe we dont undertsand this question well.
+
+	10.	Language & film-specific constraints
+
+	•	Always English?
+	→ Yes, always English
+
+	•	No film/character names, quotes, or dialogue tokens — confirm.
+	→ Confirmed, no film/character names, quotes, or dialogue tokens ever. Dont ever mention Clint Eastwood, John Wayne, or any other actor/character names.
+
+	•	Time-period leakage: forbid anachronistic tags even if present (e.g., "microphone") unless visibly on screen?
+	→ Some westerns have cars. Ignore them.
+
+	11.	Input/Output contract details
+
+	•	Input unit: per-shot (spanning multiple frames) or per-frame? If per-shot, do we assume the most representative frame or aggregate across frames?
+	→ Per-shot, aggregate across frames
+
+	•	Output must always include all four keys exactly as in the schema ("Protagonists", "Place", "Actions", "Objects") with arrays of strings (possibly empty) — confirm.
+	→ Confirmed. All four keys exactly as in the schema with arrays of strings (possibly empty).
+	→ Empty arrays when nothing to report.
+
+	•	Any additional top-level keys (e.g., "errors": []) are forbidden per schema, correct?
+	→ Correct, no additional top-level keys
+
+	12.	Hard constraints & refusals
+
+	•	List any forbidden tokens (e.g., slurs, body descriptors).
+	→ Forbidden tokens: any proper names, "indian", "redskin", "savage", "cripple", (n-word), "oriental", "foreigner", "half-breed", "mulatto", "gypsy", "hunchback", "dwarf", "midget"
+	→ Allowed: "native" (specify ethnicity instead of slur or "foreigner" or "savage"), "blind", "amputee", "stranger", "migrant", "settler", "pioneer", "old man", "boy", "girl", "insane", "lunatic"
+
+	•	Privacy/sensitivity constraints beyond names.
+	→ No sensitive attributes beyond names except when important to the scene
+
+	13.	Examples (gold annotations)
+
+	•	Provide 5–10 gold examples (image descriptions optional) with the exact JSON output you expect for typical Western shots (saloon talk, high-noon duel, cavalry charge, card table con, train robbery, canyon ambush, prairie campfire, courtroom scene, etc.). These will become unit tests inside the system prompt.
+
+	JSON Example 1: Breakheart-Pass(1975){tmdb-8043}_shot_0011.jpg
+{
+  "Protagonists": [],
+  "Place": ["railway", "mountains"],
+  "Actions": ["rolling"],
+  "Objects": ["train","steam"]
+}
+
+JSON Example 2: Breakheart-Pass(1975){tmdb-8043}_shot_0016.jpg
+{
+  "Protagonists": ["traveller"],
+  "Place": ["train"],
+  "Actions": ["jumping off"],
+  "Objects": []
+}
+
+JSON Example 3: Breakheart-Pass(1975){tmdb-8043}_shot_0028.jpg
+{
+  "Protagonists": ["townspeople", "children"],
+  "Place": ["town", "wooden house"],
+  "Actions": ["exiting"],
+  "Objects": []
+}
+
+JSON Example 4: Breakheart-Pass(1975){tmdb-8043}_shot_0057.jpg
+{
+  "Protagonists": ["gambler"],
+  "Place": [],
+  "Actions": ["closing"],
+  "Objects": ["door"]
+}
+
+JSON Example 5: Breakheart-Pass(1975){tmdb-8043}_shot_0088.jpg
+{
+  "Protagonists": [],
+  "Place": [],
+  "Actions": [],
+  "Objects": ["wanted poster"]
+}
+
+JSON Example 6: Breakheart-Pass(1975){tmdb-8043}_shot_0068.jpg
+{
+  "Protagonists": ["soldier"],
+  "Place": [],
+  "Actions": ["staring"],
+  "Objects": []
+}
+
+	14.	Failure handling
+
+	•	If the model detects non-Western footage or animated/archival anomalies, do you want a generic abstain (all arrays []) or proceed denotatively anyway?
+	→ Ignore all title-cards, animated, or non-western footage. Return all arrays `[]` in these cases.

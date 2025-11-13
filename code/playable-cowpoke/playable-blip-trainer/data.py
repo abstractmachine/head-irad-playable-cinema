@@ -2,51 +2,57 @@ import os
 import csv
 from typing import List, Dict, Optional
 
-class Cinematheque:
+class MediaLibrary:
     """
-    Loads and manages the cinematheque.csv metadata.
+    Base class for loading and managing media metadata (cinematheque or gameplay).
     """
-    def __init__(self, csv_path: str, project_root: str):
+    def __init__(self, csv_path: str, project_root: str, video_dir: str, shotlist_dir: str):
         self.csv_path = csv_path
         self.project_root = project_root
-        self.films: List[Dict] = []
+        self.video_dir = video_dir
+        self.shotlist_dir = shotlist_dir
+        self.items: List[Dict] = []
         self._load()
 
     def _load(self):
-        """Load the CSV into self.films as a list of dicts."""
+        """Load the CSV into self.items as a list of dicts."""
         if not os.path.exists(self.csv_path):
-            raise FileNotFoundError(f"Cinematheque CSV not found: {self.csv_path}")
+            raise FileNotFoundError(f"CSV not found: {self.csv_path}")
         
         with open(self.csv_path, newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
-            self.films = [row for row in reader]
+            self.items = [row for row in reader]
         
-        if not self.films:
+        if not self.items:
             raise ValueError(f"No entries found in {self.csv_path}")
 
     def get(self, index: int) -> Optional[Dict]:
-        """Retrieve a film by index. Returns None if out of range."""
-        if 0 <= index < len(self.films):
-            return self.films[index]
+        """Retrieve an item by index. Returns None if out of range."""
+        if 0 <= index < len(self.items):
+            return self.items[index]
         return None
 
-    def load_shotlist(self, film: Dict) -> Optional[List[Dict]]:
+    def get_video_path(self, item: Dict) -> str:
+        """Get the full path to the video file."""
+        filename = item.get('Filename') or item.get('filename', '')
+        return os.path.join(self.project_root, self.video_dir, filename)
+
+    def load_shotlist(self, item: Dict) -> Optional[List[Dict]]:
         """
-        Load the shotlist CSV for a given film.
-        Expects film dict to have a 'filename' key with the video filename.
+        Load the shotlist CSV for a given item.
         Returns list of shot dicts or None if not found.
         """
-        if 'filename' not in film:
+        filename = item.get('Filename') or item.get('filename', '')
+        if not filename:
             return None
         
         # Extract filename without extension
-        filename = film['filename']
         base_name = os.path.splitext(filename)[0]
         
         # Build path to shotlist
         shotlist_path = os.path.join(
             self.project_root,
-            "shotlists",
+            self.shotlist_dir,
             f"{base_name}.csv"
         )
         
@@ -61,22 +67,22 @@ class Cinematheque:
         
         return shots
 
-    def save_shotlist(self, film: Dict, shots: List[Dict]) -> bool:
+    def save_shotlist(self, item: Dict, shots: List[Dict]) -> bool:
         """
-        Save the shotlist CSV for a given film.
+        Save the shotlist CSV for a given item.
         Returns True if successful, False otherwise.
         """
-        if 'filename' not in film:
+        filename = item.get('Filename') or item.get('filename', '')
+        if not filename:
             return False
         
         # Extract filename without extension
-        filename = film['filename']
         base_name = os.path.splitext(filename)[0]
         
         # Build path to shotlist
         shotlist_path = os.path.join(
             self.project_root,
-            "shotlists",
+            self.shotlist_dir,
             f"{base_name}.csv"
         )
         
@@ -95,12 +101,12 @@ class Cinematheque:
             print(f"Error saving shotlist: {e}")
             return False
 
-    def erase_shot_captions(self, film: Dict) -> bool:
+    def erase_shot_captions(self, item: Dict) -> bool:
         """
         Erase all Shot_Caption entries in the shotlist.
         Returns True if successful, False otherwise.
         """
-        shotlist = self.load_shotlist(film)
+        shotlist = self.load_shotlist(item)
         if not shotlist:
             return False
         
@@ -109,14 +115,14 @@ class Cinematheque:
             if 'Shot_Caption' in shot:
                 shot['Shot_Caption'] = ''
         
-        return self.save_shotlist(film, shotlist)
+        return self.save_shotlist(item, shotlist)
 
-    def erase_scene_captions(self, film: Dict) -> bool:
+    def erase_scene_captions(self, item: Dict) -> bool:
         """
         Erase all Scene_Caption entries in the shotlist.
         Returns True if successful, False otherwise.
         """
-        shotlist = self.load_shotlist(film)
+        shotlist = self.load_shotlist(item)
         if not shotlist:
             return False
         
@@ -125,10 +131,44 @@ class Cinematheque:
             if 'Scene_Caption' in shot:
                 shot['Scene_Caption'] = ''
         
-        return self.save_shotlist(film, shotlist)
+        return self.save_shotlist(item, shotlist)
 
     def __len__(self):
-        return len(self.films)
+        return len(self.items)
 
     def __repr__(self):
-        return f"<Cinematheque: {len(self.films)} films from {self.csv_path}>"
+        return f"<{self.__class__.__name__}: {len(self.items)} items from {self.csv_path}>"
+
+
+class Cinematheque(MediaLibrary):
+    """
+    Loads and manages the cinematheque.csv metadata for movies.
+    """
+    def __init__(self, csv_path: str, project_root: str):
+        super().__init__(
+            csv_path=csv_path,
+            project_root=project_root,
+            video_dir="movies",
+            shotlist_dir="shotlists"
+        )
+
+    def get_title(self, item: Dict) -> str:
+        """Get the display title for a film."""
+        return f"{item.get('title', 'Unknown')} ({item.get('year', 'Unknown')})"
+
+
+class Gameplay(MediaLibrary):
+    """
+    Loads and manages the gameplay.csv metadata for gameplay videos.
+    """
+    def __init__(self, csv_path: str, project_root: str):
+        super().__init__(
+            csv_path=csv_path,
+            project_root=project_root,
+            video_dir="gameplay",
+            shotlist_dir="playlists"
+        )
+
+    def get_title(self, item: Dict) -> str:
+        """Get the display title for a gameplay video."""
+        return item.get('title', 'Unknown')

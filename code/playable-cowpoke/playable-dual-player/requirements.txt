@@ -1,0 +1,21 @@
+# Core for GUI / video (keep existing)
+PyQt5>=5.15.0
+mpv>=1.0.0  # if you use python-mpv bindings
+
+# --- Semantic caption encoding + vector search ---
+sentence-transformers>=2.7.0
+faiss-cpu>=1.8.0
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Also requires mpv installed via Homebrew:
+# brew install mpv
+
+# Installation of this file
+# pip install -r requirements.txt
+
+# Virtual Environment Instructions Mac using pyenv already installed:
+# 1. pyenv install 3.11.9
+# 2. pyenv virtualenv 3.11.9 playable-dual-player
+# 3. pyenv activate playable-dual-player
+

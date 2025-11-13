@@ -1,0 +1,28 @@
+(playable-dual-player) abstractmachine@MacBookPro playable-dual-player % python app.py
+Loaded 994 shots from Breakheart-Pass(1975){tmdb-8043}.csv
+Loaded 103 shots from rdr2-train-robbery-full.csv
+⚙️ Encoding Breakheart-Pass(1975){tmdb-8043}.csv with BAAI/bge-small-en-v1.5 …
+modules.json: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 349/349 [00:00<00:00, 569kB/s]
+config_sentence_transformers.json: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 124/124 [00:00<00:00, 149kB/s]
+README.md: 94.8kB [00:00, 21.2MB/s]
+sentence_bert_config.json: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████| 52.0/52.0 [00:00<00:00, 186kB/s]
+config.json: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 743/743 [00:00<00:00, 2.28MB/s]
+model.safetensors: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████| 133M/133M [00:02<00:00, 45.4MB/s]
+tokenizer_config.json: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████| 366/366 [00:00<00:00, 1.15MB/s]
+vocab.txt: 232kB [00:00, 5.92MB/s]
+tokenizer.json: 711kB [00:00, 15.8MB/s]
+special_tokens_map.json: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████| 125/125 [00:00<00:00, 389kB/s]
+config.json: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 190/190 [00:00<00:00, 387kB/s]
+✅ Done: Breakheart-Pass(1975){tmdb-8043}.captions.txt, Breakheart-Pass(1975){tmdb-8043}.emb-BAAI_bge-small-en-v1.5.npy
+⚙️ Encoding rdr2-train-robbery-full.csv with BAAI/bge-small-en-v1.5 …
+✅ Done: rdr2-train-robbery-full.captions.txt, rdr2-train-robbery-full.emb-BAAI_bge-small-en-v1.5.npy
+Controls: 1-5 speed, ←/→ ±5s, PgUp/PgDn ±60s, Q/Esc quit
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+
