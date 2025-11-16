@@ -1,3 +1,4 @@
+# Requirements for the Playable Cinema tool
 
 # GUI
 PyQt5
