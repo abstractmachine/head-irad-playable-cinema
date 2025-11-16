@@ -23,7 +23,7 @@ A comprehensive PyQt5-based application designed for video analysis, annotation,
 
 2. **Install Dependencies**
    ```bash
-   pip install -r requirements.txt
+   pip install --upgrade -r requirements.txt
    ```
 
 3. **Install External Tools** (macOS)
