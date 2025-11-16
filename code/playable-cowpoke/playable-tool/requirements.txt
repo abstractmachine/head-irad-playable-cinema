@@ -1,30 +1,54 @@
-# Requirements for the Playable Cinema tool
+# =====================================
+# Requirements for Playable Cinema tool
+# =====================================
 
-# GUI
+# ---------------------
+# GUI / Desktop
+# ---------------------
 PyQt5
 
-# Image processing
-Pillow
-opencv-python
+# ---------------------
+# Image & Video Processing
+# ---------------------
+Pillow>=10.0.0
+opencv-python>=4.9.0
 
 # Scene detection
-scenedetect[opencv]
+scenedetect[opencv]>=0.6.3
 
-# AI
-openai
-requests
-torch
-transformers
+# ---------------------
+# Core Python & Networking
+# ---------------------
+numpy>=1.24.0
+requests>=2.31.0
+jsonschema>=4.22.0
+
+# ---------------------
+# AI / ML Stack
+# ---------------------
+torch>=2.2.0
+transformers>=4.44.0
+huggingface-hub>=0.23.0
 accelerate
+openai
 
-# Note: Video converter requires ffmpeg command line tools
-# ffmpeg must be installed separately
-# Mac:  brew install ffmpeg
-#       brew install ffprobe
-# Linux:    sudo apt install ffmpeg
-#           sudo apt install ffprobe
-# Windows: Download from https://ffmpeg.org/download.html
-#           and add to PATH
+# ---------------------
+# Notes
+# ---------------------
+# - ffmpeg command line tools must be installed separately.
+#   Mac:     brew install ffmpeg ffprobe
+#   Linux:   sudo apt install ffmpeg ffprobe
+#   Windows: Download from https://ffmpeg.org/download.html and add to PATH
+#
+# - To install requirements:
+#     pip install --upgrade -r requirements.txt
+#
+# - Recommended Python version: 3.11.x
+# - Compatible with pyenv / virtualenv workflows
+#
+# Example setup:
+#   pyenv install 3.11.9
+#   pyenv virtualenv 3.11.9 playable-cinema
+#   pyenv activate playable-cinema
+#   pip install --upgrade -r requirements.txt
 
-# To install the requirements using pip:
-# pip install --upgrade -r requirements.txt
