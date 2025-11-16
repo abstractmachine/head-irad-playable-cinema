@@ -14,9 +14,9 @@ from PyQt5.QtGui import QTextCursor
 import os
 
 # Our methods
-from gui.utility import minimum_load_interval, HIGHLIGHT_BACKGROUND_COLOR, HIGHLIGHT_COLOR
-from gui.project import ProjectManager
-from gui.layout import load_window_geometry, load_dock_layout
+from .utility import minimum_load_interval, HIGHLIGHT_BACKGROUND_COLOR, HIGHLIGHT_COLOR
+from .project import ProjectManager
+from .layout import load_window_geometry, load_dock_layout
 
 
 class SaveLayoutDialog(QDialog):
@@ -409,7 +409,7 @@ class RobotsWindow(QMainWindow):
         project_folder = self.project_manager.get_project_folder()
         layout_folder = os.path.join(project_folder, "layouts")
         # Use layout.py utility to delete files
-        from gui.layout import delete_layout_files
+        from .layout import delete_layout_files
         deleted_files = delete_layout_files(layout_folder, layout_name)
         self.console_write(f"Deleted layout: {layout_name}")
         # Refresh the dropdown
@@ -436,7 +436,7 @@ class RobotsWindow(QMainWindow):
             os.makedirs(layout_folder)
         geometry_file = os.path.join(layout_folder, f"{parsed_name}.geometry")
         layout_file = os.path.join(layout_folder, f"{parsed_name}.layout")
-        from gui.layout import save_window_geometry, save_dock_layout
+        from .layout import save_window_geometry, save_dock_layout
         save_window_geometry(main_window, geometry_file)
         save_dock_layout(main_window, layout_file)
         self.console_write(f"Saved layout: {parsed_name}")

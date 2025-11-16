@@ -8,7 +8,7 @@ import cv2
 from PyQt5.QtCore import QObject, pyqtSignal
 from PyQt5.QtWidgets import QTextEdit
 
-from gui.prompt import parse_system_prompt_files
+from .prompt import parse_system_prompt_files
 
 def encode_image(image_array):
     # Create temp file, close handle before writing with OpenCV

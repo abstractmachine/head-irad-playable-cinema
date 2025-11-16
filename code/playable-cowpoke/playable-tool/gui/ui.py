@@ -5,7 +5,7 @@ from PyQt5.QtGui import QFont, QFontDatabase
 import os
 import subprocess
 
-from gui.utility import HIGHLIGHT_BACKGROUND_COLOR, HIGHLIGHT_COLOR, DARK_DOCK_BORDER, LIGHT_DOCK_BORDER
+from .utility import HIGHLIGHT_BACKGROUND_COLOR, HIGHLIGHT_COLOR, DARK_DOCK_BORDER, LIGHT_DOCK_BORDER
 
 # Signal import for pyqtSigal
 from PyQt5.QtCore import QObject, pyqtSignal

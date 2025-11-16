@@ -6,8 +6,13 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt
 import os
-from catalog import AbstractCatalogWindow
-from gui.catalog_item import MovieItemWidget
+# from catalog import AbstractCatalogWindow
+from .catalog import AbstractCatalogWindow
+# If used in this file, make worker/item imports relative too:
+# from catalog import CatalogLoadingWorker
+from .catalog import CatalogLoadingWorker
+# from catalog_item import MovieItemWidget, ITEM_HEIGHT
+from .catalog_item import MovieItemWidget, ITEM_HEIGHT
 
 class CinemathequeWindow(AbstractCatalogWindow):
     
@@ -66,7 +71,8 @@ class CinemathequeWindow(AbstractCatalogWindow):
 
         # Create worker thread
         from PyQt5.QtCore import QThread
-        from catalog import CatalogLoadingWorker
+        # from catalog import CatalogLoadingWorker
+        from .catalog import CatalogLoadingWorker
         self.loading_thread = QThread()
         self.loading_worker = CatalogLoadingWorker(metadata_path, project_folder, self.get_assets_folder_name())
         self.loading_worker.moveToThread(self.loading_thread)
@@ -139,7 +145,8 @@ class CinemathequeWindow(AbstractCatalogWindow):
             # Create list item with fixed height
             from PyQt5.QtCore import QSize
             from PyQt5.QtWidgets import QListWidgetItem
-            from gui.catalog_item import ITEM_HEIGHT
+            # from .catalog_item import ITEM_HEIGHT
+            from .catalog_item import ITEM_HEIGHT
             item = QListWidgetItem()
             item.setSizeHint(QSize(item_widget.width(), ITEM_HEIGHT))
 

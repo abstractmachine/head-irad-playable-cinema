@@ -4,7 +4,7 @@ from PyQt5.QtCore import Qt, pyqtSignal, QSize
 from PyQt5.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel
 from PyQt5.QtGui import QPixmap
 import os
-from gui.catalog_item import AbstractCatalogItemWidget, POSTER_WIDTH, POSTER_HEIGHT, ITEM_HEIGHT
+from .catalog_item import AbstractCatalogItemWidget, POSTER_WIDTH, POSTER_HEIGHT, ITEM_HEIGHT
 
 THUMBNAIL_WIDTH = int(POSTER_HEIGHT * (16.0 / 9.0))
 THUMBNAIL_HEIGHT = POSTER_HEIGHT

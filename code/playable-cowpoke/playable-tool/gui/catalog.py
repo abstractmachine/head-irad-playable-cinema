@@ -11,9 +11,9 @@ from PyQt5.QtWidgets import (
 import os
 import csv
 import random
-from gui.metadata import MetadataWorker, read_metadata_csv
-from gui.catalog_item import AbstractCatalogItemWidget, MovieItemWidget, ITEM_HEIGHT
-from gui.utility import HIGHLIGHT_BACKGROUND_COLOR, HIGHLIGHT_COLOR
+from .metadata import MetadataWorker, read_metadata_csv
+from .catalog_item import AbstractCatalogItemWidget, MovieItemWidget, ITEM_HEIGHT
+from .utility import HIGHLIGHT_BACKGROUND_COLOR, HIGHLIGHT_COLOR
 
 class CatalogLoadingWorker(QObject):
     """Worker class for loading catalog data in a separate thread"""
@@ -352,7 +352,7 @@ class AbstractCatalogWindow(QMainWindow):
         self.metadata_rebuild_started.emit()
         
         # Create worker thread
-        from gui.metadata import MetadataWorker
+        from .metadata import MetadataWorker
         self.metadata_thread = QThread()
         self.metadata_worker = MetadataWorker(self.project_folder, self.data_folder, self.metadata_file)
         self.metadata_worker.moveToThread(self.metadata_thread)

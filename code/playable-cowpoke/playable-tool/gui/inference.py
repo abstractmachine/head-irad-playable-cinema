@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton, QLabel
 )
 
-from gui.utility import DARK_DOCK_BORDER, LIGHT_DOCK_BORDER
+from .utility import DARK_DOCK_BORDER, LIGHT_DOCK_BORDER
 
 class InferenceWindow(QWidget):
     preferences_save = pyqtSignal()

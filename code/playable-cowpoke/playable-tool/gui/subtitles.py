@@ -5,7 +5,7 @@ import os
 import re
 from PyQt5.QtCore import Qt, pyqtSignal, QThread, pyqtSignal
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QTextEdit, QSizePolicy
-from gui.utility import timecode_to_milliseconds, milliseconds_to_timecode
+from .utility import timecode_to_milliseconds, milliseconds_to_timecode
 
 # A worker thread to handle importing the subtitles from the project folder
 class SubtitlesImportWorker(QThread):

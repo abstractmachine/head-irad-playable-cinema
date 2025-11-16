@@ -1,4 +1,4 @@
-from gui.player import AbstractPlayerWindow, SEEK_FAST
+from .player import AbstractPlayerWindow, SEEK_FAST
 
 class PlayhouseWindow(AbstractPlayerWindow):
     def __init__(self, ui):
