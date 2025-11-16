@@ -115,8 +115,10 @@ class DualPlayer(QMainWindow):
         return {"container": container, "label": label, "edit": edit}
 
     def _init_players(self, movie_path: str, game_path: str):
-        self.movie.start(movie_path)
-        self.game.start(game_path)
+        self.movie.start(movie_path, loop=False)  # Movie doesn't loop
+        self.game.start(game_path, loop=True)     # Gameplay loops
+        # Auto-play gameplay
+        self.game.play()
 
     def _load_txt_lines(self, path: Path):
         try:
@@ -125,6 +127,13 @@ class DualPlayer(QMainWindow):
         except OSError as e:
             print(f"Warning: could not read {path}: {e}")
             return []
+
+    def _find_movie_shot_at_time(self, seconds: float):
+        """Find the movie shot that contains the given time."""
+        for shot in self.movie_shots:
+            if shot["start"] <= seconds <= shot["end"]:
+                return shot
+        return None
 
     def _tick(self):
         # Poll mpv events
@@ -155,11 +164,16 @@ class DualPlayer(QMainWindow):
                     self.last_game_caption = normalized
                     match = self.matcher.search_best_from_text(normalized)
                     if match and match.get("start_seconds") is not None:
-                        self.movie.seek(float(match["start_seconds"]), relative=False)
+                        # Find the corresponding movie shot to get the end time
+                        movie_shot = self._find_movie_shot_at_time(match["start_seconds"])
+                        if movie_shot:
+                            self.movie.seek_to_shot(float(match["start_seconds"]), float(movie_shot["end"]))
+                        else:
+                            self.movie.seek(float(match["start_seconds"]), relative=False)
 
     def _set_caption_from_txt(self, widget, shot, pos: float, lines: list[str]):
         if not shot:
-            widget.setText("No caption for this time range")
+            widget.setText("")
             return ""
         idx = shot.get("row")
         text = ""

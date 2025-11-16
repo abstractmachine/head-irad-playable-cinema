@@ -21,13 +21,17 @@ class MpvPlayer:
         self._buf = b""
         self.speed_idx = 2  # 1.0x default
         self.current_time = 0.0
+        self.duration = 0.0
+        self.auto_pause_at = None  # For movie: pause at specific end time
+        self.enable_looping = False  # For gameplay looping
 
-    def start(self, filepath: str):
+    def start(self, filepath: str, loop: bool = False):
         try:
             os.unlink(self.sock_path)
         except OSError:
             pass
 
+        self.enable_looping = loop
         wid = int(self.widget.winId())
         cmd = [
             "mpv", filepath,
@@ -40,6 +44,9 @@ class MpvPlayer:
             f"--input-ipc-server={self.sock_path}",
             "--cache=yes",
         ]
+        if loop:
+            cmd.append("--loop=inf")
+        
         self.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         for _ in range(100):
@@ -53,6 +60,7 @@ class MpvPlayer:
                 self.sock.connect(self.sock_path)
                 self.sock.setblocking(False)
                 self._send_command(["observe_property", 1, "time-pos"])
+                self._send_command(["observe_property", 2, "duration"])
                 return
             except (ConnectionRefusedError, OSError):
                 time.sleep(0.05)
@@ -81,10 +89,19 @@ class MpvPlayer:
                     continue
                 try:
                     obj = json.loads(line.decode("utf-8"))
-                    if obj.get("event") == "property-change" and obj.get("name") == "time-pos":
+                    if obj.get("event") == "property-change":
+                        name = obj.get("name")
                         d = obj.get("data")
-                        if d is not None:
+                        if name == "time-pos" and d is not None:
                             self.current_time = float(d)
+                            # Check for auto-pause - stop exactly at end time
+                            if self.auto_pause_at is not None and self.current_time >= self.auto_pause_at:
+                                self.pause()
+                                # Seek back to exact end time
+                                self.seek(self.auto_pause_at, relative=False)
+                                self.auto_pause_at = None
+                        elif name == "duration" and d is not None:
+                            self.duration = float(d)
                 except (ValueError, json.JSONDecodeError):
                     pass
         except (BlockingIOError, OSError):
@@ -100,6 +117,18 @@ class MpvPlayer:
     def seek(self, seconds: float, relative: bool = True):
         mode = "relative" if relative else "absolute"
         self._send_command(["seek", seconds, mode])
+
+    def seek_to_shot(self, start_seconds: float, end_seconds: float):
+        """Seek to start time and set auto-pause at end time."""
+        self.seek(start_seconds, relative=False)
+        self.auto_pause_at = end_seconds
+        self.play()
+
+    def play(self):
+        self._send_command(["set_property", "pause", False])
+
+    def pause(self):
+        self._send_command(["set_property", "pause", True])
 
     def close(self):
         if self.sock:
