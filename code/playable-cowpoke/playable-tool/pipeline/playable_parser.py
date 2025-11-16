@@ -1,135 +1,342 @@
 import argparse
 import sys
+import os
 from pathlib import Path
 
 # -------------------------------------------------
-# Legacy (flat) parser retained (still callable directly)
+# Unified parser (flat root + optional command flags)
 # -------------------------------------------------
-def parse_arguments():
-    parser = argparse.ArgumentParser(description="BLIP trainer/annotation tool")
-    _add_legacy_root_options(parser)
-    if len(sys.argv) == 1:
-        parser.print_help()
-        parser.exit()
-    return parser.parse_args()
+
+class _DispatchAction(argparse.Action):
+    def __init__(self, option_strings, dest, nargs=None, **kwargs):
+        self._cmd = kwargs.pop("cmd", None)
+        self._func = kwargs.pop("func", None)
+        super().__init__(option_strings, dest, nargs=nargs, **kwargs)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        setattr(namespace, "cmd", self._cmd)
+        if callable(self._func):
+            setattr(namespace, "func", self._func)
+        setattr(namespace, self.dest, values)
 
 
-def _add_legacy_root_options(parser):
+def cmd_legacy(ns):
+    if ns.verbose:
+        print("[legacy] Parsed flat arguments")
+    
+    parser = build_parser()
+    print("No command selected. Use one of: --list, --detect, --extract_frames, --annotate, --erase, --process\n")
+    parser.print_help()
+    return 2
+
+
+def build_parser():
+    p = argparse.ArgumentParser(
+        prog="playable",
+        description="Playable Cinema CLI"
+    )
+
     # Project
-    parser.add_argument(
+    p.add_argument(
         "--project-root", "--project_root",
         dest="project_root",
         default="/Volumes/abstract-2T/project/",
         help="Root directory for the project"
     )
+    
     # Core selection
-    parser.add_argument("--index", type=int, default=-1, help="Item index from metadata CSV")
-    parser.add_argument("--action", choices=["annotate", "erase"], help="Action to perform")
-    parser.add_argument("--type", choices=["shot", "scene"], default="shot", help="Operation type")
-    parser.add_argument("--media", choices=["movie", "gameplay"], default="movie", help="Media library")
-    # Modes
-    parser.add_argument("--detect", action="store_true", help="Run detection (depends on --type)")
+    p.add_argument("--index", type=int, default=-1, help="Item index from metadata CSV")
+    p.add_argument("--type", choices=["shot", "scene"], default="shot", help="Operation type (for --erase)")
+    p.add_argument("--media", choices=["movie", "gameplay"], default="movie", help="Media library")
+    
     # Annotation controls
-    parser.add_argument("--shot_index", type=int, default=1, help="Starting shot index (1-based)")
-    parser.add_argument("--annotation_count", type=int, default=None, help="Number of shots to annotate (default: all)")
-    parser.add_argument("--filelist", type=str, default=None, help="Text file with one video filename per line")
+    p.add_argument("--shot_index", type=int, default=1, help="Starting shot index (1-based)")
+    p.add_argument("--annotation_count", type=int, default=None, help="Number of shots to annotate (default: all)")
+    p.add_argument("--filelist", type=str, default=None, help="Text file with one video filename per line")
+    
     # Model/runtime
-    parser.add_argument("--model", type=str, default="gemma3:27b", help="Ollama model name")
-    parser.add_argument("--num-ctx", type=int, default=8192, help="Ollama context window")
-    parser.add_argument("--temperature", type=float, default=0.3, help="Model temperature (0.0-1.0)")
-    parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
+    p.add_argument("--temperature", type=float, default=0.3, help="Model temperature (0.0-1.0)")
+    p.add_argument("--verbose", action="store_true", help="Enable verbose logging")
+    
     # Detection method parameters
-    parser.add_argument("--method", choices=["adaptive","content"], default="adaptive", help="Shot detection method")
-    parser.add_argument("--threshold", type=float, default=3.0, help="Detection threshold (default 3.0 adaptive)")
-    parser.add_argument("--shot_max_length", type=float, default=-1.0, help="Max seconds per detected shot; -1 disables splitting")
+    p.add_argument("--method", choices=["adaptive","content"], default="adaptive", help="Shot detection method")
+    p.add_argument("--threshold", type=float, default=3.0, help="Detection threshold (default 3.0 adaptive)")
+    p.add_argument("--shot_max_length", type=float, default=-1.0, help="Max seconds per detected shot; -1 disables splitting")
+    
+    # Frame extraction
+    p.add_argument("--frames-per-shot", type=int, default=5, dest="frames_per_shot",
+                   help="Frames per shot for extraction")
+    p.add_argument("--system", default="system.txt", help="System prompt file for annotation")
 
+    # Commands (mutually exclusive)
+    mode = p.add_mutually_exclusive_group(required=False)
 
-# -------------------------------------------------
-# Unified parser (flat root + optional subcommands)
-# -------------------------------------------------
-def build_parser():
-    p = argparse.ArgumentParser(
-        prog="playable",
-        description="Playable Cinema CLI (legacy root options OR subcommands)"
+    mode.add_argument(
+        "--list",
+        action="store_const",
+        const=cmd_list,
+        dest="func",
+        help="List all items in --media library (movie or gameplay)"
     )
 
-    # Add all legacy root options so invoking without subcommand stays clean
-    _add_legacy_root_options(p)
+    mode.add_argument(
+        "--detect",
+        nargs="?",
+        metavar="VIDEO",
+        dest="video",
+        action=_DispatchAction,
+        cmd="detect",
+        func=cmd_detect,
+        help="Detect shots in VIDEO or use --index from media library"
+    )
 
-    # Optional subcommands (not required)
-    sub = p.add_subparsers(dest="cmd")  # no required=True -> legacy stays intact
+    mode.add_argument(
+        "--extract_frames",
+        nargs="?",
+        metavar="VIDEO",
+        dest="video",
+        action=_DispatchAction,
+        cmd="extract_frames",
+        func=cmd_extract,
+        help="Extract sample frames from VIDEO or use --index"
+    )
 
-    # Shared parent for subcommands (reuse some root flags)
-    parent = argparse.ArgumentParser(add_help=False)
-    parent.add_argument("--project-root", "--project_root",
-                        dest="project_root",
-                        default="/Volumes/abstract-2T/project/",
-                        help="Root directory")
-    parent.add_argument("--verbose", action="store_true")
-    parent.add_argument("--model", type=str, default="gemma3:27b")
-    parent.add_argument("--num-ctx", type=int, default=8192)
-    parent.add_argument("--temperature", type=float, default=0.3)
+    mode.add_argument(
+        "--annotate",
+        nargs="?",
+        metavar="VIDEO",
+        dest="video",
+        action=_DispatchAction,
+        cmd="annotate",
+        func=cmd_annotate,
+        help="Annotate detected shots in VIDEO or use --index"
+    )
 
-    # detect-shots
-    d = sub.add_parser("detect-shots", help="Detect shots in a video", parents=[parent])
-    d.add_argument("video")
-    d.add_argument("--method", choices=["adaptive","content"], default="adaptive")
-    d.add_argument("--threshold", type=float, default=3.0)
-    d.add_argument("--shot_max_length", type=float, default=-1.0)
-    d.set_defaults(func=cmd_detect)
+    mode.add_argument(
+        "--erase",
+        nargs="?",
+        metavar="VIDEO",
+        dest="video",
+        action=_DispatchAction,
+        cmd="erase",
+        func=cmd_erase,
+        help="Erase annotations (use --type shot|scene) in VIDEO or use --index"
+    )
 
-    # extract-frames
-    e = sub.add_parser("extract-frames", help="Extract sample frames", parents=[parent])
-    e.add_argument("video")
-    e.add_argument("-n", type=int, default=5, help="Frames per shot")
-    e.set_defaults(func=cmd_extract)
+    mode.add_argument(
+        "--process",
+        nargs="?",
+        metavar="VIDEO",
+        dest="video",
+        action=_DispatchAction,
+        cmd="process",
+        func=cmd_process,
+        help="Detect → extract → annotate pipeline for VIDEO, --index, or --filelist"
+    )
 
-    # annotate-shots
-    a = sub.add_parser("annotate-shots", help="Annotate detected shots", parents=[parent])
-    a.add_argument("video")
-    a.add_argument("--system", default="system.txt")
-    a.add_argument("--shot_index", type=int, default=1)
-    a.add_argument("--annotation_count", type=int, default=None)
-    a.set_defaults(func=cmd_annotate)
-
-    # process pipeline
-    pr = sub.add_parser("process", help="Detect → extract → annotate pipeline", parents=[parent])
-    pr.add_argument("--video")
-    pr.add_argument("--filelist")
-    pr.add_argument("--frames-per-shot", type=int, default=5)
-    pr.add_argument("--method", choices=["adaptive","content"], default="adaptive")
-    pr.add_argument("--threshold", type=float, default=3.0)
-    pr.set_defaults(func=cmd_process)
+    p.set_defaults(func=cmd_legacy, cmd=None)
 
     return p
 
 
 # -------------------------------------------------
-# Command implementations (placeholders)
+# Helper: resolve video path from --index or VIDEO argument
 # -------------------------------------------------
-def cmd_detect(ns):
+def _resolve_video(ns) -> str:
+    """
+    If ns.video is set, return it.
+    Otherwise use --index + --media to load from MediaLibrary.
+    """
+    if ns.video:
+        return ns.video
+
+    if ns.index < 0:
+        raise ValueError("Either VIDEO or --index must be provided")
+
+    try:
+        from pipeline.playable_data import Cinematheque, Gameplay
+    except ImportError:
+        raise RuntimeError("Cannot import playable_data; ensure pipeline module is available")
+
+    if ns.media == "movie":
+        csv_path = os.path.join(ns.project_root, "metadata", "cinematheque.csv")
+        lib = Cinematheque(csv_path, ns.project_root)
+    else:
+        csv_path = os.path.join(ns.project_root, "metadata", "gameplay.csv")
+        lib = Gameplay(csv_path, ns.project_root)
+
+    item = lib.get(ns.index)
+    if not item:
+        raise ValueError(f"No item at index {ns.index} in {ns.media} library")
+
+    video_path = lib.get_video_path(item)
+    if not os.path.exists(video_path):
+        raise FileNotFoundError(f"Video not found: {video_path}")
+
     if ns.verbose:
-        print(f"[detect] video={ns.video} method={ns.method} threshold={ns.threshold} max_len={ns.shot_max_length}")
+        print(f"[resolve] index={ns.index} media={ns.media} → {video_path}")
+
+    return video_path
+
+
+# -------------------------------------------------
+# Command implementations
+# -------------------------------------------------
+def cmd_list(ns):
+    """List all items in the media library."""
+    try:
+        from pipeline.playable_data import Cinematheque, Gameplay
+    except ImportError:
+        print("Error: Cannot import playable_data; ensure pipeline module is available")
+        return 1
+
+    if ns.media == "movie":
+        csv_path = os.path.join(ns.project_root, "metadata", "cinematheque.csv")
+        lib = Cinematheque(csv_path, ns.project_root)
+        print(f"\n=== Cinematheque ({len(lib)} items) ===\n")
+    else:
+        csv_path = os.path.join(ns.project_root, "metadata", "gameplay.csv")
+        lib = Gameplay(csv_path, ns.project_root)
+        print(f"\n=== Gameplay ({len(lib)} items) ===\n")
+
+    for i in range(len(lib)):
+        item = lib.get(i)
+        if not item:
+            continue
+        
+        title = lib.get_title(item)
+        filename = item.get('Filename') or item.get('filename', '')
+        video_path = lib.get_video_path(item)
+        exists = "✓" if os.path.exists(video_path) else "✗"
+        
+        print(f"{i:3d}  {exists}  {title}")
+        if ns.verbose:
+            print(f"       {filename}")
+    
+    print()
+    return 0
+
+
+def cmd_detect(ns):
+    video = _resolve_video(ns)
+    if ns.verbose:
+        print(f"[detect] video={video} method={ns.method} threshold={ns.threshold} max_len={ns.shot_max_length}")
     return 0
 
 
 def cmd_extract(ns):
+    video = _resolve_video(ns)
     if ns.verbose:
-        print(f"[extract] video={ns.video} frames={ns.n}")
+        print(f"[extract] video={video} frames={ns.frames_per_shot}")
     return 0
 
 
 def cmd_annotate(ns):
-    if ns.verbose:
-        print(f"[annotate] video={ns.video} start={ns.shot_index} count={ns.annotation_count} system={ns.system}")
+    video = _resolve_video(ns)
+    
+    try:
+        from pipeline.playable_data import Cinematheque, Gameplay
+        from pipeline.playable_annotator import annotate_shots
+        from pipeline.ollama_client import OllamaClient
+    except ImportError as e:
+        raise RuntimeError(f"Cannot import required modules: {e}")
+
+    if ns.media == "movie":
+        csv_path = os.path.join(ns.project_root, "metadata", "cinematheque.csv")
+        lib = Cinematheque(csv_path, ns.project_root)
+    else:
+        csv_path = os.path.join(ns.project_root, "metadata", "gameplay.csv")
+        lib = Gameplay(csv_path, ns.project_root)
+
+    item = lib.get(ns.index)
+    if not item:
+        raise ValueError(f"No item at index {ns.index} in {ns.media} library")
+
+    shotlist = lib.load_shotlist(item)
+    if not shotlist:
+        raise FileNotFoundError(f"No shotlist found for {lib.get_title(item)}")
+
+    # Use hardcoded defaults for model and context
+    ollama = OllamaClient(
+        model="gemma3:27b",
+        num_ctx=8192,
+        temperature=ns.temperature
+    )
+
+    if not ollama.test_connection():
+        raise RuntimeError("Cannot connect to Ollama. Is it running?")
+
+    frames_dir = os.path.join(ns.project_root, "frames")
+
+    print(f"\nAnnotating: {lib.get_title(item)}")
+    print(f"Video: {video}")
+    print(f"Shots: {len(shotlist)} total")
+    print(f"Model: gemma3:27b (ctx=8192, temp={ns.temperature})\n")
+
+    def save_progress(updated_shotlist):
+        lib.save_shotlist(item, updated_shotlist)
+
+    annotate_shots(
+        shotlist=shotlist,
+        video_path=video,
+        film=item,
+        ollama=ollama,
+        frames_dir=frames_dir,
+        project_root=ns.project_root,
+        limit=ns.annotation_count,
+        start_index=ns.shot_index,
+        verbose=ns.verbose,
+        save_callback=save_progress
+    )
+
+    lib.save_shotlist(item, shotlist)
+    print(f"\n✓ Annotations saved to shotlist")
+
     return 0
+
+
+def cmd_erase(ns):
+    """Erase shot or scene captions."""
+    try:
+        from pipeline.playable_data import Cinematheque, Gameplay
+    except ImportError as e:
+        raise RuntimeError(f"Cannot import required modules: {e}")
+
+    if ns.media == "movie":
+        csv_path = os.path.join(ns.project_root, "metadata", "cinematheque.csv")
+        lib = Cinematheque(csv_path, ns.project_root)
+    else:
+        csv_path = os.path.join(ns.project_root, "metadata", "gameplay.csv")
+        lib = Gameplay(csv_path, ns.project_root)
+
+    item = lib.get(ns.index)
+    if not item:
+        raise ValueError(f"No item at index {ns.index} in {ns.media} library")
+
+    title = lib.get_title(item)
+    
+    if ns.type == "shot":
+        success = lib.erase_shot_captions(item)
+        what = "shot captions"
+    else:
+        success = lib.erase_scene_captions(item)
+        what = "scene captions"
+
+    if success:
+        print(f"✓ Erased {what} from {title}")
+        return 0
+    else:
+        print(f"✗ Failed to erase {what} from {title}")
+        return 1
 
 
 def cmd_process(ns):
     if ns.filelist:
         paths = [p.strip() for p in Path(ns.filelist).read_text().splitlines() if p.strip()]
     else:
-        paths = [ns.video] if ns.video else []
+        video = _resolve_video(ns)
+        paths = [video]
+
     if ns.verbose:
         print(f"[process] videos={paths} method={ns.method} threshold={ns.threshold} frames={ns.frames_per_shot}")
     for _v in paths:
@@ -148,29 +355,12 @@ def main(argv=None):
 
     parser = build_parser()
 
-    # If user called with no args -> help (legacy style)
     if not argv:
         parser.print_help()
         return 0
 
     ns = parser.parse_args(argv)
-
-    # Subcommand path
-    if ns.cmd:
-        func = getattr(ns, "func", None)
-        return func(ns) if callable(func) else 0
-
-    # Legacy path (no subcommand)
-    if ns.verbose:
-        print("[legacy] Parsed flat arguments")
-    # Placeholder legacy behavior:
-    if ns.detect:
-        if ns.verbose:
-            print(f"[legacy-detect] method={ns.method} threshold={ns.threshold} max_len={ns.shot_max_length}")
-    if ns.action == "annotate":
-        if ns.verbose:
-            print(f"[legacy-annotate] index_start={ns.shot_index} count={ns.annotation_count}")
-    return 0
+    return ns.func(ns)
 
 
 if __name__ == "__main__":

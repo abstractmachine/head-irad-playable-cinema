@@ -1,0 +1,62 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "Setting",
+    "Protagonists",
+    "Place",
+    "Actions",
+    "Objects",
+    "Props",
+    "Environment",
+    "Architecture"
+  ],
+  "properties": {
+    "Setting": {
+      "type": "string",
+      "enum": ["interior", "exterior", ""]
+    },
+    "Protagonists": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "Place": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "Actions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "Objects": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "Props": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "Environment": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "Architecture": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}
