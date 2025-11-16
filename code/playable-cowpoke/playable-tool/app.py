@@ -11,28 +11,28 @@ from PyQt5.QtWidgets import QApplication
 from PyQt5.QtMultimedia import QMediaContent
 
 # UI and styling
-from ui import UI
-from keyboard import GlobalKeyFilter
+from gui.ui import UI
+from gui.keyboard import GlobalKeyFilter
 
 # Window imports
-from nickelodeon import NickelodeonWindow
-from playhouse import PlayhouseWindow
-from shotlist import ShotlistWindow
-from playlist import PlaylistWindow
-from cinematheque import CinemathequeWindow
-from playbill import PlaybillWindow
-from prompt import PromptWindow
-from subtitles import SubtitlesWindow
-from inference import InferenceWindow
-from caption import CaptionWindow
-from robots import RobotsWindow
+from gui.nickelodeon import NickelodeonWindow
+from gui.playhouse import PlayhouseWindow
+from gui.shotlist import ShotlistWindow
+from gui.playlist import PlaylistWindow
+from gui.cinematheque import CinemathequeWindow
+from gui.playbill import PlaybillWindow
+from gui.prompt import PromptWindow
+from gui.subtitles import SubtitlesWindow
+from gui.inference import InferenceWindow
+from gui.caption import CaptionWindow
+from gui.robots import RobotsWindow
 
 # Layout and coordination
-from layout import (
+from gui.layout import (
     PlayableCinemaMainWindow, save_preferences, load_preferences,
     save_window_geometry, save_dock_layout, load_window_geometry, load_dock_layout
 )
-from switchboard import Switchboard
+from gui.switchboard import Switchboard
 
 def main():
     """

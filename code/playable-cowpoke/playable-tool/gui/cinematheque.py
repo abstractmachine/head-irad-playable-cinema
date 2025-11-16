@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt
 import os
 from catalog import AbstractCatalogWindow
-from catalog_item import MovieItemWidget
+from gui.catalog_item import MovieItemWidget
 
 class CinemathequeWindow(AbstractCatalogWindow):
     
@@ -139,7 +139,7 @@ class CinemathequeWindow(AbstractCatalogWindow):
             # Create list item with fixed height
             from PyQt5.QtCore import QSize
             from PyQt5.QtWidgets import QListWidgetItem
-            from catalog_item import ITEM_HEIGHT
+            from gui.catalog_item import ITEM_HEIGHT
             item = QListWidgetItem()
             item.setSizeHint(QSize(item_widget.width(), ITEM_HEIGHT))
 

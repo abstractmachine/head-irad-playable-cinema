@@ -1,5 +1,5 @@
 from PyQt5.QtCore import Qt
-from player import AbstractPlayerWindow, SEEK_NORMAL, SEEK_FAST
+from gui.player import AbstractPlayerWindow, SEEK_NORMAL, SEEK_FAST
 
 class NickelodeonWindow(AbstractPlayerWindow):
     def __init__(self, ui):

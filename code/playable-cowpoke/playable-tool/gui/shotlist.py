@@ -1,4 +1,4 @@
-from list import AbstractListWindow
+from gui.list import AbstractListWindow
 
 class ShotlistWindow(AbstractListWindow):
     def __init__(self, ui):

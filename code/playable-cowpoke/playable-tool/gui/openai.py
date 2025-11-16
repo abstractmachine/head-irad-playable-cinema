@@ -8,7 +8,7 @@ import cv2
 from PyQt5.QtCore import QObject, pyqtSignal
 from PyQt5.QtWidgets import QTextEdit
 
-from prompt import parse_system_prompt_files
+from gui.prompt import parse_system_prompt_files
 
 def encode_image(image_array):
     # Create temp file, close handle before writing with OpenCV
@@ -81,7 +81,7 @@ class ApiWorker(QObject):
             self.finished.emit()
             return
 
-        import openai
+        import gui.openai as openai
         messages = [
             {"role": "system", "content": parsed_prompt},
             {"role": "user", "content": images_payload}

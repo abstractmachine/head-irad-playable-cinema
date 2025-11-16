@@ -4,7 +4,7 @@ from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import QHBoxLayout, QPushButton, QMessageBox
 import os
 from catalog import AbstractCatalogWindow
-from gameplay_item import GameplayItemWidget
+from gui.gameplay_item import GameplayItemWidget
 
 class PlaybillWindow(AbstractCatalogWindow):
     

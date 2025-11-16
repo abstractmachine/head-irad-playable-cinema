@@ -5,8 +5,8 @@ from PyQt5.QtWidgets import (
     QGridLayout, QWidget, QTextEdit
 )
 
-from prompt import parse_system_prompt_files
-from utility import DARK_DOCK_BORDER, LIGHT_DOCK_BORDER
+from gui.prompt import parse_system_prompt_files
+from gui.utility import DARK_DOCK_BORDER, LIGHT_DOCK_BORDER
 
 class CaptionWindow(QWidget):
     preferences_save = pyqtSignal()

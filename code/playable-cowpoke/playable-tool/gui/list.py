@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (
     QVBoxLayout, QWidget
 )
 
-from utility import timecode_to_milliseconds, HIGHLIGHT_BACKGROUND_COLOR, HIGHLIGHT_COLOR
+from gui.utility import timecode_to_milliseconds, HIGHLIGHT_BACKGROUND_COLOR, HIGHLIGHT_COLOR
 
 LOADING_DELAY = 1000
 

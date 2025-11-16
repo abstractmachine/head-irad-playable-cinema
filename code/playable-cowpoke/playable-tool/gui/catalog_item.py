@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel
 from PyQt5.QtGui import QPixmap
 import os
 
-from utility import HIGHLIGHT_BACKGROUND_COLOR, HIGHLIGHT_COLOR
+from gui.utility import HIGHLIGHT_BACKGROUND_COLOR, HIGHLIGHT_COLOR
 
 # Common dimensions and colors
 POSTER_WIDTH = 40

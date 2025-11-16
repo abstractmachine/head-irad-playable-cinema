@@ -1,5 +1,8 @@
 # TODO
 
+# 2025-11-16
+This TODO list is out of date. A lot has happened since last notes. So todo: update todo *:-P
+
 # 2025-09-02
 - Translate subtitles (FR > EN) for :
     + ~~Bugles-In-The-Afternoon(1952){tmdb-059041}~~

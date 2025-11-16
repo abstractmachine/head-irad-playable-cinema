@@ -10,7 +10,7 @@ import subprocess
 import json
 import unicodedata
 
-from utility import html_encode_text, html_decode_text
+from gui.utility import html_encode_text, html_decode_text
 
 class MetadataWorker(QObject):
     """Worker class for rebuilding metadata in a separate thread"""

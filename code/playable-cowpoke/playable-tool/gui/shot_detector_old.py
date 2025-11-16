@@ -15,7 +15,7 @@ from scenedetect import open_video, SceneManager
 from scenedetect.detectors import ContentDetector
 
 # Our stuff
-from utility import timecode_to_milliseconds, pct_to_milliseconds
+from gui.utility import timecode_to_milliseconds, pct_to_milliseconds
 
 def parse_detector_args(arg_string):
     """Parse command line arguments for detector options"""
