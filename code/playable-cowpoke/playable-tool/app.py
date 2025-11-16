@@ -1,5 +1,57 @@
 DEBUG = False  # Set to True to enable debug output
 
+# ---- CLI switcher (top of app.py) ----
+import sys
+from pathlib import Path
+
+def _dispatch_cli_if_requested(argv):
+    if "--cli" not in argv:
+        return False
+
+    i = argv.index("--cli")
+    subargs = argv[i+1:]
+    if subargs and subargs[0] == "--":  # allow optional delimiter
+        subargs = subargs[1:]
+    if not subargs:
+        subargs = ["--help"]
+
+    # Attempt both import styles
+    PP = None
+    try:
+        from pipeline import playable_parser as PP
+    except ImportError:
+        try:
+            import playable_parser as PP
+        except ImportError as e:
+            print(f"CLI error: {e}")
+            print("No CLI entrypoint found. Expected pipeline.playable_parser or playable_parser module.")
+            return 2
+
+    try:
+        # Prefer build_parser()
+        if hasattr(PP, "build_parser"):
+            parser = PP.build_parser()
+            ns = parser.parse_args(subargs)
+            func = getattr(ns, "func", None)
+            rc = func(ns) if callable(func) else 0
+            return rc
+
+        # Fallback to main()
+        if hasattr(PP, "main"):
+            return PP.main(subargs)
+
+        print("CLI error: playable_parser lacks build_parser() and main().")
+        return 2
+
+    except Exception as e:
+        print(f"CLI runtime error: {e}")
+        return 2
+
+if (rc := _dispatch_cli_if_requested(sys.argv)) is not False:
+    raise SystemExit(rc)
+# ---- end CLI switch; your existing GUI imports follow below ----
+
+
 from PyQt5 import sip
 sip.setdestroyonexit(False)
 
