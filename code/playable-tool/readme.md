@@ -16,11 +16,14 @@ You can install the latest release version of this tool here:
 
 [Playable-Cinema-Tool](https://github.com/abstractmachine/head-irad-playable-cinema/releases/latest)
 
+### Source Code
+You can run this code by downloading the source, installing the dependencies and following the steps listed below.
+
 ### Prerequisites
 
-- **Python**: 3.11.9+ (recommended with pyenv)
+- **Python**: 3.11.9+ (install via with pyenv, see below)
 - **FFmpeg**: Required for video processing
-- **VLC**: Required for video playback in GUI mode
+- **VLC**: Required for video playback in GUI mode (depreciated, will remove soon)
 
 ### macOS Setup
 
