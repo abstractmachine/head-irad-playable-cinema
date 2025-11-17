@@ -19,6 +19,8 @@ You can install the latest release version of this tool here:
 ### Source Code
 You can run this code by downloading the source, installing the dependencies and following the steps listed below.
 
+[Source Code](../)
+
 ### Prerequisites
 
 - **Python**: 3.11.9+ (install via with pyenv, see below)
