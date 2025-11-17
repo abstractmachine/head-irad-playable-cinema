@@ -466,14 +466,12 @@ def cmd_process(ns):
     
     # Determine which videos to process
     if ns.filelist:
-        # Load video paths from filelist
         filelist_path = Path(ns.filelist)
         if not filelist_path.exists():
             raise FileNotFoundError(f"Filelist not found: {ns.filelist}")
         
         video_names = [p.strip() for p in filelist_path.read_text().splitlines() if p.strip()]
         
-        # Resolve to indices
         if ns.media == "movie":
             csv_path = os.path.join(ns.project_root, "metadata", "cinematheque.csv")
             lib = Cinematheque(csv_path, ns.project_root)
@@ -493,18 +491,15 @@ def cmd_process(ns):
             print("Error: No valid videos found in filelist")
             return 1
     elif ns.video:
-        # Single video path provided
         indices = [ns.index] if ns.index >= 0 else None
         if indices is None:
             print("Error: --process with VIDEO path requires --index to save results")
             return 1
     elif ns.index >= 0:
-        # Single index provided
         indices = [ns.index]
     else:
         raise ValueError("Either VIDEO, --index, or --filelist must be provided for --process")
     
-    # Process each video
     total = len(indices)
     success_count = 0
     failed = []
@@ -517,10 +512,9 @@ def cmd_process(ns):
     print(f"{'='*60}\n")
     
     for count, idx in enumerate(indices, start=1):
-        # Update namespace for this iteration
         ns_copy = argparse.Namespace(**vars(ns))
         ns_copy.index = idx
-        ns_copy.video = None  # Force resolution from index
+        ns_copy.video = None
         
         try:
             video = _resolve_video(ns_copy)
@@ -534,25 +528,43 @@ def cmd_process(ns):
             
             item = lib.get(idx)
             title = lib.get_title(item) if item else f"index {idx}"
+            movie_filename = item.get('Filename') or item.get('filename', '')
+            movie_base = os.path.splitext(movie_filename)[0]
             
             print(f"\n[{count}/{total}] {title}")
             print(f"{'─'*60}")
             
-            # Step 1: Detect
-            if ns.verbose:
-                print("→ Detecting shots...")
-            result = cmd_detect(ns_copy)
-            if result != 0:
-                raise RuntimeError("Detection failed")
+            # Step 1: Detect (skip if shotlist exists)
+            shotlist = lib.load_shotlist(item)
+            if shotlist:
+                print(f"→ Shotlist exists ({len(shotlist)} shots), skipping detection")
+            else:
+                if ns.verbose:
+                    print("→ Detecting shots...")
+                result = cmd_detect(ns_copy)
+                if result != 0:
+                    raise RuntimeError("Detection failed")
+                shotlist = lib.load_shotlist(item)
             
-            # Step 2: Extract
-            if ns.verbose:
-                print("→ Extracting frames...")
-            result = cmd_extract(ns_copy)
-            if result != 0:
-                raise RuntimeError("Frame extraction failed")
+            if not shotlist:
+                raise RuntimeError("No shotlist available after detection")
             
-            # Step 3: Annotate
+            # Step 2: Extract (skip if frames already exist)
+            frames_dir = os.path.join(ns.project_root, "frames")
+            # Check if frames exist for first shot
+            first_frame_pattern = f"{movie_base}_shot0000_frame00.jpg"
+            first_frame_path = os.path.join(frames_dir, first_frame_pattern)
+            
+            if os.path.exists(first_frame_path):
+                print(f"→ Frames already exist, skipping extraction")
+            else:
+                if ns.verbose:
+                    print("→ Extracting frames...")
+                result = cmd_extract(ns_copy)
+                if result != 0:
+                    raise RuntimeError("Frame extraction failed")
+            
+            # Step 3: Annotate (always run - overwrites existing captions)
             if ns.verbose:
                 print("→ Annotating shots...")
             result = cmd_annotate(ns_copy)
@@ -579,5 +591,3 @@ def cmd_process(ns):
     print(f"{'='*60}\n")
     
     return 0 if success_count == total else 1
-
-# ...existing code...
