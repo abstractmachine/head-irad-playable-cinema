@@ -1,38 +1,43 @@
 import os
 import json
 import time
+import functools
+import subprocess
+import shutil
+import cv2
+from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional
-import cv2
 from jsonschema import validate, ValidationError
-import subprocess  # added
-import shutil      # added
-import functools
 
 from pipeline.ollama_client import OllamaClient
 
 _schema_cache: Optional[dict] = None
 
-# Hard schema for validation (matches annotation.schema.json structure)
-VALIDATION_SCHEMA = {
-    "type": "object",
-    "required": ["Setting", "Protagonists", "Place", "Actions", "Objects", "Props", "Environment", "Architecture"],
-    "properties": {
-        "Setting": {"type": "string"},
-        "Protagonists": {"type": "array", "items": {"type": "string"}},
-        "Place": {"type": "array", "items": {"type": "string"}},
-        "Actions": {"type": "array", "items": {"type": "string"}},
-        "Objects": {"type": "array", "items": {"type": "string"}},
-        "Props": {"type": "array", "items": {"type": "string"}},
-        "Environment": {"type": "array", "items": {"type": "string"}},
-        "Architecture": {"type": "array", "items": {"type": "string"}}
-    },
-    "additionalProperties": False
-}
+def _load_schema() -> dict:
+    """Load annotation schema from schema/annotation.schema.json"""
+    global _schema_cache
+    if _schema_cache:
+        return _schema_cache
+    
+    # Look for schema relative to this file's parent directory (playable-tool/)
+    script_dir = Path(__file__).parent.parent  # Go up to playable-tool/
+    schema_path = script_dir / "schema" / "annotation.schema.json"
+    
+    if not schema_path.exists():
+        raise FileNotFoundError(
+            f"Schema file not found. Tried:\n  - {schema_path}"
+        )
+    
+    with open(schema_path, 'r') as f:
+        _schema_cache = json.load(f)
+    
+    return _schema_cache
 
-def _extract_and_validate_json(text: str, max_tries: int = 1) -> Optional[dict]:
+
+def _extract_and_validate_json(text: str, schema: dict) -> Optional[dict]:
     """
-    Extract first {...} from text, validate against schema.
+    Extract first {...} from text, validate against provided schema.
     Returns dict or None.
     """
     if not text:
@@ -41,7 +46,7 @@ def _extract_and_validate_json(text: str, max_tries: int = 1) -> Optional[dict]:
     # Try raw parse first
     try:
         data = json.loads(text.strip())
-        validate(instance=data, schema=VALIDATION_SCHEMA)
+        validate(instance=data, schema=schema)
         return data
     except Exception:
         pass
@@ -55,7 +60,7 @@ def _extract_and_validate_json(text: str, max_tries: int = 1) -> Optional[dict]:
     candidate = text[start:end+1]
     try:
         data = json.loads(candidate)
-        validate(instance=data, schema=VALIDATION_SCHEMA)
+        validate(instance=data, schema=schema)
         return data
     except (json.JSONDecodeError, ValidationError) as e:
         print(f"[warn] JSON extraction/validation failed: {e}")
@@ -78,33 +83,22 @@ def _minify_system_text(text: str) -> str:
 def load_annotation_schema(project_root: str) -> dict:
     """
     Load and cache annotation.schema.json.
+    Uses _load_schema() which looks in playable-tool/schema/
     """
-    global _schema_cache
-    if _schema_cache is not None:
-        return _schema_cache
-
-    candidates = [
-        os.path.join(os.path.dirname(__file__), "schema", "annotation.schema.json")
-    ]
-
-    for path in candidates:
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                _schema_cache = json.load(f)
-            # Print only the file name
-            print(f"Using annotation schema: {os.path.basename(path)}")
-            return _schema_cache
-
-    tried = "\n  - ".join(os.path.abspath(p) for p in candidates)
-    raise FileNotFoundError(f"Schema file not found. Tried:\n  - {tried}")
+    return _load_schema()
 
 def load_system_prompt(project_root: str, image_count: int, film: Dict) -> str:
     """
-    Load system prompt from the local repository's system.txt only.
+    Load system prompt from prompts/system.txt in the project root.
     """
-    prompt_path = os.path.join(os.path.dirname(__file__), "system.txt")
-    if not os.path.exists(prompt_path):
+    # Look in playable-tool/prompts/system.txt (parent of pipeline/)
+    script_dir = Path(__file__).parent.parent  # Go up to playable-tool/
+    prompt_path = script_dir / "prompts" / "system.txt"
+    
+    if not prompt_path.exists():
+        print(f"[ERROR] system.txt not found at: {prompt_path}")
         return ""
+    
     with open(prompt_path, 'r', encoding='utf-8') as f:
         prompt = f.read()
 
@@ -112,6 +106,7 @@ def load_system_prompt(project_root: str, image_count: int, film: Dict) -> str:
     prompt = prompt.replace("{year}", str(film.get('year', 'Unknown')))
     prompt = prompt.replace("{director}", film.get('director', 'Unknown'))
     prompt = prompt.replace("{image-count}", str(image_count))
+    
     return prompt
 
 def has_scenes(shotlist: List[Dict]) -> bool:
@@ -346,6 +341,17 @@ def annotate_shot(
 
     system_text = load_system_prompt(project_root, len(image_paths), film)
     schema = load_annotation_schema(project_root)
+
+    # Add verbose output here
+    if verbose:
+        print(f"    [SYSTEM PROMPT] Loaded from system.txt ({len(system_text)} chars)")
+        print(f"    [SYSTEM PROMPT PREVIEW]")
+        print("    " + "─" * 60)
+        # Print first 500 chars or full prompt
+        preview = system_text[:500] + "..." if len(system_text) > 500 else system_text
+        for line in preview.split('\n'):
+            print(f"    {line}")
+        print("    " + "─" * 60)
     
     # Strict user prompt (reinforces JSON-only output)
     user_prompt = (
@@ -375,9 +381,9 @@ def annotate_shot(
                     print(f"    [attempt {attempt+1}/{MAX_RETRIES}] No response from model")
                 continue
             
-            # Extract and validate
+            # Extract and validate using loaded schema
             t_parse0 = time.perf_counter()
-            data = _extract_and_validate_json(resp)
+            data = _extract_and_validate_json(resp, schema)
             parse_s = time.perf_counter() - t_parse0
             
             if data:
@@ -386,7 +392,13 @@ def annotate_shot(
                 if verbose:
                     print(f"    [attempt {attempt+1}/{MAX_RETRIES}] Invalid JSON, retrying...")
                 # Tighten prompt for next attempt
-                user_prompt = "CRITICAL: Return ONLY valid JSON. Begin with '{', end with '}'. No text before or after."
+                #user_prompt = "CRITICAL: Return ONLY valid JSON. Begin with '{', end with ''. No text before or after."
+                # Strict user prompt (reinforces JSON-only output)
+                user_prompt = (
+                    "Output EXACTLY ONE JSON object matching the schema. "
+                    "Start with '{' and end with '}'. "
+                    "No explanations, no markdown, no code fences."
+                )
         except Exception as e:
             if verbose:
                 print(f"    [attempt {attempt+1}/{MAX_RETRIES}] Error: {e}")

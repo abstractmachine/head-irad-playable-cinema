@@ -219,15 +219,142 @@ def cmd_list(ns):
 
 def cmd_detect(ns):
     video = _resolve_video(ns)
-    if ns.verbose:
-        print(f"[detect] video={video} method={ns.method} threshold={ns.threshold} max_len={ns.shot_max_length}")
+    
+    try:
+        from pipeline.playable_data import Cinematheque, Gameplay
+        from pipeline.playable_detector import detect_shots
+    except ImportError as e:
+        raise RuntimeError(f"Cannot import required modules: {e}")
+
+    if ns.media == "movie":
+        csv_path = os.path.join(ns.project_root, "metadata", "cinematheque.csv")
+        lib = Cinematheque(csv_path, ns.project_root)
+    else:
+        csv_path = os.path.join(ns.project_root, "metadata", "gameplay.csv")
+        lib = Gameplay(csv_path, ns.project_root)
+
+    item = lib.get(ns.index)
+    if not item:
+        raise ValueError(f"No item at index {ns.index} in {ns.media} library")
+
+    title = lib.get_title(item)
+    
+    print(f"\nDetecting shots: {title}")
+    print(f"Video: {video}")
+    print(f"Method: {ns.method} (threshold={ns.threshold}, max_length={ns.shot_max_length}s)\n")
+    
+    # Detect shots
+    shotlist = detect_shots(
+        video_path=video,
+        method=ns.method,
+        threshold=ns.threshold,
+        shot_max_length=ns.shot_max_length,
+        verbose=ns.verbose
+    )
+    
+    if not shotlist:
+        print("✗ No shots detected")
+        return 1
+    
+    # Save shotlist
+    lib.save_shotlist(item, shotlist)
+    print(f"\n✓ Detected {len(shotlist)} shots, saved to shotlist")
+    
     return 0
 
 
 def cmd_extract(ns):
+    """Extract sample frames from detected shots."""
     video = _resolve_video(ns)
-    if ns.verbose:
-        print(f"[extract] video={video} frames={ns.frames_per_shot}")
+    
+    try:
+        from pipeline.playable_data import Cinematheque, Gameplay
+        import cv2
+        import numpy as np
+    except ImportError as e:
+        raise RuntimeError(f"Cannot import required modules: {e}")
+
+    if ns.media == "movie":
+        csv_path = os.path.join(ns.project_root, "metadata", "cinematheque.csv")
+        lib = Cinematheque(csv_path, ns.project_root)
+    else:
+        csv_path = os.path.join(ns.project_root, "metadata", "gameplay.csv")
+        lib = Gameplay(csv_path, ns.project_root)
+
+    item = lib.get(ns.index)
+    if not item:
+        raise ValueError(f"No item at index {ns.index} in {ns.media} library")
+
+    shotlist = lib.load_shotlist(item)
+    if not shotlist:
+        raise FileNotFoundError(f"No shotlist found for {lib.get_title(item)}. Run --detect first.")
+
+    title = lib.get_title(item)
+    frames_dir = os.path.join(ns.project_root, "frames")
+    os.makedirs(frames_dir, exist_ok=True)
+    
+    movie_base = os.path.splitext(item.get('Filename') or item.get('filename', ''))[0]
+    
+    print(f"\nExtracting frames: {title}")
+    print(f"Shots: {len(shotlist)}")
+    print(f"Frames per shot: {ns.frames_per_shot}\n")
+    
+    cap = cv2.VideoCapture(video)
+    if not cap.isOpened():
+        raise RuntimeError(f"Cannot open video: {video}")
+    
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = 0
+    
+    def _tc_to_frame(tc_str: str) -> int:
+        """Convert HH:MM:SS:FF to frame number."""
+        parts = tc_str.split(':')
+        if len(parts) != 4:
+            return 0
+        h, m, s, f = map(int, parts)
+        return int((h * 3600 + m * 60 + s) * fps + f)
+    
+    for i, shot in enumerate(shotlist):
+        start_tc = shot.get('Start') or shot.get('TC In') or ''
+        end_tc = shot.get('End') or shot.get('TC Out') or ''
+        
+        if not start_tc or not end_tc:
+            if ns.verbose:
+                print(f"  Shot {i+1}: skipped (missing timecodes)")
+            continue
+        
+        start_frame = _tc_to_frame(start_tc)
+        end_frame = _tc_to_frame(end_tc)
+        duration = end_frame - start_frame
+        
+        if duration <= 0:
+            if ns.verbose:
+                print(f"  Shot {i+1}: skipped (invalid duration)")
+            continue
+        
+        # Extract evenly spaced frames
+        frame_indices = np.linspace(start_frame, end_frame, ns.frames_per_shot, dtype=int)
+        shot_frames = []
+        
+        for idx, frame_num in enumerate(frame_indices):
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+            ret, frame = cap.read()
+            
+            if not ret:
+                continue
+            
+            # Save frame
+            frame_filename = f"{movie_base}_shot{i:04d}_frame{idx:02d}.jpg"
+            frame_path = os.path.join(frames_dir, frame_filename)
+            cv2.imwrite(frame_path, frame)
+            shot_frames.append(frame_path)
+        
+        total_frames += len(shot_frames)
+        if ns.verbose:
+            print(f"  Shot {i+1}: extracted {len(shot_frames)} frames")
+    
+    cap.release()
+    print(f"\n✓ Extracted {total_frames} frames total to {frames_dir}")
     return 0
 
 
@@ -331,37 +458,126 @@ def cmd_erase(ns):
 
 
 def cmd_process(ns):
+    """Run detect → extract → annotate pipeline for one or more videos."""
+    try:
+        from pipeline.playable_data import Cinematheque, Gameplay
+    except ImportError as e:
+        raise RuntimeError(f"Cannot import required modules: {e}")
+    
+    # Determine which videos to process
     if ns.filelist:
-        paths = [p.strip() for p in Path(ns.filelist).read_text().splitlines() if p.strip()]
+        # Load video paths from filelist
+        filelist_path = Path(ns.filelist)
+        if not filelist_path.exists():
+            raise FileNotFoundError(f"Filelist not found: {ns.filelist}")
+        
+        video_names = [p.strip() for p in filelist_path.read_text().splitlines() if p.strip()]
+        
+        # Resolve to indices
+        if ns.media == "movie":
+            csv_path = os.path.join(ns.project_root, "metadata", "cinematheque.csv")
+            lib = Cinematheque(csv_path, ns.project_root)
+        else:
+            csv_path = os.path.join(ns.project_root, "metadata", "gameplay.csv")
+            lib = Gameplay(csv_path, ns.project_root)
+        
+        indices = []
+        for name in video_names:
+            idx = lib.find_by_filename(name)
+            if idx is not None:
+                indices.append(idx)
+            elif ns.verbose:
+                print(f"Warning: '{name}' not found in {ns.media} library, skipping")
+        
+        if not indices:
+            print("Error: No valid videos found in filelist")
+            return 1
+    elif ns.video:
+        # Single video path provided
+        indices = [ns.index] if ns.index >= 0 else None
+        if indices is None:
+            print("Error: --process with VIDEO path requires --index to save results")
+            return 1
+    elif ns.index >= 0:
+        # Single index provided
+        indices = [ns.index]
     else:
-        video = _resolve_video(ns)
-        paths = [video]
+        raise ValueError("Either VIDEO, --index, or --filelist must be provided for --process")
+    
+    # Process each video
+    total = len(indices)
+    success_count = 0
+    failed = []
+    
+    print(f"\n{'='*60}")
+    print(f"Processing {total} video(s) in {ns.media} library")
+    print(f"Pipeline: detect (method={ns.method}, threshold={ns.threshold})")
+    print(f"          → extract (frames={ns.frames_per_shot})")
+    print(f"          → annotate (temp={ns.temperature})")
+    print(f"{'='*60}\n")
+    
+    for count, idx in enumerate(indices, start=1):
+        # Update namespace for this iteration
+        ns_copy = argparse.Namespace(**vars(ns))
+        ns_copy.index = idx
+        ns_copy.video = None  # Force resolution from index
+        
+        try:
+            video = _resolve_video(ns_copy)
+            
+            if ns.media == "movie":
+                csv_path = os.path.join(ns.project_root, "metadata", "cinematheque.csv")
+                lib = Cinematheque(csv_path, ns.project_root)
+            else:
+                csv_path = os.path.join(ns.project_root, "metadata", "gameplay.csv")
+                lib = Gameplay(csv_path, ns.project_root)
+            
+            item = lib.get(idx)
+            title = lib.get_title(item) if item else f"index {idx}"
+            
+            print(f"\n[{count}/{total}] {title}")
+            print(f"{'─'*60}")
+            
+            # Step 1: Detect
+            if ns.verbose:
+                print("→ Detecting shots...")
+            result = cmd_detect(ns_copy)
+            if result != 0:
+                raise RuntimeError("Detection failed")
+            
+            # Step 2: Extract
+            if ns.verbose:
+                print("→ Extracting frames...")
+            result = cmd_extract(ns_copy)
+            if result != 0:
+                raise RuntimeError("Frame extraction failed")
+            
+            # Step 3: Annotate
+            if ns.verbose:
+                print("→ Annotating shots...")
+            result = cmd_annotate(ns_copy)
+            if result != 0:
+                raise RuntimeError("Annotation failed")
+            
+            success_count += 1
+            print(f"✓ Completed successfully")
+            
+        except Exception as e:
+            failed.append((idx, title, str(e)))
+            print(f"✗ Failed: {e}")
+            if ns.verbose:
+                import traceback
+                traceback.print_exc()
+    
+    # Summary
+    print(f"\n{'='*60}")
+    print(f"SUMMARY: {success_count}/{total} succeeded")
+    if failed:
+        print(f"\nFailed videos:")
+        for idx, title, error in failed:
+            print(f"  [{idx}] {title}: {error}")
+    print(f"{'='*60}\n")
+    
+    return 0 if success_count == total else 1
 
-    if ns.verbose:
-        print(f"[process] videos={paths} method={ns.method} threshold={ns.threshold} frames={ns.frames_per_shot}")
-    for _v in paths:
-        _ = cmd_detect(ns)
-        _ = cmd_extract(ns)
-        _ = cmd_annotate(ns)
-    return 0
-
-
-# -------------------------------------------------
-# Unified main
-# -------------------------------------------------
-def main(argv=None):
-    if argv is None:
-        argv = sys.argv[1:]
-
-    parser = build_parser()
-
-    if not argv:
-        parser.print_help()
-        return 0
-
-    ns = parser.parse_args(argv)
-    return ns.func(ns)
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+# ...existing code...
