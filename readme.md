@@ -26,9 +26,9 @@ In this current form, the project explores how hybrid strategies can emerge new 
 - [Guillaume Stagnaro](https://www.stagnaro.net), [Cowpoke Controller](./hardware/cowpoke-controller/) Developer
 
 ## Software
-A [training and playback tool](./code/playable-cowpoke/playable-tool/) is currently in development.
+A [training and playback tool](./code/playable-tool/) is currently in development.
 
-![Playable-Cinema-Tool](./code/playable-cowpoke/playable-tool/screenshots/playable-cinema-tool-2025-09-09.png)
+![Playable-Cinema-Tool](./code/playable-tool/screenshots/playable-cinema-tool-2025-09-09.png)
 
 ## Cabin
 A [cabin](./hardware/cowpoke-cabin/readme.md) is currently in production that integrates all the parts of the project.
