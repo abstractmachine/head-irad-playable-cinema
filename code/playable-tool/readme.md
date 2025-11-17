@@ -12,6 +12,9 @@ A comprehensive desktop and command-line application for video analysis, annotat
 - **Multi-window Interface**: Tabbed interface with specialized tools for different workflows
 
 ## Installation
+You can install the latest release version of this tool here:
+
+[Playable-Cinema-Tool](https://github.com/abstractmachine/head-irad-playable-cinema/releases/latest)
 
 ### Prerequisites
 
