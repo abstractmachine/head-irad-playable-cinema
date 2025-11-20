@@ -23,10 +23,12 @@ The cowpoke cabin is the physical manifestation of the Playable Cinema project, 
 ### Blueprints
 Blueprints to build the cabin can be found in this folder at: [cowpoke-cabin](./blueprints/)
 
+![Cowpoke Cabin - Isometric Labels](./images/Cabin-Names-2025-11-20-a.png)
+
 ### CAD
 You can download the latest 3D CAD model of the cabin in two formats:
-- [head-irad-cowpoke-cabin-2025-10-28.step](./models/head-irad-cowpoke-cabin-2025-10-28.step)
-- [head-irad-cowpoke-cabin-2025-10-28.shapr](./models/head-irad-cowpoke-cabin-2025-10-28.shapr)
+- [head-irad-cowpoke-cabin-2025-11-20-a.step](./models/head-irad-cowpoke-cabin-2025-11-20-a.step)
+- [head-irad-cowpoke-cabin-2025-11-20-a.shapr](./models/head-irad-cowpoke-cabin-2025-11-20-a.shapr)
 
 The original Shapr3D file contains modular parametric varibles that can adjust various aspects of the design.
 
