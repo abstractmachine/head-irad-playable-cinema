@@ -37,6 +37,8 @@ A [cabin](./hardware/cowpoke-cabin/readme.md) is currently in production that in
 
 Blueprints to build this cabin can be found in the repository [hardware/cowpoke-cabin](./hardware/cowpoke-cabin/blueprints/)
 
+![Cowpoke Cabin - Isometric Named](./hardware/cowpoke-cabin/images/Cabin-Names-2025-11-20-a.png)
+
 ## Hardware
 A [physical object](./hardware/cowpoke-controller/readme.md) is currently in developement. This allows visitors to interact with the installation.
 
