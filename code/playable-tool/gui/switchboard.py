@@ -1,10 +1,11 @@
-DEBUG = True  # Set to True to enable debug output
+DEBUG = False  # Set to True to enable debug output
 
 # Python imports
 import os
 import random
 import pandas as pd
 from PyQt5.QtCore import QTimer
+import time
 # Qt imports
 from PyQt5.QtCore import QObject, pyqtSignal
 
@@ -43,7 +44,14 @@ class Switchboard(QObject):
         self.current_shot_index = -1  # Track current shot for playback coordination
         self.current_project_folder = None  # Track current project to detect changes
         self.catalogs_rebuilding = []  # Track which catalogs are currently rebuilding metadata
-        
+        # --- FAISS jump throttle (3s cooldown) ---
+        self._faiss_cooldown_ms = 3000
+        self._faiss_last_jump_ms = 0
+        self._faiss_pending = None
+        self._faiss_cooldown_timer = QTimer(self)
+        self._faiss_cooldown_timer.setSingleShot(True)
+        self._faiss_cooldown_timer.timeout.connect(self._faiss_try_pending)
+
         if DEBUG: print("DEBUG: Switchboard initialized")
         
         # Set up all signal connections if windows are provided
@@ -474,6 +482,17 @@ class Switchboard(QObject):
         """Handle FAISS match - jump cinematheque to the matched movie and shot"""
         if DEBUG: print(f"DEBUG: FAISS match - video: {video_name}, shot: {shot_index}")
 
+        # --- throttle jumps: enforce 3s between jumps ---
+        now_ms = int(time.time() * 1000)
+        elapsed = now_ms - getattr(self, "_faiss_last_jump_ms", 0)
+        if elapsed < self._faiss_cooldown_ms:
+            remaining = self._faiss_cooldown_ms - elapsed
+            self._faiss_pending = (video_name, shot_index)
+            if DEBUG: print(f"DEBUG: FAISS jump throttled; retrying in {remaining} ms")
+            # restart single timer with remaining time
+            self._faiss_cooldown_timer.start(max(remaining, 50))
+            return
+
         cine = self.windows.get("cinematheque")
         if not cine:
             if DEBUG: print("DEBUG: No cinematheque window available")
@@ -544,19 +563,7 @@ class Switchboard(QObject):
         resolved_filename = str(row.iloc[0]["filename"]).strip()
         if DEBUG: print(f"DEBUG: Resolved metadata: title='{resolved_title}', filename='{resolved_filename}'")
 
-        # --- DEBUG dump + robust match using widget.item_data ---
-        if DEBUG:
-            print("DEBUG: Cinematheque items (first 20):")
-            for i in range(min(20, cine.item_list.count())):
-                item = cine.item_list.item(i)
-                widget = cine.item_list.itemWidget(item)
-                if not widget or not hasattr(widget, "item_data"):
-                    continue
-                md = widget.item_data or {}
-                md_fn = md.get("filename", "")
-                md_title = md.get("title", "")
-                print(f"  [{i}] title='{md_title}' filename='{md_fn}'")
-
+        # --- match using widget.item_data ---
         found_widget = None
         found_data = None
         for i in range(cine.item_list.count()):
@@ -584,7 +591,7 @@ class Switchboard(QObject):
                       f"(stem='{target_stem}', title='{resolved_title}')")
             return
 
-        # Use Cinematheque click handler so it emits item_selected and updates selection
+        # Trigger selection through Cinematheque UI flow
         try:
             cine.on_widget_clicked(found_widget, found_data, start_timecode)
             if DEBUG: print(f"DEBUG: Triggered Cinematheque selection for '{resolved_title}' at {start_timecode}")
@@ -592,3 +599,15 @@ class Switchboard(QObject):
             if DEBUG: print(f"DEBUG: Error triggering Cinematheque selection: {e}")
             self.cinematheque_item_selected(found_data, start_timecode)
             if DEBUG: print(f"DEBUG: Routed selection via switchboard for '{resolved_title}' at {start_timecode}")
+
+        # Start cooldown after a successful jump
+        self._faiss_last_jump_ms = now_ms
+        if DEBUG: print(f"DEBUG: FAISS jump cooldown started ({self._faiss_cooldown_ms} ms)")
+
+    def _faiss_try_pending(self):
+        """Attempt the most recent pending FAISS jump after the cooldown."""
+        req = self._faiss_pending
+        self._faiss_pending = None
+        if req:
+            video_name, shot_index = req
+            self.on_faiss_match(video_name, shot_index)
