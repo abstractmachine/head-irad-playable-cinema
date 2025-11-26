@@ -1,3 +1,4 @@
+# head-irad-playable-tool
 DEBUG = False  # Add this at the top
 
 from PyQt5.QtCore import Qt, pyqtSignal, QUrl, QTimer, QPoint
