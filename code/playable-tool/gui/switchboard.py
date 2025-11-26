@@ -24,15 +24,22 @@ class Switchboard(QObject):
     metadata_rebuilding_started = pyqtSignal()  # Emitted when first catalog starts rebuilding
     metadata_rebuilding_stopped = pyqtSignal()  # Emitted when last catalog finishes rebuilding
 
-    def __init__(self, windows=None, ui=None, keyboard=None):
+    def __init__(self, windows, ui, keyboard):
         super().__init__()
-
-        self.ui = ui  # Store UI reference for styling and preferences
-        self.keyboard = keyboard  # Store keyboard reference for global shortcuts
+        self.windows = windows
+        self.ui = ui
+        self.keyboard = keyboard
+        
+        # Get references to commonly used windows
+        self.robots = windows.get("robots")
+        self.faiss = windows.get("faiss")
+        self.playhouse = windows.get("playhouse")
+        
+        # Connect all signals
+        self.connect_signals()
 
         self.current_shot_index = -1  # Track current shot for playback coordination
         self.current_project_folder = None  # Track current project to detect changes
-        self.windows = windows  # Reference to all windows for signal routing
         self.catalogs_rebuilding = []  # Track which catalogs are currently rebuilding metadata
         
         if DEBUG: print("DEBUG: Switchboard initialized")
@@ -40,6 +47,34 @@ class Switchboard(QObject):
         # Set up all signal connections if windows are provided
         if self.windows:
             self.setup_connections()
+
+    def connect_signals(self):
+        """Connect all inter-window signals"""
+        
+        # FAISS connections
+        if self.robots and self.faiss:
+            # Toggle FAISS on/off when robots button is clicked
+            self.robots.faiss_toggle_requested.connect(self.faiss.toggle)
+            
+            # Send FAISS console messages to robots console
+            self.faiss.console_message.connect(self.robots.on_faiss_message)
+            
+            if DEBUG: print("DEBUG: Switchboard: FAISS signals connected")
+        
+        # Playhouse timecode to FAISS
+        if self.playhouse and self.faiss:
+            # Send timecode changes to FAISS for processing
+            self.playhouse.timecode_changed.connect(self.faiss.on_timecode_changed)
+            
+            if DEBUG: print("DEBUG: Switchboard: Playhouse -> FAISS timecode connected")
+        
+        # Caption changes to FAISS (connect to caption window directly)
+        captions = self.windows.get("captions")
+        if captions and self.faiss:
+            # Listen to play shot caption edits
+            captions.caption_was_edited.connect(self.on_caption_edited_for_faiss)
+            
+            if DEBUG: print("DEBUG: Switchboard: Captions -> FAISS caption connected")
 
     def setup_connections(self):
         if DEBUG: print("DEBUG: Switchboard setting up connections")
@@ -191,6 +226,12 @@ class Switchboard(QObject):
         self.windows["playhouse"].video_is_loading.connect(
             lambda: self.windows["robots"].on_video_loading("play")
         )
+        
+        # Connect playhouse video cleared/stopped to disable FAISS
+        if hasattr(self.windows["playhouse"], "video_cleared"):
+            self.windows["playhouse"].video_cleared.connect(
+                lambda: self.windows["robots"].on_video_cleared("play")
+            )
 
         if DEBUG: print("DEBUG: Switchboard finished setting up connections")
 
@@ -413,3 +454,12 @@ class Switchboard(QObject):
             self.windows["shotlist"].caption_was_edited(caption_type, text)
         elif source == "play":
             self.windows["playlist"].caption_was_edited(caption_type, text)
+    
+    def on_caption_edited_for_faiss(self, source, caption_type, text):
+        """Route play shot caption changes to FAISS"""
+        if DEBUG: print(f"DEBUG: Caption edited for FAISS: {source} {caption_type}: {text}")
+        
+        # Only send play shot captions to FAISS
+        if source == "play" and caption_type == "shot":
+            if DEBUG: print(f"DEBUG: Sending to FAISS: {text}")
+            self.faiss.on_shot_caption_changed(text)

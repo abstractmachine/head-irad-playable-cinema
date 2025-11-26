@@ -78,6 +78,7 @@ from gui.subtitles import SubtitlesWindow
 from gui.inference import InferenceWindow
 from gui.caption import CaptionWindow
 from gui.robots import RobotsWindow
+from gui.faiss import FaissModule
 
 # Layout and coordination
 from gui.layout import (
@@ -118,6 +119,10 @@ def main():
         "cinematheque": CinemathequeWindow(ui),
         "robots": RobotsWindow(ui),
     }
+    
+    # FAISS is not a window, just a module
+    faiss_module = FaissModule(ui)
+    windows["faiss"] = faiss_module  # Add to windows dict for consistency
 
     # === Signal Setup ===
     # Connect preference save/load signals for all windows
@@ -127,6 +132,13 @@ def main():
 
     # === Main Window Setup ===
     main_window = PlayableCinemaMainWindow(windows)
+    
+    # Don't add FAISS to docks since it's not a window
+    # Remove it from windows dict used for dock creation
+    dock_windows = {k: v for k, v in windows.items() if k != "faiss"}
+    main_window = PlayableCinemaMainWindow(dock_windows)
+    windows["faiss"] = faiss_module  # Add it back for switchboard
+    
     main_window.show()
 
     # === Input Handling ===

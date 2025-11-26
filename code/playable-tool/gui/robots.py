@@ -68,7 +68,7 @@ class RobotsWindow(QMainWindow):
 
     # Project
     project_folder_was_set = pyqtSignal(str)
-    project_folder_was_changed = pyqtSignal(str)  # Emitted when project folder changes
+    project_folder_was_changed = pyqtSignal(str)
 
     # Gremlins
     chaos = pyqtSignal()
@@ -77,6 +77,9 @@ class RobotsWindow(QMainWindow):
     caption_model_requested = pyqtSignal()
     search_model_requested = pyqtSignal()
     inference_off_requested = pyqtSignal()
+    
+    # FAISS toggle
+    faiss_toggle_requested = pyqtSignal()
 
     # Break Scene
     break_scene_of_type = pyqtSignal(str)
@@ -99,6 +102,10 @@ class RobotsWindow(QMainWindow):
         # State
         self.is_running = False
         self.interval_seconds = 3.0
+        
+        # FAISS state
+        self.faiss_is_active = False
+        self.playhouse_video_loaded = False  # Track if playhouse has a video
         
         # Timer for chaos events
         self.chaos_timer = QTimer()
@@ -193,8 +200,8 @@ class RobotsWindow(QMainWindow):
         self.search_model_button = QPushButton("FAISS")
         self.search_model_button.setFixedSize(80, button_height)
         # self.search_model_button.setFont(self.ui.get_font('button'))
-        self.search_model_button.clicked.connect(self.search_model_requested.emit)
-        self.search_model_button.setEnabled(False)
+        self.search_model_button.clicked.connect(self.toggle_faiss)
+        self.search_model_button.setEnabled(False)  # Disabled by default
         chaos_layout.addWidget(self.search_model_button)
 
         self.off_button = QPushButton("Inference")
@@ -484,6 +491,37 @@ class RobotsWindow(QMainWindow):
             if DEBUG: print(f"DEBUG: Invalid Gremlins interval input: '{text}'")
             pass
             
+    def toggle_faiss(self):
+        """Toggle FAISS mode on/off"""
+        if self.faiss_is_active:
+            self.stop_faiss()
+        else:
+            self.start_faiss()
+    
+    def start_faiss(self):
+        """Start FAISS mode"""
+        if not self.playhouse_video_loaded:
+            self.console_write("FAISS requires a video in Playhouse")
+            return
+        
+        # Turn off Gremlins if it's running
+        if self.is_running:
+            self.stop_chaos()
+        
+        self.faiss_is_active = True
+        self.search_model_button.setStyleSheet("background-color: #f0f; color: #fff;")
+        self.faiss_toggle_requested.emit()
+        
+        if DEBUG: print("DEBUG: FAISS mode started")
+    
+    def stop_faiss(self):
+        """Stop FAISS mode"""
+        self.faiss_is_active = False
+        self.search_model_button.setStyleSheet("")
+        self.faiss_toggle_requested.emit()
+        
+        if DEBUG: print("DEBUG: FAISS mode stopped")
+        
     def toggle_chaos(self):
         """Toggle chaos generation on/off"""
         if self.is_running:
@@ -493,6 +531,10 @@ class RobotsWindow(QMainWindow):
             
     def start_chaos(self):
         """Start generating chaos events"""
+        # Turn off FAISS if it's active
+        if self.faiss_is_active:
+            self.stop_faiss()
+        
         self.is_running = True
         self.toggle_button.setText("Gremlins")
         self.toggle_button.setStyleSheet("background-color: #f0f; color: #fff;")
@@ -538,13 +580,23 @@ class RobotsWindow(QMainWindow):
     def clear_project(self):
         if self.is_running:
             self.stop_chaos()
+        if self.faiss_is_active:
+            self.stop_faiss()
+        self.playhouse_video_loaded = False
+        self.search_model_button.setEnabled(False)
         # Reset project manager state if needed
         self.select_button.setEnabled(True)
+    
+    def on_faiss_message(self, message):
+        """Receive messages from FAISS module and display in console"""
+        self.console_write(message)
 
     def closeEvent(self, event):
         """Handle window close"""
         if self.is_running:
             self.stop_chaos()
+        if self.faiss_is_active:
+            self.stop_faiss()
         super().closeEvent(event)
 
     # ----------- VIDEO + LIST STATUS -------------
@@ -569,15 +621,26 @@ class RobotsWindow(QMainWindow):
 
     def on_video_loaded(self, source):
         # the video finished loading (actually, we don't care)
+        if source == "play":
+            self.playhouse_video_loaded = True
+            # Enable FAISS button when playhouse video is loaded
+            if not self.faiss_is_active:
+                self.search_model_button.setEnabled(True)
+        
         self.update_detector_buttons()
         self.update_api_button()
 
     def on_video_loading(self, source):
         # we started loading the video
-        if source == "Movie":
+        if source == "movie":
             self.shotlist_status = "Waiting"
-        elif source == "Play":
+        elif source == "play":
             self.playlist_status = "Waiting"
+            self.playhouse_video_loaded = False
+            # Disable and deactivate FAISS when switching videos
+            if self.faiss_is_active:
+                self.stop_faiss()
+            self.search_model_button.setEnabled(False)
         # udpate status
         self.update_detector_buttons()
         self.update_api_button()
