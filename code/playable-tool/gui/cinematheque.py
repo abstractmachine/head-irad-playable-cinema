@@ -186,3 +186,18 @@ class CinemathequeWindow(AbstractCatalogWindow):
                 print(f"DEBUG: Cinematheque: Actual label text after update: '{self.progress_label.text()}'")
         else:
             if DEBUG: print(f"DEBUG: Cinematheque: progress_label is None!")
+
+    def on_widget_clicked(self, widget, metadata, timecode=None):
+        """Handle when a catalog item widget is clicked"""
+        if DEBUG: print(f"DEBUG: {self.catalog_name}: Item clicked: {metadata.get('title', 'Unknown')}")
+        
+        # Deselect previous widget
+        if self.selected_item_widget and self.selected_item_widget != widget:
+            self.selected_item_widget.set_selected(False)
+        
+        # Select new widget
+        widget.set_selected(True)
+        self.selected_item_widget = widget
+        
+        # Emit selection signal with optional timecode
+        self.item_selected.emit(metadata, timecode)

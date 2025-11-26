@@ -20,6 +20,7 @@ scenedetect[opencv]>=0.6.3
 # Core Python & Networking
 # ---------------------
 numpy>=1.24.0
+pandas>=2.0.0
 requests>=2.31.0
 jsonschema>=4.22.0
 
@@ -31,6 +32,10 @@ transformers>=4.44.0
 huggingface-hub>=0.23.0
 accelerate
 openai
+
+# Sentence embeddings & vector search
+sentence-transformers>=2.2.0
+faiss-cpu>=1.7.4
 
 # ---------------------
 # Notes
