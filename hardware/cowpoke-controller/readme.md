@@ -1,7 +1,7 @@
 # Controller
 Joystick, gamepad, joypad, stick, controller, call it whatever you want: we are building a custom controller for this project.
 
-<img alt="Cowpoke Controller 2025-11-02" src="../../presskit/images/head-irad-cowpoke-controller-front-2025-11-03.png" height="640" />
+<img alt="Cowpoke Controller 2025-11-02" src="../../presskit/images/head-irad-cowpoke-controller-front-2025-11-03.png" height="540" />
 
 ## Design
 After many failed [experiments](./experiments/) by Douglas, Faust made the following drawing which placed us on the right path of exploring the shape of [Derringer](https://en.wikipedia.org/wiki/Derringer) pistols, as opposed to the [Colt](https://en.wikipedia.org/wiki/Colt_Single_Action_Army) family of pistols along with all it's bretheren.
