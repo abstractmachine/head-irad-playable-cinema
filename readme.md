@@ -21,9 +21,9 @@ In this current form, the project explores how hybrid strategies can emerge new 
 ![Playable Cinema Research Project, IRAD, HEAD – Genève](./presskit/images/playable-cinema-cowpoke-controller-drunkard.jpg)
 
 ## Team
-- [Douglas Edric Stanley](https://abstractmachine.net), Project Lead
-- [Faust Perillaud](https://2024.head-geneve.show/en/projects/spectral-yard-fp-100e1), Research Assistant, training & labelling
-- [Guillaume Stagnaro](https://www.stagnaro.net), [Cowpoke Controller](./hardware/cowpoke-controller/) Developer
+- [Douglas Edric Stanley](https://abstractmachine.net), Project Lead, concept, design, development, production
+- [Faust Perillaud](https://2024.head-geneve.show/en/projects/spectral-yard-fp-100e1), Research Assistant, training & labelling, production
+- [Guillaume Stagnaro](https://www.stagnaro.net), [Cowpoke Controller](./hardware/cowpoke-controller/) development
 - [Colin Castellano](https://ebenisterie-castellano.ch), Wood construction consulting & production
 
 ## Software
