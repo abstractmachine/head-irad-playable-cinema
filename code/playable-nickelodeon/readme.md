@@ -1,5 +1,9 @@
-# playable-playback
-Notes for current autonomous playback device.
+# playable-nickelodeon
+The Playable Nickelodeon is a hardware based playback device that brings the entire project closer to the autonomous, edge-computing goals of this project. These goals align with the [DataCraft](https://datacrafty.ch) research project where our long-term goals are to find/invent/hack various means for creating smaller, offline, and/or autonomous AI inferencing and training strategies for our art & design projects.
+
+This code is designed to run on a low-cost Raspbery Pi 5 device, ideally with an internal SSD card with sufficient size to hold the entire collection of videos that will be played back by the device.
+
+A local network protocol allows the real-time inferencing system running on its own hardware to send `"{"action":"play}"` requests to this Nickelodeon player, hence offloading the power and computation requirements of two different part of the entire system. In this way, the video playback can be optimized for low-cost hardware computation, and the inferencing can equally be chosen for the specific hardware needs of the real-time video inferencing system, using larger graphics cards but equally on locally maintained hardware.
 
 ## Demo
 [<img src="./images/playable-nickelodeon-week-playback-test-a.png" height="320" alt="Nickelodeon weeklong playback test">](https://youtu.be/lhw2UKQBqmM) [<img src="./images/playable-nickelodeon-week-playback-test-b.png" height="320" alt="Nickelodeon weeklong playback test">](https://youtu.be/sbAsKG1wDwo)
