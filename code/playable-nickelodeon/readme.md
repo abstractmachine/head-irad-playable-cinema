@@ -1,4 +1,4 @@
-# playable-nickelodeon
+# Playable Nickelodeon
 The Playable Nickelodeon is a hardware based playback device that brings the entire project closer to the autonomous, edge-computing goals of this project. These goals align with the [DataCraft](https://datacrafty.ch) research project where our long-term goals are to find/invent/hack various means for creating smaller, offline, and/or autonomous AI inferencing and training strategies for our art & design projects.
 
 This code is designed to run on a low-cost Raspbery Pi 5 device, ideally with an internal SSD card with sufficient size to hold the entire collection of videos that will be played back by the device.
