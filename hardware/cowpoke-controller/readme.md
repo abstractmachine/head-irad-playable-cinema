@@ -19,6 +19,8 @@ A more recent render:
 ## Layers
 <img alt="Cowpoke Controller metal frame" src="./images/head-irad-cowpoke-controller-0353.png" height="240" /> <img alt="Cowpoke Controller layers" src="./images/cowpoke-controller-no-frame-front.png" height="240" /> <img alt="Cowpoke Controller layers" src="./images/cowpoke-controller-no-frame-layers.png" height="240" />
 
+![Cowpoke Controller circuit design](cowpoke-controller-0CB1ED5798D6-1.jpg)
+
 ## User tests
 Quick animation of hand movement test:
 
