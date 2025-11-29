@@ -17,7 +17,7 @@ A more recent render:
 <img alt="Cowpoke Controller Mockup" src="./images/cowpoke-controller-render-2025-09-15.png" height="320">
 
 ## Frame
-<img alt="Cowpoke Controller metal frame" src=".images/head-irad-cowpoke-controller-0353.png" height="320">
+<img alt="Cowpoke Controller metal frame" src="./images/head-irad-cowpoke-controller-0353.png" height="320">
 
 ## User tests
 Quick animation of hand movement test:
