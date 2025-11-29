@@ -4,6 +4,8 @@ Notes for current autonomous playback device.
 ## Demo
 [<img src="./images/playable-nickelodeon-week-playback-test-a.png" height="320" alt="Nickelodeon weeklong playback test">](https://youtu.be/lhw2UKQBqmM) [<img src="./images/playable-nickelodeon-week-playback-test-b.png" height="320" alt="Nickelodeon weeklong playback test">](https://youtu.be/sbAsKG1wDwo)
 
+Links: [https://youtu.be/lhw2UKQBqmM](https://youtu.be/lhw2UKQBqmM), [https://youtu.be/lhw2UKQBqmM](https://youtu.be/lhw2UKQBqmM)
+
 ## HEVC Playback
 ChatGPT says that we actually need H.265/HEVC on RPI5.
 
