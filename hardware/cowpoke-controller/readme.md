@@ -6,7 +6,7 @@ Joystick, gamepad, joypad, stick, controller, call it whatever you want: we are 
 ## Design
 After many failed [experiments](./experiments/) by Douglas, Faust made the following drawing which placed us on the right path of exploring the shape of [Derringer](https://en.wikipedia.org/wiki/Derringer) pistols, as opposed to the [Colt](https://en.wikipedia.org/wiki/Colt_Single_Action_Army) family of pistols along with all it's bretheren.
 
-<img alt="Cowpoke Controller drawing - Faust Perillaud" src="./images/faust-drawing.png" height="320">
+<img alt="Cowpoke Controller drawing - Faust Perillaud" src="./images/faust-drawing.png" height="320"> <img alt="Cowpoke Controller drawing - Faust Perillaud" src="./images/faust-drawing-isolated.png" height="320">
 
 ## Early Mockup
 <img alt="Cowpoke Controller Mockup" src="./images/Cowpoke-Controller-2025-09-12-a.jpg" height="320>
