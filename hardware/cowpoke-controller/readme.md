@@ -16,6 +16,9 @@ A more recent render:
 
 ![Cowpoke Controller Mockup](./images/cowpoke-controller-render-2025-09-15.png)
 
+## Frame
+![Cowpoke Controller metal frame](head-irad-cowpoke-controller-0353.png)
+
 ## User tests
 Quick animation of hand movement test:
 
@@ -25,6 +28,7 @@ Cf. https://youtu.be/peajP1k5_gU
 
 Excerpts of other hand tests:
 
+![Cowpoke Controller user tests - 2025-09-15](./images/head-irad-cowpoke-controller-9206.png)
 ![Cowpoke Controller user tests - 2025-09-16](./images/cowpoke-controller-user-tests-9264.jpg)
 ![Cowpoke Controller user tests - 2025-09-16](./images/cowpoke-controller-user-tests-9227.jpg)
 ![Cowpoke Controller user tests - 2025-09-16](./images/cowpoke-controller-user-tests-9261.jpg)
@@ -47,7 +51,15 @@ For now we will be using the GP2040 in standard HID PC Joystick mode, which requ
 ## Process
 [Guillaume Stagnaro](https://www.stagnaro.net) is currently developping the controller circuit + final 3D CAD model. We are using [KiCAD](https://www.kicad.org) for the PCB development, and [JLC-PCB](https://jlcpcb.com/) + [LCSC](https://www.lcsc.com) for the circuit board production, including their pick-in-place solutions to order as well as place the entire circuit components on the board in one integrated solution. Guillaume is using [easyeda2kicad](https://github.com/uPesy/easyeda2kicad.py) to synchronize his work in KiCAD with the massive library of components at [LCSC](https://www.lcsc.com).
 
+![Guillaume Stagnaro @ Pool numérique, HEAD – Genève](./images/head-irad-cowpoke-controller-9232.png)
+![Guillaume Stagnaro @ Pool numérique, HEAD – Genève](./images/head-irad-cowpoke-controller-9228.png)
+
 We will also use their [JLC-3DP](https://jlc3dp.com) service to cutout the physical controller frame in stainless steel (frame) and solid wood (stock handles). Guillaume is using a hybrid KiCAD + [Rhino3D](https://www.rhino3d.com) solution to integrate these two layers (circuit design + object design). Douglas is using [Shapr3D](https://www.shapr3d.com) based on Guillaume's [STEP](https://en.wikipedia.org/wiki/ISO_10303-21) files generated in Rhino3D, and constant test printing using [PrusaSlicer](https://www.prusa3d.com/page/prusaslicer_424/) and a [Prusa MK4S](https://www.prusa3d.com) / [Prusa One](https://www.prusa3d.com/product/prusa-core-one-kit).
+
+## Production
+We have encountered an interesting snag in production of this controller. There is a certain ambiguity as to the functional use of this controller and whether or not it falls into the category of “controlled products”. Cf:
+
+![Controlled Substances category](./images/cnc-controlled-product.png) ![Controlled Substances category](./images/cnc-controlled-products-reply.png)
 
 # CAD Models
 Although we have successfully used the mockups to make our choices concerning dimensions and fundamental shapes, there is still a lot of fine tuning required with the KiCAD circuit diagram and component selection and layout. Here is a folder with some of the latest mockups used to make our design decisions: [Cowpoke Controller models](./models/).

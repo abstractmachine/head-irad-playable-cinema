@@ -19,6 +19,9 @@ The cowpoke cabin is the physical manifestation of the Playable Cinema project, 
     - Enzo Mari
 
 ## Construction
+[Faust Perillaud]() and [Douglas Edric Stanley](http://abstractmachine.net/biography) constructed this cabin under the direction and collaboration of [Colin Castellano](https://ebenisterie-castellano.ch) over the last two weeks of November 2025. Photographic documentation of this cabin will take place from December 1 to 3, 2025.
+
+<img src="./images/head-irad-playable-cabin-construction-4204.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4224.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4225.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4226.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4227.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4231.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4248.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4256.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4258.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4264.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4266.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4270.jpg" height="320" />  <img src="./images/head-irad-playable-cabin-construction-4273.jpg" height="320" />  <img src="./images/head-irad-playable-cabin-construction-4273.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4277.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4289.jpg" height="320" />
 
 ### Blueprints
 Blueprints to build the cabin can be found in this folder at: [cowpoke-cabin](./blueprints/)
