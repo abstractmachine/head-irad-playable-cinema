@@ -34,7 +34,7 @@ A [training and playback tool](./code/playable-tool/readme.md) is currently in d
 ## Demo
 You can watch a short excerpt of the software synchronizing in real-time images from gameplay and shots from historical western cinema:
 
-[![](https://youtu.be/HK4ISlI1vM0)](./code/playable-tool/images/head-irad-playable-cinema-sync-test-train-robbery.png)
+[![](./code/playable-tool/images/head-irad-playable-cinema-sync-test-train-robbery.png)]([](https://youtu.be/HK4ISlI1vM0))
 
 ## Cabin
 A [cabin](./hardware/cowpoke-cabin/readme.md) is currently in production that integrates all the parts of the project.
