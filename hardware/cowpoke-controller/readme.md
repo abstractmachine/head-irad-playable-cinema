@@ -17,7 +17,7 @@ A more recent render:
 <img alt="Cowpoke Controller Mockup" src="./images/cowpoke-controller-render-2025-09-15.png" height="320">
 
 ## Layers
-<img alt="Cowpoke Controller metal frame" src="./images/head-irad-cowpoke-controller-0353.png" height="320"> <img alt="Cowpoke Controller layers" src="./images/cowpoke-controller-no-frame-front.png" height="320"> <img alt="Cowpoke Controller layers" src="./images/cowpoke-controller-no-frame-layers.png" height="320">
+<img alt="Cowpoke Controller metal frame" src="./images/head-irad-cowpoke-controller-0353.png" height="240"> <img alt="Cowpoke Controller layers" src="./images/cowpoke-controller-no-frame-front.png" height="240"> <img alt="Cowpoke Controller layers" src="./images/cowpoke-controller-no-frame-layers.png" height="240">
 
 ## User tests
 Quick animation of hand movement test:
@@ -56,7 +56,7 @@ We will also use their [JLC-3DP](https://jlc3dp.com) service to cutout the physi
 ## Production Problems
 We have encountered an interesting snag in production of this controller. There is a certain ambiguity as to the functional use of this controller and whether or not it falls into the category of *“controlled products”*. Cf:
 
-[<img alt="Controlled Substances category" src="./images/cnc-controlled-product.png" height="320">](./images/cnc-controlled-product.png) [<img alt="Controlled Substances category" src="./images/cnc-controlled-products-reply.png" height="320">](./images/cnc-controlled-products-reply.png)
+[<img alt="Controlled Substances category" src="./images/cnc-controlled-product.png" height="480">](./images/cnc-controlled-product.png) [<img alt="Controlled Substances category" src="./images/cnc-controlled-products-reply.png" height="480">](./images/cnc-controlled-products-reply.png)
 
 # CAD Models
 Although we have successfully used the mockups to make our choices concerning dimensions and fundamental shapes, there is still a lot of fine tuning required with the KiCAD circuit diagram and component selection and layout. Here is a folder with some of the latest mockups used to make our design decisions: [Cowpoke Controller models](./models/).
