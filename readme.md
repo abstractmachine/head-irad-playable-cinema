@@ -24,7 +24,7 @@ In this current form, the project explores how hybrid strategies can emerge new 
 - [Douglas Edric Stanley](https://abstractmachine.net), Project Lead
 - [Faust Perillaud](https://2024.head-geneve.show/en/projects/spectral-yard-fp-100e1), Research Assistant, training & labelling
 - [Guillaume Stagnaro](https://www.stagnaro.net), [Cowpoke Controller](./hardware/cowpoke-controller/) Developer
-- [Colin Castellano](https://ebenisterie-castellano.ch)
+- [Colin Castellano](https://ebenisterie-castellano.ch), Wood construction consulting & production
 
 ## Software
 A [training and playback tool](./code/playable-tool/readme.md) is currently in development.
