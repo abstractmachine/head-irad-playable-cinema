@@ -32,9 +32,11 @@ A [training and playback tool](./code/playable-tool/readme.md) is currently in d
 ![Playable-Cinema-Tool](./code/playable-tool/screenshots/playable-cinema-tool-2025-09-09.png)
 
 ## Demo
-You can watch a short excerpt of the software synchronizing in real-time images from gameplay and shots from historical western cinema:
-
-[![](./code/playable-tool/images/head-irad-playable-cinema-sync-test-train-robbery.png)]([](https://youtu.be/HK4ISlI1vM0))
+You can watch a short excerpt of the software synchronizing in real-time images from gameplay and shots from historical western cinema
+- ![](./code/playable-tool/images/head-irad-playable-cinema-sync-test-train-robbery.png)]([](https://youtu.be/-g9P9GaXHlI))
+    - Linl: [Train Robbery](https://youtu.be/-g9P9GaXHlI) ([https://youtu.be/-g9P9GaXHlI](https://youtu.be/-g9P9GaXHlI)):
+- [![](./code/playable-tool/images/playable-cinema-dual-sync-test-carriage-entering-stables.png)]([](https://youtu.be/cOG3Zf-KX_0))
+    - Linl: [Carriage Entering Stables](https://youtu.be/cOG3Zf-KX_0) ([https://youtu.be/cOG3Zf-KX_0](https://youtu.be/cOG3Zf-KX_0))
 
 ## Cabin
 A [cabin](./hardware/cowpoke-cabin/readme.md) is currently in production that integrates all the parts of the project.
