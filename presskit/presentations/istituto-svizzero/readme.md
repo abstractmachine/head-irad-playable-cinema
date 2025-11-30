@@ -11,6 +11,15 @@ Playable Cinema is a research project exploring how artificial intelligence can 
 
 At Istituto Svizzero, the team will show the behind-the-scenes logic of their audiovisual remix engine, and explore the new curatorial methodologies that are beginning to emerge as generative tools collaborate with humans in assembling the haunted archive of our shared hallucinations of the West.
 
+## Keynote
+Here is a link to the Keynote presentation:
+- [head-irad-playable-istituto-svizzero-2025-11-27.key](https://drive.google.com/file/d/1tZrH-56Af5QQWoMjkEfPuZMDoqdUXfen/view?usp=sharing)
+
+## PDF
+Here is a PDF version of the Keynote presentation, along with the presenter notes version.
+- [head-irad-playable-istituto-svizzero-2025-11-27.pdf](https://drive.google.com/file/d/1ZuCUa5uAIqiXCG9jcp0EkGwCcUmW9fdw/view?usp=sharing)
+- [head-irad-playable-istituto-svizzero-2025-11-27+notes.pdf](https://drive.google.com/file/d/1_gGKHiqUoNQcKJnzjK8YVKIhhCKoYyxV/view?usp=sharing)
+
 ## Images
 ![Playable Cinema - Cowpoke Controller - Screenshot](../../images/playable-cinema-cowpoke-controller-cheat.jpg)
 Cowpoke Controller, Playable Cinema Project, IRAD, HEAD – Genève

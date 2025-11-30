@@ -41,7 +41,7 @@ You can watch a short excerpt of the software synchronizing in real-time images 
 [Sync Demo - Carriage Entering Stables](https://youtu.be/cOG3Zf-KX_0) ([https://youtu.be/cOG3Zf-KX_0](https://youtu.be/cOG3Zf-KX_0))
 
 ## Cabin
-A [cabin](./hardware/cowpoke-cabin/readme.md) is currently in production that integrates all the parts of the project.
+A [cabin](./hardware/cowpoke-cabin/readme.md) has been constructed that integrates all the parts of the project.
 
 ![Cowpoke Cabin - Side View](./presskit/images/playable-cinema-cowpoke-cabin-back-view.jpg)
 
@@ -50,7 +50,7 @@ Blueprints to build this cabin can be found in the repository [hardware/cowpoke-
 ![Cowpoke Cabin - Isometric Named](./hardware/cowpoke-cabin/images/Cabin-Names-2025-11-20-a.png)
 
 ## Hardware
-A [physical object](./hardware/cowpoke-controller/readme.md) is currently in developement. This allows visitors to interact with the installation.
+A [physical game controller](./hardware/cowpoke-controller/readme.md) is currently in developement. This allows visitors to interact with the installation.
 
 ![Cowpoke Controller render](./presskit/images/head-irad-cowpoke-controller-front-2025-11-03.png)
 
