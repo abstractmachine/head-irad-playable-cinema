@@ -4,25 +4,27 @@ The cowpoke cabin is the physical manifestation of the Playable Cinema project, 
 ![Cowpoke Cabin - Side View](../../presskit/images/playable-cinema-cowpoke-cabin-side-view.jpg)
 
 ## Outline
+- Influences
+    - Henry David Thoreau
+    - The Unabomber
+    - Dogville
+- Maker Stuff
+    - The Joinery Compendium
+    - Wedged Tusk Tenon
+    - U-Joints
+    - Enzo Mari
 - [Construction](#construction)
     - [Blueprints](#blueprints)
     - [CAD](#cad)
     - [Dimensions](#dimensions)
     - [Renders](#renders)
-- Influences
-    - Henry David Thoreau
-    - The Unabomber
-    - Dogville
-    - The Joinery Compendium
-    - Wedged Tusk Tenon
-    - U-Joints
-    - Enzo Mari
+
+## Influences
+
 
 ## Construction
 [Faust Perillaud]() and [Douglas Edric Stanley](http://abstractmachine.net/biography) constructed this cabin under the direction and collaboration of [Colin Castellano](https://ebenisterie-castellano.ch) over the last two weeks of November 2025. Photographic documentation of this cabin will take place from December 1 to 3, 2025.
 
-<img src="./images/head-irad-playable-cabin-construction-4204.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4224.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4225.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4226.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4227.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4231.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4248.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4256.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4258.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4264.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4266.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4270.jpg" height="320" />  <img src="./images/head-irad-playable-cabin-construction-4273.jpg" height="320" />  <img src="./images/head-irad-playable-cabin-construction-4273.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4277.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4289.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4277.jpg" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9588.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9589.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9590.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9591.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9592.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9594.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9595.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9598.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9599.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9600.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9601.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9603.png" height="320" />
-<img src="./images/head-irad-playable-cabin-construction-4204.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4224.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4225.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4226.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4227.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4231.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4248.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4256.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4258.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4264.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4266.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4270.jpg" height="320" />  <img src="./images/head-irad-playable-cabin-construction-4273.jpg" height="320" />  <img src="./images/head-irad-playable-cabin-construction-4273.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4277.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4289.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4277.jpg" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9588.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9589.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9590.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9591.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9592.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9594.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9595.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9598.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9599.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9603.png" height="320" />
 ### Blueprints
 Blueprints to build the cabin can be found in this folder at: [cowpoke-cabin](./blueprints/)
 
@@ -30,31 +32,39 @@ Blueprints to build the cabin can be found in this folder at: [cowpoke-cabin](./
 
 ### CAD
 You can download the latest 3D CAD model of the cabin in two formats:
-- [head-irad-cowpoke-cabin-2025-11-20-a.step](./models/head-irad-cowpoke-cabin-2025-11-20-a.step)
-- [head-irad-cowpoke-cabin-2025-11-20-a.shapr](./models/head-irad-cowpoke-cabin-2025-11-20-a.shapr)
+- [head-irad-cowpoke-cabin-2025-11-30.step](./models/head-irad-cowpoke-cabin-2025-11-30.step)
+- [head-irad-cowpoke-cabin-2025-11-30.shapr](./models/head-irad-cowpoke-cabin-2025-11-30.shapr)
 
 The original Shapr3D file contains modular parametric varibles that can adjust various aspects of the design.
 
 The folder of previous CAD files is here: [models/](./models/)
 
-## Dimensions
+### Dimensions
 Extents:
-- Width: 2500mm
-- Depth: 3750mm
-- Height: 3450mm
+- Width: 2490mm
+- Depth: 3740mm
+- Height: 3440mm
 
-Document: [cowpoke-cabin-extents-2025-11-03](./blueprints/cowpoke-cabin-extents-2025-11-03.pdf)
+Document: [cowpoke-cabin-extents-2025-11-03](./blueprints/Cabin-Extents-2025-11-30.pdf)
 
-![](./images/head-irad-playable-cinema-cabin-extents-2025-11-03.png)
+![](./images/Cabin-Extents-2025-11-30.png)
 
-## Renders
+### Renders
 ![](../../presskit/images/playable-cinema-cowpoke-cabin-back-view.jpg)
 
-## Color Coding
+### Color Coding
 TBD
 
+### Images
+
+[![](./images/cabin-assemblage-2025-11-25.gif)](https://youtu.be/xarn6tkhMLY)
+
+[Cabin Assemblage 2025-11-25](https://youtu.be/xarn6tkhMLY) (YT)
+
+<img src="./images/head-irad-playable-cabin-construction-4204.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4224.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4225.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4226.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4227.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4231.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4248.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4256.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4258.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4264.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4266.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4270.jpg" height="320" />  <img src="./images/head-irad-playable-cabin-construction-4273.jpg" height="320" />  <img src="./images/head-irad-playable-cabin-construction-4273.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4277.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4289.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4277.jpg" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9588.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9589.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9590.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9591.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9592.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9594.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9595.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9598.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9599.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9600.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9601.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9603.png" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4204.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4224.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4225.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4226.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4227.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4231.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4248.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4256.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4258.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4264.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4266.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4270.jpg" height="320" />  <img src="./images/head-irad-playable-cabin-construction-4273.jpg" height="320" />  <img src="./images/head-irad-playable-cabin-construction-4273.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4277.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4289.jpg" height="320" /> <img src="./images/head-irad-playable-cabin-construction-4277.jpg" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9588.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9589.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9590.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9591.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9592.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9594.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9595.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9598.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9599.png" height="320" /> <img alt="Cabin construction" src="./images/head-irad-playable-cabin-construction-9603.png" height="320" />
+
 ## Original Brief
-The goal of the cabin is to regroup all the various components of this complex project into a single, easily accessible installation.
+TODO: these are some notes from the the original brief that have yet to be synthesized in the text above.
 
 - Structure. Wood-framed structure: Oregon Douglas Fur.
 - Joints
