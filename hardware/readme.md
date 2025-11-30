@@ -1,5 +1,5 @@
 # Hardware
-A [physical object](./hardware/cowpoke-controller/readme.md) is currently in developement. This allows visitors to interact with the installation.
+A [physical controller](./hardware/cowpoke-controller/readme.md) is currently in developement. This allows visitors to interact with the installation.
 
 ![Cowpoke Controller render](./cowpoke-controller/images/cowpoke-controller-render-2025-09-15.png)
 
@@ -22,4 +22,4 @@ A [cabin](./cowpoke-cabin/readme.md) is currently in production that integrates 
 
 ![Cowpoke Cabin - Side View](../presskit/images/playable-cinema-cowpoke-cabin-side-view.jpg)
 
-Blueprints to build this cabin can be found in the repository [hardware/cowpoke-cabin](./cowpoke-cabin/blueprints/)
+More info, including blueprints to build this cabin, can be found in the repository [hardware/cowpoke-cabin](./cowpoke-cabin/)
