@@ -18,6 +18,7 @@ The cowpoke cabin is the physical manifestation of the Playable Cinema project, 
     - [CAD](#cad)
     - [Dimensions](#dimensions)
     - [Renders](#renders)
+    - [Images + Timelapse](#images)
 
 ## Influences
 In the conceptual mapping of this cabin, [Douglas](http://abstractmachine.net/biography) looked at several influences. Here are the main three:
@@ -96,7 +97,7 @@ Here is a render from the 3D Sketch, along with a closer view of how the console
 ### Color Coding
 TBD
 
-### Images
+### Images + Timelapse
 
 #### Assembly
 [![](./images/cabin-assembly-2025-11-25.gif)](https://youtu.be/3f9DKMTOF4E)
