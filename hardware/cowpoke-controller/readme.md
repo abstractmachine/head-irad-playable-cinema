@@ -3,6 +3,8 @@ Joystick, gamepad, joypad, stick, controller, call it whatever you want: we are 
 
 <img alt="Cowpoke Controller 2025-11-02" src="../../presskit/images/head-irad-cowpoke-controller-front-2025-11-03.png" height="540" />
 
+This Cowpoke Controller is a physically modified PS4 controller designed to lock the user into Red Dead Redemption 2 while providing a tactile, diegetic way to move between curated in-game moments.
+
 ## Design
 After many failed [experiments](./experiments/) by Douglas, Faust made the following drawing which placed us on the right path of exploring the shape of [Derringer](https://en.wikipedia.org/wiki/Derringer) pistols, as opposed to the [Colt](https://en.wikipedia.org/wiki/Colt_Single_Action_Army) family of pistols along with all it's bretheren.
 
@@ -83,3 +85,29 @@ Current the circuit has the following components:
     - 4 x Triggers (R1, R2, L1, L2)
 - [Foster Vibration Actuator](https://www.foster-electric.com/products/vibration_actuator/)
 - {TBD…}
+
+Brief
+Subheading
+
+
+Key Features
+- Controls
+    - Normal PS4 Button/Joystick commands
+    - Restricted Controls
+        - All standard navigation or “exit game” buttons are disabled/removed.
+        - Prevents leaving the RDR2 environment or entering unrelated PS4 menus.
+    - Rotating Central Barrel
+        - A sculptural element inspired by the cylinder of a Colt revolver.
+        - The operator “spins the barrel” to jump between cinematic events, creating dynamic re-cuts of RDR2
+        - Rotating the barrel triggers the specific sequence of button presses needed to:
+            - Open RDR2’s Load Game menu.
+            - Navigate through a list of pre-saved game moments.
+            - Confirm selection with any button press, except cancel (exit menu selection)
+        - Curated Save Slots
+            - Each slot represents a “cinematic moment” (action scene, landscape, encounter).
+            - Acts as a filmic shot library, letting the operator quickly switch contexts during a live montage or performance
+
+## Early Prototypes
+These were all mostly-failed attempts at trying to better understand how a Colt is assembled. Interesting stuff, but nothing conclusive. These files can be found in the git repository under models. They are included here to show the direction of this part of the project, but not its final form.
+
+(TODO: Add archive images)
