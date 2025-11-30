@@ -5,9 +5,9 @@ The cowpoke cabin is the physical manifestation of the Playable Cinema project, 
 
 ## Outline
 - Influences
-    - Henry David Thoreau
-    - The Unabomber
-    - Dogville
+    - [Henry David Thoreau](#henry-david-thoreau)
+    - [The Unabomber](#the-unabomber)
+    - [Dogville](#dogville)
 - Maker Stuff
     - The Joinery Compendium
     - Wedged Tusk Tenon
@@ -23,6 +23,15 @@ The cowpoke cabin is the physical manifestation of the Playable Cinema project, 
 In the conceptual mapping of this cabin, [Douglas](http://abstractmachine.net/biography) looked at several influences. Here are the main three:
 
 ### Henry David Thoreau
+[Thoreau](https://en.wikipedia.org/wiki/Henry_David_Thoreau)’s Walden cabin is the archetype we kept circling back to: minimal frame: a diagram of an autonomous lifestyle, albeit literary, open to dispute; a sort of myth that nevertheless continues to inspire those dreaming of autonomy. So it is not the myth of solitude, but the cabin as an interface; a deliberately constrained environment designed to filter the individual's relation to the world and an idea of civilization. Thoreau constructed his cabin as a symbol of resistance from early industrial modernity. So too we borrow the same gesture for our times, shaped by algorithmic systems mediating subjectivity.
+
+[![Walden Cabin](https://upload.wikimedia.org/wikipedia/commons/thumb/1/15/Replica_of_Thoreau%27s_cabin_near_Walden_Pond_and_his_statue.jpg/1280px-Replica_of_Thoreau%27s_cabin_near_Walden_Pond_and_his_statue.jpg)](https://en.wikipedia.org/wiki/Walden)
+
+The idea here is also to play with the construction: exposed joinery, a readable structure, and a sense that the “house” is slightly too transparent to be an actual shelter.
+
+![Walden, Henry David Thoreau](./images/walden_thoreau.png)
+
+[Thoreau, Henry David](https://en.wikipedia.org/wiki/Henry_David_Thoreau). [Walden, and On The Duty Of Civil Disobedience](https://gutenberg.org/ebooks/205). Ticknor and Fields, 1854.
 
 ### The Unabomber
 The Ted Kaczynski cabin is in many aspects a more contemporary nod to Thoreau’s dream of an autonomous life as a form of civil disobedience — updated for an era of technological systems of control. This cabin positions itself at the farthest possible extremity of a growing “Technological Society”. It is the paranoiac extreme of a form of technological dread that grows yet again strong as “artificial intelligence” spreads its tentacles into the smallest corners of our human experience.
