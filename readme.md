@@ -73,8 +73,9 @@ There is a [list of the western films](./cineclub/README.md) we are using to tra
 ## HEAD – Genève
 - [Anthony Masure](https://www.anthonymasure.com), Dean of Research, [IRAD](https://www.hesge.ch/head/en/programs-research/research), [HEAD – Genève](https://www.hesge.ch/head/en), [HES-SO](https://www.hes-so.ch/)
 - [Christelle Granite-Noble](https://www.hesge.ch/head/annuaire/christelle-granite-noble), Administrative Coordination, [IRAD](https://www.hesge.ch/head/en/programs-research/research), [HEAD – Genève](https://www.hesge.ch/head/en), [HES-SO](https://www.hes-so.ch/)
-- [Alexandre Simian](https://www.hesge.ch/head/annuaire/alexandre-simian), Lead [Wood Workshop](https://www.hesge.ch/head/en/wood-workshop), [HEAD – Genève](https://www.hesge.ch/head/en)
-- [Sébastien Pitteloud](https://www.hesge.ch/head/annuaire/sebastien-pitteloud), Assistant [Wood Workshop](https://www.hesge.ch/head/en/wood-workshop), [HEAD – Genève](https://www.hesge.ch/head/en)
+- [Valentin Dubois](https://www.hesge.ch/head/en/directory/valentin-dubois), [HEAD – Genève](https://www.hesge.ch/head/en), Head of [Materials + Prototyping Pool](https://www.hesge.ch/head/en/studies-and-research/pools/materials-prototyping-pool)
+- [Alexandre Simian](https://www.hesge.ch/head/annuaire/alexandre-simian), Technician [Wood Workshop](https://www.hesge.ch/head/en/wood-workshop), [HEAD – Genève](https://www.hesge.ch/head/en)
+- [Sébastien Pitteloud](https://www.hesge.ch/head/annuaire/sebastien-pitteloud), Technician [Wood Workshop](https://www.hesge.ch/head/en/wood-workshop), [HEAD – Genève](https://www.hesge.ch/head/en)
 - [Charles Cuccu](https://www.hesge.ch/head/annuaire/newuser5cc3f9459ff5c), Régisseur [HEAD – Genève](https://www.hesge.ch/head/en)
 
 ## Financing
