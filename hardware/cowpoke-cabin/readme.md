@@ -55,6 +55,10 @@ The idea for this installation is that as the visitor/player sits inside of the 
 
 But inversely, the same experience also allows another perspective: that of sitting inside of the cabin, interacting with the landscape via the interactive game controller, and looking out into a near-infinite plane of possible views, perspectives, and actions constructed by both the 360° game landscape, and all of the associated images found within the database of historical westerns.
 
+![Dogville set design](./images/dogville-set-design.png)
+
+![Dogville set design](./images/dville-set-design-overhead.png)
+
 ## Construction
 [Faust Perillaud]() and [Douglas Edric Stanley](http://abstractmachine.net/biography) constructed this cabin under the direction and collaboration of [Colin Castellano](https://ebenisterie-castellano.ch) over the last two weeks of November 2025. Photographic documentation of this cabin will take place from December 1 to 3, 2025.
 
