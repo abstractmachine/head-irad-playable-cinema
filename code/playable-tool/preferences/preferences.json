@@ -4,11 +4,11 @@
   "subtitles": {},
   "prompt": {},
   "playhouse": {
-    "visible_ui": false
+    "visible_ui": true
   },
   "playbill": {},
   "nickelodeon": {
-    "visible_ui": false
+    "visible_ui": true
   },
   "shotlist": {
     "col0_width": 44,
@@ -33,6 +33,6 @@
     "main_text_size": 13
   },
   "faiss": {
-    "is_active": true
+    "is_active": false
   }
 }

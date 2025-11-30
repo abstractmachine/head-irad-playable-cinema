@@ -25,7 +25,7 @@ def cmd_legacy(ns):
         print("[legacy] Parsed flat arguments")
     
     parser = build_parser()
-    print("No command selected. Use one of: --list, --detect, --extract_frames, --annotate, --erase, --process\n")
+    print("No command selected. Use one of: --list, --detect, --extract, --annotate, --erase, --process\n")
     parser.print_help()
     return 2
 
@@ -36,37 +36,41 @@ def build_parser():
         description="Playable Cinema CLI"
     )
 
-    # Project
+    # Project configuration
     p.add_argument(
-        "--project-root", "--project_root",
+        "--project-root",
         dest="project_root",
         default="/Volumes/abstract-2T/project/",
         help="Root directory for the project"
     )
     
-    # Core selection
+    # Core selection (--index OR VIDEO argument)
     p.add_argument("--index", type=int, default=-1, help="Item index from metadata CSV")
-    p.add_argument("--type", choices=["shot", "scene"], default="shot", help="Operation type (for --erase)")
     p.add_argument("--media", choices=["movie", "gameplay"], default="movie", help="Media library")
     
-    # Annotation controls
-    p.add_argument("--shot_index", type=int, default=1, help="Starting shot index (1-based)")
-    p.add_argument("--annotation_count", type=int, default=None, help="Number of shots to annotate (default: all)")
+    # Batch processing
     p.add_argument("--filelist", type=str, default=None, help="Text file with one video filename per line")
     
-    # Model/runtime
-    p.add_argument("--temperature", type=float, default=0.3, help="Model temperature (0.0-1.0)")
-    p.add_argument("--verbose", action="store_true", help="Enable verbose logging")
-    
-    # Detection method parameters
-    p.add_argument("--method", choices=["adaptive","content"], default="adaptive", help="Shot detection method")
-    p.add_argument("--threshold", type=float, default=3.0, help="Detection threshold (default 3.0 adaptive)")
-    p.add_argument("--shot_max_length", type=float, default=-1.0, help="Max seconds per detected shot; -1 disables splitting")
+    # Shot detection parameters
+    p.add_argument("--method", choices=["adaptive", "content"], default="adaptive", help="Shot detection method")
+    p.add_argument("--threshold", type=float, default=3.0, help="Detection threshold")
+    p.add_argument("--max-shot-length", dest="shot_max_length", type=float, default=-1.0, 
+                   help="Max seconds per shot; -1 disables splitting")
     
     # Frame extraction
-    p.add_argument("--frames-per-shot", type=int, default=5, dest="frames_per_shot",
+    p.add_argument("--frames", dest="frames_per_shot", type=int, default=5,
                    help="Frames per shot for extraction")
-    p.add_argument("--system", default="system.txt", help="System prompt file for annotation")
+    
+    # Annotation controls
+    p.add_argument("--start", dest="shot_index", type=int, default=1, 
+                   help="Starting shot index (1-based)")
+    p.add_argument("--limit", dest="annotation_count", type=int, default=None, 
+                   help="Number of shots to annotate (default: all)")
+    p.add_argument("--temperature", type=float, default=0.3, 
+                   help="Model temperature (0.0-1.0)")
+    
+    # Global flags
+    p.add_argument("--verbose", action="store_true", help="Enable verbose logging")
 
     # Commands (mutually exclusive)
     mode = p.add_mutually_exclusive_group(required=False)
@@ -76,7 +80,7 @@ def build_parser():
         action="store_const",
         const=cmd_list,
         dest="func",
-        help="List all items in --media library (movie or gameplay)"
+        help="List all items in --media library"
     )
 
     mode.add_argument(
@@ -87,18 +91,18 @@ def build_parser():
         action=_DispatchAction,
         cmd="detect",
         func=cmd_detect,
-        help="Detect shots in VIDEO or use --index from media library"
+        help="Detect shots in VIDEO or --index"
     )
 
     mode.add_argument(
-        "--extract_frames",
+        "--extract",
         nargs="?",
         metavar="VIDEO",
         dest="video",
         action=_DispatchAction,
-        cmd="extract_frames",
+        cmd="extract",
         func=cmd_extract,
-        help="Extract sample frames from VIDEO or use --index"
+        help="Extract sample frames from VIDEO or --index"
     )
 
     mode.add_argument(
@@ -109,18 +113,18 @@ def build_parser():
         action=_DispatchAction,
         cmd="annotate",
         func=cmd_annotate,
-        help="Annotate detected shots in VIDEO or use --index"
+        help="Annotate detected shots in VIDEO or --index"
     )
 
     mode.add_argument(
         "--erase",
         nargs="?",
-        metavar="VIDEO",
-        dest="video",
+        metavar="TYPE",
+        dest="erase_type",
         action=_DispatchAction,
         cmd="erase",
         func=cmd_erase,
-        help="Erase annotations (use --type shot|scene) in VIDEO or use --index"
+        help="Erase captions: 'shot' or 'scene' (requires --index)"
     )
 
     mode.add_argument(
@@ -131,7 +135,7 @@ def build_parser():
         action=_DispatchAction,
         cmd="process",
         func=cmd_process,
-        help="Detect → extract → annotate pipeline for VIDEO, --index, or --filelist"
+        help="Full pipeline: detect → extract → annotate"
     )
 
     p.set_defaults(func=cmd_legacy, cmd=None)
@@ -429,6 +433,13 @@ def cmd_erase(ns):
     except ImportError as e:
         raise RuntimeError(f"Cannot import required modules: {e}")
 
+    if ns.index < 0:
+        raise ValueError("--erase requires --index")
+
+    erase_type = ns.erase_type or "shot"  # Default to shot if no argument given
+    if erase_type not in ["shot", "scene"]:
+        raise ValueError(f"Invalid erase type: {erase_type}. Use 'shot' or 'scene'")
+
     if ns.media == "movie":
         csv_path = os.path.join(ns.project_root, "metadata", "cinematheque.csv")
         lib = Cinematheque(csv_path, ns.project_root)
@@ -442,7 +453,7 @@ def cmd_erase(ns):
 
     title = lib.get_title(item)
     
-    if ns.type == "shot":
+    if erase_type == "shot":
         success = lib.erase_shot_captions(item)
         what = "shot captions"
     else:
