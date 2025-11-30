@@ -29,7 +29,7 @@ In the conceptual mapping of this cabin, [Douglas](http://abstractmachine.net/bi
 
 The idea here is also to play with the construction: exposed joinery, a readable structure, and a sense that the “house” is slightly too transparent to be an actual shelter.
 
-![Walden, Henry David Thoreau](./images/walden_thoreau.png)
+[![Walden, Henry David Thoreau](./images/walden_thoreau.png)](https://gutenberg.org/ebooks/205)
 
 [Thoreau, Henry David](https://en.wikipedia.org/wiki/Henry_David_Thoreau). [Walden, and On The Duty Of Civil Disobedience](https://gutenberg.org/ebooks/205). Ticknor and Fields, 1854.
 
