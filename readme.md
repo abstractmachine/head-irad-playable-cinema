@@ -4,9 +4,9 @@
 ## Project
 Cowpokes riding through the ghost town of an abandoned Western. Isolated cabin, solitary frames, staring out onto the flickering plains of a mythology fading to red. A crossroads. Two mediums, revolvers drawn, caught in a deadly standoff.
 
-[![Cowpoke Cabin - Side View](./presskit/images/head-irad-dead-crossing-cabin-cube.png)](https://youtu.be/oTemVyUjSEc)
+[![Cowpoke Cabin - Side View](./presskit/images/head-irad-dead-crossing-cabin-cube.png)](https://youtu.be/lXZD4t-__Wc)
 
-Cf. [Dead Crossing](https://youtu.be/oTemVyUjSEc) installation (YouTube)
+Cf. [Dead Crossing](https://youtu.be/lXZD4t-__Wc) installation (YouTube)
 
 Playable Cinema is a research project exploring how artificial intelligence can ride the invisible frontier between cinema history and interactive gameplay. By using machine learning to analyze classical western cinema, the project constructs a generative database where fragments of film history and the streams of live gameplay bleed into one another; where the joystick becomes an editing tool for an infinite fever dream looping through the ghosts of cinematic history.
 
