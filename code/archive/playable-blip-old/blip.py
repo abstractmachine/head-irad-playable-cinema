@@ -1,17 +1,7 @@
 import cv2, torch, time
 from transformers import BlipProcessor, BlipForConditionalGeneration
-
+from typing import Tuple
 import os
-
-# (optionnel) utile pour éviter les erreurs quand un op n'existe pas sur MPS,
-# mais ATTENTION: tout fallback CPU peut ralentir fortement.
-os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
-
-USE_MPS = torch.backends.mps.is_built() and torch.backends.mps.is_available()
-device = "mps" if USE_MPS else ("cuda" if torch.cuda.is_available() else "cpu")
-
-print(f"[device] {device} | mps_built={torch.backends.mps.is_built()} "
-      f"| mps_available={torch.backends.mps.is_available()}")
 
 # --- settings ---
 MOVIES_DIR = "/Volumes/PLAYABLE-D/project/movies/"
@@ -32,14 +22,27 @@ def ts_from_frame(idx, fps):
     h = int(secs // 3600); m = int((secs % 3600) // 60); s = int(secs % 60)
     return f"{h:02d}:{m:02d}:{s:02d}"
 
+# --- device detection (Jetson-compatible) ---
+if torch.cuda.is_available():
+    device = "cuda"
+    print(f"[device] cuda | GPU: {torch.cuda.get_device_name(0)}")
+else:
+    device = "cpu"
+    print(f"[device] cpu")
+
 # --- load model ---
-processor = BlipProcessor.from_pretrained(MODEL_DIR, use_fast=True)
+print(f"Loading BLIP model from {MODEL_DIR}...")
+processor = BlipProcessor.from_pretrained(MODEL_DIR)
 model = BlipForConditionalGeneration.from_pretrained(MODEL_DIR)
-device = "cuda" if torch.cuda.is_available() else "cpu"
 model.to(device)
+model.eval()  # Set to evaluation mode
+print(f"Model loaded on {device}")
 
 # --- open video ---
 cap = cv2.VideoCapture(MOVIES_DIR + MOVIE_FILE)
+if not cap.isOpened():
+    raise RuntimeError(f"Failed to open video: {MOVIES_DIR + MOVIE_FILE}")
+
 fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
 frame_jump = int(fps * N_SECONDS)
 
