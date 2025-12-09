@@ -6,7 +6,7 @@ Cowpokes riding through the ghost town of an abandoned Western. Isolated cabin, 
 
 [![Cowpoke Cabin - Side View](./presskit/images/head-irad-dead-crossing-cabin-cube-video.png)](https://youtu.be/FBftxKD_kOU)
 
-Cf. [Dead Crossing](https://youtu.be/FBftxKD_kOU) installation (YouTube)
+Cf. [Dead Crossing](https://youtu.be/FBftxKD_kOU) installation (YouTube). Camera: Faust Perillaud. Edit: Douglas Edric Stanley
 
 Playable Cinema is a research project exploring how artificial intelligence can ride the invisible frontier between cinema history and interactive gameplay. By using machine learning to analyze classical western cinema, the project constructs a generative database where fragments of film history and the streams of live gameplay bleed into one another; where the joystick becomes an editing tool for an infinite fever dream looping through the ghosts of cinematic history.
 
@@ -25,8 +25,8 @@ In this current form, the project explores how hybrid strategies can emerge new 
 ![Playable Cinema Research Project, IRAD, HEAD – Genève](./presskit/images/playable-cinema-cowpoke-controller-drunkard.jpg)
 
 ## Team
-- [Douglas Edric Stanley](https://abstractmachine.net), Project Lead, concept, design, development, production
-- [Faust Perillaud](https://2024.head-geneve.show/en/projects/spectral-yard-fp-100e1), Research Assistant, training & labelling, production
+- [Douglas Edric Stanley](https://abstractmachine.net), Project Lead, concept, design, development, production, documentation
+- [Faust Perillaud](https://2024.head-geneve.show/en/projects/spectral-yard-fp-100e1), Research Assistant, training & labelling, production, documentation, photography
 - [Guillaume Stagnaro](https://www.stagnaro.net), [Cowpoke Controller](./hardware/cowpoke-controller/) development
 - [Colin Castellano](https://ebenisterie-castellano.ch), Wood construction consulting & production
 
@@ -48,6 +48,8 @@ You can watch a short excerpt of the software synchronizing in real-time images 
 A [cabin](./hardware/cowpoke-cabin/readme.md) has been constructed that integrates all the parts of the project.
 
 ![Cowpoke Cabin - Side View](./presskit/images/head-irad-dead-crossing-cabin-cube.jpg)
+
+Photo by Faust Perillaud.
 
 Blueprints to build this cabin can be found in the repository [hardware/cowpoke-cabin](./hardware/cowpoke-cabin/blueprints/)
 
