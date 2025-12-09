@@ -3,6 +3,8 @@ The cowpoke cabin is the physical manifestation of the Playable Cinema project, 
 
 ![Cowpoke Cabin - Side View](../../presskit/images/head-irad-dead-crossing-cabin-cube-vertical.jpg)
 
+Photo by Douglas Edric Stanley
+
 ## Outline
 - Influences
     - [Henry David Thoreau](#henry-david-thoreau)
@@ -91,7 +93,7 @@ Document: [cowpoke-cabin-extents-2025-11-03](./blueprints/Cabin-Extents-2025-11-
 
 ![Cabin - Assembly - Cube - HEAD - Genève - 2025-12-03](/presskit/images/head-irad-dead-crossing-cabin-overhead-assembly.jpg)
 
-Photography by Faust Perillaud.
+Photo by Faust Perillaud
 
 ### Renders
 Here is a render from the 3D Sketch, along with a closer view of how the console info is displayed on the wall next to the interactive controller. This sketch does not show the wire connecting the controller to the frame. This controller will be held by the sitting visitor.
