@@ -91,9 +91,11 @@ Document: [cowpoke-cabin-extents-2025-11-03](./blueprints/Cabin-Extents-2025-11-
 
 ### Photo
 
+![Cabin - Assembly - Cube - HEAD - Genève - 2025-12-03](/presskit/images/head-irad-dead-crossing-cabin-cube-assembly-ladder.jpg)
+
 ![Cabin - Assembly - Cube - HEAD - Genève - 2025-12-03](/presskit/images/head-irad-dead-crossing-cabin-overhead-assembly.jpg)
 
-Photo by Faust Perillaud
+Photos by Faust Perillaud
 
 ### Renders
 Here is a render from the 3D Sketch, along with a closer view of how the console info is displayed on the wall next to the interactive controller. This sketch does not show the wire connecting the controller to the frame. This controller will be held by the sitting visitor.
