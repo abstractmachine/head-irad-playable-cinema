@@ -67,7 +67,7 @@ These are some books and design projects that have inspired us in the design and
 ![](images/cowpoke-cabin-books-influences.jpg)
 
 ### The Joinery Compendium
-[<img src="./images/JC_Cover-Kopie-1444x2048.jpg" height="480" />](https://ruby-press.com/shop/the-joinery-compendium-learning-from-traditional-woodworking/) [<img src="./images/TJC_06_c-2048x1450.jpg" height="480" />](https://ruby-press.com/shop/the-joinery-compendium-learning-from-traditional-woodworking/)
+[<img src="./images/JC_Cover-Kopie-1444x2048.jpg" height="320" />](https://ruby-press.com/shop/the-joinery-compendium-learning-from-traditional-woodworking/) [<img src="./images/TJC_06_c-2048x1450.jpg" height="320" />](https://ruby-press.com/shop/the-joinery-compendium-learning-from-traditional-woodworking/)
 
 Sascha Bower & Daniel Pauli, [The Joinery Compendium: Learning From Traditional Woodworking](https://ruby-press.com/shop/the-joinery-compendium-learning-from-traditional-woodworking/), 2024
 
