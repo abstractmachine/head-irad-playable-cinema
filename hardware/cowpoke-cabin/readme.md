@@ -11,10 +11,9 @@ Photo by Douglas Edric Stanley
     - [The Unabomber](#the-unabomber)
     - [Dogville](#dogville)
 - Maker Stuff
-    - The Joinery Compendium
-    - Wedged Tusk Tenon
-    - U-Joints
-    - Enzo Mari
+    - [The Joinery Compendium](#the-joinery-compendium)
+    - [U-Joints](#u-joints)
+    - [Enzo Mari](#enzo-mari)
 - [Construction](#construction)
     - [Blueprints](#blueprints)
     - [CAD](#cad)
@@ -54,16 +53,46 @@ Dogville Set Design, 2003. Cf. [Dogville Prologue](https://www.youtube.com/embed
 
 The staging device of this film is genius, and allowed Lars von Trier to re-introduce the medium-specific artifice of theatrical scenography, storytelling, and also immersion into his cinematographic process. In each scene, the actor is “inside” of a specific space, but also, at all times, positioned within the larger social habitus of the village community.
 
-The idea for this installation is that as the visitor/player sits inside of the structure, they transform into an integral, sculptural, part of the installation. They are part of the spectacle, visible from all sides, almost like a portrait subject being sketched from all sides by a class of portrait painters: portrait of a person sitting in a cabin, staring out the window onto a virtual landscape.
+The idea for our own installation is that as the visitor/player sits inside of the structure, they transform into an integral, sculptural, part of the installation. They are part of the spectacle, visible from all sides, almost like a portrait subject being sketched from all sides by a class of portrait painters: portrait of a person sitting in a cabin, staring out the window onto a {virtual} landscape.
 
-But inversely, the same experience also allows another perspective: that of sitting inside of the cabin, interacting with the landscape via the interactive game controller, and looking out into a near-infinite plane of possible views, perspectives, and actions constructed by both the 360° game landscape, and all of the associated images found within the database of historical westerns.
+But inversely, the same experience also allows another perspective: that of sitting inside of the cabin, interacting with the landscape via the interactive game controller, and looking out into a near-infinite plane of possible views, perspectives, and actions constructed by both the 360° game landscape, and all of the associated images found within the database of historical westerns. Here too, what we might call an “unfinished” structure is in fact more precisely an “open” structure, suggesting as a sort of echo of the 3D-wireframe “structure” that makes all virtual 3D spaces possible: players are “inside” of a “possible” architecture, and the landscape it paints is visible from inside the cabin, through the window portal screens.
 
 ![Dogville set design](./images/dogville-set-design.png)
 
 ![Dogville set design](./images/dville-set-design-overhead.png)
 
+## Maker Stuff
+These are some books and design projects that have inspired us in the design and construction of this cabin.
+
+![](images/cowpoke-cabin-books-influences.jpg)
+
+### The Joinery Compendium
+[<img src="./images/JC_Cover-Kopie-1444x2048.jpg" height="480" />](https://ruby-press.com/shop/the-joinery-compendium-learning-from-traditional-woodworking/) [<img src="./images/TJC_06_c-2048x1450.jpg" height="480" />](https://ruby-press.com/shop/the-joinery-compendium-learning-from-traditional-woodworking/)
+
+Sascha Bower & Daniel Pauli, [The Joinery Compendium: Learning From Traditional Woodworking](https://ruby-press.com/shop/the-joinery-compendium-learning-from-traditional-woodworking/), 2024
+
+### U-Joints
+![U Joints website](images/U-JOINTS--A-taxonomy-of-connections_11_Delfino-Sisto-Legnani.jpg)
+
+Andrea Caputo, Anniina Koivu; [U-Joints: A taxonomy of connections](https://u-joints.com), 2022
+
+In the book U-Joints there are many interesting joints that helped us create our simple but modular structural assembly system for the structure, as well as smaller joints that help with cable management, the design of our color-coding system, and joints such as the R-Type [Split Pin](https://en.wikipedia.org/wiki/Split_pin) that will help us for the mounting of the television monitors.
+
+![](images/Cotter_Pin_(PSF).png) ![](images/r-type-split-pin.jpg)
+
+### Enzo Mari
+![](images/mari-autoprogettazione-13-1200x675.jpg)
+
+[Autoprogettazione?](https://syllabus.pirate.care/library/Enzo%20Mari/Autoprogettazione_%20(221)/Autoprogettazione_%20-%20Enzo%20Mari.pdf)
+
+![](images/erik-almqvist-mari-b4.jpg)
+
+We were also influenced by the “windor chair” proposed by Erik Eje Almqvist in his addition/extension of the Mari furniture project.
+
+Erik Eje Almqvist, [Hammer and Nail: Making And Assembling Furniture Designs Inspired By Enzo Mari](), 2025
+
 ## Construction
-[Faust Perillaud]() and [Douglas Edric Stanley](http://abstractmachine.net/biography) constructed this cabin under the direction and collaboration of [Colin Castellano](https://ebenisterie-castellano.ch) over the last two weeks of November 2025. Photographic documentation of this cabin will take place from December 1 to 3, 2025.
+[Faust Perillaud]() and [Douglas Edric Stanley](http://abstractmachine.net/biography) constructed this cabin under the direction and collaboration of [Colin Castellano](https://ebenisterie-castellano.ch) over the last two weeks of November 2025. Photographic documentation of this cabin took place from December 1 to 3, 2025 with assembly assistance from Faust Perillaud, Charles Cuccu, Chakir Ali, and Esther Rivas.
 
 ### Blueprints
 Blueprints to build the cabin can be found in this folder at: [cowpoke-cabin](./blueprints/)
