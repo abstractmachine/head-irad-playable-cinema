@@ -78,7 +78,7 @@ Andrea Caputo, Anniina Koivu; [U-Joints: A taxonomy of connections](https://u-jo
 
 In the book U-Joints there are many interesting joints that helped us create our simple but modular structural assembly system for the structure, as well as smaller joints that help with cable management, the design of our color-coding system, and joints such as the R-Type [Split Pin](https://en.wikipedia.org/wiki/Split_pin) that will help us for the mounting of the television monitors.
 
-![](images/Cotter_Pin_(PSF).png) ![](images/r-type-split-pin.jpg)
+<img src="images/Cotter_Pin_(PSF).png" height="240"> <img src="images/r-type-split-pin.jpg" height="240">
 
 ### Enzo Mari
 ![](images/mari-autoprogettazione-13-1200x675.jpg)
