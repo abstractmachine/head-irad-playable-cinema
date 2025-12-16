@@ -6,11 +6,11 @@ The cowpoke cabin is the physical manifestation of the Playable Cinema project, 
 Photo by Douglas Edric Stanley
 
 ## Outline
-- Influences
+- [Influences](#influences)
     - [Henry David Thoreau](#henry-david-thoreau)
     - [The Unabomber](#the-unabomber)
     - [Dogville](#dogville)
-- Maker Stuff
+- [Maker Stuff](#maker-stuff)
     - [The Joinery Compendium](#the-joinery-compendium)
     - [U-Joints](#u-joints)
     - [Enzo Mari](#enzo-mari)
