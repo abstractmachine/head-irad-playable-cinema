@@ -31,8 +31,7 @@ Samples timed: 2256
 Avg latency per caption: 0.072s
 ```
 
-
-Here is output of a M1-Macbook-Pro-Max-64GB: [output-mac-m1-max-64Gb-2025-10-01-18-11-00.txt](./output-mac-m1-max-64Gb-2025-10-01-18-11-00.txt)
+Here is output of a M1-Macbook-Pro-Max-64GB:    [output-mac-m1-max-64Gb-2025-10-01-18-11-00.txt](./output-mac-m1-max-64Gb-2025-10-01-18-11-00.txt)
 
 And the timing scores:
 
