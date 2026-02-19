@@ -33,6 +33,6 @@
     "main_text_size": 13
   },
   "faiss": {
-    "is_active": true
+    "is_active": false
   }
 }
