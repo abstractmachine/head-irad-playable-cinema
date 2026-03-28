@@ -27,7 +27,22 @@ jsonschema>=4.22.0
 # ---------------------
 # AI / ML Stack
 # ---------------------
-torch>=2.2.0
+
+# ⚠️ PyTorch installation
+# ---------------------
+# PyTorch must be installed separately.
+#
+# Standard GPUs:
+#   pip install torch torchvision torchaudio
+#
+# NVIDIA Blackwell (sm_120):
+#   Requires building PyTorch from source.
+#   See: baseline-system/docs/pytorch_blackwell_build.md
+#
+# Do NOT install torch via pip if using a custom build.
+
+# torch  (installed manually)
+
 transformers>=4.44.0
 huggingface-hub>=0.23.0
 accelerate

@@ -1,6 +1,8 @@
 # AI
-torch
-torchvision
+# torch
+# torchvision
+# PyTorch must be built from source for Blackwell (sm_120)
+# See: baseline-system/docs/pytorch_blackwell_build.md
 transformers
 
 # Computer Vision

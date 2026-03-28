@@ -27,6 +27,12 @@ You can run this code by downloading the source, installing the dependencies and
 - **FFmpeg**: Required for video processing
 - **VLC**: Required for video playback in GUI mode (depreciated, will remove soon)
 
+### Ubuntu Setup
+```
+python3 -m venv ~/venvs/playable-tool
+source ~/venvs/playable-tool/bin/activate
+```
+
 ### macOS Setup
 
 1. **Install System Dependencies**
@@ -46,21 +52,6 @@ You can run this code by downloading the source, installing the dependencies and
    ```bash
    pip install --upgrade -r requirements.txt
    ```
-
-### Linux Setup
-
-1. **Install System Dependencies**
-   ```bash
-   sudo apt install ffmpeg vlc
-   ```
-
-2. **Create Python Environment** (follow macOS step 2-3)
-
-### Windows Setup
-
-1. **Install FFmpeg and VLC** manually from their respective websites
-2. **Create Python Environment** using venv or pyenv
-3. **Install Python Dependencies** (follow macOS step 3)
 
 ## Quick Start
 
