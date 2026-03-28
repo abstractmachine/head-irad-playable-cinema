@@ -1,6 +1,9 @@
 # Cowpoke Console
 These are the notes for the basic installation steps of setting up the Cowpoke Console. These steps assume starting from scratch as the machine was delivered, i.e. with the following configuration:
 
+## Docs
+See `./baseline-system` for more info on installs, especially `torch` build for `Blackwell` architecture.
+
 ## PC Build
 - Fractal Design Ridge, ITX Case, black
 - AMD Ryzen 7 9700X, 3.8 - 5.5 GHz, 8 Cores / 16 Threads,

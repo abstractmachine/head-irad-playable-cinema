@@ -1,0 +1,16 @@
+Fri Mar 27 06:21:36 PM CET 2026
+Linux
+Distributor ID:	Ubuntu
+Description:	Ubuntu 24.04.4 LTS
+Release:	24.04
+Codename:	noble
+       Icon name: computer-desktop
+         Chassis: desktop 🖥️
+Operating System: Ubuntu 24.04.4 LTS
+          Kernel: Linux 6.17.0-19-generic
+    Architecture: x86-64
+ Hardware Vendor: ASUS
+  Hardware Model: ROG STRIX X870-I GAMING WIFI
+Firmware Version: 1644
+   Firmware Date: Tue 2026-03-10
+    Firmware Age: 2w 3d
