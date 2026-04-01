@@ -2,6 +2,33 @@
 
 A comprehensive desktop and command-line application for video analysis, annotation, and scene detection. Built with PyQt5, this tool provides both a GUI and CLI for annotating videos with AI-powered scene detection and metadata tagging.
 
+## Quick Start
+
+### GUI Mode
+
+```bash
+cd ~/playable/head-irad-playable-cinema/playable-tool
+source ~/venvs/playable-tool/bin/activate
+python app.py
+```
+
+### CLI Mode
+
+```bash
+cd ~/playable/head-irad-playable-cinema/playable-tool
+source ~/venvs/playable-tool/bin/activate
+python cli.py --help
+```
+
+Example CLI usage:
+```bash
+# Detect scenes in a video
+python cli.py detect --video path/to/movie.mp4 --output shotlist.csv
+
+# Annotate shots with AI
+python cli.py annotate --video path/to/movie.mp4 --shotlist shotlist.csv
+```
+
 ## Features
 
 - **Dual Interface**: Full-featured GUI and command-line interface
@@ -27,9 +54,13 @@ You can run this code by downloading the source, installing the dependencies and
 - **FFmpeg**: Required for video processing
 - **VLC**: Required for video playback in GUI mode (depreciated, will remove soon)
 
-### Ubuntu Setup
+### Ubuntu Init
 ```
 python3 -m venv ~/venvs/playable-tool
+```
+
+### Ubuntu Setup
+```
 source ~/venvs/playable-tool/bin/activate
 ```
 
@@ -52,31 +83,6 @@ source ~/venvs/playable-tool/bin/activate
    ```bash
    pip install --upgrade -r requirements.txt
    ```
-
-## Quick Start
-
-### GUI Mode
-
-```bash
-pyenv activate playable-tool
-python app.py
-```
-
-### CLI Mode
-
-```bash
-pyenv activate playable-tool
-python cli.py --help
-```
-
-Example CLI usage:
-```bash
-# Detect scenes in a video
-python cli.py detect --video path/to/movie.mp4 --output shotlist.csv
-
-# Annotate shots with AI
-python cli.py annotate --video path/to/movie.mp4 --shotlist shotlist.csv
-```
 
 ## Project Structure
 

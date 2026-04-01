@@ -45,6 +45,7 @@ See `./baseline-system` for more info on installs, especially `torch` build for 
 sudo apt update
 sudo apt install nvidia-driver-580-open
 sudo apt install mesa-utils
+sudo apt install ffmpeg
 ```
 
 ### Python
