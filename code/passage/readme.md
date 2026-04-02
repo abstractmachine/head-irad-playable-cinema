@@ -93,8 +93,25 @@ passage shot detect --tmdb 10772           # find by TMDb ID
 passage shot detect "Fistful" --force      # overwrite existing
 
 # Output CSV format:
-# Ignore,Scene,Start,End,Shot_Caption,Scene_Caption,Shot_Source,Shot_Confidence
-# No,0,00:00:00.000,00:00:05.123,"","",auto,0.876
+# Ignore,Scene,Start,End,Start_Frame,End_Frame,Shot_Caption,Scene_Caption,Shot_Source,Shot_Confidence
+# No,0,00:00:00.000,00:00:05.123,0,123,"","",auto,0.876
+
+# Validate and correct detected shots (launches GUI)
+passage shot validate <filename_substring>
+passage shot validate --tmdb 56966         # use TMDb ID
+  --media {movies,gameplay}                # media type (default: movies)
+
+# Keyboard shortcuts in validator (OpenCV frame-precise):
+# Space      - Play/Pause
+# ↑/↓        - Previous/Next shot (resumes playback if was playing)
+# ←/→        - Step one frame backward/forward
+# Shift+←/→  - Step one second backward/forward
+# E          - Jump to end frame of current shot
+# F          - Toggle Ignore flag on current shot
+# M          - Merge current shot with previous
+# N          - Split current shot at current frame (creates new shot boundary)
+# Ctrl+S     - Save changes
+# Continue button - toggle playback past shot boundaries (ON/OFF)
 ```
 
 ### Shotlist Management
@@ -123,37 +140,17 @@ passage shotlist annotate scene --tmdb 391 0 "Opening sequence"
 
 # Show specific shot data
 passage shotlist show shot <filename> <shot_index>
-passage shotlist show shot --tmdb 391 52  # returns structured JSON data
+passage shotlist show shot --tmdb 391 52
   --media {movies,gameplay}
-  --field protagonists place actions        # extract and format specific fields
-  --json                                    # output as JSON (works with or without --field)
-
-# Example with --field (table format):
-# Start: 00:02:52.586 → End: 00:02:55.804
-# ------------------------------------------------------------
-# Protagonists         man
-# Place                desert, plains
-# Actions              drawing, lifting
-#
-# Example with --field --json (filtered JSON):
-# {
-#   "Start": "00:02:52.586",
-#   "End": "00:02:55.804",
-#   "Scene": "1",
-#   "Protagonists": ["man"],
-#   "Place": ["desert", "plains"],
-#   "Actions": ["drawing", "lifting"]
-# }
-#
-# Available fields (depends on your shotlist schema):
-# setting, protagonists, place, actions, objects, props, environment, architecture
+  --field protagonists place actions        # extract specific fields (table output)
+  --json                                    # output as JSON
 
 # Show all shots in a scene
 passage shotlist show scene <filename> <scene_number>
 passage shotlist show scene --tmdb 391 1
   --media {movies,gameplay}
-  --field protagonists actions              # show only specific fields for all shots
-  --json                                    # output as JSON array
+  --field protagonists actions
+  --json
 ```
 
 ### API Keys
@@ -164,12 +161,6 @@ passage api_key get {openai,opensubtitles,tmdb}
 
 # Set API key
 passage api_key set {openai,opensubtitles,tmdb} <key>
-```
-
-### Search (Stub)
-
-```bash
-passage search <query>              # find passages (not yet implemented)
 ```
 
 ## Project Folder Structure
@@ -222,7 +213,8 @@ Movies and gameplay metadata includes:
 - The `--pick` flag on import opens a native GUI file picker (requires python3-tk)
 - Use `--field` with shotlist show commands to extract specific fields from caption JSON (table or JSON output)
 - Use `--json` flag for raw JSON output (full shot data or filtered fields with `--field`)
-- Shot detection uses TransNetV2 and creates CSV files with Shot_Source="auto" and confidence scores
+- Shot detection uses TransNetV2 and creates CSV files with Shot_Source="auto", confidence scores, and exact frame numbers (Start_Frame/End_Frame)
+- Shot validation GUI (`passage shot validate`) uses OpenCV for frame-precise display — each frame is seeked by exact integer frame index, not timecode
 
 ## Requirements
 
@@ -230,6 +222,7 @@ Movies and gameplay metadata includes:
 - ffmpeg: `sudo apt install ffmpeg`
 - python3-tk (optional, for GUI file picker): `sudo apt install python3-tk`
 - TransNetV2 (optional, for shot detection) - see Install section below
+- PyQt5 + opencv-python-headless (optional, for shot validation UI) - see Install section below
 
 ## Virtual Python Environment
 
@@ -262,3 +255,10 @@ pip install -e .
 pip install git+https://github.com/soCzech/TransNetV2.git
 pip install tensorflow>=2.5 ffmpeg-python
 ```
+
+**For shot validation UI:**
+```bash
+pip install PyQt5 opencv-python-headless
+```
+
+> Use `opencv-python-headless` (not `opencv-python`) to avoid Qt plugin conflicts with PyQt5.

@@ -58,17 +58,41 @@ def detect_shots_transnet(video_path: str) -> list[dict[str, Any]]:
     
     # Get shot boundaries with confidence threshold
     threshold = 0.5
-    frame_rate = 25  # Default, will be updated from video metadata
+    frame_rate = 25.0  # Default fallback
     
-    # Try to get actual frame rate
+    # Try to get actual frame rate from video
     try:
         import av
         with av.open(video_path) as container:
             stream = container.streams.video[0]
-            frame_rate = float(stream.average_rate)
-    except Exception:
-        # Fallback to default if we can't read frame rate
-        pass
+            # average_rate is a Fraction - convert to float
+            if stream.average_rate is not None:
+                frame_rate = float(stream.average_rate)
+                print(f"[Shot Detection] Detected frame rate: {frame_rate:.3f} fps")
+            else:
+                print(f"[Shot Detection] No frame rate in metadata, using default: {frame_rate} fps")
+    except ImportError:
+        # PyAV not installed, try ffprobe as fallback
+        try:
+            import subprocess
+            result = subprocess.run(
+                ['ffprobe', '-v', 'error', '-select_streams', 'v:0', 
+                 '-show_entries', 'stream=r_frame_rate', '-of', 'default=noprint_wrappers=1:nokey=1',
+                 video_path],
+                capture_output=True, text=True, check=True
+            )
+            # Parse fraction like "24000/1001"
+            fps_str = result.stdout.strip()
+            if '/' in fps_str:
+                num, den = fps_str.split('/')
+                frame_rate = float(num) / float(den)
+            else:
+                frame_rate = float(fps_str)
+            print(f"[Shot Detection] Detected frame rate (ffprobe): {frame_rate:.3f} fps")
+        except Exception as e:
+            print(f"[Shot Detection] Could not detect frame rate ({e}), using default: {frame_rate} fps")
+    except Exception as e:
+        print(f"[Shot Detection] Could not read frame rate ({e}), using default: {frame_rate} fps")
     
     # Find boundaries
     shots = []
@@ -79,12 +103,18 @@ def detect_shots_transnet(video_path: str) -> list[dict[str, Any]]:
             boundaries.append((i, pred))
     
     # Convert boundaries to shots
+    # Boundary semantics: frame_idx is the LAST frame of the CURRENT shot
+    # (TransNetV2 marks the transition frame as belonging to the ending shot)
+    # So the next shot starts at frame_idx + 1
     if not boundaries:
         # No boundaries detected - entire video is one shot
         duration = len(single_frame_predictions) / frame_rate
+        total_frames = len(single_frame_predictions)
         shots.append({
             "start": 0.0,
             "end": duration,
+            "start_frame": 0,
+            "end_frame": total_frames - 1,
             "confidence": 1.0,
             "source": "auto"
         })
@@ -92,28 +122,42 @@ def detect_shots_transnet(video_path: str) -> list[dict[str, Any]]:
         # Create shots from boundaries
         prev_frame = 0
         for frame_idx, confidence in boundaries:
-            if frame_idx > prev_frame:
+            if frame_idx >= prev_frame:
                 start_time = prev_frame / frame_rate
+                # End time is AT the boundary frame (transition frame belongs to current shot)
                 end_time = frame_idx / frame_rate
                 shots.append({
                     "start": start_time,
                     "end": end_time,
+                    "start_frame": prev_frame,
+                    "end_frame": frame_idx,
                     "confidence": float(confidence),
                     "source": "auto"
                 })
-            prev_frame = frame_idx
+                # Next shot starts AFTER the boundary frame
+                prev_frame = frame_idx + 1
         
-        # Add final shot
+        # Add final shot (if there are frames after the last boundary)
         final_frame = len(single_frame_predictions)
         if prev_frame < final_frame:
             start_time = prev_frame / frame_rate
-            end_time = final_frame / frame_rate
+            # Last shot goes to the end of the video
+            end_time = (final_frame - 1) / frame_rate
             shots.append({
                 "start": start_time,
                 "end": end_time,
+                "start_frame": prev_frame,
+                "end_frame": final_frame - 1,
                 "confidence": 1.0,  # No boundary at end
                 "source": "auto"
             })
+    
+    # Filter out zero-length shots (can occur when consecutive frames trigger detection)
+    original_count = len(shots)
+    shots = [shot for shot in shots if shot['start'] < shot['end']]
+    filtered_count = original_count - len(shots)
+    if filtered_count > 0:
+        print(f"[Shot Detection] Filtered out {filtered_count} zero-length shot(s)")
     
     return shots
 
@@ -160,6 +204,8 @@ def write_shotlist_csv(
         "Scene",
         "Start",
         "End",
+        "Start_Frame",
+        "End_Frame",
         "Shot_Caption",
         "Scene_Caption",
         "Shot_Source",
@@ -176,6 +222,8 @@ def write_shotlist_csv(
                 "Scene": "0",
                 "Start": format_timecode(shot["start"]),
                 "End": format_timecode(shot["end"]),
+                "Start_Frame": shot["start_frame"],
+                "End_Frame": shot["end_frame"],
                 "Shot_Caption": "",
                 "Scene_Caption": "",
                 "Shot_Source": shot["source"],

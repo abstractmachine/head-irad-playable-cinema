@@ -98,10 +98,22 @@ def write_shotlist(project_path: str, filename: str, media_type: str, shots: lis
     """Write shotlist data back to CSV."""
     shotlist_path = get_shotlist_path(project_path, filename, media_type)
     
-    fieldnames = ['Ignore', 'Scene', 'Start', 'End', 'Shot_Caption', 'Scene_Caption']
+    # Base fieldnames
+    fieldnames = ['Ignore', 'Scene', 'Start', 'End']
+    
+    # Add frame columns if present
+    if shots and any('Start_Frame' in shot for shot in shots):
+        fieldnames.extend(['Start_Frame', 'End_Frame'])
+    
+    # Add captions
+    fieldnames.extend(['Shot_Caption', 'Scene_Caption'])
+    
+    # Add Shot_Source and Shot_Confidence if present in any shot (for auto-detected shots)
+    if shots and any('Shot_Source' in shot for shot in shots):
+        fieldnames.extend(['Shot_Source', 'Shot_Confidence'])
     
     with open(shotlist_path, 'w', encoding='utf-8', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
         writer.writeheader()
         writer.writerows(shots)
 

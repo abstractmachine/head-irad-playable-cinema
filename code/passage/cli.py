@@ -1,4 +1,5 @@
 import sys
+import os
 import argparse
 import json
 from pathlib import Path
@@ -823,6 +824,8 @@ def cmd_shot(args):
     sub = args.shot_subcommand
     if sub == "detect":
         _shot_detect(args)
+    elif sub == "validate":
+        _shot_validate(args)
 
 
 def _shot_detect(args):
@@ -865,9 +868,12 @@ def _shot_detect(args):
         print(f"Using TransNetV2...")
         
         # Detect shots
+        import time
+        start_time = time.time()
         shots = detect_shots_transnet(str(video_path))
+        elapsed = time.time() - start_time
         
-        print(f"Found {len(shots)} shots")
+        print(f"Found {len(shots)} shots in {elapsed:.1f} seconds")
         
         # Write CSV
         csv_path = write_shotlist_csv(
@@ -894,6 +900,44 @@ def _shot_detect(args):
         import traceback
         traceback.print_exc()
         sys.exit(1)
+
+
+def _shot_validate(args):
+    """Launch shot validation GUI."""
+    import subprocess
+    from pathlib import Path
+    
+    # Get path to validator (in same directory as cli.py)
+    cli_dir = Path(__file__).parent
+    
+    validator_path = cli_dir / "services" / "shot_validator.py"
+    
+    if not validator_path.exists():
+        print(f"✗ Error: {validator_path.name} not found at {validator_path}", file=sys.stderr)
+        sys.exit(1)
+    
+    # Build command
+    cmd = [sys.executable, str(validator_path)]
+    
+    if args.query:
+        cmd.append(args.query)
+    if args.tmdb:
+        cmd.extend(["--tmdb", str(args.tmdb)])
+    if args.media:
+        cmd.extend(["--media", args.media])
+    
+    # Add project path from preferences
+    project_path = prefs.get("path")
+    if project_path:
+        cmd.extend(["--project", project_path])
+    
+    # Launch validator
+    try:
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as e:
+        sys.exit(e.returncode)
+    except KeyboardInterrupt:
+        sys.exit(0)
 
 
 # ---------------------------------------------------------------------------
@@ -1060,6 +1104,11 @@ def build_parser():
     p_shot_detect.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
     p_shot_detect.add_argument("--media", choices=["movies", "gameplay"], default="movies")
     p_shot_detect.add_argument("--force", action="store_true", help="Overwrite existing shotlist if it exists")
+    
+    p_shot_validate = shot_sub.add_parser("validate", help="Validate and correct shot boundaries (GUI)")
+    p_shot_validate.add_argument("query", nargs="?", default=None, help="Filename substring to match")
+    p_shot_validate.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
+    p_shot_validate.add_argument("--media", choices=["movies", "gameplay"], default="movies")
 
     # api_key command group
     p_api_key = sub.add_parser("api_key", help="Get or set API keys")
