@@ -6,7 +6,16 @@ import os
 import re
 import subprocess
 import json
+import threading
+import time
 from pathlib import Path
+
+try:
+    import av as _av
+    import sounddevice as _sd
+    _AUDIO_AVAILABLE = True
+except ImportError:
+    _AUDIO_AVAILABLE = False
 
 # Fix Qt plugin conflict with OpenCV
 # Import PyQt5 first, then remove OpenCV's Qt plugin path
@@ -58,6 +67,64 @@ def frames_to_timecode(frame_number: int, fps: float) -> str:
     minutes, remainder = divmod(remainder, 60_000)
     seconds, ms = divmod(remainder, 1000)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{ms:03d}"
+
+
+class AudioPlayer:
+    """Streams audio from a video file in a background thread (PyAV + sounddevice)."""
+
+    def __init__(self):
+        self._stop_event = threading.Event()
+        self._thread = None
+
+    def play(self, video_path: str, start_secs: float):
+        """Start audio playback from start_secs. Stops any current playback first."""
+        self.stop()
+        if not _AUDIO_AVAILABLE:
+            return
+        self._stop_event = threading.Event()
+        self._thread = threading.Thread(
+            target=self._stream,
+            args=(str(video_path), start_secs, self._stop_event),
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self):
+        """Stop audio playback and wait for the thread to finish."""
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+            self._thread = None
+
+    @staticmethod
+    def _stream(video_path: str, start_secs: float, stop: threading.Event):
+        container = None
+        try:
+            container = _av.open(video_path)
+            audio_streams = [s for s in container.streams if s.type == 'audio']
+            if not audio_streams:
+                return
+            audio_stream = audio_streams[0]
+            sample_rate = audio_stream.codec_context.sample_rate
+            channels = audio_stream.codec_context.channels or 2
+            if start_secs > 0:
+                # seek uses microseconds in container time base
+                container.seek(int(start_secs * 1_000_000))
+            with _sd.OutputStream(samplerate=sample_rate, channels=channels, dtype='float32') as out:
+                for frame in container.decode(audio_stream):
+                    if stop.is_set():
+                        break
+                    # fltp = planar float: shape (channels, samples) — transpose to (samples, channels)
+                    pcm = np.ascontiguousarray(frame.to_ndarray().T)
+                    out.write(pcm)
+        except Exception:
+            pass
+        finally:
+            if container is not None:
+                try:
+                    container.close()
+                except Exception:
+                    pass
 
 
 def _display_name(filename: str) -> str:
@@ -138,6 +205,9 @@ class OpenCVValidator(QMainWindow):
         self.playback_timer = None
         self._updating_slider = False
         self._updating_combo = False
+        self._play_start_time = 0.0
+        self._play_start_frame = 0
+        self.audio = AudioPlayer()
 
         # Set up video path
         self.video_path = Path(project_path) / "media" / "videos" / media_type / self.filename
@@ -444,6 +514,10 @@ class OpenCVValidator(QMainWindow):
         """Start video playback from current position."""
         self.is_playing = True
         self.play_pause_button.setText("⏸ Pause")
+        self._play_start_time = time.perf_counter()
+        self._play_start_frame = self.current_frame_number
+        start_secs = self.current_frame_number / self.frame_rate if self.frame_rate > 0 else 0.0
+        self.audio.play(str(self.video_path), start_secs)
         self.playback_timer.start()
     
     def stop_playback(self):
@@ -451,6 +525,7 @@ class OpenCVValidator(QMainWindow):
         self.is_playing = False
         self.play_pause_button.setText("▶ Play")
         self.playback_timer.stop()
+        self.audio.stop()
     
     def toggle_continue(self):
         """Toggle continue playback past shot boundaries."""
@@ -461,13 +536,21 @@ class OpenCVValidator(QMainWindow):
             self.continue_button.setText("Continue")
     
     def advance_frame(self):
-        """Advance to next frame during playback."""
+        """Advance to next frame during playback, driven by wall-clock time to stay in sync with audio."""
         if not self.is_playing:
             return
-        
-        # Advance frame
-        self.current_frame_number += 1
-        
+
+        # Compute the frame we should be on right now from elapsed real time
+        elapsed = time.perf_counter() - self._play_start_time
+        target_frame = self._play_start_frame + int(elapsed * self.frame_rate)
+        target_frame = min(target_frame, self.total_frames - 1)
+
+        # Skip if we haven't advanced yet (timer fired too early)
+        if target_frame <= self.current_frame_number:
+            return
+
+        self.current_frame_number = target_frame
+
         # Stop if we reach end of video
         if self.current_frame_number >= self.total_frames:
             self.stop_playback()
@@ -565,6 +648,7 @@ class OpenCVValidator(QMainWindow):
             elif reply == QMessageBox.Save:
                 self.save_changes()
 
+        was_playing = self.is_playing
         if self.is_playing:
             self.stop_playback()
 
@@ -621,6 +705,8 @@ class OpenCVValidator(QMainWindow):
         self.rebuild_scene_list()
         self.update_stats()
         self.load_first_shot()
+        if was_playing:
+            self.start_playback()
 
     def sync_scene_list_selection(self):
         """Highlight the scene_list row matching the current shot's scene."""

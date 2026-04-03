@@ -6,6 +6,10 @@ build-backend = "setuptools.build_meta"
 name = "crossing"
 version = "0.1.0"
 requires-python = ">=3.11"
+dependencies = [
+    "av",
+    "sounddevice",
+]
 
 [project.scripts]
 crossing = "cli:main"
