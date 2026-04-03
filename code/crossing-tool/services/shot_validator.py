@@ -159,10 +159,6 @@ class OpenCVValidator(QMainWindow):
         self.sar_num, self.sar_den = _get_sar(str(self.video_path))
         # Display width accounts for non-square pixels
         self.video_native_width = int(round(raw_w * self.sar_num / self.sar_den))
-        print(f"[Validator] Frame rate: {self.frame_rate:.3f} fps")
-        print(f"[Validator] Total frames: {self.total_frames}")
-        if (self.sar_num, self.sar_den) != (1, 1):
-            print(f"[Validator] SAR {self.sar_num}:{self.sar_den} → display width {self.video_native_width}")
         
         # Load shotlist
         try:
@@ -187,7 +183,6 @@ class OpenCVValidator(QMainWindow):
             self.playback_timer.setInterval(42)  # ~24fps fallback
         
         self.setWindowTitle(f"Shot Validator \u2014 {_display_name(self.filename)}  (1/{len(self.filenames)})")
-        self.setGeometry(100, 100, 1400, 800)
         
         self.init_ui()
         self.load_first_shot()
@@ -227,7 +222,8 @@ class OpenCVValidator(QMainWindow):
         self.frame_label = QLabel()
         self.frame_label.setAlignment(Qt.AlignCenter)
         self.frame_label.setScaledContents(False)
-        self.frame_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.frame_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
+        self.frame_label.setMinimumSize(1, 1)
         frame_layout.addWidget(self.frame_label, stretch=1)
 
         # Timeline scrub bar
@@ -1140,28 +1136,12 @@ def main():
         QMessageBox      { background-color: #808080; color: white; }
     """)
     validator = OpenCVValidator(project_path, filenames, 0, args.media)
-    validator.show()
-    QApplication.processEvents()
 
-    # Size window: full screen width, height fitted to video aspect ratio
-    screen = app.screenAt(validator.geometry().center()) or app.primaryScreen()
+    # Open maximised on whatever screen the window appears on
+    screen = QApplication.primaryScreen()
     avail = screen.availableGeometry()
-
-    # Step 1: stretch to full screen width and re-layout
-    validator.setGeometry(avail.x(), avail.y(), avail.width(), validator.height())
-    QApplication.processEvents()
-
-    # Step 2: compute ideal height from the actual laid-out video label width
-    if validator.video_native_width > 0 and validator.video_native_height > 0:
-        video_label_w = validator.frame_label.width()
-        ideal_video_h = int(video_label_w * validator.video_native_height / validator.video_native_width)
-        non_video_h = validator.height() - validator.frame_label.height()
-        ideal_win_h = min(ideal_video_h + non_video_h, avail.height())
-    else:
-        ideal_win_h = min(validator.height(), avail.height())
-
-    y = avail.top() + (avail.height() - ideal_win_h) // 2
-    validator.setGeometry(avail.x(), y, avail.width(), ideal_win_h)
+    validator.setGeometry(avail)
+    validator.show()
 
     sys.exit(app.exec_())
 
