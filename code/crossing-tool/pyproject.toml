@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crossing"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+[project.scripts]
+crossing = "cli:main"
+
+[tool.setuptools]
+py-modules = ["cli", "prefs"]
+
+[tool.setuptools.packages.find]
+where = ["."]
