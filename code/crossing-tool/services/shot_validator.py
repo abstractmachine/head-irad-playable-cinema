@@ -8,6 +8,7 @@ import subprocess
 import json
 import threading
 import time
+import random
 from pathlib import Path
 
 try:
@@ -90,11 +91,9 @@ class AudioPlayer:
         self._thread.start()
 
     def stop(self):
-        """Stop audio playback and wait for the thread to finish."""
+        """Signal audio to stop. Non-blocking — daemon thread finishes on its own."""
         self._stop_event.set()
-        if self._thread is not None:
-            self._thread.join(timeout=1.0)
-            self._thread = None
+        self._thread = None
 
     @staticmethod
     def _stream(video_path: str, start_secs: float, stop: threading.Event):
@@ -208,6 +207,10 @@ class OpenCVValidator(QMainWindow):
         self._play_start_time = 0.0
         self._play_start_frame = 0
         self.audio = AudioPlayer()
+        self.gremlins_active = False
+        self.gremlins_timer = QTimer()
+        self.gremlins_timer.setInterval(5000)
+        self.gremlins_timer.timeout.connect(self.gremlin_tick)
 
         # Set up video path
         self.video_path = Path(project_path) / "media" / "videos" / media_type / self.filename
@@ -367,6 +370,14 @@ class OpenCVValidator(QMainWindow):
         self.save_button.setToolTip("Save changes to CSV  [Ctrl+S]")
         controls_layout.addWidget(self.save_button)
 
+        self.gremlins_button = QPushButton("👾 Gremlins")
+        self.gremlins_button.setCheckable(True)
+        self.gremlins_button.setChecked(False)
+        self.gremlins_button.clicked.connect(self.toggle_gremlins)
+        self.gremlins_button.setFocusPolicy(Qt.NoFocus)
+        self.gremlins_button.setToolTip("Randomly jump movies/timecodes every second  [G]")
+        controls_layout.addWidget(self.gremlins_button)
+
         frame_layout.addLayout(controls_layout)
         
         # Right side: Scene list + Shot list + controls
@@ -514,10 +525,17 @@ class OpenCVValidator(QMainWindow):
         """Start video playback from current position."""
         self.is_playing = True
         self.play_pause_button.setText("⏸ Pause")
-        self._play_start_time = time.perf_counter()
         self._play_start_frame = self.current_frame_number
         start_secs = self.current_frame_number / self.frame_rate if self.frame_rate > 0 else 0.0
         self.audio.play(str(self.video_path), start_secs)
+        # Delay video timer start to let audio initialize, then anchor the clock
+        QTimer.singleShot(130, self._begin_video_timer)
+
+    def _begin_video_timer(self):
+        """Called after audio startup delay — anchors the wall clock and starts the video timer."""
+        if not self.is_playing:
+            return
+        self._play_start_time = time.perf_counter()
         self.playback_timer.start()
     
     def stop_playback(self):
@@ -530,10 +548,72 @@ class OpenCVValidator(QMainWindow):
     def toggle_continue(self):
         """Toggle continue playback past shot boundaries."""
         self.continue_playback = not self.continue_playback
-        if self.continue_playback:
-            self.continue_button.setText("Continue")
+
+    def toggle_gremlins(self):
+        """Toggle gremlins mode on/off."""
+        self.gremlins_active = not self.gremlins_active
+        self.gremlins_button.setChecked(self.gremlins_active)
+        if self.gremlins_active:
+            self.gremlin_tick()
+            self.gremlins_timer.start()
         else:
-            self.continue_button.setText("Continue")
+            self.gremlins_timer.stop()
+
+    def gremlin_tick(self):
+        """Jump to a random movie and a random shot index, using the same path as manual navigation."""
+        if not self.gremlins_active:
+            return
+
+        was_playing = self.is_playing
+        index = random.randrange(len(self.filenames))
+        # Switch movie silently (avoid save prompt during gremlins)
+        if index != self.current_movie_index:
+            if self.is_playing:
+                self.stop_playback()
+            if self.cap is not None:
+                self.cap.release()
+            self.current_movie_index = index
+            self.filename = self.filenames[index]
+            self.shots = []
+            self.current_shot_index = 0
+            self.modified = False
+            self.current_frame_number = 0
+            self.video_path = Path(self.project_path) / "media" / "videos" / self.media_type / self.filename
+            if not self.video_path.exists():
+                return
+            self.cap = cv2.VideoCapture(str(self.video_path))
+            if not self.cap.isOpened():
+                return
+            self.frame_rate = self.cap.get(cv2.CAP_PROP_FPS)
+            self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            raw_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            self.video_native_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            self.sar_num, self.sar_den = _get_sar(str(self.video_path))
+            self.video_native_width = int(round(raw_w * self.sar_num / self.sar_den))
+            if self.frame_rate > 0:
+                self.playback_timer.setInterval(int(1000 / self.frame_rate))
+            self.timeline_slider.setMaximum(max(0, self.total_frames - 1))
+            self.setWindowTitle(f"Shot Validator \u2014 {_display_name(self.filename)}  ({self.current_movie_index + 1}/{len(self.filenames)}) \ud83d\udc7e")
+            self._updating_combo = True
+            self.movie_combo.setCurrentIndex(index)
+            self._updating_combo = False
+            # Load shotlist for the new movie
+            try:
+                self.shots = read_shotlist(self.project_path, self.filename, self.media_type)
+                for shot in self.shots:
+                    if 'Start_Frame' in shot and isinstance(shot['Start_Frame'], str):
+                        shot['Start_Frame'] = int(shot['Start_Frame'])
+                    if 'End_Frame' in shot and isinstance(shot['End_Frame'], str):
+                        shot['End_Frame'] = int(shot['End_Frame'])
+            except FileNotFoundError:
+                self.shots = []
+
+        # Jump to a random shot index — reuses the exact same sync path as keyboard navigation
+        if self.shots:
+            shot_index = random.randrange(len(self.shots))
+            # Restore is_playing so jump_to_shot resumes playback if we were playing
+            self.is_playing = was_playing
+            self.jump_to_shot(shot_index)
     
     def advance_frame(self):
         """Advance to next frame during playback, driven by wall-clock time to stay in sync with audio."""
@@ -1042,7 +1122,7 @@ class OpenCVValidator(QMainWindow):
             key = event.key()
             if key in (Qt.Key_Space, Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down,
                       Qt.Key_PageUp, Qt.Key_PageDown, Qt.Key_Home, Qt.Key_End,
-                      Qt.Key_E, Qt.Key_F, Qt.Key_M, Qt.Key_N):
+                      Qt.Key_E, Qt.Key_F, Qt.Key_M, Qt.Key_N, Qt.Key_G):
                 # Handle it ourselves instead of letting the list widget process it
                 self.keyPressEvent(event)
                 return True  # Event handled, don't pass to list widget
@@ -1091,6 +1171,8 @@ class OpenCVValidator(QMainWindow):
         elif key == Qt.Key_S and event.modifiers() & Qt.ControlModifier:
             if self.modified:
                 self.save_changes()
+        elif key == Qt.Key_G:
+            self.toggle_gremlins()
         elif key == Qt.Key_Home:
             if self.current_movie_index > 0:
                 self.switch_to_movie(self.current_movie_index - 1)
@@ -1102,7 +1184,8 @@ class OpenCVValidator(QMainWindow):
     
     def closeEvent(self, event):
         """Handle window close."""
-        # Stop playback
+        # Stop gremlins and playback
+        self.gremlins_timer.stop()
         if self.is_playing:
             self.stop_playback()
         
