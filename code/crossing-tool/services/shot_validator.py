@@ -4,6 +4,8 @@
 import sys
 import os
 import re
+import subprocess
+import json
 from pathlib import Path
 
 # Fix Qt plugin conflict with OpenCV
@@ -18,6 +20,29 @@ from PyQt5.QtGui import QFont, QPixmap, QImage, QMouseEvent
 
 from services.shotlist import read_shotlist, write_shotlist, get_shotlist_path
 from services.metadata import get_metadata
+
+
+def _get_sar(video_path: str) -> tuple[int, int]:
+    """Return (sar_num, sar_den) for video_path via ffprobe. Falls back to (1,1)."""
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=sample_aspect_ratio",
+                "-of", "json",
+                video_path,
+            ],
+            capture_output=True, text=True, timeout=5
+        )
+        data = json.loads(result.stdout)
+        sar_str = data["streams"][0].get("sample_aspect_ratio", "1:1")
+        if sar_str in ("", "0:1", "1:1"):
+            return (1, 1)
+        parts = sar_str.replace("/", ":").split(":")
+        return (int(parts[0]), int(parts[1]))
+    except Exception:
+        return (1, 1)
 
 # Import cv2 after PyQt5 and fix plugin path conflict
 import cv2
@@ -108,7 +133,7 @@ class OpenCVValidator(QMainWindow):
         self.modified = False
         self.cap = None
         self.is_playing = False
-        self.continue_playback = False  # Continue past shot boundaries during playback
+        self.continue_playback = True  # Continue past shot boundaries during playback
         self.current_frame_number = 0
         self.playback_timer = None
         self._updating_slider = False
@@ -129,10 +154,15 @@ class OpenCVValidator(QMainWindow):
         # Get video properties
         self.frame_rate = self.cap.get(cv2.CAP_PROP_FPS)
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        self.video_native_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        raw_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.video_native_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self.sar_num, self.sar_den = _get_sar(str(self.video_path))
+        # Display width accounts for non-square pixels
+        self.video_native_width = int(round(raw_w * self.sar_num / self.sar_den))
         print(f"[Validator] Frame rate: {self.frame_rate:.3f} fps")
         print(f"[Validator] Total frames: {self.total_frames}")
+        if (self.sar_num, self.sar_den) != (1, 1):
+            print(f"[Validator] SAR {self.sar_num}:{self.sar_den} → display width {self.video_native_width}")
         
         # Load shotlist
         try:
@@ -222,6 +252,7 @@ class OpenCVValidator(QMainWindow):
 
         self.continue_button = QPushButton("Continue")
         self.continue_button.setCheckable(True)
+        self.continue_button.setChecked(True)
         self.continue_button.clicked.connect(self.toggle_continue)
         self.continue_button.setFocusPolicy(Qt.NoFocus)
         self.continue_button.setToolTip("Toggle playback past shot boundaries")
@@ -383,7 +414,13 @@ class OpenCVValidator(QMainWindow):
         
         # Convert BGR to RGB
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        
+
+        # Apply sample aspect ratio correction for non-square-pixel video
+        if (self.sar_num, self.sar_den) != (1, 1):
+            display_w = int(round(frame_rgb.shape[1] * self.sar_num / self.sar_den))
+            frame_rgb = cv2.resize(frame_rgb, (display_w, frame_rgb.shape[0]),
+                                   interpolation=cv2.INTER_LINEAR)
+
         # Convert to QImage
         height, width, channel = frame_rgb.shape
         bytes_per_line = 3 * width
@@ -557,6 +594,10 @@ class OpenCVValidator(QMainWindow):
 
         self.frame_rate = self.cap.get(cv2.CAP_PROP_FPS)
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        raw_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self.video_native_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self.sar_num, self.sar_den = _get_sar(str(self.video_path))
+        self.video_native_width = int(round(raw_w * self.sar_num / self.sar_den))
         if self.frame_rate > 0:
             self.playback_timer.setInterval(int(1000 / self.frame_rate))
 
