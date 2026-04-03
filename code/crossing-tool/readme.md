@@ -6,18 +6,18 @@ Crossing is a CLI + GUI tool for relating moving images across media — connect
 
 ## Commands
 
-### Project Setup
+### Tool Setup
 
 ```bash
 # Show tool and data structure versions
-crossing version
-crossing version --init              # initialize/update data version
+crossing tool version
+crossing tool version --init         # initialize/update data version
 
 # Get or set the active project folder
-crossing path [folder]
+crossing tool path [folder]
 
 # Get or set the project name
-crossing name [name]
+crossing tool name [name]
 ```
 
 ### Import Media
@@ -25,7 +25,7 @@ crossing name [name]
 ```bash
 # Import video files (supports individual files, multiple files, or folders)
 crossing import <file(s)|folder>
-crossing import --pick               # open GUI file/folder picker
+crossing import --pick              # open GUI file/folder picker
   --media {movie,gameplay}          # destination (default: movie)
   --platform {universal,pi5}        # encoding profile (default: universal)
   --skip-metadata                   # skip automatic metadata fetch
@@ -78,46 +78,6 @@ crossing metadata prune
   --media {movies,gameplay}
 ```
 
-### Shot Detection
-
-```bash
-# Detect shot boundaries automatically using TransNetV2
-crossing shot detect <filename_substring>
-crossing shot detect --tmdb 391             # use TMDb ID
-  --media {movies,gameplay}                # media type (default: movies)
-  --force                                  # overwrite existing shotlist
-  --all                                    # process all entries in project (skips existing)
-
-# Examples:
-crossing shot detect Django                 # find by filename substring
-crossing shot detect --tmdb 10772           # find by TMDb ID
-crossing shot detect "Fistful" --force      # overwrite existing
-crossing shot detect --all                  # detect shots for all movies without a shotlist
-crossing shot detect --all --media gameplay # detect shots for all gameplay entries
-crossing shot detect --all --force          # reprocess everything
-
-# Output CSV format:
-# Ignore,Scene,Start,End,Start_Frame,End_Frame,Shot_Caption,Scene_Caption,Shot_Source,Shot_Confidence
-# No,0,00:00:00.000,00:00:05.123,0,123,"","",auto,0.876
-
-# Validate and correct detected shots (launches GUI)
-crossing shot validate <filename_substring>
-crossing shot validate --tmdb 56966         # use TMDb ID
-  --media {movies,gameplay}                # media type (default: movies)
-
-# Keyboard shortcuts in validator (OpenCV-based frame-precise):
-# Space      - Play/Pause
-# ↑/↓        - Previous/Next shot (resumes playback if was playing)
-# ←/→        - Step one frame backward/forward
-# Shift+←/→  - Step one second backward/forward
-# E          - Jump to end frame of current shot
-# F          - Toggle Ignore flag on current shot
-# M          - Merge current shot with previous
-# N          - Split current shot at current frame (creates new shot boundary)
-# Ctrl+S     - Save changes
-# Continue button - toggle playback past shot boundaries (ON/OFF)
-```
-
 ### Shotlist Management
 
 ```bash
@@ -155,6 +115,46 @@ crossing shotlist show scene --tmdb 391 1
   --media {movies,gameplay}
   --field protagonists actions
   --json
+
+# Detect shot boundaries automatically using TransNetV2
+crossing shotlist shot detect <filename_substring>
+crossing shotlist shot detect --tmdb 391             # use TMDb ID
+  --media {movies,gameplay}                          # media type (default: movies)
+  --force                                            # overwrite existing shotlist
+  --all                                              # process all entries in project (skips existing)
+
+# Examples:
+crossing shotlist shot detect Django                 # find by filename substring
+crossing shotlist shot detect --tmdb 10772           # find by TMDb ID
+crossing shotlist shot detect "Fistful" --force      # overwrite existing
+crossing shotlist shot detect --all                  # detect shots for all movies without a shotlist
+crossing shotlist shot detect --all --media gameplay # detect shots for all gameplay entries
+crossing shotlist shot detect --all --force          # reprocess everything
+
+# Output CSV format:
+# Ignore,Scene,Start,End,Start_Frame,End_Frame,Shot_Caption,Scene_Caption,Shot_Source,Shot_Confidence
+# No,0,00:00:00.000,00:00:05.123,0,123,"","",auto,0.876
+
+# Validate and correct shot/scene data (launches GUI)
+crossing shotlist validate <filename_substring>
+crossing shotlist validate --tmdb 56966         # use TMDb ID
+crossing shotlist validate --all                # validate all movies with shotlists
+  --media {movies,gameplay}                     # media type (default: movies)
+
+# Keyboard shortcuts in validator (OpenCV-based frame-precise):
+# Space      - Play/Pause
+# ↑/↓        - Previous/Next shot (resumes playback if was playing)
+# ←/→        - Step one frame backward/forward
+# Shift+←/→  - Step one second backward/forward
+# PgUp/PgDn  - Previous/Next scene
+# Home       - Switch to previous movie in list
+# End        - Switch to next movie in list
+# E          - Jump to end frame of current shot
+# F          - Toggle Ignore flag on current shot
+# M          - Merge current shot with previous
+# N          - Split current shot at current frame (creates new shot boundary)
+# Ctrl+S     - Save changes
+# Continue button - toggle playback past shot boundaries (ON/OFF)
 ```
 
 ### Audit
@@ -173,10 +173,10 @@ crossing audit --media gameplay      # report for gameplay entries
 
 ```bash
 # Get stored API key
-crossing api_key get {openai,opensubtitles,tmdb}
+crossing tool api_key get {openai,opensubtitles,tmdb}
 
 # Set API key
-crossing api_key set {openai,opensubtitles,tmdb} <key>
+crossing tool api_key set {openai,opensubtitles,tmdb} <key>
 ```
 
 ## Project Folder Structure
@@ -217,8 +217,6 @@ Movies and gameplay metadata includes:
 - `title`, `year`, `director`, `tmdb`, `imdb`
 - `filename`, `duration` (actual file duration in minutes)
 - `overview`, `tagline`
-- `shotlist` (true/false) - whether shotlist CSV exists
-- `encodings` (true/false) - whether .npy and .txt encodings exist
 
 ## Notes
 
@@ -266,12 +264,12 @@ Follow these steps when setting up from scratch in a new environment.
 > Use `opencv-python-headless` (not `opencv-python`) to avoid Qt plugin conflicts with PyQt5.
 
 ### 6. API keys *(as needed)*
-- [ ] `crossing api_key set tmdb <key>`
-- [ ] `crossing api_key set opensubtitles <key>`
-- [ ] `crossing api_key set openai <key>`
+- [ ] `crossing tool api_key set tmdb <key>`
+- [ ] `crossing tool api_key set opensubtitles <key>`
+- [ ] `crossing tool api_key set openai <key>`
 
 ### 7. Verify
-- [ ] `crossing version`
+- [ ] `crossing tool version`
 
 ## Virtual Python Environment
 

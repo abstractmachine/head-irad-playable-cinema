@@ -3,15 +3,16 @@
 
 import sys
 import os
+import re
 from pathlib import Path
 
 # Fix Qt plugin conflict with OpenCV
 # Import PyQt5 first, then remove OpenCV's Qt plugin path
 from PyQt5.QtCore import Qt, QTimer, QEvent
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QPushButton, QLabel, QListWidget, QListWidgetItem, QSplitter, 
-    QMessageBox, QSizePolicy, QSlider, QStyle
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QPushButton, QLabel, QListWidget, QListWidgetItem, QSplitter,
+    QMessageBox, QSizePolicy, QSlider, QStyle, QComboBox
 )
 from PyQt5.QtGui import QFont, QPixmap, QImage, QMouseEvent
 
@@ -32,6 +33,13 @@ def frames_to_timecode(frame_number: int, fps: float) -> str:
     minutes, remainder = divmod(remainder, 60_000)
     seconds, ms = divmod(remainder, 1000)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{ms:03d}"
+
+
+def _display_name(filename: str) -> str:
+    """Return a clean display name from a filename (strips TMDb ID suffix)."""
+    name = Path(filename).stem
+    name = re.sub(r'\s*\{tmdb-\d+\}', '', name).strip()
+    return name
 
 
 class ClickSeekSlider(QSlider):
@@ -87,11 +95,13 @@ class ShotItem(QListWidgetItem):
 
 class OpenCVValidator(QMainWindow):
     """Frame-precise shot validator."""
-    
-    def __init__(self, project_path: str, filename: str, media_type: str = "movies"):
+
+    def __init__(self, project_path: str, filenames: list, current_index: int = 0, media_type: str = "movies"):
         super().__init__()
         self.project_path = project_path
-        self.filename = filename
+        self.filenames = filenames
+        self.current_movie_index = current_index
+        self.filename = filenames[current_index]
         self.media_type = media_type
         self.shots = []
         self.current_shot_index = 0
@@ -102,9 +112,10 @@ class OpenCVValidator(QMainWindow):
         self.current_frame_number = 0
         self.playback_timer = None
         self._updating_slider = False
-        
+        self._updating_combo = False
+
         # Set up video path
-        self.video_path = Path(project_path) / "media" / "videos" / media_type / filename
+        self.video_path = Path(project_path) / "media" / "videos" / media_type / self.filename
         if not self.video_path.exists():
             QMessageBox.critical(self, "Error", f"Video file not found:\n{self.video_path}")
             sys.exit(1)
@@ -118,12 +129,14 @@ class OpenCVValidator(QMainWindow):
         # Get video properties
         self.frame_rate = self.cap.get(cv2.CAP_PROP_FPS)
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        self.video_native_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self.video_native_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         print(f"[Validator] Frame rate: {self.frame_rate:.3f} fps")
         print(f"[Validator] Total frames: {self.total_frames}")
         
         # Load shotlist
         try:
-            self.shots = read_shotlist(project_path, filename, media_type)
+            self.shots = read_shotlist(project_path, self.filename, media_type)
             # Convert string frame numbers to int if needed
             for shot in self.shots:
                 if 'Start_Frame' in shot and isinstance(shot['Start_Frame'], str):
@@ -143,7 +156,7 @@ class OpenCVValidator(QMainWindow):
         else:
             self.playback_timer.setInterval(42)  # ~24fps fallback
         
-        self.setWindowTitle(f"Shot Validator - {filename}")
+        self.setWindowTitle(f"Shot Validator \u2014 {_display_name(self.filename)}  (1/{len(self.filenames)})")
         self.setGeometry(100, 100, 1400, 800)
         
         self.init_ui()
@@ -152,12 +165,29 @@ class OpenCVValidator(QMainWindow):
     def init_ui(self):
         """Initialize the user interface."""
         main_widget = QWidget()
+        main_widget.setStyleSheet("background-color: #808080; color: white;")
         self.setCentralWidget(main_widget)
-        main_layout = QHBoxLayout(main_widget)
-        
+        outer_layout = QVBoxLayout(main_widget)
+        outer_layout.setContentsMargins(4, 4, 4, 4)
+        outer_layout.setSpacing(4)
+
+        # Movie selector
+        movie_row = QHBoxLayout()
+        movie_label = QLabel("Movie:")
+        movie_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        movie_row.addWidget(movie_label)
+        self.movie_combo = QComboBox()
+        self.movie_combo.setFocusPolicy(Qt.NoFocus)
+        for fn in self.filenames:
+            self.movie_combo.addItem(_display_name(fn), fn)
+        self.movie_combo.setCurrentIndex(self.current_movie_index)
+        self.movie_combo.currentIndexChanged.connect(self.on_movie_combo_changed)
+        movie_row.addWidget(self.movie_combo, stretch=1)
+        outer_layout.addLayout(movie_row)
+
         # Splitter for frame display / sidebar
         splitter = QSplitter(Qt.Horizontal)
-        main_layout.addWidget(splitter)
+        outer_layout.addWidget(splitter, stretch=1)
         
         # Left side: Frame display
         frame_container = QWidget()
@@ -476,6 +506,84 @@ class OpenCVValidator(QMainWindow):
                 item.setData(Qt.UserRole, scene)
                 item.setTextAlignment(Qt.AlignCenter)
                 self.scene_list.addItem(item)
+
+    def on_movie_combo_changed(self, index: int):
+        """Handle movie selection from the dropdown."""
+        if self._updating_combo:
+            return
+        self.switch_to_movie(index)
+
+    def switch_to_movie(self, index: int):
+        """Switch to a different movie in the playlist, prompting to save first if needed."""
+        if index == self.current_movie_index:
+            return
+
+        if self.modified:
+            reply = QMessageBox.question(
+                self, "Unsaved Changes",
+                "You have unsaved changes. Save before switching?",
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel
+            )
+            if reply == QMessageBox.Cancel:
+                self._updating_combo = True
+                self.movie_combo.setCurrentIndex(self.current_movie_index)
+                self._updating_combo = False
+                return
+            elif reply == QMessageBox.Save:
+                self.save_changes()
+
+        if self.is_playing:
+            self.stop_playback()
+
+        if self.cap is not None:
+            self.cap.release()
+
+        self.current_movie_index = index
+        self.filename = self.filenames[index]
+        self.shots = []
+        self.current_shot_index = 0
+        self.modified = False
+        self.current_frame_number = 0
+
+        self.video_path = Path(self.project_path) / "media" / "videos" / self.media_type / self.filename
+        if not self.video_path.exists():
+            QMessageBox.critical(self, "Error", f"Video file not found:\n{self.video_path}")
+            return
+
+        self.cap = cv2.VideoCapture(str(self.video_path))
+        if not self.cap.isOpened():
+            QMessageBox.critical(self, "Error", f"Could not open video:\n{self.video_path}")
+            return
+
+        self.frame_rate = self.cap.get(cv2.CAP_PROP_FPS)
+        self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if self.frame_rate > 0:
+            self.playback_timer.setInterval(int(1000 / self.frame_rate))
+
+        try:
+            self.shots = read_shotlist(self.project_path, self.filename, self.media_type)
+            for shot in self.shots:
+                if 'Start_Frame' in shot and isinstance(shot['Start_Frame'], str):
+                    shot['Start_Frame'] = int(shot['Start_Frame'])
+                if 'End_Frame' in shot and isinstance(shot['End_Frame'], str):
+                    shot['End_Frame'] = int(shot['End_Frame'])
+        except FileNotFoundError as e:
+            QMessageBox.critical(self, "Error", str(e))
+            return
+
+        self.timeline_slider.setMaximum(max(0, self.total_frames - 1))
+        self.timeline_slider.setValue(0)
+        self.save_button.setEnabled(False)
+        self.setWindowTitle(f"Shot Validator — {_display_name(self.filename)}  ({self.current_movie_index + 1}/{len(self.filenames)})")
+
+        self._updating_combo = True
+        self.movie_combo.setCurrentIndex(index)
+        self._updating_combo = False
+
+        self.rebuild_shot_list()
+        self.rebuild_scene_list()
+        self.update_stats()
+        self.load_first_shot()
 
     def sync_scene_list_selection(self):
         """Highlight the scene_list row matching the current shot's scene."""
@@ -810,7 +918,7 @@ class OpenCVValidator(QMainWindow):
             # Redirect keyboard events to main window
             key = event.key()
             if key in (Qt.Key_Space, Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down,
-                      Qt.Key_PageUp, Qt.Key_PageDown,
+                      Qt.Key_PageUp, Qt.Key_PageDown, Qt.Key_Home, Qt.Key_End,
                       Qt.Key_E, Qt.Key_F, Qt.Key_M, Qt.Key_N):
                 # Handle it ourselves instead of letting the list widget process it
                 self.keyPressEvent(event)
@@ -860,6 +968,12 @@ class OpenCVValidator(QMainWindow):
         elif key == Qt.Key_S and event.modifiers() & Qt.ControlModifier:
             if self.modified:
                 self.save_changes()
+        elif key == Qt.Key_Home:
+            if self.current_movie_index > 0:
+                self.switch_to_movie(self.current_movie_index - 1)
+        elif key == Qt.Key_End:
+            if self.current_movie_index < len(self.filenames) - 1:
+                self.switch_to_movie(self.current_movie_index + 1)
         else:
             super().keyPressEvent(event)
     
@@ -894,20 +1008,21 @@ class OpenCVValidator(QMainWindow):
 def main():
     """Main entry point."""
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="Validate shot boundaries with frame-precise display")
     parser.add_argument('query', nargs='?', help="Filename substring to match")
     parser.add_argument('--tmdb', type=int, help="TMDb ID")
     parser.add_argument('--media', choices=['movies', 'gameplay'], default='movies')
     parser.add_argument('--project', help="Project path (default: current directory)")
-    
+    parser.add_argument('--filenames', nargs='+', help="Explicit list of filenames (passed by cli.py)")
+    parser.add_argument('--all', action='store_true', help="Validate all movies with shotlists")
+
     args = parser.parse_args()
-    
+
     # Determine project path
     if args.project:
         project_path = args.project
     else:
-        # Try to find project path by looking for data/ directory
         cwd = Path.cwd()
         if (cwd / "data").exists():
             project_path = str(cwd)
@@ -916,21 +1031,26 @@ def main():
         else:
             print("✗ Error: Could not find project path. Use --project or run from project directory.", file=sys.stderr)
             sys.exit(1)
-    
-    # Resolve filename
-    if args.tmdb:
-        # Look up by TMDb ID
+
+    # Resolve the list of filenames
+    if args.filenames:
+        filenames = args.filenames
+    elif getattr(args, 'all', False):
         entries = get_metadata(project_path, media_type=args.media)
-        filename = None
-        for entry in entries:
-            if entry.get('tmdb') == str(args.tmdb):
-                filename = entry['filename']
-                break
-        if not filename:
+        filenames = [
+            e['filename'] for e in entries
+            if e.get('filename') and get_shotlist_path(project_path, e['filename'], args.media).exists()
+        ]
+        if not filenames:
+            print("✗ Error: No shotlists found.", file=sys.stderr)
+            sys.exit(1)
+    elif args.tmdb:
+        entries = get_metadata(project_path, media_type=args.media)
+        filenames = [e['filename'] for e in entries if e.get('tmdb') == str(args.tmdb)]
+        if not filenames:
             print(f"✗ Error: No file found with TMDb ID: {args.tmdb}", file=sys.stderr)
             sys.exit(1)
     elif args.query:
-        # Search by substring
         entries = get_metadata(project_path, query=args.query, media_type=args.media)
         if not entries:
             print(f"✗ Error: No file found matching '{args.query}'", file=sys.stderr)
@@ -941,22 +1061,67 @@ def main():
                 print(f"  - {entry['filename']}", file=sys.stderr)
             print("\nUse --tmdb <id> or a more specific query", file=sys.stderr)
             sys.exit(1)
-        filename = entries[0]['filename']
+        filenames = [entries[0]['filename']]
     else:
-        print("✗ Error: Must provide query or --tmdb", file=sys.stderr)
+        print("✗ Error: Must provide query, --tmdb, --filenames, or --all", file=sys.stderr)
         sys.exit(1)
-    
-    # Check if shotlist exists
-    shotlist_path = get_shotlist_path(project_path, filename, args.media)
-    if not shotlist_path.exists():
-        print(f"✗ Error: No shotlist found for {filename}", file=sys.stderr)
-        print("Run 'crossing shot detect' first to generate shotlist.", file=sys.stderr)
-        sys.exit(1)
-    
+
+    # Verify shotlists exist
+    for fn in filenames:
+        shotlist_path = get_shotlist_path(project_path, fn, args.media)
+        if not shotlist_path.exists():
+            print(f"✗ Error: No shotlist found for {fn}", file=sys.stderr)
+            print("Run 'crossing shotlist shot detect' first to generate shotlist.", file=sys.stderr)
+            sys.exit(1)
+
     # Launch Qt application
     app = QApplication(sys.argv)
-    validator = OpenCVValidator(project_path, filename, args.media)
+    app.setStyleSheet("""
+        QWidget          { background-color: #808080; color: white; }
+        QPushButton      { background-color: #666; color: white; border: 1px solid #999; padding: 3px 8px; border-radius: 3px; }
+        QPushButton:hover      { background-color: #777; }
+        QPushButton:pressed    { background-color: #555; }
+        QPushButton:checked    { background-color: #ff00ff; border-color: #ff66ff; }
+        QPushButton:disabled   { color: #aaa; border-color: #777; }
+        QComboBox        { background-color: #666; color: white; border: 1px solid #999; padding: 2px 6px; }
+        QComboBox QAbstractItemView { background-color: #666; color: white; selection-background-color: #ff00ff; }
+        QListWidget      { background-color: #5a5a5a; color: white; border: 1px solid #888; }
+        QListWidget::item:selected { background-color: #ff00ff; color: white; }
+        QListWidget::item:hover    { background-color: #6a6a6a; }
+        QSlider::groove:horizontal { background: #555; height: 6px; border-radius: 3px; }
+        QSlider::handle:horizontal { background: #ccc; width: 14px; height: 14px; margin: -4px 0; border-radius: 7px; }
+        QSlider::sub-page:horizontal { background: #ff00ff; border-radius: 3px; }
+        QScrollBar:vertical        { background: #666; width: 10px; }
+        QScrollBar::handle:vertical { background: #999; border-radius: 4px; min-height: 20px; }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+        QLabel           { background-color: transparent; color: white; }
+        QSplitter::handle { background-color: #666; }
+        QMessageBox      { background-color: #808080; color: white; }
+    """)
+    validator = OpenCVValidator(project_path, filenames, 0, args.media)
     validator.show()
+    QApplication.processEvents()
+
+    # Size window: full screen width, height fitted to video aspect ratio
+    screen = app.screenAt(validator.geometry().center()) or app.primaryScreen()
+    avail = screen.availableGeometry()
+
+    # Step 1: stretch to full screen width and re-layout
+    validator.setGeometry(avail.x(), avail.y(), avail.width(), validator.height())
+    QApplication.processEvents()
+
+    # Step 2: compute ideal height from the actual laid-out video label width
+    if validator.video_native_width > 0 and validator.video_native_height > 0:
+        video_label_w = validator.frame_label.width()
+        ideal_video_h = int(video_label_w * validator.video_native_height / validator.video_native_width)
+        non_video_h = validator.height() - validator.frame_label.height()
+        ideal_win_h = min(ideal_video_h + non_video_h, avail.height())
+    else:
+        ideal_win_h = min(validator.height(), avail.height())
+
+    y = avail.top() + (avail.height() - ideal_win_h) // 2
+    validator.setGeometry(avail.x(), y, avail.width(), ideal_win_h)
+
     sys.exit(app.exec_())
 
 

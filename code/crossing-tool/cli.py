@@ -51,10 +51,10 @@ def _pick_files_or_folder():
         return []
         
     except ImportError:
-        print("ERROR: tkinter not available. Install python3-tk package.")
+        print("✗ Error: tkinter not available. Install python3-tk package.", file=sys.stderr)
         return []
     except Exception as e:
-        print(f"ERROR: Failed to open file picker: {e}")
+        print(f"✗ Error: Failed to open file picker: {e}", file=sys.stderr)
         return []
 
 
@@ -87,9 +87,9 @@ def cmd_version(args):
                 print("  Consider migrating your data structure to the latest version.")
         else:
             print(f"Data version: (not set)")
-            print(f"\n💡 Run 'crossing version --init' to initialize data version.")
+            print(f"\n💡 Run 'crossing tool version --init' to initialize data version.")
     else:
-        print("\nNo project path set. Use 'crossing path <folder>' to set one.")
+        print("\nNo project path set. Use 'crossing tool path <folder>' to set one.")
 
 
 def cmd_version_init(args):
@@ -153,8 +153,7 @@ def cmd_import(args):
             return
     else:
         if not args.sources:
-            print("ERROR: No sources provided. Use --pick flag or provide file/folder paths.")
-            return
+            args._parser.error("the following arguments are required: source (or use --pick)")
         sources = args.sources
     
     # Import files
@@ -229,13 +228,13 @@ def _meta_set(args):
     try:
         data = json.loads(args.json_data)
     except json.JSONDecodeError as exc:
-        print(f"Error: invalid JSON — {exc}")
+        print(f"✗ Error: invalid JSON — {exc}", file=sys.stderr)
         sys.exit(1)
     ok, errors = validate_metadata(data)
     if not ok:
-        print("Validation failed:")
+        print("✗ Error: Validation failed:", file=sys.stderr)
         for e in errors:
-            print(f"  {e}")
+            print(f"  {e}", file=sys.stderr)
         sys.exit(1)
     dest = set_metadata(prefs.get("path"), data)
     print(f"Saved: {dest}")
@@ -359,10 +358,10 @@ def _meta_update(args):
                     print(f"Subtitle: {subtitle_path}")
             print(f"  ok  {single_file}")
         except RuntimeError as exc:
-            print(f"Error: {exc}")
+            print(f"✗ Error: {exc}", file=sys.stderr)
             sys.exit(1)
         except LookupError as exc:
-            print(f"Not found: {exc}")
+            print(f"✗ Error: {exc}", file=sys.stderr)
             sys.exit(1)
         return
 
@@ -595,6 +594,12 @@ def cmd_shotlist(args):
         _shotlist_annotate(args)
     elif sub == "show":
         _shotlist_show(args)
+    elif sub == "shot":
+        sub2 = args.shot_subcommand
+        if sub2 == "detect":
+            _shot_detect(args)
+    elif sub == "validate":
+        _shot_validate(args)
 
 
 def _shotlist_list(args):
@@ -644,7 +649,7 @@ def _shotlist_get(args):
         print(f"✗ Error: Invalid data format - {e}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
-        print(f"✗ Unexpected error: {e}", file=sys.stderr)
+        print(f"✗ Error: {e}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -674,7 +679,7 @@ def _shotlist_annotate(args):
         print(f"✗ Error: {e}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
-        print(f"✗ Unexpected error: {e}", file=sys.stderr)
+        print(f"✗ Error: {e}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -811,7 +816,7 @@ def _shotlist_show(args):
         print(f"✗ Error: Invalid data format - {e}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
-        print(f"✗ Unexpected error: {e}", file=sys.stderr)
+        print(f"✗ Error: {e}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -900,7 +905,7 @@ def _shot_detect(args):
         print(f"✗ Error: {e}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
-        print(f"✗ Unexpected error: {e}", file=sys.stderr)
+        print(f"✗ Error: {e}", file=sys.stderr)
         import traceback
         traceback.print_exc()
         sys.exit(1)
@@ -965,32 +970,58 @@ def _shot_validate(args):
     """Launch shot validation GUI."""
     import subprocess
     from pathlib import Path
-    
-    # Get path to validator (in same directory as cli.py)
+    from services.shotlist import get_shotlist_path
+    from services.metadata import get_metadata
+
     cli_dir = Path(__file__).parent
-    
     validator_path = cli_dir / "services" / "shot_validator.py"
-    
+
     if not validator_path.exists():
         print(f"✗ Error: {validator_path.name} not found at {validator_path}", file=sys.stderr)
         sys.exit(1)
-    
-    # Build command
-    cmd = [sys.executable, str(validator_path)]
-    
-    if args.query:
-        cmd.append(args.query)
-    if args.tmdb:
-        cmd.extend(["--tmdb", str(args.tmdb)])
-    if args.media:
-        cmd.extend(["--media", args.media])
-    
-    # Add project path from preferences
+
+    _require_path()
     project_path = prefs.get("path")
-    if project_path:
-        cmd.extend(["--project", project_path])
-    
-    # Launch validator
+    media_type = args.media
+
+    # Resolve the list of filenames to validate
+    if getattr(args, 'all', False):
+        entries = get_metadata(project_path, media_type=media_type)
+        filenames = [
+            e['filename'] for e in entries
+            if e.get('filename') and get_shotlist_path(project_path, e['filename'], media_type).exists()
+        ]
+        if not filenames:
+            print("✗ Error: No shotlists found.", file=sys.stderr)
+            sys.exit(1)
+    elif args.tmdb is not None:
+        entries = get_metadata(project_path, media_type=media_type)
+        filenames = [e['filename'] for e in entries if e.get('tmdb') == str(args.tmdb)]
+        if not filenames:
+            print(f"✗ Error: No file found with TMDb ID: {args.tmdb}", file=sys.stderr)
+            sys.exit(1)
+    elif args.query:
+        entries = get_metadata(project_path, query=args.query, media_type=media_type)
+        if not entries:
+            print(f"✗ Error: No file found matching '{args.query}'", file=sys.stderr)
+            sys.exit(1)
+        if len(entries) > 1:
+            print(f"✗ Error: Multiple files match '{args.query}':", file=sys.stderr)
+            for e in entries:
+                print(f"  - {e['filename']}", file=sys.stderr)
+            sys.exit(1)
+        filenames = [entries[0]['filename']]
+    else:
+        print("✗ Error: Must provide query, --tmdb, or --all", file=sys.stderr)
+        sys.exit(1)
+
+    cmd = [
+        sys.executable, str(validator_path),
+        "--media", media_type,
+        "--project", project_path,
+        "--filenames",
+    ] + filenames
+
     try:
         subprocess.run(cmd, check=True)
     except subprocess.CalledProcessError as e:
@@ -1021,6 +1052,18 @@ def cmd_api_key(args):
         else:
             print(key_file.read_text().strip())
 
+
+
+def cmd_tool(args):
+    sub = args.tool_subcommand
+    if sub == "version":
+        cmd_version_init(args) if getattr(args, "init", False) else cmd_version(args)
+    elif sub == "path":
+        cmd_path(args)
+    elif sub == "name":
+        cmd_name(args)
+    elif sub == "api_key":
+        cmd_api_key(args)
 
 
 def cmd_audit(args):
@@ -1091,28 +1134,25 @@ def cmd_audit(args):
 
 def _require_path():
     if not prefs.get("path"):
-        print("Error: no project path set. Run: crossing path <folder>")
+        print("✗ Error: no project path set. Run: crossing tool path <folder>", file=sys.stderr)
         sys.exit(1)
 
 
+class _HelpfulParser(argparse.ArgumentParser):
+    def error(self, message):
+        sys.stderr.write(f"missing: {message}\n")
+        self.print_usage(sys.stderr)
+        if "the following arguments are required:" in message:
+            sys.stderr.write(f"help: {self.prog} -h\n")
+        self.exit(2)
+
+
 def build_parser():
-    parser = argparse.ArgumentParser(
+    parser = _HelpfulParser(
         prog="crossing",
         description="Relate moving images across media.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
-
-    p_version = sub.add_parser("version", help="Show tool and data structure versions")
-    p_version.add_argument("--init", action="store_true", help="Initialize/update data version for current project")
-    p_version.set_defaults(func=lambda args: cmd_version_init(args) if args.init else cmd_version(args))
-
-    p_path = sub.add_parser("path", help="Set the active project folder")
-    p_path.add_argument("folder", nargs="?")
-    p_path.set_defaults(func=cmd_path)
-
-    p_name = sub.add_parser("name", help="Set the project name")
-    p_name.add_argument("project_name", nargs="?")
-    p_name.set_defaults(func=cmd_name)
 
     p_import = sub.add_parser("import", help="Import media files into the project")
     p_import.add_argument("sources", nargs="*", metavar="source", help="File(s) or folder to import")
@@ -1120,7 +1160,7 @@ def build_parser():
     p_import.add_argument("--media", choices=["movie", "gameplay"], default="movie")
     p_import.add_argument("--platform", choices=["universal", "pi5"], default="universal")
     p_import.add_argument("--skip-metadata", action="store_true", help="Skip automatic metadata fetch")
-    p_import.set_defaults(func=cmd_import)
+    p_import.set_defaults(func=cmd_import, _parser=p_import)
 
     p_search = sub.add_parser("search", help="Search for passages")
     p_search.add_argument("query")
@@ -1169,7 +1209,7 @@ def build_parser():
                               help="Actually remove the entries (default is a dry run)")
 
     # shotlist command group
-    p_shotlist = sub.add_parser("shotlist", help="Manage shot and scene annotations")
+    p_shotlist = sub.add_parser("shotlist", help="Manage shot and scene cuts and annotations")
     p_shotlist.set_defaults(func=cmd_shotlist)
     shotlist_sub = p_shotlist.add_subparsers(dest="shotlist_subcommand", required=True)
 
@@ -1219,39 +1259,50 @@ def build_parser():
     p_show_scene.add_argument("--field", nargs="+", default=None, help="Extract specific fields from caption JSON (e.g. protagonists place actions)")
     p_show_scene.add_argument("--json", action="store_true", help="Output as JSON (raw or filtered by --field)")
 
-    # shot command group
-    p_shot = sub.add_parser("shot", help="Shot boundary detection")
-    p_shot.set_defaults(func=cmd_shot)
-    shot_sub = p_shot.add_subparsers(dest="shot_subcommand", required=True)
-    
-    p_shot_detect = shot_sub.add_parser("detect", help="Detect shot boundaries using TransNetV2")
-    p_shot_detect.add_argument("query", nargs="?", default=None, help="Filename substring to match")
-    p_shot_detect.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_shot_detect.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-    p_shot_detect.add_argument("--force", action="store_true", help="Overwrite existing shotlist if it exists")
-    p_shot_detect.add_argument("--all", action="store_true", help="Process all metadata entries without a shotlist")
-    
-    p_shot_validate = shot_sub.add_parser("validate", help="Validate and correct shot boundaries (GUI)")
-    p_shot_validate.add_argument("query", nargs="?", default=None, help="Filename substring to match")
-    p_shot_validate.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_shot_validate.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    p_sl_shot = shotlist_sub.add_parser("shot", help="Shot boundary detection")
+    sl_shot_sub = p_sl_shot.add_subparsers(dest="shot_subcommand", required=True)
+
+    p_sl_shot_detect = sl_shot_sub.add_parser("detect", help="Detect shot boundaries using TransNetV2")
+    p_sl_shot_detect.add_argument("query", nargs="?", default=None, help="Filename substring to match")
+    p_sl_shot_detect.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
+    p_sl_shot_detect.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    p_sl_shot_detect.add_argument("--force", action="store_true", help="Overwrite existing shotlist if it exists")
+    p_sl_shot_detect.add_argument("--all", action="store_true", help="Process all metadata entries without a shotlist")
+
+    p_sl_validate = shotlist_sub.add_parser("validate", help="Validate and correct shot/scene data (GUI)")
+    p_sl_validate.add_argument("query", nargs="?", default=None, help="Filename substring to match")
+    p_sl_validate.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
+    p_sl_validate.add_argument("--all", action="store_true", help="Validate all movies that have a shotlist")
+    p_sl_validate.add_argument("--media", choices=["movies", "gameplay"], default="movies")
 
     # audit command
     p_audit = sub.add_parser("audit", help="Report missing metadata, shotlists, and subtitles")
     p_audit.set_defaults(func=cmd_audit)
     p_audit.add_argument("--media", choices=["movies", "gameplay"], default="movies")
 
-    # api_key command group
-    p_api_key = sub.add_parser("api_key", help="Get or set API keys")
-    p_api_key.set_defaults(func=cmd_api_key)
-    api_key_sub = p_api_key.add_subparsers(dest="api_key_subcommand", required=True)
+    # tool command group (version, path, name, api_key)
+    p_tool = sub.add_parser("tool", help="Tool settings: version, path, name, API keys")
+    p_tool.set_defaults(func=cmd_tool)
+    tool_sub = p_tool.add_subparsers(dest="tool_subcommand", required=True)
 
-    p_api_key_get = api_key_sub.add_parser("get", help="Print a stored API key")
-    p_api_key_get.add_argument("service", choices=_API_KEY_SERVICES)
+    p_tool_version = tool_sub.add_parser("version", help="Show tool and data structure versions")
+    p_tool_version.add_argument("--init", action="store_true", help="Initialize/update data version for current project")
 
-    p_api_key_set = api_key_sub.add_parser("set", help="Save an API key")
-    p_api_key_set.add_argument("service", choices=_API_KEY_SERVICES)
-    p_api_key_set.add_argument("value", metavar="key")
+    p_tool_path = tool_sub.add_parser("path", help="Get or set the active project folder")
+    p_tool_path.add_argument("folder", nargs="?")
+
+    p_tool_name = tool_sub.add_parser("name", help="Get or set the project name")
+    p_tool_name.add_argument("project_name", nargs="?")
+
+    p_tool_api_key = tool_sub.add_parser("api_key", help="Get or set API keys")
+    tool_api_key_sub = p_tool_api_key.add_subparsers(dest="api_key_subcommand", required=True)
+
+    p_tool_api_key_get = tool_api_key_sub.add_parser("get", help="Print a stored API key")
+    p_tool_api_key_get.add_argument("service", choices=_API_KEY_SERVICES)
+
+    p_tool_api_key_set = tool_api_key_sub.add_parser("set", help="Save an API key")
+    p_tool_api_key_set.add_argument("service", choices=_API_KEY_SERVICES)
+    p_tool_api_key_set.add_argument("value", metavar="key")
 
     return parser
 

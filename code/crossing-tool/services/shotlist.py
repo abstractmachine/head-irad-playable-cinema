@@ -47,37 +47,47 @@ def list_shotlists(project_path: str, media_type: str | None = None) -> list[dic
     """
     from services.metadata import _all_metadata
     
-    # Get all metadata entries that have shotlists
+    # Get all metadata entries and check for shotlists on disk
     all_entries = _all_metadata(project_path, media_type)
+    # Build a lookup by filename for quick access
+    meta_by_filename = {e['filename']: e for e in all_entries if e.get('filename')}
     shotlists = []
-    
-    for entry in all_entries:
-        if entry.get('shotlist') == 'true':
-            shotlist_path = get_shotlist_path(
-                project_path, 
-                entry['filename'], 
-                entry.get('media_type', 'movies')
-            )
-            
-            if shotlist_path.exists():
-                # Count shots and scenes
-                with open(shotlist_path, 'r', encoding='utf-8') as f:
-                    reader = csv.DictReader(f)
-                    rows = list(reader)
-                    shot_count = len(rows)
-                    scenes = set(row['Scene'] for row in rows if row.get('Scene'))
-                    scene_count = len(scenes)
-                
-                shotlists.append({
-                    'filename': entry['filename'],
-                    'title': entry.get('title', ''),
-                    'year': entry.get('year', ''),
-                    'tmdb': entry.get('tmdb', ''),
-                    'media_type': entry.get('media_type', 'movies'),
-                    'shot_count': shot_count,
-                    'scene_count': scene_count,
-                    'has_encodings': entry.get('encodings') == 'true'
-                })
+
+    types_to_check = [media_type] if media_type else ['movies', 'gameplay']
+    for mtype in types_to_check:
+        shotlist_dir = Path(project_path) / "data" / "shotlists" / mtype
+        if not shotlist_dir.is_dir():
+            continue
+        for csv_path in sorted(shotlist_dir.glob("*.csv")):
+            # Try to match back to a metadata entry by stem
+            stem = csv_path.stem
+            # Find metadata entry whose filename stem matches
+            entry = None
+            for fn, e in meta_by_filename.items():
+                if Path(fn).stem == stem and e.get('media_type', 'movies') == mtype:
+                    entry = e
+                    break
+            if entry is None:
+                continue
+
+            with open(csv_path, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                rows = list(reader)
+                shot_count = len(rows)
+                scenes = set(row['Scene'] for row in rows if row.get('Scene'))
+                scene_count = len(scenes)
+
+            npy_path = Path(project_path) / "data" / "shotlists" / mtype / (stem + ".npy")
+            shotlists.append({
+                'filename': entry['filename'],
+                'title': entry.get('title', ''),
+                'year': entry.get('year', ''),
+                'tmdb': entry.get('tmdb', ''),
+                'media_type': mtype,
+                'shot_count': shot_count,
+                'scene_count': scene_count,
+                'has_encodings': npy_path.exists()
+            })
     
     return shotlists
 
