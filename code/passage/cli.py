@@ -831,13 +831,17 @@ def cmd_shot(args):
 def _shot_detect(args):
     """Detect shot boundaries using TransNetV2."""
     from services.shot_detection import detect_shots_transnet, write_shotlist_csv
-    from services.shotlist import resolve_filename
+    from services.shotlist import resolve_filename, get_shotlist_path
     from services.metadata import get_metadata
-    
+
     project_path = prefs.get("path")
     media_type = args.media
-    
+
     try:
+        if getattr(args, 'all', False):
+            _shot_detect_all(project_path, media_type, args.force)
+            return
+
         # Resolve filename from query or tmdb
         if args.tmdb is not None:
             filename = resolve_filename(project_path, args.tmdb, None, media_type)
@@ -902,6 +906,61 @@ def _shot_detect(args):
         sys.exit(1)
 
 
+def _shot_detect_all(project_path: str, media_type: str, force: bool):
+    """Detect shots for all metadata entries that don't yet have a shotlist."""
+    from services.shot_detection import detect_shots_transnet, write_shotlist_csv
+    from services.shotlist import get_shotlist_path
+    from services.metadata import get_metadata
+    import time
+
+    entries = get_metadata(project_path, media_type=media_type)
+    if not entries:
+        print("No metadata entries found.")
+        return
+
+    pending = []
+    skipped = []
+    for entry in entries:
+        filename = entry.get('filename')
+        if not filename:
+            continue
+        shotlist_path = get_shotlist_path(project_path, filename, media_type)
+        if shotlist_path.exists() and not force:
+            skipped.append(filename)
+        else:
+            video_path = Path(project_path) / "media" / "videos" / media_type / filename
+            if video_path.exists():
+                pending.append(filename)
+            else:
+                print(f"  ⚠ Skipping (video not found): {filename}")
+
+    print(f"Found {len(entries)} entries: {len(pending)} to process, {len(skipped)} already have shotlists.")
+    if skipped:
+        print("  (use --force to reprocess existing shotlists)")
+    print()
+
+    failed = []
+    for i, filename in enumerate(pending, 1):
+        video_path = Path(project_path) / "media" / "videos" / media_type / filename
+        print(f"[{i}/{len(pending)}] {filename}")
+        try:
+            start_time = time.time()
+            shots = detect_shots_transnet(str(video_path))
+            elapsed = time.time() - start_time
+            csv_path = write_shotlist_csv(project_path, filename, shots, media_type, force=force)
+            print(f"  ✓ {len(shots)} shots in {elapsed:.1f}s → {csv_path.name}")
+        except Exception as e:
+            print(f"  ✗ Failed: {e}", file=sys.stderr)
+            failed.append(filename)
+
+    print()
+    print(f"Done. {len(pending) - len(failed)}/{len(pending)} processed successfully.")
+    if failed:
+        print("Failed:")
+        for f in failed:
+            print(f"  - {f}")
+
+
 def _shot_validate(args):
     """Launch shot validation GUI."""
     import subprocess
@@ -962,6 +1021,72 @@ def cmd_api_key(args):
         else:
             print(key_file.read_text().strip())
 
+
+
+def cmd_audit(args):
+    """Report missing metadata, shotlists, and subtitles."""
+    from pathlib import Path
+    from services.metadata import get_metadata
+
+    _require_path()
+    project_path = prefs.get("path")
+    media_type = args.media
+
+    video_dir  = Path(project_path) / "media" / "videos" / media_type
+    subtitle_dir = Path(project_path) / "media" / "subtitles" / media_type
+    shotlist_dir = Path(project_path) / "data" / "shotlists" / media_type
+
+    video_files = sorted(f.name for f in video_dir.glob("*") if f.is_file()) if video_dir.exists() else []
+    entries = get_metadata(project_path, media_type=media_type)
+    meta_filenames = {e["filename"] for e in entries if e.get("filename")}
+
+    # Videos on disk with no metadata row
+    no_metadata = [f for f in video_files if f not in meta_filenames]
+
+    # Metadata entries with no shotlist CSV
+    no_shotlist = []
+    for entry in entries:
+        fn = entry.get("filename", "")
+        if fn and not (shotlist_dir / (Path(fn).stem + ".csv")).exists():
+            no_shotlist.append(fn)
+
+    # Metadata entries with no subtitle file
+    no_subtitle = []
+    for entry in entries:
+        fn = entry.get("filename", "")
+        if not fn:
+            continue
+        stem = Path(fn).stem
+        if not (subtitle_dir / (stem + ".srt")).exists() and \
+           not (subtitle_dir / (stem.replace(" ", "-") + ".srt")).exists():
+            no_subtitle.append(fn)
+
+    n = len(entries)
+    print(f"Audit · {media_type}  ({len(video_files)} video file(s) · {n} metadata entry(ies))")
+
+    print()
+    if no_metadata:
+        print(f"  No metadata   ({len(no_metadata)}):")
+        for f in no_metadata:
+            print(f"    {f}")
+    else:
+        print(f"  Metadata:   ✓ all {n}")
+
+    print()
+    if no_shotlist:
+        print(f"  No shotlist   ({len(no_shotlist)} / {n}):")
+        for f in no_shotlist:
+            print(f"    {f}")
+    else:
+        print(f"  Shotlists:  ✓ all {n}")
+
+    print()
+    if no_subtitle:
+        print(f"  No subtitles  ({len(no_subtitle)} / {n}):")
+        for f in no_subtitle:
+            print(f"    {f}")
+    else:
+        print(f"  Subtitles:  ✓ all {n}")
 
 
 def _require_path():
@@ -1104,11 +1229,17 @@ def build_parser():
     p_shot_detect.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
     p_shot_detect.add_argument("--media", choices=["movies", "gameplay"], default="movies")
     p_shot_detect.add_argument("--force", action="store_true", help="Overwrite existing shotlist if it exists")
+    p_shot_detect.add_argument("--all", action="store_true", help="Process all metadata entries without a shotlist")
     
     p_shot_validate = shot_sub.add_parser("validate", help="Validate and correct shot boundaries (GUI)")
     p_shot_validate.add_argument("query", nargs="?", default=None, help="Filename substring to match")
     p_shot_validate.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
     p_shot_validate.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+
+    # audit command
+    p_audit = sub.add_parser("audit", help="Report missing metadata, shotlists, and subtitles")
+    p_audit.set_defaults(func=cmd_audit)
+    p_audit.add_argument("--media", choices=["movies", "gameplay"], default="movies")
 
     # api_key command group
     p_api_key = sub.add_parser("api_key", help="Get or set API keys")

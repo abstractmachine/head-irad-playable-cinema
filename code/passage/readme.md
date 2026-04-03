@@ -56,7 +56,7 @@ passage metadata get [query]
 passage metadata update
   --file <filename>                 # update single file
   --force                           # re-fetch all entries (including duration)
-  --media {movies,gameplay}
+  --media {movies}
 
 # Validate metadata
 passage metadata validate
@@ -86,11 +86,15 @@ passage shot detect <filename_substring>
 passage shot detect --tmdb 391             # use TMDb ID
   --media {movies,gameplay}                # media type (default: movies)
   --force                                  # overwrite existing shotlist
+  --all                                    # process all entries in project (skips existing)
 
 # Examples:
 passage shot detect Django                 # find by filename substring
 passage shot detect --tmdb 10772           # find by TMDb ID
 passage shot detect "Fistful" --force      # overwrite existing
+passage shot detect --all                  # detect shots for all movies without a shotlist
+passage shot detect --all --media gameplay # detect shots for all gameplay entries
+passage shot detect --all --force          # reprocess everything
 
 # Output CSV format:
 # Ignore,Scene,Start,End,Start_Frame,End_Frame,Shot_Caption,Scene_Caption,Shot_Source,Shot_Confidence
@@ -101,7 +105,7 @@ passage shot validate <filename_substring>
 passage shot validate --tmdb 56966         # use TMDb ID
   --media {movies,gameplay}                # media type (default: movies)
 
-# Keyboard shortcuts in validator (OpenCV frame-precise):
+# Keyboard shortcuts in validator (OpenCV-based frame-precise):
 # Space      - Play/Pause
 # ↑/↓        - Previous/Next shot (resumes playback if was playing)
 # ←/→        - Step one frame backward/forward
@@ -151,6 +155,18 @@ passage shotlist show scene --tmdb 391 1
   --media {movies,gameplay}
   --field protagonists actions
   --json
+```
+
+### Audit
+
+```bash
+# Show which entries are missing metadata, shotlists, or subtitles
+passage audit
+  --media {movies,gameplay}         # media type (default: movies)
+
+# Examples:
+passage audit                       # report for all movies
+passage audit --media gameplay      # report for gameplay entries
 ```
 
 ### API Keys
