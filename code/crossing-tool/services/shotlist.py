@@ -4,6 +4,34 @@ import csv
 from pathlib import Path
 from typing import Any
 
+# Maps legacy CSV column names to the canonical temporal field names.
+# Used by normalize_shot_fields() to ensure backward-compatible reads.
+_TEMPORAL_FIELD_ALIASES: dict[str, str] = {
+    "Start": "start_time",
+    "End": "end_time",
+    "Start_Frame": "start_frame",
+    "End_Frame": "end_frame",
+}
+
+
+def normalize_shot_fields(shot: dict) -> dict:
+    """Normalize legacy temporal field names to canonical names.
+
+    Maps old-style CSV column names to the explicit, typed equivalents:
+        Start       -> start_time   (HH:MM:SS.mmm)
+        End         -> end_time     (HH:MM:SS.mmm)
+        Start_Frame -> start_frame  (integer)
+        End_Frame   -> end_frame    (integer)
+
+    If the canonical name already exists the legacy name is silently dropped
+    so that data is never lost or overwritten.
+    """
+    result = dict(shot)
+    for old_key, new_key in _TEMPORAL_FIELD_ALIASES.items():
+        if old_key in result and new_key not in result:
+            result[new_key] = result.pop(old_key)
+    return result
+
 
 def resolve_filename(project_path: str, tmdb_id: str | None, filename: str | None, media_type: str = "movies") -> str:
     """Resolve TMDb ID or filename to actual filename.
@@ -101,27 +129,23 @@ def read_shotlist(project_path: str, filename: str, media_type: str = "movies") 
     
     with open(shotlist_path, 'r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
-        return list(reader)
+        return [normalize_shot_fields(row) for row in reader]
 
 
 def write_shotlist(project_path: str, filename: str, media_type: str, shots: list[dict[str, Any]]) -> None:
     """Write shotlist data back to CSV."""
     shotlist_path = get_shotlist_path(project_path, filename, media_type)
     
-    # Base fieldnames
-    fieldnames = ['Ignore', 'Scene', 'Start', 'End']
-    
+    # Base fieldnames — canonical temporal naming
+    fieldnames = ['Ignore', 'Scene', 'start_time', 'end_time']
+
     # Add frame columns if present
-    if shots and any('Start_Frame' in shot for shot in shots):
-        fieldnames.extend(['Start_Frame', 'End_Frame'])
+    if shots and any('start_frame' in shot for shot in shots):
+        fieldnames.extend(['start_frame', 'end_frame'])
     
     # Add captions
     fieldnames.extend(['Shot_Caption', 'Scene_Caption'])
-    
-    # Add Shot_Source and Shot_Confidence if present in any shot (for auto-detected shots)
-    if shots and any('Shot_Source' in shot for shot in shots):
-        fieldnames.extend(['Shot_Source', 'Shot_Confidence'])
-    
+
     with open(shotlist_path, 'w', encoding='utf-8', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
         writer.writeheader()
@@ -164,6 +188,79 @@ def get_shot(project_path: str, filename: str, shot_index: int, media_type: str 
         raise IndexError(f"Shot index {shot_index} out of range (0-{len(shots)-1})")
     
     return shots[shot_index]
+
+
+def migrate_shotlist_fields(project_path: str, media_type: str | None = None, dry_run: bool = False) -> list[dict]:
+    """Migrate all shotlist CSVs from legacy temporal field names to canonical names.
+
+    For each CSV under data/shotlists/{media_type}/:
+    - Checks its raw column headers.
+    - If any legacy names are found (Start, End, Start_Frame, End_Frame), reads the
+      file (which normalizes field names in memory), then writes it back using the
+      canonical names and column order.
+    - Files already using canonical names are left untouched.
+
+    Returns a list of result dicts, one per CSV:
+        {
+            "path": str,
+            "status": "migrated" | "already_current" | "skipped",
+            "old_headers": list[str],    # only for "migrated"
+            "shot_count": int,           # only for "migrated"
+        }
+
+    Args:
+        project_path: Path to the project root.
+        media_type: "movies", "gameplay", or None (both).
+        dry_run: If True, report what would change but don't write anything.
+    """
+    _LEGACY_TEMPORAL = set(_TEMPORAL_FIELD_ALIASES.keys())
+    types_to_check = [media_type] if media_type else ["movies", "gameplay"]
+    results = []
+
+    for mtype in types_to_check:
+        shotlist_dir = Path(project_path) / "data" / "shotlists" / mtype
+        if not shotlist_dir.is_dir():
+            continue
+
+        for csv_path in sorted(shotlist_dir.glob("*.csv")):
+            # Read raw headers without normalizing
+            with open(csv_path, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                raw_headers = list(reader.fieldnames or [])
+
+            legacy_found = [h for h in raw_headers if h in _LEGACY_TEMPORAL]
+            has_dropped = any(h in ("Shot_Source", "Shot_Confidence") for h in raw_headers)
+
+            if not legacy_found and not has_dropped:
+                results.append({"path": str(csv_path), "status": "already_current"})
+                continue
+
+            # Read rows through the normalizing reader
+            with open(csv_path, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                shots = [normalize_shot_fields(row) for row in reader]
+
+            if not dry_run:
+                # Determine fieldnames for the rewritten file
+                fieldnames = ["Ignore", "Scene", "start_time", "end_time"]
+                if any("start_frame" in shot for shot in shots):
+                    fieldnames.extend(["start_frame", "end_frame"])
+                fieldnames.extend(["Shot_Caption", "Scene_Caption"])
+
+                with open(csv_path, "w", encoding="utf-8", newline="") as f:
+                    writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+                    writer.writeheader()
+                    writer.writerows(shots)
+
+            results.append({
+                "path": str(csv_path),
+                "status": "migrated" if not dry_run else "would_migrate",
+                "old_headers": legacy_found,
+                "shot_count": len(shots),
+                "dropped_columns": [h for h in raw_headers if h in ("Shot_Source", "Shot_Confidence")],
+            })
+
+    return results
 
 
 def get_scene_shots(project_path: str, filename: str, scene_number: int, media_type: str = "movies") -> list[dict[str, Any]]:

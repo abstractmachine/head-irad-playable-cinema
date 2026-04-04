@@ -171,8 +171,8 @@ class ShotItem(QListWidgetItem):
         # pad scene and shot with values for proper sorting (up to 9999 scenes/shots)
         scene_value = f"{int(self.shot.get('Scene', 0)):04d}"
         shot_value = f"{self.index:04d}"
-        start_frame = self.shot.get('Start_Frame', '?')
-        end_frame = self.shot.get('End_Frame', '?')
+        start_frame = self.shot.get('start_frame', '?')
+        end_frame = self.shot.get('end_frame', '?')
         # confidence = self.shot.get('Shot_Confidence', '')
         ignored = " [X]" if self.is_ignored else ""
         # conf_str = f" ({confidence})" if confidence else ""
@@ -240,10 +240,10 @@ class OpenCVValidator(QMainWindow):
             self.shots = read_shotlist(project_path, self.filename, media_type)
             # Convert string frame numbers to int if needed
             for shot in self.shots:
-                if 'Start_Frame' in shot and isinstance(shot['Start_Frame'], str):
-                    shot['Start_Frame'] = int(shot['Start_Frame'])
-                if 'End_Frame' in shot and isinstance(shot['End_Frame'], str):
-                    shot['End_Frame'] = int(shot['End_Frame'])
+                if 'start_frame' in shot and isinstance(shot['start_frame'], str):
+                    shot['start_frame'] = int(shot['start_frame'])
+                if 'end_frame' in shot and isinstance(shot['end_frame'], str):
+                    shot['end_frame'] = int(shot['end_frame'])
         except FileNotFoundError as e:
             QMessageBox.critical(self, "Error", str(e))
             sys.exit(1)
@@ -616,10 +616,10 @@ class OpenCVValidator(QMainWindow):
             try:
                 self.shots = read_shotlist(self.project_path, self.filename, self.media_type)
                 for shot in self.shots:
-                    if 'Start_Frame' in shot and isinstance(shot['Start_Frame'], str):
-                        shot['Start_Frame'] = int(shot['Start_Frame'])
-                    if 'End_Frame' in shot and isinstance(shot['End_Frame'], str):
-                        shot['End_Frame'] = int(shot['End_Frame'])
+                    if 'start_frame' in shot and isinstance(shot['start_frame'], str):
+                        shot['start_frame'] = int(shot['start_frame'])
+                    if 'end_frame' in shot and isinstance(shot['end_frame'], str):
+                        shot['end_frame'] = int(shot['end_frame'])
             except FileNotFoundError:
                 self.shots = []
 
@@ -663,7 +663,7 @@ class OpenCVValidator(QMainWindow):
             # Stop at end of current shot
             if 0 <= self.current_shot_index < len(self.shots):
                 current_shot = self.shots[self.current_shot_index]
-                end_frame = int(current_shot.get('End_Frame', self.total_frames - 1))
+                end_frame = int(current_shot.get('end_frame', self.total_frames - 1))
                 
                 if self.current_frame_number > end_frame:
                     self.stop_playback()
@@ -681,8 +681,8 @@ class OpenCVValidator(QMainWindow):
             # Update info label
             if 0 <= self.current_shot_index < len(self.shots):
                 shot = self.shots[self.current_shot_index]
-                start_tc = shot.get('Start', '?')
-                end_tc = shot.get('End', '?')
+                start_tc = shot.get('start_time', '?')
+                end_tc = shot.get('end_time', '?')
                 confidence = shot.get('Shot_Confidence', '')
                 conf_str = f"\nConfidence: {confidence}" if confidence else ""
                 
@@ -696,8 +696,8 @@ class OpenCVValidator(QMainWindow):
     def update_current_shot_from_frame(self):
         """Update current shot index based on current frame number."""
         for i, shot in enumerate(self.shots):
-            start_frame = int(shot.get('Start_Frame', 0))
-            end_frame = int(shot.get('End_Frame', 0))
+            start_frame = int(shot.get('start_frame', 0))
+            end_frame = int(shot.get('end_frame', 0))
             
             if start_frame <= self.current_frame_number <= end_frame:
                 if i != self.current_shot_index:
@@ -786,10 +786,10 @@ class OpenCVValidator(QMainWindow):
         try:
             self.shots = read_shotlist(self.project_path, self.filename, self.media_type)
             for shot in self.shots:
-                if 'Start_Frame' in shot and isinstance(shot['Start_Frame'], str):
-                    shot['Start_Frame'] = int(shot['Start_Frame'])
-                if 'End_Frame' in shot and isinstance(shot['End_Frame'], str):
-                    shot['End_Frame'] = int(shot['End_Frame'])
+                if 'start_frame' in shot and isinstance(shot['start_frame'], str):
+                    shot['start_frame'] = int(shot['start_frame'])
+                if 'end_frame' in shot and isinstance(shot['end_frame'], str):
+                    shot['end_frame'] = int(shot['end_frame'])
         except FileNotFoundError as e:
             QMessageBox.critical(self, "Error", str(e))
             return
@@ -874,10 +874,10 @@ class OpenCVValidator(QMainWindow):
             
             # Get frame number
             if show_end:
-                frame_number = int(shot.get('End_Frame', 0))
+                frame_number = int(shot.get('end_frame', 0))
                 frame_type = "END"
             else:
-                frame_number = int(shot.get('Start_Frame', 0))
+                frame_number = int(shot.get('start_frame', 0))
                 frame_type = "START"
             
             # Extract and display frame
@@ -894,8 +894,8 @@ class OpenCVValidator(QMainWindow):
                 self.display_frame(frame)
                 
                 # Update info label with shot details
-                start_tc = shot.get('Start', '?')
-                end_tc = shot.get('End', '?')
+                start_tc = shot.get('start_time', '?')
+                end_tc = shot.get('end_time', '?')
                 confidence = shot.get('Shot_Confidence', '')
                 conf_str = f"\nConfidence: {confidence}" if confidence else ""
                 
@@ -978,8 +978,8 @@ class OpenCVValidator(QMainWindow):
         if 0 <= self.current_shot_index < len(self.shots):
             shot = self.shots[self.current_shot_index]
             scene = shot.get('Scene', '0')
-            start_tc = shot.get('Start', '?')
-            end_tc = shot.get('End', '?')
+            start_tc = shot.get('start_time', '?')
+            end_tc = shot.get('end_time', '?')
             confidence = shot.get('Shot_Confidence', '')
             conf_str = f"\nConfidence: {confidence}" if confidence else ""
             self.info_label.setText(
@@ -1014,8 +1014,8 @@ class OpenCVValidator(QMainWindow):
         prev_shot = self.shots[self.current_shot_index - 1]
         
         # Update previous shot's end to current shot's end
-        prev_shot['End'] = current_shot['End']
-        prev_shot['End_Frame'] = current_shot['End_Frame']
+        prev_shot['end_time'] = current_shot['end_time']
+        prev_shot['end_frame'] = current_shot['end_frame']
         
         # Remove current shot
         self.shots.pop(self.current_shot_index)
@@ -1038,8 +1038,8 @@ class OpenCVValidator(QMainWindow):
             return
 
         shot = self.shots[self.current_shot_index]
-        start_frame = int(shot.get('Start_Frame', 0))
-        end_frame = int(shot.get('End_Frame', 0))
+        start_frame = int(shot.get('start_frame', 0))
+        end_frame = int(shot.get('end_frame', 0))
         split_frame = self.current_frame_number
 
         # Split frame must be strictly inside the shot (not at start or end)
@@ -1054,14 +1054,14 @@ class OpenCVValidator(QMainWindow):
 
         # Build the two new shots
         first_shot = dict(shot)
-        first_shot['End_Frame'] = split_frame - 1
-        first_shot['End'] = frames_to_timecode(split_frame - 1, self.frame_rate)
+        first_shot['end_frame'] = split_frame - 1
+        first_shot['end_time'] = frames_to_timecode(split_frame - 1, self.frame_rate)
         first_shot['Shot_Caption'] = ''
         first_shot['Shot_Confidence'] = ''
 
         second_shot = dict(shot)
-        second_shot['Start_Frame'] = split_frame
-        second_shot['Start'] = frames_to_timecode(split_frame, self.frame_rate)
+        second_shot['start_frame'] = split_frame
+        second_shot['start_time'] = frames_to_timecode(split_frame, self.frame_rate)
         second_shot['Shot_Caption'] = ''
         second_shot['Shot_Source'] = 'manual'
         second_shot['Shot_Confidence'] = ''

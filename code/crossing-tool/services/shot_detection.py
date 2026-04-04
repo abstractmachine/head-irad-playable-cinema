@@ -202,14 +202,12 @@ def write_shotlist_csv(
     fieldnames = [
         "Ignore",
         "Scene",
-        "Start",
-        "End",
-        "Start_Frame",
-        "End_Frame",
+        "start_time",
+        "end_time",
+        "start_frame",
+        "end_frame",
         "Shot_Caption",
         "Scene_Caption",
-        "Shot_Source",
-        "Shot_Confidence"
     ]
     
     with open(csv_path, 'w', newline='', encoding='utf-8') as f:
@@ -220,14 +218,12 @@ def write_shotlist_csv(
             writer.writerow({
                 "Ignore": "No",
                 "Scene": "0",
-                "Start": format_timecode(shot["start"]),
-                "End": format_timecode(shot["end"]),
-                "Start_Frame": shot["start_frame"],
-                "End_Frame": shot["end_frame"],
+                "start_time": format_timecode(shot["start"]),
+                "end_time": format_timecode(shot["end"]),
+                "start_frame": shot["start_frame"],
+                "end_frame": shot["end_frame"],
                 "Shot_Caption": "",
                 "Scene_Caption": "",
-                "Shot_Source": shot["source"],
-                "Shot_Confidence": f"{shot['confidence']:.3f}"
             })
     
     return csv_path

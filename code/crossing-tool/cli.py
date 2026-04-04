@@ -300,7 +300,7 @@ def _meta_validate(args):
 
     # Check for subtitles if requested
     if args.check_subtitles:
-        subtitle_dir = Path(project_path) / "media" / "subtitles" / media_type / media_type
+        subtitle_dir = Path(project_path) / "media" / "subtitles" / media_type
         missing_subtitles = []
         
         for row in rows:
@@ -438,7 +438,7 @@ def _meta_list(args):
         rows = [r for r in rows if needle in str(r.get("director", "")).lower()]
 
     # Add subtitle status
-    subtitle_dir = Path(project_path) / "media" / "subtitles" / media_type / media_type
+    subtitle_dir = Path(project_path) / "media" / "subtitles" / media_type
     if True:
         for row in rows:
             filename = row.get("filename", "")
@@ -485,6 +485,105 @@ def _meta_prune(args):
 
     pruned = prune_metadata(project_path, media_type=media_type)
     print(f"\nRemoved {len(pruned)} entr{'y' if len(pruned) == 1 else 'ies'}.")
+
+
+# ---------------------------------------------------------------------------
+# remove command
+# ---------------------------------------------------------------------------
+
+def cmd_remove(args):
+    _require_path()
+    from services.metadata import get_metadata, prune_metadata
+    from services.shotlist import resolve_filename
+
+    project_path = prefs.get("path")
+    media_type = args.media
+    tmdb = getattr(args, "tmdb", None)
+    query = " ".join(args.query).strip() if args.query else ""
+
+    if not tmdb and not query:
+        print("✗ Provide a title query or --tmdb <id>.", file=sys.stderr)
+        sys.exit(1)
+
+    rows = get_metadata(project_path, media_type=media_type)
+
+    if tmdb is not None:
+        try:
+            filename = resolve_filename(project_path, tmdb, None, media_type)
+        except ValueError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            sys.exit(1)
+        matches = [r for r in rows if r.get("filename") == filename]
+    else:
+        q = query.lower()
+        matches = [
+            r for r in rows
+            if q in str(r.get("filename", "")).lower()
+            or q in str(r.get("title", "")).lower()
+        ]
+
+    if not matches:
+        hint = f"--tmdb {tmdb}" if tmdb else f"'{query}'"
+        print(f"✗ No metadata entry matches {hint}.", file=sys.stderr)
+        sys.exit(1)
+
+    if len(matches) > 1:
+        print(f"✗ '{query}' matches {len(matches)} entries — be more specific or use --tmdb:", file=sys.stderr)
+        for r in matches:
+            print(f"  [{r.get('tmdb', '?')}]  {r.get('filename', '')}  —  {r.get('title', '')} ({r.get('year', '')})", file=sys.stderr)
+        sys.exit(1)
+
+    row = matches[0]
+    filename = row.get("filename", "")
+    stem = Path(filename).stem
+
+    video_path     = Path(project_path) / "media" / "videos"     / media_type / filename
+    thumbnail_path = Path(project_path) / "media" / "thumbnails" / media_type / (stem + ".jpg")
+    subtitle_path  = Path(project_path) / "media" / "subtitles"  / media_type / (stem + ".srt")
+    shotlist_path  = Path(project_path) / "data"  / "shotlists"  / media_type / (stem + ".csv")
+    npy_path       = Path(project_path) / "data"  / "shotlists"  / media_type / (stem + ".npy")
+
+    candidates = [
+        ("video",     video_path),
+        ("thumbnail", thumbnail_path),
+        ("subtitle",  subtitle_path),
+        ("shotlist",  shotlist_path),
+        ("embeddings",npy_path),
+    ]
+    present = [(label, p) for label, p in candidates if p.exists()]
+
+    print(f"Will remove: {row.get('title', filename)} ({row.get('year', '?')})")
+    print(f"  metadata row in {media_type}.csv")
+    for label, p in present:
+        print(f"  {label}: {p.relative_to(project_path)}")
+    absent = [(label, p) for label, p in candidates if not p.exists()]
+    for label, _ in absent:
+        print(f"  {label}: (not present)")
+
+    if not args.confirm:
+        print(f"\nDry run. Pass --confirm to delete.")
+        return
+
+    # Delete files
+    for _, p in present:
+        p.unlink()
+
+    # Remove metadata row by rewriting the CSV without this filename
+    import csv as _csv
+    from services.metadata import _csv_path
+    dest = _csv_path(project_path, media_type)
+    if dest.exists():
+        with dest.open(newline="", encoding="utf-8") as f:
+            reader = _csv.DictReader(f)
+            fieldnames = list(reader.fieldnames or [])
+            kept = [r for r in reader if r.get("filename") != filename]
+        with dest.open("w", newline="", encoding="utf-8") as f:
+            writer = _csv.DictWriter(f, fieldnames=fieldnames, restval="")
+            writer.writeheader()
+            writer.writerows(kept)
+
+    removed_files = len(present)
+    print(f"\nRemoved: metadata row + {removed_files} file(s).")
 
 
 def _meta_fixname(args):
@@ -553,7 +652,7 @@ def _meta_fixname(args):
     # Fix subtitle files
     subtitle_renamed = 0
     if True:
-        subtitle_dir = Path(project_path) / "media" / "subtitles" / media_type / media_type
+        subtitle_dir = Path(project_path) / "media" / "subtitles" / media_type
         if subtitle_dir.is_dir():
             for old_path in sorted(subtitle_dir.iterdir()):
                 if not old_path.is_file() or old_path.suffix != ".srt":
@@ -600,6 +699,46 @@ def cmd_shotlist(args):
             _shot_detect(args)
     elif sub == "validate":
         _shot_validate(args)
+    elif sub == "migrate":
+        _shotlist_migrate(args)
+
+
+def _shotlist_migrate(args):
+    """Rewrite all shotlist CSVs that still use legacy temporal field names."""
+    from services.shotlist import migrate_shotlist_fields
+    project_path = prefs.get("path")
+    media_type = getattr(args, "media", None)
+    dry_run = getattr(args, "dry_run", False)
+
+    results = migrate_shotlist_fields(project_path, media_type=media_type, dry_run=dry_run)
+
+    if not results:
+        print("No shotlist CSVs found.")
+        return
+
+    migrated = [r for r in results if r["status"] in ("migrated", "would_migrate")]
+    current  = [r for r in results if r["status"] == "already_current"]
+
+    if dry_run:
+        print("Dry run — no files written.")
+
+    for r in migrated:
+        label = "Would migrate" if dry_run else "Migrated"
+        old = ", ".join(r["old_headers"]) if r["old_headers"] else "none"
+        dropped = ", ".join(r.get("dropped_columns", []))
+        print(f"  {label}: {r['path']}")
+        if r["old_headers"]:
+            print(f"    Renamed:  {old}")
+        if dropped:
+            print(f"    Dropped:  {dropped}")
+        print(f"    Shots: {r['shot_count']}")
+
+    for r in current:
+        print(f"  Already current: {r['path']}")
+
+    print()
+    action = "to migrate" if dry_run else "migrated"
+    print(f"Total: {len(migrated)} {action}, {len(current)} already current.")
 
 
 def _shotlist_list(args):
@@ -686,8 +825,8 @@ def _shotlist_annotate(args):
 def _extract_shot_fields(shot: dict, fields: list) -> dict:
     """Extract specific fields from shot caption JSON and return as dict."""
     result = {
-        "Start": shot.get("Start", "N/A"),
-        "End": shot.get("End", "N/A"),
+        "start_time": shot.get("start_time", "N/A"),
+        "end_time": shot.get("end_time", "N/A"),
         "Scene": shot.get("Scene", "N/A")
     }
     
@@ -745,7 +884,7 @@ def _display_shot_fields(shot: dict, fields: list, indent: int = 0):
     field_map = {k.lower(): k for k in caption_data.keys()}
     
     # Display basic shot info
-    print(f"{indent_str}Start: {shot.get('Start', 'N/A')} → End: {shot.get('End', 'N/A')}")
+    print(f"{indent_str}Start: {shot.get('start_time', 'N/A')} → End: {shot.get('end_time', 'N/A')}")
     print(f"{indent_str}{'-' * 60}")
     
     # Display requested fields in table format
@@ -1132,6 +1271,155 @@ def cmd_audit(args):
         print(f"  Subtitles:  ✓ all {n}")
 
 
+# ---------------------------------------------------------------------------
+# subtitle command
+# ---------------------------------------------------------------------------
+
+def cmd_subtitle(args):
+    _require_path()
+    sub = args.subtitle_subcommand
+    if sub == "fetch":
+        _subtitle_fetch(args)
+    elif sub == "list":
+        _subtitle_list(args)
+
+
+def _subtitle_fetch(args):
+    from services.metadata import fetch_subtitle, get_metadata
+    from services.shotlist import resolve_filename
+
+    project_path = prefs.get("path")
+    media_type = args.media
+    force = getattr(args, "force", False)
+    tmdb = getattr(args, "tmdb", None)
+    query_words = getattr(args, "query", None) or []
+    query = " ".join(query_words).strip() if query_words else None
+    fetch_all = getattr(args, "all", False)
+
+    rows = get_metadata(project_path, media_type=media_type)
+    if not rows:
+        print("No metadata entries found.")
+        return
+
+    if tmdb is not None:
+        try:
+            filename = resolve_filename(project_path, tmdb, None, media_type)
+        except ValueError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            sys.exit(1)
+        targets = [r for r in rows if r.get("filename") == filename]
+    elif fetch_all:
+        targets = rows
+    elif query:
+        q = query.lower()
+        targets = [
+            r for r in rows
+            if q in str(r.get("filename", "")).lower()
+            or q in str(r.get("title", "")).lower()
+        ]
+        if not targets:
+            print(f"✗ No entries match '{query}'", file=sys.stderr)
+            sys.exit(1)
+    else:
+        print("✗ Provide a search query, --tmdb, or --all", file=sys.stderr)
+        sys.exit(1)
+
+    subtitle_dir = Path(project_path) / "media" / "subtitles" / media_type
+    ok = skip_exists = skip_no_imdb = failed = 0
+
+    for row in targets:
+        filename = row.get("filename", "")
+        if not filename:
+            continue
+        imdb_id = row.get("imdb", "")
+        if not imdb_id:
+            print(f"  skip (no imdb)  {filename}")
+            skip_no_imdb += 1
+            continue
+
+        stem = Path(filename).stem
+        existing = (subtitle_dir / (stem + ".srt")).exists() or \
+                   (subtitle_dir / (stem.replace(" ", "-") + ".srt")).exists()
+        if existing and not force:
+            print(f"  skip (exists)   {filename}")
+            skip_exists += 1
+            continue
+
+        try:
+            path = fetch_subtitle(
+                filename,
+                project_path,
+                media_type,
+                imdb_id,
+                row.get("title", ""),
+                row.get("year"),
+                force=force,
+            )
+            if path:
+                print(f"  ✓ fetched       {filename}")
+                ok += 1
+            else:
+                print(f"  ✗ no results    {filename}  [{imdb_id}]")
+                failed += 1
+        except RuntimeError as exc:
+            print(f"  ✗ error         {filename}: {exc}")
+            failed += 1
+
+    total = ok + skip_exists + skip_no_imdb + failed
+    print(
+        f"\n{total} processed — "
+        f"{ok} fetched, {skip_exists} already present, "
+        f"{skip_no_imdb} no IMDb ID, {failed} failed"
+    )
+
+
+def _subtitle_list(args):
+    from services.metadata import get_metadata
+
+    project_path = prefs.get("path")
+    media_type = args.media
+    subtitle_dir = Path(project_path) / "media" / "subtitles" / media_type
+
+    rows = get_metadata(project_path, media_type=media_type)
+    if not rows:
+        print("No metadata entries found.")
+        return
+
+    present = []
+    missing_fetchable = []
+    missing_no_imdb = []
+
+    for row in rows:
+        filename = row.get("filename", "")
+        if not filename:
+            continue
+        stem = Path(filename).stem
+        has = (subtitle_dir / (stem + ".srt")).exists() or \
+              (subtitle_dir / (stem.replace(" ", "-") + ".srt")).exists()
+        label = f"{row.get('title', filename)} ({row.get('year', '?')})"
+        if has:
+            present.append(label)
+        elif row.get("imdb"):
+            missing_fetchable.append(label)
+        else:
+            missing_no_imdb.append(label)
+
+    for label in present:
+        print(f"  ✓  {label}")
+    for label in missing_fetchable:
+        print(f"  ✗  {label}")
+    for label in missing_no_imdb:
+        print(f"  ✗  {label}  [no imdb id]")
+
+    total = len(present) + len(missing_fetchable) + len(missing_no_imdb)
+    print(
+        f"\n{total} total — "
+        f"{len(present)} present, "
+        f"{len(missing_fetchable)} missing (fetchable), "
+        f"{len(missing_no_imdb)} missing (no IMDb ID)"
+    )
+
+
 def _require_path():
     if not prefs.get("path"):
         print("✗ Error: no project path set. Run: crossing tool path <folder>", file=sys.stderr)
@@ -1275,10 +1563,46 @@ def build_parser():
     p_sl_validate.add_argument("--all", action="store_true", help="Validate all movies that have a shotlist")
     p_sl_validate.add_argument("--media", choices=["movies", "gameplay"], default="movies")
 
+    p_sl_migrate = shotlist_sub.add_parser(
+        "migrate",
+        help="Rewrite shotlist CSVs with legacy column names to the canonical naming scheme",
+    )
+    p_sl_migrate.add_argument(
+        "--media", choices=["movies", "gameplay"], default=None,
+        help="Limit to one media type (default: both movies and gameplay)",
+    )
+    p_sl_migrate.add_argument(
+        "--dry-run", dest="dry_run", action="store_true",
+        help="Report what would change without writing any files",
+    )
+
     # audit command
     p_audit = sub.add_parser("audit", help="Report missing metadata, shotlists, and subtitles")
     p_audit.set_defaults(func=cmd_audit)
     p_audit.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+
+    # remove command
+    p_remove = sub.add_parser("remove", help="Remove a film and all its associated files")
+    p_remove.set_defaults(func=cmd_remove)
+    p_remove.add_argument("query", nargs="*", help="Filename or title words to match")
+    p_remove.add_argument("--tmdb", type=int, default=None, help="TMDb ID (unambiguous)")
+    p_remove.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    p_remove.add_argument("--confirm", action="store_true", help="Actually delete (default is a dry run)")
+
+    # subtitle command group
+    p_subtitle = sub.add_parser("subtitle", help="Download and list subtitles")
+    p_subtitle.set_defaults(func=cmd_subtitle)
+    subtitle_sub = p_subtitle.add_subparsers(dest="subtitle_subcommand", required=True)
+
+    p_sub_fetch = subtitle_sub.add_parser("fetch", help="Download missing subtitles from OpenSubtitles")
+    p_sub_fetch.add_argument("query", nargs="*", default=None, help="Filename or title words (e.g. pals saddle)")
+    p_sub_fetch.add_argument("--tmdb", type=int, default=None, help="TMDb ID (unambiguous)")
+    p_sub_fetch.add_argument("--all", action="store_true", help="Fetch for all entries without a subtitle")
+    p_sub_fetch.add_argument("--force", action="store_true", help="Re-download even if a subtitle already exists")
+    p_sub_fetch.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+
+    p_sub_list = subtitle_sub.add_parser("list", help="Show subtitle status for all entries")
+    p_sub_list.add_argument("--media", choices=["movies", "gameplay"], default="movies")
 
     # tool command group (version, path, name, api_key)
     p_tool = sub.add_parser("tool", help="Tool settings: version, path, name, API keys")

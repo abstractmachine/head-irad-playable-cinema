@@ -2,6 +2,8 @@ import csv
 import json
 import re
 import subprocess
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -225,11 +227,12 @@ def _read_key(project_path: str, name: str) -> str:
     return key_file.read_text().strip()
 
 
-def fetch_subtitle(filename: str, project_path: str, media_type: str, imdb_id: str | None, title: str, year: int | None) -> Path | None:
+def fetch_subtitle(filename: str, project_path: str, media_type: str, imdb_id: str | None, title: str, year: int | None, *, force: bool = False) -> Path | None:
     """Download English subtitle for a file if not already present.
 
     Checks for existing subtitle in both new format (spaces) and old format (dashes).
     Downloads from OpenSubtitles if missing. Returns path to subtitle or None if unavailable.
+    Pass force=True to re-download even when a subtitle file already exists.
     """
     from services.normalize import normalize_filename
 
@@ -245,10 +248,11 @@ def fetch_subtitle(filename: str, project_path: str, media_type: str, imdb_id: s
     old_subtitle_name = subtitle_name.replace(" ", "-")
     old_subtitle_path = subtitle_dir / old_subtitle_name
 
-    if subtitle_path.exists():
-        return subtitle_path
-    if old_subtitle_path.exists():
-        return old_subtitle_path
+    if not force:
+        if subtitle_path.exists():
+            return subtitle_path
+        if old_subtitle_path.exists():
+            return old_subtitle_path
 
     # OpenSubtitles API requires IMDB ID
     if not imdb_id:
@@ -257,66 +261,74 @@ def fetch_subtitle(filename: str, project_path: str, media_type: str, imdb_id: s
     # OpenSubtitles.com REST API
     BASE = "https://api.opensubtitles.com/api/v1"
     
-    # Search for subtitles
-    search_params = {
-        "imdb_id": imdb_id.replace("tt", ""),  # API wants numeric ID only
-        "languages": "en",
+    _HEADERS = {
+        "Api-Key": api_key,
+        "Content-Type": "application/json",
+        "User-Agent": "crossing-tool/2.0",
     }
-    search_url = f"{BASE}/subtitles?{urllib.parse.urlencode(search_params)}"
-    
-    req = urllib.request.Request(
-        search_url,
-        headers={
-            "Api-Key": api_key,
-            "Content-Type": "application/json",
-        },
-    )
-    
-    try:
-        with urllib.request.urlopen(req) as resp:
-            data = json.loads(resp.read().decode())
-    except Exception:
-        return None
 
-    results = data.get("data", [])
+    def _search(params: dict) -> list:
+        url = f"{BASE}/subtitles?{urllib.parse.urlencode(params)}"
+        req = urllib.request.Request(url, headers=_HEADERS)
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return json.loads(resp.read().decode()).get("data", [])
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode(errors="replace")[:200]
+            raise RuntimeError(f"OpenSubtitles search failed: HTTP {exc.code} {exc.reason} — {body}")
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"OpenSubtitles search failed: {exc.reason}")
+
+    # Search by IMDb ID first, fall back to title+year
+    results = _search({"imdb_id": imdb_id.replace("tt", ""), "languages": "en"})
+    if not results and title:
+        fallback_params: dict[str, str] = {"query": title, "languages": "en"}
+        if year:
+            fallback_params["year"] = str(year)
+        results = _search(fallback_params)
+
     if not results:
         return None
 
     # Get the first English subtitle file
     file_id = results[0].get("attributes", {}).get("files", [{}])[0].get("file_id")
     if not file_id:
-        return None
+        raise RuntimeError("OpenSubtitles returned a result but no file_id in the first entry")
 
-    # Download the subtitle file
+    # Request a download link
     download_url = f"{BASE}/download"
     download_body = json.dumps({"file_id": file_id}).encode("utf-8")
+
+    req = urllib.request.Request(download_url, data=download_body, headers=_HEADERS)
     
-    req = urllib.request.Request(
-        download_url,
-        data=download_body,
-        headers={
-            "Api-Key": api_key,
-            "Content-Type": "application/json",
-        },
-    )
-    
+    for attempt in range(2):
+        try:
+            with urllib.request.urlopen(req) as resp:
+                download_data = json.loads(resp.read().decode())
+            break
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode(errors="replace")[:200]
+            if exc.code >= 500 and attempt == 0:
+                time.sleep(3)
+                continue
+            raise RuntimeError(f"OpenSubtitles download request failed: HTTP {exc.code} {exc.reason} — {body}")
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"OpenSubtitles download request failed: {exc.reason}")
+
+    link = download_data.get("link")
+    if not link:
+        raise RuntimeError("OpenSubtitles download response contained no link")
+
     try:
-        with urllib.request.urlopen(req) as resp:
-            download_data = json.loads(resp.read().decode())
-        
-        # Get the actual download link
-        link = download_data.get("link")
-        if not link:
-            return None
-        
-        # Download the subtitle content
         with urllib.request.urlopen(link) as resp:
             subtitle_content = resp.read()
-        
-        subtitle_path.write_bytes(subtitle_content)
-        return subtitle_path
-    except Exception:
-        return None
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"Subtitle file download failed: HTTP {exc.code} {exc.reason}")
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Subtitle file download failed: {exc.reason}")
+
+    subtitle_path.write_bytes(subtitle_content)
+    return subtitle_path
 
 
 def fetch_thumbnail(filename: str, project_path: str, media_type: str, tmdb_id: int) -> Path | None:
