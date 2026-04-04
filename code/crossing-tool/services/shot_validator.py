@@ -9,6 +9,8 @@ import json
 import threading
 import time
 import random
+import traceback
+import faulthandler
 from pathlib import Path
 
 try:
@@ -533,10 +535,14 @@ class OpenCVValidator(QMainWindow):
 
     def _begin_video_timer(self):
         """Called after audio startup delay — anchors the wall clock and starts the video timer."""
-        if not self.is_playing:
-            return
-        self._play_start_time = time.perf_counter()
-        self.playback_timer.start()
+        try:
+            if not self.is_playing:
+                return
+            self._play_start_time = time.perf_counter()
+            self.playback_timer.start()
+        except Exception:
+            traceback.print_exc(file=sys.stderr)
+            self.stop_playback()
     
     def stop_playback(self):
         """Stop video playback."""
@@ -561,6 +567,15 @@ class OpenCVValidator(QMainWindow):
 
     def gremlin_tick(self):
         """Jump to a random movie and a random shot index, using the same path as manual navigation."""
+        try:
+            self._gremlin_tick_inner()
+        except Exception:
+            traceback.print_exc(file=sys.stderr)
+            self.gremlins_active = False
+            self.gremlins_timer.stop()
+            self.gremlins_button.setChecked(False)
+
+    def _gremlin_tick_inner(self):
         if not self.gremlins_active:
             return
 
@@ -617,6 +632,13 @@ class OpenCVValidator(QMainWindow):
     
     def advance_frame(self):
         """Advance to next frame during playback, driven by wall-clock time to stay in sync with audio."""
+        try:
+            self._advance_frame_inner()
+        except Exception:
+            traceback.print_exc(file=sys.stderr)
+            self.stop_playback()
+
+    def _advance_frame_inner(self):
         if not self.is_playing:
             return
 
@@ -860,8 +882,9 @@ class OpenCVValidator(QMainWindow):
             
             # Extract and display frame
             self.info_label.setText(f"Loading frame {frame_number}...")
-            QApplication.processEvents()
-            
+            # NOTE: QApplication.processEvents() removed — it allowed timer callbacks
+            # to fire re-entrantly while mid-switch, which was a crash hazard.
+
             # Update current frame number for playback
             self.current_frame_number = frame_number
             self.update_timeline_slider()
@@ -1117,17 +1140,20 @@ class OpenCVValidator(QMainWindow):
     
     def eventFilter(self, obj, event):
         """Intercept events from child widgets to handle keyboard shortcuts globally."""
-        if obj == self.shot_list and event.type() == QEvent.KeyPress:
-            # Redirect keyboard events to main window
-            key = event.key()
-            if key in (Qt.Key_Space, Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down,
-                      Qt.Key_PageUp, Qt.Key_PageDown, Qt.Key_Home, Qt.Key_End,
-                      Qt.Key_E, Qt.Key_F, Qt.Key_M, Qt.Key_N, Qt.Key_G):
-                # Handle it ourselves instead of letting the list widget process it
-                self.keyPressEvent(event)
-                return True  # Event handled, don't pass to list widget
-        
-        return super().eventFilter(obj, event)
+        try:
+            if obj == self.shot_list and event.type() == QEvent.KeyPress:
+                # Redirect keyboard events to main window
+                key = event.key()
+                if key in (Qt.Key_Space, Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down,
+                          Qt.Key_PageUp, Qt.Key_PageDown, Qt.Key_Home, Qt.Key_End,
+                          Qt.Key_E, Qt.Key_F, Qt.Key_M, Qt.Key_N, Qt.Key_G):
+                    # Handle it ourselves instead of letting the list widget process it
+                    self.keyPressEvent(event)
+                    return True  # Event handled, don't pass to list widget
+            return super().eventFilter(obj, event)
+        except Exception:
+            traceback.print_exc(file=sys.stderr)
+            return super().eventFilter(obj, event)
     
     def keyPressEvent(self, event):
         """Handle keyboard shortcuts."""
@@ -1279,6 +1305,9 @@ def main():
             print(f"✗ Error: No shotlist found for {fn}", file=sys.stderr)
             print("Run 'crossing shotlist shot detect' first to generate shotlist.", file=sys.stderr)
             sys.exit(1)
+
+    # Enable low-level fault handler so C-level crashes (segfaults etc.) print a traceback
+    faulthandler.enable()
 
     # Launch Qt application
     app = QApplication(sys.argv)

@@ -6,6 +6,12 @@ Crossing is a CLI + GUI tool for relating moving images across media — connect
 
 ## Commands
 
+
+### Load
+```bash
+source ~/venvs/crossing-tool/bin/activate
+```
+
 ### Tool Setup
 
 ```bash
