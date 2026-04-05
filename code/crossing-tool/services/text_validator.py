@@ -25,7 +25,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QListWidget, QListWidgetItem, QSplitter,
     QMessageBox, QSizePolicy, QSlider, QStyle, QComboBox, QTextEdit, QFrame,
-    QScrollArea,
+    QScrollArea, QCheckBox,
 )
 from PyQt5.QtGui import QFont, QPixmap, QImage, QMouseEvent
 
@@ -232,6 +232,7 @@ class TextValidator(QMainWindow):
         self._updating_editor = False
         self._play_start_time = 0.0
         self._play_start_frame = 0
+        self.show_quad = True
         self.audio = AudioPlayer()
 
         # Open video
@@ -443,11 +444,18 @@ class TextValidator(QMainWindow):
         self.split_button.setToolTip("Split current event at current frame  [N]")
         controls_layout.addWidget(self.split_button)
 
+        self.quad_check = QCheckBox("Quad")
+        self.quad_check.setChecked(True)
+        self.quad_check.setFocusPolicy(Qt.NoFocus)
+        self.quad_check.setToolTip("Show bounding quad overlay on frame  [Q]")
+        self.quad_check.toggled.connect(self._on_quad_toggle)
+        controls_layout.addWidget(self.quad_check)
+
         sidebar_layout.addLayout(controls_layout)
 
         # Keyboard hint
         hint = QLabel(
-            "↑↓ event  Tab edit/list  Space play  Ctrl+S save  M merge  N split  ←→ frame  Shift+←→ 1s  Home/End movie"
+            "↑↓ event  Tab edit/list  Space play  Ctrl+S save  M merge  N split  Q quad  ←→ frame  Shift+←→ 1s  Home/End movie"
         )
         hint.setFont(QFont("Monospace", 7))
         hint.setStyleSheet("color: #bbb;")
@@ -498,6 +506,33 @@ class TextValidator(QMainWindow):
         ret, frame = self.cap.read()
         return frame if ret else None
 
+    def _current_quad_pts(self) -> "np.ndarray | None":
+        """Return the SAR-corrected quad polygon for the current event, or None.
+
+        Quad coords in the CSV are in raw (pre-SAR) video pixel space.
+        Returns an (4, 1, 2) int32 array suitable for cv2.polylines, or None.
+        """
+        if not (0 <= self.current_event_index < len(self.rows)):
+            return None
+        row = self.rows[self.current_event_index]
+        sf = int(row.get("start_frame", 0))
+        ef = int(row.get("end_frame", 0))
+        if not (sf <= self.current_frame_number <= ef):
+            return None
+        quad_str = row.get("quad", "")
+        if not quad_str:
+            return None
+        try:
+            parts = [int(v) for v in quad_str.split(",") if v.strip()]
+        except ValueError:
+            return None
+        if len(parts) != 8:
+            return None
+        pts = np.array(parts, dtype=np.float64).reshape(4, 2)
+        if (self.sar_num, self.sar_den) != (1, 1):
+            pts[:, 0] *= self.sar_num / self.sar_den
+        return pts.astype(np.int32).reshape(4, 1, 2)
+
     def display_frame(self, frame: np.ndarray):
         if frame is None:
             self.frame_label.setText("Failed to load frame")
@@ -509,6 +544,10 @@ class TextValidator(QMainWindow):
                 frame_rgb, (display_w, frame_rgb.shape[0]),
                 interpolation=cv2.INTER_LINEAR,
             )
+        if self.show_quad:
+            quad_pts = self._current_quad_pts()
+            if quad_pts is not None:
+                cv2.polylines(frame_rgb, [quad_pts], isClosed=True, color=(0, 255, 0), thickness=2)
         height, width, channel = frame_rgb.shape
         bytes_per_line = 3 * width
         q_image = QImage(
@@ -783,6 +822,12 @@ class TextValidator(QMainWindow):
             self._refresh_event_item(self.current_event_index)
             self._mark_modified()
 
+    def _on_quad_toggle(self, checked: bool):
+        self.show_quad = checked
+        frame = self.get_frame(self.current_frame_number)
+        if frame is not None:
+            self.display_frame(frame)
+
     def _mark_modified(self):
         if not self.modified:
             self.modified = True
@@ -1050,6 +1095,8 @@ class TextValidator(QMainWindow):
             self.merge_with_previous()
         elif key == Qt.Key_N:
             self.split_at_current_frame()
+        elif key == Qt.Key_Q:
+            self.quad_check.setChecked(not self.quad_check.isChecked())
         elif key == Qt.Key_Home:
             if self.current_movie_index > 0:
                 self.switch_to_movie(self.current_movie_index - 1)

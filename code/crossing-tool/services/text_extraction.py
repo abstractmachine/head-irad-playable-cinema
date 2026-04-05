@@ -51,7 +51,7 @@ TEXT_COLUMNS: list[str] = [
 ]
 
 VALID_TYPES: frozenset[str] = frozenset(
-    ["meta", "title", "ending", "credits", "intertitle", "onscreen"]
+    ["meta", "title", "ending", "credits", "intertitle", "diegetic"]
 )
 
 # ---------------------------------------------------------------------------
@@ -247,15 +247,16 @@ def _text_is_plausible(text: str) -> bool:
 
     Three checks:
     - At least 6 characters total (passes "THE END", "FIN", short titles).
-    - At least 50% of characters are alphabetic (filters numbers, symbols, noise).
-    - At least one word of 3+ consecutive alphabetic characters.
+    - At least 40% of characters are alphanumeric (allows currency / numbers
+      like "$10.000" while still filtering symbol-only noise).
+    - At least one run of 3+ consecutive alphanumeric characters.
     """
     if len(text) < 6:
         return False
-    alpha = sum(c.isalpha() for c in text)
-    if (alpha / len(text)) < 0.50:
+    alphanum = sum(c.isalpha() or c.isdigit() for c in text)
+    if (alphanum / len(text)) < 0.40:
         return False
-    return bool(re.search(r"[a-zA-Z]{3,}", text))
+    return bool(re.search(r"[a-zA-Z0-9]{3,}", text))
 
 
 def _image_is_blank(frame_rgb) -> bool:
@@ -362,10 +363,10 @@ def _classify_type(
     3. Last 20 % of film + multi-line / names         → credits
     4. First 20 % of film + multi-line / names        → credits
     5. B&W card anywhere in middle                    → intertitle
-    6. Fallback                                       → onscreen
+    6. Fallback                                       → diegetic
     """
     if total_frames == 0:
-        return "onscreen"
+        return "diegetic"
 
     mid_frame = (start_frame + end_frame) / 2
     position = mid_frame / total_frames  # 0.0 … 1.0
@@ -389,7 +390,7 @@ def _classify_type(
     if is_bw_card:
         return "intertitle"
 
-    return "onscreen"
+    return "diegetic"
 
 
 # ---------------------------------------------------------------------------
@@ -638,6 +639,114 @@ def _merge_box_streams(
     return closed
 
 
+def _union_quad(quads: list[list[int]]) -> list[int]:
+    """Return an AABB quad that encloses all supplied quads.
+
+    Each quad is 8 ints [x1,y1, x2,y2, x3,y3, x4,y4].  The result is the
+    axis-aligned bounding box of all corners, returned as a clockwise quad:
+    top-left, top-right, bottom-right, bottom-left.  Returns [] if no valid
+    quads are supplied.
+    """
+    all_xs: list[int] = []
+    all_ys: list[int] = []
+    for q in quads:
+        if q and len(q) == 8:
+            all_xs.extend(q[0::2])
+            all_ys.extend(q[1::2])
+    if not all_xs:
+        return []
+    x1, y1 = min(all_xs), min(all_ys)
+    x2, y2 = max(all_xs), max(all_ys)
+    return [x1, y1, x2, y1, x2, y2, x1, y2]
+
+
+def _group_cooccurring_events(
+    events: list[dict[str, Any]],
+    sample_frame_step: int,
+) -> list[dict[str, Any]]:
+    """Combine box-stream events that belong to the same visual card.
+
+    After ``_merge_box_streams`` each bounding box is its own event.  Boxes
+    that were consistently present on the same card across every sample frame
+    will have nearly identical start and end frame numbers.  This function
+    finds those groups and merges them into a single multi-line event.
+
+    Two events are co-occurring when:
+      |a.frame_no  - b.frame_no | <= sample_frame_step  AND
+      |a.end_frame - b.end_frame| <= sample_frame_step
+
+    Within each group the texts are ordered top-to-bottom by the centroid
+    Y of their bounding quads (reading order for title cards / credits).
+    The stored quad becomes the AABB union of all boxes in the group.
+    """
+    if not events:
+        return []
+
+    n = len(events)
+    events = sorted(events, key=lambda e: e["frame_no"])
+    tol = sample_frame_step
+
+    # Union-Find for transitive grouping (handles 3+ lines on the same card).
+    parent = list(range(n))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(x: int, y: int) -> None:
+        parent[find(x)] = find(y)
+
+    for i in range(n):
+        ei = events[i]
+        for j in range(i + 1, n):
+            ej = events[j]
+            if ej["frame_no"] - ei["frame_no"] > tol:
+                break  # Events are too far apart — and list is sorted, so done.
+            if abs(ei["end_frame"] - ej["end_frame"]) <= tol:
+                union(i, j)
+
+    from collections import defaultdict
+    groups: dict[int, list[int]] = defaultdict(list)
+    for i in range(n):
+        groups[find(i)].append(i)
+
+    def _center_y(event: dict) -> float:
+        q = event.get("quad", [])
+        if q and len(q) >= 8:
+            return sum(q[1::2]) / (len(q) // 2)
+        return float("inf")
+
+    result: list[dict[str, Any]] = []
+    for root, members in groups.items():
+        group = [events[i] for i in members]
+        if len(group) == 1:
+            result.append(group[0])
+            continue
+
+        # Sort top-to-bottom for natural reading order.
+        group.sort(key=_center_y)
+        combined_text = "\n".join(e["text"] for e in group if e["text"].strip())
+        start_frame = min(e["frame_no"] for e in group)
+        end_frame = max(e["end_frame"] for e in group)
+        first = min(group, key=lambda e: e["frame_no"])
+        last = max(group, key=lambda e: e["end_frame"])
+
+        result.append({
+            "frame_no":     start_frame,
+            "timecode":     first["timecode"],
+            "end_frame":    end_frame,
+            "end_timecode": last["end_timecode"],
+            "text":         combined_text,
+            "quad":         _union_quad([e["quad"] for e in group if e.get("quad")]),
+            "is_card":      any(e.get("is_card") for e in group),
+        })
+
+    result.sort(key=lambda e: e["frame_no"])
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Core extraction pipeline
 # ---------------------------------------------------------------------------
@@ -841,6 +950,9 @@ def extract_text_events(
             )
     else:
         merged = _merge_box_streams(hits, merge_gap_frames, sample_frame_step)
+
+    # --- 2b: combine boxes from the same card into multi-line events -------
+    merged = _group_cooccurring_events(merged, sample_frame_step)
 
     # --- third pass: build output rows with type classification ------------
     events: list[dict[str, Any]] = []

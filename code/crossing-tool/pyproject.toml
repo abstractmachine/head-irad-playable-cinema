@@ -12,6 +12,7 @@ dependencies = [
     "paddleocr>=3.2",
     "numpy",
     "Pillow",
+    "ultralytics",
 ]
 
 [project.scripts]

@@ -1820,6 +1820,100 @@ def _text_validate(args):
         sys.exit(0)
 
 
+def cmd_compose(args):
+    """Generative poster / canvas tool — crossing compose."""
+    from services.compose import compose, CANVAS_SIZES
+    from services.text_extraction import get_text_csv_path
+
+    _require_path()
+    project_path = prefs.get("path")
+    media_type   = getattr(args, "media", "movies")
+
+    # ---- resolve filenames -------------------------------------------------
+    if getattr(args, "all", False):
+        from services.metadata import get_metadata
+        from services.text_extraction import list_text_csvs
+        entries = get_metadata(project_path, media_type=media_type)
+        filenames = [
+            e["filename"] for e in entries
+            if e.get("filename")
+            and get_text_csv_path(project_path, e["filename"], media_type).exists()
+        ]
+        if not filenames:
+            print("✗ No text CSVs found.", file=sys.stderr)
+            sys.exit(1)
+    elif getattr(args, "tmdb", None) is not None:
+        from services.metadata import get_metadata
+        entries = get_metadata(project_path, media_type=media_type)
+        filenames = [e["filename"] for e in entries if e.get("tmdb") == str(args.tmdb)]
+        if not filenames:
+            print(f"✗ No file found with TMDb ID: {args.tmdb}", file=sys.stderr)
+            sys.exit(1)
+    elif getattr(args, "query", None):
+        from services.metadata import get_metadata
+        entries = get_metadata(project_path, query=args.query, media_type=media_type)
+        if not entries:
+            print(f"✗ No file found matching '{args.query}'", file=sys.stderr)
+            sys.exit(1)
+        filenames = [e["filename"] for e in entries]
+    else:
+        # No selector — use every film that has a text CSV
+        from services.metadata import get_metadata
+        entries = get_metadata(project_path, media_type=media_type)
+        filenames = [
+            e["filename"] for e in entries
+            if e.get("filename")
+            and get_text_csv_path(project_path, e["filename"], media_type).exists()
+        ]
+        if not filenames:
+            print("✗ No text CSVs found. Run `crossing text detect` first.", file=sys.stderr)
+            sys.exit(1)
+
+    # ---- orientation / dimensions ------------------------------------------
+    orientation = getattr(args, "orientation", "portrait")
+    width  = getattr(args, "width",  None)
+    height = getattr(args, "height", None)
+
+    # ---- other options -----------------------------------------------------
+    n_elements   = getattr(args, "count",        None)
+    bg_frame     = getattr(args, "bg_frame",     None)
+    bg_treatment = getattr(args, "bg_treatment", None)
+    seed         = getattr(args, "seed",         None)
+    output_path  = getattr(args, "output",       None)
+    fmt          = getattr(args, "format",       "jpg")
+    open_result  = not getattr(args, "no_open",  False)
+    verbose      = getattr(args, "verbose",      False)
+
+    print(f"Composing from {len(filenames)} film(s)…")
+    if verbose and len(filenames) <= 5:
+        for fn in filenames:
+            print(f"  {fn}")
+
+    try:
+        out_path = compose(
+            filenames,
+            project_path,
+            media_type=media_type,
+            orientation=orientation,
+            width=width,
+            height=height,
+            n_elements=n_elements,
+            bg_frame=bg_frame,
+            bg_treatment=bg_treatment,
+            seed=seed,
+            output_path=output_path,
+            fmt=fmt,
+            open_result=open_result,
+            verbose=verbose,
+        )
+        print(f"✓ Saved: {out_path}")
+    except Exception as exc:
+        print(f"✗ compose failed: {exc}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
 def _require_path():
     if not prefs.get("path"):
         print("✗ Error: no project path set. Run: crossing tool path <folder>", file=sys.stderr)
@@ -2047,6 +2141,56 @@ def build_parser():
                                   help="One or more known strings that appear in the first window of the film")
     p_text_calibrate.add_argument("--window", type=float, default=180.0,
                                   help="Seconds from start to analyse (default: 180)")
+
+    # compose command — generative poster / canvas
+    p_compose = sub.add_parser(
+        "compose",
+        help="Generate an experimental poster by compositing text events on a video frame",
+    )
+    p_compose.set_defaults(func=cmd_compose)
+    p_compose.add_argument(
+        "query", nargs="?", default=None,
+        help="Filename substring to select films (omit to use all films with text CSVs)",
+    )
+    p_compose.add_argument("--all",    action="store_true", help="Use all films that have text CSVs")
+    p_compose.add_argument("--tmdb",   type=int, default=None, help="Select film by TMDb ID")
+    p_compose.add_argument("--media",  choices=["movies", "gameplay"], default="movies")
+    p_compose.add_argument(
+        "--orientation", choices=["portrait", "landscape"], default="portrait",
+        help="Canvas orientation: portrait 1240×1754 or landscape 1920×1080 (default: portrait)",
+    )
+    p_compose.add_argument("--width",  type=int, default=None, help="Override canvas width in pixels")
+    p_compose.add_argument("--height", type=int, default=None, help="Override canvas height in pixels")
+    p_compose.add_argument(
+        "--count", type=int, default=None, dest="count",
+        help="Number of text patches to composite (default: random 6–18)",
+    )
+    p_compose.add_argument(
+        "--bg-frame", type=int, default=None, dest="bg_frame",
+        help="Specific frame number to use as background (default: random)",
+    )
+    p_compose.add_argument(
+        "--bg-treatment", choices=["desaturate", "tint", "darken", "original"],
+        default=None, dest="bg_treatment",
+        help="Background colour treatment (default: random)",
+    )
+    p_compose.add_argument(
+        "--seed", type=int, default=None,
+        help="RNG seed for reproducible results (default: random)",
+    )
+    p_compose.add_argument(
+        "--output", default=None,
+        help="Save path for the output file (default: data/compose/<auto-name>)",
+    )
+    p_compose.add_argument(
+        "--format", choices=["jpg", "pdf"], default="jpg", dest="format",
+        help="Output format: jpg or pdf (default: jpg)",
+    )
+    p_compose.add_argument(
+        "--no-open", action="store_true", dest="no_open",
+        help="Do not open the result in the desktop viewer after saving",
+    )
+    p_compose.add_argument("--verbose", action="store_true", help="Print progress")
 
     # tool command group (version, path, name, api_key)
     p_tool = sub.add_parser("tool", help="Tool settings: version, path, name, API keys")

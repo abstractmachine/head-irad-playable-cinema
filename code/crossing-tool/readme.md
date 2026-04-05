@@ -256,6 +256,52 @@ crossing text detect --all --notify --notify-items
 crossing shotlist shot detect --all --notify --notify-items
 ```
 
+### Compose
+
+Generates an experimental poster or landscape canvas by compositing SAM-masked text
+patches from one or more films on top of a randomly sampled background frame.
+SAM 2 (via `ultralytics`) is required — see the install checklist.
+
+```bash
+# Single film — random everything
+crossing compose "Sunrise"
+
+# Multiple films via query (substring match returns >1 result)
+crossing compose "Chaplin"
+
+# All films that have text CSVs
+crossing compose --all
+
+# Landscape canvas, 12 elements, fixed seed for reproducibility
+crossing compose --all --orientation landscape --count 12 --seed 42
+
+# Darken the background, output as PDF, don't open automatically
+crossing compose --all --bg-treatment darken --format pdf --no-open
+
+# Pin the background to a specific frame number
+crossing compose "10 000 Dollari" --bg-frame 9420
+
+# Override canvas size (pixels)
+crossing compose --all --width 2480 --height 3508
+```
+
+**Flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--orientation` | `portrait` | `portrait` (1240×1754) or `landscape` (1920×1080) |
+| `--width` / `--height` | — | Override canvas dimensions in pixels |
+| `--count` | random 6–18 | Number of text patches to composite |
+| `--bg-frame` | random | Specific source frame number for the background |
+| `--bg-treatment` | random | `desaturate`, `tint`, `darken`, or `original` |
+| `--seed` | random | Integer seed for fully reproducible output |
+| `--format` | `jpg` | `jpg` or `pdf` |
+| `--output` | auto | Full save path override |
+| `--no-open` | — | Skip opening the result in the desktop viewer |
+| `--verbose` | — | Print per-patch progress |
+
+Output is saved to `<project>/media/compositions/`.
+
 ## Project Folder Structure
 
 ```
@@ -281,9 +327,12 @@ crossing shotlist shot detect --all --notify --notify-items
 │   ├── thumbnails/
 │   │   ├── movies/                 # movie posters from TMDb
 │   │   └── gameplay/               # gameplay thumbnails
-│   └── subtitles/
-│       ├── movies/                 # English subtitles from OpenSubtitles
-│       └── gameplay/               # gameplay subtitles
+│   ├── subtitles/
+│   │   ├── movies/                 # English subtitles from OpenSubtitles
+│   │   └── gameplay/               # gameplay subtitles
+│   └── compositions/               # output from `crossing compose`
+├── models/
+│   └── sam2.1_b.pt                 # SAM 2 model (required for `crossing compose`)
 └── preferences/
     ├── keys/                       # API keys
     │   ├── tmdb_api_key.txt
@@ -351,11 +400,16 @@ Follow these steps when setting up from scratch in a new environment.
 
 > Requires CUDA 13.0 and a CUDA-capable GPU. The PP-OCRv5 models are downloaded automatically on first run to `~/.paddlex/official_models/`. CPU-only installs are not supported — use `paddlepaddle` (non-GPU) and remove `device="gpu"` from the engine if needed.
 
-### 7. API keys *(as needed)*
+### 7. Compose *(required for `crossing compose`)*
+- [ ] `pip install ultralytics`
+
+> Requires a CUDA-capable GPU for practical performance. Place `sam2.1_b.pt` in `<project>/models/` before running.
+
+### 8. API keys *(as needed)*
 - [ ] `crossing tool api_key set tmdb <key>`
 - [ ] `crossing tool api_key set opensubtitles <key>`
 
-### 8. Verify
+### 9. Verify
 - [ ] `crossing tool version`
 
 ## Virtual Python Environment
