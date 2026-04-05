@@ -1173,7 +1173,7 @@ def _shot_validate(args):
 # api_key command
 # ---------------------------------------------------------------------------
 
-_API_KEY_SERVICES = ("openai", "opensubtitles", "tmdb")
+_API_KEY_SERVICES = ("opensubtitles", "tmdb")
 
 
 def cmd_api_key(args):

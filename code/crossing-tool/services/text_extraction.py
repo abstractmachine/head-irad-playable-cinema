@@ -9,12 +9,12 @@ Pipeline:
   4. Merge consecutive frames whose OCR output is similar into temporal
      events with start/end frame and timecode.
   5. Classify each event's ``type`` using position and structural heuristics.
-  6. Write results to  media/text/<media_type>/<stem>.csv
+  6. Write results to  data/text/<media_type>/<stem>.csv
 
 CSV schema (one row per merged text event):
   filename, type, start_time, end_time, start_frame, end_frame, text, language
 
-Storage path: <project_path>/media/text/<media_type>/<stem>.csv
+Storage path: <project_path>/data/text/<media_type>/<stem>.csv
 """
 
 from __future__ import annotations
@@ -74,7 +74,7 @@ def get_text_csv_path(
 ) -> Path:
     """Return the canonical path for a film's text-extraction CSV."""
     stem = Path(filename).stem
-    return Path(project_path) / "media" / "text" / media_type / f"{stem}.csv"
+    return Path(project_path) / "data" / "text" / media_type / f"{stem}.csv"
 
 
 # ---------------------------------------------------------------------------
@@ -577,7 +577,7 @@ def list_text_csvs(
     results: list[dict[str, Any]] = []
 
     for mtype in types_to_check:
-        text_dir = Path(project_path) / "media" / "text" / mtype
+        text_dir = Path(project_path) / "data" / "text" / mtype
         if not text_dir.is_dir():
             continue
         for csv_path in sorted(text_dir.glob("*.csv")):
@@ -616,7 +616,7 @@ def validate_text_csvs(
     """
     import datetime
 
-    text_dir = Path(project_path) / "media" / "text" / media_type
+    text_dir = Path(project_path) / "data" / "text" / media_type
     issues: list[dict[str, Any]] = []
 
     if not text_dir.is_dir():

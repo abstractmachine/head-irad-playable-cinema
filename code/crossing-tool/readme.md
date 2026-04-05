@@ -7,7 +7,7 @@ Crossing is a CLI + GUI tool for relating moving images across media — connect
 ## Commands
 
 
-### Load
+### Activate
 ```bash
 source ~/venvs/crossing-tool/bin/activate
 ```
@@ -208,10 +208,10 @@ crossing audit --media gameplay      # report for gameplay entries
 
 ```bash
 # Get stored API key
-crossing tool api_key get {openai,opensubtitles,tmdb}
+crossing tool api_key get {opensubtitles,tmdb}
 
 # Set API key
-crossing tool api_key set {openai,opensubtitles,tmdb} <key>
+crossing tool api_key set {opensubtitles,tmdb} <key>
 ```
 
 ## Project Folder Structure
@@ -222,12 +222,16 @@ crossing tool api_key set {openai,opensubtitles,tmdb} <key>
 │   ├── metadata/
 │   │   ├── movies.csv              # movie metadata
 │   │   └── gameplay.csv            # gameplay metadata
-│   └── shotlists/
-│       ├── movies/                 # shot-level data for movies
-│       │   ├── <filename>.csv      # shot timecodes and annotations
-│       │   ├── <filename>.npy      # visual encodings
-│       │   └── <filename>.txt      # encoding metadata
-│       └── gameplay/               # shot-level data for gameplay
+│   ├── shotlists/
+│   │   ├── movies/                 # shot-level data for movies
+│   │   │   ├── <filename>.csv      # shot timecodes and annotations
+│   │   │   ├── <filename>.npy      # visual encodings
+│   │   │   └── <filename>.txt      # encoding metadata
+│   │   └── gameplay/               # shot-level data for gameplay
+│   └── text/
+│       ├── movies/                 # on-screen text events for movies
+│       │   └── <filename>.csv      # text events with timecodes and type
+│       └── gameplay/               # on-screen text events for gameplay
 ├── media/
 │   ├── videos/
 │   │   ├── movies/                 # imported movie files
@@ -241,8 +245,7 @@ crossing tool api_key set {openai,opensubtitles,tmdb} <key>
 └── preferences/
     ├── keys/                       # API keys
     │   ├── tmdb_api_key.txt
-    │   ├── opensubtitles_api_key.txt
-    │   └── openai_api_key.txt
+    │   └── opensubtitles_api_key.txt
     └── version.txt                 # data structure version
 ```
 
@@ -309,7 +312,6 @@ Follow these steps when setting up from scratch in a new environment.
 ### 7. API keys *(as needed)*
 - [ ] `crossing tool api_key set tmdb <key>`
 - [ ] `crossing tool api_key set opensubtitles <key>`
-- [ ] `crossing tool api_key set openai <key>`
 
 ### 8. Verify
 - [ ] `crossing tool version`
