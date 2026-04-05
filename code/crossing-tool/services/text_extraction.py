@@ -11,8 +11,15 @@ Pipeline:
   5. Classify each event's ``type`` using position and structural heuristics.
   6. Write results to  data/text/<media_type>/<stem>.csv
 
-CSV schema (one row per merged text event):
-  filename, type, start_time, end_time, start_frame, end_frame, text, language
+CSV schema (one row per bounding-box text event):
+  filename, type, start_time, end_time, start_frame, end_frame, bbox, text, language
+
+Each row represents one OCR bounding box tracked through time.  When a
+title card contains two spatially separate text regions (e.g. a chapter
+number and a caption) they appear as two independent rows that may have
+different start/end timecodes.  ``quad`` is stored as
+``x1,y1,x2,y2,x3,y3,x4,y4`` (comma-separated pixel integers, four corners
+clockwise from top-left; empty string when unavailable).
 
 Storage path: <project_path>/data/text/<media_type>/<stem>.csv
 """
@@ -23,6 +30,7 @@ import bisect
 import csv
 import re
 import unicodedata
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
@@ -37,12 +45,13 @@ TEXT_COLUMNS: list[str] = [
     "end_time",
     "start_frame",
     "end_frame",
+    "quad",
     "text",
     "language",
 ]
 
 VALID_TYPES: frozenset[str] = frozenset(
-    ["intertitle", "opening_title", "end_title", "credit", "onscreen_text", "meta_text"]
+    ["meta", "title", "ending", "credits", "intertitle", "onscreen"]
 )
 
 # ---------------------------------------------------------------------------
@@ -149,41 +158,66 @@ def _get_ocr_engine(lang: str = "en"):
     """
     global _paddleocr_engine
     if _paddleocr_engine is None:
-        import logging
+        import logging, os, sys
         logging.disable(logging.WARNING)
-        from paddleocr import PaddleOCR
-        logging.disable(logging.NOTSET)
-        _paddleocr_engine = PaddleOCR(
-            use_doc_orientation_classify=False,
-            use_doc_unwarping=False,
-            use_textline_orientation=False,
-            device="gpu",
-            lang=lang,
-        )
+        devnull = open(os.devnull, "w")
+        old_stdout, old_stderr = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = devnull, devnull
+        try:
+            from paddleocr import PaddleOCR
+            _paddleocr_engine = PaddleOCR(
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False,
+                use_textline_orientation=False,
+                device="gpu",
+                lang=lang,
+            )
+        finally:
+            sys.stdout, sys.stderr = old_stdout, old_stderr
+            devnull.close()
+            logging.disable(logging.NOTSET)
     return _paddleocr_engine
 
 
-def _ocr_frame_paddle(frame_rgb, *, lang: str = "en", min_confidence: float = 0.70) -> str:
-    """Run PaddleOCR 3.x on a PIL Image and return the recognised text.
+def _ocr_frame_detections(
+    frame_rgb, *, lang: str = "en", min_confidence: float = 0.75
+) -> list[dict[str, Any]]:
+    """Run PaddleOCR 3.x on a PIL Image and return one dict per bounding box.
 
-    Only text regions with confidence >= min_confidence are included.
-    Returns an empty string when no text is found.
+    Each dict has:
+        text  – recognised string
+        score – recognition confidence (0–1)
+        quad  – oriented quadrilateral as [x1,y1, x2,y2, x3,y3, x4,y4] pixel
+                integers (four corners clockwise from top-left), taken directly
+                from ``dt_polys``.  Empty list when the model does not return
+                polygon data.
+
+    Only detections with confidence >= min_confidence are returned.
     """
     import numpy as np
 
     engine = _get_ocr_engine(lang)
     img_array = np.asarray(frame_rgb.convert("RGB"))
     results = engine.predict(img_array)
-    texts = []
+    detections: list[dict[str, Any]] = []
     for res in results:
-        # OCRResult is a dict subclass — rec_texts and rec_scores are top-level keys.
         rec_texts = res.get("rec_texts", [])
         rec_scores = res.get("rec_scores", [])
-        scores = rec_scores if len(rec_scores) == len(rec_texts) else [None] * len(rec_texts)
-        for text, score in zip(rec_texts, scores):
-            if text and (score is None or score >= min_confidence):
-                texts.append(text)
-    return "\n".join(texts)
+        dt_polys  = res.get("dt_polys",  [])
+        n = len(rec_texts)
+        scores = rec_scores if len(rec_scores) == n else [None] * n
+        polys  = dt_polys   if len(dt_polys)   == n else [None] * n
+        for text, score, poly in zip(rec_texts, scores, polys):
+            if not text:
+                continue
+            if score is not None and score < min_confidence:
+                continue
+            quad: list[int] = []
+            if poly is not None:
+                pts = np.asarray(poly).reshape(-1, 2)
+                quad = [int(v) for pt in pts for v in pt]
+            detections.append({"text": text, "score": float(score or 1.0), "quad": quad})
+    return detections
 
 
 def _ocr_frame_raw(frame_rgb, *, lang: str = "en") -> list[tuple[str, float]]:
@@ -294,25 +328,44 @@ def _texts_are_similar(a: str, b: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _title_matches(text: str, movie_title: str) -> bool:
+    """Return True if *text* is similar enough to *movie_title*.
+
+    Both strings are normalised (lowercased, punctuation stripped) before
+    comparison.  A SequenceMatcher ratio >= 0.5 counts as a match.
+    """
+    def _norm(s: str) -> str:
+        s = s.lower()
+        s = re.sub(r'[^a-z0-9\s]', '', s)
+        return ' '.join(s.split())
+
+    a, b = _norm(text), _norm(movie_title)
+    if not a or not b:
+        return False
+    return SequenceMatcher(None, a, b).ratio() >= 0.5
+
+
 def _classify_type(
     text: str,
     start_frame: int,
     end_frame: int,
     total_frames: int,
     is_bw_card: bool,
+    movie_title: str | None = None,
 ) -> str:
     """Derive a text type from position and structural cues.
 
     Rules (in priority order):
-    1. First 10 % of film + title-card appearance  → opening_title
-    2. Last 5 % of film + title-card appearance    → end_title
-    3. Last 20 % of film + multi-line / names      → credit
-    4. First 20 % of film + multi-line / names     → credit
-    5. B&W card anywhere in middle                 → intertitle
-    6. Fallback                                    → onscreen_text
+    1. First 10 % of film + title-card + title match  → title
+    1b. First 10 % of film + title-card + no match    → credits
+    2. Last 5 % of film + title-card appearance       → ending
+    3. Last 20 % of film + multi-line / names         → credits
+    4. First 20 % of film + multi-line / names        → credits
+    5. B&W card anywhere in middle                    → intertitle
+    6. Fallback                                       → onscreen
     """
     if total_frames == 0:
-        return "onscreen_text"
+        return "onscreen"
 
     mid_frame = (start_frame + end_frame) / 2
     position = mid_frame / total_frames  # 0.0 … 1.0
@@ -320,21 +373,23 @@ def _classify_type(
     line_count = len([l for l in text.splitlines() if l.strip()])
 
     if is_bw_card and position < 0.10:
-        return "opening_title"
+        if movie_title is None or _title_matches(text, movie_title):
+            return "title"
+        return "credits"
 
     if is_bw_card and position > 0.95:
-        return "end_title"
+        return "ending"
 
     if position > 0.80 and line_count >= 2:
-        return "credit"
+        return "credits"
 
     if position < 0.20 and line_count >= 2:
-        return "credit"
+        return "credits"
 
     if is_bw_card:
         return "intertitle"
 
-    return "onscreen_text"
+    return "onscreen"
 
 
 # ---------------------------------------------------------------------------
@@ -467,6 +522,123 @@ def calibrate_text_detection(
 
 
 # ---------------------------------------------------------------------------
+# Bounding-box helpers
+# ---------------------------------------------------------------------------
+
+
+def _bbox_iou(a: list[int], b: list[int]) -> float:
+    """Intersection-over-Union for two quads or AABB boxes.
+
+    Accepts both 8-value quads (x1,y1,...,x4,y4) and 4-value AABB
+    (x1,y1,x2,y2).  Quads are converted to their AABB envelope for
+    a fast approximate IoU.
+
+    Returns 0.0 when either box is empty or the boxes do not overlap.
+    """
+    if not a or not b:
+        return 0.0
+
+    def _to_aabb(pts: list[int]) -> tuple[int, int, int, int]:
+        xs = pts[0::2]
+        ys = pts[1::2]
+        return min(xs), min(ys), max(xs), max(ys)
+
+    ax1, ay1, ax2, ay2 = _to_aabb(a)
+    bx1, by1, bx2, by2 = _to_aabb(b)
+    ix1 = max(ax1, bx1)
+    iy1 = max(ay1, by1)
+    ix2 = min(ax2, bx2)
+    iy2 = min(ay2, by2)
+    if ix2 <= ix1 or iy2 <= iy1:
+        return 0.0
+    inter = (ix2 - ix1) * (iy2 - iy1)
+    area_a = (ax2 - ax1) * (ay2 - ay1)
+    area_b = (bx2 - bx1) * (by2 - by1)
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _merge_box_streams(
+    hits: list[dict[str, Any]],
+    merge_gap_frames: int,
+    sample_frame_step: int,
+) -> list[dict[str, Any]]:
+    """Track individual bounding-box detections across frames into events.
+
+    Each hit must have: frame_no, timecode, text, bbox, is_card.
+    Two hits from different frames are merged into the same event when:
+      - they are within ``merge_gap_frames`` sample steps of each other,
+      - their text passes ``_texts_are_similar``, AND
+      - their bounding boxes have IoU >= 0.20 (or neither carries a bbox,
+        in which case text similarity alone is used).
+
+    Returns a list of merged event dicts sorted by start frame, each
+    containing: frame_no, timecode, end_frame, end_timecode, text, bbox,
+    is_card.
+    """
+    if not hits:
+        return []
+
+    from itertools import groupby as _groupby
+
+    max_gap = merge_gap_frames * sample_frame_step
+    active: list[dict[str, Any]] = []
+    closed: list[dict[str, Any]] = []
+
+    sorted_hits = sorted(hits, key=lambda h: h["frame_no"])
+    for frame_no, group in _groupby(sorted_hits, key=lambda h: h["frame_no"]):
+        frame_hits = list(group)
+
+        # Age out streams that are too far back to match anything new.
+        still_active: list[dict[str, Any]] = []
+        for stream in active:
+            if frame_no - stream["end_frame"] > max_gap:
+                closed.append(stream)
+            else:
+                still_active.append(stream)
+        active = still_active
+
+        used: set[int] = set()
+        new_streams: list[dict[str, Any]] = []
+        for hit in frame_hits:
+            best_idx, best_iou = None, -1.0
+            for i, stream in enumerate(active):
+                if i in used:
+                    continue
+                if not _texts_are_similar(hit["text"], stream["text"]):
+                    continue
+                iou = _bbox_iou(hit["quad"], stream["quad"])
+                # Accept if boxes overlap, or if neither has a quad (text-only).
+                qualifies = iou >= 0.20 or (not hit["quad"] and not stream["quad"])
+                if qualifies and iou > best_iou:
+                    best_iou = iou
+                    best_idx = i
+            if best_idx is not None:
+                stream = active[best_idx]
+                stream["end_frame"]    = hit["frame_no"]
+                stream["end_timecode"] = hit["timecode"]
+                stream["quad"]         = hit["quad"] or stream["quad"]
+                if len(hit["text"]) > len(stream["text"]):
+                    stream["text"] = hit["text"]
+                used.add(best_idx)
+            else:
+                new_streams.append({
+                    "frame_no":     hit["frame_no"],
+                    "timecode":     hit["timecode"],
+                    "end_frame":    hit["frame_no"],
+                    "end_timecode": hit["timecode"],
+                    "text":         hit["text"],
+                    "quad":         hit["quad"],
+                    "is_card":      hit.get("is_card", True),
+                })
+        active.extend(new_streams)
+
+    closed.extend(active)
+    closed.sort(key=lambda s: s["frame_no"])
+    return closed
+
+
+# ---------------------------------------------------------------------------
 # Core extraction pipeline
 # ---------------------------------------------------------------------------
 
@@ -476,7 +648,7 @@ def extract_text_events(
     *,
     sample_fps: float = 1.0,
     lang: str = "en",
-    min_confidence: float = 0.70,
+    min_confidence: float = 0.75,
     merge_gap_frames: int = 5,
     verbose: bool = False,
     project_path: str | None = None,
@@ -511,6 +683,17 @@ def extract_text_events(
     import av  # PyAV — local import so the service can be imported safely.
 
     video_path = str(video_path)
+
+    # --- resolve movie title for classification -----------------------------
+    movie_title: str | None = None
+    if project_path and filename:
+        try:
+            from services.metadata import get_metadata
+            entries = get_metadata(project_path, filename, media_type=media_type)
+            if entries:
+                movie_title = entries[0].get("title")
+        except Exception:
+            pass
 
     # --- probe video metadata -----------------------------------------------
     with av.open(video_path) as container:
@@ -580,29 +763,33 @@ def extract_text_events(
                         got_frame = True
                         break
 
-                    raw = _ocr_frame_paddle(pil_img, lang=lang, min_confidence=min_confidence)
-                    norm = _normalise_text(raw)
+                    detections = _ocr_frame_detections(pil_img, lang=lang, min_confidence=min_confidence)
 
                     got_frame = True
 
-                    if not _text_is_plausible(norm):
-                        # OCR returned nothing useful for this frame.
+                    tc = frames_to_timecode(frame_no, fps)
+                    frame_hits = []
+                    for det in detections:
+                        norm = _normalise_text(det["text"])
+                        if _text_is_plausible(norm):
+                            frame_hits.append({
+                                "frame_no": frame_no,
+                                "timecode": tc,
+                                "text":     norm,
+                                "quad":     det["quad"],
+                                "is_card":  True,
+                            })
+
+                    if not frame_hits:
                         if verbose:
                             print(f"  [t={frame_time_s:.1f}s] skip (no plausible text)")
                         break
 
-                    tc = frames_to_timecode(frame_no, fps)
                     if verbose:
-                        print(f"  [{tc}] f{frame_no}: {norm[:60]!r}")
+                        for h in frame_hits:
+                            print(f"  [{tc}] f{frame_no}: {h['text'][:60]!r}  quad={h['quad']}")
 
-                    hits.append(
-                        {
-                            "frame_no": frame_no,
-                            "timecode": tc,
-                            "text": norm,
-                            "is_card": True,  # model decided there is text
-                        }
-                    )
+                    hits.extend(frame_hits)
                     break
 
                 if got_frame:
@@ -636,58 +823,24 @@ def extract_text_events(
     sample_frame_step: int = max(1, int(fps / sample_fps))
 
     if shots:
-        # Group hits by the shot they fall in, then sub-group by similar text
-        # within each shot.  Start/end use actual hit frames, not shot bounds.
+        # Group hits by the shot they fall in; merge box streams within each shot
+        # so events never span a shot cut.
         shot_starts = [int(s["start_frame"]) for s in shots]
-        shot_hits: dict[int, list[dict]] = {}
+        shot_hit_groups: dict[int, list[dict]] = {}
         for hit in hits:
             fn = hit["frame_no"]
             idx = bisect.bisect_right(shot_starts, fn) - 1
             if 0 <= idx < len(shots) and fn <= int(shots[idx]["end_frame"]):
-                shot_hits.setdefault(idx, []).append(hit)
+                shot_hit_groups.setdefault(idx, []).append(hit)
 
-        for shot_idx, shot_hit_list in sorted(shot_hits.items()):
-            shot_hit_list.sort(key=lambda h: h["frame_no"])
-            # Sub-group consecutive hits with similar text
-            cur = shot_hit_list[0].copy()
-            cur["end_frame"] = cur["frame_no"]
-            cur["end_timecode"] = cur["timecode"]
-            for hit in shot_hit_list[1:]:
-                gap = hit["frame_no"] - cur["end_frame"]
-                same_text = _texts_are_similar(hit["text"], cur["text"])
-                if gap <= (merge_gap_frames * sample_frame_step) and same_text:
-                    cur["end_frame"] = hit["frame_no"]
-                    cur["end_timecode"] = hit["timecode"]
-                    if len(hit["text"]) > len(cur["text"]):
-                        cur["text"] = hit["text"]
-                else:
-                    merged.append(cur)
-                    cur = hit.copy()
-                    cur["end_frame"] = cur["frame_no"]
-                    cur["end_timecode"] = cur["timecode"]
-            merged.append(cur)
+        for shot_idx in sorted(shot_hit_groups):
+            merged.extend(
+                _merge_box_streams(
+                    shot_hit_groups[shot_idx], merge_gap_frames, sample_frame_step
+                )
+            )
     else:
-        # Fallback: frame-proximity merge (no shotlist available)
-        current = hits[0].copy()
-        current["end_frame"] = current["frame_no"]
-        current["end_timecode"] = current["timecode"]
-
-        for hit in hits[1:]:
-            gap = hit["frame_no"] - current["end_frame"]
-            same_text = _texts_are_similar(hit["text"], current["text"])
-
-            if gap <= (merge_gap_frames * sample_frame_step) and same_text:
-                current["end_frame"] = hit["frame_no"]
-                current["end_timecode"] = hit["timecode"]
-                if len(hit["text"]) > len(current["text"]):
-                    current["text"] = hit["text"]
-            else:
-                merged.append(current)
-                current = hit.copy()
-                current["end_frame"] = current["frame_no"]
-                current["end_timecode"] = current["timecode"]
-
-        merged.append(current)
+        merged = _merge_box_streams(hits, merge_gap_frames, sample_frame_step)
 
     # --- third pass: build output rows with type classification ------------
     events: list[dict[str, Any]] = []
@@ -698,6 +851,7 @@ def extract_text_events(
             end_frame=m["end_frame"],
             total_frames=total_frames_est,
             is_bw_card=m["is_card"],
+            movie_title=movie_title,
         )
         events.append(
             {
@@ -706,6 +860,7 @@ def extract_text_events(
                 "end_time": m["end_timecode"],
                 "start_frame": m["frame_no"],
                 "end_frame": m["end_frame"],
+                "quad": ",".join(str(v) for v in m["quad"]) if m.get("quad") else "",
                 "text": m["text"],
                 "language": lang,
             }
@@ -787,12 +942,13 @@ def validate_text_csvs(
         try:
             with csv_path.open(newline="", encoding="utf-8") as fh:
                 reader = csv.DictReader(fh)
-                if reader.fieldnames != TEXT_COLUMNS:
+                missing_cols = set(TEXT_COLUMNS) - set(reader.fieldnames or [])
+                if missing_cols:
                     issues.append(
                         {
                             "csv_path": str(csv_path),
                             "row": 0,
-                            "issue": f"wrong columns: {reader.fieldnames}",
+                            "issue": f"missing columns: {sorted(missing_cols)}",
                         }
                     )
                 for i, row in enumerate(reader, start=1):

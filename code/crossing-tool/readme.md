@@ -128,6 +128,8 @@ crossing shotlist shot detect --tmdb 391             # use TMDb ID
   --media {movies,gameplay}                          # media type (default: movies)
   --force                                            # overwrite existing shotlist
   --all                                              # process all entries in project (skips existing)
+  --notify                                           # Discord notification when finished
+  --notify-items                                     # Discord notification after each item (batch only)
 
 # Examples:
 crossing shotlist shot detect Django                 # find by filename substring
@@ -136,6 +138,7 @@ crossing shotlist shot detect "Fistful" --force      # overwrite existing
 crossing shotlist shot detect --all                  # detect shots for all movies without a shotlist
 crossing shotlist shot detect --all --media gameplay # detect shots for all gameplay entries
 crossing shotlist shot detect --all --force          # reprocess everything
+crossing shotlist shot detect --all --notify         # notify when the whole batch finishes
 
 # Output CSV format:
 # Ignore,Scene,Start,End,Start_Frame,End_Frame,Shot_Caption,Scene_Caption,Shot_Source,Shot_Confidence
@@ -173,11 +176,16 @@ crossing text detect --tmdb 391             # use TMDb ID
   --force                                   # overwrite existing CSV
   --sample-fps 1.0                          # frames per second to sample (default: 1.0)
   --lang en                                 # PaddleOCR language code (default: en)
+  --min-confidence 0.75                     # minimum OCR confidence (default: 0.75)
   --verbose                                 # print per-frame OCR output
+  --notify                                  # Discord notification when finished
+  --notify-items                            # Discord notification after each item (batch only)
 
 # Detect text events for all films
 crossing text detect --all
 crossing text detect --all --force          # reprocess everything
+crossing text detect --all --notify         # notify when the whole batch finishes
+crossing text detect --all --notify-items   # notify after each film
 crossing text detect --silent               # run on the six silent test-bed films only
 
 # List all text CSVs
@@ -208,10 +216,44 @@ crossing audit --media gameplay      # report for gameplay entries
 
 ```bash
 # Get stored API key
-crossing tool api_key get {opensubtitles,tmdb}
+crossing tool api_key get {discord,opensubtitles,tmdb}
 
 # Set API key
-crossing tool api_key set {opensubtitles,tmdb} <key>
+crossing tool api_key set {discord,opensubtitles,tmdb} <key>
+```
+
+### Discord Notifications
+
+Long-running batch commands (`shotlist shot detect`, `text detect`) support optional
+Discord notifications via a webhook URL.
+
+**One-time setup:**
+1. In Discord, open **Server Settings → Integrations → Webhooks → New Webhook**.
+2. Name it, pick a channel, then click **Copy Webhook URL** — it will look like:
+   `https://discord.com/api/webhooks/1234567890/xxxxxxxxxxxx`
+3. Paste it into the CLI (this saves it to `preferences/keys/discord_api_key.txt`):
+```bash
+crossing tool api_key set discord https://discord.com/api/webhooks/1234567890/xxxxxxxxxxxx
+```
+4. Verify it was saved:
+```bash
+crossing tool api_key get discord
+```
+
+**Flags:**
+
+| Flag | Behaviour |
+|------|-----------|
+| `--notify` | Send one message when the entire process finishes (single film or full batch) |
+| `--notify-items` | Send a message after each individual film in a batch, including elapsed time |
+
+```bash
+# Notify on batch completion
+crossing text detect --all --notify
+
+# Notify after every film + on completion
+crossing text detect --all --notify --notify-items
+crossing shotlist shot detect --all --notify --notify-items
 ```
 
 ## Project Folder Structure

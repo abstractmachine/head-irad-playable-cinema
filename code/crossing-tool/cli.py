@@ -980,10 +980,13 @@ def _shot_detect(args):
 
     project_path = prefs.get("path")
     media_type = args.media
+    notify = getattr(args, "notify", False)
+    notify_items = getattr(args, "notify_items", False)
 
     try:
         if getattr(args, 'all', False):
-            _shot_detect_all(project_path, media_type, args.force)
+            _shot_detect_all(project_path, media_type, args.force,
+                             notify=notify, notify_items=notify_items)
             return
 
         # Resolve filename from query or tmdb
@@ -1033,7 +1036,15 @@ def _shot_detect(args):
         )
         
         print(f"✓ Saved to: {csv_path}")
-        
+
+        if notify:
+            from services.notify import discord_notify
+            discord_notify(
+                f"✓ Shot detection complete: {filename}\n"
+                f"{len(shots)} shots in {elapsed:.1f}s",
+                project_path,
+            )
+
     except ImportError as e:
         print(f"✗ {e}", file=sys.stderr)
         sys.exit(1)
@@ -1050,7 +1061,14 @@ def _shot_detect(args):
         sys.exit(1)
 
 
-def _shot_detect_all(project_path: str, media_type: str, force: bool):
+def _shot_detect_all(
+    project_path: str,
+    media_type: str,
+    force: bool,
+    *,
+    notify: bool = False,
+    notify_items: bool = False,
+):
     """Detect shots for all metadata entries that don't yet have a shotlist."""
     from services.shot_detection import detect_shots_transnet, write_shotlist_csv
     from services.shotlist import get_shotlist_path
@@ -1093,16 +1111,31 @@ def _shot_detect_all(project_path: str, media_type: str, force: bool):
             elapsed = time.time() - start_time
             csv_path = write_shotlist_csv(project_path, filename, shots, media_type, force=force)
             print(f"  ✓ {len(shots)} shots in {elapsed:.1f}s → {csv_path.name}")
+            if notify_items:
+                from services.notify import discord_notify
+                discord_notify(
+                    f"[{i}/{len(pending)}] ✓ {filename}\n"
+                    f"{len(shots)} shots in {elapsed:.1f}s",
+                    project_path,
+                )
         except Exception as e:
             print(f"  ✗ Failed: {e}", file=sys.stderr)
             failed.append(filename)
 
     print()
-    print(f"Done. {len(pending) - len(failed)}/{len(pending)} processed successfully.")
+    ok = len(pending) - len(failed)
+    print(f"Done. {ok}/{len(pending)} processed successfully.")
     if failed:
         print("Failed:")
         for f in failed:
             print(f"  - {f}")
+
+    if notify:
+        from services.notify import discord_notify
+        summary = f"Shot detection batch complete: {ok}/{len(pending)} succeeded"
+        if failed:
+            summary += "\nFailed:\n" + "\n".join(f"  {f}" for f in failed)
+        discord_notify(summary, project_path)
 
 
 def _shot_validate(args):
@@ -1173,7 +1206,7 @@ def _shot_validate(args):
 # api_key command
 # ---------------------------------------------------------------------------
 
-_API_KEY_SERVICES = ("opensubtitles", "tmdb")
+_API_KEY_SERVICES = ("discord", "opensubtitles", "tmdb")
 
 
 def cmd_api_key(args):
@@ -1203,6 +1236,26 @@ def cmd_tool(args):
         cmd_name(args)
     elif sub == "api_key":
         cmd_api_key(args)
+    elif sub == "notify":
+        cmd_notify(args)
+
+
+def cmd_notify(args):
+    """Send a test notification to verify a service is configured correctly."""
+    _require_path()
+    service = args.notify_service
+    if service == "discord":
+        import uuid
+        from services.notify import discord_notify
+        project_path = prefs.get("path")
+        test_id = uuid.uuid4().hex[:8].upper()
+        print(f"Sending test Discord notification...  (id: {test_id})")
+        ok = discord_notify(f"✓ crossing-tool notification test — id: {test_id}", project_path)
+        if ok:
+            print(f"✓ Notification sent. Check Discord for message with id: {test_id}")
+    else:
+        print(f"✗ Unknown notification service: {service}", file=sys.stderr)
+        sys.exit(1)
 
 
 def cmd_audit(args):
@@ -1521,10 +1574,12 @@ def _text_detect(args):
     force = getattr(args, "force", False)
     sample_fps = getattr(args, "sample_fps", 1.0)
     lang = getattr(args, "lang", "en")
-    min_confidence = getattr(args, "min_confidence", 0.70)
+    min_confidence = getattr(args, "min_confidence", 0.75)
     verbose = getattr(args, "verbose", False)
     do_all = getattr(args, "all", False)
     silent_preset = getattr(args, "silent", False)
+    notify = getattr(args, "notify", False)
+    notify_items = getattr(args, "notify_items", False)
 
     # ------------------------------------------------------------------ batch
     if do_all or silent_preset:
@@ -1569,6 +1624,13 @@ def _text_detect(args):
                 dest = write_text_csv(project_path, filename, rows, media_type, force=force)
                 elapsed = time.time() - t0
                 print(f"    ✓ {len(events)} event(s) in {elapsed:.1f}s → {dest.name}")
+                if notify_items:
+                    from services.notify import discord_notify
+                    discord_notify(
+                        f"[{i}/{len(pending)}] ✓ {filename}\n"
+                        f"{len(events)} text event(s) in {elapsed:.1f}s",
+                        project_path,
+                    )
             except FileExistsError as exc:
                 print(f"    ⚠ {exc}")
             except Exception as exc:
@@ -1584,6 +1646,13 @@ def _text_detect(args):
             print("Failed:")
             for f in failed:
                 print(f"  {f}")
+
+        if notify:
+            from services.notify import discord_notify
+            summary = f"Text detection batch complete: {ok}/{len(pending)} succeeded"
+            if failed:
+                summary += "\nFailed:\n" + "\n".join(f"  {f}" for f in failed)
+            discord_notify(summary, project_path)
         return
 
     # ------------------------------------------------------------------ single
@@ -1634,6 +1703,14 @@ def _text_detect(args):
     counts = Counter(r["type"] for r in rows)
     for t, n in sorted(counts.items()):
         print(f"    {n:3d}  {t}")
+
+    if notify:
+        from services.notify import discord_notify
+        discord_notify(
+            f"✓ Text detection complete: {filename}\n"
+            f"{len(events)} event(s) in {elapsed:.1f}s",
+            project_path,
+        )
 
 
 def _text_list(args):
@@ -1879,6 +1956,8 @@ def build_parser():
     p_sl_shot_detect.add_argument("--media", choices=["movies", "gameplay"], default="movies")
     p_sl_shot_detect.add_argument("--force", action="store_true", help="Overwrite existing shotlist if it exists")
     p_sl_shot_detect.add_argument("--all", action="store_true", help="Process all metadata entries without a shotlist")
+    p_sl_shot_detect.add_argument("--notify", action="store_true", help="Send a Discord notification when the process finishes")
+    p_sl_shot_detect.add_argument("--notify-items", action="store_true", dest="notify_items", help="Send a Discord notification after each item in a batch")
 
     p_sl_validate = shotlist_sub.add_parser("validate", help="Validate and correct shot/scene data (GUI)")
     p_sl_validate.add_argument("query", nargs="?", default=None, help="Filename substring to match")
@@ -1942,9 +2021,11 @@ def build_parser():
     p_text_detect.add_argument("--sample-fps", type=float, default=1.0, dest="sample_fps",
                                help="Frames per second to sample (default: 1.0)")
     p_text_detect.add_argument("--lang", default="en", help="PaddleOCR language code (default: en)")
-    p_text_detect.add_argument("--min-confidence", type=float, default=0.70, dest="min_confidence",
-                               help="Minimum OCR confidence score to accept (default: 0.70)")
+    p_text_detect.add_argument("--min-confidence", type=float, default=0.75, dest="min_confidence",
+                               help="Minimum OCR confidence score to accept (default: 0.75)")
     p_text_detect.add_argument("--verbose", action="store_true", help="Print per-frame OCR output")
+    p_text_detect.add_argument("--notify", action="store_true", help="Send a Discord notification when the process finishes")
+    p_text_detect.add_argument("--notify-items", action="store_true", dest="notify_items", help="Send a Discord notification after each item in a batch")
 
     p_text_list = text_sub.add_parser("list", help="List all text CSVs")
     p_text_list.add_argument("--media", choices=["movies", "gameplay"], default=None,
@@ -1990,6 +2071,10 @@ def build_parser():
     p_tool_api_key_set = tool_api_key_sub.add_parser("set", help="Save an API key")
     p_tool_api_key_set.add_argument("service", choices=_API_KEY_SERVICES)
     p_tool_api_key_set.add_argument("value", metavar="key")
+
+    p_tool_notify = tool_sub.add_parser("notify", help="Send a test notification to verify a service is configured")
+    p_tool_notify.add_argument("notify_service", choices=["discord"], metavar="service",
+                               help="Notification service to test (discord)")
 
     return parser
 
