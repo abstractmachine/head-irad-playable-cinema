@@ -200,6 +200,44 @@ def _luminance_mask(patch_rgb: "np.ndarray") -> "np.ndarray":
     return mask
 
 
+def _refine_mask_with_luminance(
+    patch_rgb: "np.ndarray",
+    sam_mask: "np.ndarray",
+) -> "np.ndarray":
+    """Tighten a SAM blob mask using per-pixel luminance gating.
+
+    SAM returns a filled region covering the whole text card; this step
+    zeros-out background pixels that bleed through the gaps between and
+    inside letter forms, while preserving the smooth feathered edge that
+    SAM produces at the region boundary.
+    """
+    grey = cv2.cvtColor(patch_rgb, cv2.COLOR_RGB2GRAY)
+
+    # Boost local contrast so text edges are sharp even in low-contrast frames
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    grey_eq = clahe.apply(grey)
+
+    # Otsu threshold on the CLAHE-enhanced grey
+    _, lum = cv2.threshold(grey_eq, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    # Auto-invert for dark text on bright background
+    if float(np.mean(grey)) > 128:
+        lum = 255 - lum
+
+    # Morphological cleanup: close small holes inside letter forms,
+    # then open to remove isolated noise dots
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    lum = cv2.morphologyEx(lum, cv2.MORPH_CLOSE, kernel, iterations=2)
+    lum = cv2.morphologyEx(lum, cv2.MORPH_OPEN,  kernel, iterations=1)
+
+    # Feathered SAM edge × binary luminance gate:
+    # text pixels inside the SAM region inherit the smooth SAM boundary;
+    # background bleed-through is zeroed out.
+    sam_soft = cv2.GaussianBlur(sam_mask, (5, 5), 2)
+    combined = np.minimum(sam_soft.astype(np.float32), lum.astype(np.float32))
+    return combined.astype(np.uint8)
+
+
 def _polygon_mask(shape_hw: tuple[int, int], pts: "np.ndarray") -> "np.ndarray":
     """Soft filled polygon mask clipped to shape."""
     h, w = shape_hw
@@ -260,8 +298,9 @@ def _extract_patch(
     if full_mask is not None:
         patch_rgb  = frame_rgb[by1:by2, bx1:bx2]
         patch_mask = full_mask[by1:by2, bx1:bx2]
-        patch_mask = cv2.GaussianBlur(patch_mask, (5, 5), 2)
-        rgba = np.dstack([patch_rgb, patch_mask])
+        patch_mask = _refine_mask_with_luminance(patch_rgb, patch_mask)
+        white = np.full_like(patch_rgb, 255)
+        rgba = np.dstack([white, patch_mask])
         return Image.fromarray(rgba, "RGBA")
 
     # --- 2. Luminance threshold + polygon clip path --------------------------
@@ -287,7 +326,8 @@ def _extract_patch(
     if combined.max() < 10:
         combined = poly_mask
 
-    rgba = np.dstack([patch_rgb, combined])
+    white = np.full_like(patch_rgb, 255)
+    rgba = np.dstack([white, combined])
     return Image.fromarray(rgba, "RGBA")
 
 
@@ -295,7 +335,7 @@ def _extract_patch(
 # Background treatment
 # ---------------------------------------------------------------------------
 
-_BG_TREATMENTS = ("desaturate", "tint", "darken", "original")
+_BG_TREATMENTS = ("hue_tint",)
 
 
 def _apply_bg_treatment(
@@ -305,7 +345,13 @@ def _apply_bg_treatment(
     rng: random.Random,
     treatment: str | None = None,
 ) -> Image.Image:
-    """Scale-to-fill, center-crop, then apply a random aesthetic treatment."""
+    """Scale-to-fill, center-crop, then apply background treatment.
+
+    Default: convert to greyscale, boost contrast, then overlay a random hue
+    at 75 % HSB saturation as a multiplicative tint.
+    """
+    import colorsys
+
     src_w, src_h = img.size
     scale = max(canvas_w / src_w, canvas_h / src_h)
     nw, nh = int(round(src_w * scale)), int(round(src_h * scale))
@@ -314,24 +360,26 @@ def _apply_bg_treatment(
     top  = (nh - canvas_h) // 2
     img  = img.crop((left, top, left + canvas_w, top + canvas_h))
 
-    t = treatment or rng.choice(_BG_TREATMENTS)
+    # --- Greyscale + contrast boost ----------------------------------------
+    grey = img.convert("L")
+    # Auto-contrast: stretch histogram so darkest → 0, brightest → 255
+    from PIL import ImageOps, ImageEnhance
+    grey = ImageOps.autocontrast(grey, cutoff=2)
+    # Additional contrast punch
+    grey = ImageEnhance.Contrast(grey).enhance(1.6)
 
-    if t == "desaturate":
-        img = img.convert("L").convert("RGB")
+    # --- Random hue tint at 75 % saturation, full brightness ---------------
+    hue = rng.uniform(0.0, 1.0)               # 0–1 maps to 0°–360°
+    sat = 0.75
+    r, g, b = colorsys.hsv_to_rgb(hue, sat, 1.0)
+    tint_colour = (int(r * 255), int(g * 255), int(b * 255))
 
-    elif t == "tint":
-        grey = img.convert("L").convert("RGB")
-        tint = Image.new("RGB", img.size, (
-            rng.randint(160, 255),
-            rng.randint(80, 200),
-            rng.randint(40, 180),
-        ))
-        img = Image.blend(grey, tint, 0.40)
-
-    elif t == "darken":
-        arr = np.asarray(img).astype(np.float32)
-        arr *= rng.uniform(0.20, 0.50)
-        img = Image.fromarray(arr.astype(np.uint8))
+    # Multiply grey by tint: convert grey to RGB then blend
+    grey_rgb = grey.convert("RGB")
+    tint_layer = Image.new("RGB", grey_rgb.size, tint_colour)
+    # PIL multiply: ImageChops.multiply does (a*b)/255 per channel
+    from PIL import ImageChops
+    img = ImageChops.multiply(grey_rgb, tint_layer)
 
     return img.convert("RGBA")
 

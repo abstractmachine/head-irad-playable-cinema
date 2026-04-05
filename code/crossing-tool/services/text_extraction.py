@@ -245,14 +245,19 @@ def _ocr_frame_raw(frame_rgb, *, lang: str = "en") -> list[tuple[str, float]]:
 def _text_is_plausible(text: str) -> bool:
     """Return True if the OCR output contains enough real text to keep.
 
-    Three checks:
-    - At least 6 characters total (passes "THE END", "FIN", short titles).
-    - At least 40% of characters are alphanumeric (allows currency / numbers
-      like "$10.000" while still filtering symbol-only noise).
-    - At least one run of 3+ consecutive alphanumeric characters.
+    Short strings (3–5 non-whitespace chars) are accepted only when they are
+    purely alphabetic.  This admits short words like "HAL", "by", "with",
+    "and" that appear on title cards alongside longer anchor detections, while
+    rejecting digit-only or symbol-heavy noise of the same length.
+
+    Longer strings (≥ 6 chars) apply the original tests: at least 40%
+    alphanumeric characters and at least one run of 3+ alphanumeric chars.
     """
-    if len(text) < 6:
+    stripped = re.sub(r'\s+', '', text)
+    if len(stripped) < 3:
         return False
+    if len(stripped) < 6:
+        return stripped.isalpha()
     alphanum = sum(c.isalpha() or c.isdigit() for c in text)
     if (alphanum / len(text)) < 0.40:
         return False
@@ -269,6 +274,48 @@ def _image_is_blank(frame_rgb) -> bool:
 
     grey = np.asarray(frame_rgb.convert("L"), dtype=np.float32)
     return float(np.std(grey)) < 3.0
+
+
+def _is_neutral_card(pil_img, quads: list[list[int]]) -> bool:
+    """Return True if the frame background is a plain/neutral title card.
+
+    Masks out all text quad regions, then measures the colour saturation of
+    the remaining background pixels.  A near-monochrome background — typical
+    of opening-credits title cards and narrative intertitles — has very low
+    saturation; real film footage has varied colour.
+
+    Saturation proxy used: max(R,G,B) − min(R,G,B) per pixel (range 0–255).
+    Thresholds: mean < 20 AND std < 25 → card.  Derived empirically; these
+    separate black-card / white-card backgrounds from outdoor and interior
+    scenes across the silent and early-colour library.
+    """
+    import numpy as np
+
+    rgb = np.asarray(pil_img.convert("RGB"), dtype=np.float32)
+    h, w = rgb.shape[:2]
+
+    # Build mask: True = background pixel (not covered by any text quad)
+    mask = np.ones((h, w), dtype=bool)
+    for quad in quads:
+        if len(quad) == 8:
+            pts = np.array(quad, dtype=np.float32).reshape(4, 2)
+            cx = float(pts[:, 0].mean())
+            cy = float(pts[:, 1].mean())
+            # Inflate quad 40 % around centroid to fully cover letter bodies
+            pts = ((pts - [cx, cy]) * 1.4 + [cx, cy]).astype(np.int32)
+            x1 = int(np.clip(pts[:, 0].min(), 0, w - 1))
+            y1 = int(np.clip(pts[:, 1].min(), 0, h - 1))
+            x2 = int(np.clip(pts[:, 0].max(), 0, w - 1))
+            y2 = int(np.clip(pts[:, 1].max(), 0, h - 1))
+            mask[y1:y2, x1:x2] = False
+
+    bg = rgb[mask]
+    if bg.shape[0] < 200:
+        # Too few background pixels to decide; default False (diegetic is safer)
+        return False
+
+    sat = bg.max(axis=1) - bg.min(axis=1)   # 0–255 per-pixel saturation proxy
+    return float(sat.mean()) < 20 and float(sat.std()) < 25
 
 
 def _normalise_text(text: str) -> str:
@@ -354,43 +401,41 @@ def _classify_type(
     is_bw_card: bool,
     movie_title: str | None = None,
 ) -> str:
-    """Derive a text type from position and structural cues.
+    """Derive a text type from background appearance and temporal position.
 
     Rules (in priority order):
-    1. First 10 % of film + title-card + title match  → title
-    1b. First 10 % of film + title-card + no match    → credits
-    2. Last 5 % of film + title-card appearance       → ending
-    3. Last 20 % of film + multi-line / names         → credits
-    4. First 20 % of film + multi-line / names        → credits
-    5. B&W card anywhere in middle                    → intertitle
-    6. Fallback                                       → diegetic
+
+    1. Non-neutral background (real footage)            → diegetic
+       — applies anywhere in the film; WANTED posters, signs, subtitles, etc.
+       are always diegetic even if they appear near the opening.
+
+    2. Neutral card + first 10 % + title match          → title
+    3. Neutral card + last 5 %                          → ending
+    4. Neutral card + first/last 18 %                   → credits
+    5. Neutral card anywhere in the remaining middle     → intertitle
     """
     if total_frames == 0:
+        return "diegetic"
+
+    # Non-neutral background → always diegetic, regardless of position
+    if not is_bw_card:
         return "diegetic"
 
     mid_frame = (start_frame + end_frame) / 2
     position = mid_frame / total_frames  # 0.0 … 1.0
 
-    line_count = len([l for l in text.splitlines() if l.strip()])
-
-    if is_bw_card and position < 0.10:
+    if position < 0.10:
         if movie_title is None or _title_matches(text, movie_title):
             return "title"
         return "credits"
 
-    if is_bw_card and position > 0.95:
+    if position > 0.95:
         return "ending"
 
-    if position > 0.80 and line_count >= 2:
+    if position < 0.18 or position > 0.82:
         return "credits"
 
-    if position < 0.20 and line_count >= 2:
-        return "credits"
-
-    if is_bw_card:
-        return "intertitle"
-
-    return "diegetic"
+    return "intertitle"
 
 
 # ---------------------------------------------------------------------------
@@ -660,6 +705,77 @@ def _union_quad(quads: list[list[int]]) -> list[int]:
     return [x1, y1, x2, y1, x2, y2, x1, y2]
 
 
+def _suppress_contained_events(
+    events: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Remove events whose quad is substantially inside a larger concurrent event.
+
+    After the merging and grouping passes, OCR sometimes produces two entries
+    for the same card region: one covering the whole card and a smaller one
+    that only captured a sub-region (e.g. just the bottom line).  This pass
+    removes the smaller event when:
+
+    - It has temporal overlap with the larger event (the two events' frame
+      ranges intersect), AND
+    - At least 70 % of the smaller event's AABB area lies inside the larger
+      event's AABB.
+
+    The larger event is kept unchanged; only the contained duplicate is dropped.
+    """
+    if len(events) <= 1:
+        return events
+
+    def _aabb(quad) -> "tuple[int,int,int,int] | None":
+        try:
+            vals = [int(v) for v in (quad if isinstance(quad, list) else quad.split(","))]
+        except (ValueError, AttributeError):
+            return None
+        if len(vals) < 8:
+            return None
+        xs, ys = vals[0::2], vals[1::2]
+        return min(xs), min(ys), max(xs), max(ys)
+
+    def _area(box: "tuple[int,int,int,int]") -> int:
+        return max(0, box[2] - box[0]) * max(0, box[3] - box[1])
+
+    def _contained_fraction(small: "tuple", big: "tuple") -> float:
+        ix1 = max(small[0], big[0])
+        iy1 = max(small[1], big[1])
+        ix2 = min(small[2], big[2])
+        iy2 = min(small[3], big[3])
+        if ix2 <= ix1 or iy2 <= iy1:
+            return 0.0
+        inter = (ix2 - ix1) * (iy2 - iy1)
+        small_area = _area(small)
+        return inter / small_area if small_area > 0 else 0.0
+
+    boxes = [_aabb(e.get("quad")) for e in events]
+    areas = [_area(b) if b else 0 for b in boxes]
+    suppress: set[int] = set()
+
+    for i, ev_a in enumerate(events):
+        if i in suppress or boxes[i] is None:
+            continue
+        a_start = int(ev_a.get("frame_no", 0))
+        a_end   = int(ev_a.get("end_frame", a_start))
+        for j, ev_b in enumerate(events):
+            if i == j or j in suppress or boxes[j] is None:
+                continue
+            if areas[j] <= areas[i]:
+                continue  # B must have a strictly larger AABB than A
+            b_start = int(ev_b.get("frame_no", 0))
+            b_end   = int(ev_b.get("end_frame", b_start))
+            # Temporal overlap
+            if a_end < b_start or b_end < a_start:
+                continue
+            # If ≥70 % of A's area is inside B, A is a redundant sub-event
+            if _contained_fraction(boxes[i], boxes[j]) >= 0.70:
+                suppress.add(i)
+                break
+
+    return [ev for i, ev in enumerate(events) if i not in suppress]
+
+
 def _group_cooccurring_events(
     events: list[dict[str, Any]],
     sample_frame_step: int,
@@ -872,12 +988,27 @@ def extract_text_events(
                         got_frame = True
                         break
 
-                    detections = _ocr_frame_detections(pil_img, lang=lang, min_confidence=min_confidence)
+                    # Anchor+satellite confidence: collect at a lower floor so
+                    # smaller/harder tokens on the same title card (e.g. "with",
+                    # "GARY" alongside "HUDSON") are kept when at least one box
+                    # on the frame clears the normal min_confidence threshold.
+                    _SATELLITE_MARGIN = 0.18
+                    floor = max(0.50, min_confidence - _SATELLITE_MARGIN)
+                    all_dets = _ocr_frame_detections(pil_img, lang=lang, min_confidence=floor)
+                    has_anchor = any(d["score"] >= min_confidence for d in all_dets)
+                    # Without any high-confidence anchor the frame is treated as
+                    # text-free (avoids admitting pure noise at low confidence).
+                    detections = (
+                        all_dets
+                        if has_anchor
+                        else [d for d in all_dets if d["score"] >= min_confidence]
+                    )
 
                     got_frame = True
 
                     tc = frames_to_timecode(frame_no, fps)
                     frame_hits = []
+                    plausible_quads: list[list[int]] = []
                     for det in detections:
                         norm = _normalise_text(det["text"])
                         if _text_is_plausible(norm):
@@ -886,13 +1017,21 @@ def extract_text_events(
                                 "timecode": tc,
                                 "text":     norm,
                                 "quad":     det["quad"],
-                                "is_card":  True,
+                                "is_card":  None,  # filled after quad collection
                             })
+                            plausible_quads.append(det["quad"])
 
                     if not frame_hits:
                         if verbose:
                             print(f"  [t={frame_time_s:.1f}s] skip (no plausible text)")
                         break
+
+                    # Determine whether this frame is a plain neutral card
+                    # (title card / intertitle) or real footage, then stamp
+                    # every hit from this frame with the result.
+                    is_card = _is_neutral_card(pil_img, plausible_quads)
+                    for h in frame_hits:
+                        h["is_card"] = is_card
 
                     if verbose:
                         for h in frame_hits:
@@ -953,6 +1092,9 @@ def extract_text_events(
 
     # --- 2b: combine boxes from the same card into multi-line events -------
     merged = _group_cooccurring_events(merged, sample_frame_step)
+
+    # --- 2c: remove sub-events already covered by a larger sibling ---------
+    merged = _suppress_contained_events(merged)
 
     # --- third pass: build output rows with type classification ------------
     events: list[dict[str, Any]] = []
