@@ -1427,20 +1427,28 @@ def _subtitle_list(args):
 def cmd_text(args):
     _require_path()
     sub = args.text_subcommand
-    if sub == "extract":
-        _text_extract(args)
-    elif sub == "batch":
-        _text_batch(args)
+    if sub == "detect":
+        _text_detect(args)
     elif sub == "list":
         _text_list(args)
     elif sub == "validate":
         _text_validate(args)
 
 
-def _text_extract(args):
-    """Extract on-screen text from a single film."""
-    from services.text_extraction import extract_text_events, write_text_csv
-    from services.shotlist import resolve_filename
+# Six silent films used as the initial test-bed.
+_SILENT_BATCH = [
+    "Fatty And Minnie He Haw (1914) {tmdb-226901}.mp4",
+    "Hell Bent (1918) {tmdb-302894}.mp4",
+    "Out West (1918) {tmdb-051301}.mp4",
+    "Sky High (1922) {tmdb-127277}.mp4",
+    "Straight Shooting (1917) {tmdb-157903}.mp4",
+    "The Half Breed (1916) {tmdb-200324}.mp4",
+]
+
+
+def _text_detect(args):
+    """Detect on-screen text for one film or all films (--all / --silent)."""
+    from services.text_extraction import extract_text_events, write_text_csv, get_text_csv_path
     import time
 
     project_path = prefs.get("path")
@@ -1449,6 +1457,71 @@ def _text_extract(args):
     sample_fps = getattr(args, "sample_fps", 1.0)
     lang = getattr(args, "lang", "en")
     verbose = getattr(args, "verbose", False)
+    do_all = getattr(args, "all", False)
+    silent_preset = getattr(args, "silent", False)
+
+    # ------------------------------------------------------------------ batch
+    if do_all or silent_preset:
+        if silent_preset:
+            filenames = _SILENT_BATCH
+        else:
+            from services.metadata import get_metadata
+            entries = get_metadata(project_path, media_type=media_type)
+            filenames = [
+                e["filename"] for e in entries
+                if e.get("filename")
+                and (Path(project_path) / "media" / "videos" / media_type / e["filename"]).exists()
+            ]
+
+        if not filenames:
+            print("No films to process.")
+            return
+
+        pending, skipped = [], []
+        for fn in filenames:
+            if get_text_csv_path(project_path, fn, media_type).exists() and not force:
+                skipped.append(fn)
+            else:
+                pending.append(fn)
+
+        print(f"{len(filenames)} film(s): {len(pending)} to process, {len(skipped)} already done.")
+        if skipped:
+            print("  (use --force to reprocess)")
+
+        failed = []
+        for i, filename in enumerate(pending, 1):
+            video_path = Path(project_path) / "media" / "videos" / media_type / filename
+            if not video_path.exists():
+                print(f"  [{i}/{len(pending)}] ⚠ video not found, skipping: {filename}")
+                failed.append(filename)
+                continue
+            print(f"  [{i}/{len(pending)}] {filename}")
+            t0 = time.time()
+            try:
+                events = extract_text_events(str(video_path), sample_fps=sample_fps, lang=lang, verbose=verbose, project_path=project_path, filename=filename, media_type=media_type)
+                rows = [{"filename": filename, **e} for e in events]
+                dest = write_text_csv(project_path, filename, rows, media_type, force=force)
+                elapsed = time.time() - t0
+                print(f"    ✓ {len(events)} event(s) in {elapsed:.1f}s → {dest.name}")
+            except FileExistsError as exc:
+                print(f"    ⚠ {exc}")
+            except Exception as exc:
+                print(f"    ✗ failed: {exc}", file=sys.stderr)
+                import traceback
+                traceback.print_exc()
+                failed.append(filename)
+
+        print()
+        ok = len(pending) - len(failed)
+        print(f"Done. {ok}/{len(pending)} processed successfully.")
+        if failed:
+            print("Failed:")
+            for f in failed:
+                print(f"  {f}")
+        return
+
+    # ------------------------------------------------------------------ single
+    from services.shotlist import resolve_filename
 
     try:
         tmdb = getattr(args, "tmdb", None)
@@ -1463,22 +1536,17 @@ def _text_extract(args):
         print(f"✗ Video not found: {video_path}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Extracting text: {filename}")
+    print(f"Detecting text: {filename}")
     print(f"  sample rate: {sample_fps} fps  |  lang: {lang}")
 
     t0 = time.time()
     try:
-        events = extract_text_events(
-            str(video_path),
-            sample_fps=sample_fps,
-            lang=lang,
-            verbose=verbose,
-        )
+        events = extract_text_events(str(video_path), sample_fps=sample_fps, lang=lang, verbose=verbose, project_path=project_path, filename=filename, media_type=media_type)
     except ImportError as exc:
         print(f"✗ {exc}", file=sys.stderr)
         sys.exit(1)
     except Exception as exc:
-        print(f"✗ Extraction failed: {exc}", file=sys.stderr)
+        print(f"✗ Detection failed: {exc}", file=sys.stderr)
         import traceback
         traceback.print_exc()
         sys.exit(1)
@@ -1486,7 +1554,6 @@ def _text_extract(args):
     elapsed = time.time() - t0
     print(f"  found {len(events)} text event(s) in {elapsed:.1f}s")
 
-    # Attach filename to each row
     rows = [{"filename": filename, **e} for e in events]
 
     try:
@@ -1497,107 +1564,10 @@ def _text_extract(args):
 
     print(f"✓ Saved: {dest}")
 
-    # Brief summary
     from collections import Counter
     counts = Counter(r["type"] for r in rows)
     for t, n in sorted(counts.items()):
         print(f"    {n:3d}  {t}")
-
-
-# Six silent films used as the initial test-bed.
-_SILENT_BATCH = [
-    "Fatty And Minnie He Haw (1914) {tmdb-226901}.mp4",
-    "Hell Bent (1918) {tmdb-302894}.mp4",
-    "Out West (1918) {tmdb-051301}.mp4",
-    "Sky High (1922) {tmdb-127277}.mp4",
-    "Straight Shooting (1917) {tmdb-157903}.mp4",
-    "The Half Breed (1916) {tmdb-200324}.mp4",
-]
-
-
-def _text_batch(args):
-    """Extract text for multiple films."""
-    from services.text_extraction import extract_text_events, write_text_csv
-    import time
-
-    project_path = prefs.get("path")
-    media_type = args.media
-    force = getattr(args, "force", False)
-    sample_fps = getattr(args, "sample_fps", 1.0)
-    lang = getattr(args, "lang", "en")
-    verbose = getattr(args, "verbose", False)
-    silent_preset = getattr(args, "silent", False)
-
-    # Build the list of filenames to process
-    if silent_preset:
-        filenames = _SILENT_BATCH
-    elif getattr(args, "filenames", None):
-        filenames = args.filenames
-    else:
-        # All films that have a video file
-        from services.metadata import get_metadata
-        entries = get_metadata(project_path, media_type=media_type)
-        filenames = [
-            e["filename"] for e in entries
-            if e.get("filename")
-            and (Path(project_path) / "media" / "videos" / media_type / e["filename"]).exists()
-        ]
-
-    if not filenames:
-        print("No filenames to process.")
-        return
-
-    # Filter out those that already have CSVs (unless --force)
-    from services.text_extraction import get_text_csv_path
-    pending = []
-    skipped = []
-    for fn in filenames:
-        csv_path = get_text_csv_path(project_path, fn, media_type)
-        if csv_path.exists() and not force:
-            skipped.append(fn)
-        else:
-            pending.append(fn)
-
-    print(f"{len(filenames)} film(s): {len(pending)} to process, {len(skipped)} already done.")
-    if skipped:
-        print("  (use --force to reprocess)")
-
-    failed = []
-    for i, filename in enumerate(pending, 1):
-        video_path = Path(project_path) / "media" / "videos" / media_type / filename
-        if not video_path.exists():
-            print(f"  [{i}/{len(pending)}] ⚠ video not found, skipping: {filename}")
-            failed.append(filename)
-            continue
-
-        print(f"  [{i}/{len(pending)}] {filename}")
-        t0 = time.time()
-        try:
-            events = extract_text_events(
-                str(video_path),
-                sample_fps=sample_fps,
-                lang=lang,
-                verbose=verbose,
-            )
-            rows = [{"filename": filename, **e} for e in events]
-            dest = write_text_csv(project_path, filename, rows, media_type, force=force)
-            elapsed = time.time() - t0
-            print(f"    ✓ {len(events)} event(s) in {elapsed:.1f}s → {dest.name}")
-        except FileExistsError as exc:
-            print(f"    ⚠ {exc}")
-        except Exception as exc:
-            print(f"    ✗ failed: {exc}", file=sys.stderr)
-            import traceback
-            traceback.print_exc()
-            failed.append(filename)
-
-    print()
-    ok = len(pending) - len(failed)
-    print(f"Done. {ok}/{len(pending)} processed successfully.")
-    if failed:
-        print("Failed:")
-        for f in failed:
-            print(f"  {f}")
 
 
 def _text_list(args):
@@ -1627,23 +1597,84 @@ def _text_list(args):
 
 
 def _text_validate(args):
-    """Validate text CSV schema."""
-    from services.text_extraction import validate_text_csvs
+    """Launch the text validation GUI."""
+    from services.text_extraction import get_text_csv_path
 
+    _require_path()
     project_path = prefs.get("path")
     media_type = getattr(args, "media", "movies")
 
-    issues = validate_text_csvs(project_path, media_type)
+    # GUI mode — resolve the list of filenames to validate
+    import subprocess
+    validator_path = Path(__file__).parent / "services" / "text_validator.py"
+    if not validator_path.exists():
+        print(f"\u2717 Error: text_validator.py not found at {validator_path}", file=sys.stderr)
+        sys.exit(1)
 
-    if not issues:
-        print(f"All text CSVs valid ({media_type}).")
-        return
+    if getattr(args, "all", False):
+        from services.metadata import get_metadata
+        entries = get_metadata(project_path, media_type=media_type)
+        filenames = [
+            e["filename"]
+            for e in entries
+            if e.get("filename")
+            and get_text_csv_path(project_path, e["filename"], media_type).exists()
+        ]
+        if not filenames:
+            print("\u2717 No text CSVs found.", file=sys.stderr)
+            sys.exit(1)
+    elif getattr(args, "tmdb", None) is not None:
+        from services.metadata import get_metadata
+        entries = get_metadata(project_path, media_type=media_type)
+        filenames = [e["filename"] for e in entries if e.get("tmdb") == str(args.tmdb)]
+        if not filenames:
+            print(f"\u2717 No file found with TMDb ID: {args.tmdb}", file=sys.stderr)
+            sys.exit(1)
+    elif getattr(args, "query", None):
+        from services.metadata import get_metadata
+        entries = get_metadata(project_path, query=args.query, media_type=media_type)
+        if not entries:
+            print(f"\u2717 No file found matching '{args.query}'", file=sys.stderr)
+            sys.exit(1)
+        if len(entries) > 1:
+            print(f"\u2717 Multiple files match '{args.query}':", file=sys.stderr)
+            for e in entries:
+                print(f"  - {e['filename']}", file=sys.stderr)
+            sys.exit(1)
+        filenames = [entries[0]["filename"]]
+    else:
+        print(
+            "\u2717 Must provide a query, --tmdb, or --all",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
-    print(f"{len(issues)} issue(s) found:\n")
-    for issue in issues:
-        path = Path(issue["csv_path"]).name
-        print(f"  {path}  row {issue['row']}: {issue['issue']}")
-    sys.exit(1)
+    # Warn about any entry without a text CSV
+    valid = []
+    for fn in filenames:
+        csv_path = get_text_csv_path(project_path, fn, media_type)
+        if csv_path.exists():
+            valid.append(fn)
+        else:
+            print(f"  \u26a0 No text CSV for: {fn}  (skipping)", file=sys.stderr)
+
+    if not valid:
+        print("\u2717 No text CSVs found for the selected film(s).", file=sys.stderr)
+        sys.exit(1)
+
+    cmd = [
+        sys.executable, str(validator_path),
+        "--media", media_type,
+        "--project", project_path,
+        "--filenames",
+    ] + valid
+
+    try:
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as e:
+        sys.exit(e.returncode)
+    except KeyboardInterrupt:
+        sys.exit(0)
 
 
 def _require_path():
@@ -1835,34 +1866,27 @@ def build_parser():
     p_text.set_defaults(func=cmd_text)
     text_sub = p_text.add_subparsers(dest="text_subcommand", required=True)
 
-    p_text_extract = text_sub.add_parser("extract", help="Extract on-screen text from one film")
-    p_text_extract.add_argument("filename", nargs="?", default=None, help="Video filename (or use --tmdb)")
-    p_text_extract.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_text_extract.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-    p_text_extract.add_argument("--force", action="store_true", help="Overwrite existing CSV")
-    p_text_extract.add_argument("--sample-fps", type=float, default=1.0, dest="sample_fps",
-                                help="Frames per second to sample (default: 1.0)")
-    p_text_extract.add_argument("--lang", default="en", help="PaddleOCR language code (default: en)")
-    p_text_extract.add_argument("--verbose", action="store_true", help="Print per-frame OCR output")
-
-    p_text_batch = text_sub.add_parser("batch", help="Extract text for multiple films")
-    p_text_batch.add_argument("filenames", nargs="*", metavar="filename",
-                              help="Filenames to process (default: all with video files)")
-    p_text_batch.add_argument("--silent", action="store_true",
-                              help="Process the six silent test-bed films")
-    p_text_batch.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-    p_text_batch.add_argument("--force", action="store_true", help="Overwrite existing CSVs")
-    p_text_batch.add_argument("--sample-fps", type=float, default=1.0, dest="sample_fps",
-                              help="Frames per second to sample (default: 1.0)")
-    p_text_batch.add_argument("--lang", default="en", help="PaddleOCR language code (default: en)")
-    p_text_batch.add_argument("--verbose", action="store_true", help="Print per-frame OCR output")
+    p_text_detect = text_sub.add_parser("detect", help="Detect on-screen text events for one or all films")
+    p_text_detect.add_argument("filename", nargs="?", default=None, help="Video filename (or use --tmdb)")
+    p_text_detect.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
+    p_text_detect.add_argument("--all", action="store_true", help="Process all films with video files")
+    p_text_detect.add_argument("--silent", action="store_true", help="Process the six silent test-bed films")
+    p_text_detect.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    p_text_detect.add_argument("--force", action="store_true", help="Overwrite existing CSV(s)")
+    p_text_detect.add_argument("--sample-fps", type=float, default=1.0, dest="sample_fps",
+                               help="Frames per second to sample (default: 1.0)")
+    p_text_detect.add_argument("--lang", default="en", help="EasyOCR language code (default: en)")
+    p_text_detect.add_argument("--verbose", action="store_true", help="Print per-frame OCR output")
 
     p_text_list = text_sub.add_parser("list", help="List all text CSVs")
     p_text_list.add_argument("--media", choices=["movies", "gameplay"], default=None,
                              help="Filter by media type")
     p_text_list.add_argument("--json", action="store_true", help="Output as JSON")
 
-    p_text_validate = text_sub.add_parser("validate", help="Validate text CSV schema")
+    p_text_validate = text_sub.add_parser("validate", help="Validate and edit text events (GUI)")
+    p_text_validate.add_argument("query", nargs="?", default=None, help="Filename substring to match")
+    p_text_validate.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
+    p_text_validate.add_argument("--all", action="store_true", help="Validate all films with text CSVs")
     p_text_validate.add_argument("--media", choices=["movies", "gameplay"], default="movies")
 
     # tool command group (version, path, name, api_key)

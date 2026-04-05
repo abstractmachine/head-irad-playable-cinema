@@ -163,6 +163,35 @@ crossing shotlist validate --all                # validate all movies with shotl
 # Continue button - toggle playback past shot boundaries (ON/OFF)
 ```
 
+### Text Detection
+
+```bash
+# Detect on-screen text events for a single film
+crossing text detect <filename_substring>
+crossing text detect --tmdb 391             # use TMDb ID
+  --media {movies,gameplay}                 # media type (default: movies)
+  --force                                   # overwrite existing CSV
+  --sample-fps 1.0                          # frames per second to sample (default: 1.0)
+  --lang en                                 # EasyOCR language code (default: en)
+  --verbose                                 # print per-frame OCR output
+
+# Detect text events for all films
+crossing text detect --all
+crossing text detect --all --force          # reprocess everything
+crossing text detect --silent               # run on the six silent test-bed films only
+
+# List all text CSVs
+crossing text list
+  --media {movies,gameplay}                 # filter by media type
+  --json                                    # output as JSON
+
+# Validate and edit text events (GUI)
+crossing text validate <filename_substring>
+crossing text validate --tmdb 391
+crossing text validate --all                # validate all films with text CSVs
+  --media {movies,gameplay}
+```
+
 ### Audit
 
 ```bash
@@ -235,6 +264,7 @@ Movies and gameplay metadata includes:
 - Use `--json` flag for raw JSON output (full shot data or filtered fields with `--field`)
 - Shot detection uses TransNetV2 and creates CSV files with Shot_Source="auto", confidence scores, and exact frame numbers (Start_Frame/End_Frame)
 - Shot validation GUI (`crossing shot validate`) uses OpenCV for frame-precise display — each frame is seeked by exact integer frame index, not timecode
+- Text detection uses EasyOCR (GPU-accelerated on CUDA, CPU fallback). Samples at 1 fps by default; adjacent frames with matching text are merged into a single timed event
 
 ## Requirements
 
@@ -243,6 +273,7 @@ Movies and gameplay metadata includes:
 - python3-tk (optional, for GUI file picker): `sudo apt install python3-tk`
 - TransNetV2 (optional, for shot detection) - see Install section below
 - PyQt5 + opencv-python-headless (optional, for shot validation UI) - see Install section below
+- EasyOCR (for text detection) — uses GPU automatically when CUDA is available via PyTorch
 
 ## Fresh Install Checklist
 
@@ -269,12 +300,17 @@ Follow these steps when setting up from scratch in a new environment.
 
 > Use `opencv-python-headless` (not `opencv-python`) to avoid Qt plugin conflicts with PyQt5.
 
-### 6. API keys *(as needed)*
+### 6. Text detection *(required for `crossing text detect`)*
+- [ ] `pip install easyocr`
+
+> EasyOCR will use GPU automatically if PyTorch detects a CUDA-capable device. On CPU it is slower but still functional. A GPU with CUDA support is strongly recommended for batch processing.
+
+### 7. API keys *(as needed)*
 - [ ] `crossing tool api_key set tmdb <key>`
 - [ ] `crossing tool api_key set opensubtitles <key>`
 - [ ] `crossing tool api_key set openai <key>`
 
-### 7. Verify
+### 8. Verify
 - [ ] `crossing tool version`
 
 ## Virtual Python Environment

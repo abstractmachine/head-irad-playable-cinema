@@ -19,6 +19,7 @@ Storage path: <project_path>/media/text/<media_type>/<stem>.csv
 
 from __future__ import annotations
 
+import bisect
 import csv
 import re
 import unicodedata
@@ -41,7 +42,7 @@ TEXT_COLUMNS: list[str] = [
 ]
 
 VALID_TYPES: frozenset[str] = frozenset(
-    ["intertitle", "opening_title", "end_title", "credit", "onscreen_text"]
+    ["intertitle", "opening_title", "end_title", "credit", "onscreen_text", "meta_text"]
 )
 
 # ---------------------------------------------------------------------------
@@ -137,56 +138,46 @@ def read_text_csv(
 # OCR engine — PaddleOCR lazy singleton
 # ---------------------------------------------------------------------------
 
-_paddle_ocr_engine = None
+_easyocr_reader = None
 
 
 def _get_ocr_engine(lang: str = "en"):
-    """Return the shared PaddleOCR engine, initialising it on first call.
+    """Return the shared EasyOCR reader, initialising it on first call.
 
-    The engine is created once and reused across all frames to amortise the
-    model-load cost (~2 s).  ``lang`` is passed through on first call only;
-    subsequent calls ignore it (the engine is already loaded).
+    The reader is created once and reused across all frames to amortise the
+    model-load cost.  Uses GPU when available via PyTorch CUDA.
     """
-    global _paddle_ocr_engine
-    if _paddle_ocr_engine is None:
+    global _easyocr_reader
+    if _easyocr_reader is None:
         import logging
         import warnings
         warnings.filterwarnings("ignore")
-        # Suppress verbose PaddlePaddle / PaddleOCR startup logs.
         logging.disable(logging.WARNING)
-        from paddleocr import PaddleOCR
+        import easyocr
         logging.disable(logging.NOTSET)
-        _paddle_ocr_engine = PaddleOCR(
-            lang=lang,
-            use_angle_cls=False,  # silent films are horizontal
-            show_log=False,
-        )
-    return _paddle_ocr_engine
+        _easyocr_reader = easyocr.Reader([lang], gpu=True, verbose=False)
+    return _easyocr_reader
 
 
-def _ocr_frame_paddle(frame_rgb, *, lang: str = "en") -> str:
-    """Run PaddleOCR on a PIL Image and return all detected text joined by newlines.
+def _ocr_frame_paddle(frame_rgb, *, lang: str = "en", min_confidence: float = 0.35) -> str:
+    """Run EasyOCR on a PIL Image and return text above the confidence threshold.
 
-    PaddleOCR performs both text-region detection and recognition in one pass.
-    Individual line detections are joined in top-to-bottom reading order.
+    The image is upscaled 2× before OCR — this significantly improves accuracy
+    on compressed video frames where characters are small or have artefacts.
 
     Returns an empty string when no text is found.
     """
     import numpy as np
 
-    engine = _get_ocr_engine(lang)
-    img_array = np.asarray(frame_rgb.convert("RGB"))
-    result = engine.ocr(img_array, cls=False)
-    if not result or not result[0]:
-        return ""
-    # result[0] is a list of [bbox, (text, confidence)]
-    lines = []
-    for detection in result[0]:
-        if detection and len(detection) >= 2:
-            text_conf = detection[1]
-            if text_conf and len(text_conf) >= 1:
-                lines.append(str(text_conf[0]))
-    return "\n".join(lines)
+    reader = _get_ocr_engine(lang)
+    # Upscale 2× with high-quality resampling before handing to EasyOCR.
+    # Larger input resolution is the single most effective quality improvement
+    # for printed/title-card text on video frames.
+    w, h = frame_rgb.width, frame_rgb.height
+    upscaled = frame_rgb.resize((w * 2, h * 2), resample=3)  # 3 = BICUBIC
+    img_array = np.asarray(upscaled.convert("RGB"))
+    results = reader.readtext(img_array, detail=1)
+    return "\n".join(text for (_bbox, text, conf) in results if conf >= min_confidence and text)
 
 
 def _text_is_plausible(text: str) -> bool:
@@ -327,6 +318,9 @@ def extract_text_events(
     lang: str = "en",
     merge_gap_frames: int = 5,
     verbose: bool = False,
+    project_path: str | None = None,
+    filename: str | None = None,
+    media_type: str = "movies",
 ) -> list[dict[str, Any]]:
     """Extract all visible on-screen text events from a video file.
 
@@ -460,34 +454,79 @@ def extract_text_events(
     if total_frames_est == 0 and hits:
         total_frames_est = hits[-1]["frame_no"] + int(fps)
 
-    # Nominal frame distance between consecutive samples.
-    # Used to decide whether a gap between hits is "acceptable" for merging.
+    # --- second pass: merge hits using shot boundaries (preferred) ---------
+    # Try to load the shotlist so events align with clean shot cuts.
+    shots: list[dict] | None = None
+    if project_path and filename:
+        try:
+            from services.shotlist import read_shotlist
+            raw_shots = read_shotlist(project_path, filename, media_type)
+            shots = [
+                s for s in raw_shots
+                if s.get("start_frame") is not None and s.get("end_frame") is not None
+            ]
+            shots.sort(key=lambda s: int(s["start_frame"]))
+        except Exception:
+            shots = None
+
+    merged: list[dict[str, Any]] = []
+
+    # Frame distance between consecutive samples — used for gap tolerance.
     sample_frame_step: int = max(1, int(fps / sample_fps))
 
-    # --- second pass: merge consecutive hits that share matching text ------
-    merged: list[dict[str, Any]] = []
-    current = hits[0].copy()
-    current["end_frame"] = current["frame_no"]
-    current["end_timecode"] = current["timecode"]
+    if shots:
+        # Group hits by the shot they fall in, then sub-group by similar text
+        # within each shot.  Start/end use actual hit frames, not shot bounds.
+        shot_starts = [int(s["start_frame"]) for s in shots]
+        shot_hits: dict[int, list[dict]] = {}
+        for hit in hits:
+            fn = hit["frame_no"]
+            idx = bisect.bisect_right(shot_starts, fn) - 1
+            if 0 <= idx < len(shots) and fn <= int(shots[idx]["end_frame"]):
+                shot_hits.setdefault(idx, []).append(hit)
 
-    for hit in hits[1:]:
-        gap = hit["frame_no"] - current["end_frame"]
-        same_text = _texts_are_similar(hit["text"], current["text"])
+        for shot_idx, shot_hit_list in sorted(shot_hits.items()):
+            shot_hit_list.sort(key=lambda h: h["frame_no"])
+            # Sub-group consecutive hits with similar text
+            cur = shot_hit_list[0].copy()
+            cur["end_frame"] = cur["frame_no"]
+            cur["end_timecode"] = cur["timecode"]
+            for hit in shot_hit_list[1:]:
+                gap = hit["frame_no"] - cur["end_frame"]
+                same_text = _texts_are_similar(hit["text"], cur["text"])
+                if gap <= (merge_gap_frames * sample_frame_step) and same_text:
+                    cur["end_frame"] = hit["frame_no"]
+                    cur["end_timecode"] = hit["timecode"]
+                    if len(hit["text"]) > len(cur["text"]):
+                        cur["text"] = hit["text"]
+                else:
+                    merged.append(cur)
+                    cur = hit.copy()
+                    cur["end_frame"] = cur["frame_no"]
+                    cur["end_timecode"] = cur["timecode"]
+            merged.append(cur)
+    else:
+        # Fallback: frame-proximity merge (no shotlist available)
+        current = hits[0].copy()
+        current["end_frame"] = current["frame_no"]
+        current["end_timecode"] = current["timecode"]
 
-        if gap <= (merge_gap_frames * sample_frame_step) and same_text:
-            # Extend current event
-            current["end_frame"] = hit["frame_no"]
-            current["end_timecode"] = hit["timecode"]
-            # Keep the longer/cleaner OCR text
-            if len(hit["text"]) > len(current["text"]):
-                current["text"] = hit["text"]
-        else:
-            merged.append(current)
-            current = hit.copy()
-            current["end_frame"] = current["frame_no"]
-            current["end_timecode"] = current["timecode"]
+        for hit in hits[1:]:
+            gap = hit["frame_no"] - current["end_frame"]
+            same_text = _texts_are_similar(hit["text"], current["text"])
 
-    merged.append(current)
+            if gap <= (merge_gap_frames * sample_frame_step) and same_text:
+                current["end_frame"] = hit["frame_no"]
+                current["end_timecode"] = hit["timecode"]
+                if len(hit["text"]) > len(current["text"]):
+                    current["text"] = hit["text"]
+            else:
+                merged.append(current)
+                current = hit.copy()
+                current["end_frame"] = current["frame_no"]
+                current["end_timecode"] = current["timecode"]
+
+        merged.append(current)
 
     # --- third pass: build output rows with type classification ------------
     events: list[dict[str, Any]] = []
