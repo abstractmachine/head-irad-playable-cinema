@@ -57,7 +57,27 @@ def resolve_filename(project_path: str, tmdb_id: str | None, filename: str | Non
                 return entry['filename']
         raise ValueError(f"No file found with TMDb ID: {tmdb_id}")
     elif filename is not None:
-        return filename
+        # If it's already an exact match as a filename, return it directly.
+        video_dir = Path(project_path) / "media" / "videos" / media_type
+        exact = video_dir / filename
+        if exact.exists():
+            return filename
+        # Otherwise treat it as a case-insensitive substring search against
+        # actual files on disk (allows short partial names like "10 000 Dollari").
+        query = filename.lower()
+        candidates = [p.name for p in video_dir.glob("*") if query in p.name.lower()]
+        if len(candidates) == 1:
+            return candidates[0]
+        if len(candidates) > 1:
+            # Prefer the one whose stem starts with the query
+            starts = [c for c in candidates if c.lower().startswith(query)]
+            if len(starts) == 1:
+                return starts[0]
+            listed = "\n  ".join(candidates)
+            raise ValueError(
+                f"Ambiguous filename '{filename}' — {len(candidates)} matches:\n  {listed}"
+            )
+        raise ValueError(f"No video file found matching '{filename}' in {video_dir}")
     else:
         raise ValueError("Must provide either --tmdb or filename")
 

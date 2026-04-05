@@ -138,46 +138,53 @@ def read_text_csv(
 # OCR engine — PaddleOCR lazy singleton
 # ---------------------------------------------------------------------------
 
-_easyocr_reader = None
+_paddleocr_engine = None
 
 
 def _get_ocr_engine(lang: str = "en"):
-    """Return the shared EasyOCR reader, initialising it on first call.
+    """Return the shared PaddleOCR 3.x engine, initialising it on first call.
 
-    The reader is created once and reused across all frames to amortise the
-    model-load cost.  Uses GPU when available via PyTorch CUDA.
+    Uses GPU (device="gpu") and the PP-OCRv5 server model by default.
+    Disables document preprocessing modules that are irrelevant for video frames.
     """
-    global _easyocr_reader
-    if _easyocr_reader is None:
+    global _paddleocr_engine
+    if _paddleocr_engine is None:
         import logging
-        import warnings
-        warnings.filterwarnings("ignore")
         logging.disable(logging.WARNING)
-        import easyocr
+        from paddleocr import PaddleOCR
         logging.disable(logging.NOTSET)
-        _easyocr_reader = easyocr.Reader([lang], gpu=True, verbose=False)
-    return _easyocr_reader
+        _paddleocr_engine = PaddleOCR(
+            use_doc_orientation_classify=False,
+            use_doc_unwarping=False,
+            use_textline_orientation=False,
+            device="gpu",
+            lang=lang,
+        )
+    return _paddleocr_engine
 
 
 def _ocr_frame_paddle(frame_rgb, *, lang: str = "en", min_confidence: float = 0.35) -> str:
-    """Run EasyOCR on a PIL Image and return text above the confidence threshold.
+    """Run PaddleOCR 3.x on a PIL Image and return the recognised text.
 
     The image is upscaled 2× before OCR — this significantly improves accuracy
     on compressed video frames where characters are small or have artefacts.
+    Confidence filtering is applied at the engine level via text_rec_score_thresh.
 
     Returns an empty string when no text is found.
     """
     import numpy as np
 
-    reader = _get_ocr_engine(lang)
-    # Upscale 2× with high-quality resampling before handing to EasyOCR.
-    # Larger input resolution is the single most effective quality improvement
-    # for printed/title-card text on video frames.
+    engine = _get_ocr_engine(lang)
+    # Upscale 2× with high-quality resampling before handing to PaddleOCR.
     w, h = frame_rgb.width, frame_rgb.height
     upscaled = frame_rgb.resize((w * 2, h * 2), resample=3)  # 3 = BICUBIC
     img_array = np.asarray(upscaled.convert("RGB"))
-    results = reader.readtext(img_array, detail=1)
-    return "\n".join(text for (_bbox, text, conf) in results if conf >= min_confidence and text)
+    results = engine.predict(img_array)
+    texts = []
+    for res in results:
+        # OCRResult is a dict subclass — rec_texts is a top-level key.
+        texts.extend(t for t in res.get("rec_texts", []) if t)
+    return "\n".join(texts)
 
 
 def _text_is_plausible(text: str) -> bool:

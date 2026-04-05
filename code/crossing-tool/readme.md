@@ -172,7 +172,7 @@ crossing text detect --tmdb 391             # use TMDb ID
   --media {movies,gameplay}                 # media type (default: movies)
   --force                                   # overwrite existing CSV
   --sample-fps 1.0                          # frames per second to sample (default: 1.0)
-  --lang en                                 # EasyOCR language code (default: en)
+  --lang en                                 # PaddleOCR language code (default: en)
   --verbose                                 # print per-frame OCR output
 
 # Detect text events for all films
@@ -264,7 +264,7 @@ Movies and gameplay metadata includes:
 - Use `--json` flag for raw JSON output (full shot data or filtered fields with `--field`)
 - Shot detection uses TransNetV2 and creates CSV files with Shot_Source="auto", confidence scores, and exact frame numbers (Start_Frame/End_Frame)
 - Shot validation GUI (`crossing shot validate`) uses OpenCV for frame-precise display — each frame is seeked by exact integer frame index, not timecode
-- Text detection uses EasyOCR (GPU-accelerated on CUDA, CPU fallback). Samples at 1 fps by default; adjacent frames with matching text are merged into a single timed event
+- Text detection uses PaddleOCR 3.x with PP-OCRv5 models (GPU-accelerated via PaddlePaddle). Samples at 1 fps by default; each frame is upscaled 2× before OCR; adjacent frames with matching text are merged into a single timed event
 
 ## Requirements
 
@@ -273,7 +273,7 @@ Movies and gameplay metadata includes:
 - python3-tk (optional, for GUI file picker): `sudo apt install python3-tk`
 - TransNetV2 (optional, for shot detection) - see Install section below
 - PyQt5 + opencv-python-headless (optional, for shot validation UI) - see Install section below
-- EasyOCR (for text detection) — uses GPU automatically when CUDA is available via PyTorch
+- PaddleOCR 3.x + paddlepaddle-gpu (for text detection) — requires CUDA; GPU strongly recommended for batch processing
 
 ## Fresh Install Checklist
 
@@ -301,9 +301,10 @@ Follow these steps when setting up from scratch in a new environment.
 > Use `opencv-python-headless` (not `opencv-python`) to avoid Qt plugin conflicts with PyQt5.
 
 ### 6. Text detection *(required for `crossing text detect`)*
-- [ ] `pip install easyocr`
+- [ ] `pip install paddlepaddle-gpu==3.2.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu130/`
+- [ ] `pip install "paddleocr>=3.2"`
 
-> EasyOCR will use GPU automatically if PyTorch detects a CUDA-capable device. On CPU it is slower but still functional. A GPU with CUDA support is strongly recommended for batch processing.
+> Requires CUDA 13.0 and a CUDA-capable GPU. The PP-OCRv5 models are downloaded automatically on first run to `~/.paddlex/official_models/`. CPU-only installs are not supported — use `paddlepaddle` (non-GPU) and remove `device="gpu"` from the engine if needed.
 
 ### 7. API keys *(as needed)*
 - [ ] `crossing tool api_key set tmdb <key>`

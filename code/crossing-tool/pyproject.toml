@@ -9,7 +9,7 @@ requires-python = ">=3.11"
 dependencies = [
     "av",
     "sounddevice",
-    "easyocr",
+    "paddleocr>=3.2",
     "numpy",
     "Pillow",
 ]
