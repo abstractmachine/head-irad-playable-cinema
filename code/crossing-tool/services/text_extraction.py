@@ -163,41 +163,65 @@ def _get_ocr_engine(lang: str = "en"):
     return _paddleocr_engine
 
 
-def _ocr_frame_paddle(frame_rgb, *, lang: str = "en", min_confidence: float = 0.35) -> str:
+def _ocr_frame_paddle(frame_rgb, *, lang: str = "en", min_confidence: float = 0.70) -> str:
     """Run PaddleOCR 3.x on a PIL Image and return the recognised text.
 
-    The image is upscaled 2× before OCR — this significantly improves accuracy
-    on compressed video frames where characters are small or have artefacts.
-    Confidence filtering is applied at the engine level via text_rec_score_thresh.
-
+    Only text regions with confidence >= min_confidence are included.
     Returns an empty string when no text is found.
     """
     import numpy as np
 
     engine = _get_ocr_engine(lang)
-    # Upscale 2× with high-quality resampling before handing to PaddleOCR.
-    w, h = frame_rgb.width, frame_rgb.height
-    upscaled = frame_rgb.resize((w * 2, h * 2), resample=3)  # 3 = BICUBIC
-    img_array = np.asarray(upscaled.convert("RGB"))
+    img_array = np.asarray(frame_rgb.convert("RGB"))
     results = engine.predict(img_array)
     texts = []
     for res in results:
-        # OCRResult is a dict subclass — rec_texts is a top-level key.
-        texts.extend(t for t in res.get("rec_texts", []) if t)
+        # OCRResult is a dict subclass — rec_texts and rec_scores are top-level keys.
+        rec_texts = res.get("rec_texts", [])
+        rec_scores = res.get("rec_scores", [])
+        scores = rec_scores if len(rec_scores) == len(rec_texts) else [None] * len(rec_texts)
+        for text, score in zip(rec_texts, scores):
+            if text and (score is None or score >= min_confidence):
+                texts.append(text)
     return "\n".join(texts)
+
+
+def _ocr_frame_raw(frame_rgb, *, lang: str = "en") -> list[tuple[str, float]]:
+    """Run PaddleOCR on a PIL Image and return all (text, score) pairs with no filtering.
+
+    Used by calibrate_text_detection to collect a full picture of what the
+    engine sees before any threshold is applied.
+    """
+    import numpy as np
+
+    engine = _get_ocr_engine(lang)
+    img_array = np.asarray(frame_rgb.convert("RGB"))
+    results = engine.predict(img_array)
+    pairs: list[tuple[str, float]] = []
+    for res in results:
+        rec_texts = res.get("rec_texts", [])
+        rec_scores = res.get("rec_scores", [])
+        scores = rec_scores if len(rec_scores) == len(rec_texts) else [1.0] * len(rec_texts)
+        for text, score in zip(rec_texts, scores):
+            if text:
+                pairs.append((text, float(score)))
+    return pairs
 
 
 def _text_is_plausible(text: str) -> bool:
     """Return True if the OCR output contains enough real text to keep.
 
-    Two lightweight checks only — no film-specific thresholds:
-    - At least 5 characters total.
-    - At least 25 % of characters are alphabetic (filters pure-noise detections).
+    Three checks:
+    - At least 6 characters total (passes "THE END", "FIN", short titles).
+    - At least 50% of characters are alphabetic (filters numbers, symbols, noise).
+    - At least one word of 3+ consecutive alphabetic characters.
     """
-    if len(text) < 5:
+    if len(text) < 6:
         return False
     alpha = sum(c.isalpha() for c in text)
-    return (alpha / len(text)) >= 0.25
+    if (alpha / len(text)) < 0.50:
+        return False
+    return bool(re.search(r"[a-zA-Z]{3,}", text))
 
 
 def _image_is_blank(frame_rgb) -> bool:
@@ -314,6 +338,135 @@ def _classify_type(
 
 
 # ---------------------------------------------------------------------------
+# Calibration helper
+# ---------------------------------------------------------------------------
+
+
+def calibrate_text_detection(
+    video_path: str,
+    expected_strings: list[str],
+    *,
+    window_seconds: float = 180.0,
+    lang: str = "en",
+    sample_fps: float = 1.0,
+) -> dict[str, Any]:
+    """Sweep confidence thresholds to find the optimal setting.
+
+    Runs OCR once on the first ``window_seconds`` of the video at threshold=0
+    (collecting all raw detections), then simulates filtering at each threshold
+    level without re-running the model.
+
+    For each threshold reports how many expected strings were matched and how
+    many total plausible hits remain.
+
+    Args:
+        video_path:        Absolute path to the video file.
+        expected_strings:  Ground-truth text strings that should appear in the
+                           first ``window_seconds`` of the film.
+        window_seconds:    How many seconds from the start to analyse.
+        lang:              PaddleOCR language code.
+        sample_fps:        Frames per second to sample (default 1.0).
+
+    Returns:
+        Dict with keys:
+            frames_sampled, raw_detection_count, window_seconds, expected,
+            thresholds (list of dicts: threshold, total_hits, found, missed).
+    """
+    import av
+
+    video_path = str(video_path)
+
+    with av.open(video_path) as container:
+        stream = container.streams.video[0]
+        fps: float = float(stream.average_rate or stream.base_rate or 25.0)
+
+    step_s = 1.0 / sample_fps
+    sample_times: list[float] = []
+    t = 0.0
+    while t <= window_seconds:
+        sample_times.append(t)
+        t += step_s
+
+    # --- collect all raw (text, score, frame_no) within the window ----------
+    raw: list[tuple[str, float, int]] = []
+    frames_sampled = 0
+
+    with av.open(video_path) as container:
+        stream = container.streams.video[0]
+        stream.thread_type = "AUTO"
+
+        for target_s in sample_times:
+            target_pts = int(target_s / float(stream.time_base))
+            try:
+                container.seek(target_pts, stream=stream)
+            except av.AVError:
+                break
+
+            got_frame = False
+            for packet in container.demux(stream):
+                if packet.size == 0:
+                    break
+                for av_frame in packet.decode():
+                    if av_frame.pts is None:
+                        continue
+                    frame_time_s = float(av_frame.pts * stream.time_base)
+                    if frame_time_s < target_s - step_s * 0.5:
+                        continue
+                    frame_no = int(frame_time_s * fps + 0.5)
+                    frames_sampled += 1
+                    pil_img = av_frame.to_image()
+                    if not _image_is_blank(pil_img):
+                        for text, score in _ocr_frame_raw(pil_img, lang=lang):
+                            raw.append((text, score, frame_no))
+                    got_frame = True
+                    break
+                if got_frame:
+                    break
+
+    # --- helper: fuzzy word-overlap match -----------------------------------
+    def _match(detected: str, expected: str) -> bool:
+        """True if ≥60% of expected words (3+ chars) are found in detected."""
+        def words(s: str) -> set[str]:
+            return set(re.findall(r"[a-z]{3,}", s.lower()))
+        exp_words = words(expected)
+        if not exp_words:
+            return expected.lower() in detected.lower()
+        det_words = words(detected)
+        return len(exp_words & det_words) / len(exp_words) >= 0.60
+
+    # --- sweep thresholds ---------------------------------------------------
+    thresholds_to_test = [0.50, 0.60, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95]
+    threshold_results: list[dict[str, Any]] = []
+
+    for thresh in thresholds_to_test:
+        hits = [
+            (text, score, fn)
+            for text, score, fn in raw
+            if score >= thresh and _text_is_plausible(_normalise_text(text))
+        ]
+        found: list[str] = []
+        for exp in expected_strings:
+            for text, _score, _fn in hits:
+                if _match(text, exp):
+                    found.append(exp)
+                    break
+        threshold_results.append({
+            "threshold": thresh,
+            "total_hits": len(hits),
+            "found": found,
+            "missed": [e for e in expected_strings if e not in found],
+        })
+
+    return {
+        "frames_sampled": frames_sampled,
+        "raw_detection_count": len(raw),
+        "window_seconds": window_seconds,
+        "expected": expected_strings,
+        "thresholds": threshold_results,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Core extraction pipeline
 # ---------------------------------------------------------------------------
 
@@ -323,6 +476,7 @@ def extract_text_events(
     *,
     sample_fps: float = 1.0,
     lang: str = "en",
+    min_confidence: float = 0.70,
     merge_gap_frames: int = 5,
     verbose: bool = False,
     project_path: str | None = None,
@@ -426,7 +580,7 @@ def extract_text_events(
                         got_frame = True
                         break
 
-                    raw = _ocr_frame_paddle(pil_img, lang=lang)
+                    raw = _ocr_frame_paddle(pil_img, lang=lang, min_confidence=min_confidence)
                     norm = _normalise_text(raw)
 
                     got_frame = True

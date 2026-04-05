@@ -1424,6 +1424,69 @@ def _subtitle_list(args):
 # text command family
 # ---------------------------------------------------------------------------
 
+def _text_calibrate(args):
+    """Sweep confidence thresholds using known ground-truth strings."""
+    from services.text_extraction import calibrate_text_detection
+    from services.shotlist import resolve_filename
+
+    project_path = prefs.get("path")
+    media_type = args.media
+    lang = getattr(args, "lang", "en")
+    window = getattr(args, "window", 180.0)
+    expected = args.expect
+
+    try:
+        tmdb = getattr(args, "tmdb", None)
+        filename_arg = getattr(args, "filename", None)
+        filename = resolve_filename(project_path, tmdb, filename_arg, media_type)
+    except ValueError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    video_path = Path(project_path) / "media" / "videos" / media_type / filename
+    if not video_path.exists():
+        print(f"✗ Video not found: {video_path}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Calibrating: {filename}")
+    print(f"  window: first {window:.0f}s  |  lang: {lang}")
+    print(f"  expected strings ({len(expected)}):")
+    for e in expected:
+        print(f"    • {e!r}")
+    print()
+
+    result = calibrate_text_detection(
+        str(video_path),
+        expected,
+        window_seconds=window,
+        lang=lang,
+    )
+
+    print(f"Sampled {result['frames_sampled']} frames, {result['raw_detection_count']} raw detections before filtering")
+    print()
+    print(f"  {'Threshold':>9}  {'Hits':>6}  {'Found':>9}  Missed")
+    print("  " + "-" * 56)
+
+    best_threshold = None
+    for r in result["thresholds"]:
+        found_count = len(r["found"])
+        total_expected = len(expected)
+        missed_str = ", ".join(f"'{m}'" for m in r["missed"]) if r["missed"] else "—"
+        marker = ""
+        if found_count == total_expected and best_threshold is None:
+            best_threshold = r["threshold"]
+            marker = "  ◄ recommended"
+        print(f"  {r['threshold']:>9.2f}  {r['total_hits']:>6}  {found_count:>3}/{total_expected:<3}   {missed_str}{marker}")
+
+    print()
+    if best_threshold is not None:
+        print(f"Recommendation: --min-confidence {best_threshold:.2f}")
+        print(f"  (highest threshold that recovers all {len(expected)} expected string(s))")
+    else:
+        print(f"⚠ No threshold recovered all expected strings.")
+        print(f"  Check the strings appear within the first {window:.0f}s, or use --window <seconds>.")
+
+
 def cmd_text(args):
     _require_path()
     sub = args.text_subcommand
@@ -1433,6 +1496,8 @@ def cmd_text(args):
         _text_list(args)
     elif sub == "validate":
         _text_validate(args)
+    elif sub == "calibrate":
+        _text_calibrate(args)
 
 
 # Six silent films used as the initial test-bed.
@@ -1456,6 +1521,7 @@ def _text_detect(args):
     force = getattr(args, "force", False)
     sample_fps = getattr(args, "sample_fps", 1.0)
     lang = getattr(args, "lang", "en")
+    min_confidence = getattr(args, "min_confidence", 0.70)
     verbose = getattr(args, "verbose", False)
     do_all = getattr(args, "all", False)
     silent_preset = getattr(args, "silent", False)
@@ -1498,7 +1564,7 @@ def _text_detect(args):
             print(f"  [{i}/{len(pending)}] {filename}")
             t0 = time.time()
             try:
-                events = extract_text_events(str(video_path), sample_fps=sample_fps, lang=lang, verbose=verbose, project_path=project_path, filename=filename, media_type=media_type)
+                events = extract_text_events(str(video_path), sample_fps=sample_fps, lang=lang, min_confidence=min_confidence, verbose=verbose, project_path=project_path, filename=filename, media_type=media_type)
                 rows = [{"filename": filename, **e} for e in events]
                 dest = write_text_csv(project_path, filename, rows, media_type, force=force)
                 elapsed = time.time() - t0
@@ -1541,7 +1607,7 @@ def _text_detect(args):
 
     t0 = time.time()
     try:
-        events = extract_text_events(str(video_path), sample_fps=sample_fps, lang=lang, verbose=verbose, project_path=project_path, filename=filename, media_type=media_type)
+        events = extract_text_events(str(video_path), sample_fps=sample_fps, lang=lang, min_confidence=min_confidence, verbose=verbose, project_path=project_path, filename=filename, media_type=media_type)
     except ImportError as exc:
         print(f"✗ {exc}", file=sys.stderr)
         sys.exit(1)
@@ -1875,7 +1941,9 @@ def build_parser():
     p_text_detect.add_argument("--force", action="store_true", help="Overwrite existing CSV(s)")
     p_text_detect.add_argument("--sample-fps", type=float, default=1.0, dest="sample_fps",
                                help="Frames per second to sample (default: 1.0)")
-    p_text_detect.add_argument("--lang", default="en", help="EasyOCR language code (default: en)")
+    p_text_detect.add_argument("--lang", default="en", help="PaddleOCR language code (default: en)")
+    p_text_detect.add_argument("--min-confidence", type=float, default=0.70, dest="min_confidence",
+                               help="Minimum OCR confidence score to accept (default: 0.70)")
     p_text_detect.add_argument("--verbose", action="store_true", help="Print per-frame OCR output")
 
     p_text_list = text_sub.add_parser("list", help="List all text CSVs")
@@ -1888,6 +1956,16 @@ def build_parser():
     p_text_validate.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
     p_text_validate.add_argument("--all", action="store_true", help="Validate all films with text CSVs")
     p_text_validate.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+
+    p_text_calibrate = text_sub.add_parser("calibrate", help="Sweep confidence thresholds using known ground-truth text")
+    p_text_calibrate.add_argument("filename", nargs="?", default=None, help="Video filename substring (or use --tmdb)")
+    p_text_calibrate.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
+    p_text_calibrate.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    p_text_calibrate.add_argument("--lang", default="en", help="PaddleOCR language code (default: en)")
+    p_text_calibrate.add_argument("--expect", nargs="+", required=True, metavar="TEXT",
+                                  help="One or more known strings that appear in the first window of the film")
+    p_text_calibrate.add_argument("--window", type=float, default=180.0,
+                                  help="Seconds from start to analyse (default: 180)")
 
     # tool command group (version, path, name, api_key)
     p_tool = sub.add_parser("tool", help="Tool settings: version, path, name, API keys")
