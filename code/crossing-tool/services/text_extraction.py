@@ -293,13 +293,22 @@ def _is_neutral_card(pil_img, quads: list[list[int]]) -> bool:
     2. **Uniform brightness** — the background is a flat surface (card), not a
        complex scene.  Real scenes — even in B&W prints — have significant
        brightness variation (shadows, objects, sky vs. ground).  A title card
-       is a flat inked surface:  luminance std < 35.
+       is a flat inked surface:  luminance std < 20.
 
     Both criteria must be satisfied.  Either alone is insufficient:
     - B&W outdoor scenes pass the saturation test (sat≈0) but fail on
       brightness uniformity (varied shadows/objects → lum_std ≥ 40).
     - Uniformly lit walls pass the uniformity test but can fail on saturation
       in colour film (painted wall with colour cast).
+
+    The brightness uniformity check is applied to the **inner zone** of the
+    frame (cropping ~12 % from each side and ~15 % from top/bottom).  This
+    excludes decorative border artwork — ornate frames, distributor logos,
+    header/footer banners — that some films print around every intertitle card
+    (e.g. the Paramount-Arbuckle suitcase frame in *Out West*).  Such borders
+    contain white linework on black which inflates the full-frame lum_std to
+    35–40 even though the content area is a plain flat card.  Real scene
+    backgrounds remain high-variance even within the cropped inner region.
     """
     import numpy as np
 
@@ -335,14 +344,24 @@ def _is_neutral_card(pil_img, quads: list[list[int]]) -> bool:
     if not is_low_sat:
         return False
 
-    # Criterion 2: uniform brightness — rejects B&W scenes (buildings, streets)
-    # which pass the saturation check but have significant luminance variation.
-    # Empirically: real title cards (black, white, or sepia-tinted flat surface)
-    # measure lum_std < 15.  B&W outdoor/indoor scene backgrounds measure 26–50+.
-    # Threshold 20 gives comfortable margin in both directions.
-    luminance = bg.mean(axis=1)   # approximate lightness per background pixel
+    # Criterion 2: uniform brightness — evaluated on the inner zone only so
+    # that decorative border artwork around the frame edge does not inflate
+    # lum_std and cause genuine title cards to be classified as diegetic.
+    bx = int(w * 0.12)
+    by = int(h * 0.15)
+    inner_mask = mask.copy()
+    inner_mask[:by, :]      = False
+    inner_mask[h - by:, :]  = False
+    inner_mask[:, :bx]      = False
+    inner_mask[:, w - bx:]  = False
+    bg_inner = rgb[inner_mask]
+    # Fall back to full background if the inner zone has too few pixels
+    # (very small frames or unusually large text quads covering most of the area).
+    if bg_inner.shape[0] < 200:
+        bg_inner = bg
+    luminance = bg_inner.mean(axis=1)   # approximate lightness per background pixel
     lum_std = float(luminance.std())
-    return lum_std < 20
+    return lum_std < 35
 
 
 def _normalise_text(text: str) -> str:
@@ -1037,9 +1056,12 @@ def extract_text_events(
       check (< 5 chars or < 25 % alphabetic).
     - Merge consecutive frames with similar text into single events.
     - Classify each event using temporal position heuristics.
-    - When ``cards_only=True`` (default) only events from neutral-card frames
-      (title cards, intertitles, credits slates) are emitted.  Diegetic text
+    - When ``cards_only=True`` (default) only non-diegetic events
+      (title cards, intertitles, credits, endings) are returned.  Diegetic text
       (signs, props, subtitles embedded in the scene) is silently discarded.
+      The OCR confidence score is the sole gate for whether a detection is
+      kept at all; ``_is_neutral_card`` only informs type classification, not
+      whether hits are collected.
       Pass ``cards_only=False`` to include all detected text.
 
     Args:
@@ -1183,11 +1205,6 @@ def extract_text_events(
                     for h in frame_hits:
                         h["is_card"] = is_card
 
-                    if cards_only and not is_card:
-                        if verbose:
-                            print(f"  [{tc}] f{frame_no}: skip (non-card frame, cards_only=True)")
-                        break  # discard all hits from this non-card frame
-
                     if verbose:
                         for h in frame_hits:
                             print(f"  [{tc}] f{frame_no}: {h['text'][:60]!r}  quad={h['quad']}")
@@ -1279,6 +1296,12 @@ def extract_text_events(
                 "language": lang,
             }
         )
+
+    # When cards_only, discard diegetic events — type classification already
+    # used _is_neutral_card to make this determination, so OCR confidence was
+    # the collection gate and pixel analysis only informs the type label.
+    if cards_only:
+        events = [e for e in events if e["type"] != "diegetic"]
 
     return events
 

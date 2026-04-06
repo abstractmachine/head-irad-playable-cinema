@@ -2003,8 +2003,8 @@ def _mosaic_thumbnails(args):
 
 
 def _mosaic_text(args):
-    """Collect representative frames for text events in one film and render a mosaic."""
-    from services.text_extraction import read_text_csv, get_text_csv_path
+    """Collect representative frames for text events and render a mosaic."""
+    from services.text_extraction import read_text_csv, get_text_csv_path, list_text_csvs
     from services.shotlist import resolve_filename
     from services.metadata import get_metadata
     from services.mosaic import MosaicItem, render_mosaic
@@ -2013,6 +2013,11 @@ def _mosaic_text(args):
     media_type   = args.media
     caption_mode = getattr(args, "caption", "short")
     layout       = getattr(args, "layout", "landscape")
+    all_films    = getattr(args, "all", False)
+
+    if all_films:
+        _mosaic_text_all(args, project_path, media_type, caption_mode, layout)
+        return
 
     # Resolve film filename from --tmdb or title query
     tmdb  = getattr(args, "tmdb", None)
@@ -2092,7 +2097,7 @@ def _mosaic_text(args):
         if caption_mode == "none":
             caption = None
         else:
-            caption = row.get("text", "") or f"#{i}"
+            caption = row.get("start_time", "") or f"#{i}"
 
         items.append(MosaicItem(
             video_path=video_path,
@@ -2138,6 +2143,119 @@ def _mosaic_text(args):
         import traceback
         traceback.print_exc()
         sys.exit(1)
+
+
+def _mosaic_text_all(args, project_path, media_type, caption_mode, layout):
+    """Generate one full text mosaic per film for every text CSV in the project."""
+    import datetime
+    import subprocess
+    import traceback
+    from services.text_extraction import list_text_csvs, read_text_csv
+    from services.metadata import get_metadata
+    from services.mosaic import MosaicItem, render_mosaic
+
+    csvs = list_text_csvs(project_path, media_type=media_type)
+    if not csvs:
+        print(f"✗ No text CSVs found for '{media_type}'.", file=sys.stderr)
+        sys.exit(1)
+
+    # Build a title lookup from metadata
+    meta_rows = get_metadata(project_path, media_type=media_type)
+    title_by_filename = {
+        r.get("filename", ""): r.get("title") or Path(r.get("filename", "")).stem
+        for r in meta_rows
+    }
+
+    total = len(csvs)
+    saved = 0
+    skipped = 0
+
+    for i, entry in enumerate(sorted(csvs, key=lambda e: e["filename"]), 1):
+        # Resolve the actual video filename (extension may vary)
+        actual_filename = None
+        for meta_fn in title_by_filename:
+            if Path(meta_fn).stem == Path(entry["filename"]).stem:
+                actual_filename = meta_fn
+                break
+        if actual_filename is None:
+            actual_filename = Path(entry["filename"]).stem + ".mp4"
+
+        title = title_by_filename.get(actual_filename) or Path(actual_filename).stem
+        print(f"[{i}/{total}] {title}")
+
+        try:
+            text_rows = read_text_csv(project_path, actual_filename, media_type)
+        except FileNotFoundError:
+            print(f"  ⚠ no text CSV — skipping")
+            skipped += 1
+            continue
+
+        text_rows = [
+            r for r in text_rows
+            if r.get("ignore", "").strip().lower() not in ("1", "true", "yes")
+        ]
+        if not text_rows:
+            print(f"  ⚠ CSV empty or all ignored — skipping")
+            skipped += 1
+            continue
+
+        video_path = Path(project_path) / "media" / "videos" / media_type / actual_filename
+        if not video_path.exists():
+            print(f"  ⚠ video not found — skipping")
+            skipped += 1
+            continue
+
+        items = []
+        for j, row in enumerate(text_rows):
+            try:
+                start_frame = int(row.get("start_frame") or 0)
+                end_frame   = int(row.get("end_frame")   or start_frame)
+                mid_frame   = (start_frame + end_frame) // 2
+            except (ValueError, TypeError):
+                continue
+
+            if caption_mode == "none":
+                caption = None
+            else:
+                caption = row.get("start_time", "") or f"#{j}"
+
+            items.append(MosaicItem(
+                video_path=video_path,
+                frame_index=mid_frame,
+                caption=caption,
+                metadata={"index": j, "row": row},
+            ))
+
+        if not items:
+            print(f"  ⚠ no valid frames — skipping")
+            skipped += 1
+            continue
+
+        print(f"  {len(items)} text item(s)")
+
+        stem = Path(actual_filename).stem
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        output_path = (
+            Path(project_path) / "output" / "mosaics"
+            / f"{stem}-text-mosaic-{stamp}.png"
+        )
+
+        try:
+            out = render_mosaic(
+                items,
+                output_path,
+                layout=layout,
+                show_captions=(caption_mode != "none"),
+            )
+            print(f"  ✓ Saved: {out}")
+            subprocess.Popen(["xdg-open", str(out)])
+            saved += 1
+        except Exception as exc:
+            print(f"  ✗ Render failed: {exc}", file=sys.stderr)
+            traceback.print_exc()
+            skipped += 1
+
+    print(f"\nDone: {saved} mosaic(s) saved, {skipped} skipped.")
 
 
 def _require_path():
@@ -2466,7 +2584,7 @@ def build_parser():
     )
     p_mosaic_text.add_argument(
         "--all", action="store_true", dest="all",
-        help="Include all text items (the only supported mode for now)",
+        help="Generate one tile per film from every text CSV in the project",
     )
     p_mosaic_text.add_argument(
         "--media", choices=["movies", "gameplay"], default="movies",
