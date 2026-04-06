@@ -1576,6 +1576,7 @@ def _text_detect(args):
     lang = getattr(args, "lang", "en")
     min_confidence = getattr(args, "min_confidence", 0.75)
     verbose = getattr(args, "verbose", False)
+    cards_only = not getattr(args, "include_diegetic", False)
     do_all = getattr(args, "all", False)
     silent_preset = getattr(args, "silent", False)
     notify = getattr(args, "notify", False)
@@ -1619,7 +1620,7 @@ def _text_detect(args):
             print(f"  [{i}/{len(pending)}] {filename}")
             t0 = time.time()
             try:
-                events = extract_text_events(str(video_path), sample_fps=sample_fps, lang=lang, min_confidence=min_confidence, verbose=verbose, project_path=project_path, filename=filename, media_type=media_type)
+                events = extract_text_events(str(video_path), sample_fps=sample_fps, lang=lang, min_confidence=min_confidence, verbose=verbose, project_path=project_path, filename=filename, media_type=media_type, cards_only=cards_only)
                 rows = [{"filename": filename, **e} for e in events]
                 dest = write_text_csv(project_path, filename, rows, media_type, force=force)
                 elapsed = time.time() - t0
@@ -1676,7 +1677,7 @@ def _text_detect(args):
 
     t0 = time.time()
     try:
-        events = extract_text_events(str(video_path), sample_fps=sample_fps, lang=lang, min_confidence=min_confidence, verbose=verbose, project_path=project_path, filename=filename, media_type=media_type)
+        events = extract_text_events(str(video_path), sample_fps=sample_fps, lang=lang, min_confidence=min_confidence, verbose=verbose, project_path=project_path, filename=filename, media_type=media_type, cards_only=cards_only)
     except ImportError as exc:
         print(f"✗ {exc}", file=sys.stderr)
         sys.exit(1)
@@ -2118,6 +2119,8 @@ def build_parser():
     p_text_detect.add_argument("--min-confidence", type=float, default=0.75, dest="min_confidence",
                                help="Minimum OCR confidence score to accept (default: 0.75)")
     p_text_detect.add_argument("--verbose", action="store_true", help="Print per-frame OCR output")
+    p_text_detect.add_argument("--include-diegetic", action="store_true", default=False, dest="include_diegetic",
+                               help="Also capture diegetic text (signs, props, scene text). Default: cards only.")
     p_text_detect.add_argument("--notify", action="store_true", help="Send a Discord notification when the process finishes")
     p_text_detect.add_argument("--notify-items", action="store_true", dest="notify_items", help="Send a Discord notification after each item in a batch")
 

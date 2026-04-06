@@ -41,12 +41,14 @@ from typing import Any
 TEXT_COLUMNS: list[str] = [
     "filename",
     "type",
+    "ignore",
     "start_time",
     "end_time",
     "start_frame",
     "end_frame",
     "quad",
     "text",
+    "score",
     "language",
 ]
 
@@ -279,15 +281,25 @@ def _image_is_blank(frame_rgb) -> bool:
 def _is_neutral_card(pil_img, quads: list[list[int]]) -> bool:
     """Return True if the frame background is a plain/neutral title card.
 
-    Masks out all text quad regions, then measures the colour saturation of
-    the remaining background pixels.  A near-monochrome background — typical
-    of opening-credits title cards and narrative intertitles — has very low
-    saturation; real film footage has varied colour.
+    Masks out all text quad regions, then checks two properties of the
+    remaining background pixels:
 
-    Saturation proxy used: max(R,G,B) − min(R,G,B) per pixel (range 0–255).
-    Thresholds: mean < 20 AND std < 25 → card.  Derived empirically; these
-    separate black-card / white-card backgrounds from outdoor and interior
-    scenes across the silent and early-colour library.
+    1. **Low saturation** — the background is achromatic (B&W or colour-film
+       title card) or carries a uniform tint (sepia/blue-toned silent film).
+       Saturation proxy: max(R,G,B) − min(R,G,B) per pixel (0–255).
+       - ``sat.mean() < 20``  → near-perfect greyscale
+       - OR ``sat.mean() < 55 and sat.std() < 15``  → uniform tint (sepia/blue)
+
+    2. **Uniform brightness** — the background is a flat surface (card), not a
+       complex scene.  Real scenes — even in B&W prints — have significant
+       brightness variation (shadows, objects, sky vs. ground).  A title card
+       is a flat inked surface:  luminance std < 35.
+
+    Both criteria must be satisfied.  Either alone is insufficient:
+    - B&W outdoor scenes pass the saturation test (sat≈0) but fail on
+      brightness uniformity (varied shadows/objects → lum_std ≥ 40).
+    - Uniformly lit walls pass the uniformity test but can fail on saturation
+      in colour film (painted wall with colour cast).
     """
     import numpy as np
 
@@ -315,7 +327,22 @@ def _is_neutral_card(pil_img, quads: list[list[int]]) -> bool:
         return False
 
     sat = bg.max(axis=1) - bg.min(axis=1)   # 0–255 per-pixel saturation proxy
-    return float(sat.mean()) < 20 and float(sat.std()) < 25
+    sat_mean = float(sat.mean())
+    sat_std  = float(sat.std())
+
+    # Criterion 1: near-neutral colour (pure greyscale or uniform tint)
+    is_low_sat = sat_mean < 20 or (sat_mean < 55 and sat_std < 15)
+    if not is_low_sat:
+        return False
+
+    # Criterion 2: uniform brightness — rejects B&W scenes (buildings, streets)
+    # which pass the saturation check but have significant luminance variation.
+    # Empirically: real title cards (black, white, or sepia-tinted flat surface)
+    # measure lum_std < 15.  B&W outdoor/indoor scene backgrounds measure 26–50+.
+    # Threshold 20 gives comfortable margin in both directions.
+    luminance = bg.mean(axis=1)   # approximate lightness per background pixel
+    lum_std = float(luminance.std())
+    return lum_std < 20
 
 
 def _normalise_text(text: str) -> str:
@@ -375,6 +402,32 @@ def _texts_are_similar(a: str, b: str) -> bool:
 # Type classification heuristics
 # ---------------------------------------------------------------------------
 
+# Known end-card phrases (normalised to lowercase, no punctuation).
+# Any neutral card whose normalised text contains one of these as a whole
+# word is classified as "ending" regardless of temporal position.
+_END_PHRASES: frozenset[str] = frozenset([
+    "the end", "fin", "fine", "ende", "finis", "finito",
+    "end", "the end.", "fin.",
+])
+
+
+def _is_end_card(text: str) -> bool:
+    """Return True when *text* is (or contains) a known end-of-film phrase.
+
+    Normalised (lowercase, no punctuation) so "THE END", "Fin.", "FINE" etc.
+    all match.
+    """
+    normalised = re.sub(r'[^a-z\s]', '', text.lower()).strip()
+    # Exact match of entire text (after normalisation and stripping)
+    if normalised in _END_PHRASES:
+        return True
+    # Also match if any line by itself is an end phrase (multi-line cards)
+    for line in normalised.splitlines():
+        line = line.strip()
+        if line in _END_PHRASES:
+            return True
+    return False
+
 
 def _title_matches(text: str, movie_title: str) -> bool:
     """Return True if *text* is similar enough to *movie_title*.
@@ -409,10 +462,13 @@ def _classify_type(
        — applies anywhere in the film; WANTED posters, signs, subtitles, etc.
        are always diegetic even if they appear near the opening.
 
-    2. Neutral card + first 10 % + title match          → title
+    2. Neutral card + known end phrase                  → ending
+       (text match wins over position so films that end early are handled)
+
     3. Neutral card + last 5 %                          → ending
-    4. Neutral card + first/last 18 %                   → credits
-    5. Neutral card anywhere in the remaining middle     → intertitle
+    4. Neutral card + first 15 % + title match          → title
+    5. Neutral card + first/last 18 %                   → credits
+    6. Neutral card anywhere in the remaining middle     → intertitle
     """
     if total_frames == 0:
         return "diegetic"
@@ -421,16 +477,20 @@ def _classify_type(
     if not is_bw_card:
         return "diegetic"
 
+    # Text-based ending detection (position-independent)
+    if _is_end_card(text):
+        return "ending"
+
     mid_frame = (start_frame + end_frame) / 2
     position = mid_frame / total_frames  # 0.0 … 1.0
 
-    if position < 0.10:
+    if position > 0.95:
+        return "ending"
+
+    if position < 0.15:
         if movie_title is None or _title_matches(text, movie_title):
             return "title"
         return "credits"
-
-    if position > 0.95:
-        return "ending"
 
     if position < 0.18 or position > 0.82:
         return "credits"
@@ -666,6 +726,10 @@ def _merge_box_streams(
                 stream["quad"]         = hit["quad"] or stream["quad"]
                 if len(hit["text"]) > len(stream["text"]):
                     stream["text"] = hit["text"]
+                # Running average of confidence scores across all frames
+                prev_score = stream.get("score", hit.get("score", 1.0))
+                hit_score  = hit.get("score", 1.0)
+                stream["score"] = (prev_score + hit_score) / 2.0
                 used.add(best_idx)
             else:
                 new_streams.append({
@@ -675,6 +739,7 @@ def _merge_box_streams(
                     "end_timecode": hit["timecode"],
                     "text":         hit["text"],
                     "quad":         hit["quad"],
+                    "score":         hit.get("score", 1.0),
                     "is_card":      hit.get("is_card", True),
                 })
         active.extend(new_streams)
@@ -718,7 +783,13 @@ def _suppress_contained_events(
     - It has temporal overlap with the larger event (the two events' frame
       ranges intersect), AND
     - At least 70 % of the smaller event's AABB area lies inside the larger
-      event's AABB.
+      event's AABB, AND
+    - The smaller event's meaningful words are already present in the larger
+      event's text (i.e. it carries no unique information).
+
+    Events with text not found in the containing event are kept — this
+    preserves additive detections such as ``$10.000`` alongside ``BLOOD MONEY``
+    when OCR produces separate boxes for each line of a title card.
 
     The larger event is kept unchanged; only the contained duplicate is dropped.
     """
@@ -749,6 +820,10 @@ def _suppress_contained_events(
         small_area = _area(small)
         return inter / small_area if small_area > 0 else 0.0
 
+    def _text_words(text: str) -> set[str]:
+        """Lowercase alpha tokens of length ≥ 3 from a text string."""
+        return set(re.findall(r"[a-z]{3,}", text.lower()))
+
     boxes = [_aabb(e.get("quad")) for e in events]
     areas = [_area(b) if b else 0 for b in boxes]
     suppress: set[int] = set()
@@ -758,6 +833,7 @@ def _suppress_contained_events(
             continue
         a_start = int(ev_a.get("frame_no", 0))
         a_end   = int(ev_a.get("end_frame", a_start))
+        words_a = _text_words(ev_a.get("text", ""))
         for j, ev_b in enumerate(events):
             if i == j or j in suppress or boxes[j] is None:
                 continue
@@ -768,12 +844,77 @@ def _suppress_contained_events(
             # Temporal overlap
             if a_end < b_start or b_end < a_start:
                 continue
-            # If ≥70 % of A's area is inside B, A is a redundant sub-event
+            # If ≥70 % of A's area is inside B, A is a redundant sub-event —
+            # but only if A's meaningful words are already present in B's text.
+            # When A has unique words not found in B it carries additive
+            # information (e.g. "$10.000" next to "BLOOD MONEY") and must be kept.
             if _contained_fraction(boxes[i], boxes[j]) >= 0.70:
-                suppress.add(i)
-                break
+                words_b = _text_words(ev_b.get("text", ""))
+                # If A has no extractable alpha words (e.g. purely numeric/
+                # symbolic text like "$10.000") treat it as unique and keep it.
+                if words_a and words_a.issubset(words_b):
+                    suppress.add(i)
+                    break
 
     return [ev for i, ev in enumerate(events) if i not in suppress]
+
+
+def _suppress_noise_events(
+    events: list[dict[str, Any]],
+    sample_frame_step: int,
+    *,
+    min_score: float = 0.60,
+    min_alpha_ratio: float = 0.45,
+) -> list[dict[str, Any]]:
+    """Drop single-sample-frame events that are low-quality diegetic noise.
+
+    A surprising amount of OCR output from in-scene signage is single-frame,
+    low-confidence, or heavily garbled (high proportion of non-alphabetic
+    chars).  This pass silently removes events that satisfy ALL of:
+
+    - The event spans only one sample step (end_frame - frame_no < 2 * step),
+    - The OCR score is below ``min_score`` (default 0.60), OR the text has
+      fewer than ``min_alpha_ratio`` (default 45 %) alphabetic characters.
+    - The event is NOT a neutral card (i.e. it is ``diegetic`` footage).
+
+    Card events (title, intertitle, credits, ending) are always kept because
+    they are valuable even when brief.  Only brief, low-quality diegetic
+    fragments are removed.
+    """
+    if not events:
+        return events
+
+    result: list[dict[str, Any]] = []
+    for ev in events:
+        # Keep all card events regardless of quality
+        if ev.get("is_card"):
+            result.append(ev)
+            continue
+
+        start = int(ev.get("frame_no", 0))
+        end   = int(ev.get("end_frame", start))
+        span  = end - start
+
+        # Multi-frame events are genuine — keep them
+        if span >= 2 * sample_frame_step:
+            result.append(ev)
+            continue
+
+        # Single-sample-frame diegetic event: apply quality gate
+        score = float(ev.get("score", 1.0))
+        text  = ev.get("text", "")
+        stripped = re.sub(r"\s+", "", text)
+        if stripped:
+            alpha_ratio = sum(c.isalpha() for c in stripped) / len(stripped)
+        else:
+            alpha_ratio = 0.0
+
+        if score < min_score or alpha_ratio < min_alpha_ratio:
+            continue  # drop garbled/low-confidence single-frame fragment
+
+        result.append(ev)
+
+    return result
 
 
 def _group_cooccurring_events(
@@ -849,6 +990,8 @@ def _group_cooccurring_events(
         first = min(group, key=lambda e: e["frame_no"])
         last = max(group, key=lambda e: e["end_frame"])
 
+        scores = [e["score"] for e in group if "score" in e]
+        mean_score = sum(scores) / len(scores) if scores else 1.0
         result.append({
             "frame_no":     start_frame,
             "timecode":     first["timecode"],
@@ -856,6 +999,7 @@ def _group_cooccurring_events(
             "end_timecode": last["end_timecode"],
             "text":         combined_text,
             "quad":         _union_quad([e["quad"] for e in group if e.get("quad")]),
+            "score":        mean_score,
             "is_card":      any(e.get("is_card") for e in group),
         })
 
@@ -879,6 +1023,7 @@ def extract_text_events(
     project_path: str | None = None,
     filename: str | None = None,
     media_type: str = "movies",
+    cards_only: bool = True,
 ) -> list[dict[str, Any]]:
     """Extract all visible on-screen text events from a video file.
 
@@ -892,6 +1037,10 @@ def extract_text_events(
       check (< 5 chars or < 25 % alphabetic).
     - Merge consecutive frames with similar text into single events.
     - Classify each event using temporal position heuristics.
+    - When ``cards_only=True`` (default) only events from neutral-card frames
+      (title cards, intertitles, credits slates) are emitted.  Diegetic text
+      (signs, props, subtitles embedded in the scene) is silently discarded.
+      Pass ``cards_only=False`` to include all detected text.
 
     Args:
         video_path:        Absolute path to the video file.
@@ -1016,6 +1165,7 @@ def extract_text_events(
                                 "frame_no": frame_no,
                                 "timecode": tc,
                                 "text":     norm,
+                                "score":    det["score"],
                                 "quad":     det["quad"],
                                 "is_card":  None,  # filled after quad collection
                             })
@@ -1032,6 +1182,11 @@ def extract_text_events(
                     is_card = _is_neutral_card(pil_img, plausible_quads)
                     for h in frame_hits:
                         h["is_card"] = is_card
+
+                    if cards_only and not is_card:
+                        if verbose:
+                            print(f"  [{tc}] f{frame_no}: skip (non-card frame, cards_only=True)")
+                        break  # discard all hits from this non-card frame
 
                     if verbose:
                         for h in frame_hits:
@@ -1096,6 +1251,9 @@ def extract_text_events(
     # --- 2c: remove sub-events already covered by a larger sibling ---------
     merged = _suppress_contained_events(merged)
 
+    # --- 2d: drop single-frame low-quality diegetic noise ------------------
+    merged = _suppress_noise_events(merged, sample_frame_step)
+
     # --- third pass: build output rows with type classification ------------
     events: list[dict[str, Any]] = []
     for m in merged:
@@ -1110,12 +1268,14 @@ def extract_text_events(
         events.append(
             {
                 "type": event_type,
+                "ignore": "",
                 "start_time": m["timecode"],
                 "end_time": m["end_timecode"],
                 "start_frame": m["frame_no"],
                 "end_frame": m["end_frame"],
                 "quad": ",".join(str(v) for v in m["quad"]) if m.get("quad") else "",
                 "text": m["text"],
+                "score": f"{m.get('score', 1.0):.3f}",
                 "language": lang,
             }
         )
