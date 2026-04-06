@@ -186,7 +186,6 @@ crossing text detect --all
 crossing text detect --all --force          # reprocess everything
 crossing text detect --all --notify         # notify when the whole batch finishes
 crossing text detect --all --notify-items   # notify after each film
-crossing text detect --silent               # run on the six silent test-bed films only
 
 # List all text CSVs
 crossing text list
@@ -199,6 +198,33 @@ crossing text validate --tmdb 391
 crossing text validate --all                # validate all films with text CSVs
   --media {movies,gameplay}
 ```
+
+### Mosaic
+
+Generates a contact-sheet grid image from thumbnails or representative text frames.
+
+```bash
+# Mosaic of all movie thumbnails
+crossing mosaic thumbnails --media movies --all
+
+# Mosaic of representative frames for all text events in one film
+crossing mosaic text --tmdb 40575 --all
+```
+
+**Flags (both subcommands):**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--media` | `movies` | `movies` or `gameplay` |
+| `--all` | — | Include all items (required for now) |
+| `--layout` | `landscape` | `landscape` (wider grid) or `portrait` (taller grid) |
+| `--caption` | `short` | `short` (title + year / text) or `none` |
+| `--output` | auto | Full save path override |
+
+Output is saved to `<project>/output/mosaics/`.
+
+- Thumbnails mosaic: `movies-thumbnails-mosaic.png`
+- Text mosaic: `tmdb-<id>-text-mosaic.png`
 
 ### Audit
 
@@ -331,6 +357,8 @@ Output is saved to `<project>/media/compositions/`.
 │   │   ├── movies/                 # English subtitles from OpenSubtitles
 │   │   └── gameplay/               # gameplay subtitles
 │   └── compositions/               # output from `crossing compose`
+├── output/
+│   └── mosaics/                    # output from `crossing mosaic`
 ├── models/
 │   └── sam2.1_b.pt                 # SAM 2 model (required for `crossing compose`)
 └── preferences/

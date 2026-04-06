@@ -1553,19 +1553,8 @@ def cmd_text(args):
         _text_calibrate(args)
 
 
-# Six silent films used as the initial test-bed.
-_SILENT_BATCH = [
-    "Fatty And Minnie He Haw (1914) {tmdb-226901}.mp4",
-    "Hell Bent (1918) {tmdb-302894}.mp4",
-    "Out West (1918) {tmdb-051301}.mp4",
-    "Sky High (1922) {tmdb-127277}.mp4",
-    "Straight Shooting (1917) {tmdb-157903}.mp4",
-    "The Half Breed (1916) {tmdb-200324}.mp4",
-]
-
-
 def _text_detect(args):
-    """Detect on-screen text for one film or all films (--all / --silent)."""
+    """Detect on-screen text for one film or all films (--all)."""
     from services.text_extraction import extract_text_events, write_text_csv, get_text_csv_path
     import time
 
@@ -1578,22 +1567,18 @@ def _text_detect(args):
     verbose = getattr(args, "verbose", False)
     cards_only = not getattr(args, "include_diegetic", False)
     do_all = getattr(args, "all", False)
-    silent_preset = getattr(args, "silent", False)
     notify = getattr(args, "notify", False)
     notify_items = getattr(args, "notify_items", False)
 
     # ------------------------------------------------------------------ batch
-    if do_all or silent_preset:
-        if silent_preset:
-            filenames = _SILENT_BATCH
-        else:
-            from services.metadata import get_metadata
-            entries = get_metadata(project_path, media_type=media_type)
-            filenames = [
-                e["filename"] for e in entries
-                if e.get("filename")
-                and (Path(project_path) / "media" / "videos" / media_type / e["filename"]).exists()
-            ]
+    if do_all:
+        from services.metadata import get_metadata
+        entries = get_metadata(project_path, media_type=media_type)
+        filenames = [
+            e["filename"] for e in entries
+            if e.get("filename")
+            and (Path(project_path) / "media" / "videos" / media_type / e["filename"]).exists()
+        ]
 
         if not filenames:
             print("No films to process.")
@@ -1915,6 +1900,246 @@ def cmd_compose(args):
         sys.exit(1)
 
 
+# ---------------------------------------------------------------------------
+# mosaic command family
+# ---------------------------------------------------------------------------
+
+def cmd_mosaic(args):
+    """Generate a mosaic contact sheet from thumbnails or text frames."""
+    _require_path()
+    sub = args.mosaic_subcommand
+    if sub == "thumbnails":
+        _mosaic_thumbnails(args)
+    elif sub == "text":
+        _mosaic_text(args)
+
+
+def _mosaic_thumbnails(args):
+    """Collect thumbnails for a media type and render a mosaic grid."""
+    from services.metadata import get_metadata
+    from services.mosaic import MosaicItem, render_mosaic
+
+    project_path = prefs.get("path")
+    media_type   = args.media
+    caption_mode = getattr(args, "caption", "short")
+    layout       = getattr(args, "layout", "landscape")
+
+    rows = get_metadata(project_path, media_type=media_type)
+    if not rows:
+        print(f"✗ No metadata entries found for '{media_type}'.", file=sys.stderr)
+        sys.exit(1)
+
+    thumbnail_dir = Path(project_path) / "media" / "thumbnails" / media_type
+
+    items = []
+    missing = 0
+    for row in rows:
+        filename = row.get("filename", "")
+        if not filename:
+            continue
+        stem = Path(filename).stem
+
+        # Canonical path first, then legacy dash-separated fallback
+        thumb = thumbnail_dir / (stem + ".jpg")
+        if not thumb.exists():
+            thumb = thumbnail_dir / (stem.replace(" ", "-") + ".jpg")
+        if not thumb.exists():
+            print(f"  ⚠ no thumbnail: {filename}")
+            missing += 1
+            continue
+
+        if caption_mode == "none":
+            caption = None
+        else:
+            title = row.get("title", stem)
+            year  = row.get("year", "")
+            caption = f"{title} ({year})" if year else title
+
+        items.append(MosaicItem(
+            image_path=thumb,
+            caption=caption,
+            metadata=dict(row),
+        ))
+
+    if not items:
+        print(f"✗ No thumbnails found in {thumbnail_dir}.", file=sys.stderr)
+        print(f"  Fetch them with: crossing metadata update --media {media_type}", file=sys.stderr)
+        sys.exit(1)
+
+    found_str = f"{len(items)} thumbnail(s)"
+    missing_str = f", {missing} missing" if missing else ""
+    print(f"Building thumbnails mosaic for: {media_type}")
+    print(f"  {found_str}{missing_str}")
+
+    output_path = getattr(args, "output", None)
+    if output_path:
+        output_path = Path(output_path)
+    else:
+        import datetime
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        output_path = (
+            Path(project_path) / "output" / "mosaics"
+            / f"{media_type}-thumbnails-mosaic-{stamp}.png"
+        )
+
+    try:
+        out = render_mosaic(
+            items,
+            output_path,
+            layout=layout,
+            show_captions=(caption_mode != "none"),
+        )
+        print(f"✓ Saved: {out}")
+        import subprocess
+        subprocess.Popen(["xdg-open", str(out)])
+    except ValueError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        print(f"✗ Render failed: {exc}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+def _mosaic_text(args):
+    """Collect representative frames for text events in one film and render a mosaic."""
+    from services.text_extraction import read_text_csv, get_text_csv_path
+    from services.shotlist import resolve_filename
+    from services.metadata import get_metadata
+    from services.mosaic import MosaicItem, render_mosaic
+
+    project_path = prefs.get("path")
+    media_type   = args.media
+    caption_mode = getattr(args, "caption", "short")
+    layout       = getattr(args, "layout", "landscape")
+
+    # Resolve film filename from --tmdb or title query
+    tmdb  = getattr(args, "tmdb", None)
+    query = " ".join(args.query).strip() if getattr(args, "query", None) else ""
+
+    if not tmdb and not query:
+        print("✗ Provide a title query or --tmdb <id>.", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        if tmdb is not None:
+            filename = resolve_filename(project_path, tmdb, None, media_type)
+        else:
+            rows = get_metadata(project_path, media_type=media_type)
+            q = query.lower()
+            matches = [
+                r for r in rows
+                if q in str(r.get("filename", "")).lower()
+                or q in str(r.get("title", "")).lower()
+            ]
+            if not matches:
+                print(f"✗ No entry found matching '{query}'.", file=sys.stderr)
+                sys.exit(1)
+            if len(matches) > 1:
+                print(f"✗ '{query}' matches {len(matches)} entries — be more specific or use --tmdb:", file=sys.stderr)
+                for r in matches:
+                    print(f"  [{r.get('tmdb', '?')}]  {r.get('filename', '')}  —  {r.get('title', '')} ({r.get('year', '')})", file=sys.stderr)
+                sys.exit(1)
+            filename = matches[0]["filename"]
+            tmdb = matches[0].get("tmdb")
+    except ValueError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    csv_path = get_text_csv_path(project_path, filename, media_type)
+    if not csv_path.exists():
+        print(
+            f"✗ No text CSV found for [{args.tmdb}] {filename}.\n"
+            f"  Run: crossing text detect --tmdb {args.tmdb} --media {media_type}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        text_rows = read_text_csv(project_path, filename, media_type)
+    except FileNotFoundError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if not text_rows:
+        print(f"✗ Text CSV is empty for {filename}.", file=sys.stderr)
+        sys.exit(1)
+
+    # Drop rows marked as ignored
+    text_rows = [r for r in text_rows if r.get("ignore", "").strip().lower() not in ("1", "true", "yes")]
+    if not text_rows:
+        print("✗ No usable text items (all marked as ignored).", file=sys.stderr)
+        sys.exit(1)
+
+    video_path = Path(project_path) / "media" / "videos" / media_type / filename
+    if not video_path.exists():
+        print(f"✗ Video file not found: {video_path}", file=sys.stderr)
+        sys.exit(1)
+
+    items = []
+    skipped = 0
+    for i, row in enumerate(text_rows):
+        try:
+            start_frame = int(row.get("start_frame") or 0)
+            end_frame   = int(row.get("end_frame")   or start_frame)
+            mid_frame   = (start_frame + end_frame) // 2
+        except (ValueError, TypeError):
+            print(f"  ⚠ Skipping item {i}: invalid frame data", file=sys.stderr)
+            skipped += 1
+            continue
+
+        if caption_mode == "none":
+            caption = None
+        else:
+            caption = row.get("text", "") or f"#{i}"
+
+        items.append(MosaicItem(
+            video_path=video_path,
+            frame_index=mid_frame,
+            caption=caption,
+            metadata={"index": i, "row": row},
+        ))
+
+    if not items:
+        print("✗ No valid items to render.", file=sys.stderr)
+        sys.exit(1)
+
+    skipped_str = f" ({skipped} skipped)" if skipped else ""
+    print(f"Building text mosaic for: {filename}")
+    print(f"  {len(items)} text item(s){skipped_str}")
+
+    output_path = getattr(args, "output", None)
+    if output_path:
+        output_path = Path(output_path)
+    else:
+        import datetime
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        output_path = (
+            Path(project_path) / "output" / "mosaics"
+            / f"tmdb-{tmdb}-text-mosaic-{stamp}.png"
+        )
+
+    try:
+        out = render_mosaic(
+            items,
+            output_path,
+            layout=layout,
+            show_captions=(caption_mode != "none"),
+        )
+        print(f"✓ Saved: {out}")
+        import subprocess
+        subprocess.Popen(["xdg-open", str(out)])
+    except ValueError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        print(f"✗ Render failed: {exc}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
 def _require_path():
     if not prefs.get("path"):
         print("✗ Error: no project path set. Run: crossing tool path <folder>", file=sys.stderr)
@@ -2110,7 +2335,6 @@ def build_parser():
     p_text_detect.add_argument("filename", nargs="?", default=None, help="Video filename (or use --tmdb)")
     p_text_detect.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
     p_text_detect.add_argument("--all", action="store_true", help="Process all films with video files")
-    p_text_detect.add_argument("--silent", action="store_true", help="Process the six silent test-bed films")
     p_text_detect.add_argument("--media", choices=["movies", "gameplay"], default="movies")
     p_text_detect.add_argument("--force", action="store_true", help="Overwrite existing CSV(s)")
     p_text_detect.add_argument("--sample-fps", type=float, default=1.0, dest="sample_fps",
@@ -2194,6 +2418,72 @@ def build_parser():
         help="Do not open the result in the desktop viewer after saving",
     )
     p_compose.add_argument("--verbose", action="store_true", help="Print progress")
+
+    # mosaic command group
+    p_mosaic = sub.add_parser(
+        "mosaic",
+        help="Generate a mosaic grid image from thumbnails or text frames",
+    )
+    p_mosaic.set_defaults(func=cmd_mosaic)
+    mosaic_sub = p_mosaic.add_subparsers(dest="mosaic_subcommand", required=True)
+
+    p_mosaic_thumbnails = mosaic_sub.add_parser(
+        "thumbnails",
+        help="Mosaic of thumbnails for a media type (e.g. all movies)",
+    )
+    p_mosaic_thumbnails.add_argument(
+        "--media", choices=["movies", "gameplay"], default="movies",
+        help="Media type whose thumbnails to collect (default: movies)",
+    )
+    p_mosaic_thumbnails.add_argument(
+        "--all", action="store_true", dest="all",
+        help="Include all entries (the only supported mode for now)",
+    )
+    p_mosaic_thumbnails.add_argument(
+        "--output", default=None, metavar="PATH",
+        help="Override output file path (default: output/mosaics/<media>-thumbnails-mosaic.png)",
+    )
+    p_mosaic_thumbnails.add_argument(
+        "--layout", choices=["portrait", "landscape"], default="landscape",
+        help="Grid orientation: landscape (wider) or portrait (taller) (default: landscape)",
+    )
+    p_mosaic_thumbnails.add_argument(
+        "--caption", choices=["none", "short"], default="short",
+        help="Caption style: short (title + year) or none (default: short)",
+    )
+
+    p_mosaic_text = mosaic_sub.add_parser(
+        "text",
+        help="Mosaic of representative frames for text events in one film",
+    )
+    p_mosaic_text.add_argument(
+        "query", nargs="*", metavar="TITLE",
+        help="Title search query (or use --tmdb)",
+    )
+    p_mosaic_text.add_argument(
+        "--tmdb", type=int, default=None,
+        help="TMDb ID of the film",
+    )
+    p_mosaic_text.add_argument(
+        "--all", action="store_true", dest="all",
+        help="Include all text items (the only supported mode for now)",
+    )
+    p_mosaic_text.add_argument(
+        "--media", choices=["movies", "gameplay"], default="movies",
+        help="Media type (default: movies)",
+    )
+    p_mosaic_text.add_argument(
+        "--output", default=None, metavar="PATH",
+        help="Override output file path (default: output/mosaics/tmdb-<id>-text-mosaic.png)",
+    )
+    p_mosaic_text.add_argument(
+        "--layout", choices=["portrait", "landscape"], default="landscape",
+        help="Grid orientation: landscape (wider) or portrait (taller) (default: landscape)",
+    )
+    p_mosaic_text.add_argument(
+        "--caption", choices=["none", "short"], default="short",
+        help="Caption style: short (text content) or none (default: short)",
+    )
 
     # tool command group (version, path, name, api_key)
     p_tool = sub.add_parser("tool", help="Tool settings: version, path, name, API keys")

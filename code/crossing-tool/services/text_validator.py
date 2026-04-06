@@ -184,12 +184,19 @@ class TextEventItem(QListWidgetItem):
         self.update_display()
 
     def update_display(self):
+        from PyQt5.QtGui import QColor
         start = self.row.get("start_frame", "?")
         end = self.row.get("end_frame", "?")
         type_ = self.row.get("type", "?")
         text = self.row.get("text", "")
-        snippet = text.replace("\n", " ")[:38]
-        if len(text) > 38:
+        ignored = str(self.row.get("ignore", "")).strip().lower() in ("1", "true", "yes")
+        try:
+            score_val = float(self.row.get("score", 1.0))
+            score_str = f"{score_val:.2f}"
+        except (ValueError, TypeError):
+            score_str = "   "
+        snippet = text.replace("\n", " ")[:34]
+        if len(text) > 34:
             snippet += "…"
         try:
             start_str = f"{int(start):07d}"
@@ -197,7 +204,12 @@ class TextEventItem(QListWidgetItem):
         except (ValueError, TypeError):
             start_str = str(start)
             end_str = str(end)
-        self.setText(f"f{start_str}→f{end_str}  [{type_}]  {snippet}")
+        prefix = "✗ " if ignored else ""
+        self.setText(f"{prefix}f{start_str}→f{end_str}  [{type_}] {score_str}  {snippet}")
+        if ignored:
+            self.setForeground(QColor("#888888"))  # dim ignored events
+        else:
+            self.setForeground(QColor("white"))
 
 
 # ---------------------------------------------------------------------------
@@ -374,6 +386,18 @@ class TextValidator(QMainWindow):
         type_row.addWidget(self.type_combo, stretch=1)
         editor_layout.addLayout(type_row)
 
+        # Ignore checkbox
+        ignore_row = QHBoxLayout()
+        self.ignore_check = QCheckBox("Ignore this event  [I]")
+        self.ignore_check.setFocusPolicy(Qt.NoFocus)
+        self.ignore_check.setToolTip(
+            "Mark event as ignored — dimmed in the list, excluded from exports  [I]"
+        )
+        self.ignore_check.toggled.connect(self.on_ignore_changed)
+        ignore_row.addWidget(self.ignore_check)
+        ignore_row.addStretch()
+        editor_layout.addLayout(ignore_row)
+
         # Text edit
         text_lbl = QLabel("Text (editable):")
         text_lbl.setFont(QFont("Monospace", 8))
@@ -455,7 +479,7 @@ class TextValidator(QMainWindow):
 
         # Keyboard hint
         hint = QLabel(
-            "↑↓ event  Tab edit/list  Space play  Ctrl+S save  M merge  N split  Q quad  ←→ frame  Shift+←→ 1s  Home/End movie"
+            "↑↓ event  Tab edit/list  Space play  Ctrl+S save  I ignore  M merge  N split  Q quad  ←→ frame  Shift+←→ 1s  Home/End movie"
         )
         hint.setFont(QFont("Monospace", 7))
         hint.setStyleSheet("color: #bbb;")
@@ -770,7 +794,7 @@ class TextValidator(QMainWindow):
     # ------------------------------------------------------------------
 
     def _load_event_into_editor(self, row: dict):
-        """Populate type combo and text edit from row, suppressing change signals."""
+        """Populate type combo, ignore checkbox, and text edit from row."""
         self._updating_editor = True
         try:
             type_val = row.get("type", "")
@@ -779,6 +803,9 @@ class TextValidator(QMainWindow):
                 self.type_combo.setCurrentIndex(idx)
             else:
                 self.type_combo.setEditText(type_val)
+
+            ignored = str(row.get("ignore", "")).strip().lower() in ("1", "true", "yes")
+            self.ignore_check.setChecked(ignored)
 
             self.text_edit.blockSignals(True)
             self.text_edit.setPlainText(row.get("text", ""))
@@ -795,16 +822,32 @@ class TextValidator(QMainWindow):
         lang = row.get("language", "?")
         fn = Path(row.get("filename", "")).name or self.filename
         n = len(self.rows)
+        score_str = row.get("score", "")
+        try:
+            score_display = f"{float(score_str):.3f}" if score_str != "" else "—"
+        except (ValueError, TypeError):
+            score_display = score_str or "—"
+        ignored = str(row.get("ignore", "")).strip().lower() in ("1", "true", "yes")
         self.info_label.setText(
             f"current_frame: {self.current_frame_number}\n"
             f"filename:    {fn}\n"
             f"language:    {lang}\n"
+            f"score:       {score_display}\n"
+            f"ignore:      {'yes' if ignored else 'no'}\n"
             f"start_frame: {start_f}\n"
             f"end_frame:   {end_f}\n"
             f"start_time:  {start_tc}\n"
             f"end_time:    {end_tc}\n"
             f"event {self.current_event_index + 1} / {n}"
         )
+
+    def on_ignore_changed(self, checked: bool):
+        if self._updating_editor:
+            return
+        if 0 <= self.current_event_index < len(self.rows):
+            self.rows[self.current_event_index]["ignore"] = "1" if checked else ""
+            self._refresh_event_item(self.current_event_index)
+            self._mark_modified()
 
     def on_type_changed(self, text: str):
         if self._updating_editor:
@@ -1091,6 +1134,8 @@ class TextValidator(QMainWindow):
         elif key == Qt.Key_S and mods & Qt.ControlModifier:
             if self.modified:
                 self.save_changes()
+        elif key == Qt.Key_I:
+            self.ignore_check.setChecked(not self.ignore_check.isChecked())
         elif key == Qt.Key_M:
             self.merge_with_previous()
         elif key == Qt.Key_N:

@@ -5,7 +5,7 @@ text patches from their source video frames — optionally using SAM for
 precise alpha masking — and composites them onto a randomly sampled
 background frame to produce a poster or landscape canvas.
 
-Output: JPEG or PDF, saved to <project>/media/compositions/ and optionally opened
+Output: JPEG or PDF, saved to <project>/output/compositions/ and optionally opened
 in the Ubuntu desktop viewer (xdg-open).
 
 SAM integration (optional):
@@ -581,7 +581,7 @@ def compose(
         print(f"  Placed {placed}/{n} patches")
 
     # --- Save ---------------------------------------------------------------
-    out_dir = Path(project_path) / "media" / "compositions"
+    out_dir = Path(project_path) / "output" / "compositions"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if output_path:
