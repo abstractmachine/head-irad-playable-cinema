@@ -32,12 +32,20 @@ class MosaicItem:
 
     Either image_path or (video_path + frame_index) must be set.
     caption is shown below the tile if show_captions=True.
+
+    Optional crop:
+        crop_bbox     [x1, y1, x2, y2] pixel region within the full frame to
+                      show.  When set, only that region is rendered.
+        crop_padding  Extra pixels of context added around crop_bbox on all
+                      sides (clamped to frame bounds). Default 20.
     """
     image_path: Path | None = None
     video_path: Path | None = None
     frame_index: int | None = None
     caption: str | None = None
     metadata: dict[str, Any] | None = None
+    crop_bbox: list[int] | None = None   # [x1, y1, x2, y2]
+    crop_padding: int = 20               # context pixels around the crop
 
 
 # ---------------------------------------------------------------------------
@@ -91,15 +99,32 @@ def _compute_grid(n: int, layout: str = "landscape") -> tuple[int, int]:
 
 
 def _load_item_image(item: MosaicItem) -> "Image.Image | None":
-    """Resolve a MosaicItem to a PIL Image (RGB)."""
+    """Resolve a MosaicItem to a PIL Image (RGB), optionally cropped."""
     if item.image_path is not None:
         try:
-            return Image.open(item.image_path).convert("RGB")
+            img: Image.Image | None = Image.open(item.image_path).convert("RGB")
         except Exception:
             return None
-    if item.video_path is not None and item.frame_index is not None:
-        return extract_frame_pil(item.video_path, item.frame_index)
-    return None
+    elif item.video_path is not None and item.frame_index is not None:
+        img = extract_frame_pil(item.video_path, item.frame_index)
+    else:
+        return None
+
+    if img is None:
+        return None
+
+    if item.crop_bbox is not None:
+        x1, y1, x2, y2 = item.crop_bbox
+        pad = item.crop_padding
+        fw, fh = img.size
+        x1c = max(0, x1 - pad)
+        y1c = max(0, y1 - pad)
+        x2c = min(fw, x2 + pad)
+        y2c = min(fh, y2 + pad)
+        if x2c > x1c and y2c > y1c:
+            img = img.crop((x1c, y1c, x2c, y2c))
+
+    return img
 
 
 def _fit_image(img: Image.Image, max_w: int, max_h: int) -> Image.Image:

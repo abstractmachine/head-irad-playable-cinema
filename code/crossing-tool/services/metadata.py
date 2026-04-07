@@ -8,6 +8,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
+import warnings
 
 _MEDIA_TYPES = ("movies", "gameplay")
 
@@ -119,7 +120,9 @@ def prune_metadata(project_path: str, media_type: str = "movies") -> list[dict]:
 
     Returns the list of pruned rows.
     """
-    media_dir = Path(project_path) / "media" / media_type
+    # Canonical videos location. Legacy media/<media_type> is deprecated.
+    media_dir_new = Path(project_path) / "media" / "videos" / media_type
+    media_dir_legacy = Path(project_path) / "media" / media_type
     dest = _csv_path(project_path, media_type)
 
     if not dest.exists():
@@ -131,12 +134,27 @@ def prune_metadata(project_path: str, media_type: str = "movies") -> list[dict]:
         rows = [{k: v for k, v in row.items() if k is not None} for row in reader]
 
     kept, pruned = [], []
+    legacy_detected: list[str] = []
     for row in rows:
         filename = row.get("filename", "")
-        if filename and (media_dir / filename).exists():
+        if not filename:
+            pruned.append(row)
+            continue
+        # Only canonical location is accepted. Legacy files are treated as missing.
+        if (media_dir_new / filename).exists():
             kept.append(row)
         else:
+            # If a legacy file exists, record it for a single warning and treat as missing.
+            if (media_dir_legacy / filename).exists():
+                legacy_detected.append(filename)
             pruned.append(row)
+
+    if legacy_detected:
+        warnings.warn(
+            f"Found {len(legacy_detected)} media file(s) in legacy location {media_dir_legacy}. "
+            f"These files will be treated as missing. Move them to {media_dir_new}.",
+            UserWarning,
+        )
 
     with dest.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, restval="")

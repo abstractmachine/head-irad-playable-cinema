@@ -33,6 +33,7 @@ import unicodedata
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
+import warnings
 
 # ---------------------------------------------------------------------------
 # Public constants
@@ -83,9 +84,24 @@ def seconds_to_timecode(seconds: float) -> str:
 def get_text_csv_path(
     project_path: str, filename: str, media_type: str = "movies"
 ) -> Path:
-    """Return the canonical path for a film's text-extraction CSV."""
+    """Return the canonical path for a film's text-extraction CSV.
+
+    Prefer the annotations location:
+        data/annotations/text/<media_type>/<stem>.csv
+    Fall back to the legacy location:
+        data/text/<media_type>/<stem>.csv
+    """
     stem = Path(filename).stem
-    return Path(project_path) / "data" / "text" / media_type / f"{stem}.csv"
+    ann = Path(project_path) / "data" / "annotations" / "text" / media_type / f"{stem}.csv"
+    legacy = Path(project_path) / "data" / "text" / media_type / f"{stem}.csv"
+    # Do not fall back to legacy. If a legacy file exists, warn and return
+    # the canonical path so callers will observe the missing canonical file.
+    if not ann.exists() and legacy.exists():
+        warnings.warn(
+            f"Found text CSV in legacy location: {legacy}. This is deprecated; move files to {ann}.",
+            UserWarning,
+        )
+    return ann
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +131,10 @@ def write_text_csv(
     Raises:
         FileExistsError: If the CSV already exists and ``force`` is False.
     """
-    dest = get_text_csv_path(project_path, filename, media_type)
+    # Canonical write location: prefer the annotations folder so that
+    # generated CSVs live in data/annotations/text/ by default.
+    stem = Path(filename).stem
+    dest = Path(project_path) / "data" / "annotations" / "text" / media_type / f"{stem}.csv"
 
     if dest.exists() and not force:
         raise FileExistsError(
@@ -1323,31 +1342,39 @@ def list_text_csvs(
     results: list[dict[str, Any]] = []
 
     for mtype in types_to_check:
-        text_dir = Path(project_path) / "data" / "text" / mtype
-        if not text_dir.is_dir():
-            continue
-        for csv_path in sorted(text_dir.glob("*.csv")):
-            try:
-                with csv_path.open(newline="", encoding="utf-8") as fh:
-                    reader = csv.DictReader(fh)
-                    rows = list(reader)
-                    row_count = len(rows)
-                    type_counts: dict[str, int] = {}
-                    for row in rows:
-                        t = row.get("type", "unknown")
-                        type_counts[t] = type_counts.get(t, 0) + 1
-            except Exception:
-                row_count = -1
-                type_counts = {}
-            results.append(
-                {
-                    "filename": csv_path.stem,
-                    "media_type": mtype,
-                    "csv_path": str(csv_path),
-                    "row_count": row_count,
-                    "type_counts": type_counts,
-                }
-            )
+        ann_dir = Path(project_path) / "data" / "annotations" / "text" / mtype
+        legacy_dir = Path(project_path) / "data" / "text" / mtype
+        seen: set[str] = set()
+
+        for text_dir in (ann_dir, legacy_dir):
+            if not text_dir.is_dir():
+                continue
+            for csv_path in sorted(text_dir.glob("*.csv")):
+                stem = csv_path.stem
+                if stem in seen:
+                    continue
+                seen.add(stem)
+                try:
+                    with csv_path.open(newline="", encoding="utf-8") as fh:
+                        reader = csv.DictReader(fh)
+                        rows = list(reader)
+                        row_count = len(rows)
+                        type_counts: dict[str, int] = {}
+                        for row in rows:
+                            t = row.get("type", "unknown")
+                            type_counts[t] = type_counts.get(t, 0) + 1
+                except Exception:
+                    row_count = -1
+                    type_counts = {}
+                results.append(
+                    {
+                        "filename": stem,
+                        "media_type": mtype,
+                        "csv_path": str(csv_path),
+                        "row_count": row_count,
+                        "type_counts": type_counts,
+                    }
+                )
 
     return results
 
@@ -1362,10 +1389,12 @@ def validate_text_csvs(
     """
     import datetime
 
-    text_dir = Path(project_path) / "data" / "text" / media_type
+    ann_dir = Path(project_path) / "data" / "annotations" / "text" / media_type
+    legacy_dir = Path(project_path) / "data" / "text" / media_type
     issues: list[dict[str, Any]] = []
 
-    if not text_dir.is_dir():
+    # If neither directory exists, no CSVs to validate
+    if not ann_dir.is_dir() and not legacy_dir.is_dir():
         return issues
 
     def _is_timecode(value: str) -> bool:
@@ -1375,55 +1404,63 @@ def validate_text_csvs(
         except ValueError:
             return False
 
-    for csv_path in sorted(text_dir.glob("*.csv")):
-        try:
-            with csv_path.open(newline="", encoding="utf-8") as fh:
-                reader = csv.DictReader(fh)
-                missing_cols = set(TEXT_COLUMNS) - set(reader.fieldnames or [])
-                if missing_cols:
-                    issues.append(
-                        {
-                            "csv_path": str(csv_path),
-                            "row": 0,
-                            "issue": f"missing columns: {sorted(missing_cols)}",
-                        }
-                    )
-                for i, row in enumerate(reader, start=1):
-                    if row.get("type") not in VALID_TYPES:
+    seen: set[str] = set()
+    for text_dir in (ann_dir, legacy_dir):
+        if not text_dir.is_dir():
+            continue
+        for csv_path in sorted(text_dir.glob("*.csv")):
+            stem = csv_path.stem
+            if stem in seen:
+                continue
+            seen.add(stem)
+            try:
+                with csv_path.open(newline="", encoding="utf-8") as fh:
+                    reader = csv.DictReader(fh)
+                    missing_cols = set(TEXT_COLUMNS) - set(reader.fieldnames or [])
+                    if missing_cols:
                         issues.append(
                             {
                                 "csv_path": str(csv_path),
-                                "row": i,
-                                "issue": f"invalid type {row.get('type')!r}",
+                                "row": 0,
+                                "issue": f"missing columns: {sorted(missing_cols)}",
                             }
                         )
-                    for tc_field in ("start_time", "end_time"):
-                        val = row.get(tc_field, "")
-                        if val and not _is_timecode(val):
+                    for i, row in enumerate(reader, start=1):
+                        if row.get("type") not in VALID_TYPES:
                             issues.append(
                                 {
                                     "csv_path": str(csv_path),
                                     "row": i,
-                                    "issue": f"bad {tc_field} format: {val!r}",
+                                    "issue": f"invalid type {row.get('type')!r}",
                                 }
                             )
-                    for fn_field in ("start_frame", "end_frame"):
-                        val = row.get(fn_field, "")
-                        if val and not val.lstrip("-").isdigit():
-                            issues.append(
-                                {
-                                    "csv_path": str(csv_path),
-                                    "row": i,
-                                    "issue": f"non-integer {fn_field}: {val!r}",
-                                }
-                            )
-        except Exception as exc:
-            issues.append(
-                {
-                    "csv_path": str(csv_path),
-                    "row": 0,
-                    "issue": f"could not read file: {exc}",
-                }
-            )
+                        for tc_field in ("start_time", "end_time"):
+                            val = row.get(tc_field, "")
+                            if val and not _is_timecode(val):
+                                issues.append(
+                                    {
+                                        "csv_path": str(csv_path),
+                                        "row": i,
+                                        "issue": f"bad {tc_field} format: {val!r}",
+                                    }
+                                )
+                        for fn_field in ("start_frame", "end_frame"):
+                            val = row.get(fn_field, "")
+                            if val and not val.lstrip("-").isdigit():
+                                issues.append(
+                                    {
+                                        "csv_path": str(csv_path),
+                                        "row": i,
+                                        "issue": f"non-integer {fn_field}: {val!r}",
+                                    }
+                                )
+            except Exception as exc:
+                issues.append(
+                    {
+                        "csv_path": str(csv_path),
+                        "row": 0,
+                        "issue": f"could not read file: {exc}",
+                    }
+                )
 
     return issues
