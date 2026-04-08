@@ -111,6 +111,12 @@ _MODEL_DEFAULTS = {
     "yolo": "yolov8n.pt",
 }
 
+# Persistent defaults for annotate (and other commands)
+# key = prefs key, value = built-in fallback
+_ANNOTATE_DEFAULT_KEYS = {
+    "frames-per-shot": ("annotate_frames_per_shot", 3),
+}
+
 
 def cmd_model(args):
     sub = args.model_subcommand
@@ -127,6 +133,35 @@ def cmd_model(args):
         for r in roles:
             val = prefs.get(_MODEL_KEYS[r], _MODEL_DEFAULTS[r])
             print(f"{r}: {val}")
+    elif sub == "list":
+        _require_path()
+        from services.models import list_models
+        list_models(prefs.get("path"))
+    elif sub == "download":
+        _require_path()
+        from services.models import download_model
+        try:
+            download_model(
+                prefs.get("path"),
+                args.repo,
+                local_name=getattr(args, "name", None) or None,
+                ignore_non_safetensors=not getattr(args, "all_formats", False),
+            )
+        except Exception as e:
+            print(f"✗ Download failed: {e}", file=sys.stderr)
+            sys.exit(1)
+    elif sub == "size":
+        _require_path()
+        from services.models import model_size_report
+        model_size_report(prefs.get("path"), args.model)
+    elif sub == "remove":
+        _require_path()
+        from services.models import remove_model
+        try:
+            remove_model(prefs.get("path"), args.name, confirm=getattr(args, "confirm", False))
+        except FileNotFoundError as e:
+            print(f"\u2717 {e}", file=sys.stderr)
+            sys.exit(1)
 
 
 def cmd_path(args):
@@ -1409,6 +1444,28 @@ def cmd_tool(args):
         cmd_notify(args)
     elif sub == "model":
         cmd_model(args)
+    elif sub == "default":
+        cmd_tool_default(args)
+
+
+def cmd_tool_default(args):
+    """Get or set persistent defaults for annotate and other commands."""
+    sub = args.default_subcommand
+    if sub == "set":
+        key = args.key
+        if key not in _ANNOTATE_DEFAULT_KEYS:
+            print(f"✗ Unknown default key '{key}'. Available keys: {', '.join(_ANNOTATE_DEFAULT_KEYS)}", file=sys.stderr)
+            sys.exit(1)
+        pref_key, _ = _ANNOTATE_DEFAULT_KEYS[key]
+        prefs.set(pref_key, args.value)
+        print(f"✓ Default '{key}' set to '{args.value}'")
+    elif sub == "get" or sub is None:
+        key = getattr(args, "key", None)
+        keys = [key] if key else list(_ANNOTATE_DEFAULT_KEYS)
+        for k in keys:
+            pref_key, fallback = _ANNOTATE_DEFAULT_KEYS[k]
+            val = prefs.get(pref_key, fallback)
+            print(f"{k}: {val}")
 
 
 def cmd_notify(args):
@@ -1894,6 +1951,82 @@ def _text_list(args):
         print(f"  {r['filename']}  ({r['media_type']})")
         print(f"    {r['row_count']} event(s)  ·  {counts_str or 'none'}")
         print()
+
+
+def _annotate_validate(args):
+    """Launch the annotation validation GUI."""
+    from services.annotate import get_annotation_json_path as _ann_json_path
+
+    _require_path()
+    project_path = prefs.get("path")
+    media_type = getattr(args, "media", "movies")
+
+    import subprocess
+    validator_path = Path(__file__).parent / "services" / "annotation_validator.py"
+    if not validator_path.exists():
+        print(f"\u2717 Error: annotation_validator.py not found at {validator_path}", file=sys.stderr)
+        sys.exit(1)
+
+    if getattr(args, "all", False):
+        from services.metadata import get_metadata
+        entries = get_metadata(project_path, media_type=media_type)
+        filenames = [
+            e["filename"]
+            for e in entries
+            if e.get("filename")
+            and _ann_json_path(project_path, e["filename"], media_type).exists()
+        ]
+        if not filenames:
+            print("\u2717 No annotation JSON files found.", file=sys.stderr)
+            sys.exit(1)
+    elif getattr(args, "tmdb", None) is not None:
+        from services.metadata import get_metadata
+        entries = get_metadata(project_path, media_type=media_type)
+        filenames = [e["filename"] for e in entries if e.get("tmdb") == str(args.tmdb)]
+        if not filenames:
+            print(f"\u2717 No file found with TMDb ID: {args.tmdb}", file=sys.stderr)
+            sys.exit(1)
+    elif getattr(args, "query", None):
+        from services.metadata import get_metadata
+        entries = get_metadata(project_path, query=args.query, media_type=media_type)
+        if not entries:
+            print(f"\u2717 No file found matching '{args.query}'", file=sys.stderr)
+            sys.exit(1)
+        if len(entries) > 1:
+            print(f"\u2717 Multiple files match '{args.query}':", file=sys.stderr)
+            for e in entries:
+                print(f"  - {e['filename']}", file=sys.stderr)
+            sys.exit(1)
+        filenames = [entries[0]["filename"]]
+    else:
+        print("\u2717 Must provide a query, --tmdb, or --all", file=sys.stderr)
+        sys.exit(1)
+
+    valid = []
+    for fn in filenames:
+        ann_path = _ann_json_path(project_path, fn, media_type)
+        if ann_path.exists():
+            valid.append(fn)
+        else:
+            print(f"  \u26a0 No annotation JSON for: {fn}  (skipping)", file=sys.stderr)
+
+    if not valid:
+        print("\u2717 No annotation JSON files found for the selected film(s).", file=sys.stderr)
+        sys.exit(1)
+
+    cmd = [
+        sys.executable, str(validator_path),
+        "--media", media_type,
+        "--project", project_path,
+        "--filenames",
+    ] + valid
+
+    try:
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as e:
+        sys.exit(e.returncode)
+    except KeyboardInterrupt:
+        sys.exit(0)
 
 
 def _text_validate(args):
@@ -2776,7 +2909,7 @@ def build_parser():
     p_annotate_shot.add_argument("--prompt-file", default=None, help="System prompt file (system-*.txt under prompts/<media>/shots/)")
     p_annotate_shot.add_argument("--prompt-text", default=None, help="Inline system prompt text (overrides prompt file)")
     p_annotate_shot.add_argument("--user-prompt-file", default=None, dest="user_prompt_file", help="User prompt file (user-*.txt under prompts/<media>/shots/)")
-    p_annotate_shot.add_argument("--frames-per-shot", type=int, default=3, help="Frames to sample per shot")
+    p_annotate_shot.add_argument("--frames-per-shot", type=int, default=prefs.get(_ANNOTATE_DEFAULT_KEYS["frames-per-shot"][0], _ANNOTATE_DEFAULT_KEYS["frames-per-shot"][1]), help="Frames to sample per shot")
     p_annotate_shot.add_argument("--limit", type=int, default=None, help="Limit to first N shots (process shots with index < N)")
     p_annotate_shot.add_argument("--sample-mode", choices=["center", "start", "end"], default="center", help="Frame sampling mode")
     p_annotate_shot.add_argument("--force", action="store_true", help="Overwrite existing annotations")
@@ -2806,7 +2939,7 @@ def build_parser():
     p_annotate_scene.add_argument("--prompt-file", default=None, help="System prompt file (system-*.txt under prompts/<media>/shots/)")
     p_annotate_scene.add_argument("--prompt-text", default=None, help="Inline system prompt text (overrides prompt file)")
     p_annotate_scene.add_argument("--user-prompt-file", default=None, dest="user_prompt_file", help="User prompt file (user-*.txt under prompts/<media>/shots/)")
-    p_annotate_scene.add_argument("--frames-per-shot", type=int, default=3, help="Frames to sample per shot")
+    p_annotate_scene.add_argument("--frames-per-shot", type=int, default=prefs.get(_ANNOTATE_DEFAULT_KEYS["frames-per-shot"][0], _ANNOTATE_DEFAULT_KEYS["frames-per-shot"][1]), help="Frames to sample per shot")
     p_annotate_scene.add_argument("--limit", type=int, default=None, help="Limit to first N shots (process shots with index < N)")
     p_annotate_scene.add_argument("--sample-mode", choices=["center", "start", "end"], default="center", help="Frame sampling mode")
     p_annotate_scene.add_argument("--force", action="store_true", help="Overwrite existing annotations")
@@ -2816,7 +2949,14 @@ def build_parser():
     p_annotate_scene.add_argument("--export-md", default=None, help="Export annotations Markdown path")
     p_annotate_scene.add_argument("--verbose", action="store_true", help="Print per-shot progress to stdout")
     p_annotate_scene.add_argument("--notify", action="store_true", help="Send a Discord notification when the run finishes")
-    
+
+    p_annotate_validate = annotate_sub.add_parser("validate", help="Review shot annotations in GUI")
+    p_annotate_validate.set_defaults(func=_annotate_validate)
+    p_annotate_validate.add_argument("query", nargs="?", default=None, help="Filename substring to match")
+    p_annotate_validate.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
+    p_annotate_validate.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    p_annotate_validate.add_argument("--all", action="store_true", help="Validate all films with annotation JSON files")
+
 
     # model command
     # (moved under 'crossing tool model' — see tool_sub below)
@@ -3315,6 +3455,18 @@ def build_parser():
     p_tool_notify.add_argument("notify_service", choices=["discord"], metavar="service",
                                help="Notification service to test (discord)")
 
+    p_tool_default = tool_sub.add_parser("default", help="Get or set persistent defaults for annotate and other commands")
+    default_sub = p_tool_default.add_subparsers(dest="default_subcommand")
+
+    _default_key_choices = list(_ANNOTATE_DEFAULT_KEYS)
+
+    p_tool_default_set = default_sub.add_parser("set", help="Set a default value")
+    p_tool_default_set.add_argument("key", choices=_default_key_choices, help="Setting name")
+    p_tool_default_set.add_argument("value", help="New value")
+
+    p_tool_default_get = default_sub.add_parser("get", help="Show a default value (omit key to show all)")
+    p_tool_default_get.add_argument("key", nargs="?", choices=_default_key_choices, default=None, help="Setting name")
+
     p_tool_model = tool_sub.add_parser("model", help="Get or set the model used for each subcommand")
     tool_model_sub = p_tool_model.add_subparsers(dest="model_subcommand")
 
@@ -3333,6 +3485,56 @@ def build_parser():
         choices=list(_MODEL_KEYS),
         default=None,
         help="Role to show (omit to show all)",
+    )
+
+    p_tool_model_list = tool_model_sub.add_parser(
+        "list", help="List all models downloaded to the project"
+    )
+    _ = p_tool_model_list  # no extra arguments needed
+
+    p_tool_model_download = tool_model_sub.add_parser(
+        "download", help="Download a model from Hugging Face into <project>/models/"
+    )
+    p_tool_model_download.add_argument(
+        "repo",
+        metavar="repo-or-url",
+        help="HF repo-id (owner/model) or huggingface.co URL",
+    )
+    p_tool_model_download.add_argument(
+        "--name",
+        default=None,
+        metavar="NAME",
+        help="Override the local folder name (default: model part of repo-id)",
+    )
+    p_tool_model_download.add_argument(
+        "--all-formats",
+        dest="all_formats",
+        action="store_true",
+        help="Also download legacy weight formats (bin, h5, msgpack, tf, flax)",
+    )
+
+    p_tool_model_size = tool_model_sub.add_parser(
+        "size",
+        help="Estimate model VRAM and check whether it fits on the GPU",
+    )
+    p_tool_model_size.add_argument(
+        "model",
+        metavar="name-or-repo",
+        help="Local model folder name, HF repo-id (owner/model), or HF URL",
+    )
+
+    p_tool_model_remove = tool_model_sub.add_parser(
+        "remove", help="Delete a downloaded model from <project>/models/"
+    )
+    p_tool_model_remove.add_argument(
+        "name",
+        metavar="name",
+        help="Local model folder or file name (as shown by 'crossing tool model list')",
+    )
+    p_tool_model_remove.add_argument(
+        "--confirm",
+        action="store_true",
+        help="Actually delete the model (default is a dry run)",
     )
 
     return parser

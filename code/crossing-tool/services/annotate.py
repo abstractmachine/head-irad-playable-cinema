@@ -14,6 +14,8 @@ provided inline) and is not coupled to caching or transformer logic.
 
 from __future__ import annotations
 
+FRAMES_PER_SHOT = 5
+
 import json
 import shutil
 import subprocess
@@ -219,7 +221,7 @@ def sample_frames_for_shot(
     video_path: str,
     start_time: str,
     end_time: str,
-    frames_per_shot: int = 3,
+    frames_per_shot: int = FRAMES_PER_SHOT,
     sample_mode: str = "center",
     out_dir: Optional[Path] = None,
 ) -> List[str]:
@@ -854,7 +856,7 @@ def annotate_file_shots(
     prompt_file: Optional[str] = None,
     prompt_text: Optional[str] = None,
     user_prompt_file: Optional[str] = None,
-    frames_per_shot: int = 3,
+    frames_per_shot: int = FRAMES_PER_SHOT,
     sample_mode: str = "center",
     force: bool = False,
     skip_existing: bool = True,
@@ -1255,7 +1257,7 @@ def annotate_all_files(
     prompt_file: Optional[str] = None,
     prompt_text: Optional[str] = None,
     user_prompt_file: Optional[str] = None,
-    frames_per_shot: int = 3,
+    frames_per_shot: int = FRAMES_PER_SHOT,
     sample_mode: str = "center",
     force: bool = False,
     skip_existing: bool = True,
@@ -1285,3 +1287,9 @@ def annotate_all_files(
         )
         results.append(summary)
     return results
+
+
+def get_annotation_json_path(project_path: str, filename: str, media_type: str) -> Path:
+    """Return the Path to the annotation JSON for *filename*."""
+    stem = Path(filename).stem
+    return Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{stem}.json"
