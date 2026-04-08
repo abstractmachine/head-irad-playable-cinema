@@ -100,6 +100,35 @@ def cmd_version_init(args):
     print(f"Data version set to {_TOOL_VERSION}")
 
 
+_MODEL_KEYS = {
+    "annotate": "model_annotate",
+    "segmentation": "model_segmentation",
+    "yolo": "model_yolo",
+}
+_MODEL_DEFAULTS = {
+    "annotate": "gemma4-e4b",
+    "segmentation": "sam2.1_b.pt",
+    "yolo": "yolov8n.pt",
+}
+
+
+def cmd_model(args):
+    sub = args.model_subcommand
+    if sub == "set":
+        key = _MODEL_KEYS[args.role]
+        prefs.set(key, args.name)
+        print(f"✓ Model for '{args.role}' set to '{args.name}'")
+    elif sub == "get" or sub is None:
+        role = getattr(args, "role", None)
+        if role:
+            roles = [role]
+        else:
+            roles = list(_MODEL_KEYS)
+        for r in roles:
+            val = prefs.get(_MODEL_KEYS[r], _MODEL_DEFAULTS[r])
+            print(f"{r}: {val}")
+
+
 def cmd_path(args):
     if args.folder is None:
         path = prefs.get("path")
@@ -135,6 +164,16 @@ def cmd_name(args):
     _require_path()
     prefs.set("name", args.project_name)
     print(f"Project name set to: {args.project_name!r}")
+
+
+def cmd_media(args):
+    sub = args.media_subcommand
+    if sub == "import":
+        cmd_import(args)
+    elif sub == "remove":
+        cmd_remove(args)
+    elif sub == "subtitle":
+        cmd_subtitle(args)
 
 
 def cmd_import(args):
@@ -701,8 +740,6 @@ def cmd_shotlist(args):
         _shotlist_list(args)
     elif sub == "get":
         _shotlist_get(args)
-    elif sub == "annotate":
-        _shotlist_annotate(args)
     elif sub == "show":
         _shotlist_show(args)
     elif sub == "shot":
@@ -807,16 +844,136 @@ def _shotlist_get(args):
 def _shotlist_annotate(args):
     from services.shotlist import annotate_shot, annotate_scene, resolve_filename
     project_path = prefs.get("path")
-    
+
     try:
-        filename = resolve_filename(project_path, args.tmdb, args.filename, args.media)
-        
+        # Determine manual vs automatic mode. Manual mode is triggered by
+        # presence of `--manual` text or a positional caption.
+        manual_text = getattr(args, "manual", None) or getattr(args, "caption", None)
+
         if args.annotate_type == "shot":
-            annotate_shot(project_path, filename, args.index, args.caption, args.media)
-            print(f"✓ Annotated shot {args.index}")
+            # Manual mode: update a specific shot with provided caption text
+            if manual_text is not None:
+                if args.index is None:
+                    raise ValueError("Provide shot index when annotating manually")
+                filename = resolve_filename(project_path, args.tmdb, args.filename, args.media)
+                annotate_shot(project_path, filename, args.index, manual_text, args.media)
+                print(f"✓ Annotated shot {args.index}")
+                if getattr(args, "notify", False):
+                    try:
+                        from services.notify import discord_notify
+                        discord_notify(f"✓ Manual annotation: {filename} shot {args.index}", project_path)
+                    except Exception:
+                        pass
+                return
+
+            # Automatic (default) mode
+            from services.annotate import annotate_file_shots, annotate_all_files
+
+            if getattr(args, "all", False):
+                results = annotate_all_files(
+                    project_path,
+                    media_type=args.media,
+                    model_name=args.model,
+                    prompt_file=args.prompt_file,
+                    prompt_text=args.prompt_text,
+                    user_prompt_file=getattr(args, "user_prompt_file", None),
+                    frames_per_shot=args.frames_per_shot,
+                    sample_mode=args.sample_mode,
+                    force=args.force,
+                    skip_existing=args.skip_existing,
+                    limit=getattr(args, "limit", None),
+                )
+                print(f"Processed {len(results)} file(s)")
+                for r in results:
+                    failed_count = len(r.get("failed", [])) if r.get("failed") else 0
+                    print(f"  {r.get('filename')}: updated={r.get('updated')} skipped={r.get('skipped')} failed={failed_count}")
+                if getattr(args, "notify", False):
+                    try:
+                        from services.notify import discord_notify
+                        lines = [f"Annotation batch complete: {len(results)} file(s)"]
+                        for r in results:
+                            failed_count = len(r.get("failed", [])) if r.get("failed") else 0
+                            lines.append(f"{r.get('filename')}: updated={r.get('updated')} skipped={r.get('skipped')} failed={failed_count}")
+                        discord_notify("\n".join(lines), project_path)
+                    except Exception:
+                        pass
+                return
+
+            filename = resolve_filename(project_path, args.tmdb, args.filename, args.media)
+            summary = annotate_file_shots(
+                project_path,
+                filename,
+                media_type=args.media,
+                model_name=args.model,
+                prompt_file=args.prompt_file,
+                prompt_text=args.prompt_text,
+                user_prompt_file=getattr(args, "user_prompt_file", None),
+                frames_per_shot=args.frames_per_shot,
+                sample_mode=args.sample_mode,
+                force=args.force,
+                skip_existing=args.skip_existing,
+                export_csv=getattr(args, "export_csv", None),
+                export_md=getattr(args, "export_md", None),
+                shot_index=getattr(args, "index", None),
+                limit=getattr(args, "limit", None),
+                verbose=getattr(args, "verbose", False),
+            )
+            failed_count = len(summary.get("failed", [])) if summary.get("failed") else 0
+            print(f"✓ Annotated: {filename} — updated={summary['updated']} skipped={summary['skipped']} failed={failed_count}")
+            if getattr(args, "notify", False):
+                try:
+                    from services.notify import discord_notify
+                    discord_notify(f"✓ Annotated: {filename} — updated={summary['updated']} skipped={summary['skipped']} failed={failed_count}", project_path)
+                except Exception:
+                    pass
+            return
+
         elif args.annotate_type == "scene":
-            annotate_scene(project_path, filename, args.scene_number, args.caption, args.media)
-            print(f"✓ Annotated scene {args.scene_number}")
+            # Manual scene annotation
+            if manual_text is not None:
+                filename = resolve_filename(project_path, args.tmdb, args.filename, args.media)
+                annotate_scene(project_path, filename, args.scene_number, manual_text, args.media)
+                print(f"✓ Annotated scene {args.scene_number}")
+                if getattr(args, "notify", False):
+                    try:
+                        from services.notify import discord_notify
+                        discord_notify(f"✓ Manual scene annotation: {filename} scene {args.scene_number}", project_path)
+                    except Exception:
+                        pass
+                return
+
+            # Automatic scene annotation (default)
+            from services.annotate import annotate_file_shots
+
+            filename = resolve_filename(project_path, args.tmdb, args.filename, args.media)
+            summary = annotate_file_shots(
+                project_path,
+                filename,
+                media_type=args.media,
+                model_name=args.model,
+                prompt_file=args.prompt_file,
+                prompt_text=args.prompt_text,
+                user_prompt_file=getattr(args, "user_prompt_file", None),
+                frames_per_shot=args.frames_per_shot,
+                sample_mode=args.sample_mode,
+                force=args.force,
+                skip_existing=args.skip_existing,
+                scene_number=args.scene_number,
+                limit=getattr(args, "limit", None),
+                export_csv=getattr(args, "export_csv", None),
+                export_md=getattr(args, "export_md", None),
+                verbose=getattr(args, "verbose", False),
+            )
+            failed_count = len(summary.get("failed", [])) if summary.get("failed") else 0
+            print(f"✓ Annotated scene {args.scene_number} in {filename} — updated={summary['updated']} skipped={summary['skipped']} failed={failed_count}")
+            if getattr(args, "notify", False):
+                try:
+                    from services.notify import discord_notify
+                    discord_notify(f"✓ Annotated scene {args.scene_number} in {filename} — updated={summary['updated']} skipped={summary['skipped']} failed={failed_count}", project_path)
+                except Exception:
+                    pass
+            return
+
     except ValueError as e:
         print(f"✗ Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -1250,6 +1407,8 @@ def cmd_tool(args):
         cmd_api_key(args)
     elif sub == "notify":
         cmd_notify(args)
+    elif sub == "model":
+        cmd_model(args)
 
 
 def cmd_notify(args):
@@ -1816,6 +1975,14 @@ def _text_validate(args):
         sys.exit(e.returncode)
     except KeyboardInterrupt:
         sys.exit(0)
+
+
+def cmd_generate(args):
+    sub = args.generate_subcommand
+    if sub == "compose":
+        cmd_compose(args)
+    elif sub == "mosaic":
+        cmd_mosaic(args)
 
 
 def cmd_compose(args):
@@ -2584,216 +2751,88 @@ def build_parser():
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_import = sub.add_parser("import", help="Import media files into the project")
-    p_import.add_argument("sources", nargs="*", metavar="source", help="File(s) or folder to import")
-    p_import.add_argument("--pick", action="store_true", help="Open GUI file/folder picker")
-    p_import.add_argument("--media", choices=["movie", "gameplay"], default="movie")
-    p_import.add_argument("--platform", choices=["universal", "pi5"], default="universal")
-    p_import.add_argument("--skip-metadata", action="store_true", help="Skip automatic metadata fetch")
-    p_import.set_defaults(func=cmd_import, _parser=p_import)
+    # annotate command: annotate shots or scenes (LLM)
+    p_annotate = sub.add_parser("annotate", help="Annotate shots or scenes (LLM)")
+    p_annotate.set_defaults(func=_shotlist_annotate)
+    annotate_sub = p_annotate.add_subparsers(dest="annotate_type", required=True)
 
-    p_search = sub.add_parser("search", help="Search for passages")
-    p_search.add_argument("query")
-    p_search.set_defaults(func=cmd_search)
-
-    # metadata command group
-    p_meta = sub.add_parser("metadata", help="Manage media metadata")
-    p_meta.set_defaults(func=cmd_metadata)
-    meta_sub = p_meta.add_subparsers(dest="metadata_subcommand", required=True)
-
-    p_meta_get = meta_sub.add_parser("get", help="Get metadata (all, by index, or by filename)")
-    p_meta_get.add_argument("query", nargs="?", default=None,
-                            help="index (int) or title/filename substring")
-    p_meta_get.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_meta_get.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-
-    p_meta_set = meta_sub.add_parser("set", help="Set/update metadata from a JSON string")
-    p_meta_set.add_argument("json_data", metavar="json")
-
-    p_meta_validate = meta_sub.add_parser("validate", help="Check that all metadata files exist on disk")
-    p_meta_validate.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-    p_meta_validate.add_argument("--check-thumbnails", action="store_true", help="Also verify thumbnails exist")
-    p_meta_validate.add_argument("--check-subtitles", action="store_true", help="Also verify subtitles exist")
-
-    p_meta_update = meta_sub.add_parser("update", help="Fetch and save metadata for entries missing key fields")
-    p_meta_update.add_argument("--file", default=None, help="Update a single file by filename")
-    p_meta_update.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-    p_meta_update.add_argument("--force", action="store_true", help="Force re-fetch metadata for all entries (including duration)")
-
-    p_meta_fixname = meta_sub.add_parser("fixname", help="Normalize filenames and update metadata CSV")
-    p_meta_fixname.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-
-    p_meta_count = meta_sub.add_parser("count", help="Print the number of metadata entries")
-    p_meta_count.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-
-    p_meta_list = meta_sub.add_parser("list", help="List entries, optionally filtered by year or director")
-    p_meta_list.add_argument("--year", default=None, help="Filter by exact year (e.g. 1956)")
-    p_meta_list.add_argument("--director", default=None, help="Filter by director name (case-insensitive substring)")
-    p_meta_list.add_argument("--fields", default=None, help="Comma-separated fields to include (e.g. title,year,director)")
-    p_meta_list.add_argument("--sort", default=None, help="Field to sort by (e.g. year, director, title)")
-    p_meta_list.add_argument("--reverse", action="store_true", help="Reverse the sort order (descending)")
-    p_meta_list.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-
-    p_meta_prune = meta_sub.add_parser("prune", help="Remove metadata entries with no matching file on disk")
-    p_meta_prune.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-    p_meta_prune.add_argument("--confirm", action="store_true",
-                              help="Actually remove the entries (default is a dry run)")
-
-    # shotlist command group
-    p_shotlist = sub.add_parser("shotlist", help="Manage shot and scene cuts and annotations")
-    p_shotlist.set_defaults(func=cmd_shotlist)
-    shotlist_sub = p_shotlist.add_subparsers(dest="shotlist_subcommand", required=True)
-
-    p_shotlist_list = shotlist_sub.add_parser("list", help="List all available shotlists")
-    p_shotlist_list.add_argument("--media", choices=["movies", "gameplay"], default=None, help="Filter by media type")
-    p_shotlist_list.add_argument("--json", action="store_true", help="Output as JSON")
-
-    p_shotlist_get = shotlist_sub.add_parser("get", help="Get shotlist data for a file")
-    p_shotlist_get.add_argument("filename", nargs="?", default=None, help="Video filename (or use --tmdb)")
-    p_shotlist_get.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_shotlist_get.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-    p_shotlist_get.add_argument("--scene", type=int, default=None, help="Filter by scene number")
-
-    p_shotlist_annotate = shotlist_sub.add_parser("annotate", help="Add annotation to shot or scene")
-    annotate_sub = p_shotlist_annotate.add_subparsers(dest="annotate_type", required=True)
-    
-    p_annotate_shot = annotate_sub.add_parser("shot", help="Annotate a specific shot")
+    p_annotate_shot = annotate_sub.add_parser("shot", help="Annotate shot(s)")
     p_annotate_shot.add_argument("filename", nargs="?", default=None, help="Video filename (or use --tmdb)")
-    p_annotate_shot.add_argument("index", type=int, help="Shot index (0-based)")
-    p_annotate_shot.add_argument("caption", help="Annotation text")
+    p_annotate_shot.add_argument("index", type=int, nargs="?", default=None, help="Shot index (0-based). Omit to annotate all shots in file.")
+    p_annotate_shot.add_argument("caption", nargs="?", default=None, help="Annotation text (manual mode only)")
     p_annotate_shot.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
     p_annotate_shot.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-    
-    p_annotate_scene = annotate_sub.add_parser("scene", help="Annotate all shots in a scene")
+    p_annotate_shot.add_argument("--manual", dest="manual", metavar="TEXT", default=None, help="Manual caption text; when provided operate in manual mode")
+    p_annotate_shot.add_argument("--all", action="store_true", help="Annotate all files in metadata (automatic mode by default)")
+    p_annotate_shot.add_argument(
+        "--model",
+        default=prefs.get(_MODEL_KEYS["annotate"], _MODEL_DEFAULTS["annotate"]),
+        help=(
+            "Model name to use for annotation (default from 'crossing tool model annotate'). "
+            "By default this refers to a local folder under <project>/models/<name>. "
+            "You may also pass an absolute/relative local path or a valid Hugging Face repo id."
+        ),
+    )
+    p_annotate_shot.add_argument("--prompt-file", default=None, help="System prompt file (system-*.txt under prompts/<media>/shots/)")
+    p_annotate_shot.add_argument("--prompt-text", default=None, help="Inline system prompt text (overrides prompt file)")
+    p_annotate_shot.add_argument("--user-prompt-file", default=None, dest="user_prompt_file", help="User prompt file (user-*.txt under prompts/<media>/shots/)")
+    p_annotate_shot.add_argument("--frames-per-shot", type=int, default=3, help="Frames to sample per shot")
+    p_annotate_shot.add_argument("--limit", type=int, default=None, help="Limit to first N shots (process shots with index < N)")
+    p_annotate_shot.add_argument("--sample-mode", choices=["center", "start", "end"], default="center", help="Frame sampling mode")
+    p_annotate_shot.add_argument("--force", action="store_true", help="Overwrite existing annotations")
+    p_annotate_shot.add_argument("--skip-existing", dest="skip_existing", action="store_true", default=True, help="Skip shots that already have annotations (default)")
+    p_annotate_shot.add_argument("--no-skip-existing", dest="skip_existing", action="store_false", help="Do not skip shots that already have annotations")
+    p_annotate_shot.add_argument("--export-csv", default=None, help="Export annotations CSV path")
+    p_annotate_shot.add_argument("--export-md", default=None, help="Export annotations Markdown path")
+    p_annotate_shot.add_argument("--verbose", action="store_true", help="Print per-shot progress to stdout")
+    p_annotate_shot.add_argument("--notify", action="store_true", help="Send a Discord notification when the run finishes")
+
+    p_annotate_scene = annotate_sub.add_parser("scene", help="Annotate scene(s)")
     p_annotate_scene.add_argument("filename", nargs="?", default=None, help="Video filename (or use --tmdb)")
     p_annotate_scene.add_argument("scene_number", type=int, help="Scene number")
-    p_annotate_scene.add_argument("caption", help="Annotation text")
+    p_annotate_scene.add_argument("caption", nargs="?", default=None, help="Annotation text (manual mode only)")
     p_annotate_scene.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
     p_annotate_scene.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-
-    p_shotlist_show = shotlist_sub.add_parser("show", help="Show shot or scene data")
-    show_sub = p_shotlist_show.add_subparsers(dest="show_type", required=True)
+    p_annotate_scene.add_argument("--manual", dest="manual", metavar="TEXT", default=None, help="Manual caption text; when provided operate in manual mode")
+    p_annotate_scene.add_argument(
+        "--model",
+        default=prefs.get(_MODEL_KEYS["annotate"], _MODEL_DEFAULTS["annotate"]),
+        help=(
+            "Model name to use for annotation (default from 'crossing model set annotate'). "
+            "By default this refers to a local folder under <project>/models/<name>. "
+            "You may also pass an absolute/relative local path or a valid Hugging Face repo id."
+        ),
+    )
+    p_annotate_scene.add_argument("--prompt-file", default=None, help="System prompt file (system-*.txt under prompts/<media>/shots/)")
+    p_annotate_scene.add_argument("--prompt-text", default=None, help="Inline system prompt text (overrides prompt file)")
+    p_annotate_scene.add_argument("--user-prompt-file", default=None, dest="user_prompt_file", help="User prompt file (user-*.txt under prompts/<media>/shots/)")
+    p_annotate_scene.add_argument("--frames-per-shot", type=int, default=3, help="Frames to sample per shot")
+    p_annotate_scene.add_argument("--limit", type=int, default=None, help="Limit to first N shots (process shots with index < N)")
+    p_annotate_scene.add_argument("--sample-mode", choices=["center", "start", "end"], default="center", help="Frame sampling mode")
+    p_annotate_scene.add_argument("--force", action="store_true", help="Overwrite existing annotations")
+    p_annotate_scene.add_argument("--skip-existing", dest="skip_existing", action="store_true", default=True, help="Skip shots that already have annotations (default)")
+    p_annotate_scene.add_argument("--no-skip-existing", dest="skip_existing", action="store_false", help="Do not skip shots that already have annotations")
+    p_annotate_scene.add_argument("--export-csv", default=None, help="Export annotations CSV path")
+    p_annotate_scene.add_argument("--export-md", default=None, help="Export annotations Markdown path")
+    p_annotate_scene.add_argument("--verbose", action="store_true", help="Print per-shot progress to stdout")
+    p_annotate_scene.add_argument("--notify", action="store_true", help="Send a Discord notification when the run finishes")
     
-    p_show_shot = show_sub.add_parser("shot", help="Show a specific shot")
-    p_show_shot.add_argument("filename", nargs="?", default=None, help="Video filename (or use --tmdb)")
-    p_show_shot.add_argument("index", type=int, help="Shot index (0-based)")
-    p_show_shot.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_show_shot.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-    p_show_shot.add_argument("--field", nargs="+", default=None, help="Extract specific fields from caption JSON (e.g. protagonists place actions)")
-    p_show_shot.add_argument("--json", action="store_true", help="Output as JSON (raw or filtered by --field)")
-    
-    p_show_scene = show_sub.add_parser("scene", help="Show all shots in a scene")
-    p_show_scene.add_argument("filename", nargs="?", default=None, help="Video filename (or use --tmdb)")
-    p_show_scene.add_argument("scene_number", type=int, help="Scene number")
-    p_show_scene.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_show_scene.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-    p_show_scene.add_argument("--field", nargs="+", default=None, help="Extract specific fields from caption JSON (e.g. protagonists place actions)")
-    p_show_scene.add_argument("--json", action="store_true", help="Output as JSON (raw or filtered by --field)")
 
-    p_sl_shot = shotlist_sub.add_parser("shot", help="Shot boundary detection")
-    sl_shot_sub = p_sl_shot.add_subparsers(dest="shot_subcommand", required=True)
-
-    p_sl_shot_detect = sl_shot_sub.add_parser("detect", help="Detect shot boundaries using TransNetV2")
-    p_sl_shot_detect.add_argument("query", nargs="?", default=None, help="Filename substring to match")
-    p_sl_shot_detect.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_sl_shot_detect.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-    p_sl_shot_detect.add_argument("--force", action="store_true", help="Overwrite existing shotlist if it exists")
-    p_sl_shot_detect.add_argument("--all", action="store_true", help="Process all metadata entries without a shotlist")
-    p_sl_shot_detect.add_argument("--notify", action="store_true", help="Send a Discord notification when the process finishes")
-    p_sl_shot_detect.add_argument("--notify-items", action="store_true", dest="notify_items", help="Send a Discord notification after each item in a batch")
-
-    p_sl_validate = shotlist_sub.add_parser("validate", help="Validate and correct shot/scene data (GUI)")
-    p_sl_validate.add_argument("query", nargs="?", default=None, help="Filename substring to match")
-    p_sl_validate.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_sl_validate.add_argument("--all", action="store_true", help="Validate all movies that have a shotlist")
-    p_sl_validate.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-
-    p_sl_migrate = shotlist_sub.add_parser(
-        "migrate",
-        help="Rewrite shotlist CSVs with legacy column names to the canonical naming scheme",
-    )
-    p_sl_migrate.add_argument(
-        "--media", choices=["movies", "gameplay"], default=None,
-        help="Limit to one media type (default: both movies and gameplay)",
-    )
-    p_sl_migrate.add_argument(
-        "--dry-run", dest="dry_run", action="store_true",
-        help="Report what would change without writing any files",
-    )
+    # model command
+    # (moved under 'crossing tool model' — see tool_sub below)
 
     # audit command
     p_audit = sub.add_parser("audit", help="Report missing metadata, shotlists, and subtitles")
     p_audit.set_defaults(func=cmd_audit)
     p_audit.add_argument("--media", choices=["movies", "gameplay"], default="movies")
 
-    # remove command
-    p_remove = sub.add_parser("remove", help="Remove a film and all its associated files")
-    p_remove.set_defaults(func=cmd_remove)
-    p_remove.add_argument("query", nargs="*", help="Filename or title words to match")
-    p_remove.add_argument("--tmdb", type=int, default=None, help="TMDb ID (unambiguous)")
-    p_remove.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-    p_remove.add_argument("--confirm", action="store_true", help="Actually delete (default is a dry run)")
+    # generate command group — compose, mosaic
+    p_generate = sub.add_parser("generate", help="Generate content from project data (compose, mosaic)")
+    p_generate.set_defaults(func=cmd_generate)
+    generate_sub = p_generate.add_subparsers(dest="generate_subcommand", required=True)
 
-    # subtitle command group
-    p_subtitle = sub.add_parser("subtitle", help="Download and list subtitles")
-    p_subtitle.set_defaults(func=cmd_subtitle)
-    subtitle_sub = p_subtitle.add_subparsers(dest="subtitle_subcommand", required=True)
-
-    p_sub_fetch = subtitle_sub.add_parser("fetch", help="Download missing subtitles from OpenSubtitles")
-    p_sub_fetch.add_argument("query", nargs="*", default=None, help="Filename or title words (e.g. pals saddle)")
-    p_sub_fetch.add_argument("--tmdb", type=int, default=None, help="TMDb ID (unambiguous)")
-    p_sub_fetch.add_argument("--all", action="store_true", help="Fetch for all entries without a subtitle")
-    p_sub_fetch.add_argument("--force", action="store_true", help="Re-download even if a subtitle already exists")
-    p_sub_fetch.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-
-    p_sub_list = subtitle_sub.add_parser("list", help="Show subtitle status for all entries")
-    p_sub_list.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-
-    # text command group
-    p_text = sub.add_parser("text", help="Extract and manage on-screen text (intertitles, credits, signs)")
-    p_text.set_defaults(func=cmd_text)
-    text_sub = p_text.add_subparsers(dest="text_subcommand", required=True)
-
-    p_text_detect = text_sub.add_parser("detect", help="Detect on-screen text events for one or all films")
-    p_text_detect.add_argument("filename", nargs="?", default=None, help="Video filename (or use --tmdb)")
-    p_text_detect.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_text_detect.add_argument("--all", action="store_true", help="Process all films with video files")
-    p_text_detect.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-    p_text_detect.add_argument("--force", action="store_true", help="Overwrite existing CSV(s)")
-    p_text_detect.add_argument("--sample-fps", type=float, default=1.0, dest="sample_fps",
-                               help="Frames per second to sample (default: 1.0)")
-    p_text_detect.add_argument("--lang", default="en", help="PaddleOCR language code (default: en)")
-    p_text_detect.add_argument("--min-confidence", type=float, default=0.75, dest="min_confidence",
-                               help="Minimum OCR confidence score to accept (default: 0.75)")
-    p_text_detect.add_argument("--verbose", action="store_true", help="Print per-frame OCR output")
-    p_text_detect.add_argument("--include-diegetic", action="store_true", default=False, dest="include_diegetic",
-                               help="Also capture diegetic text (signs, props, scene text). Default: cards only.")
-    p_text_detect.add_argument("--notify", action="store_true", help="Send a Discord notification when the process finishes")
-    p_text_detect.add_argument("--notify-items", action="store_true", dest="notify_items", help="Send a Discord notification after each item in a batch")
-
-    p_text_list = text_sub.add_parser("list", help="List all text CSVs")
-    p_text_list.add_argument("--media", choices=["movies", "gameplay"], default=None,
-                             help="Filter by media type")
-    p_text_list.add_argument("--json", action="store_true", help="Output as JSON")
-
-    p_text_validate = text_sub.add_parser("validate", help="Validate and edit text events (GUI)")
-    p_text_validate.add_argument("query", nargs="?", default=None, help="Filename substring to match")
-    p_text_validate.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_text_validate.add_argument("--all", action="store_true", help="Validate all films with text CSVs")
-    p_text_validate.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-
-    p_text_calibrate = text_sub.add_parser("calibrate", help="Sweep confidence thresholds using known ground-truth text")
-    p_text_calibrate.add_argument("filename", nargs="?", default=None, help="Video filename substring (or use --tmdb)")
-    p_text_calibrate.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_text_calibrate.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-    p_text_calibrate.add_argument("--lang", default="en", help="PaddleOCR language code (default: en)")
-    p_text_calibrate.add_argument("--expect", nargs="+", required=True, metavar="TEXT",
-                                  help="One or more known strings that appear in the first window of the film")
-    p_text_calibrate.add_argument("--window", type=float, default=180.0,
-                                  help="Seconds from start to analyse (default: 180)")
-
-    # compose command — generative poster / canvas
-    p_compose = sub.add_parser(
+    # generate compose
+    p_compose = generate_sub.add_parser(
         "compose",
         help="Generate an experimental poster by compositing text events on a video frame",
     )
@@ -2843,8 +2882,8 @@ def build_parser():
     p_compose.add_argument("--verbose", action="store_true", help="Print progress")
     p_compose.add_argument("--notify", action="store_true", help="Send a Discord notification when the run finishes")
 
-    # mosaic command group
-    p_mosaic = sub.add_parser(
+    # generate mosaic
+    p_mosaic = generate_sub.add_parser(
         "mosaic",
         help="Generate a mosaic grid image from thumbnails or text frames",
     )
@@ -2948,33 +2987,65 @@ def build_parser():
         help="Send a Discord notification when the run finishes",
     )
 
-    # tool command group (version, path, name, api_key)
-    p_tool = sub.add_parser("tool", help="Tool settings: version, path, name, API keys")
-    p_tool.set_defaults(func=cmd_tool)
-    tool_sub = p_tool.add_subparsers(dest="tool_subcommand", required=True)
+    # media command group
+    p_media = sub.add_parser(
+        "media",
+        help="Manage content: videos, subtitles, posters, and thumbnails",
+    )
+    p_media.set_defaults(func=cmd_media)
+    media_sub = p_media.add_subparsers(dest="media_subcommand", required=True)
 
-    p_tool_version = tool_sub.add_parser("version", help="Show tool and data structure versions")
-    p_tool_version.add_argument("--init", action="store_true", help="Initialize/update data version for current project")
+    # media import
+    p_import = media_sub.add_parser("import", help="Import media files into the project")
+    p_import.add_argument("sources", nargs="*", metavar="source", help="File(s) or folder to import")
+    p_import.add_argument("--pick", action="store_true", help="Open GUI file/folder picker")
+    p_import.add_argument("--media", choices=["movie", "gameplay"], default="movie")
+    p_import.add_argument("--platform", choices=["universal", "pi5"], default="universal")
+    p_import.add_argument("--skip-metadata", action="store_true", help="Skip automatic metadata fetch")
+    p_import.set_defaults(func=cmd_import, _parser=p_import)
 
-    p_tool_path = tool_sub.add_parser("path", help="Get or set the active project folder")
-    p_tool_path.add_argument("folder", nargs="?")
+    # metadata command group
+    p_meta = sub.add_parser("metadata", help="Manage media metadata")
+    p_meta.set_defaults(func=cmd_metadata)
+    meta_sub = p_meta.add_subparsers(dest="metadata_subcommand", required=True)
 
-    p_tool_name = tool_sub.add_parser("name", help="Get or set the project name")
-    p_tool_name.add_argument("project_name", nargs="?")
+    p_meta_get = meta_sub.add_parser("get", help="Get metadata (all, by index, or by filename)")
+    p_meta_get.add_argument("query", nargs="?", default=None,
+                            help="index (int) or title/filename substring")
+    p_meta_get.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
+    p_meta_get.add_argument("--media", choices=["movies", "gameplay"], default="movies")
 
-    p_tool_api_key = tool_sub.add_parser("api_key", help="Get or set API keys")
-    tool_api_key_sub = p_tool_api_key.add_subparsers(dest="api_key_subcommand", required=True)
+    p_meta_set = meta_sub.add_parser("set", help="Set/update metadata from a JSON string")
+    p_meta_set.add_argument("json_data", metavar="json")
 
-    p_tool_api_key_get = tool_api_key_sub.add_parser("get", help="Print a stored API key")
-    p_tool_api_key_get.add_argument("service", choices=_API_KEY_SERVICES)
+    p_meta_validate = meta_sub.add_parser("validate", help="Check that all metadata files exist on disk")
+    p_meta_validate.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    p_meta_validate.add_argument("--check-thumbnails", action="store_true", help="Also verify thumbnails exist")
+    p_meta_validate.add_argument("--check-subtitles", action="store_true", help="Also verify subtitles exist")
 
-    p_tool_api_key_set = tool_api_key_sub.add_parser("set", help="Save an API key")
-    p_tool_api_key_set.add_argument("service", choices=_API_KEY_SERVICES)
-    p_tool_api_key_set.add_argument("value", metavar="key")
+    p_meta_update = meta_sub.add_parser("update", help="Fetch and save metadata for entries missing key fields")
+    p_meta_update.add_argument("--file", default=None, help="Update a single file by filename")
+    p_meta_update.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    p_meta_update.add_argument("--force", action="store_true", help="Force re-fetch metadata for all entries (including duration)")
 
-    p_tool_notify = tool_sub.add_parser("notify", help="Send a test notification to verify a service is configured")
-    p_tool_notify.add_argument("notify_service", choices=["discord"], metavar="service",
-                               help="Notification service to test (discord)")
+    p_meta_fixname = meta_sub.add_parser("fixname", help="Normalize filenames and update metadata CSV")
+    p_meta_fixname.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+
+    p_meta_count = meta_sub.add_parser("count", help="Print the number of metadata entries")
+    p_meta_count.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+
+    p_meta_list = meta_sub.add_parser("list", help="List entries, optionally filtered by year or director")
+    p_meta_list.add_argument("--year", default=None, help="Filter by exact year (e.g. 1956)")
+    p_meta_list.add_argument("--director", default=None, help="Filter by director name (case-insensitive substring)")
+    p_meta_list.add_argument("--fields", default=None, help="Comma-separated fields to include (e.g. title,year,director)")
+    p_meta_list.add_argument("--sort", default=None, help="Field to sort by (e.g. year, director, title)")
+    p_meta_list.add_argument("--reverse", action="store_true", help="Reverse the sort order (descending)")
+    p_meta_list.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+
+    p_meta_prune = meta_sub.add_parser("prune", help="Remove metadata entries with no matching file on disk")
+    p_meta_prune.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    p_meta_prune.add_argument("--confirm", action="store_true",
+                              help="Actually remove the entries (default is a dry run)")
 
     # persona command group
     p_persona = sub.add_parser(
@@ -3080,6 +3151,189 @@ def build_parser():
     )
     p_persona_get.add_argument("--tmdb", type=int, default=None, help="TMDb ID of the film")
     p_persona_get.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+
+    # media remove
+    p_remove = media_sub.add_parser("remove", help="Remove a film and all its associated files")
+    p_remove.set_defaults(func=cmd_remove)
+    p_remove.add_argument("query", nargs="*", help="Filename or title words to match")
+    p_remove.add_argument("--tmdb", type=int, default=None, help="TMDb ID (unambiguous)")
+    p_remove.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    p_remove.add_argument("--confirm", action="store_true", help="Actually delete (default is a dry run)")
+
+    # search command
+    p_search = sub.add_parser("search", help="Search for passages")
+    p_search.add_argument("query")
+    p_search.set_defaults(func=cmd_search)
+
+    # shotlist command group
+    p_shotlist = sub.add_parser("shotlist", help="Manage shot and scene cuts and annotations")
+    p_shotlist.set_defaults(func=cmd_shotlist)
+    shotlist_sub = p_shotlist.add_subparsers(dest="shotlist_subcommand", required=True)
+
+    p_shotlist_list = shotlist_sub.add_parser("list", help="List all available shotlists")
+    p_shotlist_list.add_argument("--media", choices=["movies", "gameplay"], default=None, help="Filter by media type")
+    p_shotlist_list.add_argument("--json", action="store_true", help="Output as JSON")
+
+    p_shotlist_get = shotlist_sub.add_parser("get", help="Get shotlist data for a file")
+    p_shotlist_get.add_argument("filename", nargs="?", default=None, help="Video filename (or use --tmdb)")
+    p_shotlist_get.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
+    p_shotlist_get.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    p_shotlist_get.add_argument("--scene", type=int, default=None, help="Filter by scene number")
+    
+    p_shotlist_show = shotlist_sub.add_parser("show", help="Show shot or scene data")
+    show_sub = p_shotlist_show.add_subparsers(dest="show_type", required=True)
+    
+    p_show_shot = show_sub.add_parser("shot", help="Show a specific shot")
+    p_show_shot.add_argument("filename", nargs="?", default=None, help="Video filename (or use --tmdb)")
+    p_show_shot.add_argument("index", type=int, help="Shot index (0-based)")
+    p_show_shot.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
+    p_show_shot.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    p_show_shot.add_argument("--field", nargs="+", default=None, help="Extract specific fields from caption JSON (e.g. protagonists place actions)")
+    p_show_shot.add_argument("--json", action="store_true", help="Output as JSON (raw or filtered by --field)")
+    
+    p_show_scene = show_sub.add_parser("scene", help="Show all shots in a scene")
+    p_show_scene.add_argument("filename", nargs="?", default=None, help="Video filename (or use --tmdb)")
+    p_show_scene.add_argument("scene_number", type=int, help="Scene number")
+    p_show_scene.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
+    p_show_scene.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    p_show_scene.add_argument("--field", nargs="+", default=None, help="Extract specific fields from caption JSON (e.g. protagonists place actions)")
+    p_show_scene.add_argument("--json", action="store_true", help="Output as JSON (raw or filtered by --field)")
+
+    p_sl_shot = shotlist_sub.add_parser("shot", help="Shot boundary detection")
+    sl_shot_sub = p_sl_shot.add_subparsers(dest="shot_subcommand", required=True)
+
+    p_sl_shot_detect = sl_shot_sub.add_parser("detect", help="Detect shot boundaries using TransNetV2")
+    p_sl_shot_detect.add_argument("query", nargs="?", default=None, help="Filename substring to match")
+    p_sl_shot_detect.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
+    p_sl_shot_detect.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    p_sl_shot_detect.add_argument("--force", action="store_true", help="Overwrite existing shotlist if it exists")
+    p_sl_shot_detect.add_argument("--all", action="store_true", help="Process all metadata entries without a shotlist")
+    p_sl_shot_detect.add_argument("--notify", action="store_true", help="Send a Discord notification when the process finishes")
+    p_sl_shot_detect.add_argument("--notify-items", action="store_true", dest="notify_items", help="Send a Discord notification after each item in a batch")
+
+    p_sl_validate = shotlist_sub.add_parser("validate", help="Validate and correct shot/scene data (GUI)")
+    p_sl_validate.add_argument("query", nargs="?", default=None, help="Filename substring to match")
+    p_sl_validate.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
+    p_sl_validate.add_argument("--all", action="store_true", help="Validate all movies that have a shotlist")
+    p_sl_validate.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+
+    p_sl_migrate = shotlist_sub.add_parser(
+        "migrate",
+        help="Rewrite shotlist CSVs with legacy column names to the canonical naming scheme",
+    )
+    p_sl_migrate.add_argument(
+        "--media", choices=["movies", "gameplay"], default=None,
+        help="Limit to one media type (default: both movies and gameplay)",
+    )
+    p_sl_migrate.add_argument(
+        "--dry-run", dest="dry_run", action="store_true",
+        help="Report what would change without writing any files",
+    )
+    # media subtitle
+    p_subtitle = media_sub.add_parser("subtitle", help="Download and list subtitles")
+    p_subtitle.set_defaults(func=cmd_subtitle)
+    subtitle_sub = p_subtitle.add_subparsers(dest="subtitle_subcommand", required=True)
+
+    p_sub_fetch = subtitle_sub.add_parser("fetch", help="Download missing subtitles from OpenSubtitles")
+    p_sub_fetch.add_argument("query", nargs="*", default=None, help="Filename or title words (e.g. pals saddle)")
+    p_sub_fetch.add_argument("--tmdb", type=int, default=None, help="TMDb ID (unambiguous)")
+    p_sub_fetch.add_argument("--all", action="store_true", help="Fetch for all entries without a subtitle")
+    p_sub_fetch.add_argument("--force", action="store_true", help="Re-download even if a subtitle already exists")
+    p_sub_fetch.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+
+    p_sub_list = subtitle_sub.add_parser("list", help="Show subtitle status for all entries")
+    p_sub_list.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+
+    # text command group
+    p_text = sub.add_parser("text", help="Extract and manage on-screen text (intertitles, credits, signs)")
+    p_text.set_defaults(func=cmd_text)
+    text_sub = p_text.add_subparsers(dest="text_subcommand", required=True)
+
+    p_text_detect = text_sub.add_parser("detect", help="Detect on-screen text events for one or all films")
+    p_text_detect.add_argument("filename", nargs="?", default=None, help="Video filename (or use --tmdb)")
+    p_text_detect.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
+    p_text_detect.add_argument("--all", action="store_true", help="Process all films with video files")
+    p_text_detect.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    p_text_detect.add_argument("--force", action="store_true", help="Overwrite existing CSV(s)")
+    p_text_detect.add_argument("--sample-fps", type=float, default=1.0, dest="sample_fps",
+                               help="Frames per second to sample (default: 1.0)")
+    p_text_detect.add_argument("--lang", default="en", help="PaddleOCR language code (default: en)")
+    p_text_detect.add_argument("--min-confidence", type=float, default=0.75, dest="min_confidence",
+                               help="Minimum OCR confidence score to accept (default: 0.75)")
+    p_text_detect.add_argument("--verbose", action="store_true", help="Print per-frame OCR output")
+    p_text_detect.add_argument("--include-diegetic", action="store_true", default=False, dest="include_diegetic",
+                               help="Also capture diegetic text (signs, props, scene text). Default: cards only.")
+    p_text_detect.add_argument("--notify", action="store_true", help="Send a Discord notification when the process finishes")
+    p_text_detect.add_argument("--notify-items", action="store_true", dest="notify_items", help="Send a Discord notification after each item in a batch")
+
+    p_text_list = text_sub.add_parser("list", help="List all text CSVs")
+    p_text_list.add_argument("--media", choices=["movies", "gameplay"], default=None,
+                             help="Filter by media type")
+    p_text_list.add_argument("--json", action="store_true", help="Output as JSON")
+
+    p_text_validate = text_sub.add_parser("validate", help="Validate and edit text events (GUI)")
+    p_text_validate.add_argument("query", nargs="?", default=None, help="Filename substring to match")
+    p_text_validate.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
+    p_text_validate.add_argument("--all", action="store_true", help="Validate all films with text CSVs")
+    p_text_validate.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+
+    p_text_calibrate = text_sub.add_parser("calibrate", help="Sweep confidence thresholds using known ground-truth text")
+    p_text_calibrate.add_argument("filename", nargs="?", default=None, help="Video filename substring (or use --tmdb)")
+    p_text_calibrate.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
+    p_text_calibrate.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    p_text_calibrate.add_argument("--lang", default="en", help="PaddleOCR language code (default: en)")
+    p_text_calibrate.add_argument("--expect", nargs="+", required=True, metavar="TEXT",
+                                  help="One or more known strings that appear in the first window of the film")
+    p_text_calibrate.add_argument("--window", type=float, default=180.0,
+                                  help="Seconds from start to analyse (default: 180)")
+
+    # tool command group (version, path, name, api_key)
+    p_tool = sub.add_parser("tool", help="Tool settings: version, path, name, models, API keys")
+    p_tool.set_defaults(func=cmd_tool)
+    tool_sub = p_tool.add_subparsers(dest="tool_subcommand", required=True)
+
+    p_tool_version = tool_sub.add_parser("version", help="Show tool and data structure versions")
+    p_tool_version.add_argument("--init", action="store_true", help="Initialize/update data version for current project")
+
+    p_tool_path = tool_sub.add_parser("path", help="Get or set the active project folder")
+    p_tool_path.add_argument("folder", nargs="?")
+
+    p_tool_name = tool_sub.add_parser("name", help="Get or set the project name")
+    p_tool_name.add_argument("project_name", nargs="?")
+
+    p_tool_api_key = tool_sub.add_parser("api_key", help="Get or set API keys")
+    tool_api_key_sub = p_tool_api_key.add_subparsers(dest="api_key_subcommand", required=True)
+
+    p_tool_api_key_get = tool_api_key_sub.add_parser("get", help="Print a stored API key")
+    p_tool_api_key_get.add_argument("service", choices=_API_KEY_SERVICES)
+
+    p_tool_api_key_set = tool_api_key_sub.add_parser("set", help="Save an API key")
+    p_tool_api_key_set.add_argument("service", choices=_API_KEY_SERVICES)
+    p_tool_api_key_set.add_argument("value", metavar="key")
+
+    p_tool_notify = tool_sub.add_parser("notify", help="Send a test notification to verify a service is configured")
+    p_tool_notify.add_argument("notify_service", choices=["discord"], metavar="service",
+                               help="Notification service to test (discord)")
+
+    p_tool_model = tool_sub.add_parser("model", help="Get or set the model used for each subcommand")
+    tool_model_sub = p_tool_model.add_subparsers(dest="model_subcommand")
+
+    p_tool_model_set = tool_model_sub.add_parser("set", help="Set the default model for a role")
+    p_tool_model_set.add_argument(
+        "role",
+        choices=list(_MODEL_KEYS),
+        help="Which role to configure: annotate, segmentation, or yolo",
+    )
+    p_tool_model_set.add_argument("name", help="Model name or path")
+
+    p_tool_model_get = tool_model_sub.add_parser("get", help="Show the configured model(s)")
+    p_tool_model_get.add_argument(
+        "role",
+        nargs="?",
+        choices=list(_MODEL_KEYS),
+        default=None,
+        help="Role to show (omit to show all)",
+    )
 
     return parser
 

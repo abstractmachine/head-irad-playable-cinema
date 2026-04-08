@@ -24,22 +24,44 @@ crossing tool path [folder]
 
 # Get or set the project name
 crossing tool name [name]
+
+# Get or set the model used for a role
+crossing tool model get [annotate|segmentation|yolo]        # show current model (all or one role)
+crossing tool model set {annotate,segmentation,yolo} <name> # set model folder name
 ```
 
-### Import Media
+### Media
+
+Manage content: videos, subtitles, posters, and thumbnails.
 
 ```bash
 # Import video files (supports individual files, multiple files, or folders)
-crossing import <file(s)|folder>
-crossing import --pick              # open GUI file/folder picker
-  --media {movie,gameplay}          # destination (default: movie)
-  --platform {universal,pi5}        # encoding profile (default: universal)
-  --skip-metadata                   # skip automatic metadata fetch
+crossing media import <file(s)|folder>
+crossing media import --pick              # open GUI file/folder picker
+  --media {movie,gameplay}                # destination (default: movie)
+  --platform {universal,pi5}              # encoding profile (default: universal)
+  --skip-metadata                         # skip automatic metadata fetch
 
 # Examples:
-crossing import /path/to/video.mp4
-crossing import /path/to/movies/
-crossing import --pick               # GUI picker for single/multiple files or folder
+crossing media import /path/to/video.mp4
+crossing media import /path/to/movies/
+crossing media import --pick              # GUI picker for single/multiple files or folder
+
+# Remove a film and all its associated files
+crossing media remove [query]             # match by filename or title words
+crossing media remove --tmdb 391         # match by TMDb ID
+  --media {movies,gameplay}              # media type (default: movies)
+  --confirm                              # actually delete (default is a dry run)
+
+# Download and manage subtitles
+crossing media subtitle fetch [query]    # fetch missing subtitles from OpenSubtitles
+crossing media subtitle fetch --tmdb 391
+crossing media subtitle fetch --all      # fetch for all entries without a subtitle
+crossing media subtitle fetch --force    # re-download even if one already exists
+  --media {movies,gameplay}
+
+crossing media subtitle list             # show subtitle status for all entries
+  --media {movies,gameplay}
 ```
 
 ### Metadata Management
@@ -199,19 +221,27 @@ crossing text validate --all                # validate all films with text CSVs
   --media {movies,gameplay}
 ```
 
-### Mosaic
+### Generate
+
+Generate content from project data.
+
+#### Mosaic
 
 Generates a contact-sheet grid image from thumbnails or representative text frames.
 
 ```bash
 # Mosaic of all movie thumbnails
-crossing mosaic thumbnails --media movies --all
+crossing generate mosaic thumbnails --media movies --all
 
 # Mosaic of representative frames for all text events in one film
-crossing mosaic text --tmdb 40575 --all
+crossing generate mosaic text --tmdb 40575 --all
+
+# Mosaic of persona appearances for a film
+crossing generate mosaic personas "Young Guns"
+crossing generate mosaic personas --tmdb 10772 --max-per-persona 4
 ```
 
-**Flags (both subcommands):**
+**Flags (thumbnails / text):**
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -220,11 +250,65 @@ crossing mosaic text --tmdb 40575 --all
 | `--layout` | `landscape` | `landscape` (wider grid) or `portrait` (taller grid) |
 | `--caption` | `short` | `short` (title + year / text) or `none` |
 | `--output` | auto | Full save path override |
+| `--notify` | — | Discord notification when finished |
+
+**Additional flags (personas):**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--max-per-persona` | `6` | Maximum appearance frames per persona row |
+| `--no-open` | — | Do not open the result in the desktop viewer |
 
 Output is saved to `<project>/output/mosaics/`.
 
 - Thumbnails mosaic: `movies-thumbnails-mosaic.png`
 - Text mosaic: `tmdb-<id>-text-mosaic.png`
+
+#### Compose
+
+Generates an experimental poster or landscape canvas by compositing SAM-masked text
+patches from one or more films on top of a randomly sampled background frame.
+SAM 2 (via `ultralytics`) is required — see the install checklist.
+
+```bash
+# Single film — random everything
+crossing generate compose "Sunrise"
+
+# Multiple films via query (substring match returns >1 result)
+crossing generate compose "Chaplin"
+
+# All films that have text CSVs
+crossing generate compose --all
+
+# Landscape canvas, 12 elements, fixed seed for reproducibility
+crossing generate compose --all --orientation landscape --count 12 --seed 42
+
+# Darken the background, output as PDF, don't open automatically
+crossing generate compose --all --bg-treatment darken --format pdf --no-open
+
+# Pin the background to a specific frame number
+crossing generate compose "10 000 Dollari" --bg-frame 9420
+
+# Override canvas size (pixels)
+crossing generate compose --all --width 2480 --height 3508
+```
+
+**Flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--orientation` | `portrait` | `portrait` (1240×1754) or `landscape` (1920×1080) |
+| `--width` / `--height` | — | Override canvas dimensions in pixels |
+| `--count` | random 6–18 | Number of text patches to composite |
+| `--bg-frame` | random | Specific source frame number for the background |
+| `--bg-treatment` | random | `desaturate`, `tint`, `darken`, or `original` |
+| `--seed` | random | Integer seed for fully reproducible output |
+| `--format` | `jpg` | `jpg` or `pdf` |
+| `--output` | auto | Full save path override |
+| `--no-open` | — | Skip opening the result in the desktop viewer |
+| `--verbose` | — | Print per-patch progress |
+
+Output is saved to `<project>/media/compositions/`.
 
 ### Audit
 
@@ -246,6 +330,19 @@ crossing tool api_key get {discord,opensubtitles,tmdb}
 
 # Set API key
 crossing tool api_key set {discord,opensubtitles,tmdb} <key>
+```
+
+### Models
+For now there is no model downloader. This might be implemented in the future. So you will have to manualy download into your project folder:
+
+```
+hf download HF_ORG_ID/HF_MODEL_ID --local-dir /<project-root>/models/MODEL_FOLDER_NAME
+```
+
+For example:
+
+```
+hf download Qwen/Qwen3-VL-8B-Thinking --local-dir /<project-root>/models/quen3-vl-8b-thinking
 ```
 
 ### Discord Notifications
@@ -282,53 +379,7 @@ crossing text detect --all --notify --notify-items
 crossing shotlist shot detect --all --notify --notify-items
 ```
 
-### Compose
-
-Generates an experimental poster or landscape canvas by compositing SAM-masked text
-patches from one or more films on top of a randomly sampled background frame.
-SAM 2 (via `ultralytics`) is required — see the install checklist.
-
-```bash
-# Single film — random everything
-crossing compose "Sunrise"
-
-# Multiple films via query (substring match returns >1 result)
-crossing compose "Chaplin"
-
-# All films that have text CSVs
-crossing compose --all
-
-# Landscape canvas, 12 elements, fixed seed for reproducibility
-crossing compose --all --orientation landscape --count 12 --seed 42
-
-# Darken the background, output as PDF, don't open automatically
-crossing compose --all --bg-treatment darken --format pdf --no-open
-
-# Pin the background to a specific frame number
-crossing compose "10 000 Dollari" --bg-frame 9420
-
-# Override canvas size (pixels)
-crossing compose --all --width 2480 --height 3508
-```
-
-**Flags:**
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--orientation` | `portrait` | `portrait` (1240×1754) or `landscape` (1920×1080) |
-| `--width` / `--height` | — | Override canvas dimensions in pixels |
-| `--count` | random 6–18 | Number of text patches to composite |
-| `--bg-frame` | random | Specific source frame number for the background |
-| `--bg-treatment` | random | `desaturate`, `tint`, `darken`, or `original` |
-| `--seed` | random | Integer seed for fully reproducible output |
-| `--format` | `jpg` | `jpg` or `pdf` |
-| `--output` | auto | Full save path override |
-| `--no-open` | — | Skip opening the result in the desktop viewer |
-| `--verbose` | — | Print per-patch progress |
-
-Output is saved to `<project>/media/compositions/`.
-
-## Project Folder Structure
+### Project Folder Structure
 
 ```
 <project>/
@@ -356,11 +407,11 @@ Output is saved to `<project>/media/compositions/`.
 │   ├── subtitles/
 │   │   ├── movies/                 # English subtitles from OpenSubtitles
 │   │   └── gameplay/               # gameplay subtitles
-│   └── compositions/               # output from `crossing compose`
+│   └── compositions/               # output from `crossing generate compose`
 ├── output/
-│   └── mosaics/                    # output from `crossing mosaic`
+│   └── mosaics/                    # output from `crossing generate mosaic`
 ├── models/
-│   └── sam2.1_b.pt                 # SAM 2 model (required for `crossing compose`)
+│   └── sam2.1_b.pt                 # SAM 2 model (required for `crossing generate compose`)
 └── preferences/
     ├── keys/                       # API keys
     │   ├── tmdb_api_key.txt
@@ -428,7 +479,7 @@ Follow these steps when setting up from scratch in a new environment.
 
 > Requires CUDA 13.0 and a CUDA-capable GPU. The PP-OCRv5 models are downloaded automatically on first run to `~/.paddlex/official_models/`. CPU-only installs are not supported — use `paddlepaddle` (non-GPU) and remove `device="gpu"` from the engine if needed.
 
-### 7. Compose *(required for `crossing compose`)*
+### 7. Compose *(required for `crossing generate compose`)*
 - [ ] `pip install ultralytics`
 
 > Requires a CUDA-capable GPU for practical performance. Place `sam2.1_b.pt` in `<project>/models/` before running.

@@ -19,6 +19,14 @@ dependencies = [
     "tensorboard",
 ]
 
+[project.optional-dependencies]
+annotate = [
+  "transformers>=5.0.0",
+  "huggingface-hub>=0.15.0",
+  "safetensors",
+  "accelerate",
+]
+
 [project.scripts]
 crossing = "cli:main"
 
