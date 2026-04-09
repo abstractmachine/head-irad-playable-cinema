@@ -970,8 +970,8 @@ def _shotlist_annotate(args):
                     limit=getattr(args, "limit", None),
                     verbose=getattr(args, "verbose", False),
                     write_log=getattr(args, "log", False),
+                    reload_every_n_shots=getattr(args, "reload_every_n_shots", 25),
                 )
-                print(f"Processed {len(results)} file(s)")
                 for r in results:
                     failed_count = len(r.get("failed", [])) if r.get("failed") else 0
                     print(f"  {r.get('filename')}: updated={r.get('updated')} skipped={r.get('skipped')} failed={failed_count}")
@@ -1006,6 +1006,7 @@ def _shotlist_annotate(args):
                 limit=getattr(args, "limit", None),
                 verbose=getattr(args, "verbose", False),
                 write_log=getattr(args, "log", False),
+                reload_every_n_shots=getattr(args, "reload_every_n_shots", 25),
             )
             failed_count = len(summary.get("failed", [])) if summary.get("failed") else 0
             print(f"✓ Annotated: {filename} — updated={summary['updated']} skipped={summary['skipped']} failed={failed_count}")
@@ -1053,6 +1054,7 @@ def _shotlist_annotate(args):
                 export_md=getattr(args, "export_md", None),
                 verbose=getattr(args, "verbose", False),
                 write_log=getattr(args, "log", False),
+                reload_every_n_shots=getattr(args, "reload_every_n_shots", 25),
             )
             failed_count = len(summary.get("failed", [])) if summary.get("failed") else 0
             print(f"✓ Annotated scene {args.scene_number} in {filename} — updated={summary['updated']} skipped={summary['skipped']} failed={failed_count}")
@@ -2835,6 +2837,10 @@ def build_parser():
     p_annotate_shot.add_argument("--verbose", action="store_true", help="Print per-shot progress to stdout")
     p_annotate_shot.add_argument("--log", action="store_true", help="Write a debug log file alongside the annotation JSON")
     p_annotate_shot.add_argument("--notify", action="store_true", help="Send a Discord notification when the run finishes")
+    p_annotate_shot.add_argument(
+        "--reload-every", type=int, default=25, dest="reload_every_n_shots", metavar="N",
+        help="Reload the model pipeline every N processed shots to prevent output drift (default: 25; set 0 to disable)",
+    )
 
     p_annotate_scene = annotate_sub.add_parser("scene", help="Annotate scene(s)")
     p_annotate_scene.add_argument("filename", nargs="?", default=None, help="Video filename (or use --tmdb)")
@@ -2866,6 +2872,10 @@ def build_parser():
     p_annotate_scene.add_argument("--verbose", action="store_true", help="Print per-shot progress to stdout")
     p_annotate_scene.add_argument("--log", action="store_true", help="Write a debug log file alongside the annotation JSON")
     p_annotate_scene.add_argument("--notify", action="store_true", help="Send a Discord notification when the run finishes")
+    p_annotate_scene.add_argument(
+        "--reload-every", type=int, default=25, dest="reload_every_n_shots", metavar="N",
+        help="Reload the model pipeline every N processed shots to prevent output drift (default: 25; set 0 to disable)",
+    )
 
     p_annotate_visualizer = annotate_sub.add_parser("visualizer", help="Review shot annotations in GUI")
     p_annotate_visualizer.set_defaults(func=_annotate_visualizer)

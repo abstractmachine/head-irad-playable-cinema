@@ -589,6 +589,51 @@ def _load_text_generation_pipeline(project_path: str, model_name: str):
     return gen
 
 
+def _reload_pipeline(pipeline, project_path: str, model_name: str, log_path, verbose: bool, reason: str, shots_since_reload: int):
+    """Release *pipeline*, clear GPU memory, and reload from scratch.
+
+    Keeps reload logic separate from annotation logic.  Returns the new
+    pipeline instance on success, or raises if loading fails.
+
+    Parameters
+    ----------
+    reason:
+        Either ``"interval"`` (periodic N-shot cycle) or
+        ``"consecutive_failures"`` (too many shots failed in a row).
+    shots_since_reload:
+        How many shots were processed since the last reload (or run start).
+        Logged for diagnostic purposes.
+    """
+    import gc
+
+    _append_log(
+        log_path,
+        f"RELOAD start: reason='{reason}'  shots_since_reload={shots_since_reload}",
+    )
+    if verbose:
+        print(f"  [pipeline reload: {reason} after {shots_since_reload} shots]")
+
+    # Release the old pipeline before allocating the new one so that GPU memory
+    # is freed first.  pipeline=None + gc.collect() is intentional.
+    del pipeline  # noqa: F841
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+    new_pipeline = _load_text_generation_pipeline(project_path, model_name)
+    _append_log(
+        log_path,
+        f"RELOAD complete: reason='{reason}'  shots_since_reload={shots_since_reload}",
+    )
+    if verbose:
+        print(f"  [pipeline reloaded successfully]")
+    return new_pipeline
+
+
 def _call_model(pipeline, messages: List[Dict[str, Any]], overrides: Optional[Dict[str, Any]] = None, images: Optional[List] = None) -> Tuple[str, str]:
     """Call the HF pipeline and return (full_text, generated_only).
 
@@ -922,6 +967,7 @@ def annotate_file_shots(
     on_shot_done=None,
     stop_event=None,
     write_log: bool = False,
+    reload_every_n_shots: int = 25,
 ) -> Dict[str, Any]:
     """Annotate all shots in a single file and write canonical outputs.
 
@@ -1015,6 +1061,7 @@ def annotate_file_shots(
     skipped = 0
     failed: List[Tuple[int, str]] = []
     _consecutive_failures = 0  # triggers pipeline reload when too many shots fail in a row
+    _shots_since_reload = 0    # counts shots processed since last reload (or run start)
 
     # video_path already defined above (before model load for early-exit check)
 
@@ -1267,27 +1314,38 @@ def annotate_file_shots(
             if _consecutive_failures >= 5:
                 # Consecutive failures indicate device-drift or memory corruption
                 # (classic symptom: input_ids on cpu while model is on cuda).
-                # Release the old pipeline, clear CUDA cache, then reload.
+                # Delegate to _reload_pipeline which also resets _shots_since_reload.
                 try:
-                    import gc
-                    pipeline = None  # release reference so GC can free GPU memory
-                    gc.collect()
-                    try:
-                        import torch
-                        if torch.cuda.is_available():
-                            torch.cuda.empty_cache()
-                    except Exception:
-                        pass
-                    pipeline = _load_text_generation_pipeline(project_path, model_name)
+                    pipeline = _reload_pipeline(
+                        pipeline, project_path, model_name, log_path, verbose,
+                        "consecutive_failures", _shots_since_reload,
+                    )
+                    _shots_since_reload = 0
                     _consecutive_failures = 0
-                    if verbose:
-                        print(f"  [pipeline reloaded after consecutive failures]")
                 except Exception as _reload_exc:
+                    _append_log(log_path, f"RELOAD failed (consecutive_failures): {_reload_exc}")
                     if verbose:
                         print(f"  [pipeline reload failed: {_reload_exc}]", file=sys.stderr)
             if verbose:
                 reason = failed[-1][1] if failed and failed[-1][0] == i else "failed"
                 print(f"    ✗ Shot {i}: {reason}")
+
+        # Count this shot as processed (attempted annotation, not a skip).
+        # Trigger a periodic pipeline reload after every reload_every_n_shots attempts
+        # to prevent the model drifting into generic/repetitive outputs.
+        _shots_since_reload += 1
+        if reload_every_n_shots > 0 and _shots_since_reload >= reload_every_n_shots:
+            try:
+                pipeline = _reload_pipeline(
+                    pipeline, project_path, model_name, log_path, verbose,
+                    "interval", _shots_since_reload,
+                )
+                _shots_since_reload = 0
+                _consecutive_failures = 0
+            except Exception as _reload_exc:
+                _append_log(log_path, f"RELOAD failed (interval): {_reload_exc}")
+                if verbose:
+                    print(f"  [periodic pipeline reload failed: {_reload_exc}]", file=sys.stderr)
 
         # small pause to be polite to model infra
         time.sleep(0.1)
@@ -1398,6 +1456,7 @@ def annotate_all_files(
     limit: Optional[int] = None,
     verbose: bool = False,
     write_log: bool = False,
+    reload_every_n_shots: int = 25,
 ) -> List[Dict[str, Any]]:
     from services.metadata import get_metadata
 
@@ -1424,6 +1483,7 @@ def annotate_all_files(
             limit=limit,
             verbose=verbose,
             write_log=write_log,
+            reload_every_n_shots=reload_every_n_shots,
         )
         results.append(summary)
     return results
