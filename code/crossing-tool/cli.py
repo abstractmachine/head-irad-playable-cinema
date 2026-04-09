@@ -2269,6 +2269,8 @@ def cmd_mosaic(args):
         _persona_mosaic(args)
     elif sub == "search":
         _mosaic_search(args)
+    elif sub == "visualizer":
+        _mosaic_visualizer(args)
 
 
 def _mosaic_thumbnails(args):
@@ -2420,6 +2422,12 @@ def _mosaic_search(args):
         import traceback
         traceback.print_exc()
         sys.exit(1)
+
+
+def _mosaic_visualizer(args):
+    """mosaic visualizer — launch the interactive live mosaic explorer GUI."""
+    from services.mosaic_visualizer import run_visualizer
+    run_visualizer(prefs.get("path"))
 
 
 # ---------------------------------------------------------------------------
@@ -2935,6 +2943,13 @@ def build_parser():
         "--notify", action="store_true",
         help="Send a Discord notification when the run finishes",
     )
+
+    # generate mosaic visualizer
+    p_mosaic_visualizer = mosaic_sub.add_parser(
+        "visualizer",
+        help="Launch interactive live mosaic explorer GUI (no arguments needed)",
+    )
+    p_mosaic_visualizer.set_defaults(func=cmd_mosaic)
 
     # media command group
     p_media = sub.add_parser(
