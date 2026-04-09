@@ -821,7 +821,16 @@ def _meta_fixname(args):
 
 def cmd_shotlist(args):
     _require_path()
+    if getattr(args, "visualizer", False):
+        args.all = True
+        args.query = None
+        args.tmdb = None
+        _shot_visualizer(args)
+        return
     sub = args.shotlist_subcommand
+    if sub is None:
+        print("✗ shotlist: specify a subcommand or use --visualizer.", file=sys.stderr)
+        sys.exit(1)
     if sub == "list":
         _shotlist_list(args)
     elif sub == "get":
@@ -832,8 +841,6 @@ def cmd_shotlist(args):
         sub2 = args.shot_subcommand
         if sub2 == "detect":
             _shot_detect(args)
-    elif sub == "visualizer":
-        _shot_visualizer(args)
     elif sub == "migrate":
         _shotlist_migrate(args)
 
@@ -928,6 +935,16 @@ def _shotlist_get(args):
 
 
 def _shotlist_annotate(args):
+    if getattr(args, "visualizer", False):
+        _require_path()
+        args.all = True
+        args.query = None
+        args.tmdb = None
+        _annotate_visualizer(args)
+        return
+    if getattr(args, "annotate_type", None) is None:
+        print("✗ annotate: specify a subcommand or use --visualizer.", file=sys.stderr)
+        sys.exit(1)
     from services.shotlist import annotate_shot, annotate_scene, resolve_filename
     project_path = prefs.get("path")
 
@@ -1827,13 +1844,20 @@ def _text_calibrate(args):
 
 def cmd_text(args):
     _require_path()
+    if getattr(args, "visualizer", False):
+        args.all = True
+        args.query = None
+        args.tmdb = None
+        _text_visualizer(args)
+        return
     sub = args.text_subcommand
+    if sub is None:
+        print("✗ text: specify a subcommand or use --visualizer.", file=sys.stderr)
+        sys.exit(1)
     if sub == "detect":
         _text_detect(args)
     elif sub == "list":
         _text_list(args)
-    elif sub == "visualizer":
-        _text_visualizer(args)
     elif sub == "calibrate":
         _text_calibrate(args)
 
@@ -2193,66 +2217,76 @@ def cmd_generate(args):
 
 
 def cmd_compose(args):
-    """Dispatch compose subcommands."""
+    """compose [query] — build a single tableau from one random search result."""
     _require_path()
-    sub = args.compose_subcommand
-    if sub == "search":
-        _compose_search(args)
-
-
-def _compose_search(args):
-    """compose search <query> [scope...] — compose a poster from search results."""
-    from services.search import search_shots
-    from generators.compose import compose_from_search_results
-
     project_path = prefs.get("path")
-    media_type   = getattr(args, "media", "movies")
-    scopes       = (args.scope or []) + (getattr(args, "movie", None) or [])
-    scopes       = scopes or None
-    use_all      = getattr(args, "all", False)
-    field        = getattr(args, "field", None)
-    limit        = getattr(args, "limit", None)
+    query        = args.query or ""
     orientation  = getattr(args, "orientation", "portrait")
-    seed         = getattr(args, "seed", None)
     output_path  = getattr(args, "output", None)
-    fmt          = getattr(args, "format", "jpg")
     open_result  = not getattr(args, "no_open", False)
 
+    if getattr(args, "visualizer", False):
+        from visualizers.compose_visualizer import run_visualizer
+        run_visualizer(project_path, initial_query=query)
+        return
+
+    if not query:
+        print("✗ compose: a search query is required outside of --visualizer mode.", file=sys.stderr)
+        sys.exit(1)
+
+    from services.search import search_shots
+    from generators.compose import choose_background, build_tableau, save_tableau
+
     search_result = search_shots(
-        query=args.query,
-        scopes=scopes,
-        field=field,
-        limit=limit,
-        limit_per_item=None,
-        use_all=use_all,
-        project_path=project_path,
-        media_type=media_type,
+        query          = query,
+        scopes         = None,
+        field          = None,
+        limit          = None,
+        limit_per_item = None,
+        use_all        = True,
+        project_path   = project_path,
     )
     results = search_result["results"]
 
     if not results:
-        print(f"✗ No results for query '{args.query}'.", file=sys.stderr)
+        print(f"✗ No results for query {query!r}.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Composing from {len(results)} result(s) (query: {args.query!r})…")
+    print(f"  {len(results)} result(s) for {query!r} — picking background…")
 
     try:
-        out_path = compose_from_search_results(
-            results,
-            project_path,
-            orientation=orientation,
-            seed=seed,
-            output_path=output_path,
-            fmt=fmt,
-            open_result=open_result,
-        )
-        print(f"✓ Saved: {out_path}")
+        result  = choose_background(results)
+        tableau = build_tableau(result, project_path, orientation=orientation)
+
+        if output_path:
+            from pathlib import Path as _Path
+            out = _Path(output_path)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            tableau.convert("RGB").save(str(out), "JPEG", quality=93)
+        else:
+            from pathlib import Path as _Path
+            out = save_tableau(
+                tableau, query,
+                _Path(project_path) / "output" / "compositions",
+            )
+
+        movie = result.get("movie_title", result.get("movie_id", ""))
+        print(f"✓ Saved: {out}  [{movie}]")
+
+        if open_result:
+            try:
+                import subprocess as _sp
+                _sp.Popen(["xdg-open", str(out)])
+            except Exception:
+                pass
+
         if getattr(args, "notify", False):
             from services.notify import discord_notify
             discord_notify(
-                f"✓ Compose complete: '{args.query}' → {out_path.name}",
+                f"✓ Compose: {query!r} → {out.name}  [{movie}]",
                 project_path,
             )
+
     except (ValueError, FileNotFoundError) as exc:
         print(f"✗ compose failed: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -2270,7 +2304,13 @@ def _compose_search(args):
 def cmd_mosaic(args):
     """Generate a mosaic contact sheet from thumbnails, personas, or search results."""
     _require_path()
+    if getattr(args, "visualizer", False):
+        _mosaic_visualizer(args)
+        return
     sub = args.mosaic_subcommand
+    if sub is None:
+        print("✗ mosaic: specify a subcommand or use --visualizer.", file=sys.stderr)
+        sys.exit(1)
     if sub == "thumbnails":
         _mosaic_thumbnails(args)
     elif sub == "personas":
@@ -2279,8 +2319,6 @@ def cmd_mosaic(args):
         _mosaic_search(args)
     elif sub == "export":
         _mosaic_export(args)
-    elif sub == "visualizer":
-        _mosaic_visualizer(args)
 
 
 def _mosaic_thumbnails(args):
@@ -2804,7 +2842,9 @@ def build_parser():
     # annotate command: annotate shots or scenes (LLM)
     p_annotate = sub.add_parser("annotate", help="Annotate shots or scenes (LLM)")
     p_annotate.set_defaults(func=_shotlist_annotate)
-    annotate_sub = p_annotate.add_subparsers(dest="annotate_type", required=True)
+    p_annotate.add_argument("--visualizer", action="store_true", help="Open the annotation visualizer GUI (all films)")
+    p_annotate.add_argument("--media", choices=["movies", "gameplay"], default="movies", help="Media type for --visualizer (default: movies)")
+    annotate_sub = p_annotate.add_subparsers(dest="annotate_type", required=False)
 
     p_annotate_shot = annotate_sub.add_parser("shot", help="Annotate shot(s)")
     p_annotate_shot.add_argument("filename", nargs="?", default=None, help="Video filename (or use --tmdb)")
@@ -2877,13 +2917,6 @@ def build_parser():
         help="Reload the model pipeline every N processed shots to prevent output drift (default: 25; set 0 to disable)",
     )
 
-    p_annotate_visualizer = annotate_sub.add_parser("visualizer", help="Review shot annotations in GUI")
-    p_annotate_visualizer.set_defaults(func=_annotate_visualizer)
-    p_annotate_visualizer.add_argument("query", nargs="?", default=None, help="Filename substring to match")
-    p_annotate_visualizer.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_annotate_visualizer.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-    p_annotate_visualizer.add_argument("--all", action="store_true", help="Open visualizer for all films with annotation JSON files")
-
     p_annotate_remove = annotate_sub.add_parser("remove", help="Remove shot annotations for a film")
     p_annotate_remove.set_defaults(func=_annotate_remove)
     p_annotate_remove.add_argument("filename", nargs="?", default=None, help="Video filename (or use --tmdb / --all)")
@@ -2907,30 +2940,18 @@ def build_parser():
     # generate compose
     p_compose = generate_sub.add_parser(
         "compose",
-        help="Compose a poster from shot annotation search results",
+        help="Build a single tableau image from a search criteria string",
     )
     p_compose.set_defaults(func=cmd_compose)
-    compose_sub = p_compose.add_subparsers(dest="compose_subcommand", required=True)
-
-    p_compose_search = compose_sub.add_parser(
-        "search",
-        help="Compose a poster from shots matching a query",
-    )
-    p_compose_search.add_argument("query", help="Search query (e.g. \"gun\" or \"sunset\")")
-    p_compose_search.add_argument("scope", nargs="*", help="Fuzzy movie-title filter(s); omit to search all movies")
-    p_compose_search.add_argument("--field", default=None, help="Restrict search to one annotation field")
-    p_compose_search.add_argument("--limit", type=int, default=None, help="Max search results to draw from")
-    p_compose_search.add_argument("--all", action="store_true", help="Search all movies (overrides positional scopes)")
-    p_compose_search.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-    p_compose_search.add_argument(
+    p_compose.add_argument("query", nargs="?", default="", help="Background search criteria (e.g. \"gun\" or \"sunset\"); optional when --visualizer is used")
+    p_compose.add_argument(
         "--orientation", choices=["portrait", "landscape"], default="portrait",
-        help="Canvas orientation: portrait 1240×1754 or landscape 1920×1080 (default: portrait)",
+        help="Canvas preset: portrait 1240×1754 or landscape 1920×1080 (default: portrait)",
     )
-    p_compose_search.add_argument("--seed", type=int, default=None, help="RNG seed for reproducibility")
-    p_compose_search.add_argument("--output", default=None, help="Output file path (default: auto-generated)")
-    p_compose_search.add_argument("--format", choices=["jpg", "pdf"], default="jpg", dest="format")
-    p_compose_search.add_argument("--no-open", action="store_true", dest="no_open", help="Do not open result in desktop viewer")
-    p_compose_search.add_argument("--notify", action="store_true", help="Send a Discord notification when done")
+    p_compose.add_argument("--output", default=None, metavar="PATH", help="Override output file path")
+    p_compose.add_argument("--no-open", action="store_true", dest="no_open", help="Do not open result in desktop viewer")
+    p_compose.add_argument("--notify", action="store_true", help="Send a Discord notification when done")
+    p_compose.add_argument("--visualizer", action="store_true", help="Open the interactive compose visualizer instead of saving")
 
     # generate mosaic
     p_mosaic = generate_sub.add_parser(
@@ -2938,7 +2959,8 @@ def build_parser():
         help="Generate a mosaic grid image from thumbnails or text frames",
     )
     p_mosaic.set_defaults(func=cmd_mosaic)
-    mosaic_sub = p_mosaic.add_subparsers(dest="mosaic_subcommand", required=True)
+    p_mosaic.add_argument("--visualizer", action="store_true", help="Open the interactive mosaic explorer GUI")
+    mosaic_sub = p_mosaic.add_subparsers(dest="mosaic_subcommand", required=False)
 
     p_mosaic_thumbnails = mosaic_sub.add_parser(
         "thumbnails",
@@ -3041,13 +3063,6 @@ def build_parser():
     )
     p_mosaic_export.add_argument("--no-open", action="store_true", dest="no_open", help="Do not open result folder")
     p_mosaic_export.add_argument("--notify", action="store_true", help="Send a Discord notification when done")
-
-    # generate mosaic visualizer
-    p_mosaic_visualizer = mosaic_sub.add_parser(
-        "visualizer",
-        help="Launch interactive live mosaic explorer GUI (no arguments needed)",
-    )
-    p_mosaic_visualizer.set_defaults(func=cmd_mosaic)
 
     # media command group
     p_media = sub.add_parser(
@@ -3239,7 +3254,9 @@ def build_parser():
     # shotlist command group
     p_shotlist = sub.add_parser("shotlist", help="Manage shot and scene cuts and annotations")
     p_shotlist.set_defaults(func=cmd_shotlist)
-    shotlist_sub = p_shotlist.add_subparsers(dest="shotlist_subcommand", required=True)
+    p_shotlist.add_argument("--visualizer", action="store_true", help="Open the shot visualizer GUI (all films)")
+    p_shotlist.add_argument("--media", choices=["movies", "gameplay"], default="movies", help="Media type for --visualizer (default: movies)")
+    shotlist_sub = p_shotlist.add_subparsers(dest="shotlist_subcommand", required=False)
 
     p_shotlist_list = shotlist_sub.add_parser("list", help="List all available shotlists")
     p_shotlist_list.add_argument("--media", choices=["movies", "gameplay"], default=None, help="Filter by media type")
@@ -3282,12 +3299,6 @@ def build_parser():
     p_sl_shot_detect.add_argument("--notify", action="store_true", help="Send a Discord notification when the process finishes")
     p_sl_shot_detect.add_argument("--notify-items", action="store_true", dest="notify_items", help="Send a Discord notification after each item in a batch")
 
-    p_sl_visualizer = shotlist_sub.add_parser("visualizer", help="Review and correct shot/scene data (GUI)")
-    p_sl_visualizer.add_argument("query", nargs="?", default=None, help="Filename substring to match")
-    p_sl_visualizer.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_sl_visualizer.add_argument("--all", action="store_true", help="Open visualizer for all movies that have a shotlist")
-    p_sl_visualizer.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-
     p_sl_migrate = shotlist_sub.add_parser(
         "migrate",
         help="Rewrite shotlist CSVs with legacy column names to the canonical naming scheme",
@@ -3318,7 +3329,9 @@ def build_parser():
     # text command group
     p_text = sub.add_parser("text", help="Extract and manage on-screen text (intertitles, credits, signs)")
     p_text.set_defaults(func=cmd_text)
-    text_sub = p_text.add_subparsers(dest="text_subcommand", required=True)
+    p_text.add_argument("--visualizer", action="store_true", help="Open the text visualizer GUI (all films)")
+    p_text.add_argument("--media", choices=["movies", "gameplay"], default="movies", help="Media type for --visualizer (default: movies)")
+    text_sub = p_text.add_subparsers(dest="text_subcommand", required=False)
 
     p_text_detect = text_sub.add_parser("detect", help="Detect on-screen text events for one or all films")
     p_text_detect.add_argument("filename", nargs="?", default=None, help="Video filename (or use --tmdb)")
@@ -3341,12 +3354,6 @@ def build_parser():
     p_text_list.add_argument("--media", choices=["movies", "gameplay"], default=None,
                              help="Filter by media type")
     p_text_list.add_argument("--json", action="store_true", help="Output as JSON")
-
-    p_text_visualizer = text_sub.add_parser("visualizer", help="Review and edit text events (GUI)")
-    p_text_visualizer.add_argument("query", nargs="?", default=None, help="Filename substring to match")
-    p_text_visualizer.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_text_visualizer.add_argument("--all", action="store_true", help="Open visualizer for all films with text CSVs")
-    p_text_visualizer.add_argument("--media", choices=["movies", "gameplay"], default="movies")
 
     p_text_calibrate = text_sub.add_parser("calibrate", help="Sweep confidence thresholds using known ground-truth text")
     p_text_calibrate.add_argument("filename", nargs="?", default=None, help="Video filename substring (or use --tmdb)")
