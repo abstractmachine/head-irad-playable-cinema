@@ -2210,14 +2210,14 @@ def _text_visualizer(args):
 
 def cmd_generate(args):
     sub = args.generate_subcommand
-    if sub == "compose":
-        cmd_compose(args)
+    if sub == "composition":
+        cmd_composition(args)
     elif sub == "mosaic":
         cmd_mosaic(args)
 
 
-def cmd_compose(args):
-    """compose [query] — build a single tableau from one random search result."""
+def cmd_composition(args):
+    """composition [query] — build a single tableau from one random search result."""
     _require_path()
     project_path = prefs.get("path")
     query        = args.query or ""
@@ -2226,16 +2226,16 @@ def cmd_compose(args):
     open_result  = not getattr(args, "no_open", False)
 
     if getattr(args, "visualizer", False):
-        from visualizers.compose_visualizer import run_visualizer
+        from visualizers.composition_visualizer import run_visualizer
         run_visualizer(project_path, initial_query=query)
         return
 
     if not query:
-        print("✗ compose: a search query is required outside of --visualizer mode.", file=sys.stderr)
+        print("✗ composition: a search query is required outside of --visualizer mode.", file=sys.stderr)
         sys.exit(1)
 
     from services.search import search_shots
-    from generators.compose import choose_background, build_tableau, save_tableau
+    from generators.composition import choose_background, build_tableau, save_tableau
 
     search_result = search_shots(
         query          = query,
@@ -2283,15 +2283,15 @@ def cmd_compose(args):
         if getattr(args, "notify", False):
             from services.notify import discord_notify
             discord_notify(
-                f"✓ Compose: {query!r} → {out.name}  [{movie}]",
+                f"✓ Composition: {query!r} → {out.name}  [{movie}]",
                 project_path,
             )
 
     except (ValueError, FileNotFoundError) as exc:
-        print(f"✗ compose failed: {exc}", file=sys.stderr)
+        print(f"✗ composition failed: {exc}", file=sys.stderr)
         sys.exit(1)
     except Exception as exc:
-        print(f"✗ compose failed: {exc}", file=sys.stderr)
+        print(f"✗ composition failed: {exc}", file=sys.stderr)
         import traceback
         traceback.print_exc()
         sys.exit(1)
@@ -2932,26 +2932,26 @@ def build_parser():
     p_audit.set_defaults(func=cmd_audit)
     p_audit.add_argument("--media", choices=["movies", "gameplay"], default="movies")
 
-    # generate command group — compose, mosaic
-    p_generate = sub.add_parser("generate", help="Generate content from project data (compose, mosaic)")
+    # generate command group — composition, mosaic
+    p_generate = sub.add_parser("generate", help="Generate content from project data (composition, mosaic)")
     p_generate.set_defaults(func=cmd_generate)
     generate_sub = p_generate.add_subparsers(dest="generate_subcommand", required=True)
 
-    # generate compose
-    p_compose = generate_sub.add_parser(
-        "compose",
+    # generate composition
+    p_composition = generate_sub.add_parser(
+        "composition",
         help="Build a single tableau image from a search criteria string",
     )
-    p_compose.set_defaults(func=cmd_compose)
-    p_compose.add_argument("query", nargs="?", default="", help="Background search criteria (e.g. \"gun\" or \"sunset\"); optional when --visualizer is used")
-    p_compose.add_argument(
+    p_composition.set_defaults(func=cmd_composition)
+    p_composition.add_argument("query", nargs="?", default="", help="Background search criteria (e.g. \"gun\" or \"sunset\"); optional when --visualizer is used")
+    p_composition.add_argument(
         "--orientation", choices=["portrait", "landscape"], default="portrait",
         help="Canvas preset: portrait 1240×1754 or landscape 1920×1080 (default: portrait)",
     )
-    p_compose.add_argument("--output", default=None, metavar="PATH", help="Override output file path")
-    p_compose.add_argument("--no-open", action="store_true", dest="no_open", help="Do not open result in desktop viewer")
-    p_compose.add_argument("--notify", action="store_true", help="Send a Discord notification when done")
-    p_compose.add_argument("--visualizer", action="store_true", help="Open the interactive compose visualizer instead of saving")
+    p_composition.add_argument("--output", default=None, metavar="PATH", help="Override output file path")
+    p_composition.add_argument("--no-open", action="store_true", dest="no_open", help="Do not open result in desktop viewer")
+    p_composition.add_argument("--notify", action="store_true", help="Send a Discord notification when done")
+    p_composition.add_argument("--visualizer", action="store_true", help="Open the interactive composition visualizer instead of saving")
 
     # generate mosaic
     p_mosaic = generate_sub.add_parser(

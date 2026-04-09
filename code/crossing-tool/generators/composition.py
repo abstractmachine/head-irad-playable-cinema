@@ -1,4 +1,4 @@
-"""compose — minimal one-layer tableau composer.
+"""composition — minimal one-layer tableau composer.
 
 Pipeline:
     1. Caller passes ``search_shots()`` results.
@@ -13,7 +13,7 @@ Canvas presets:
 Example::
 
     from services.search import search_shots
-    from generators.compose import choose_background, build_tableau, save_tableau
+    from generators.composition import choose_background, build_tableau, save_tableau
 
     res = search_shots("gun", scopes=None, field=None,
                        limit=None, limit_per_item=None, use_all=True,

@@ -1,7 +1,7 @@
-"""Compose Visualizer — interactive preview for the one-layer tableau composer.
+"""Composition Visualizer — interactive preview for the one-layer tableau composer.
 
 Launched via:
-    crossing generate compose <query> --visualizer
+    crossing generate composition --visualizer
 
 The window has:
   TOP   — toolbar: query input, orientation selector, Compose / Export buttons
@@ -69,7 +69,7 @@ class ComposeWorker(QThread):
     def run(self) -> None:
         try:
             from services.search import search_shots
-            from generators.compose import choose_background, build_tableau
+            from generators.composition import choose_background, build_tableau
 
             res = search_shots(
                 query          = self.query,
@@ -140,7 +140,7 @@ class ComposeVisualizer(QMainWindow):
         self._current_img    = None   # PIL Image
         self._current_result: Optional[dict] = None
 
-        self.setWindowTitle("Crossing — Compose Visualizer")
+        self.setWindowTitle("Crossing — Composition Visualizer")
         self.resize(1280, 800)
         self.setStyleSheet(_STYLESHEET)
 
@@ -243,7 +243,7 @@ class ComposeVisualizer(QMainWindow):
     def _on_export(self) -> None:
         if self._current_img is None:
             return
-        from generators.compose import save_tableau
+        from generators.composition import save_tableau
         query   = self.query_input.text().strip() or "compose"
         out_dir = Path(self.project_path) / "output" / "compositions"
         out     = save_tableau(self._current_img, query, out_dir)
