@@ -306,6 +306,7 @@ def search_shots(
             results.append({
                 "movie_id": movie_id,
                 "movie_title": movie_title,
+                "shot_index": shot_id,
                 "shot_id": f"shot_{shot_id:05d}",
                 "start_time": timing.get("start_time", ""),
                 "end_time": timing.get("end_time", ""),
@@ -341,4 +342,107 @@ def search_shots(
         "limit_per_item": limit_per_item,
         "results": results,
     }
+
+
+# ---------------------------------------------------------------------------
+# Vocabulary extraction
+# ---------------------------------------------------------------------------
+
+def vocabulary_from_field(
+    field: str,
+    scopes: list[str] | None,
+    use_all: bool,
+    show_count: bool,
+    project_path: str,
+    media_type: str = "movies",
+    sort: str = "alphabetical",
+) -> list:
+    """Return distinct values found in *field* across all matching shots.
+
+    Parameters
+    ----------
+    field:        Annotation field to enumerate (e.g. ``"objects"``).
+    scopes:       Optional fuzzy movie-title filters.
+    use_all:      Ignore scopes and enumerate every movie.
+    show_count:   If True return ``[{"value": v, "count": n}, ...]``;
+                  otherwise return ``["v1", "v2", ...]``.
+    project_path: Project root directory.
+    media_type:   ``"movies"`` or ``"gameplay"``.
+    sort:         ``"alphabetical"`` (default) or ``"count"`` (desc).
+
+    Returns
+    -------
+    JSON-serialisable list.
+    """
+    import re
+    from services.metadata import get_metadata
+
+    if not project_path:
+        raise RuntimeError("project_path is required")
+
+    all_entries = get_metadata(project_path, media_type=media_type)
+    selected, _ = _resolve_movies(scopes, use_all, all_entries)
+
+    ann_base = Path(project_path) / "data" / "annotations" / "shots" / media_type
+
+    # canonical_key → (display_form, shot_count)
+    counts: dict[str, list] = {}  # key → [display, count]
+
+    def _norm_key(v: str) -> str:
+        return re.sub(r"\s+", " ", v.strip()).lower()
+
+    for entry in selected:
+        filename = entry.get("filename", "")
+        if not filename:
+            continue
+        stem = Path(filename).stem
+        ann_path = ann_base / f"{stem}.json"
+        if not ann_path.exists():
+            continue
+        try:
+            ann_entries: list = json.loads(ann_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+
+        for ann_entry in ann_entries:
+            shot_meta = ann_entry.get("shot") if isinstance(ann_entry, dict) else None
+            if not isinstance(shot_meta, dict):
+                continue
+            ann = shot_meta.get("annotation")
+            if not isinstance(ann, dict):
+                continue
+
+            val = ann.get(field)
+            if val is None:
+                continue
+
+            # Flatten list or treat scalar as single item
+            raw_values: list[str]
+            if isinstance(val, list):
+                raw_values = [str(v) for v in val if v is not None and str(v).strip()]
+            else:
+                s = str(val).strip()
+                raw_values = [s] if s else []
+
+            # Count each distinct value once per shot
+            seen_in_shot: set[str] = set()
+            for rv in raw_values:
+                key = _norm_key(rv)
+                if not key or key in seen_in_shot:
+                    continue
+                seen_in_shot.add(key)
+                if key not in counts:
+                    counts[key] = [rv.strip(), 0]
+                counts[key][1] += 1
+
+    # Sort: alphabetical by default; count desc + alpha tiebreak if requested
+    if sort == "count":
+        sorted_items = sorted(counts.values(), key=lambda x: (-x[1], x[0].lower()))
+    else:
+        sorted_items = sorted(counts.values(), key=lambda x: x[0].lower())
+
+    if show_count:
+        return [{"value": item[0], "count": item[1]} for item in sorted_items]
+    else:
+        return [item[0] for item in sorted_items]
 

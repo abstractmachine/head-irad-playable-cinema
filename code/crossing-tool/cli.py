@@ -260,9 +260,37 @@ def cmd_import(args):
 
 def cmd_search(args):
     _require_path()
+
+    # Dispatch: `crossing search vocabulary <field> [scope...]`
+    if args.query == "vocabulary":
+        from services.search import vocabulary_from_field
+        remaining = args.scope or []
+        if not remaining:
+            print("error: 'vocabulary' requires a field name, e.g. crossing search vocabulary objects", file=sys.stderr)
+            sys.exit(1)
+        field = remaining[0]
+        scopes = (remaining[1:] or []) + (getattr(args, "movie", None) or [])
+        scopes = scopes or None
+        use_all = getattr(args, "all", False)
+        show_count = getattr(args, "show_count", False)
+        sort = getattr(args, "sort", "alphabetical")
+        media_type = getattr(args, "media", "movies")
+        result = vocabulary_from_field(
+            field=field,
+            scopes=scopes,
+            use_all=use_all,
+            show_count=show_count,
+            project_path=prefs.get("path"),
+            media_type=media_type,
+            sort=sort,
+        )
+        print(json.dumps(result, indent=2))
+        return
+
     from services.search import search_shots
 
-    scopes = args.scope if args.scope else None
+    scopes = (args.scope or []) + (getattr(args, "movie", None) or [])
+    scopes = scopes or None
     use_all = getattr(args, "all", False)
     field = getattr(args, "field", None)
     limit = getattr(args, "limit", None)
@@ -2157,98 +2185,69 @@ def cmd_generate(args):
 
 
 def cmd_compose(args):
-    """Generative poster / canvas tool — crossing compose."""
-    from services.compose import compose, CANVAS_SIZES
-    from services.text_extraction import get_text_csv_path
-
+    """Dispatch compose subcommands."""
     _require_path()
+    sub = args.compose_subcommand
+    if sub == "search":
+        _compose_search(args)
+
+
+def _compose_search(args):
+    """compose search <query> [scope...] — compose a poster from search results."""
+    from services.search import search_shots
+    from services.compose import compose_from_search_results
+
     project_path = prefs.get("path")
     media_type   = getattr(args, "media", "movies")
+    scopes       = (args.scope or []) + (getattr(args, "movie", None) or [])
+    scopes       = scopes or None
+    use_all      = getattr(args, "all", False)
+    field        = getattr(args, "field", None)
+    limit        = getattr(args, "limit", None)
+    orientation  = getattr(args, "orientation", "portrait")
+    seed         = getattr(args, "seed", None)
+    output_path  = getattr(args, "output", None)
+    fmt          = getattr(args, "format", "jpg")
+    open_result  = not getattr(args, "no_open", False)
 
-    # ---- resolve filenames -------------------------------------------------
-    if getattr(args, "all", False):
-        from services.metadata import get_metadata
-        from services.text_extraction import list_text_csvs
-        entries = get_metadata(project_path, media_type=media_type)
-        filenames = [
-            e["filename"] for e in entries
-            if e.get("filename")
-            and get_text_csv_path(project_path, e["filename"], media_type).exists()
-        ]
-        if not filenames:
-            print("✗ No text CSVs found.", file=sys.stderr)
-            sys.exit(1)
-    elif getattr(args, "tmdb", None) is not None:
-        from services.metadata import get_metadata
-        entries = get_metadata(project_path, media_type=media_type)
-        filenames = [e["filename"] for e in entries if e.get("tmdb") == str(args.tmdb)]
-        if not filenames:
-            print(f"✗ No file found with TMDb ID: {args.tmdb}", file=sys.stderr)
-            sys.exit(1)
-    elif getattr(args, "query", None):
-        from services.metadata import get_metadata
-        entries = get_metadata(project_path, query=args.query, media_type=media_type)
-        if not entries:
-            print(f"✗ No file found matching '{args.query}'", file=sys.stderr)
-            sys.exit(1)
-        filenames = [e["filename"] for e in entries]
-    else:
-        # No selector — use every film that has a text CSV
-        from services.metadata import get_metadata
-        entries = get_metadata(project_path, media_type=media_type)
-        filenames = [
-            e["filename"] for e in entries
-            if e.get("filename")
-            and get_text_csv_path(project_path, e["filename"], media_type).exists()
-        ]
-        if not filenames:
-            print("✗ No text CSVs found. Run `crossing text detect` first.", file=sys.stderr)
-            sys.exit(1)
+    search_result = search_shots(
+        query=args.query,
+        scopes=scopes,
+        field=field,
+        limit=limit,
+        limit_per_item=None,
+        use_all=use_all,
+        project_path=project_path,
+        media_type=media_type,
+    )
+    results = search_result["results"]
 
-    # ---- orientation / dimensions ------------------------------------------
-    orientation = getattr(args, "orientation", "portrait")
-    width  = getattr(args, "width",  None)
-    height = getattr(args, "height", None)
+    if not results:
+        print(f"✗ No results for query '{args.query}'.", file=sys.stderr)
+        sys.exit(1)
 
-    # ---- other options -----------------------------------------------------
-    n_elements   = getattr(args, "count",        None)
-    bg_frame     = getattr(args, "bg_frame",     None)
-    bg_treatment = getattr(args, "bg_treatment", None)
-    seed         = getattr(args, "seed",         None)
-    output_path  = getattr(args, "output",       None)
-    fmt          = getattr(args, "format",       "jpg")
-    open_result  = not getattr(args, "no_open",  False)
-    verbose      = getattr(args, "verbose",      False)
-
-    print(f"Composing from {len(filenames)} film(s)…")
-    if verbose and len(filenames) <= 5:
-        for fn in filenames:
-            print(f"  {fn}")
+    print(f"Composing from {len(results)} result(s) (query: {args.query!r})…")
 
     try:
-        out_path = compose(
-            filenames,
+        out_path = compose_from_search_results(
+            results,
             project_path,
-            media_type=media_type,
             orientation=orientation,
-            width=width,
-            height=height,
-            n_elements=n_elements,
-            bg_frame=bg_frame,
-            bg_treatment=bg_treatment,
             seed=seed,
             output_path=output_path,
             fmt=fmt,
             open_result=open_result,
-            verbose=verbose,
         )
         print(f"✓ Saved: {out_path}")
         if getattr(args, "notify", False):
             from services.notify import discord_notify
             discord_notify(
-                f"✓ Compose complete: {len(filenames)} film(s) → {out_path.name}",
+                f"✓ Compose complete: '{args.query}' → {out_path.name}",
                 project_path,
             )
+    except (ValueError, FileNotFoundError) as exc:
+        print(f"✗ compose failed: {exc}", file=sys.stderr)
+        sys.exit(1)
     except Exception as exc:
         print(f"✗ compose failed: {exc}", file=sys.stderr)
         import traceback
@@ -2261,15 +2260,15 @@ def cmd_compose(args):
 # ---------------------------------------------------------------------------
 
 def cmd_mosaic(args):
-    """Generate a mosaic contact sheet from thumbnails or text frames."""
+    """Generate a mosaic contact sheet from thumbnails, personas, or search results."""
     _require_path()
     sub = args.mosaic_subcommand
     if sub == "thumbnails":
         _mosaic_thumbnails(args)
-    elif sub == "text":
-        _mosaic_text(args)
     elif sub == "personas":
         _persona_mosaic(args)
+    elif sub == "search":
+        _mosaic_search(args)
 
 
 def _mosaic_thumbnails(args):
@@ -2360,143 +2359,57 @@ def _mosaic_thumbnails(args):
         sys.exit(1)
 
 
-def _mosaic_text(args):
-    """Collect representative frames for text events and render a mosaic."""
-    from services.text_extraction import read_text_csv, get_text_csv_path, list_text_csvs
-    from services.shotlist import resolve_filename
-    from services.metadata import get_metadata
-    from services.mosaic import MosaicItem, render_mosaic
+def _mosaic_search(args):
+    """mosaic search <query> [scope...] — mosaic grid from shot annotation search."""
+    import subprocess
+    from services.search import search_shots
+    from services.mosaic import mosaic_from_search_results
 
     project_path = prefs.get("path")
-    media_type   = args.media
-    caption_mode = getattr(args, "caption", "short")
+    media_type   = getattr(args, "media", "movies")
+    scopes       = (args.scope or []) + (getattr(args, "movie", None) or [])
+    scopes       = scopes or None
+    use_all      = getattr(args, "all", False)
+    field        = getattr(args, "field", None)
+    limit        = getattr(args, "limit", None)
     layout       = getattr(args, "layout", "landscape")
-    all_films    = getattr(args, "all", False)
+    frame_pct    = getattr(args, "frame_pct", 0.5)
+    output_path  = getattr(args, "output", None)
+    open_result  = not getattr(args, "no_open", False)
 
-    if all_films:
-        _mosaic_text_all(args, project_path, media_type, caption_mode, layout)
-        return
+    search_result = search_shots(
+        query=args.query,
+        scopes=scopes,
+        field=field,
+        limit=limit,
+        limit_per_item=None,
+        use_all=use_all,
+        project_path=project_path,
+        media_type=media_type,
+    )
+    results = search_result["results"]
 
-    # Resolve film filename from --tmdb or title query
-    tmdb  = getattr(args, "tmdb", None)
-    query = " ".join(args.query).strip() if getattr(args, "query", None) else ""
-
-    if not tmdb and not query:
-        print("✗ Provide a title query or --tmdb <id>.", file=sys.stderr)
+    if not results:
+        print(f"✗ No results for query '{args.query}'.", file=sys.stderr)
         sys.exit(1)
+
+    print(f"Building search mosaic: {len(results)} result(s) (query: {args.query!r})…")
 
     try:
-        if tmdb is not None:
-            filename = resolve_filename(project_path, tmdb, None, media_type)
-        else:
-            rows = get_metadata(project_path, media_type=media_type)
-            q = query.lower()
-            matches = [
-                r for r in rows
-                if q in str(r.get("filename", "")).lower()
-                or q in str(r.get("title", "")).lower()
-            ]
-            if not matches:
-                print(f"✗ No entry found matching '{query}'.", file=sys.stderr)
-                sys.exit(1)
-            if len(matches) > 1:
-                print(f"✗ '{query}' matches {len(matches)} entries — be more specific or use --tmdb:", file=sys.stderr)
-                for r in matches:
-                    print(f"  [{r.get('tmdb', '?')}]  {r.get('filename', '')}  —  {r.get('title', '')} ({r.get('year', '')})", file=sys.stderr)
-                sys.exit(1)
-            filename = matches[0]["filename"]
-            tmdb = matches[0].get("tmdb")
-    except ValueError as exc:
-        print(f"✗ {exc}", file=sys.stderr)
-        sys.exit(1)
-
-    csv_path = get_text_csv_path(project_path, filename, media_type)
-    if not csv_path.exists():
-        print(
-            f"✗ No text CSV found for [{args.tmdb}] {filename}.\n"
-            f"  Run: crossing text detect --tmdb {args.tmdb} --media {media_type}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    try:
-        text_rows = read_text_csv(project_path, filename, media_type)
-    except FileNotFoundError as exc:
-        print(f"✗ {exc}", file=sys.stderr)
-        sys.exit(1)
-
-    if not text_rows:
-        print(f"✗ Text CSV is empty for {filename}.", file=sys.stderr)
-        sys.exit(1)
-
-    # Drop rows marked as ignored
-    text_rows = [r for r in text_rows if r.get("ignore", "").strip().lower() not in ("1", "true", "yes")]
-    if not text_rows:
-        print("✗ No usable text items (all marked as ignored).", file=sys.stderr)
-        sys.exit(1)
-
-    video_path = Path(project_path) / "media" / "videos" / media_type / filename
-    if not video_path.exists():
-        print(f"✗ Video file not found: {video_path}", file=sys.stderr)
-        sys.exit(1)
-
-    items = []
-    skipped = 0
-    for i, row in enumerate(text_rows):
-        try:
-            start_frame = int(row.get("start_frame") or 0)
-            end_frame   = int(row.get("end_frame")   or start_frame)
-            mid_frame   = (start_frame + end_frame) // 2
-        except (ValueError, TypeError):
-            print(f"  ⚠ Skipping item {i}: invalid frame data", file=sys.stderr)
-            skipped += 1
-            continue
-
-        if caption_mode == "none":
-            caption = None
-        else:
-            caption = row.get("start_time", "") or f"#{i}"
-
-        items.append(MosaicItem(
-            video_path=video_path,
-            frame_index=mid_frame,
-            caption=caption,
-            metadata={"index": i, "row": row},
-        ))
-
-    if not items:
-        print("✗ No valid items to render.", file=sys.stderr)
-        sys.exit(1)
-
-    skipped_str = f" ({skipped} skipped)" if skipped else ""
-    print(f"Building text mosaic for: {filename}")
-    print(f"  {len(items)} text item(s){skipped_str}")
-
-    output_path = getattr(args, "output", None)
-    if output_path:
-        output_path = Path(output_path)
-    else:
-        import datetime
-        stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-        output_path = (
-            Path(project_path) / "output" / "mosaics"
-            / f"tmdb-{tmdb}-text-mosaic-{stamp}.png"
-        )
-
-    try:
-        out = render_mosaic(
-            items,
-            output_path,
+        out = mosaic_from_search_results(
+            results,
+            project_path,
+            output_path=output_path,
             layout=layout,
-            show_captions=(caption_mode != "none"),
+            frame_pct=frame_pct,
         )
         print(f"✓ Saved: {out}")
-        import subprocess
-        subprocess.Popen(["xdg-open", str(out)])
+        if open_result:
+            subprocess.Popen(["xdg-open", str(out)])
         if getattr(args, "notify", False):
             from services.notify import discord_notify
             discord_notify(
-                f"✓ Mosaic text complete: {filename}\n{len(items)} item(s) → {out.name}",
+                f"✓ Mosaic search complete: '{args.query}' → {out.name}",
                 project_path,
             )
     except ValueError as exc:
@@ -2507,119 +2420,6 @@ def _mosaic_text(args):
         import traceback
         traceback.print_exc()
         sys.exit(1)
-
-
-def _mosaic_text_all(args, project_path, media_type, caption_mode, layout):
-    """Generate one full text mosaic per film for every text CSV in the project."""
-    import datetime
-    import subprocess
-    import traceback
-    from services.text_extraction import list_text_csvs, read_text_csv
-    from services.metadata import get_metadata
-    from services.mosaic import MosaicItem, render_mosaic
-
-    csvs = list_text_csvs(project_path, media_type=media_type)
-    if not csvs:
-        print(f"✗ No text CSVs found for '{media_type}'.", file=sys.stderr)
-        sys.exit(1)
-
-    # Build a title lookup from metadata
-    meta_rows = get_metadata(project_path, media_type=media_type)
-    title_by_filename = {
-        r.get("filename", ""): r.get("title") or Path(r.get("filename", "")).stem
-        for r in meta_rows
-    }
-
-    total = len(csvs)
-    saved = 0
-    skipped = 0
-
-    for i, entry in enumerate(sorted(csvs, key=lambda e: e["filename"]), 1):
-        # Resolve the actual video filename (extension may vary)
-        actual_filename = None
-        for meta_fn in title_by_filename:
-            if Path(meta_fn).stem == Path(entry["filename"]).stem:
-                actual_filename = meta_fn
-                break
-        if actual_filename is None:
-            actual_filename = Path(entry["filename"]).stem + ".mp4"
-
-        title = title_by_filename.get(actual_filename) or Path(actual_filename).stem
-        print(f"[{i}/{total}] {title}")
-
-        try:
-            text_rows = read_text_csv(project_path, actual_filename, media_type)
-        except FileNotFoundError:
-            print(f"  ⚠ no text CSV — skipping")
-            skipped += 1
-            continue
-
-        text_rows = [
-            r for r in text_rows
-            if r.get("ignore", "").strip().lower() not in ("1", "true", "yes")
-        ]
-        if not text_rows:
-            print(f"  ⚠ CSV empty or all ignored — skipping")
-            skipped += 1
-            continue
-
-        video_path = Path(project_path) / "media" / "videos" / media_type / actual_filename
-        if not video_path.exists():
-            print(f"  ⚠ video not found — skipping")
-            skipped += 1
-            continue
-
-        items = []
-        for j, row in enumerate(text_rows):
-            try:
-                start_frame = int(row.get("start_frame") or 0)
-                end_frame   = int(row.get("end_frame")   or start_frame)
-                mid_frame   = (start_frame + end_frame) // 2
-            except (ValueError, TypeError):
-                continue
-
-            if caption_mode == "none":
-                caption = None
-            else:
-                caption = row.get("start_time", "") or f"#{j}"
-
-            items.append(MosaicItem(
-                video_path=video_path,
-                frame_index=mid_frame,
-                caption=caption,
-                metadata={"index": j, "row": row},
-            ))
-
-        if not items:
-            print(f"  ⚠ no valid frames — skipping")
-            skipped += 1
-            continue
-
-        print(f"  {len(items)} text item(s)")
-
-        stem = Path(actual_filename).stem
-        stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-        output_path = (
-            Path(project_path) / "output" / "mosaics"
-            / f"{stem}-text-mosaic-{stamp}.png"
-        )
-
-        try:
-            out = render_mosaic(
-                items,
-                output_path,
-                layout=layout,
-                show_captions=(caption_mode != "none"),
-            )
-            print(f"  ✓ Saved: {out}")
-            subprocess.Popen(["xdg-open", str(out)])
-            saved += 1
-        except Exception as exc:
-            print(f"  ✗ Render failed: {exc}", file=sys.stderr)
-            traceback.print_exc()
-            skipped += 1
-
-    print(f"\nDone: {saved} mosaic(s) saved, {skipped} skipped.")
 
 
 # ---------------------------------------------------------------------------
@@ -3020,53 +2820,30 @@ def build_parser():
     # generate compose
     p_compose = generate_sub.add_parser(
         "compose",
-        help="Generate an experimental poster by compositing text events on a video frame",
+        help="Compose a poster from shot annotation search results",
     )
     p_compose.set_defaults(func=cmd_compose)
-    p_compose.add_argument(
-        "query", nargs="?", default=None,
-        help="Filename substring to select films (omit to use all films with text CSVs)",
+    compose_sub = p_compose.add_subparsers(dest="compose_subcommand", required=True)
+
+    p_compose_search = compose_sub.add_parser(
+        "search",
+        help="Compose a poster from shots matching a query",
     )
-    p_compose.add_argument("--all",    action="store_true", help="Use all films that have text CSVs")
-    p_compose.add_argument("--tmdb",   type=int, default=None, help="Select film by TMDb ID")
-    p_compose.add_argument("--media",  choices=["movies", "gameplay"], default="movies")
-    p_compose.add_argument(
+    p_compose_search.add_argument("query", help="Search query (e.g. \"gun\" or \"sunset\")")
+    p_compose_search.add_argument("scope", nargs="*", help="Fuzzy movie-title filter(s); omit to search all movies")
+    p_compose_search.add_argument("--field", default=None, help="Restrict search to one annotation field")
+    p_compose_search.add_argument("--limit", type=int, default=None, help="Max search results to draw from")
+    p_compose_search.add_argument("--all", action="store_true", help="Search all movies (overrides positional scopes)")
+    p_compose_search.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    p_compose_search.add_argument(
         "--orientation", choices=["portrait", "landscape"], default="portrait",
         help="Canvas orientation: portrait 1240×1754 or landscape 1920×1080 (default: portrait)",
     )
-    p_compose.add_argument("--width",  type=int, default=None, help="Override canvas width in pixels")
-    p_compose.add_argument("--height", type=int, default=None, help="Override canvas height in pixels")
-    p_compose.add_argument(
-        "--count", type=int, default=None, dest="count",
-        help="Number of text patches to composite (default: random 6–18)",
-    )
-    p_compose.add_argument(
-        "--bg-frame", type=int, default=None, dest="bg_frame",
-        help="Specific frame number to use as background (default: random)",
-    )
-    p_compose.add_argument(
-        "--bg-treatment", choices=["desaturate", "tint", "darken", "original"],
-        default=None, dest="bg_treatment",
-        help="Background colour treatment (default: random)",
-    )
-    p_compose.add_argument(
-        "--seed", type=int, default=None,
-        help="RNG seed for reproducible results (default: random)",
-    )
-    p_compose.add_argument(
-        "--output", default=None,
-        help="Save path for the output file (default: data/compose/<auto-name>)",
-    )
-    p_compose.add_argument(
-        "--format", choices=["jpg", "pdf"], default="jpg", dest="format",
-        help="Output format: jpg or pdf (default: jpg)",
-    )
-    p_compose.add_argument(
-        "--no-open", action="store_true", dest="no_open",
-        help="Do not open the result in the desktop viewer after saving",
-    )
-    p_compose.add_argument("--verbose", action="store_true", help="Print progress")
-    p_compose.add_argument("--notify", action="store_true", help="Send a Discord notification when the run finishes")
+    p_compose_search.add_argument("--seed", type=int, default=None, help="RNG seed for reproducibility")
+    p_compose_search.add_argument("--output", default=None, help="Output file path (default: auto-generated)")
+    p_compose_search.add_argument("--format", choices=["jpg", "pdf"], default="jpg", dest="format")
+    p_compose_search.add_argument("--no-open", action="store_true", dest="no_open", help="Do not open result in desktop viewer")
+    p_compose_search.add_argument("--notify", action="store_true", help="Send a Discord notification when done")
 
     # generate mosaic
     p_mosaic = generate_sub.add_parser(
@@ -3105,42 +2882,28 @@ def build_parser():
         help="Send a Discord notification when the run finishes",
     )
 
-    p_mosaic_text = mosaic_sub.add_parser(
-        "text",
-        help="Mosaic of representative frames for text events in one film",
+    p_mosaic_search = mosaic_sub.add_parser(
+        "search",
+        help="Mosaic grid of frames matching a shot annotation query",
     )
-    p_mosaic_text.add_argument(
-        "query", nargs="*", metavar="TITLE",
-        help="Title search query (or use --tmdb)",
-    )
-    p_mosaic_text.add_argument(
-        "--tmdb", type=int, default=None,
-        help="TMDb ID of the film",
-    )
-    p_mosaic_text.add_argument(
-        "--all", action="store_true", dest="all",
-        help="Generate one tile per film from every text CSV in the project",
-    )
-    p_mosaic_text.add_argument(
-        "--media", choices=["movies", "gameplay"], default="movies",
-        help="Media type (default: movies)",
-    )
-    p_mosaic_text.add_argument(
-        "--output", default=None, metavar="PATH",
-        help="Override output file path (default: output/mosaics/tmdb-<id>-text-mosaic.png)",
-    )
-    p_mosaic_text.add_argument(
+    p_mosaic_search.add_argument("query", help="Search query (e.g. \"gun\" or \"sunset\")")
+    p_mosaic_search.add_argument("scope", nargs="*", help="Fuzzy movie-title filter(s); omit to search all movies")
+    p_mosaic_search.add_argument("--movie", nargs="+", default=None, metavar="TITLE", help="Fuzzy movie-title filter(s) (named alternative to positional scope)")
+    p_mosaic_search.add_argument("--field", default=None, help="Restrict search to one annotation field")
+    p_mosaic_search.add_argument("--limit", type=int, default=None, help="Max search results / mosaic tiles")
+    p_mosaic_search.add_argument("--all", action="store_true", help="Search all movies (overrides positional scopes)")
+    p_mosaic_search.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    p_mosaic_search.add_argument(
         "--layout", choices=["portrait", "landscape"], default="landscape",
-        help="Grid orientation: landscape (wider) or portrait (taller) (default: landscape)",
+        help="Grid orientation (default: landscape)",
     )
-    p_mosaic_text.add_argument(
-        "--caption", choices=["none", "short"], default="short",
-        help="Caption style: short (text content) or none (default: short)",
+    p_mosaic_search.add_argument(
+        "--frame_pct", type=float, default=0.5, metavar="PCT",
+        help="Frame position within each shot: 0.0=start  0.5=middle (default)  1.0=end",
     )
-    p_mosaic_text.add_argument(
-        "--notify", action="store_true",
-        help="Send a Discord notification when the run finishes",
-    )
+    p_mosaic_search.add_argument("--output", default=None, metavar="PATH", help="Override output file path")
+    p_mosaic_search.add_argument("--no-open", action="store_true", dest="no_open", help="Do not open result")
+    p_mosaic_search.add_argument("--notify", action="store_true", help="Send a Discord notification when done")
 
     p_mosaic_personas = mosaic_sub.add_parser(
         "personas",
@@ -3350,10 +3113,13 @@ def build_parser():
     p_search = sub.add_parser("search", help="Search shot annotations")
     p_search.add_argument("query", help="Search string (e.g. \"sunset\" or \"man with gun\")")
     p_search.add_argument("scope", nargs="*", help="Fuzzy movie-title filter(s); omit to search all movies")
+    p_search.add_argument("--movie", nargs="+", default=None, metavar="TITLE", help="Fuzzy movie-title filter(s) (named alternative to positional scope)")
     p_search.add_argument("--field", default=None, help="Restrict search to one annotation field (e.g. objects)")
     p_search.add_argument("--limit", type=int, default=None, help="Max results to return overall")
     p_search.add_argument("--limit-per-item", dest="limit_per_item", type=int, default=None, help="Max results per movie")
     p_search.add_argument("--all", action="store_true", help="Search all movies (overrides positional scopes)")
+    p_search.add_argument("--show_count", action="store_true", help="(vocabulary mode) include occurrence counts in output")
+    p_search.add_argument("--sort", choices=["alphabetical", "count"], default="alphabetical", help="(vocabulary mode) sort order: alphabetical (default) or count")
     p_search.add_argument("--media", choices=["movies", "gameplay"], default="movies")
     p_search.set_defaults(func=cmd_search)
 

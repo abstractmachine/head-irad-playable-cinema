@@ -318,7 +318,7 @@ class AnnotationValidator(QMainWindow):
         splitter = QSplitter(Qt.Horizontal)
         outer.addWidget(splitter, stretch=1)
 
-        # ---- LEFT: video ----
+        # ---- COL 1: video ----
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
@@ -340,7 +340,22 @@ class AnnotationValidator(QMainWindow):
         self.timeline_slider.setToolTip("Scrub timeline  [←/→ frame  Shift+←/→ 1s]")
         left_layout.addWidget(self.timeline_slider)
 
-        # ---- RIGHT: sidebar ----
+        # ---- COL 2: annotation panel ----
+        mid = QWidget()
+        mid_layout = QVBoxLayout(mid)
+        mid_layout.setContentsMargins(2, 2, 2, 2)
+        mid_layout.setSpacing(4)
+
+        self.ann_display = QTextEdit()
+        self.ann_display.setReadOnly(True)
+        self.ann_display.setFont(QFont("Monospace", 9))
+        self.ann_display.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.ann_display.setStyleSheet(
+            "QTextEdit { background-color: #4a4a4a; color: white; border: none; }"
+        )
+        mid_layout.addWidget(self.ann_display, stretch=1)
+
+        # ---- COL 3: shotlist + controls ----
         right = QWidget()
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(2, 2, 2, 2)
@@ -360,11 +375,6 @@ class AnnotationValidator(QMainWindow):
         movie_row.addWidget(self.movie_combo, stretch=1)
         right_layout.addLayout(movie_row)
 
-        # Shot list
-        list_header = QLabel("Shots  [✓ annotated  ✗ failed  ? missing]  (↑↓ navigate)")
-        list_header.setFont(QFont("Monospace", 8))
-        right_layout.addWidget(list_header)
-
         self.shot_list = QListWidget()
         self.shot_list.setFont(QFont("Monospace", 8))
         self.shot_list.itemClicked.connect(self._on_shot_clicked)
@@ -372,32 +382,14 @@ class AnnotationValidator(QMainWindow):
         self.shot_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         right_layout.addWidget(self.shot_list, stretch=1)
 
-        # Annotation panel (no title label — ~50% of right-panel height)
-        ann_frame = QFrame()
-        ann_frame.setFrameStyle(QFrame.StyledPanel | QFrame.Raised)
-        ann_layout = QVBoxLayout(ann_frame)
-        ann_layout.setContentsMargins(6, 6, 6, 6)
-        ann_layout.setSpacing(3)
-
-        self.ann_display = QTextEdit()
-        self.ann_display.setReadOnly(True)
-        self.ann_display.setFont(QFont("Monospace", 9))
-        self.ann_display.setMinimumHeight(120)
-        self.ann_display.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.ann_display.setStyleSheet(
-            "QTextEdit { background-color: #4a4a4a; color: white; border: 1px solid #888; }"
-        )
-        ann_layout.addWidget(self.ann_display, stretch=1)
-
+        # Status / frame info
         self.status_label = QLabel()
         self.status_label.setFont(QFont("Monospace", 8))
         self.status_label.setWordWrap(True)
         self.status_label.setStyleSheet(
             "background-color: #5a5a5a; padding: 4px; border: 1px solid #888;"
         )
-        ann_layout.addWidget(self.status_label)
-
-        right_layout.addWidget(ann_frame, stretch=2)
+        right_layout.addWidget(self.status_label)
 
         # Play / Continue controls row
         playback_row = QHBoxLayout()
@@ -415,7 +407,9 @@ class AnnotationValidator(QMainWindow):
             "Continue: when OFF playback stops at the last frame of the current shot"
         )
         playback_row.addWidget(self.continue_btn)
+        right_layout.addLayout(playback_row)
 
+        action_row = QHBoxLayout()
         self.annotate_btn = QPushButton("⚡ Auto-Annotate")
         self.annotate_btn.setFocusPolicy(Qt.NoFocus)
         self.annotate_btn.setCheckable(True)
@@ -424,7 +418,7 @@ class AnnotationValidator(QMainWindow):
             "Start / stop background LLM annotation of all unannotated shots in this film"
         )
         self.annotate_btn.clicked.connect(self._toggle_auto_annotate)
-        playback_row.addWidget(self.annotate_btn)
+        action_row.addWidget(self.annotate_btn)
 
         self.remove_ann_btn = QPushButton("🗑 Remove")
         self.remove_ann_btn.setFocusPolicy(Qt.NoFocus)
@@ -432,8 +426,8 @@ class AnnotationValidator(QMainWindow):
             "Delete all shot annotations for this film (cannot be undone)"
         )
         self.remove_ann_btn.clicked.connect(self._remove_annotations)
-        playback_row.addWidget(self.remove_ann_btn)
-        right_layout.addLayout(playback_row)
+        action_row.addWidget(self.remove_ann_btn)
+        right_layout.addLayout(action_row)
 
         # Keyboard hint
         hint = QLabel("↑↓ shot  Space play  ←→ frame  Shift+←→ 1s  Home/End movie")
@@ -442,10 +436,13 @@ class AnnotationValidator(QMainWindow):
         right_layout.addWidget(hint)
 
         splitter.addWidget(left)
+        splitter.addWidget(mid)
         splitter.addWidget(right)
-        right.setMinimumWidth(380)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 1)
+        mid.setMinimumWidth(220)
+        right.setMinimumWidth(300)
+        splitter.setStretchFactor(0, 4)
+        splitter.setStretchFactor(1, 3)
+        splitter.setStretchFactor(2, 2)
 
         self._populate_shot_list()
         self.setFocus()
@@ -635,16 +632,17 @@ class AnnotationValidator(QMainWindow):
             self.ann_display.setPlainText("(not annotated)")
         elif _is_valid_annotation(ann):
             lines = []
-            setting = ann.get("setting") or ""
-            lines.append(f"Setting:\n  {setting}\n")
-            for field in ("objects", "humans", "animals", "text"):
-                items = ann.get(field) or []
-                if items:
-                    lines.append(f"{field.capitalize()}:")
-                    for v in items:
-                        lines.append(f"  • {v}")
+            for key, val in ann.items():
+                label = key.replace("_", " ").capitalize()
+                if isinstance(val, list):
+                    if val:
+                        lines.append(f"{label}:")
+                        for v in val:
+                            lines.append(f"  • {v}")
+                    else:
+                        lines.append(f"{label}:\n  —")
                 else:
-                    lines.append(f"{field.capitalize()}:\n  —")
+                    lines.append(f"{label}:\n  {val or '—'}")
                 lines.append("")
             self.ann_display.setPlainText("\n".join(lines).strip())
         else:

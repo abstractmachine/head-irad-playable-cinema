@@ -293,3 +293,127 @@ def render_mosaic(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(str(output_path))
     return output_path
+
+
+# ---------------------------------------------------------------------------
+# Search-result consumer
+# ---------------------------------------------------------------------------
+
+def _find_video_path(project_path: str, movie_id: str) -> "Path | None":
+    """Locate the video file whose stem matches *movie_id*.
+
+    Searches both ``media/videos/movies/`` and ``media/videos/gameplay/``.
+    Returns the first match or None.
+
+    Example
+    -------
+        video = _find_video_path(project_path, "The Wild Bunch (1969) {tmdb-11232}")
+    """
+    videos_base = Path(project_path) / "media" / "videos"
+    if not videos_base.exists():
+        return None
+    for subdir in sorted(videos_base.iterdir()):
+        if not subdir.is_dir():
+            continue
+        for f in subdir.iterdir():
+            if f.is_file() and f.stem == movie_id:
+                return f
+    return None
+
+
+def frame_from_pct(start_frame: int, end_frame: int, frame_pct: float) -> int:
+    """Return the frame index at *frame_pct* through a shot.
+
+    ``frame_pct`` is clamped to ``[0.0, 1.0]``.  ``0.0`` → start,
+    ``0.5`` → middle, ``1.0`` → end.
+    """
+    pct = max(0.0, min(1.0, frame_pct))
+    return int(start_frame + (end_frame - start_frame) * pct)
+
+
+def mosaic_from_search_results(
+    results: list[dict],
+    project_path: str,
+    *,
+    output_path: "str | None" = None,
+    layout: str = "landscape",
+    show_captions: bool = True,
+    frame_pct: float = 0.5,
+) -> Path:
+    """Build a mosaic grid from ``search_shots()`` results.
+
+    Each result becomes one tile in the grid.  The tile image is the video
+    frame at *frame_pct* through the shot (0.0 = start, 0.5 = middle,
+    1.0 = end).  Results whose video cannot be located on disk are silently
+    skipped.
+
+    Args:
+        results:      List of result dicts from ``search_shots()["results"]``.
+        project_path: Project root directory.
+        output_path:  Destination file (auto-generated under
+                      ``output/mosaics/`` if not provided).
+        layout:       ``"landscape"`` (wider) or ``"portrait"`` (taller grid).
+        show_captions: Draw ``movie_title`` below each tile.
+
+    Returns:
+        Path to the saved mosaic PNG.
+
+    Raises:
+        ValueError: If no frames could be resolved from the results.
+
+    Example
+    -------
+        from services.search import search_shots
+        from services.mosaic import mosaic_from_search_results
+
+        res = search_shots("gun", scopes=None, field=None,
+                           limit=40, limit_per_item=None, use_all=True,
+                           project_path=project_path)
+        out = mosaic_from_search_results(res["results"], project_path)
+    """
+    import datetime
+
+    items: list[MosaicItem] = []
+
+    for r in results:
+        movie_id = r.get("movie_id", "")
+        video_path = _find_video_path(project_path, movie_id)
+        if video_path is None:
+            print(f"  ⚠ video not found for movie_id={movie_id!r} — skipping", flush=True)
+            continue
+
+        sf = r.get("start_frame")
+        ef = r.get("end_frame")
+        if sf is not None and ef is not None:
+            frame_index = frame_from_pct(int(sf), int(ef), frame_pct)
+        elif sf is not None:
+            frame_index = int(sf)
+        else:
+            frame_index = 0
+
+        caption = r.get("movie_title") or movie_id
+
+        items.append(MosaicItem(
+            video_path=video_path,
+            frame_index=int(frame_index),
+            caption=caption,
+            metadata=r,
+        ))
+
+    if not items:
+        raise ValueError(
+            "mosaic_from_search_results: no usable frames — "
+            "check that video files are present for the matched movies."
+        )
+
+    if output_path:
+        dest = Path(output_path)
+    else:
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        dest = (
+            Path(project_path) / "output" / "mosaics"
+            / f"search-mosaic-{stamp}.png"
+        )
+
+    return render_mosaic(items, dest, layout=layout, show_captions=show_captions)
+
