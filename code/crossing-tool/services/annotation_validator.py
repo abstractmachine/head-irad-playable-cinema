@@ -14,7 +14,8 @@ import faulthandler
 from pathlib import Path
 
 # Fix Qt plugin conflict with OpenCV — import PyQt5 first
-from PyQt5.QtCore import Qt, QTimer, QEvent
+from PyQt5.QtCore import Qt, QTimer, QEvent, QThread, pyqtSignal
+import threading
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QListWidget, QListWidgetItem, QSplitter,
@@ -150,6 +151,48 @@ class ShotAnnotationItem(QListWidgetItem):
 
 
 # ---------------------------------------------------------------------------
+# Background annotation worker
+# ---------------------------------------------------------------------------
+
+class AnnotateWorker(QThread):
+    """Runs annotate_file_shots in a background thread; emits shot_done per shot."""
+
+    shot_done = pyqtSignal(int)   # emits shot_index on each successful annotation
+    finished = pyqtSignal(str)    # emits a summary or error message when done
+
+    def __init__(self, project_path, filename, media_type, model_name, frames_per_shot):
+        super().__init__()
+        self._stop_event = threading.Event()
+        self.project_path = project_path
+        self.filename = filename
+        self.media_type = media_type
+        self.model_name = model_name
+        self.frames_per_shot = frames_per_shot
+
+    def stop(self):
+        self._stop_event.set()
+
+    def run(self):
+        from services.annotate import annotate_file_shots
+        try:
+            summary = annotate_file_shots(
+                project_path=self.project_path,
+                filename=self.filename,
+                media_type=self.media_type,
+                model_name=self.model_name,
+                frames_per_shot=self.frames_per_shot,
+                skip_existing=True,
+                on_shot_done=lambda i: self.shot_done.emit(i),
+                stop_event=self._stop_event,
+            )
+            updated = summary.get("updated", 0)
+            skipped = summary.get("skipped", 0)
+            self.finished.emit(f"✓ Done  {updated} annotated  {skipped} skipped")
+        except Exception as exc:
+            self.finished.emit(f"✗ {exc}")
+
+
+# ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
 
@@ -176,6 +219,14 @@ class AnnotationValidator(QMainWindow):
         self._play_start_time = 0.0
         self._play_start_frame = 0
         self._current_shot_end_frame = 0
+        self._annotate_worker = None
+        try:
+            import prefs as _prefs
+            self._model_name = _prefs.get("model_annotate", "gemma4-e4b")
+            self._frames_per_shot = int(_prefs.get("annotate_frames_per_shot", 3))
+        except Exception:
+            self._model_name = "gemma4-e4b"
+            self._frames_per_shot = 3
 
         self._open_video()
         self._load_data()
@@ -364,6 +415,24 @@ class AnnotationValidator(QMainWindow):
             "Continue: when OFF playback stops at the last frame of the current shot"
         )
         playback_row.addWidget(self.continue_btn)
+
+        self.annotate_btn = QPushButton("⚡ Auto-Annotate")
+        self.annotate_btn.setFocusPolicy(Qt.NoFocus)
+        self.annotate_btn.setCheckable(True)
+        self.annotate_btn.setChecked(False)
+        self.annotate_btn.setToolTip(
+            "Start / stop background LLM annotation of all unannotated shots in this film"
+        )
+        self.annotate_btn.clicked.connect(self._toggle_auto_annotate)
+        playback_row.addWidget(self.annotate_btn)
+
+        self.remove_ann_btn = QPushButton("🗑 Remove")
+        self.remove_ann_btn.setFocusPolicy(Qt.NoFocus)
+        self.remove_ann_btn.setToolTip(
+            "Delete all shot annotations for this film (cannot be undone)"
+        )
+        self.remove_ann_btn.clicked.connect(self._remove_annotations)
+        playback_row.addWidget(self.remove_ann_btn)
         right_layout.addLayout(playback_row)
 
         # Keyboard hint
@@ -671,7 +740,79 @@ class AnnotationValidator(QMainWindow):
     # Close
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Auto-annotate
+    # ------------------------------------------------------------------
+
+    def _toggle_auto_annotate(self, checked: bool):
+        if checked:
+            if self._annotate_worker is not None and self._annotate_worker.isRunning():
+                return
+            self.annotate_btn.setText("⏹ Stop")
+            worker = AnnotateWorker(
+                project_path=self.project_path,
+                filename=self.filename,
+                media_type=self.media_type,
+                model_name=self._model_name,
+                frames_per_shot=self._frames_per_shot,
+            )
+            worker.shot_done.connect(self._on_shot_annotated)
+            worker.finished.connect(self._on_annotate_finished)
+            self._annotate_worker = worker
+            worker.start()
+        else:
+            if self._annotate_worker is not None:
+                self._annotate_worker.stop()
+            self.annotate_btn.setText("⚡ Auto-Annotate")
+
+    def _on_shot_annotated(self, shot_index: int):
+        """Called from AnnotateWorker after each successful shot; refresh UI."""
+        ann_path = _get_annotation_json_path(self.project_path, self.filename, self.media_type)
+        self.annotation_index = _build_annotation_index(_read_annotation_json(ann_path))
+        ann = self.annotation_index.get(shot_index)
+        item = self.shot_list.item(shot_index)
+        if isinstance(item, ShotAnnotationItem):
+            item.annotation = ann
+            item.update_display()
+        if shot_index == self.current_shot_index:
+            self._update_annotation_panel(shot_index, self.shots[shot_index])
+
+    def _on_annotate_finished(self, message: str):
+        """Called when the worker thread exits; reset button state."""
+        self._annotate_worker = None
+        self.annotate_btn.setChecked(False)
+        self.annotate_btn.setText("⚡ Auto-Annotate")
+        # Full reload in case any shots were written while the list was out of sync
+        self._load_data()
+        self._populate_shot_list()
+        # Print errors to console; success is visible from the shot list colours
+        if message.startswith("✗"):
+            print(f"[Auto-Annotate] {message}", file=sys.stderr)
+
+    def _remove_annotations(self):
+        """Delete the annotation JSON for the current film after confirmation."""
+        from PyQt5.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            self,
+            "Remove annotations",
+            f"Delete all shot annotations for\n{self.filename}?\n\nThis cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        from services.annotate import remove_file_annotations
+        removed = remove_file_annotations(self.project_path, self.filename, self.media_type)
+        if removed:
+            print(f"[Remove] Deleted annotations: {self.filename}", file=sys.stderr)
+        # Reload so the shot list reflects the cleared state
+        self._load_data()
+        self._populate_shot_list()
+
     def closeEvent(self, event):
+        if self._annotate_worker is not None and self._annotate_worker.isRunning():
+            self._annotate_worker.stop()
+            self._annotate_worker.wait(2000)
         if self.cap is not None:
             self.cap.release()
         event.accept()
@@ -714,13 +855,9 @@ def main():
         filenames = args.filenames
     elif getattr(args, "all", False):
         entries = get_metadata(project_path, media_type=args.media)
-        filenames = [
-            e["filename"] for e in entries
-            if e.get("filename")
-            and _get_annotation_json_path(project_path, e["filename"], args.media).exists()
-        ]
+        filenames = [e["filename"] for e in entries if e.get("filename")]
         if not filenames:
-            print("✗ No annotation files found.", file=sys.stderr)
+            print("✗ No films found in metadata.", file=sys.stderr)
             sys.exit(1)
     elif args.tmdb:
         entries = get_metadata(project_path, media_type=args.media)
@@ -744,17 +881,8 @@ def main():
         print("✗ Must provide a query, --tmdb, --filenames, or --all", file=sys.stderr)
         sys.exit(1)
 
-    # Warn if any selected film has no annotation file
-    valid = []
-    for fn in filenames:
-        ann_path = _get_annotation_json_path(project_path, fn, args.media)
-        if ann_path.exists():
-            valid.append(fn)
-        else:
-            print(f"  ⚠ No annotation file for: {fn}  (skipping)", file=sys.stderr)
-    if not valid:
-        print("✗ No annotation files found for the selected film(s).", file=sys.stderr)
-        sys.exit(1)
+    # All selected filenames are valid (no annotation JSON required to open)
+    valid = filenames
 
     faulthandler.enable()
 

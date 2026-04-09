@@ -917,6 +917,8 @@ def _shotlist_annotate(args):
                     force=args.force,
                     skip_existing=args.skip_existing,
                     limit=getattr(args, "limit", None),
+                    verbose=getattr(args, "verbose", False),
+                    write_log=getattr(args, "log", False),
                 )
                 print(f"Processed {len(results)} file(s)")
                 for r in results:
@@ -952,6 +954,7 @@ def _shotlist_annotate(args):
                 shot_index=getattr(args, "index", None),
                 limit=getattr(args, "limit", None),
                 verbose=getattr(args, "verbose", False),
+                write_log=getattr(args, "log", False),
             )
             failed_count = len(summary.get("failed", [])) if summary.get("failed") else 0
             print(f"✓ Annotated: {filename} — updated={summary['updated']} skipped={summary['skipped']} failed={failed_count}")
@@ -998,6 +1001,7 @@ def _shotlist_annotate(args):
                 export_csv=getattr(args, "export_csv", None),
                 export_md=getattr(args, "export_md", None),
                 verbose=getattr(args, "verbose", False),
+                write_log=getattr(args, "log", False),
             )
             failed_count = len(summary.get("failed", [])) if summary.get("failed") else 0
             print(f"✓ Annotated scene {args.scene_number} in {filename} — updated={summary['updated']} skipped={summary['skipped']} failed={failed_count}")
@@ -1953,6 +1957,38 @@ def _text_list(args):
         print()
 
 
+def _annotate_remove(args):
+    """Remove shot-annotation JSON for one or all films."""
+    from services.annotate import remove_file_annotations
+    from services.shotlist import resolve_filename
+
+    _require_path()
+    project_path = prefs.get("path")
+    media_type = getattr(args, "media", "movies")
+
+    if getattr(args, "all", False):
+        from services.metadata import get_metadata
+        entries = get_metadata(project_path, media_type=media_type)
+        filenames = [e["filename"] for e in entries if e.get("filename")]
+    else:
+        if not args.filename and not getattr(args, "tmdb", None):
+            print("✗ Provide a filename or --tmdb (or use --all)", file=sys.stderr)
+            sys.exit(1)
+        filenames = [resolve_filename(project_path, getattr(args, "tmdb", None), args.filename, media_type)]
+
+    removed = 0
+    skipped = 0
+    for fn in filenames:
+        if remove_file_annotations(project_path, fn, media_type):
+            print(f"✓ Removed annotations: {fn}")
+            removed += 1
+        else:
+            print(f"  (no annotation file)  {fn}")
+            skipped += 1
+
+    print(f"\nRemoved {removed}  |  already absent {skipped}")
+
+
 def _annotate_validate(args):
     """Launch the annotation validation GUI."""
     from services.annotate import get_annotation_json_path as _ann_json_path
@@ -1970,14 +2006,9 @@ def _annotate_validate(args):
     if getattr(args, "all", False):
         from services.metadata import get_metadata
         entries = get_metadata(project_path, media_type=media_type)
-        filenames = [
-            e["filename"]
-            for e in entries
-            if e.get("filename")
-            and _ann_json_path(project_path, e["filename"], media_type).exists()
-        ]
+        filenames = [e["filename"] for e in entries if e.get("filename")]
         if not filenames:
-            print("\u2717 No annotation JSON files found.", file=sys.stderr)
+            print("\u2717 No films found in metadata.", file=sys.stderr)
             sys.exit(1)
     elif getattr(args, "tmdb", None) is not None:
         from services.metadata import get_metadata
@@ -2002,17 +2033,7 @@ def _annotate_validate(args):
         print("\u2717 Must provide a query, --tmdb, or --all", file=sys.stderr)
         sys.exit(1)
 
-    valid = []
-    for fn in filenames:
-        ann_path = _ann_json_path(project_path, fn, media_type)
-        if ann_path.exists():
-            valid.append(fn)
-        else:
-            print(f"  \u26a0 No annotation JSON for: {fn}  (skipping)", file=sys.stderr)
-
-    if not valid:
-        print("\u2717 No annotation JSON files found for the selected film(s).", file=sys.stderr)
-        sys.exit(1)
+    valid = filenames
 
     cmd = [
         sys.executable, str(validator_path),
@@ -2918,6 +2939,7 @@ def build_parser():
     p_annotate_shot.add_argument("--export-csv", default=None, help="Export annotations CSV path")
     p_annotate_shot.add_argument("--export-md", default=None, help="Export annotations Markdown path")
     p_annotate_shot.add_argument("--verbose", action="store_true", help="Print per-shot progress to stdout")
+    p_annotate_shot.add_argument("--log", action="store_true", help="Write a debug log file alongside the annotation JSON")
     p_annotate_shot.add_argument("--notify", action="store_true", help="Send a Discord notification when the run finishes")
 
     p_annotate_scene = annotate_sub.add_parser("scene", help="Annotate scene(s)")
@@ -2948,6 +2970,7 @@ def build_parser():
     p_annotate_scene.add_argument("--export-csv", default=None, help="Export annotations CSV path")
     p_annotate_scene.add_argument("--export-md", default=None, help="Export annotations Markdown path")
     p_annotate_scene.add_argument("--verbose", action="store_true", help="Print per-shot progress to stdout")
+    p_annotate_scene.add_argument("--log", action="store_true", help="Write a debug log file alongside the annotation JSON")
     p_annotate_scene.add_argument("--notify", action="store_true", help="Send a Discord notification when the run finishes")
 
     p_annotate_validate = annotate_sub.add_parser("validate", help="Review shot annotations in GUI")
@@ -2957,8 +2980,14 @@ def build_parser():
     p_annotate_validate.add_argument("--media", choices=["movies", "gameplay"], default="movies")
     p_annotate_validate.add_argument("--all", action="store_true", help="Validate all films with annotation JSON files")
 
+    p_annotate_remove = annotate_sub.add_parser("remove", help="Remove shot annotations for a film")
+    p_annotate_remove.set_defaults(func=_annotate_remove)
+    p_annotate_remove.add_argument("filename", nargs="?", default=None, help="Video filename (or use --tmdb / --all)")
+    p_annotate_remove.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
+    p_annotate_remove.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    p_annotate_remove.add_argument("--all", action="store_true", help="Remove annotations for all films in metadata")
 
-    # model command
+
     # (moved under 'crossing tool model' — see tool_sub below)
 
     # audit command
