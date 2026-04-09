@@ -260,8 +260,25 @@ def cmd_import(args):
 
 def cmd_search(args):
     _require_path()
-    from services.search import search
-    result = search(args.query)
+    from services.search import search_shots
+
+    scopes = args.scope if args.scope else None
+    use_all = getattr(args, "all", False)
+    field = getattr(args, "field", None)
+    limit = getattr(args, "limit", None)
+    limit_per_item = getattr(args, "limit_per_item", None)
+    media_type = getattr(args, "media", "movies")
+
+    result = search_shots(
+        query=args.query,
+        scopes=scopes,
+        field=field,
+        limit=limit,
+        limit_per_item=limit_per_item,
+        use_all=use_all,
+        project_path=prefs.get("path"),
+        media_type=media_type,
+    )
     print(json.dumps(result, indent=2))
 
 
@@ -3330,8 +3347,14 @@ def build_parser():
     p_remove.add_argument("--confirm", action="store_true", help="Actually delete (default is a dry run)")
 
     # search command
-    p_search = sub.add_parser("search", help="Search for passages")
-    p_search.add_argument("query")
+    p_search = sub.add_parser("search", help="Search shot annotations")
+    p_search.add_argument("query", help="Search string (e.g. \"sunset\" or \"man with gun\")")
+    p_search.add_argument("scope", nargs="*", help="Fuzzy movie-title filter(s); omit to search all movies")
+    p_search.add_argument("--field", default=None, help="Restrict search to one annotation field (e.g. objects)")
+    p_search.add_argument("--limit", type=int, default=None, help="Max results to return overall")
+    p_search.add_argument("--limit-per-item", dest="limit_per_item", type=int, default=None, help="Max results per movie")
+    p_search.add_argument("--all", action="store_true", help="Search all movies (overrides positional scopes)")
+    p_search.add_argument("--media", choices=["movies", "gameplay"], default="movies")
     p_search.set_defaults(func=cmd_search)
 
     # shotlist command group
