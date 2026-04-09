@@ -46,7 +46,7 @@ def persona_mosaic(
         FileNotFoundError: if the persona JSON or the video file is missing.
         ValueError:        if no personas are found in the JSON.
     """
-    from services.mosaic import MosaicItem, render_mosaic
+    from generators.mosaic import MosaicItem, render_mosaic
 
     doc: PersonaDocument = read_persona_json(project_path, filename, media_type)
 

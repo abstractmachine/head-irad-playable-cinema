@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shot Validator - Frame-precise shot boundary validation."""
+"""Shot Visualizer - Frame-precise shot boundary review."""
 
 import sys
 import os

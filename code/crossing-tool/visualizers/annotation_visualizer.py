@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Annotation Validator — review VLM shot annotations alongside video frames.
+"""Annotation Visualizer — review VLM shot annotations alongside video frames.
 
-Launched as a subprocess by cli.py (`crossing annotate validate`).
+Launched as a subprocess by cli.py (`crossing annotate visualizer`).
 """
 
 import sys
@@ -173,7 +173,7 @@ class AnnotateWorker(QThread):
         self._stop_event.set()
 
     def run(self):
-        from services.annotate import annotate_file_shots
+        from generators.annotate import annotate_file_shots
         try:
             summary = annotate_file_shots(
                 project_path=self.project_path,
@@ -799,7 +799,7 @@ class AnnotationValidator(QMainWindow):
         )
         if reply != QMessageBox.Yes:
             return
-        from services.annotate import remove_file_annotations
+        from generators.annotate import remove_file_annotations
         removed = remove_file_annotations(self.project_path, self.filename, self.media_type)
         if removed:
             print(f"[Remove] Deleted annotations: {self.filename}", file=sys.stderr)

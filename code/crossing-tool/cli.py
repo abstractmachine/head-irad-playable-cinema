@@ -4,6 +4,12 @@ import argparse
 import json
 from pathlib import Path
 
+# Ensure the project root is importable so generators/ and visualizers/ are found
+# regardless of the cwd when the installed `crossing` entry-point is invoked.
+_PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 import prefs
 
 _MEDIA_FOLDER = {"movie": "movies", "gameplay": "gameplay"}
@@ -826,8 +832,8 @@ def cmd_shotlist(args):
         sub2 = args.shot_subcommand
         if sub2 == "detect":
             _shot_detect(args)
-    elif sub == "validate":
-        _shot_validate(args)
+    elif sub == "visualizer":
+        _shot_visualizer(args)
     elif sub == "migrate":
         _shotlist_migrate(args)
 
@@ -947,7 +953,7 @@ def _shotlist_annotate(args):
                 return
 
             # Automatic (default) mode
-            from services.annotate import annotate_file_shots, annotate_all_files
+            from generators.annotate import annotate_file_shots, annotate_all_files
 
             if getattr(args, "all", False):
                 results = annotate_all_files(
@@ -1026,7 +1032,7 @@ def _shotlist_annotate(args):
                 return
 
             # Automatic scene annotation (default)
-            from services.annotate import annotate_file_shots
+            from generators.annotate import annotate_file_shots
 
             filename = resolve_filename(project_path, args.tmdb, args.filename, args.media)
             summary = annotate_file_shots(
@@ -1221,13 +1227,13 @@ def cmd_shot(args):
     sub = args.shot_subcommand
     if sub == "detect":
         _shot_detect(args)
-    elif sub == "validate":
-        _shot_validate(args)
+    elif sub == "visualizer":
+        _shot_visualizer(args)
 
 
 def _shot_detect(args):
     """Detect shot boundaries using TransNetV2."""
-    from services.shot_detection import detect_shots_transnet, write_shotlist_csv
+    from generators.shot_detection import detect_shots_transnet, write_shotlist_csv
     from services.shotlist import resolve_filename, get_shotlist_path
     from services.metadata import get_metadata
 
@@ -1323,7 +1329,7 @@ def _shot_detect_all(
     notify_items: bool = False,
 ):
     """Detect shots for all metadata entries that don't yet have a shotlist."""
-    from services.shot_detection import detect_shots_transnet, write_shotlist_csv
+    from generators.shot_detection import detect_shots_transnet, write_shotlist_csv
     from services.shotlist import get_shotlist_path
     from services.metadata import get_metadata
     import time
@@ -1391,15 +1397,15 @@ def _shot_detect_all(
         discord_notify(summary, project_path)
 
 
-def _shot_validate(args):
-    """Launch shot validation GUI."""
+def _shot_visualizer(args):
+    """Launch shot visualizer GUI."""
     import subprocess
     from pathlib import Path
     from services.shotlist import get_shotlist_path
     from services.metadata import get_metadata
 
     cli_dir = Path(__file__).parent
-    validator_path = cli_dir / "services" / "shot_validator.py"
+    validator_path = cli_dir / "visualizers" / "shot_visualizer.py"
 
     if not validator_path.exists():
         print(f"✗ Error: {validator_path.name} not found at {validator_path}", file=sys.stderr)
@@ -1756,7 +1762,7 @@ def _subtitle_list(args):
 
 def _text_calibrate(args):
     """Sweep confidence thresholds using known ground-truth strings."""
-    from services.text_extraction import calibrate_text_detection
+    from generators.text_extraction import calibrate_text_detection
     from services.shotlist import resolve_filename
 
     project_path = prefs.get("path")
@@ -1824,15 +1830,15 @@ def cmd_text(args):
         _text_detect(args)
     elif sub == "list":
         _text_list(args)
-    elif sub == "validate":
-        _text_validate(args)
+    elif sub == "visualizer":
+        _text_visualizer(args)
     elif sub == "calibrate":
         _text_calibrate(args)
 
 
 def _text_detect(args):
     """Detect on-screen text for one film or all films (--all)."""
-    from services.text_extraction import extract_text_events, write_text_csv, get_text_csv_path
+    from generators.text_extraction import extract_text_events, write_text_csv, get_text_csv_path
     import time
 
     project_path = prefs.get("path")
@@ -1978,7 +1984,7 @@ def _text_detect(args):
 
 def _text_list(args):
     """List text CSVs."""
-    from services.text_extraction import list_text_csvs
+    from generators.text_extraction import list_text_csvs
 
     project_path = prefs.get("path")
     media_type = getattr(args, "media", None)
@@ -2004,7 +2010,7 @@ def _text_list(args):
 
 def _annotate_remove(args):
     """Remove shot-annotation JSON for one or all films."""
-    from services.annotate import remove_file_annotations
+    from generators.annotate import remove_file_annotations
     from services.shotlist import resolve_filename
 
     _require_path()
@@ -2034,18 +2040,18 @@ def _annotate_remove(args):
     print(f"\nRemoved {removed}  |  already absent {skipped}")
 
 
-def _annotate_validate(args):
-    """Launch the annotation validation GUI."""
-    from services.annotate import get_annotation_json_path as _ann_json_path
+def _annotate_visualizer(args):
+    """Launch the annotation visualizer GUI."""
+    from generators.annotate import get_annotation_json_path as _ann_json_path
 
     _require_path()
     project_path = prefs.get("path")
     media_type = getattr(args, "media", "movies")
 
     import subprocess
-    validator_path = Path(__file__).parent / "services" / "annotation_validator.py"
+    validator_path = Path(__file__).parent / "visualizers" / "annotation_visualizer.py"
     if not validator_path.exists():
-        print(f"\u2717 Error: annotation_validator.py not found at {validator_path}", file=sys.stderr)
+        print(f"\u2717 Error: annotation_visualizer.py not found at {validator_path}", file=sys.stderr)
         sys.exit(1)
 
     if getattr(args, "all", False):
@@ -2095,19 +2101,19 @@ def _annotate_validate(args):
         sys.exit(0)
 
 
-def _text_validate(args):
-    """Launch the text validation GUI."""
-    from services.text_extraction import get_text_csv_path
+def _text_visualizer(args):
+    """Launch the text visualizer GUI."""
+    from generators.text_extraction import get_text_csv_path
 
     _require_path()
     project_path = prefs.get("path")
     media_type = getattr(args, "media", "movies")
 
-    # GUI mode — resolve the list of filenames to validate
+    # GUI mode — resolve the list of filenames to visualize
     import subprocess
-    validator_path = Path(__file__).parent / "services" / "text_validator.py"
+    validator_path = Path(__file__).parent / "visualizers" / "text_visualizer.py"
     if not validator_path.exists():
-        print(f"\u2717 Error: text_validator.py not found at {validator_path}", file=sys.stderr)
+        print(f"\u2717 Error: text_visualizer.py not found at {validator_path}", file=sys.stderr)
         sys.exit(1)
 
     if getattr(args, "all", False):
@@ -2195,7 +2201,7 @@ def cmd_compose(args):
 def _compose_search(args):
     """compose search <query> [scope...] — compose a poster from search results."""
     from services.search import search_shots
-    from services.compose import compose_from_search_results
+    from generators.compose import compose_from_search_results
 
     project_path = prefs.get("path")
     media_type   = getattr(args, "media", "movies")
@@ -2269,6 +2275,8 @@ def cmd_mosaic(args):
         _persona_mosaic(args)
     elif sub == "search":
         _mosaic_search(args)
+    elif sub == "export":
+        _mosaic_export(args)
     elif sub == "visualizer":
         _mosaic_visualizer(args)
 
@@ -2276,7 +2284,7 @@ def cmd_mosaic(args):
 def _mosaic_thumbnails(args):
     """Collect thumbnails for a media type and render a mosaic grid."""
     from services.metadata import get_metadata
-    from services.mosaic import MosaicItem, render_mosaic
+    from generators.mosaic import MosaicItem, render_mosaic
 
     project_path = prefs.get("path")
     media_type   = args.media
@@ -2365,7 +2373,7 @@ def _mosaic_search(args):
     """mosaic search <query> [scope...] — mosaic grid from shot annotation search."""
     import subprocess
     from services.search import search_shots
-    from services.mosaic import mosaic_from_search_results
+    from generators.mosaic import mosaic_from_search_results
 
     project_path = prefs.get("path")
     media_type   = getattr(args, "media", "movies")
@@ -2426,8 +2434,69 @@ def _mosaic_search(args):
 
 def _mosaic_visualizer(args):
     """mosaic visualizer — launch the interactive live mosaic explorer GUI."""
-    from services.mosaic_visualizer import run_visualizer
+    from visualizers.mosaic_visualizer import run_visualizer
     run_visualizer(prefs.get("path"))
+
+
+def _mosaic_export(args):
+    """mosaic export <query> [scope...] — export individual JPEGs for each search result."""
+    import subprocess
+    from services.search import search_shots
+    from generators.mosaic import export_frames_from_search_results
+
+    project_path = prefs.get("path")
+    media_type   = getattr(args, "media", "movies")
+    scopes       = (args.scope or []) + (getattr(args, "movie", None) or [])
+    scopes       = scopes or None
+    use_all      = getattr(args, "all", False)
+    field        = getattr(args, "field", None)
+    limit        = getattr(args, "limit", None)
+    frame_pct    = getattr(args, "frame_pct", 0.5)
+    open_result  = not getattr(args, "no_open", False)
+
+    search_result = search_shots(
+        query=args.query,
+        scopes=scopes,
+        field=field,
+        limit=limit,
+        limit_per_item=None,
+        use_all=use_all,
+        project_path=project_path,
+        media_type=media_type,
+    )
+    results = search_result["results"]
+
+    if not results:
+        print(f"✗ No results for query '{args.query}'.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Exporting {len(results)} frame(s) for query: {args.query!r}…")
+
+    try:
+        out_dir = export_frames_from_search_results(
+            results,
+            project_path,
+            query=args.query,
+            field=field,
+            frame_pct=frame_pct,
+        )
+        print(f"✓ Exported to: {out_dir}")
+        if open_result:
+            subprocess.Popen(["xdg-open", str(out_dir)])
+        if getattr(args, "notify", False):
+            from services.notify import discord_notify
+            discord_notify(
+                f"✓ Mosaic export complete: '{args.query}' → {out_dir.name}/",
+                project_path,
+            )
+    except ValueError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        print(f"✗ Export failed: {exc}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -2798,12 +2867,12 @@ def build_parser():
     p_annotate_scene.add_argument("--log", action="store_true", help="Write a debug log file alongside the annotation JSON")
     p_annotate_scene.add_argument("--notify", action="store_true", help="Send a Discord notification when the run finishes")
 
-    p_annotate_validate = annotate_sub.add_parser("validate", help="Review shot annotations in GUI")
-    p_annotate_validate.set_defaults(func=_annotate_validate)
-    p_annotate_validate.add_argument("query", nargs="?", default=None, help="Filename substring to match")
-    p_annotate_validate.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_annotate_validate.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-    p_annotate_validate.add_argument("--all", action="store_true", help="Validate all films with annotation JSON files")
+    p_annotate_visualizer = annotate_sub.add_parser("visualizer", help="Review shot annotations in GUI")
+    p_annotate_visualizer.set_defaults(func=_annotate_visualizer)
+    p_annotate_visualizer.add_argument("query", nargs="?", default=None, help="Filename substring to match")
+    p_annotate_visualizer.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
+    p_annotate_visualizer.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    p_annotate_visualizer.add_argument("--all", action="store_true", help="Open visualizer for all films with annotation JSON files")
 
     p_annotate_remove = annotate_sub.add_parser("remove", help="Remove shot annotations for a film")
     p_annotate_remove.set_defaults(func=_annotate_remove)
@@ -2943,6 +3012,25 @@ def build_parser():
         "--notify", action="store_true",
         help="Send a Discord notification when the run finishes",
     )
+
+    # generate mosaic export
+    p_mosaic_export = mosaic_sub.add_parser(
+        "export",
+        help="Export individual JPEG frames for each search result into a timestamped folder",
+    )
+    p_mosaic_export.add_argument("query", help="Search query (e.g. \"gun\" or \"sunset\")")
+    p_mosaic_export.add_argument("scope", nargs="*", help="Fuzzy movie-title filter(s); omit to search all movies")
+    p_mosaic_export.add_argument("--movie", nargs="+", default=None, metavar="TITLE", help="Fuzzy movie-title filter(s)")
+    p_mosaic_export.add_argument("--field", default=None, help="Restrict search to one annotation field")
+    p_mosaic_export.add_argument("--limit", type=int, default=None, help="Max results to export")
+    p_mosaic_export.add_argument("--all", action="store_true", help="Search all movies (overrides positional scopes)")
+    p_mosaic_export.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    p_mosaic_export.add_argument(
+        "--frame_pct", type=float, default=0.5, metavar="PCT",
+        help="Frame position within each shot: 0.0=start  0.5=middle (default)  1.0=end",
+    )
+    p_mosaic_export.add_argument("--no-open", action="store_true", dest="no_open", help="Do not open result folder")
+    p_mosaic_export.add_argument("--notify", action="store_true", help="Send a Discord notification when done")
 
     # generate mosaic visualizer
     p_mosaic_visualizer = mosaic_sub.add_parser(
@@ -3184,11 +3272,11 @@ def build_parser():
     p_sl_shot_detect.add_argument("--notify", action="store_true", help="Send a Discord notification when the process finishes")
     p_sl_shot_detect.add_argument("--notify-items", action="store_true", dest="notify_items", help="Send a Discord notification after each item in a batch")
 
-    p_sl_validate = shotlist_sub.add_parser("validate", help="Validate and correct shot/scene data (GUI)")
-    p_sl_validate.add_argument("query", nargs="?", default=None, help="Filename substring to match")
-    p_sl_validate.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_sl_validate.add_argument("--all", action="store_true", help="Validate all movies that have a shotlist")
-    p_sl_validate.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    p_sl_visualizer = shotlist_sub.add_parser("visualizer", help="Review and correct shot/scene data (GUI)")
+    p_sl_visualizer.add_argument("query", nargs="?", default=None, help="Filename substring to match")
+    p_sl_visualizer.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
+    p_sl_visualizer.add_argument("--all", action="store_true", help="Open visualizer for all movies that have a shotlist")
+    p_sl_visualizer.add_argument("--media", choices=["movies", "gameplay"], default="movies")
 
     p_sl_migrate = shotlist_sub.add_parser(
         "migrate",
@@ -3244,11 +3332,11 @@ def build_parser():
                              help="Filter by media type")
     p_text_list.add_argument("--json", action="store_true", help="Output as JSON")
 
-    p_text_validate = text_sub.add_parser("validate", help="Validate and edit text events (GUI)")
-    p_text_validate.add_argument("query", nargs="?", default=None, help="Filename substring to match")
-    p_text_validate.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_text_validate.add_argument("--all", action="store_true", help="Validate all films with text CSVs")
-    p_text_validate.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    p_text_visualizer = text_sub.add_parser("visualizer", help="Review and edit text events (GUI)")
+    p_text_visualizer.add_argument("query", nargs="?", default=None, help="Filename substring to match")
+    p_text_visualizer.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
+    p_text_visualizer.add_argument("--all", action="store_true", help="Open visualizer for all films with text CSVs")
+    p_text_visualizer.add_argument("--media", choices=["movies", "gameplay"], default="movies")
 
     p_text_calibrate = text_sub.add_parser("calibrate", help="Sweep confidence thresholds using known ground-truth text")
     p_text_calibrate.add_argument("filename", nargs="?", default=None, help="Video filename substring (or use --tmdb)")

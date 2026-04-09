@@ -266,6 +266,53 @@ class VocabularyWorker(QThread):
 
 
 # ---------------------------------------------------------------------------
+# Background worker: JPEG export
+# ---------------------------------------------------------------------------
+
+class ExportWorker(QThread):
+    """Runs export_frames_from_search_results() in a background thread.
+
+    Signals
+    -------
+    finished_signal(export_dir_str)
+        Emitted with the output folder path when done.
+    error(message)
+        Emitted on failure.
+    """
+
+    finished_signal = pyqtSignal(str)
+    error           = pyqtSignal(str)
+
+    def __init__(
+        self,
+        results: list,
+        project_path: str,
+        query: str,
+        field: Optional[str],
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.results      = results
+        self.project_path = project_path
+        self.query        = query
+        self.field        = field
+
+    def run(self) -> None:
+        try:
+            from generators.mosaic import export_frames_from_search_results
+            out_dir = export_frames_from_search_results(
+                self.results,
+                self.project_path,
+                query=self.query,
+                field=self.field,
+            )
+            self.finished_signal.emit(str(out_dir))
+        except Exception as exc:
+            import traceback
+            self.error.emit(f"{exc}\n{traceback.format_exc()}")
+
+
+# ---------------------------------------------------------------------------
 # Individual tile widget
 # ---------------------------------------------------------------------------
 
@@ -508,6 +555,8 @@ class MosaicVisualizer(QMainWindow):
         self.project_path = project_path
         self._worker: Optional[SearchWorker] = None
         self._vocab_worker: Optional[VocabularyWorker] = None
+        self._export_worker: Optional[ExportWorker] = None
+        self._current_results: list = []   # results for the last completed search
 
         self.setWindowTitle("Crossing — Mosaic Visualizer")
         self.resize(1440, 900)
@@ -573,6 +622,14 @@ class MosaicVisualizer(QMainWindow):
         self.search_btn = QPushButton("Search")
         self.search_btn.clicked.connect(self._on_search)
         query_layout.addWidget(self.search_btn)
+        self.export_btn = QPushButton("Export JPEGs…")
+        self.export_btn.setEnabled(False)
+        self.export_btn.setToolTip(
+            "Export each result as an individual JPEG with search info overlay\n"
+            "into output/exports/<query>-<timestamp>/"
+        )
+        self.export_btn.clicked.connect(self._on_export)
+        query_layout.addWidget(self.export_btn)
         layout.addWidget(query_group)
 
         # Options
@@ -649,6 +706,8 @@ class MosaicVisualizer(QMainWindow):
             self._worker.wait(3000)
 
         self.canvas.clear()
+        self._current_results = []
+        self.export_btn.setEnabled(False)
 
         scope_text      = self.movie_combo.currentText()
         scope           = None if scope_text == "--all" else scope_text
@@ -675,11 +734,13 @@ class MosaicVisualizer(QMainWindow):
         self._worker.start()
 
     def _on_tile_ready(self, result: dict, pixmap) -> None:
+        self._current_results.append(result)
         self.canvas.add_tile(result, pixmap)
         self.status.showMessage(f"Loading… {self.canvas.tile_count} tile(s)")
 
     def _on_search_done(self, count: int) -> None:
         self.search_btn.setEnabled(True)
+        self.export_btn.setEnabled(count > 0)
         if count == 0:
             self.status.showMessage("No results found.")
         else:
@@ -691,6 +752,51 @@ class MosaicVisualizer(QMainWindow):
         self.search_btn.setEnabled(True)
         preview = message.splitlines()[0][:120]
         self.status.showMessage(f"Error: {preview}")
+
+    # ------------------------------------------------------------------
+    # Export
+
+    def _on_export(self) -> None:
+        if not self._current_results:
+            self.status.showMessage("No results to export — run a search first.")
+            return
+
+        # Prevent double-click while export is in flight
+        if self._export_worker and self._export_worker.isRunning():
+            return
+
+        query      = self.query_input.text().strip()
+        field_text = self.field_combo.currentText()
+        field      = None if field_text == "--all" else field_text
+
+        self.export_btn.setEnabled(False)
+        self.search_btn.setEnabled(False)
+        self.status.showMessage(
+            f"Exporting {len(self._current_results)} frame(s) for '{query}'…"
+        )
+
+        self._export_worker = ExportWorker(
+            results      = list(self._current_results),
+            project_path = self.project_path,
+            query        = query,
+            field        = field,
+        )
+        self._export_worker.finished_signal.connect(self._on_export_done)
+        self._export_worker.error.connect(self._on_export_error)
+        self._export_worker.start()
+
+    def _on_export_done(self, out_dir: str) -> None:
+        import subprocess
+        self.export_btn.setEnabled(True)
+        self.search_btn.setEnabled(True)
+        self.status.showMessage(f"Exported → {out_dir}")
+        subprocess.Popen(["xdg-open", out_dir])
+
+    def _on_export_error(self, message: str) -> None:
+        self.export_btn.setEnabled(True)
+        self.search_btn.setEnabled(True)
+        preview = message.splitlines()[0][:120]
+        self.status.showMessage(f"Export error: {preview}")
 
     # ------------------------------------------------------------------
     # Vocabulary panel

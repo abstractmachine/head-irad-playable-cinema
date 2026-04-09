@@ -364,7 +364,7 @@ def mosaic_from_search_results(
     Example
     -------
         from services.search import search_shots
-        from services.mosaic import mosaic_from_search_results
+        from generators.mosaic import mosaic_from_search_results
 
         res = search_shots("gun", scopes=None, field=None,
                            limit=40, limit_per_item=None, use_all=True,
@@ -416,4 +416,142 @@ def mosaic_from_search_results(
         )
 
     return render_mosaic(items, dest, layout=layout, show_captions=show_captions)
+
+
+# ---------------------------------------------------------------------------
+# Per-frame JPEG exporter
+# ---------------------------------------------------------------------------
+
+def export_frames_from_search_results(
+    results: list[dict],
+    project_path: str,
+    query: str,
+    *,
+    field: "str | None" = None,
+    frame_pct: float = 0.5,
+    jpeg_quality: int = 92,
+) -> Path:
+    """Export each search result as an individual JPEG with an info overlay.
+
+    Files are written to::
+
+        <project>/output/exports/<stem>-<YYYY-MM-DD-HH-MM-SS>/
+
+    where *stem* is the sanitised query string.  Each file is named::
+
+        <zero-padded-index>-<movie_id>-shot<shot_id>.jpg
+
+    An info bar is burned into the bottom of every frame showing:
+      • the query string (and field, if filtered)
+      • the result index  (e.g. ``#001 / 042``)
+      • the movie title and shot id
+
+    Args:
+        results:      List of result dicts from ``search_shots()["results"]``.
+        project_path: Project root directory.
+        query:        The search string used to produce *results*.
+        field:        Annotation field filter (``None`` = all fields).
+        frame_pct:    Frame position within the shot (0.0–1.0).
+        jpeg_quality: JPEG quality 1–95 (default 92).
+
+    Returns:
+        Path to the export folder.
+
+    Raises:
+        ValueError: If no frames could be exported.
+    """
+    import datetime
+    import re
+
+    if not results:
+        raise ValueError("export_frames_from_search_results: results list is empty")
+
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    safe_query = re.sub(r"[^\w\-]", "_", query)[:40].strip("_")
+    folder_name = f"{safe_query}-{stamp}"
+    export_dir = Path(project_path) / "output" / "exports" / folder_name
+    export_dir.mkdir(parents=True, exist_ok=True)
+
+    # Info bar visual constants
+    BAR_H        = 36
+    BAR_BG       = (15, 15, 15)
+    TEXT_COLOR   = (220, 220, 220)
+    ACCENT_COLOR = (255, 200, 80)
+    FONT_SIZE    = 14
+    FONT_SIZE_SM = 12
+
+    font_main = _load_font(FONT_SIZE)
+    font_sm   = _load_font(FONT_SIZE_SM)
+
+    total = len(results)
+    exported = 0
+    skipped  = 0
+
+    for idx, r in enumerate(results):
+        movie_id   = r.get("movie_id", "")
+        video_path = _find_video_path(project_path, movie_id)
+        if video_path is None:
+            print(f"  ⚠ [{idx+1}/{total}] video not found for {movie_id!r} — skipping", flush=True)
+            skipped += 1
+            continue
+
+        sf = r.get("start_frame")
+        ef = r.get("end_frame")
+        if sf is not None and ef is not None:
+            frame_index = frame_from_pct(int(sf), int(ef), frame_pct)
+        elif sf is not None:
+            frame_index = int(sf)
+        else:
+            frame_index = 0
+
+        img = extract_frame_pil(video_path, frame_index)
+        if img is None:
+            print(f"  ⚠ [{idx+1}/{total}] frame extraction failed — skipping", flush=True)
+            skipped += 1
+            continue
+
+        # Build info bar
+        bar = Image.new("RGB", (img.width, BAR_H), color=BAR_BG)
+        draw = ImageDraw.Draw(bar)
+
+        # Left: query + field
+        field_suffix = f"  [{field}]" if field else ""
+        left_text = f"query: {query}{field_suffix}"
+        draw.text((8, 4), left_text, font=font_sm, fill=TEXT_COLOR)
+
+        # Right: index counter
+        index_text = f"#{idx+1:03d} / {total:03d}"
+        if font_main:
+            bbox = draw.textbbox((0, 0), index_text, font=font_main)
+            ix = img.width - (bbox[2] - bbox[0]) - 10
+        else:
+            ix = img.width - 90
+        draw.text((ix, 3), index_text, font=font_main, fill=ACCENT_COLOR)
+
+        # Second line: movie title + shot id
+        movie_title = r.get("movie_title") or movie_id
+        shot_id     = r.get("shot_id", "")
+        detail_text = f"{movie_title}  •  shot {shot_id}"
+        draw.text((8, BAR_H // 2 + 2), detail_text, font=font_sm, fill=TEXT_COLOR)
+
+        # Append bar below frame
+        composite = Image.new("RGB", (img.width, img.height + BAR_H))
+        composite.paste(img, (0, 0))
+        composite.paste(bar, (0, img.height))
+
+        # Filename
+        safe_mid  = re.sub(r"[^\w\-]", "_", movie_id)[:50]
+        filename  = f"{idx+1:04d}-{safe_mid}-shot{shot_id}.jpg"
+        dest      = export_dir / filename
+        composite.save(str(dest), "JPEG", quality=jpeg_quality, optimize=True)
+        exported += 1
+
+    if exported == 0:
+        raise ValueError(
+            "export_frames_from_search_results: no frames could be exported — "
+            "check that video files exist for the matched movies."
+        )
+
+    print(f"  ✓ Exported {exported} frame(s) ({skipped} skipped) → {export_dir}", flush=True)
+    return export_dir
 

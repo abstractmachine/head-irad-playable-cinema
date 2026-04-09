@@ -15,7 +15,7 @@ Canvas presets:
 Example::
 
     from services.search import search_shots
-    from services.compose import compose_from_search_results
+    from generators.compose import compose_from_search_results
 
     res = search_shots("gun", scopes=None, field=None,
                        limit=20, limit_per_item=None, use_all=True,
@@ -242,7 +242,7 @@ def compose_from_search_results(
     Example
     -------
         from services.search import search_shots
-        from services.compose import compose_from_search_results
+        from generators.compose import compose_from_search_results
 
         res = search_shots("gun", scopes=None, field=None, limit=20,
                            limit_per_item=None, use_all=True,

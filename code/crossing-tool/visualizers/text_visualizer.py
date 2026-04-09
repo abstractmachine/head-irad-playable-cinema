@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Text Validator - Frame-precise on-screen text event validation and editing."""
+"""Text Visualizer - Frame-precise on-screen text event review and editing."""
 
 import sys
 import os
@@ -29,7 +29,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import QFont, QPixmap, QImage, QMouseEvent
 
-from services.text_extraction import (
+from generators.text_extraction import (
     read_text_csv,
     write_text_csv,
     get_text_csv_path,
