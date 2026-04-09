@@ -698,7 +698,7 @@ class MosaicVisualizer(QMainWindow):
     def _on_field_changed(self) -> None:
         field = self.field_combo.currentText()
         self.vocab_list.clear()
-        if not field or field == "--all":
+        if not field or field in ("--all", "text", "description"):
             return
 
         # Cancel any in-flight vocab worker
