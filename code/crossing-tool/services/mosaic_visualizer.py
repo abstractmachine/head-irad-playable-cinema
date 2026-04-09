@@ -32,6 +32,8 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QPushButton,
     QScrollArea,
@@ -216,6 +218,48 @@ class SearchWorker(QThread):
 
             self.finished_signal.emit(count)
 
+        except Exception as exc:
+            import traceback
+            self.error.emit(f"{exc}\n{traceback.format_exc()}")
+
+
+# ---------------------------------------------------------------------------
+# Vocabulary background worker
+# ---------------------------------------------------------------------------
+
+class VocabularyWorker(QThread):
+    """Fetches vocabulary for one annotation field in a background thread.
+
+    Signals
+    -------
+    items_ready(list)   list of {"value": str, "count": int} dicts
+    error(str)          emitted on failure
+    """
+
+    items_ready = pyqtSignal(list)
+    error       = pyqtSignal(str)
+
+    def __init__(self, field: str, scope: Optional[str], project_path: str, parent=None):
+        super().__init__(parent)
+        self.field        = field
+        self.scope        = scope
+        self.project_path = project_path
+
+    def run(self) -> None:
+        try:
+            from services.search import vocabulary_from_field
+            scopes  = None if (not self.scope or self.scope == "--all") else [self.scope]
+            use_all = scopes is None
+            result  = vocabulary_from_field(
+                field        = self.field,
+                scopes       = scopes,
+                use_all      = use_all,
+                show_count   = True,
+                project_path = self.project_path,
+                media_type   = "movies",
+                sort         = "count",
+            )
+            self.items_ready.emit(result)
         except Exception as exc:
             import traceback
             self.error.emit(f"{exc}\n{traceback.format_exc()}")
@@ -463,6 +507,7 @@ class MosaicVisualizer(QMainWindow):
         super().__init__()
         self.project_path = project_path
         self._worker: Optional[SearchWorker] = None
+        self._vocab_worker: Optional[VocabularyWorker] = None
 
         self.setWindowTitle("Crossing — Mosaic Visualizer")
         self.resize(1440, 900)
@@ -497,10 +542,6 @@ class MosaicVisualizer(QMainWindow):
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(14)
 
-        heading = QLabel("Mosaic Visualizer")
-        heading.setStyleSheet("font-size: 15px; font-weight: bold; color: #ccc;")
-        layout.addWidget(heading)
-
         # Movie scope
         scope_group = QGroupBox("Movie Scope")
         scope_layout = QVBoxLayout(scope_group)
@@ -517,6 +558,7 @@ class MosaicVisualizer(QMainWindow):
         self.field_combo = QComboBox()
         for f in ANNOTATION_FIELDS:
             self.field_combo.addItem(f)
+        self.field_combo.currentIndexChanged.connect(self._on_field_changed)
         field_layout.addWidget(self.field_combo)
         layout.addWidget(field_group)
 
@@ -553,13 +595,29 @@ class MosaicVisualizer(QMainWindow):
         opt_layout.addWidget(self.limit_per_movie_cb)
         layout.addWidget(opt_group)
 
-        # Zoom hint
-        hint = QLabel("Ctrl + scroll  →  zoom\nScroll  →  pan")
-        hint.setStyleSheet(f"color: {_TEXT_DIM}; font-size: 10px;")
-        hint.setAlignment(Qt.AlignCenter)
-        layout.addWidget(hint)
-
-        layout.addStretch()
+        # Vocabulary
+        vocab_group = QGroupBox("Vocabulary")
+        vocab_layout = QVBoxLayout(vocab_group)
+        vocab_layout.setContentsMargins(4, 12, 4, 4)
+        vocab_layout.setSpacing(0)
+        self.vocab_list = QListWidget()
+        self.vocab_list.setStyleSheet(f"""
+            QListWidget {{
+                background: #1a1a1a;
+                border: none;
+                color: {_TEXT};
+                font-size: 11px;
+            }}
+            QListWidget::item {{
+                padding: 3px 8px;
+                border-bottom: 1px solid #252525;
+            }}
+            QListWidget::item:hover     {{ background: #2a2a2a; }}
+            QListWidget::item:selected  {{ background: #333; }}
+        """)
+        self.vocab_list.itemClicked.connect(self._on_vocab_item_clicked)
+        vocab_layout.addWidget(self.vocab_list)
+        layout.addWidget(vocab_group, 1)  # stretch=1 fills remaining space
         return panel
 
     def _populate_movies(self) -> None:
@@ -633,6 +691,55 @@ class MosaicVisualizer(QMainWindow):
         self.search_btn.setEnabled(True)
         preview = message.splitlines()[0][:120]
         self.status.showMessage(f"Error: {preview}")
+
+    # ------------------------------------------------------------------
+    # Vocabulary panel
+
+    def _on_field_changed(self) -> None:
+        field = self.field_combo.currentText()
+        self.vocab_list.clear()
+        if not field or field == "--all":
+            return
+
+        # Cancel any in-flight vocab worker
+        if self._vocab_worker and self._vocab_worker.isRunning():
+            self._vocab_worker.wait(1000)
+
+        scope_text = self.movie_combo.currentText()
+        scope      = None if scope_text == "--all" else scope_text
+
+        loading = QListWidgetItem("Loading…")
+        loading.setFlags(loading.flags() & ~Qt.ItemIsEnabled)
+        self.vocab_list.addItem(loading)
+
+        self._vocab_worker = VocabularyWorker(
+            field        = field,
+            scope        = scope,
+            project_path = self.project_path,
+        )
+        self._vocab_worker.items_ready.connect(self._on_vocab_items)
+        self._vocab_worker.error.connect(self._on_vocab_error)
+        self._vocab_worker.start()
+
+    def _on_vocab_items(self, items: list) -> None:
+        self.vocab_list.clear()
+        for entry in items:
+            value = entry["value"]
+            count = entry["count"]
+            item  = QListWidgetItem(f"{value}  ×{count}")
+            item.setData(Qt.UserRole, value)
+            self.vocab_list.addItem(item)
+
+    def _on_vocab_error(self, message: str) -> None:
+        self.vocab_list.clear()
+        err = QListWidgetItem("Error loading vocabulary")
+        err.setFlags(err.flags() & ~Qt.ItemIsEnabled)
+        self.vocab_list.addItem(err)
+
+    def _on_vocab_item_clicked(self, item: QListWidgetItem) -> None:
+        value = item.data(Qt.UserRole)
+        if value:
+            self.query_input.setText(value)
 
 
 # ---------------------------------------------------------------------------
