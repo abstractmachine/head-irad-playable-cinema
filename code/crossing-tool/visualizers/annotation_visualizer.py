@@ -814,38 +814,15 @@ class AnnotationValidator(QMainWindow):
             f"embedding row: {row}  shot index: {shot_index}\n"
         )
 
-        # Format values in rows of 8, head + tail for large vectors
+        # Format all values in rows of 8
         def _fmt_row(vals) -> str:
             return "  ".join(f"{v:+.5f}" for v in vals)
 
         COLS = 8
-        HEAD_ROWS = 4   # 32 values
-        TAIL_ROWS = 1   # 8 values
-        head_n = HEAD_ROWS * COLS
-        tail_n = TAIL_ROWS * COLS
-
-        if dim <= head_n + tail_n:
-            # Show everything
-            rows = []
-            for off in range(0, dim, COLS):
-                rows.append("  " + _fmt_row(vec[off : off + COLS]))
-            return header + "\n" + "[\n" + "\n".join(rows) + "\n]"
-
-        omitted = dim - head_n - tail_n
-        head_rows = []
-        for off in range(0, head_n, COLS):
-            head_rows.append("  " + _fmt_row(vec[off : off + COLS]))
-        tail_rows = []
-        for off in range(dim - tail_n, dim, COLS):
-            tail_rows.append("  " + _fmt_row(vec[off : off + COLS]))
-        return (
-            header + "\n"
-            + "[\n"
-            + "\n".join(head_rows) + "\n"
-            + f"  ... {omitted} elements omitted ...\n"
-            + "\n".join(tail_rows) + "\n"
-            + "]"
-        )
+        rows = []
+        for off in range(0, dim, COLS):
+            rows.append("  " + _fmt_row(vec[off : off + COLS]))
+        return header + "\n" + "[\n" + "\n".join(rows) + "\n]"
 
     # ------------------------------------------------------------------
     # Movie selector
