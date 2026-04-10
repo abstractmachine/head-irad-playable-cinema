@@ -1540,6 +1540,23 @@ def cmd_tool_default(args):
             pref_key, fallback = _ANNOTATE_DEFAULT_KEYS[k]
             val = prefs.get(pref_key, fallback)
             print(f"{k}: {val}")
+        if not key:
+            # Show the index mapping when displaying all defaults
+            project_path = prefs.get("path")
+            if project_path:
+                try:
+                    from services.index import load_mapping
+                    mapping = load_mapping(project_path)
+                    print()
+                    print("mapping:")
+                    print(f"  fields:         {', '.join(mapping.get('fields', []))}")
+                    print(f"  include_labels: {mapping.get('include_labels', True)}")
+                    print(f"  separator:      {mapping.get('separator', ' | ')!r}")
+                    print(f"  skip_empty:     {mapping.get('skip_empty', True)}")
+                except FileNotFoundError:
+                    print("\nmapping: (no mapping.yaml found in project)")
+                except (ValueError, ImportError) as exc:
+                    print(f"\nmapping: (error loading — {exc})")
 
 
 def cmd_notify(args):
@@ -2817,6 +2834,71 @@ def _persona_detect(args):
         )
 
 
+# ---------------------------------------------------------------------------
+# index command family
+# ---------------------------------------------------------------------------
+
+def cmd_index(args):
+    _require_path()
+    sub = args.index_subcommand
+    if sub == "serialize":
+        _index_serialize(args)
+    else:
+        print("✗ index: specify a subcommand.", file=sys.stderr)
+        sys.exit(1)
+
+
+def _index_serialize(args):
+    """Print serialized text representations of annotation items to stdout."""
+    from services.shotlist import resolve_filename
+    from services.index import load_mapping, load_annotation_items, serialize_annotation_item
+
+    project_path = prefs.get("path")
+    media_type = getattr(args, "media", "movies")
+
+    query_words = getattr(args, "query", None) or []
+    query_str = " ".join(query_words).strip() if query_words else None
+    tmdb = getattr(args, "tmdb", None)
+    shot_index = getattr(args, "shot", None)
+
+    if tmdb is None and not query_str:
+        print("✗ Provide a title query or --tmdb <id>.", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        filename = resolve_filename(project_path, tmdb, query_str, media_type)
+    except ValueError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        mapping = load_mapping(project_path)
+    except (FileNotFoundError, ValueError, ImportError) as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        items = load_annotation_items(project_path, filename, media_type)
+    except FileNotFoundError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if shot_index is not None:
+        if shot_index < 0 or shot_index >= len(items):
+            print(
+                f"✗ Shot index {shot_index} out of range "
+                f"(0–{len(items) - 1} for {len(items)} shots).",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        line = serialize_annotation_item(items[shot_index], mapping)
+        print(f"{shot_index}: {line}")
+    else:
+        for i, item in enumerate(items):
+            line = serialize_annotation_item(item, mapping)
+            print(f"{i}: {line}")
+
+
 def _require_path():
     if not prefs.get("path"):
         print("✗ Error: no project path set. Run: crossing tool path <folder>", file=sys.stderr)
@@ -3063,6 +3145,43 @@ def build_parser():
     )
     p_mosaic_export.add_argument("--no-open", action="store_true", dest="no_open", help="Do not open result folder")
     p_mosaic_export.add_argument("--notify", action="store_true", help="Send a Discord notification when done")
+
+    # index command group
+    p_index = sub.add_parser(
+        "index",
+        help="Build and inspect text indices for annotation data",
+    )
+    p_index.set_defaults(func=cmd_index)
+    index_sub = p_index.add_subparsers(dest="index_subcommand", required=True)
+
+    p_index_serialize = index_sub.add_parser(
+        "serialize",
+        help=(
+            "Serialize annotation items to text lines using the project mapping "
+            "and print them to stdout"
+        ),
+    )
+    p_index_serialize.set_defaults(func=cmd_index)
+    p_index_serialize.add_argument(
+        "query",
+        nargs="*",
+        help="Title keywords to identify the film (e.g. 7th Cavalry)",
+    )
+    p_index_serialize.add_argument(
+        "--tmdb", type=int, default=None,
+        help="TMDb ID of the film (unambiguous alternative to title keywords)",
+    )
+    p_index_serialize.add_argument(
+        "--media", choices=["movies", "gameplay"], default="movies",
+        help="Media type (default: movies)",
+    )
+    p_index_serialize.add_argument(
+        "--shot", type=int, default=None, metavar="INDEX",
+        help=(
+            "Serialize only this one shot (0-based list index). "
+            "Omit to serialize all shots."
+        ),
+    )
 
     # media command group
     p_media = sub.add_parser(
