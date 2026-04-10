@@ -589,8 +589,14 @@ def _load_text_generation_pipeline(project_path: str, model_name: str):
     return gen
 
 
-def _reload_pipeline(pipeline, project_path: str, model_name: str, log_path, verbose: bool, reason: str, shots_since_reload: int):
-    """Release *pipeline*, clear GPU memory, and reload from scratch.
+def _reload_pipeline(project_path: str, model_name: str, log_path, verbose: bool, reason: str, shots_since_reload: int):
+    """Clear GPU memory and reload the pipeline from scratch.
+
+    The caller MUST set ``pipeline = None`` before calling this function so
+    that the old model's reference count drops to zero before gc.collect()
+    runs.  Passing the old pipeline in as a parameter and calling ``del``
+    inside the function does NOT release it — the caller's reference is still
+    live and the object will not be freed until after this function returns.
 
     Keeps reload logic separate from annotation logic.  Returns the new
     pipeline instance on success, or raises if loading fails.
@@ -613,9 +619,8 @@ def _reload_pipeline(pipeline, project_path: str, model_name: str, log_path, ver
     if verbose:
         print(f"  [pipeline reload: {reason} after {shots_since_reload} shots]")
 
-    # Release the old pipeline before allocating the new one so that GPU memory
-    # is freed first.  pipeline=None + gc.collect() is intentional.
-    del pipeline  # noqa: F841
+    # The old pipeline must already be None at this point (caller's responsibility).
+    # gc.collect() frees any remaining cyclic references, then we clear CUDA cache.
     gc.collect()
     try:
         import torch
@@ -1314,10 +1319,12 @@ def annotate_file_shots(
             if _consecutive_failures >= 5:
                 # Consecutive failures indicate device-drift or memory corruption
                 # (classic symptom: input_ids on cpu while model is on cuda).
-                # Delegate to _reload_pipeline which also resets _shots_since_reload.
+                # Set pipeline=None HERE so gc.collect() inside _reload_pipeline
+                # can actually free the GPU memory before loading the new model.
                 try:
+                    pipeline = None
                     pipeline = _reload_pipeline(
-                        pipeline, project_path, model_name, log_path, verbose,
+                        project_path, model_name, log_path, verbose,
                         "consecutive_failures", _shots_since_reload,
                     )
                     _shots_since_reload = 0
@@ -1336,8 +1343,11 @@ def annotate_file_shots(
         _shots_since_reload += 1
         if reload_every_n_shots > 0 and _shots_since_reload >= reload_every_n_shots:
             try:
+                # Set pipeline=None HERE so gc.collect() inside _reload_pipeline
+                # can actually free the GPU memory before loading the new model.
+                pipeline = None
                 pipeline = _reload_pipeline(
-                    pipeline, project_path, model_name, log_path, verbose,
+                    project_path, model_name, log_path, verbose,
                     "interval", _shots_since_reload,
                 )
                 _shots_since_reload = 0

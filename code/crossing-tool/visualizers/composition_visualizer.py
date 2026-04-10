@@ -3,9 +3,9 @@
 Launched via:
     crossing generate composition --visualizer
 
-The window has:
-  TOP   — toolbar: query input, orientation selector, Compose / Export buttons
-  CENTER — full-size preview of the selected tableau image
+Layout:
+  LEFT  — full-bleed image preview (fills remaining width)
+  RIGHT — control panel: 4 layer keyword inputs, orientation, Compose / Export buttons
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from typing import Optional
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -30,7 +31,7 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PyQt5.QtGui import QImage, QPixmap
+from PyQt5.QtGui import QFont, QImage, QPixmap
 
 if "QT_QPA_PLATFORM_PLUGIN_PATH" in os.environ:
     del os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"]
@@ -99,11 +100,13 @@ class ComposeWorker(QThread):
 # Style constants
 # ---------------------------------------------------------------------------
 
-_DARK_BG  = "#121212"
-_PANEL_BG = "#1e1e1e"
-_CTRL_BG  = "#232323"
-_TEXT     = "#dddddd"
-_TEXT_DIM = "#888888"
+_DARK_BG   = "#121212"
+_PANEL_BG  = "#1e1e1e"
+_CTRL_BG   = "#1a1a1a"
+_LAYER_BG  = "#232323"
+_TEXT      = "#dddddd"
+_TEXT_DIM  = "#888888"
+_ACCENT    = "#444"
 
 _STYLESHEET = f"""
 QMainWindow, QWidget  {{ background: {_PANEL_BG}; color: {_TEXT}; }}
@@ -115,15 +118,18 @@ QComboBox, QLineEdit  {{
 QComboBox::drop-down  {{ border: none; }}
 QPushButton           {{
     background: #2d2d2d; color: {_TEXT};
-    border: 1px solid #555; padding: 5px 12px; border-radius: 3px;
+    border: 1px solid #555; padding: 6px 12px; border-radius: 3px;
 }}
 QPushButton:hover     {{ background: #3a3a3a; }}
 QPushButton:pressed   {{ background: #484848; }}
 QPushButton:disabled  {{ color: #555; border-color: #3a3a3a; }}
-QStatusBar            {{ background: #1a1a1a; color: {_TEXT_DIM}; }}
+QStatusBar            {{ background: #141414; color: {_TEXT_DIM}; }}
+QFrame[frameShape="4"],
+QFrame[frameShape="5"]  {{ color: #333; }}
 """
 
-_TOOLBAR_H = 48
+_PANEL_W   = 260
+_LAYER_FONT_SIZE = 10
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +137,7 @@ _TOOLBAR_H = 48
 # ---------------------------------------------------------------------------
 
 class ComposeVisualizer(QMainWindow):
-    """Minimal compose visualizer — search, pick one background, preview."""
+    """Compose visualizer — image fills the left, layer controls on the right."""
 
     def __init__(self, project_path: str, initial_query: str = ""):
         super().__init__()
@@ -141,73 +147,114 @@ class ComposeVisualizer(QMainWindow):
         self._current_result: Optional[dict] = None
 
         self.setWindowTitle("Crossing — Composition Visualizer")
-        self.resize(1280, 800)
+        self.resize(1440, 900)
         self.setStyleSheet(_STYLESHEET)
 
         central = QWidget()
         self.setCentralWidget(central)
-        main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
+        root = QHBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        # -- Toolbar ----------------------------------------------------------
-        toolbar = QWidget()
-        toolbar.setFixedHeight(_TOOLBAR_H)
-        toolbar.setStyleSheet(f"background: {_CTRL_BG}; border-bottom: 1px solid #333;")
-        tb = QHBoxLayout(toolbar)
-        tb.setContentsMargins(12, 6, 12, 6)
-        tb.setSpacing(8)
-
-        self.query_input = QLineEdit()
-        self.query_input.setPlaceholderText("Search criteria (background layer)…")
-        self.query_input.returnPressed.connect(self._on_compose)
-        if initial_query:
-            self.query_input.setText(initial_query)
-
-        self.orientation_combo = QComboBox()
-        self.orientation_combo.addItems(["portrait", "landscape"])
-        self.orientation_combo.setFixedWidth(110)
-
-        self.compose_btn = QPushButton("Compose")
-        self.compose_btn.setFixedWidth(90)
-        self.compose_btn.clicked.connect(self._on_compose)
-
-        self.export_btn = QPushButton("Export")
-        self.export_btn.setFixedWidth(80)
-        self.export_btn.setEnabled(False)
-        self.export_btn.clicked.connect(self._on_export)
-
-        tb.addWidget(QLabel("Query:"))
-        tb.addWidget(self.query_input, stretch=1)
-        tb.addWidget(QLabel("Orientation:"))
-        tb.addWidget(self.orientation_combo)
-        tb.addWidget(self.compose_btn)
-        tb.addWidget(self.export_btn)
-        main_layout.addWidget(toolbar)
-
-        # -- Image display ----------------------------------------------------
+        # -- Left: image display ----------------------------------------------
         self.image_label = QLabel()
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.image_label.setStyleSheet(f"background: {_DARK_BG};")
-        main_layout.addWidget(self.image_label, stretch=1)
+        root.addWidget(self.image_label, stretch=1)
+
+        # -- Divider ----------------------------------------------------------
+        divider = QFrame()
+        divider.setFrameShape(QFrame.VLine)
+        divider.setFrameShadow(QFrame.Plain)
+        divider.setFixedWidth(1)
+        divider.setStyleSheet("background: #333;")
+        root.addWidget(divider)
+
+        # -- Right: control panel ---------------------------------------------
+        right_panel = QWidget()
+        right_panel.setFixedWidth(_PANEL_W)
+        right_panel.setStyleSheet(f"background: {_CTRL_BG};")
+        rp = QVBoxLayout(right_panel)
+        rp.setContentsMargins(14, 18, 14, 14)
+        rp.setSpacing(0)
+        root.addWidget(right_panel)
+
+        label_font = QFont()
+        label_font.setPointSize(_LAYER_FONT_SIZE)
+        label_font.setCapitalization(QFont.AllUppercase)
+        label_font.setLetterSpacing(QFont.AbsoluteSpacing, 1.2)
+
+        dim_style  = f"color: {_TEXT_DIM}; font-size: 9px;"
+        group_style = f"background: {_LAYER_BG}; border-radius: 4px; padding: 2px;"
+
+        def _add_layer(title: str, placeholder: str) -> QLineEdit:
+            """Add a labelled layer group and return its QLineEdit."""
+            lbl = QLabel(title)
+            lbl.setFont(label_font)
+            lbl.setStyleSheet(f"color: {_TEXT}; padding-bottom: 4px;")
+            rp.addWidget(lbl)
+            inp = QLineEdit()
+            inp.setPlaceholderText(placeholder)
+            inp.returnPressed.connect(self._on_compose)
+            rp.addWidget(inp)
+            rp.addSpacing(14)
+            return inp
+
+        self.bg_input     = _add_layer("Background",  "keyword…")
+        self.middle_input = _add_layer("Middle",       "keyword…")
+        self.mask_input   = _add_layer("Mask",         "keyword…")
+        self.text_input   = _add_layer("Text",         "keyword…")
+
+        # -- Separator --------------------------------------------------------
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setFrameShadow(QFrame.Plain)
+        sep.setStyleSheet("background: #333;")
+        rp.addWidget(sep)
+        rp.addSpacing(14)
+
+        # -- Orientation ------------------------------------------------------
+        ori_lbl = QLabel("Orientation")
+        ori_lbl.setFont(label_font)
+        ori_lbl.setStyleSheet(f"color: {_TEXT}; padding-bottom: 4px;")
+        rp.addWidget(ori_lbl)
+
+        self.orientation_combo = QComboBox()
+        self.orientation_combo.addItems(["portrait", "landscape"])
+        rp.addWidget(self.orientation_combo)
+
+        # -- Push buttons to bottom -------------------------------------------
+        rp.addStretch(1)
+
+        # -- Action buttons ---------------------------------------------------
+        self.compose_btn = QPushButton("Compose")
+        self.compose_btn.clicked.connect(self._on_compose)
+        rp.addWidget(self.compose_btn)
+        rp.addSpacing(6)
+
+        self.export_btn = QPushButton("Export")
+        self.export_btn.setEnabled(False)
+        self.export_btn.clicked.connect(self._on_export)
+        rp.addWidget(self.export_btn)
 
         # -- Status bar -------------------------------------------------------
         self.status = QStatusBar()
         self.setStatusBar(self.status)
-        self.status.showMessage("Enter a search query and press Compose.")
+        self.status.showMessage("Enter a background keyword and press Compose.")
 
-        # Auto-compose if a query was supplied on launch
+        # Seed initial query into background field
         if initial_query:
+            self.bg_input.setText(initial_query)
             self._on_compose()
 
     # -------------------------------------------------------------------------
     # Compose action
 
     def _on_compose(self) -> None:
-        query = self.query_input.text().strip()
+        query = self.bg_input.text().strip()
         if not query:
-            self.status.showMessage("Please enter a search query.")
+            self.status.showMessage("Please enter a background keyword.")
             return
         orientation = self.orientation_combo.currentText()
 
@@ -244,7 +291,7 @@ class ComposeVisualizer(QMainWindow):
         if self._current_img is None:
             return
         from generators.composition import save_tableau
-        query   = self.query_input.text().strip() or "compose"
+        query   = self.bg_input.text().strip() or "composition"
         out_dir = Path(self.project_path) / "output" / "compositions"
         out     = save_tableau(self._current_img, query, out_dir)
         self.status.showMessage(f"Saved: {out}")
@@ -256,7 +303,7 @@ class ComposeVisualizer(QMainWindow):
         """Re-scale and display _current_img in the image label."""
         if self._current_img is None:
             return
-        img = self._current_img
+        img    = self._current_img
         rgb    = img.tobytes("raw", "RGB")
         w, h   = img.size
         qimg   = QImage(rgb, w, h, 3 * w, QImage.Format_RGB888)
