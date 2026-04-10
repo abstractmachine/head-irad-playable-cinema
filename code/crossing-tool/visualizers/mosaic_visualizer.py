@@ -679,7 +679,7 @@ class MosaicVisualizer(QMainWindow):
 
     def _populate_movies(self) -> None:
         try:
-            from services.metadata import get_metadata
+            from data.metadata import get_metadata
             rows = get_metadata(self.project_path, media_type="movies")
             sorted_rows = sorted(rows, key=lambda r: (r.get("title") or "").lower())
             for row in sorted_rows:

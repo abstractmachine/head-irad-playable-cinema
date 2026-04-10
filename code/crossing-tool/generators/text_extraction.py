@@ -1103,7 +1103,7 @@ def extract_text_events(
     movie_title: str | None = None
     if project_path and filename:
         try:
-            from services.metadata import get_metadata
+            from data.metadata import get_metadata
             entries = get_metadata(project_path, filename, media_type=media_type)
             if entries:
                 movie_title = entries[0].get("title")
@@ -1246,7 +1246,7 @@ def extract_text_events(
     shots: list[dict] | None = None
     if project_path and filename:
         try:
-            from services.shotlist import read_shotlist
+            from data.shotlist import read_shotlist
             raw_shots = read_shotlist(project_path, filename, media_type)
             shots = [
                 s for s in raw_shots

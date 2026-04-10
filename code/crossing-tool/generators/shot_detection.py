@@ -184,7 +184,7 @@ def write_shotlist_csv(
     Raises:
         FileExistsError: If CSV exists and force=False
     """
-    from services.shotlist import get_shotlist_path
+    from data.shotlist import get_shotlist_path
     
     csv_path = get_shotlist_path(project_path, filename, media_type)
     

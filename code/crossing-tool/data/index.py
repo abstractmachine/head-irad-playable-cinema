@@ -94,6 +94,49 @@ def serialize_annotation_item(item: dict, mapping: dict) -> str:
     return separator.join(parts)
 
 
+def get_text_path(project_path: str, filename: str, media_type: str) -> Path:
+    """Return the canonical path for the serialized `.txt` file.
+
+    Sits alongside the annotation JSON:
+    ``<project>/data/annotations/shots/<media_type>/<stem>.txt``
+    """
+    stem = Path(filename).stem
+    return Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{stem}.txt"
+
+
+def write_text_file(
+    project_path: str,
+    filename: str,
+    media_type: str,
+    lines: list[str],
+    *,
+    force: bool = False,
+) -> Path:
+    """Write serialized text lines to ``<project>/data/index/text/<media_type>/<stem>.txt``.
+
+    Args:
+        project_path: Project root path.
+        filename:     Source video filename (used to derive the stem).
+        media_type:   ``"movies"`` or ``"gameplay"``.
+        lines:        Pure serialized payload lines — no display indices.
+        force:        Overwrite the file if it already exists.
+
+    Returns:
+        The Path where the file was written.
+
+    Raises:
+        FileExistsError: If the file already exists and ``force`` is False.
+    """
+    dest = get_text_path(project_path, filename, media_type)
+    if dest.exists() and not force:
+        raise FileExistsError(
+            f"Output already exists: {dest}\n  Pass --force to overwrite."
+        )
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return dest
+
+
 def load_annotation_items(project_path: str, filename: str, media_type: str) -> list[dict]:
     """Load annotation JSON items for a given film.
 

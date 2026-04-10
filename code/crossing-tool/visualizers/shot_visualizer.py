@@ -30,8 +30,8 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import QFont, QPixmap, QImage, QMouseEvent
 
-from services.shotlist import read_shotlist, write_shotlist, get_shotlist_path
-from services.metadata import get_metadata
+from data.shotlist import read_shotlist, write_shotlist, get_shotlist_path
+from data.metadata import get_metadata
 
 
 def _get_sar(video_path: str) -> tuple[int, int]:

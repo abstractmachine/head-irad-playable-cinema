@@ -225,8 +225,8 @@ def search_shots(
     -------
     dict with keys: query, scopes, field, limit, limit_per_item, results
     """
-    from services.metadata import get_metadata
-    from services.shotlist import read_shotlist
+    from data.metadata import get_metadata
+    from data.shotlist import read_shotlist
 
     if not project_path:
         raise RuntimeError("project_path is required")
@@ -375,7 +375,7 @@ def vocabulary_from_field(
     JSON-serialisable list.
     """
     import re
-    from services.metadata import get_metadata
+    from data.metadata import get_metadata
 
     if not project_path:
         raise RuntimeError("project_path is required")

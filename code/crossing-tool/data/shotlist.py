@@ -50,7 +50,7 @@ def resolve_filename(project_path: str, tmdb_id: str | None, filename: str | Non
     """
     if tmdb_id is not None:
         # Look up filename by TMDb ID
-        from services.metadata import get_metadata
+        from data.metadata import get_metadata
         entries = get_metadata(project_path, media_type=media_type)
         for entry in entries:
             if entry.get('tmdb') == str(tmdb_id):
@@ -93,7 +93,7 @@ def list_shotlists(project_path: str, media_type: str | None = None) -> list[dic
     
     Returns list of dicts with: filename, media_type, shot_count, scene_count
     """
-    from services.metadata import _all_metadata
+    from data.metadata import _all_metadata
     
     # Get all metadata entries and check for shotlists on disk
     all_entries = _all_metadata(project_path, media_type)

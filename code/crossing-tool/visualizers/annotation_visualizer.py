@@ -23,7 +23,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import QFont, QPixmap, QImage, QColor, QMouseEvent
 
-from services.metadata import get_metadata
+from data.metadata import get_metadata
 
 import cv2
 import numpy as np
@@ -267,7 +267,7 @@ class AnnotationValidator(QMainWindow):
         self.video_native_width = int(round(raw_w * self.sar_num / self.sar_den))
 
     def _load_data(self):
-        from services.shotlist import read_shotlist
+        from data.shotlist import read_shotlist
         try:
             self.shots = read_shotlist(self.project_path, self.filename, self.media_type)
         except FileNotFoundError as e:

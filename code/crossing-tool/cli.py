@@ -220,7 +220,7 @@ def cmd_media(args):
 def cmd_import(args):
     _require_path()
     from services.import_media import import_files
-    from services.metadata import fetch_metadata, fetch_thumbnail, fetch_subtitle, set_metadata
+    from data.metadata import fetch_metadata, fetch_thumbnail, fetch_subtitle, set_metadata
     
     project_path = prefs.get("path")
     media_type = _MEDIA_FOLDER[args.media]
@@ -342,7 +342,7 @@ def cmd_metadata(args):
 
 
 def _meta_get(args):
-    from services.metadata import get_metadata
+    from data.metadata import get_metadata
     tmdb = getattr(args, "tmdb", None)
     query = getattr(args, "query", None)
     project_path = prefs.get("path")
@@ -361,7 +361,7 @@ def _meta_get(args):
 
 
 def _meta_set(args):
-    from services.metadata import set_metadata, validate_metadata
+    from data.metadata import set_metadata, validate_metadata
     try:
         data = json.loads(args.json_data)
     except json.JSONDecodeError as exc:
@@ -379,7 +379,7 @@ def _meta_set(args):
 
 def _meta_validate(args):
     from pathlib import Path
-    from services.metadata import get_metadata
+    from data.metadata import get_metadata
     from services.normalize import normalize_filename
 
     project_path = prefs.get("path")
@@ -465,7 +465,7 @@ def _meta_validate(args):
 
 
 def _meta_update(args):
-    from services.metadata import fetch_metadata, fetch_thumbnail, fetch_subtitle, set_metadata, get_metadata
+    from data.metadata import fetch_metadata, fetch_thumbnail, fetch_subtitle, set_metadata, get_metadata
     project_path = prefs.get("path")
     media_type = getattr(args, "media", "movies")
     force = getattr(args, "force", False)
@@ -554,7 +554,7 @@ def _meta_update(args):
 
 
 def _meta_count(args):
-    from services.metadata import get_metadata
+    from data.metadata import get_metadata
     project_path = prefs.get("path")
     media_type = getattr(args, "media", "movies")
     rows = get_metadata(project_path, media_type=media_type)
@@ -562,7 +562,7 @@ def _meta_count(args):
 
 
 def _meta_list(args):
-    from services.metadata import get_metadata
+    from data.metadata import get_metadata
     project_path = prefs.get("path")
     media_type = getattr(args, "media", "movies")
 
@@ -600,7 +600,7 @@ def _meta_list(args):
 
 
 def _meta_prune(args):
-    from services.metadata import get_metadata, prune_metadata
+    from data.metadata import get_metadata, prune_metadata
     project_path = prefs.get("path")
     media_type = getattr(args, "media", "movies")
     media_dir = Path(project_path) / "media" / "videos" / media_type
@@ -630,8 +630,8 @@ def _meta_prune(args):
 
 def cmd_remove(args):
     _require_path()
-    from services.metadata import get_metadata, prune_metadata
-    from services.shotlist import resolve_filename
+    from data.metadata import get_metadata, prune_metadata
+    from data.shotlist import resolve_filename
 
     project_path = prefs.get("path")
     media_type = args.media
@@ -707,7 +707,7 @@ def cmd_remove(args):
 
     # Remove metadata row by rewriting the CSV without this filename
     import csv as _csv
-    from services.metadata import _csv_path
+    from data.metadata import _csv_path
     dest = _csv_path(project_path, media_type)
     if dest.exists():
         with dest.open(newline="", encoding="utf-8") as f:
@@ -726,7 +726,7 @@ def cmd_remove(args):
 def _meta_fixname(args):
     from pathlib import Path
     from services.normalize import normalize_filename
-    from services.metadata import get_metadata, set_metadata
+    from data.metadata import get_metadata, set_metadata
 
     project_path = prefs.get("path")
     media_type = args.media
@@ -847,7 +847,7 @@ def cmd_shotlist(args):
 
 def _shotlist_migrate(args):
     """Rewrite all shotlist CSVs that still use legacy temporal field names."""
-    from services.shotlist import migrate_shotlist_fields
+    from data.shotlist import migrate_shotlist_fields
     project_path = prefs.get("path")
     media_type = getattr(args, "media", None)
     dry_run = getattr(args, "dry_run", False)
@@ -884,7 +884,7 @@ def _shotlist_migrate(args):
 
 
 def _shotlist_list(args):
-    from services.shotlist import list_shotlists
+    from data.shotlist import list_shotlists
     project_path = prefs.get("path")
     media_type = getattr(args, "media", None)
     
@@ -906,7 +906,7 @@ def _shotlist_list(args):
 
 
 def _shotlist_get(args):
-    from services.shotlist import read_shotlist, resolve_filename
+    from data.shotlist import read_shotlist, resolve_filename
     project_path = prefs.get("path")
     
     try:
@@ -945,7 +945,7 @@ def _shotlist_annotate(args):
     if getattr(args, "annotate_type", None) is None:
         print("✗ annotate: specify a subcommand or use --visualizer.", file=sys.stderr)
         sys.exit(1)
-    from services.shotlist import annotate_shot, annotate_scene, resolve_filename
+    from data.shotlist import annotate_shot, annotate_scene, resolve_filename
     project_path = prefs.get("path")
 
     try:
@@ -1186,7 +1186,7 @@ def _display_shot_fields(shot: dict, fields: list, indent: int = 0):
 
 
 def _shotlist_show(args):
-    from services.shotlist import get_shot, get_scene_shots, resolve_filename
+    from data.shotlist import get_shot, get_scene_shots, resolve_filename
     project_path = prefs.get("path")
     
     try:
@@ -1253,8 +1253,8 @@ def cmd_shot(args):
 def _shot_detect(args):
     """Detect shot boundaries using TransNetV2."""
     from generators.shot_detection import detect_shots_transnet, write_shotlist_csv
-    from services.shotlist import resolve_filename, get_shotlist_path
-    from services.metadata import get_metadata
+    from data.shotlist import resolve_filename, get_shotlist_path
+    from data.metadata import get_metadata
 
     project_path = prefs.get("path")
     media_type = args.media
@@ -1349,8 +1349,8 @@ def _shot_detect_all(
 ):
     """Detect shots for all metadata entries that don't yet have a shotlist."""
     from generators.shot_detection import detect_shots_transnet, write_shotlist_csv
-    from services.shotlist import get_shotlist_path
-    from services.metadata import get_metadata
+    from data.shotlist import get_shotlist_path
+    from data.metadata import get_metadata
     import time
 
     entries = get_metadata(project_path, media_type=media_type)
@@ -1420,8 +1420,8 @@ def _shot_visualizer(args):
     """Launch shot visualizer GUI."""
     import subprocess
     from pathlib import Path
-    from services.shotlist import get_shotlist_path
-    from services.metadata import get_metadata
+    from data.shotlist import get_shotlist_path
+    from data.metadata import get_metadata
 
     cli_dir = Path(__file__).parent
     validator_path = cli_dir / "visualizers" / "shot_visualizer.py"
@@ -1545,7 +1545,7 @@ def cmd_tool_default(args):
             project_path = prefs.get("path")
             if project_path:
                 try:
-                    from services.index import load_mapping
+                    from data.index import load_mapping
                     mapping = load_mapping(project_path)
                     print()
                     print("mapping:")
@@ -1580,7 +1580,7 @@ def cmd_notify(args):
 def cmd_audit(args):
     """Report missing metadata, shotlists, and subtitles."""
     from pathlib import Path
-    from services.metadata import get_metadata
+    from data.metadata import get_metadata
 
     _require_path()
     project_path = prefs.get("path")
@@ -1657,8 +1657,8 @@ def cmd_subtitle(args):
 
 
 def _subtitle_fetch(args):
-    from services.metadata import fetch_subtitle, get_metadata
-    from services.shotlist import resolve_filename
+    from data.metadata import fetch_subtitle, get_metadata
+    from data.shotlist import resolve_filename
 
     project_path = prefs.get("path")
     media_type = args.media
@@ -1746,7 +1746,7 @@ def _subtitle_fetch(args):
 
 
 def _subtitle_list(args):
-    from services.metadata import get_metadata
+    from data.metadata import get_metadata
 
     project_path = prefs.get("path")
     media_type = args.media
@@ -1799,7 +1799,7 @@ def _subtitle_list(args):
 def _text_calibrate(args):
     """Sweep confidence thresholds using known ground-truth strings."""
     from generators.text_extraction import calibrate_text_detection
-    from services.shotlist import resolve_filename
+    from data.shotlist import resolve_filename
 
     project_path = prefs.get("path")
     media_type = args.media
@@ -1898,7 +1898,7 @@ def _text_detect(args):
 
     # ------------------------------------------------------------------ batch
     if do_all:
-        from services.metadata import get_metadata
+        from data.metadata import get_metadata
         entries = get_metadata(project_path, media_type=media_type)
         filenames = [
             e["filename"] for e in entries
@@ -1968,7 +1968,7 @@ def _text_detect(args):
         return
 
     # ------------------------------------------------------------------ single
-    from services.shotlist import resolve_filename
+    from data.shotlist import resolve_filename
 
     try:
         tmdb = getattr(args, "tmdb", None)
@@ -2054,14 +2054,14 @@ def _text_list(args):
 def _annotate_remove(args):
     """Remove shot-annotation JSON for one or all films."""
     from generators.annotate import remove_file_annotations
-    from services.shotlist import resolve_filename
+    from data.shotlist import resolve_filename
 
     _require_path()
     project_path = prefs.get("path")
     media_type = getattr(args, "media", "movies")
 
     if getattr(args, "all", False):
-        from services.metadata import get_metadata
+        from data.metadata import get_metadata
         entries = get_metadata(project_path, media_type=media_type)
         filenames = [e["filename"] for e in entries if e.get("filename")]
     else:
@@ -2098,21 +2098,21 @@ def _annotate_visualizer(args):
         sys.exit(1)
 
     if getattr(args, "all", False):
-        from services.metadata import get_metadata
+        from data.metadata import get_metadata
         entries = get_metadata(project_path, media_type=media_type)
         filenames = [e["filename"] for e in entries if e.get("filename")]
         if not filenames:
             print("\u2717 No films found in metadata.", file=sys.stderr)
             sys.exit(1)
     elif getattr(args, "tmdb", None) is not None:
-        from services.metadata import get_metadata
+        from data.metadata import get_metadata
         entries = get_metadata(project_path, media_type=media_type)
         filenames = [e["filename"] for e in entries if e.get("tmdb") == str(args.tmdb)]
         if not filenames:
             print(f"\u2717 No file found with TMDb ID: {args.tmdb}", file=sys.stderr)
             sys.exit(1)
     elif getattr(args, "query", None):
-        from services.metadata import get_metadata
+        from data.metadata import get_metadata
         entries = get_metadata(project_path, query=args.query, media_type=media_type)
         if not entries:
             print(f"\u2717 No file found matching '{args.query}'", file=sys.stderr)
@@ -2160,7 +2160,7 @@ def _text_visualizer(args):
         sys.exit(1)
 
     if getattr(args, "all", False):
-        from services.metadata import get_metadata
+        from data.metadata import get_metadata
         entries = get_metadata(project_path, media_type=media_type)
         filenames = [
             e["filename"]
@@ -2172,14 +2172,14 @@ def _text_visualizer(args):
             print("\u2717 No text CSVs found.", file=sys.stderr)
             sys.exit(1)
     elif getattr(args, "tmdb", None) is not None:
-        from services.metadata import get_metadata
+        from data.metadata import get_metadata
         entries = get_metadata(project_path, media_type=media_type)
         filenames = [e["filename"] for e in entries if e.get("tmdb") == str(args.tmdb)]
         if not filenames:
             print(f"\u2717 No file found with TMDb ID: {args.tmdb}", file=sys.stderr)
             sys.exit(1)
     elif getattr(args, "query", None):
-        from services.metadata import get_metadata
+        from data.metadata import get_metadata
         entries = get_metadata(project_path, query=args.query, media_type=media_type)
         if not entries:
             print(f"\u2717 No file found matching '{args.query}'", file=sys.stderr)
@@ -2340,7 +2340,7 @@ def cmd_mosaic(args):
 
 def _mosaic_thumbnails(args):
     """Collect thumbnails for a media type and render a mosaic grid."""
-    from services.metadata import get_metadata
+    from data.metadata import get_metadata
     from generators.mosaic import MosaicItem, render_mosaic
 
     project_path = prefs.get("path")
@@ -2573,7 +2573,7 @@ def cmd_persona(args):
 def _persona_get(args):
     """Print the persona JSON for a single film."""
     from services.persona.io import read_persona_json, get_persona_json_path
-    from services.shotlist import resolve_filename
+    from data.shotlist import resolve_filename
 
     project_path = prefs.get("path")
     media_type = args.media
@@ -2607,7 +2607,7 @@ def _persona_mosaic(args):
     """Generate one mosaic image per persona in a subfolder."""
     from services.persona.mosaic import persona_mosaic
     from services.persona.io import get_persona_json_path
-    from services.shotlist import resolve_filename
+    from data.shotlist import resolve_filename
 
     project_path = prefs.get("path")
     media_type = args.media
@@ -2670,7 +2670,7 @@ def _persona_mosaic(args):
 
 def _persona_detect(args):
     """Detect recurring anonymous personas in one film or all films."""
-    from services.shotlist import resolve_filename
+    from data.shotlist import resolve_filename
     from services.persona.detect import (
         detect_personas,
         detect_personas_for_all,
@@ -2849,9 +2849,15 @@ def cmd_index(args):
 
 
 def _index_serialize(args):
-    """Print serialized text representations of annotation items to stdout."""
-    from services.shotlist import resolve_filename
-    from services.index import load_mapping, load_annotation_items, serialize_annotation_item
+    """Serialize annotation items to text and print to stdout and/or save to a .txt file."""
+    from data.shotlist import resolve_filename
+    from data.index import (
+        load_mapping,
+        load_annotation_items,
+        serialize_annotation_item,
+        get_text_path,
+        write_text_file,
+    )
 
     project_path = prefs.get("path")
     media_type = getattr(args, "media", "movies")
@@ -2860,6 +2866,10 @@ def _index_serialize(args):
     query_str = " ".join(query_words).strip() if query_words else None
     tmdb = getattr(args, "tmdb", None)
     shot_index = getattr(args, "shot", None)
+    do_save = getattr(args, "save", False)
+    do_print = getattr(args, "print", False)
+    force = getattr(args, "force", False)
+    verbose = getattr(args, "verbose", False)
 
     if tmdb is None and not query_str:
         print("✗ Provide a title query or --tmdb <id>.", file=sys.stderr)
@@ -2883,6 +2893,7 @@ def _index_serialize(args):
         print(f"✗ {exc}", file=sys.stderr)
         sys.exit(1)
 
+    # Resolve the slice of items to process
     if shot_index is not None:
         if shot_index < 0 or shot_index >= len(items):
             print(
@@ -2891,11 +2902,45 @@ def _index_serialize(args):
                 file=sys.stderr,
             )
             sys.exit(1)
-        line = serialize_annotation_item(items[shot_index], mapping)
-        print(f"{shot_index}: {line}")
+        indexed_items = [(shot_index, items[shot_index])]
     else:
-        for i, item in enumerate(items):
-            line = serialize_annotation_item(item, mapping)
+        indexed_items = list(enumerate(items))
+
+    # Serialize all selected items
+    lines: list[str] = []
+    for i, item in indexed_items:
+        line = serialize_annotation_item(item, mapping)
+        lines.append(line)
+
+    # --- stdout-only mode (default) ---
+    if not do_save:
+        for i, line in zip([idx for idx, _ in indexed_items], lines):
+            print(f"{i}: {line}")
+        return
+
+    # --- save mode ---
+    if shot_index is not None:
+        # Single-shot: saving a slice of the full file would be surprising;
+        # notify the user and write normally.
+        print(
+            f"  note: saving a single-shot slice — "
+            f"only shot {shot_index} will be written to the .txt file.",
+            file=sys.stderr,
+        )
+
+    try:
+        dest = write_text_file(
+            project_path, filename, media_type, lines, force=force
+        )
+    except FileExistsError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if verbose:
+        print(f"✓ Saved: {dest}  ({len(lines)} line(s))")
+
+    if do_print:
+        for i, line in zip([idx for idx, _ in indexed_items], lines):
             print(f"{i}: {line}")
 
 
@@ -3181,6 +3226,26 @@ def build_parser():
             "Serialize only this one shot (0-based list index). "
             "Omit to serialize all shots."
         ),
+    )
+    p_index_serialize.add_argument(
+        "--save", action="store_true",
+        help=(
+            "Write serialized lines to "
+            "<project>/data/index/text/<media>/<stem>.txt "
+            "instead of printing to stdout"
+        ),
+    )
+    p_index_serialize.add_argument(
+        "--print", action="store_true", dest="print",
+        help="When --save is active, also print serialized lines to stdout",
+    )
+    p_index_serialize.add_argument(
+        "--force", action="store_true",
+        help="Overwrite an existing .txt file (only relevant with --save)",
+    )
+    p_index_serialize.add_argument(
+        "--verbose", action="store_true",
+        help="Print each serialized line as it is produced (during --save runs)",
     )
 
     # media command group

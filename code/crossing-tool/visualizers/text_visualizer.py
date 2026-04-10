@@ -35,7 +35,7 @@ from generators.text_extraction import (
     get_text_csv_path,
     VALID_TYPES,
 )
-from services.metadata import get_metadata
+from data.metadata import get_metadata
 
 import cv2
 import numpy as np

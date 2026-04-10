@@ -978,8 +978,8 @@ def annotate_file_shots(
 
     Returns a summary dict with counts and paths.
     """
-    from services.shotlist import read_shotlist, write_shotlist
-    from services.metadata import get_metadata
+    from data.shotlist import read_shotlist, write_shotlist
+    from data.metadata import get_metadata
 
     project = Path(project_path)
     shots = read_shotlist(project_path, filename, media_type)
@@ -1468,7 +1468,7 @@ def annotate_all_files(
     write_log: bool = False,
     reload_every_n_shots: int = 25,
 ) -> List[Dict[str, Any]]:
-    from services.metadata import get_metadata
+    from data.metadata import get_metadata
 
     entries = get_metadata(project_path, media_type=media_type)
     results = []

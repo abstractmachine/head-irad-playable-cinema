@@ -450,8 +450,8 @@ def detect_personas(
         FileNotFoundError: if the video or shotlist cannot be found.
     """
     import cv2
-    from services.shotlist import get_shotlist_path, read_shotlist
-    from services.metadata import get_metadata
+    from data.shotlist import get_shotlist_path, read_shotlist
+    from data.metadata import get_metadata
 
     # ── 1. Load movie metadata ──────────────────────────────────────────────
     entries = get_metadata(project_path, media_type=media_type)
@@ -995,8 +995,8 @@ def detect_personas_for_all(
 
     Returns a list of (filename, output_path_or_None, error_or_None).
     """
-    from services.metadata import get_metadata
-    from services.shotlist import get_shotlist_path
+    from data.metadata import get_metadata
+    from data.shotlist import get_shotlist_path
     from .io import write_persona_json
 
     entries = get_metadata(project_path, media_type=media_type)
