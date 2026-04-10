@@ -12,6 +12,9 @@ import traceback
 import faulthandler
 from pathlib import Path
 
+# Allow imports from the tool root (data/, services/, generators/)
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 try:
     import av as _av
     import sounddevice as _sd

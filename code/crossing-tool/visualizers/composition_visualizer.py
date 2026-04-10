@@ -15,6 +15,9 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+# Allow imports from the tool root (data/, services/, generators/)
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 # Fix Qt plugin conflict with OpenCV — import PyQt5 before cv2
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (

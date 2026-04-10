@@ -13,6 +13,9 @@ import argparse
 import faulthandler
 from pathlib import Path
 
+# Allow imports from the tool root (data/, services/, generators/)
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 # Fix Qt plugin conflict with OpenCV — import PyQt5 first
 from PyQt5.QtCore import Qt, QTimer, QEvent, QThread, pyqtSignal
 import threading
@@ -24,6 +27,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtGui import QFont, QPixmap, QImage, QColor, QMouseEvent
 
 from data.metadata import get_metadata
+from data.index import load_mapping, serialize_annotation_item
 
 import cv2
 import numpy as np
@@ -60,6 +64,19 @@ def _build_annotation_index(entries: list) -> dict:
         ann = shot.get("annotation")
         if shot_id is not None and ann is not None:
             idx[int(shot_id) - 1] = ann  # shot_id is 1-based
+    return idx
+
+
+def _build_entry_index(entries: list) -> dict:
+    """Return {shot_index: full_entry} for use with serialize_annotation_item."""
+    idx = {}
+    for entry in entries:
+        shot = entry.get("shot")
+        if not isinstance(shot, dict):
+            continue
+        shot_id = shot.get("shot_id")
+        if shot_id is not None:
+            idx[int(shot_id) - 1] = entry  # shot_id is 1-based
     return idx
 
 
@@ -209,6 +226,10 @@ class AnnotationValidator(QMainWindow):
         self.media_type = media_type
         self.shots: list = []
         self.annotation_index: dict = {}  # shot_index → annotation dict
+        self._annotation_entry_index: dict = {}  # shot_index → full entry (for txt render)
+        self._mapping = None
+        self._mapping_loaded = False
+        self._mapping_error: str = ""
         self.current_shot_index = 0
         self.cap = None
         self.is_playing = False
@@ -284,7 +305,9 @@ class AnnotationValidator(QMainWindow):
                         s[k] = 0
 
         ann_path = _get_annotation_json_path(self.project_path, self.filename, self.media_type)
-        self.annotation_index = _build_annotation_index(_read_annotation_json(ann_path))
+        ann_entries = _read_annotation_json(ann_path)
+        self.annotation_index = _build_annotation_index(ann_entries)
+        self._annotation_entry_index = _build_entry_index(ann_entries)
 
     def _reload_for_movie(self, index: int):
         self.current_movie_index = index
@@ -345,6 +368,19 @@ class AnnotationValidator(QMainWindow):
         mid_layout = QVBoxLayout(mid)
         mid_layout.setContentsMargins(2, 2, 2, 2)
         mid_layout.setSpacing(4)
+
+        repr_row = QHBoxLayout()
+        repr_lbl = QLabel("View:")
+        repr_lbl.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        repr_row.addWidget(repr_lbl)
+        self.ann_repr_combo = QComboBox()
+        self.ann_repr_combo.setFocusPolicy(Qt.NoFocus)
+        for _mode in ("fields", "json", "txt"):
+            self.ann_repr_combo.addItem(_mode)
+        self.ann_repr_combo.setCurrentIndex(0)
+        self.ann_repr_combo.currentIndexChanged.connect(self._on_repr_changed)
+        repr_row.addWidget(self.ann_repr_combo, stretch=1)
+        mid_layout.addLayout(repr_row)
 
         self.ann_display = QTextEdit()
         self.ann_display.setReadOnly(True)
@@ -626,11 +662,26 @@ class AnnotationValidator(QMainWindow):
         fail_count = sum(1 for a in self.annotation_index.values() if not _is_valid_annotation(a))
         unannotated = n - len(self.annotation_index)
 
-        ann = self.annotation_index.get(shot_index)
+        mode = self.ann_repr_combo.currentText() if hasattr(self, "ann_repr_combo") else "fields"
+        if mode == "json":
+            text = self._render_annotation_json(shot_index)
+        elif mode == "txt":
+            text = self._render_annotation_txt(shot_index)
+        else:
+            text = self._render_annotation_fields(shot_index)
+        self.ann_display.setPlainText(text)
 
+        self._status_shot_text = (
+            f"Shot {shot_index} / {n - 1}  ·  Scene {shot.get('Scene', '?')}\n"
+            f"✓ {ann_count}  ✗ {fail_count}  ? {unannotated}"
+        )
+        self._refresh_status_label()
+
+    def _render_annotation_fields(self, shot_index: int) -> str:
+        ann = self.annotation_index.get(shot_index)
         if ann is None:
-            self.ann_display.setPlainText("(not annotated)")
-        elif _is_valid_annotation(ann):
+            return "(not annotated)"
+        if _is_valid_annotation(ann):
             lines = []
             for key, val in ann.items():
                 label = key.replace("_", " ").capitalize()
@@ -644,27 +695,63 @@ class AnnotationValidator(QMainWindow):
                 else:
                     lines.append(f"{label}:\n  {val or '—'}")
                 lines.append("")
-            self.ann_display.setPlainText("\n".join(lines).strip())
-        else:
-            # Failed annotation — show raw model output
-            raw = ann.get("model_output") or ann.get("error") or ""
-            full = ann.get("model_output_full") or ""
-            if raw:
-                self.ann_display.setPlainText(f"⚠ FAILED — model output:\n\n{raw[:2000]}")
-            elif full:
-                self.ann_display.setPlainText(f"⚠ FAILED — full output:\n\n{full[:2000]}")
-            else:
-                self.ann_display.setPlainText("⚠ FAILED — no output recorded")
+            return "\n".join(lines).strip()
+        raw = ann.get("model_output") or ann.get("error") or ""
+        full = ann.get("model_output_full") or ""
+        if raw:
+            return f"⚠ FAILED — model output:\n\n{raw[:2000]}"
+        if full:
+            return f"⚠ FAILED — full output:\n\n{full[:2000]}"
+        return "⚠ FAILED — no output recorded"
 
-        self._status_shot_text = (
-            f"Shot {shot_index} / {n - 1}  ·  Scene {shot.get('Scene', '?')}\n"
-            f"✓ {ann_count}  ✗ {fail_count}  ? {unannotated}"
-        )
-        self._refresh_status_label()
+    def _render_annotation_json(self, shot_index: int) -> str:
+        ann = self.annotation_index.get(shot_index)
+        if ann is None:
+            return "(not annotated)"
+        try:
+            return json.dumps(ann, indent=2, ensure_ascii=False)
+        except Exception as exc:
+            return f"(JSON serialization error: {exc})"
+
+    def _render_annotation_txt(self, shot_index: int) -> str:
+        entry = self._annotation_entry_index.get(shot_index)
+        if entry is None:
+            return "(not annotated)"
+        mapping, err = self._get_mapping()
+        if mapping is None:
+            return f"⚠ Mapping unavailable:\n\n{err}"
+        try:
+            result = serialize_annotation_item(entry, mapping)
+        except Exception as exc:
+            return f"⚠ Serialization error:\n\n{exc}"
+        if not result:
+            ann = self.annotation_index.get(shot_index)
+            if not _is_valid_annotation(ann):
+                return "⚠ Cannot serialize: annotation is missing or invalid"
+            return "(empty — all fields are empty or filtered by mapping)"
+        return result
+
+    def _get_mapping(self):
+        if not self._mapping_loaded:
+            self._mapping_loaded = True
+            try:
+                self._mapping = load_mapping(self.project_path)
+                self._mapping_error = ""
+            except Exception as exc:
+                self._mapping = None
+                self._mapping_error = str(exc)
+        return self._mapping, self._mapping_error
 
     # ------------------------------------------------------------------
     # Movie selector
     # ------------------------------------------------------------------
+
+    def _on_repr_changed(self, _index: int):
+        if not self.shots:
+            return
+        self._update_annotation_panel(
+            self.current_shot_index, self.shots[self.current_shot_index]
+        )
 
     def _on_movie_changed(self, index: int):
         if self._updating_combo:
@@ -766,7 +853,9 @@ class AnnotationValidator(QMainWindow):
     def _on_shot_annotated(self, shot_index: int):
         """Called from AnnotateWorker after each successful shot; refresh UI."""
         ann_path = _get_annotation_json_path(self.project_path, self.filename, self.media_type)
-        self.annotation_index = _build_annotation_index(_read_annotation_json(ann_path))
+        ann_entries = _read_annotation_json(ann_path)
+        self.annotation_index = _build_annotation_index(ann_entries)
+        self._annotation_entry_index = _build_entry_index(ann_entries)
         ann = self.annotation_index.get(shot_index)
         item = self.shot_list.item(shot_index)
         if isinstance(item, ShotAnnotationItem):
