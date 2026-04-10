@@ -27,7 +27,12 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtGui import QFont, QPixmap, QImage, QColor, QMouseEvent
 
 from data.metadata import get_metadata
-from data.index import load_mapping, serialize_annotation_item
+from data.index import (
+    load_mapping,
+    serialize_annotation_item,
+    get_embeddings_path,
+    load_embeddings,
+)
 
 import cv2
 import numpy as np
@@ -77,6 +82,23 @@ def _build_entry_index(entries: list) -> dict:
         shot_id = shot.get("shot_id")
         if shot_id is not None:
             idx[int(shot_id) - 1] = entry  # shot_id is 1-based
+    return idx
+
+
+def _build_embedding_row_index(entries: list) -> dict:
+    """Return {shot_index: npy_row} for aligning shot_index to embedding array rows.
+
+    The .npy row order matches the JSON list order (same as the serialized .txt
+    line order), so the row number is simply the list position of each entry.
+    """
+    idx = {}
+    for row, entry in enumerate(entries):
+        shot = entry.get("shot")
+        if not isinstance(shot, dict):
+            continue
+        shot_id = shot.get("shot_id")
+        if shot_id is not None:
+            idx[int(shot_id) - 1] = row  # shot_id is 1-based
     return idx
 
 
@@ -227,6 +249,9 @@ class AnnotationValidator(QMainWindow):
         self.shots: list = []
         self.annotation_index: dict = {}  # shot_index → annotation dict
         self._annotation_entry_index: dict = {}  # shot_index → full entry (for txt render)
+        self._embedding_row_index: dict = {}  # shot_index → npy row (for vector render)
+        self._embeddings = None  # np.ndarray | None, loaded lazily per film
+        self._embeddings_loaded: bool = False
         self._mapping = None
         self._mapping_loaded = False
         self._mapping_error: str = ""
@@ -308,6 +333,10 @@ class AnnotationValidator(QMainWindow):
         ann_entries = _read_annotation_json(ann_path)
         self.annotation_index = _build_annotation_index(ann_entries)
         self._annotation_entry_index = _build_entry_index(ann_entries)
+        self._embedding_row_index = _build_embedding_row_index(ann_entries)
+        # Reset the per-film embedding cache whenever we switch films
+        self._embeddings = None
+        self._embeddings_loaded = False
 
     def _reload_for_movie(self, index: int):
         self.current_movie_index = index
@@ -375,7 +404,7 @@ class AnnotationValidator(QMainWindow):
         repr_row.addWidget(repr_lbl)
         self.ann_repr_combo = QComboBox()
         self.ann_repr_combo.setFocusPolicy(Qt.NoFocus)
-        for _mode in ("fields", "json", "txt"):
+        for _mode in ("fields", "json", "txt", "vector"):
             self.ann_repr_combo.addItem(_mode)
         self.ann_repr_combo.setCurrentIndex(0)
         self.ann_repr_combo.currentIndexChanged.connect(self._on_repr_changed)
@@ -667,6 +696,8 @@ class AnnotationValidator(QMainWindow):
             text = self._render_annotation_json(shot_index)
         elif mode == "txt":
             text = self._render_annotation_txt(shot_index)
+        elif mode == "vector":
+            text = self._render_annotation_vector(shot_index)
         else:
             text = self._render_annotation_fields(shot_index)
         self.ann_display.setPlainText(text)
@@ -741,6 +772,80 @@ class AnnotationValidator(QMainWindow):
                 self._mapping = None
                 self._mapping_error = str(exc)
         return self._mapping, self._mapping_error
+
+    def _load_embeddings_cached(self):
+        """Lazy-load the embeddings .npy for the current film; returns None if absent."""
+        if not self._embeddings_loaded:
+            self._embeddings_loaded = True
+            self._embeddings = load_embeddings(
+                self.project_path, self.filename, self.media_type
+            )
+        return self._embeddings
+
+    def _render_annotation_vector(self, shot_index: int) -> str:
+        row = self._embedding_row_index.get(shot_index)
+        if row is None:
+            return "(not annotated — no embedding row)"
+
+        embeddings = self._load_embeddings_cached()
+        if embeddings is None:
+            emb_path = get_embeddings_path(
+                self.project_path, self.filename, self.media_type
+            )
+            return (
+                "(no embeddings file for this film)\n\n"
+                f"Expected at:\n  {emb_path}\n\n"
+                "Run: crossing index embed <film title>"
+            )
+
+        if row >= len(embeddings):
+            return (
+                f"⚠ Row {row} out of range — "
+                f"embeddings shape is {embeddings.shape}"
+            )
+
+        vec = embeddings[row]
+        dim = int(vec.shape[0])
+        dtype = str(vec.dtype)
+        norm = float(np.linalg.norm(vec))
+
+        header = (
+            f"shape: ({dim},)  dtype: {dtype}  l2-norm: {norm:.6f}\n"
+            f"embedding row: {row}  shot index: {shot_index}\n"
+        )
+
+        # Format values in rows of 8, head + tail for large vectors
+        def _fmt_row(vals) -> str:
+            return "  ".join(f"{v:+.5f}" for v in vals)
+
+        COLS = 8
+        HEAD_ROWS = 4   # 32 values
+        TAIL_ROWS = 1   # 8 values
+        head_n = HEAD_ROWS * COLS
+        tail_n = TAIL_ROWS * COLS
+
+        if dim <= head_n + tail_n:
+            # Show everything
+            rows = []
+            for off in range(0, dim, COLS):
+                rows.append("  " + _fmt_row(vec[off : off + COLS]))
+            return header + "\n" + "[\n" + "\n".join(rows) + "\n]"
+
+        omitted = dim - head_n - tail_n
+        head_rows = []
+        for off in range(0, head_n, COLS):
+            head_rows.append("  " + _fmt_row(vec[off : off + COLS]))
+        tail_rows = []
+        for off in range(dim - tail_n, dim, COLS):
+            tail_rows.append("  " + _fmt_row(vec[off : off + COLS]))
+        return (
+            header + "\n"
+            + "[\n"
+            + "\n".join(head_rows) + "\n"
+            + f"  ... {omitted} elements omitted ...\n"
+            + "\n".join(tail_rows) + "\n"
+            + "]"
+        )
 
     # ------------------------------------------------------------------
     # Movie selector

@@ -110,11 +110,13 @@ _MODEL_KEYS = {
     "annotate": "model_annotate",
     "segmentation": "model_segmentation",
     "yolo": "model_yolo",
+    "embed": "model_embed",
 }
 _MODEL_DEFAULTS = {
     "annotate": "gemma4-e4b",
     "segmentation": "sam2.1_b.pt",
     "yolo": "yolov8n.pt",
+    "embed": "BAAI/bge-small-en-v1.5",
 }
 
 # Persistent defaults for annotate (and other commands)
@@ -2843,6 +2845,12 @@ def cmd_index(args):
     sub = args.index_subcommand
     if sub == "serialize":
         _index_serialize(args)
+    elif sub == "embed":
+        _index_embed(args)
+    elif sub == "update":
+        _index_update(args)
+    elif sub == "audit":
+        _index_audit(args)
     else:
         print("✗ index: specify a subcommand.", file=sys.stderr)
         sys.exit(1)
@@ -2942,6 +2950,506 @@ def _index_serialize(args):
     if do_print:
         for i, line in zip([idx for idx, _ in indexed_items], lines):
             print(f"{i}: {line}")
+
+
+def _index_embed(args):
+    """Embed serialized text lines and save the embedding array to a .npy file."""
+    from data.shotlist import resolve_filename
+    from data.index import (
+        get_text_path,
+        get_embeddings_path,
+        embed_texts,
+        write_embeddings,
+    )
+
+    project_path = prefs.get("path")
+    media_type = getattr(args, "media", "movies")
+
+    query_words = getattr(args, "query", None) or []
+    query_str = " ".join(query_words).strip() if query_words else None
+    tmdb = getattr(args, "tmdb", None)
+    model_name = getattr(args, "model", None) or prefs.get(_MODEL_KEYS["embed"], _MODEL_DEFAULTS["embed"])
+    force = getattr(args, "force", False)
+    verbose = getattr(args, "verbose", False)
+
+    if tmdb is None and not query_str:
+        print("✗ Provide a title query or --tmdb <id>.", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        filename = resolve_filename(project_path, tmdb, query_str, media_type)
+    except ValueError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    text_path = get_text_path(project_path, filename, media_type)
+    if not text_path.exists():
+        print(
+            f"✗ No serialized text found: {text_path}\n"
+            f"  Run first: crossing index serialize {query_str or ''} --save",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    lines = [ln for ln in text_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    if not lines:
+        print(f"✗ Serialized text file is empty: {text_path}", file=sys.stderr)
+        sys.exit(1)
+
+    if verbose:
+        print(f"  Model:  {model_name}")
+        print(f"  Input:  {text_path}  ({len(lines)} line(s))")
+
+    try:
+        embeddings = embed_texts(lines, model_name, project_path)
+    except (ImportError, RuntimeError) as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        dest = write_embeddings(project_path, filename, media_type, embeddings, force=force)
+    except FileExistsError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if verbose:
+        print(f"✓ Saved: {dest}  (shape {embeddings.shape}  dtype {embeddings.dtype})")
+    else:
+        print(f"✓ {dest.name}  shape={embeddings.shape}")
+
+
+def _resolve_all_annotation_filenames(project_path: str, media_type: str) -> list:
+    """Return sorted video filenames that have an annotation JSON on disk.
+
+    The filename is read from the first item's ``movie.filename`` field inside
+    each JSON; falls back to ``<stem>.mp4`` when that is unavailable.
+    """
+    from pathlib import Path
+
+    ann_dir = Path(project_path) / "data" / "annotations" / "shots" / media_type
+    if not ann_dir.exists():
+        return []
+    filenames = []
+    for json_file in sorted(ann_dir.glob("*.json")):
+        if json_file.name.endswith(".manifest.json"):
+            continue
+        try:
+            import json as _json
+            with json_file.open("r", encoding="utf-8") as f:
+                items = _json.load(f)
+            if items and isinstance(items[0], dict) and "movie" in items[0]:
+                fn = items[0]["movie"].get("filename")
+                if fn:
+                    filenames.append(fn)
+                    continue
+        except Exception:
+            pass
+        filenames.append(json_file.stem + ".mp4")
+    return filenames
+
+
+def _update_one_film(
+    project_path: str,
+    filename: str,
+    media_type: str,
+    model_name: str,
+    *,
+    force: bool = False,
+    verbose: bool = False,
+) -> str:
+    """Reconcile .txt, .npy, and manifest for one film.
+
+    Returns:
+        ``"ok"``    — files were rebuilt and manifest refreshed.
+        ``"skip"``  — everything was already up to date.
+        ``"error"`` — a fatal error occurred; message already printed.
+    """
+    from pathlib import Path
+    from generators.annotate import get_annotation_json_path
+    from data.index import (
+        load_mapping,
+        load_annotation_items,
+        serialize_annotation_item,
+        get_text_path,
+        write_text_file,
+        get_embeddings_path,
+        embed_texts,
+        write_embeddings,
+        load_manifest,
+        write_manifest,
+        build_manifest,
+        hash_file,
+    )
+
+    stem = Path(filename).stem
+    json_path = get_annotation_json_path(project_path, filename, media_type)
+    mapping_path = Path(project_path) / "preferences" / "data" / "mapping.yaml"
+    txt_path = get_text_path(project_path, filename, media_type)
+    npy_path = get_embeddings_path(project_path, filename, media_type)
+
+    if not json_path.exists():
+        print(f"  ✗ {stem}  no annotation JSON", file=sys.stderr)
+        return "error"
+
+    live_json_hash = hash_file(json_path)
+    live_mapping_hash = hash_file(mapping_path) if mapping_path.exists() else None
+
+    manifest = None if force else load_manifest(project_path, filename, media_type)
+
+    # ---- Determine what needs rebuilding ----
+    if manifest and not force:
+        m_json = manifest.get("json", {})
+        m_map = manifest.get("mapping", {})
+        m_txt = manifest.get("txt", {})
+        m_npy = manifest.get("npy", {})
+
+        need_txt = (
+            not txt_path.exists()
+            or m_json.get("hash") != live_json_hash
+            or m_map.get("hash") != live_mapping_hash
+            or m_txt.get("hash") != hash_file(txt_path)
+        )
+        if need_txt:
+            need_npy = True
+        else:
+            live_txt_hash = hash_file(txt_path)
+            need_npy = (
+                not npy_path.exists()
+                or m_npy.get("embed_model") != model_name
+                or m_txt.get("hash") != live_txt_hash
+                or m_npy.get("hash") != hash_file(npy_path)
+            )
+    else:
+        need_txt = True
+        need_npy = True
+
+    if not need_txt and not need_npy:
+        print(f"✓ {stem}  (up to date)")
+        return "skip"
+
+    # ---- Rebuild .txt ----
+    if need_txt:
+        try:
+            mapping = load_mapping(project_path)
+        except (FileNotFoundError, ValueError, ImportError) as exc:
+            print(f"  ✗ {stem}  mapping: {exc}", file=sys.stderr)
+            return "error"
+        try:
+            items = load_annotation_items(project_path, filename, media_type)
+        except FileNotFoundError as exc:
+            print(f"  ✗ {stem}  {exc}", file=sys.stderr)
+            return "error"
+        lines = [serialize_annotation_item(item, mapping) for item in items]
+        write_text_file(project_path, filename, media_type, lines, force=True)
+        if verbose:
+            print(f"  ✓ txt    {txt_path.name}  ({len(lines)} lines)")
+    elif verbose:
+        print(f"  — txt    (unchanged)")
+
+    # ---- Rebuild .npy ----
+    if need_npy:
+        raw_lines = txt_path.read_text(encoding="utf-8").splitlines()
+        lines = [ln for ln in raw_lines if ln.strip()]
+        try:
+            embeddings = embed_texts(lines, model_name, project_path)
+        except (ImportError, RuntimeError) as exc:
+            print(f"  ✗ {stem}  embed: {exc}", file=sys.stderr)
+            return "error"
+        write_embeddings(project_path, filename, media_type, embeddings, force=True)
+        if verbose:
+            print(f"  ✓ npy    {npy_path.name}  (shape {embeddings.shape})")
+    elif verbose:
+        print(f"  — npy    (unchanged)")
+
+    # ---- Write manifest ----
+    try:
+        m = build_manifest(project_path, filename, media_type, embed_model=model_name)
+        write_manifest(project_path, filename, media_type, m)
+    except Exception as exc:
+        print(f"  ✗ {stem}  manifest: {exc}", file=sys.stderr)
+        return "error"
+
+    if verbose:
+        print(f"  ✓ manifest updated")
+    print(f"✓ {stem}  updated")
+    return "ok"
+
+
+def _audit_one_film(
+    project_path: str,
+    filename: str,
+    media_type: str,
+    model_name: str,
+    *,
+    verbose: bool = False,
+) -> str:
+    """Inspect and print index status for one film. Never modifies files.
+
+    Returns one of: ``"current"``, ``"stale"``, ``"missing"``, ``"no manifest"``.
+    """
+    from pathlib import Path
+    from generators.annotate import get_annotation_json_path
+    from data.index import (
+        get_text_path,
+        get_embeddings_path,
+        load_manifest,
+        hash_file,
+    )
+
+    stem = Path(filename).stem
+    json_path = get_annotation_json_path(project_path, filename, media_type)
+    mapping_path = Path(project_path) / "preferences" / "data" / "mapping.yaml"
+    txt_path = get_text_path(project_path, filename, media_type)
+    npy_path = get_embeddings_path(project_path, filename, media_type)
+
+    json_exists = json_path.exists()
+    txt_exists = txt_path.exists()
+    npy_exists = npy_path.exists()
+
+    live_json_hash = hash_file(json_path) if json_exists else None
+    live_mapping_hash = hash_file(mapping_path) if mapping_path.exists() else None
+    live_txt_hash = hash_file(txt_path) if txt_exists else None
+    live_npy_hash = hash_file(npy_path) if npy_exists else None
+
+    manifest = load_manifest(project_path, filename, media_type)
+
+    txt_issues: list = []
+    npy_issues: list = []
+
+    if manifest:
+        m_json = manifest.get("json", {})
+        m_map = manifest.get("mapping", {})
+        m_txt = manifest.get("txt", {})
+        m_npy = manifest.get("npy", {})
+
+        # txt staleness checks (at most one reason reported)
+        if not txt_exists:
+            txt_issues.append("missing")
+        elif m_json.get("hash") != live_json_hash:
+            txt_issues.append("json changed")
+        elif m_map.get("hash") != live_mapping_hash:
+            txt_issues.append("mapping changed")
+        elif m_txt.get("hash") != live_txt_hash:
+            txt_issues.append("externally modified")
+
+        # npy staleness checks
+        # When txt is stale npy will need a rebuild too; we report it separately
+        # only if txt itself is fine so the output stays focused.
+        if not npy_exists:
+            npy_issues.append("missing")
+        elif txt_issues:
+            npy_issues.append("will need rebuild")
+        elif m_npy.get("embed_model") != model_name:
+            prev_model = m_npy.get("embed_model", "?")
+            npy_issues.append(f"model changed ({prev_model!r} → {model_name!r})")
+        elif m_txt.get("hash") != live_txt_hash:
+            npy_issues.append("txt modified externally")
+        elif m_npy.get("hash") != live_npy_hash:
+            npy_issues.append("externally modified")
+
+        # alignment check (cheap — uses manifest counts, not file reads)
+        if json_exists and txt_exists and npy_exists and not txt_issues and not npy_issues:
+            item_count = m_json.get("item_count")
+            line_count = m_txt.get("line_count")
+            npy_rows = (m_npy.get("shape") or [None])[0]
+            if None not in (item_count, line_count, npy_rows):
+                if not (item_count == line_count == npy_rows):
+                    npy_issues.append(
+                        f"row mismatch (json={item_count}, txt={line_count}, npy={npy_rows})"
+                    )
+
+        all_issues = (
+            [f"stale txt ({i})" for i in txt_issues]
+            + [f"stale npy ({i})" for i in npy_issues]
+        )
+        if all_issues:
+            status = "stale"
+            icon = "✗"
+        else:
+            status = "current"
+            icon = "✓"
+    else:
+        # No manifest — report what's present
+        if not txt_exists:
+            txt_issues.append("missing")
+        if not npy_exists:
+            npy_issues.append("missing")
+        all_issues = (
+            (["txt missing"] if not txt_exists else [])
+            + (["npy missing"] if not npy_exists else [])
+        )
+        status = "no manifest"
+        icon = "!"
+
+    # ---- Output ----
+    if not verbose:
+        issue_str = f"  [{'; '.join(all_issues)}]" if all_issues else ""
+        print(f"{icon}  {stem}  {status}{issue_str}")
+    else:
+        print(f"\n{stem}")
+
+        # json row
+        if json_exists:
+            h = live_json_hash[:22] + "…" if live_json_hash else ""
+            count = (manifest.get("json", {}).get("item_count", "?")
+                     if manifest else "?")
+            print(f"  json      ✓  {count} items    {h}")
+        else:
+            print(f"  json      ✗  missing")
+
+        # mapping row
+        if mapping_path.exists():
+            h = live_mapping_hash[:22] + "…" if live_mapping_hash else ""
+            print(f"  mapping   ✓  {h}")
+        else:
+            print(f"  mapping   ✗  missing")
+
+        # txt row
+        if txt_exists:
+            lc = (manifest.get("txt", {}).get("line_count", "?")
+                  if manifest else "?")
+            lbl = "stale" if txt_issues else "current"
+            reason = f"  ({'; '.join(txt_issues)})" if txt_issues else ""
+            sym = "✗" if txt_issues else "✓"
+            print(f"  txt       {sym}  {lc} lines    [{lbl}]{reason}")
+        else:
+            print(f"  txt       ✗  missing")
+
+        # npy row
+        if npy_exists:
+            shape = (manifest.get("npy", {}).get("shape") if manifest else None)
+            dtype = (manifest.get("npy", {}).get("dtype", "?") if manifest else "?")
+            stored_model = (manifest.get("npy", {}).get("embed_model", "?")
+                            if manifest else "?")
+            shape_str = f"({', '.join(str(d) for d in shape)})" if shape else "?"
+            lbl = "stale" if npy_issues else "current"
+            reason = f"  ({'; '.join(npy_issues)})" if npy_issues else ""
+            sym = "✗" if npy_issues else "✓"
+            model_note = ""
+            if stored_model != model_name:
+                model_note = f"  stored: {stored_model!r}"
+            print(f"  npy       {sym}  {shape_str} {dtype}    [{lbl}]{reason}{model_note}")
+        else:
+            print(f"  npy       ✗  missing")
+
+        # manifest row
+        if manifest:
+            updated = manifest.get("updated_at", "?")
+            print(f"  manifest  ✓  {updated}")
+        else:
+            print(f"  manifest  ✗  missing")
+
+        # active model
+        print(f"  model        {model_name}")
+
+        # status summary
+        issue_desc = f"  ({'; '.join(all_issues)})" if all_issues else ""
+        print(f"  status    {icon}  {status}{issue_desc}")
+
+    return status
+
+
+def _index_update(args):
+    """Reconcile .txt, .npy, and manifest for one film or all films."""
+    from data.shotlist import resolve_filename
+
+    project_path = prefs.get("path")
+    media_type = getattr(args, "media", "movies")
+    query_words = getattr(args, "query", None) or []
+    query_str = " ".join(query_words).strip() if query_words else None
+    tmdb = getattr(args, "tmdb", None)
+    do_all = getattr(args, "all", False)
+    model_name = (
+        getattr(args, "model", None)
+        or prefs.get(_MODEL_KEYS["embed"], _MODEL_DEFAULTS["embed"])
+    )
+    force = getattr(args, "force", False)
+    verbose = getattr(args, "verbose", False)
+
+    if do_all:
+        filenames = _resolve_all_annotation_filenames(project_path, media_type)
+        if not filenames:
+            print(f"No annotation JSON files found under {media_type}.", file=sys.stderr)
+            sys.exit(1)
+        counts = {"ok": 0, "skip": 0, "error": 0}
+        for fn in filenames:
+            result = _update_one_film(
+                project_path, fn, media_type, model_name,
+                force=force, verbose=verbose,
+            )
+            counts[result] = counts.get(result, 0) + 1
+        total = sum(counts.values())
+        parts = []
+        if counts["ok"]:
+            parts.append(f"{counts['ok']} updated")
+        if counts["skip"]:
+            parts.append(f"{counts['skip']} current")
+        if counts["error"]:
+            parts.append(f"{counts['error']} error(s)")
+        print(f"\n{', '.join(parts)}  —  {total} total")
+    else:
+        if tmdb is None and not query_str:
+            print("✗ Provide a title query, --tmdb <id>, or --all.", file=sys.stderr)
+            sys.exit(1)
+        try:
+            filename = resolve_filename(project_path, tmdb, query_str, media_type)
+        except ValueError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            sys.exit(1)
+        _update_one_film(
+            project_path, filename, media_type, model_name,
+            force=force, verbose=verbose,
+        )
+
+
+def _index_audit(args):
+    """Inspect and report index status for one film or all films. Never writes files."""
+    from data.shotlist import resolve_filename
+
+    project_path = prefs.get("path")
+    media_type = getattr(args, "media", "movies")
+    query_words = getattr(args, "query", None) or []
+    query_str = " ".join(query_words).strip() if query_words else None
+    tmdb = getattr(args, "tmdb", None)
+    do_all = getattr(args, "all", False)
+    model_name = (
+        getattr(args, "model", None)
+        or prefs.get(_MODEL_KEYS["embed"], _MODEL_DEFAULTS["embed"])
+    )
+    verbose = getattr(args, "verbose", False)
+
+    if do_all:
+        filenames = _resolve_all_annotation_filenames(project_path, media_type)
+        if not filenames:
+            print(f"No annotation JSON files found under {media_type}.", file=sys.stderr)
+            sys.exit(1)
+        tally: dict = {}
+        for fn in filenames:
+            s = _audit_one_film(
+                project_path, fn, media_type, model_name, verbose=verbose
+            )
+            tally[s] = tally.get(s, 0) + 1
+        total = sum(tally.values())
+        parts = []
+        for key in ("current", "stale", "missing", "no manifest"):
+            if tally.get(key):
+                parts.append(f"{tally[key]} {key}")
+        remaining = {k: v for k, v in tally.items() if k not in parts}
+        for k, v in remaining.items():
+            parts.append(f"{v} {k}")
+        print(f"\n{', '.join(parts)}  —  {total} total")
+    else:
+        if tmdb is None and not query_str:
+            print("✗ Provide a title query, --tmdb <id>, or --all.", file=sys.stderr)
+            sys.exit(1)
+        try:
+            filename = resolve_filename(project_path, tmdb, query_str, media_type)
+        except ValueError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            sys.exit(1)
+        _audit_one_film(
+            project_path, filename, media_type, model_name, verbose=verbose
+        )
 
 
 def _require_path():
@@ -3246,6 +3754,118 @@ def build_parser():
     p_index_serialize.add_argument(
         "--verbose", action="store_true",
         help="Print each serialized line as it is produced (during --save runs)",
+    )
+
+    p_index_embed = index_sub.add_parser(
+        "embed",
+        help=(
+            "Generate embeddings from serialized text lines"
+        ),
+    )
+    p_index_embed.set_defaults(func=cmd_index)
+    p_index_embed.add_argument(
+        "query",
+        nargs="*",
+        help="Title keywords to identify the film (e.g. 7th Cavalry)",
+    )
+    p_index_embed.add_argument(
+        "--tmdb", type=int, default=None,
+        help="TMDb ID of the film (unambiguous alternative to title keywords)",
+    )
+    p_index_embed.add_argument(
+        "--media", choices=["movies", "gameplay"], default="movies",
+        help="Media type (default: movies)",
+    )
+    p_index_embed.add_argument(
+        "--model", default=None, metavar="NAME",
+        help=(
+            "Embedding model name or path.  Resolved against <project>/models/, "
+            "then as an explicit path, then as a HuggingFace repo-id.  "
+            "Defaults to the 'embed' model role (crossing tool model set embed <name>)."
+        ),
+    )
+    p_index_embed.add_argument(
+        "--force", action="store_true",
+        help="Overwrite an existing .npy embeddings file",
+    )
+    p_index_embed.add_argument(
+        "--verbose", action="store_true",
+        help="Print model, input path, output shape, and save confirmation",
+    )
+
+    p_index_update = index_sub.add_parser(
+        "update",
+        help=(
+            "Reconcile .txt, .npy, and manifest for a film.  "
+            "Only rebuilds what is missing or stale."
+        ),
+    )
+    p_index_update.set_defaults(func=cmd_index)
+    p_index_update.add_argument(
+        "query",
+        nargs="*",
+        help="Title keywords to identify the film (e.g. 7th Cavalry)",
+    )
+    p_index_update.add_argument(
+        "--tmdb", type=int, default=None,
+        help="TMDb ID of the film (unambiguous alternative to title keywords)",
+    )
+    p_index_update.add_argument(
+        "--media", choices=["movies", "gameplay"], default="movies",
+        help="Media type (default: movies)",
+    )
+    p_index_update.add_argument(
+        "--model", default=None, metavar="NAME",
+        help=(
+            "Embedding model name or path.  "
+            "Defaults to the 'embed' model role (crossing tool model set embed <name>)."
+        ),
+    )
+    p_index_update.add_argument(
+        "--all", action="store_true",
+        help="Process all films that have an annotation JSON",
+    )
+    p_index_update.add_argument(
+        "--force", action="store_true",
+        help="Force a full rebuild even if files appear current",
+    )
+    p_index_update.add_argument(
+        "--verbose", action="store_true",
+        help="Print per-file actions (txt written, npy written, unchanged)",
+    )
+
+    p_index_audit = index_sub.add_parser(
+        "audit",
+        help="Inspect index status for a film without modifying any files",
+    )
+    p_index_audit.set_defaults(func=cmd_index)
+    p_index_audit.add_argument(
+        "query",
+        nargs="*",
+        help="Title keywords to identify the film (e.g. 7th Cavalry)",
+    )
+    p_index_audit.add_argument(
+        "--tmdb", type=int, default=None,
+        help="TMDb ID of the film (unambiguous alternative to title keywords)",
+    )
+    p_index_audit.add_argument(
+        "--media", choices=["movies", "gameplay"], default="movies",
+        help="Media type (default: movies)",
+    )
+    p_index_audit.add_argument(
+        "--model", default=None, metavar="NAME",
+        help=(
+            "Embedding model to check against.  "
+            "Defaults to the 'embed' model role (crossing tool model set embed <name>)."
+        ),
+    )
+    p_index_audit.add_argument(
+        "--all", action="store_true",
+        help="Audit all films that have an annotation JSON",
+    )
+    p_index_audit.add_argument(
+        "--verbose", action="store_true",
+        help="Show per-field detail (json, mapping, txt, npy, manifest) for each film",
     )
 
     # media command group
