@@ -2149,7 +2149,6 @@ def _mosaic_search(args):
     project_path = prefs.get("path")
     media_type   = getattr(args, "media", "movies")
     scopes       = (args.scope or []) + (getattr(args, "movie", None) or [])
-    scopes       = scopes or None
     use_all      = getattr(args, "all", False)
     field        = getattr(args, "field", None)
     limit        = getattr(args, "limit", None)
@@ -2158,8 +2157,21 @@ def _mosaic_search(args):
     output_path  = getattr(args, "output", None)
     open_result  = not getattr(args, "no_open", False)
 
+    # `crossing generate mosaic search text "WANTED"` — same shorthand as
+    # `crossing search text "WANTED"`: restrict to the annotation text field.
+    query = args.query
+    if query == "text":
+        if not scopes:
+            print("✗ mosaic search text: provide a query phrase, e.g. crossing generate mosaic search text \"WANTED\"", file=sys.stderr)
+            sys.exit(1)
+        query = scopes[0]
+        scopes = scopes[1:] or None
+        field = "text"
+    else:
+        scopes = scopes or None
+
     search_result = search_shots(
-        query=args.query,
+        query=query,
         scopes=scopes,
         field=field,
         limit=limit,
@@ -2171,10 +2183,10 @@ def _mosaic_search(args):
     results = search_result["results"]
 
     if not results:
-        print(f"✗ No results for query '{args.query}'.", file=sys.stderr)
+        print(f"✗ No results for query '{query}'.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Building search mosaic: {len(results)} result(s) (query: {args.query!r})…")
+    print(f"Building search mosaic: {len(results)} result(s) (query: {query!r})…")
 
     try:
         out = mosaic_from_search_results(
@@ -2190,7 +2202,7 @@ def _mosaic_search(args):
         if getattr(args, "notify", False):
             from services.notify import discord_notify
             discord_notify(
-                f"✓ Mosaic search complete: '{args.query}' → {out.name}",
+                f"✓ Mosaic search complete: '{query}' → {out.name}",
                 project_path,
             )
     except ValueError as exc:
