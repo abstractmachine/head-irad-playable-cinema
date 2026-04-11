@@ -393,30 +393,6 @@ def _load_text_generation_pipeline(project_path: str, model_name: str):
                 f"and make sure its full processor directory is present."
             )
 
-    def _patch_chat_template(proc, model_dir: str) -> None:
-        """If the processor's inner tokenizer has no chat_template, look for a
-        ``chat_template.jinja`` (or ``chat_template.json``) file in *model_dir*
-        and load it.
-
-        Transformers ≤5.5 does not auto-load standalone chat-template files —
-        Gemma 4 ships the template as a separate file rather than embedding it
-        in tokenizer_config.json, so without this patch apply_chat_template
-        raises 'this tokenizer does not have a chat template'.
-        """
-        inner_tok = getattr(proc, "tokenizer", None) or proc
-        if getattr(inner_tok, "chat_template", None) is not None:
-            return  # already set, nothing to do
-        model_path = Path(model_dir)
-        for candidate in ("chat_template.jinja", "chat_template.json"):
-            tmpl_file = model_path / candidate
-            if tmpl_file.exists():
-                try:
-                    tmpl = tmpl_file.read_text(encoding="utf-8").strip()
-                    inner_tok.chat_template = tmpl
-                except Exception:
-                    pass
-                return
-
     def _load_model(path_or_name, **kwargs):
         """Load a vision-language model, trying AutoModelForImageTextToText
         first (covers Qwen3-VL, Gemma4, Llama4, etc. in transformers 5.x)
@@ -438,7 +414,6 @@ def _load_text_generation_pipeline(project_path: str, model_name: str):
         except Exception as exc:
             raise RuntimeError(f"Failed to load local model from '{project_local}': {exc}") from exc
         _require_vision(tokenizer, str(project_local))
-        _patch_chat_template(tokenizer, str(project_local))
 
     # 2) Explicit path provided by user (absolute or relative)
     elif explicit_path.exists():
@@ -448,7 +423,6 @@ def _load_text_generation_pipeline(project_path: str, model_name: str):
         except Exception as exc:
             raise RuntimeError(f"Failed to load local model from '{explicit_path}': {exc}") from exc
         _require_vision(tokenizer, str(explicit_path))
-        _patch_chat_template(tokenizer, str(explicit_path))
 
     # 3) Treat as Hugging Face repo id (may download into project cache)
     else:
@@ -464,7 +438,6 @@ def _load_text_generation_pipeline(project_path: str, model_name: str):
                 f"Error: {exc}"
             ) from exc
         _require_vision(tokenizer, model_name)
-        _patch_chat_template(tokenizer, str(cache_dir))
 
     # Ensure the model/config does not carry legacy max_length defaults that
     # conflict with `max_new_tokens`. Set cleaned defaults on both config and
@@ -616,56 +589,6 @@ def _load_text_generation_pipeline(project_path: str, model_name: str):
     return gen
 
 
-def _reload_pipeline(project_path: str, model_name: str, log_path, verbose: bool, reason: str, shots_since_reload: int):
-    """Clear GPU memory and reload the pipeline from scratch.
-
-    The caller MUST set ``pipeline = None`` before calling this function so
-    that the old model's reference count drops to zero before gc.collect()
-    runs.  Passing the old pipeline in as a parameter and calling ``del``
-    inside the function does NOT release it — the caller's reference is still
-    live and the object will not be freed until after this function returns.
-
-    Keeps reload logic separate from annotation logic.  Returns the new
-    pipeline instance on success, or raises if loading fails.
-
-    Parameters
-    ----------
-    reason:
-        Either ``"interval"`` (periodic N-shot cycle) or
-        ``"consecutive_failures"`` (too many shots failed in a row).
-    shots_since_reload:
-        How many shots were processed since the last reload (or run start).
-        Logged for diagnostic purposes.
-    """
-    import gc
-
-    _append_log(
-        log_path,
-        f"RELOAD start: reason='{reason}'  shots_since_reload={shots_since_reload}",
-    )
-    if verbose:
-        print(f"  [pipeline reload: {reason} after {shots_since_reload} shots]")
-
-    # The old pipeline must already be None at this point (caller's responsibility).
-    # gc.collect() frees any remaining cyclic references, then we clear CUDA cache.
-    gc.collect()
-    try:
-        import torch
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    except Exception:
-        pass
-
-    new_pipeline = _load_text_generation_pipeline(project_path, model_name)
-    _append_log(
-        log_path,
-        f"RELOAD complete: reason='{reason}'  shots_since_reload={shots_since_reload}",
-    )
-    if verbose:
-        print(f"  [pipeline reloaded successfully]")
-    return new_pipeline
-
-
 def _is_gemma4_processor(tokenizer) -> bool:
     """Return True when the processor is Gemma4Processor (or any Gemma-family
     processor).  These processors require images to be passed *during*
@@ -754,46 +677,19 @@ def _call_model(pipeline, messages: List[Dict[str, Any]], overrides: Optional[Di
             chat_messages.append(_msg)
     try:
         if images and _is_gemma4_processor(tokenizer):
-            # Gemma4Processor path.
-            #
-            # Two issues with the naive call:
-            # 1. Gemma4's apply_chat_template(tokenize=True) iterates over EVERY
-            #    message's content (including system) to extract visuals.  If any
-            #    message has content as a plain string it iterates over characters
-            #    and does character["type"], raising:
-            #      TypeError: string indices must be integers, not 'str'
-            # 2. Passing images= as a plain kwarg triggers the processor warning:
-            #      "Kwargs passed to processor.__call__ have to be in
-            #       processor_kwargs dict, not in **kwargs"
-            #    which is harmless but indicates images weren't embedded properly.
-            #
-            # Fix: rebuild gemma_messages where ALL content is a list and embed
-            # actual PIL images directly in the user turn content dict so the
-            # processor extracts them during template rendering without needing
-            # an explicit images= kwarg.
-            gemma_messages = []
-            for _g in chat_messages:
-                _gc = _g.get("content", "")
-                if _g["role"] == "user":
-                    # Replace bare {"type": "image"} placeholders with actual PIL images
-                    text_items = [
-                        item for item in (_gc if isinstance(_gc, list) else [])
-                        if isinstance(item, dict) and item.get("type") != "image"
-                    ]
-                    content = [{"type": "image", "image": img} for img in images] + text_items
-                    gemma_messages.append({"role": "user", "content": content})
-                else:
-                    # Convert string content to a list so Gemma4 never iterates chars
-                    if isinstance(_gc, str):
-                        gemma_messages.append({"role": _g["role"], "content": [{"type": "text", "text": _gc}]})
-                    else:
-                        gemma_messages.append(_g)
+            # Gemma4Processor path: pass images directly to apply_chat_template so
+            # that <start_of_image> tokens are embedded in the token stream.  If we
+            # were to call apply_chat_template(tokenize=False) and then feed the
+            # resulting string back into the processor with images separately, the
+            # formatted string contains no image token slots and the processor
+            # reports "tokens: 0, features: N".
             inputs = tokenizer.apply_chat_template(
-                gemma_messages,
+                chat_messages,
                 add_generation_prompt=True,
                 tokenize=True,
                 return_dict=True,
                 return_tensors="pt",
+                images=images,
             )
         else:
             # Qwen3-VL and other models: apply chat template first as plain text,
@@ -1046,87 +942,6 @@ def _build_prompt(
     return "\n".join(parts)
 
 
-# ---------------------------------------------------------------------------
-# ETA helpers — used by annotate_file_shots and annotate_all_files
-# ---------------------------------------------------------------------------
-
-def _load_existing_agg(project_path: str, filename: str, media_type: str) -> Dict[int, Any]:
-    """Load the aggregated annotations JSON for *filename*, keyed by shot_id (1-based).
-
-    Returns an empty dict if the file does not exist or cannot be parsed.
-    """
-    stem = Path(filename).stem
-    agg_path = (
-        Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{stem}.json"
-    )
-    result: Dict[int, Any] = {}
-    if not agg_path.exists():
-        return result
-    try:
-        raw = json.loads(agg_path.read_text(encoding="utf-8"))
-        for entry in raw:
-            s = entry.get("shot") if isinstance(entry, dict) else None
-            if isinstance(s, dict) and s.get("shot_id") is not None:
-                result[int(s["shot_id"])] = entry
-    except Exception:
-        pass
-    return result
-
-
-def _count_pending_shots(
-    shots: List[Dict[str, Any]],
-    existing_agg: Dict[int, Any],
-    force: bool,
-    skip_existing: bool,
-    scene_str: Optional[str],
-    shot_index: Optional[int],
-    limit: Optional[int],
-) -> int:
-    """Count shots that will actually be attempted in *annotate_file_shots*.
-
-    Mirrors the skip logic in the annotation loop without any I/O or model
-    calls.  Used to pre-compute ETA shot counts.
-    """
-    count = 0
-    for i, shot in enumerate(shots):
-        if limit is not None and i >= limit:
-            break
-        if scene_str is not None and str(shot.get("Scene", "")) != scene_str:
-            continue
-        if shot_index is not None and i != shot_index:
-            continue
-        _shot_id = i + 1
-        _prior = existing_agg.get(_shot_id)
-        if not force and skip_existing and _prior is not None:
-            _prior_ann = _prior.get("shot", {}).get("annotation", {})
-            if isinstance(_prior_ann, dict) and _prior_ann.get("setting"):
-                continue
-        count += 1
-    return count
-
-
-def _count_file_pending_shots(
-    project_path: str,
-    filename: str,
-    media_type: str,
-    force: bool,
-    skip_existing: bool,
-    limit: Optional[int],
-) -> int:
-    """Count annotation-pending shots for *filename* without loading the model.
-
-    Intended for the corpus-level ETA pre-pass in *annotate_all_files*.
-    Returns 0 on any error so that ETA calculation degrades gracefully.
-    """
-    try:
-        from data.shotlist import read_shotlist
-        shots = read_shotlist(project_path, filename, media_type)
-        existing_agg = _load_existing_agg(project_path, filename, media_type)
-        return _count_pending_shots(shots, existing_agg, force, skip_existing, None, None, limit)
-    except Exception:
-        return 0
-
-
 def annotate_file_shots(
     project_path: str,
     filename: str,
@@ -1148,16 +963,13 @@ def annotate_file_shots(
     on_shot_done=None,
     stop_event=None,
     write_log: bool = False,
-    reload_every_n_shots: int = 25,
-    timer: Optional[Any] = None,
-    subsequent_shots: int = 0,
 ) -> Dict[str, Any]:
     """Annotate all shots in a single file and write canonical outputs.
 
     Returns a summary dict with counts and paths.
     """
-    from data.shotlist import read_shotlist, write_shotlist
-    from data.metadata import get_metadata
+    from services.shotlist import read_shotlist, write_shotlist
+    from services.metadata import get_metadata
 
     project = Path(project_path)
     shots = read_shotlist(project_path, filename, media_type)
@@ -1244,7 +1056,6 @@ def annotate_file_shots(
     skipped = 0
     failed: List[Tuple[int, str]] = []
     _consecutive_failures = 0  # triggers pipeline reload when too many shots fail in a row
-    _shots_since_reload = 0    # counts shots processed since last reload (or run start)
 
     # video_path already defined above (before model load for early-exit check)
 
@@ -1288,24 +1099,6 @@ def annotate_file_shots(
         except Exception:
             pass
 
-    # Create a per-file timer when in verbose mode and no shared timer was provided.
-    # When called from annotate_all_files, a shared timer is passed in so that
-    # the rolling window spans the whole corpus run.
-    if timer is None and verbose:
-        try:
-            from services.annotation_timer import AnnotationTimer
-            timer = AnnotationTimer()
-        except ImportError:
-            pass
-
-    # Pre-compute how many shots in this file need annotation so we can report
-    # shots-remaining without scanning ahead on every iteration.
-    _movie_pending = (
-        _count_pending_shots(shots, _existing_agg, force, skip_existing, scene_str, shot_index, limit)
-        if timer is not None
-        else 0
-    )
-
     for i, shot in enumerate(shots):
         # Allow an external stop signal to abort iteration gracefully
         if stop_event is not None and stop_event.is_set():
@@ -1341,8 +1134,6 @@ def annotate_file_shots(
                 skipped += 1
                 results.append(_prior)
                 continue
-
-        _shot_start = time.time()
 
         # Sample frames (best-effort). Prefer pre-baked frames under
         # media/frames/<media_type>/<stem>/ if present (useful for debugging).
@@ -1507,13 +1298,8 @@ def annotate_file_shots(
             results.append(shot_annotation)
             updated += 1
             _consecutive_failures = 0
-            if timer is not None:
-                timer.record(time.time() - _shot_start)
             if verbose:
                 print(f"    ✓ Shot {i+1}")
-                if timer is not None:
-                    _remaining_movie = max(0, _movie_pending - updated)
-                    timer.print_estimates(_remaining_movie, _remaining_movie + subsequent_shots)
         else:
             # Do NOT append failed shots to results: they are omitted from the JSON
             # so the validator shows them as unannotated (? not ✗), and they are
@@ -1522,43 +1308,27 @@ def annotate_file_shots(
             if _consecutive_failures >= 5:
                 # Consecutive failures indicate device-drift or memory corruption
                 # (classic symptom: input_ids on cpu while model is on cuda).
-                # Set pipeline=None HERE so gc.collect() inside _reload_pipeline
-                # can actually free the GPU memory before loading the new model.
+                # Release the old pipeline, clear CUDA cache, then reload.
                 try:
-                    pipeline = None
-                    pipeline = _reload_pipeline(
-                        project_path, model_name, log_path, verbose,
-                        "consecutive_failures", _shots_since_reload,
-                    )
-                    _shots_since_reload = 0
+                    import gc
+                    pipeline = None  # release reference so GC can free GPU memory
+                    gc.collect()
+                    try:
+                        import torch
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                    except Exception:
+                        pass
+                    pipeline = _load_text_generation_pipeline(project_path, model_name)
                     _consecutive_failures = 0
+                    if verbose:
+                        print(f"  [pipeline reloaded after consecutive failures]")
                 except Exception as _reload_exc:
-                    _append_log(log_path, f"RELOAD failed (consecutive_failures): {_reload_exc}")
                     if verbose:
                         print(f"  [pipeline reload failed: {_reload_exc}]", file=sys.stderr)
             if verbose:
                 reason = failed[-1][1] if failed and failed[-1][0] == i else "failed"
                 print(f"    ✗ Shot {i+1}: {reason}")
-
-        # Count this shot as processed (attempted annotation, not a skip).
-        # Trigger a periodic pipeline reload after every reload_every_n_shots attempts
-        # to prevent the model drifting into generic/repetitive outputs.
-        _shots_since_reload += 1
-        if reload_every_n_shots > 0 and _shots_since_reload >= reload_every_n_shots:
-            try:
-                # Set pipeline=None HERE so gc.collect() inside _reload_pipeline
-                # can actually free the GPU memory before loading the new model.
-                pipeline = None
-                pipeline = _reload_pipeline(
-                    project_path, model_name, log_path, verbose,
-                    "interval", _shots_since_reload,
-                )
-                _shots_since_reload = 0
-                _consecutive_failures = 0
-            except Exception as _reload_exc:
-                _append_log(log_path, f"RELOAD failed (interval): {_reload_exc}")
-                if verbose:
-                    print(f"  [periodic pipeline reload failed: {_reload_exc}]", file=sys.stderr)
 
         # small pause to be polite to model infra
         time.sleep(0.1)
@@ -1669,51 +1439,17 @@ def annotate_all_files(
     limit: Optional[int] = None,
     verbose: bool = False,
     write_log: bool = False,
-    reload_every_n_shots: int = 25,
-    on_file_done=None,
 ) -> List[Dict[str, Any]]:
-    from data.metadata import get_metadata
+    from services.metadata import get_metadata
 
     entries = get_metadata(project_path, media_type=media_type)
-
-    # Pre-compute pending shot counts so we can project corpus-level ETA from
-    # the very first annotation.  Failures are silently treated as 0.
-    _pending_counts: Dict[str, int] = {}
-    for _e in entries:
-        _fn = _e.get("filename")
-        if _fn:
-            _pending_counts[_fn] = _count_file_pending_shots(
-                project_path, _fn, media_type, force, skip_existing, limit
-            )
-
-    # Shared timer spans the entire corpus run so the rolling window reflects
-    # realistic throughput even when individual files are small.
-    _timer = None
-    if verbose:
-        try:
-            from services.annotation_timer import AnnotationTimer
-            _timer = AnnotationTimer()
-        except ImportError:
-            pass
-
-    _all_filenames = [_e.get("filename") for _e in entries if _e.get("filename")]
-    # _corpus_subsequent starts at the total and is decremented before each file,
-    # so it represents shots in movies *after* the current one while that file
-    # is being processed.
-    _corpus_subsequent = sum(_pending_counts.get(_fn, 0) for _fn in _all_filenames)
-
     results = []
     for e in entries:
         fn = e.get("filename")
         if not fn:
             continue
-        # Subtract this movie's pending count before processing it so that
-        # subsequent_shots passed to annotate_file_shots reflects only the
-        # movies that come after the current one.
-        _corpus_subsequent -= _pending_counts.get(fn, 0)
         if verbose:
             print(f"\n--- {fn} ---")
-        _t0 = time.time()
         summary = annotate_file_shots(
             project_path,
             fn,
@@ -1729,17 +1465,8 @@ def annotate_all_files(
             limit=limit,
             verbose=verbose,
             write_log=write_log,
-            reload_every_n_shots=reload_every_n_shots,
-            timer=_timer,
-            subsequent_shots=_corpus_subsequent,
         )
-        _elapsed = time.time() - _t0
         results.append(summary)
-        if on_file_done is not None:
-            try:
-                on_file_done(summary, _elapsed)
-            except Exception:
-                pass
     return results
 
 
