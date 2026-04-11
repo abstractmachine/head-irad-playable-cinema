@@ -404,7 +404,7 @@ class AnnotationValidator(QMainWindow):
         repr_row.addWidget(repr_lbl)
         self.ann_repr_combo = QComboBox()
         self.ann_repr_combo.setFocusPolicy(Qt.NoFocus)
-        for _mode in ("fields", "json", "txt", "vector"):
+        for _mode in ("fields", "json", "txt", "vector", "mapping"):
             self.ann_repr_combo.addItem(_mode)
         self.ann_repr_combo.setCurrentIndex(0)
         self.ann_repr_combo.currentIndexChanged.connect(self._on_repr_changed)
@@ -698,6 +698,8 @@ class AnnotationValidator(QMainWindow):
             text = self._render_annotation_txt(shot_index)
         elif mode == "vector":
             text = self._render_annotation_vector(shot_index)
+        elif mode == "mapping":
+            text = self._render_annotation_mapping()
         else:
             text = self._render_annotation_fields(shot_index)
         self.ann_display.setPlainText(text)
@@ -823,6 +825,27 @@ class AnnotationValidator(QMainWindow):
         for off in range(0, dim, COLS):
             rows.append("  " + _fmt_row(vec[off : off + COLS]))
         return header + "\n" + "[\n" + "\n".join(rows) + "\n]"
+
+    def _render_annotation_mapping(self) -> str:
+        mapping, err = self._get_mapping()
+        if mapping is None:
+            return f"⚠ Mapping unavailable:\n\n{err}"
+        fields = mapping.get("fields", [])
+        include_labels = mapping.get("include_labels", True)
+        separator = mapping.get("separator", " | ")
+        skip_empty = mapping.get("skip_empty", True)
+        lines = [
+            "fields:",
+        ]
+        for f in fields:
+            lines.append(f"  - {f}")
+        lines += [
+            "",
+            f"include_labels: {include_labels}",
+            f"separator:      {separator!r}",
+            f"skip_empty:     {skip_empty}",
+        ]
+        return "\n".join(lines)
 
     # ------------------------------------------------------------------
     # Movie selector
