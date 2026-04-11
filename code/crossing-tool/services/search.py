@@ -256,6 +256,7 @@ def search_shots(
         year = entry.get("year", "")
         movie_title_raw = entry.get("title") or stem
         movie_title = f"{movie_title_raw} ({year})" if year else movie_title_raw
+        tmdb_id = entry.get("tmdb") or entry.get("tmdb_id")
 
         ann_path = ann_base / f"{stem}.json"
         if not ann_path.exists():
@@ -304,6 +305,8 @@ def search_shots(
             timing = shot_timing.get(shot_id - 1, {})
 
             results.append({
+                "filename": filename,
+                "tmdb_id": tmdb_id,
                 "movie_id": movie_id,
                 "movie_title": movie_title,
                 "shot_index": shot_id,

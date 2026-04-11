@@ -293,6 +293,36 @@ def cmd_search(args):
         print(json.dumps(result, indent=2))
         return
 
+    # Dispatch: `crossing search text <query> [scope...]`
+    # Searches the annotation `text` field — the canonical semantic text layer
+    # produced by `crossing annotate`. Downstream spatial localization (bbox)
+    # will build on these results but is not implemented here.
+    if args.query == "text":
+        from services.search import search_shots
+        remaining = args.scope or []
+        if not remaining:
+            print("error: 'search text' requires a query, e.g. crossing search text \"WANTED\"", file=sys.stderr)
+            sys.exit(1)
+        text_query = remaining[0]
+        scopes = (remaining[1:] or []) + (getattr(args, "movie", None) or [])
+        scopes = scopes or None
+        use_all = getattr(args, "all", False)
+        limit = getattr(args, "limit", None)
+        limit_per_item = getattr(args, "limit_per_item", None)
+        media_type = getattr(args, "media", "movies")
+        result = search_shots(
+            query=text_query,
+            scopes=scopes,
+            field="text",
+            limit=limit,
+            limit_per_item=limit_per_item,
+            use_all=use_all,
+            project_path=prefs.get("path"),
+            media_type=media_type,
+        )
+        print(json.dumps(result, indent=2))
+        return
+
     from services.search import search_shots
 
     scopes = (args.scope or []) + (getattr(args, "movie", None) or [])
@@ -1813,262 +1843,9 @@ def _subtitle_list(args):
 
 
 # ---------------------------------------------------------------------------
-# text command family
+# (text command family removed — text retrieval now lives under
+#  `crossing search text <query>`; see cmd_search)
 # ---------------------------------------------------------------------------
-
-def _text_calibrate(args):
-    """Sweep confidence thresholds using known ground-truth strings."""
-    from generators.text_extraction import calibrate_text_detection
-    from data.shotlist import resolve_filename
-
-    project_path = prefs.get("path")
-    media_type = args.media
-    lang = getattr(args, "lang", "en")
-    window = getattr(args, "window", 180.0)
-    expected = args.expect
-
-    try:
-        tmdb = getattr(args, "tmdb", None)
-        filename_arg = getattr(args, "filename", None)
-        filename = resolve_filename(project_path, tmdb, filename_arg, media_type)
-    except ValueError as exc:
-        print(f"✗ {exc}", file=sys.stderr)
-        sys.exit(1)
-
-    video_path = Path(project_path) / "media" / "videos" / media_type / filename
-    if not video_path.exists():
-        print(f"✗ Video not found: {video_path}", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"Calibrating: {filename}")
-    print(f"  window: first {window:.0f}s  |  lang: {lang}")
-    print(f"  expected strings ({len(expected)}):")
-    for e in expected:
-        print(f"    • {e!r}")
-    print()
-
-    result = calibrate_text_detection(
-        str(video_path),
-        expected,
-        window_seconds=window,
-        lang=lang,
-    )
-
-    print(f"Sampled {result['frames_sampled']} frames, {result['raw_detection_count']} raw detections before filtering")
-    print()
-    print(f"  {'Threshold':>9}  {'Hits':>6}  {'Found':>9}  Missed")
-    print("  " + "-" * 56)
-
-    best_threshold = None
-    for r in result["thresholds"]:
-        found_count = len(r["found"])
-        total_expected = len(expected)
-        missed_str = ", ".join(f"'{m}'" for m in r["missed"]) if r["missed"] else "—"
-        marker = ""
-        if found_count == total_expected and best_threshold is None:
-            best_threshold = r["threshold"]
-            marker = "  ◄ recommended"
-        print(f"  {r['threshold']:>9.2f}  {r['total_hits']:>6}  {found_count:>3}/{total_expected:<3}   {missed_str}{marker}")
-
-    print()
-    if best_threshold is not None:
-        print(f"Recommendation: --min-confidence {best_threshold:.2f}")
-        print(f"  (highest threshold that recovers all {len(expected)} expected string(s))")
-    else:
-        print(f"⚠ No threshold recovered all expected strings.")
-        print(f"  Check the strings appear within the first {window:.0f}s, or use --window <seconds>.")
-
-
-def cmd_text(args):
-    _require_path()
-    if getattr(args, "visualizer", False):
-        args.all = True
-        args.query = None
-        args.tmdb = None
-        _text_visualizer(args)
-        return
-    sub = args.text_subcommand
-    if sub is None:
-        print("✗ text: specify a subcommand or use --visualizer.", file=sys.stderr)
-        sys.exit(1)
-    if sub == "detect":
-        _text_detect(args)
-    elif sub == "list":
-        _text_list(args)
-    elif sub == "calibrate":
-        _text_calibrate(args)
-
-
-def _text_detect(args):
-    """Detect on-screen text for one film or all films (--all)."""
-    from generators.text_extraction import extract_text_events, write_text_csv, get_text_csv_path
-    import time
-
-    project_path = prefs.get("path")
-    media_type = args.media
-    force = getattr(args, "force", False)
-    sample_fps = getattr(args, "sample_fps", 1.0)
-    lang = getattr(args, "lang", "en")
-    min_confidence = getattr(args, "min_confidence", 0.75)
-    verbose = getattr(args, "verbose", False)
-    cards_only = not getattr(args, "include_diegetic", False)
-    do_all = getattr(args, "all", False)
-    notify = getattr(args, "notify", False)
-    notify_items = getattr(args, "notify_items", False)
-
-    # ------------------------------------------------------------------ batch
-    if do_all:
-        from data.metadata import get_metadata
-        entries = get_metadata(project_path, media_type=media_type)
-        filenames = [
-            e["filename"] for e in entries
-            if e.get("filename")
-            and (Path(project_path) / "media" / "videos" / media_type / e["filename"]).exists()
-        ]
-
-        if not filenames:
-            print("No films to process.")
-            return
-
-        pending, skipped = [], []
-        for fn in filenames:
-            if get_text_csv_path(project_path, fn, media_type).exists() and not force:
-                skipped.append(fn)
-            else:
-                pending.append(fn)
-
-        print(f"{len(filenames)} film(s): {len(pending)} to process, {len(skipped)} already done.")
-        if skipped:
-            print("  (use --force to reprocess)")
-
-        failed = []
-        for i, filename in enumerate(pending, 1):
-            video_path = Path(project_path) / "media" / "videos" / media_type / filename
-            if not video_path.exists():
-                print(f"  [{i}/{len(pending)}] ⚠ video not found, skipping: {filename}")
-                failed.append(filename)
-                continue
-            print(f"  [{i}/{len(pending)}] {filename}")
-            t0 = time.time()
-            try:
-                events = extract_text_events(str(video_path), sample_fps=sample_fps, lang=lang, min_confidence=min_confidence, verbose=verbose, project_path=project_path, filename=filename, media_type=media_type, cards_only=cards_only)
-                rows = [{"filename": filename, **e} for e in events]
-                dest = write_text_csv(project_path, filename, rows, media_type, force=force)
-                elapsed = time.time() - t0
-                print(f"    ✓ {len(events)} event(s) in {elapsed:.1f}s → {dest.name}")
-                if notify_items:
-                    from services.notify import discord_notify
-                    discord_notify(
-                        f"[{i}/{len(pending)}] ✓ {filename}\n"
-                        f"{len(events)} text event(s) in {elapsed:.1f}s",
-                        project_path,
-                    )
-            except FileExistsError as exc:
-                print(f"    ⚠ {exc}")
-            except Exception as exc:
-                print(f"    ✗ failed: {exc}", file=sys.stderr)
-                import traceback
-                traceback.print_exc()
-                failed.append(filename)
-
-        print()
-        ok = len(pending) - len(failed)
-        print(f"Done. {ok}/{len(pending)} processed successfully.")
-        if failed:
-            print("Failed:")
-            for f in failed:
-                print(f"  {f}")
-
-        if notify:
-            from services.notify import discord_notify
-            summary = f"Text detection batch complete: {ok}/{len(pending)} succeeded"
-            if failed:
-                summary += "\nFailed:\n" + "\n".join(f"  {f}" for f in failed)
-            discord_notify(summary, project_path)
-        return
-
-    # ------------------------------------------------------------------ single
-    from data.shotlist import resolve_filename
-
-    try:
-        tmdb = getattr(args, "tmdb", None)
-        filename_arg = getattr(args, "filename", None)
-        filename = resolve_filename(project_path, tmdb, filename_arg, media_type)
-    except ValueError as exc:
-        print(f"✗ {exc}", file=sys.stderr)
-        sys.exit(1)
-
-    video_path = Path(project_path) / "media" / "videos" / media_type / filename
-    if not video_path.exists():
-        print(f"✗ Video not found: {video_path}", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"Detecting text: {filename}")
-    print(f"  sample rate: {sample_fps} fps  |  lang: {lang}")
-
-    t0 = time.time()
-    try:
-        events = extract_text_events(str(video_path), sample_fps=sample_fps, lang=lang, min_confidence=min_confidence, verbose=verbose, project_path=project_path, filename=filename, media_type=media_type, cards_only=cards_only)
-    except ImportError as exc:
-        print(f"✗ {exc}", file=sys.stderr)
-        sys.exit(1)
-    except Exception as exc:
-        print(f"✗ Detection failed: {exc}", file=sys.stderr)
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
-
-    elapsed = time.time() - t0
-    print(f"  found {len(events)} text event(s) in {elapsed:.1f}s")
-
-    rows = [{"filename": filename, **e} for e in events]
-
-    try:
-        dest = write_text_csv(project_path, filename, rows, media_type, force=force)
-    except FileExistsError as exc:
-        print(f"✗ {exc}", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"✓ Saved: {dest}")
-
-    from collections import Counter
-    counts = Counter(r["type"] for r in rows)
-    for t, n in sorted(counts.items()):
-        print(f"    {n:3d}  {t}")
-
-    if notify:
-        from services.notify import discord_notify
-        discord_notify(
-            f"✓ Text detection complete: {filename}\n"
-            f"{len(events)} event(s) in {elapsed:.1f}s",
-            project_path,
-        )
-
-
-def _text_list(args):
-    """List text CSVs."""
-    from generators.text_extraction import list_text_csvs
-
-    project_path = prefs.get("path")
-    media_type = getattr(args, "media", None)
-    as_json = getattr(args, "json", False)
-
-    results = list_text_csvs(project_path, media_type)
-
-    if as_json:
-        print(json.dumps(results, indent=2))
-        return
-
-    if not results:
-        print("No text CSVs found.")
-        return
-
-    print(f"Found {len(results)} text CSV(s):\n")
-    for r in results:
-        counts_str = "  ".join(f"{v} {k}" for k, v in sorted(r["type_counts"].items()))
-        print(f"  {r['filename']}  ({r['media_type']})")
-        print(f"    {r['row_count']} event(s)  ·  {counts_str or 'none'}")
-        print()
 
 
 def _annotate_remove(args):
@@ -2148,87 +1925,6 @@ def _annotate_visualizer(args):
         sys.exit(1)
 
     valid = filenames
-
-    cmd = [
-        sys.executable, str(validator_path),
-        "--media", media_type,
-        "--project", project_path,
-        "--filenames",
-    ] + valid
-
-    try:
-        subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError as e:
-        sys.exit(e.returncode)
-    except KeyboardInterrupt:
-        sys.exit(0)
-
-
-def _text_visualizer(args):
-    """Launch the text visualizer GUI."""
-    from generators.text_extraction import get_text_csv_path
-
-    _require_path()
-    project_path = prefs.get("path")
-    media_type = getattr(args, "media", "movies")
-
-    # GUI mode — resolve the list of filenames to visualize
-    import subprocess
-    validator_path = Path(__file__).parent / "visualizers" / "text_visualizer.py"
-    if not validator_path.exists():
-        print(f"\u2717 Error: text_visualizer.py not found at {validator_path}", file=sys.stderr)
-        sys.exit(1)
-
-    if getattr(args, "all", False):
-        from data.metadata import get_metadata
-        entries = get_metadata(project_path, media_type=media_type)
-        filenames = [
-            e["filename"]
-            for e in entries
-            if e.get("filename")
-            and get_text_csv_path(project_path, e["filename"], media_type).exists()
-        ]
-        if not filenames:
-            print("\u2717 No text CSVs found.", file=sys.stderr)
-            sys.exit(1)
-    elif getattr(args, "tmdb", None) is not None:
-        from data.metadata import get_metadata
-        entries = get_metadata(project_path, media_type=media_type)
-        filenames = [e["filename"] for e in entries if e.get("tmdb") == str(args.tmdb)]
-        if not filenames:
-            print(f"\u2717 No file found with TMDb ID: {args.tmdb}", file=sys.stderr)
-            sys.exit(1)
-    elif getattr(args, "query", None):
-        from data.metadata import get_metadata
-        entries = get_metadata(project_path, query=args.query, media_type=media_type)
-        if not entries:
-            print(f"\u2717 No file found matching '{args.query}'", file=sys.stderr)
-            sys.exit(1)
-        if len(entries) > 1:
-            print(f"\u2717 Multiple files match '{args.query}':", file=sys.stderr)
-            for e in entries:
-                print(f"  - {e['filename']}", file=sys.stderr)
-            sys.exit(1)
-        filenames = [entries[0]["filename"]]
-    else:
-        print(
-            "\u2717 Must provide a query, --tmdb, or --all",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    # Warn about any entry without a text CSV
-    valid = []
-    for fn in filenames:
-        csv_path = get_text_csv_path(project_path, fn, media_type)
-        if csv_path.exists():
-            valid.append(fn)
-        else:
-            print(f"  \u26a0 No text CSV for: {fn}  (skipping)", file=sys.stderr)
-
-    if not valid:
-        print("\u2717 No text CSVs found for the selected film(s).", file=sys.stderr)
-        sys.exit(1)
 
     cmd = [
         sys.executable, str(validator_path),
@@ -3647,7 +3343,16 @@ def build_parser():
 
     # search command
     p_search = sub.add_parser("search", help="Search shot annotations")
-    p_search.add_argument("query", help="Search string (e.g. \"sunset\" or \"man with gun\")")
+    p_search.add_argument(
+        "query",
+        help=(
+            "Search string (e.g. \"sunset\").  "
+            "Special values: "
+            "\"text <phrase>\" — search the annotation text field "
+            "(e.g. crossing search text \"WANTED\"); "
+            "\"vocabulary <field>\" — list distinct values in a field."
+        ),
+    )
     p_search.add_argument("scope", nargs="*", help="Fuzzy movie-title filter(s); omit to search all movies")
     p_search.add_argument("--movie", nargs="+", default=None, metavar="TITLE", help="Fuzzy movie-title filter(s) (named alternative to positional scope)")
     p_search.add_argument("--field", default=None, help="Restrict search to one annotation field (e.g. objects)")
@@ -3733,45 +3438,6 @@ def build_parser():
 
     p_sub_list = subtitle_sub.add_parser("list", help="Show subtitle status for all entries")
     p_sub_list.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-
-    # text command group
-    p_text = sub.add_parser("text", help="Extract and manage on-screen text (intertitles, credits, signs)")
-    p_text.set_defaults(func=cmd_text)
-    p_text.add_argument("--visualizer", action="store_true", help="Open the text visualizer GUI (all films)")
-    p_text.add_argument("--media", choices=["movies", "gameplay"], default="movies", help="Media type for --visualizer (default: movies)")
-    text_sub = p_text.add_subparsers(dest="text_subcommand", required=False)
-
-    p_text_detect = text_sub.add_parser("detect", help="Detect on-screen text events for one or all films")
-    p_text_detect.add_argument("filename", nargs="?", default=None, help="Video filename (or use --tmdb)")
-    p_text_detect.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_text_detect.add_argument("--all", action="store_true", help="Process all films with video files")
-    p_text_detect.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-    p_text_detect.add_argument("--force", action="store_true", help="Overwrite existing CSV(s)")
-    p_text_detect.add_argument("--sample-fps", type=float, default=1.0, dest="sample_fps",
-                               help="Frames per second to sample (default: 1.0)")
-    p_text_detect.add_argument("--lang", default="en", help="PaddleOCR language code (default: en)")
-    p_text_detect.add_argument("--min-confidence", type=float, default=0.75, dest="min_confidence",
-                               help="Minimum OCR confidence score to accept (default: 0.75)")
-    p_text_detect.add_argument("--verbose", action="store_true", help="Print per-frame OCR output")
-    p_text_detect.add_argument("--include-diegetic", action="store_true", default=False, dest="include_diegetic",
-                               help="Also capture diegetic text (signs, props, scene text). Default: cards only.")
-    p_text_detect.add_argument("--notify", action="store_true", help="Send a Discord notification when the process finishes")
-    p_text_detect.add_argument("--notify-items", action="store_true", dest="notify_items", help="Send a Discord notification after each item in a batch")
-
-    p_text_list = text_sub.add_parser("list", help="List all text CSVs")
-    p_text_list.add_argument("--media", choices=["movies", "gameplay"], default=None,
-                             help="Filter by media type")
-    p_text_list.add_argument("--json", action="store_true", help="Output as JSON")
-
-    p_text_calibrate = text_sub.add_parser("calibrate", help="Sweep confidence thresholds using known ground-truth text")
-    p_text_calibrate.add_argument("filename", nargs="?", default=None, help="Video filename substring (or use --tmdb)")
-    p_text_calibrate.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_text_calibrate.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-    p_text_calibrate.add_argument("--lang", default="en", help="PaddleOCR language code (default: en)")
-    p_text_calibrate.add_argument("--expect", nargs="+", required=True, metavar="TEXT",
-                                  help="One or more known strings that appear in the first window of the film")
-    p_text_calibrate.add_argument("--window", type=float, default=180.0,
-                                  help="Seconds from start to analyse (default: 180)")
 
     # tool command group (version, path, name, api_key)
     p_tool = sub.add_parser("tool", help="Tool settings: version, path, name, models, API keys")
