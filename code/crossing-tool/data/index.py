@@ -151,7 +151,7 @@ def load_annotation_items(project_path: str, filename: str, media_type: str) -> 
     Raises:
         FileNotFoundError: If the annotation JSON does not exist.
     """
-    from generators.annotate import get_annotation_json_path
+    from data.annotate import get_annotation_json_path
 
     json_path = get_annotation_json_path(project_path, filename, media_type)
     if not json_path.exists():
@@ -410,7 +410,7 @@ def build_manifest(
     """
     import numpy as np
     from datetime import datetime, timezone
-    from generators.annotate import get_annotation_json_path
+    from data.annotate import get_annotation_json_path
 
     json_path = get_annotation_json_path(project_path, filename, media_type)
     mapping_path = Path(project_path) / "preferences" / "data" / "mapping.yaml"

@@ -369,6 +369,8 @@ def cmd_metadata(args):
         _meta_list(args)
     elif sub == "prune":
         _meta_prune(args)
+    elif sub == "audit":
+        _meta_audit(args)
 
 
 def _meta_get(args):
@@ -652,6 +654,67 @@ def _meta_prune(args):
 
     pruned = prune_metadata(project_path, media_type=media_type)
     print(f"\nRemoved {len(pruned)} entr{'y' if len(pruned) == 1 else 'ies'}.")
+
+
+def _meta_audit(args):
+    """Report missing metadata, shotlists, and subtitles."""
+    from data.metadata import get_metadata
+
+    project_path = prefs.get("path")
+    media_type = getattr(args, "media", "movies")
+
+    video_dir    = Path(project_path) / "media" / "videos"    / media_type
+    subtitle_dir = Path(project_path) / "media" / "subtitles" / media_type
+    shotlist_dir = Path(project_path) / "data"  / "shotlists" / media_type
+
+    video_files   = sorted(f.name for f in video_dir.glob("*") if f.is_file()) if video_dir.exists() else []
+    entries       = get_metadata(project_path, media_type=media_type)
+    meta_filenames = {e["filename"] for e in entries if e.get("filename")}
+
+    no_metadata = [f for f in video_files if f not in meta_filenames]
+
+    no_shotlist = []
+    for entry in entries:
+        fn = entry.get("filename", "")
+        if fn and not (shotlist_dir / (Path(fn).stem + ".csv")).exists():
+            no_shotlist.append(fn)
+
+    no_subtitle = []
+    for entry in entries:
+        fn = entry.get("filename", "")
+        if not fn:
+            continue
+        stem = Path(fn).stem
+        if not (subtitle_dir / (stem + ".srt")).exists() and \
+           not (subtitle_dir / (stem.replace(" ", "-") + ".srt")).exists():
+            no_subtitle.append(fn)
+
+    n = len(entries)
+    print(f"Audit · {media_type}  ({len(video_files)} video file(s) · {n} metadata entry(ies))")
+
+    print()
+    if no_metadata:
+        print(f"  No metadata   ({len(no_metadata)}):")
+        for f in no_metadata:
+            print(f"    {f}")
+    else:
+        print(f"  Metadata:   ✓ all {n}")
+
+    print()
+    if no_shotlist:
+        print(f"  No shotlist   ({len(no_shotlist)} / {n}):")
+        for f in no_shotlist:
+            print(f"    {f}")
+    else:
+        print(f"  Shotlists:  ✓ all {n}")
+
+    print()
+    if no_subtitle:
+        print(f"  No subtitles  ({len(no_subtitle)} / {n}):")
+        for f in no_subtitle:
+            print(f"    {f}")
+    else:
+        print(f"  Subtitles:  ✓ all {n}")
 
 
 # ---------------------------------------------------------------------------
@@ -975,6 +1038,9 @@ def _shotlist_annotate(args):
     if getattr(args, "annotate_type", None) is None:
         print("✗ annotate: specify a subcommand or use --visualizer.", file=sys.stderr)
         sys.exit(1)
+    if args.annotate_type == "audit":
+        _annotate_audit(args)
+        return
     from data.shotlist import annotate_shot, annotate_scene, resolve_filename
     project_path = prefs.get("path")
 
@@ -1000,7 +1066,7 @@ def _shotlist_annotate(args):
                 return
 
             # Automatic (default) mode
-            from generators.annotate import annotate_file_shots, annotate_all_files
+            from data.annotate import annotate_file_shots, annotate_all_files
 
             if getattr(args, "all", False):
                 _notify_items = getattr(args, "notify_items", False)
@@ -1100,7 +1166,7 @@ def _shotlist_annotate(args):
                 return
 
             # Automatic scene annotation (default)
-            from generators.annotate import annotate_file_shots
+            from data.annotate import annotate_file_shots
 
             filename = resolve_filename(project_path, args.tmdb, args.filename, args.media)
             summary = annotate_file_shots(
@@ -1302,7 +1368,7 @@ def cmd_shot(args):
 
 def _shot_detect(args):
     """Detect shot boundaries using TransNetV2."""
-    from generators.shot_detection import detect_shots_transnet, write_shotlist_csv
+    from data.shot_detection import detect_shots_transnet, write_shotlist_csv
     from data.shotlist import resolve_filename, get_shotlist_path
     from data.metadata import get_metadata
 
@@ -1398,7 +1464,7 @@ def _shot_detect_all(
     notify_items: bool = False,
 ):
     """Detect shots for all metadata entries that don't yet have a shotlist."""
-    from generators.shot_detection import detect_shots_transnet, write_shotlist_csv
+    from data.shot_detection import detect_shots_transnet, write_shotlist_csv
     from data.shotlist import get_shotlist_path
     from data.metadata import get_metadata
     import time
@@ -1627,72 +1693,6 @@ def cmd_notify(args):
         sys.exit(1)
 
 
-def cmd_audit(args):
-    """Report missing metadata, shotlists, and subtitles."""
-    from pathlib import Path
-    from data.metadata import get_metadata
-
-    _require_path()
-    project_path = prefs.get("path")
-    media_type = args.media
-
-    video_dir  = Path(project_path) / "media" / "videos" / media_type
-    subtitle_dir = Path(project_path) / "media" / "subtitles" / media_type
-    shotlist_dir = Path(project_path) / "data" / "shotlists" / media_type
-
-    video_files = sorted(f.name for f in video_dir.glob("*") if f.is_file()) if video_dir.exists() else []
-    entries = get_metadata(project_path, media_type=media_type)
-    meta_filenames = {e["filename"] for e in entries if e.get("filename")}
-
-    # Videos on disk with no metadata row
-    no_metadata = [f for f in video_files if f not in meta_filenames]
-
-    # Metadata entries with no shotlist CSV
-    no_shotlist = []
-    for entry in entries:
-        fn = entry.get("filename", "")
-        if fn and not (shotlist_dir / (Path(fn).stem + ".csv")).exists():
-            no_shotlist.append(fn)
-
-    # Metadata entries with no subtitle file
-    no_subtitle = []
-    for entry in entries:
-        fn = entry.get("filename", "")
-        if not fn:
-            continue
-        stem = Path(fn).stem
-        if not (subtitle_dir / (stem + ".srt")).exists() and \
-           not (subtitle_dir / (stem.replace(" ", "-") + ".srt")).exists():
-            no_subtitle.append(fn)
-
-    n = len(entries)
-    print(f"Audit · {media_type}  ({len(video_files)} video file(s) · {n} metadata entry(ies))")
-
-    print()
-    if no_metadata:
-        print(f"  No metadata   ({len(no_metadata)}):")
-        for f in no_metadata:
-            print(f"    {f}")
-    else:
-        print(f"  Metadata:   ✓ all {n}")
-
-    print()
-    if no_shotlist:
-        print(f"  No shotlist   ({len(no_shotlist)} / {n}):")
-        for f in no_shotlist:
-            print(f"    {f}")
-    else:
-        print(f"  Shotlists:  ✓ all {n}")
-
-    print()
-    if no_subtitle:
-        print(f"  No subtitles  ({len(no_subtitle)} / {n}):")
-        for f in no_subtitle:
-            print(f"    {f}")
-    else:
-        print(f"  Subtitles:  ✓ all {n}")
-
-
 # ---------------------------------------------------------------------------
 # subtitle command
 # ---------------------------------------------------------------------------
@@ -1850,7 +1850,7 @@ def _subtitle_list(args):
 
 def _annotate_remove(args):
     """Remove shot-annotation JSON for one or all films."""
-    from generators.annotate import remove_file_annotations
+    from data.annotate import remove_file_annotations
     from data.shotlist import resolve_filename
 
     _require_path()
@@ -1880,9 +1880,112 @@ def _annotate_remove(args):
     print(f"\nRemoved {removed}  |  already absent {skipped}")
 
 
+def _annotate_audit(args):
+    """Report annotation status per film: missing, empty, incomplete, or complete."""
+    import json as _json
+    from data.metadata import get_metadata
+    from data.shotlist import read_shotlist
+
+    project_path = prefs.get("path")
+    media_type   = getattr(args, "media", "movies")
+
+    entries = get_metadata(project_path, media_type=media_type)
+    if not entries:
+        print("No metadata entries found.")
+        return
+
+    ann_dir = Path(project_path) / "data" / "annotations" / "shots" / media_type
+
+    missing    = []  # no annotation JSON
+    empty      = []  # JSON exists but 0 valid annotations
+    incomplete = []  # some shots annotated, some not
+    complete   = []  # all shots annotated
+
+    for entry in entries:
+        fn = entry.get("filename", "")
+        if not fn:
+            continue
+        stem = Path(fn).stem
+        ann_path = ann_dir / f"{stem}.json"
+
+        if not ann_path.exists():
+            missing.append(fn)
+            continue
+
+        try:
+            ann_entries = _json.loads(ann_path.read_text(encoding="utf-8"))
+        except Exception:
+            missing.append(fn)
+            continue
+
+        if not ann_entries:
+            empty.append(fn)
+            continue
+
+        # Count valid annotations
+        valid = sum(
+            1 for e in ann_entries
+            if isinstance(e.get("shot"), dict)
+            and isinstance(e["shot"].get("annotation"), dict)
+            and "setting" in e["shot"]["annotation"]
+        )
+
+        # Compare against shotlist if available
+        try:
+            shots = read_shotlist(project_path, fn, media_type)
+            total_shots = len(shots)
+        except Exception:
+            total_shots = len(ann_entries)
+
+        if valid == 0:
+            empty.append(fn)
+        elif valid < total_shots:
+            incomplete.append((fn, valid, total_shots))
+        else:
+            complete.append(fn)
+
+    n = len(entries)
+    print(f"Annotation audit · {media_type}  ({n} film(s))")
+
+    print()
+    if complete:
+        print(f"  Complete ({len(complete)}):")
+        for f in complete:
+            print(f"    ✓  {f}")
+    else:
+        print(f"  Complete:  (none)")
+
+    print()
+    if incomplete:
+        print(f"  Incomplete ({len(incomplete)}):")
+        for f, done, total in incomplete:
+            print(f"    ~  {f}  ({done}/{total} shots)")
+    else:
+        print(f"  Incomplete:  (none)")
+
+    print()
+    if empty:
+        print(f"  No valid annotations ({len(empty)}):")
+        for f in empty:
+            print(f"    ✗  {f}")
+    else:
+        print(f"  No valid annotations:  (none)")
+
+    print()
+    if missing:
+        print(f"  Missing annotation file ({len(missing)}):")
+        for f in missing:
+            print(f"    ?  {f}")
+    else:
+        print(f"  Missing annotation file:  (none)")
+
+    print()
+    print(f"  {len(complete)} complete  {len(incomplete)} incomplete  {len(empty)} empty  {len(missing)} missing  —  {n} total")
+
+
 def _annotate_visualizer(args):
     """Launch the annotation visualizer GUI."""
-    from generators.annotate import get_annotation_json_path as _ann_json_path
+    from data.annotate import get_annotation_json_path as _ann_json_path
 
     _require_path()
     project_path = prefs.get("path")
@@ -2512,7 +2615,7 @@ def _update_one_film(
         ``"error"`` — a fatal error occurred; message already printed.
     """
     from pathlib import Path
-    from generators.annotate import get_annotation_json_path
+    from data.annotate import get_annotation_json_path
     from data.index import (
         load_mapping,
         load_annotation_items,
@@ -2635,7 +2738,7 @@ def _audit_one_film(
     Returns one of: ``"current"``, ``"stale"``, ``"missing"``, ``"no manifest"``.
     """
     from pathlib import Path
-    from generators.annotate import get_annotation_json_path
+    from data.annotate import get_annotation_json_path
     from data.index import (
         get_text_path,
         get_embeddings_path,
@@ -2865,7 +2968,7 @@ def _index_audit(args):
     )
     verbose = getattr(args, "verbose", False)
 
-    if do_all:
+    if do_all or (tmdb is None and not query_str):
         filenames = _resolve_all_annotation_filenames(project_path, media_type)
         if not filenames:
             print(f"No annotation JSON files found under {media_type}.", file=sys.stderr)
@@ -3007,13 +3110,11 @@ def build_parser():
     p_annotate_remove.add_argument("--media", choices=["movies", "gameplay"], default="movies")
     p_annotate_remove.add_argument("--all", action="store_true", help="Remove annotations for all films in metadata")
 
+    p_annotate_audit = annotate_sub.add_parser("audit", help="Report annotation status per film (complete, incomplete, missing)")
+    p_annotate_audit.set_defaults(func=_shotlist_annotate)
+    p_annotate_audit.add_argument("--media", choices=["movies", "gameplay"], default="movies")
 
     # (moved under 'crossing tool model' — see tool_sub below)
-
-    # audit command
-    p_audit = sub.add_parser("audit", help="Report missing metadata, shotlists, and subtitles")
-    p_audit.set_defaults(func=cmd_audit)
-    p_audit.add_argument("--media", choices=["movies", "gameplay"], default="movies")
 
     # generate command group — composition, mosaic
     p_generate = sub.add_parser("generate", help="Generate content from project data (composition, mosaic)")
@@ -3344,6 +3445,9 @@ def build_parser():
     p_meta_prune.add_argument("--media", choices=["movies", "gameplay"], default="movies")
     p_meta_prune.add_argument("--confirm", action="store_true",
                               help="Actually remove the entries (default is a dry run)")
+
+    p_meta_audit = meta_sub.add_parser("audit", help="Report missing metadata, shotlists, and subtitles")
+    p_meta_audit.add_argument("--media", choices=["movies", "gameplay"], default="movies")
 
     # media remove
     p_remove = media_sub.add_parser("remove", help="Remove a film and all its associated files")

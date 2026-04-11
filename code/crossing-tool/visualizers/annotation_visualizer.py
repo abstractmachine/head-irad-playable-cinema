@@ -212,7 +212,7 @@ class AnnotateWorker(QThread):
         self._stop_event.set()
 
     def run(self):
-        from generators.annotate import annotate_file_shots
+        from data.annotate import annotate_file_shots
         try:
             summary = annotate_file_shots(
                 project_path=self.project_path,
@@ -993,7 +993,7 @@ class AnnotationValidator(QMainWindow):
         )
         if reply != QMessageBox.Yes:
             return
-        from generators.annotate import remove_file_annotations
+        from data.annotate import remove_file_annotations
         removed = remove_file_annotations(self.project_path, self.filename, self.media_type)
         if removed:
             print(f"[Remove] Deleted annotations: {self.filename}", file=sys.stderr)
