@@ -183,7 +183,7 @@ def list_models(project_path: str) -> None:
 
     # Load configured roles to annotate which model is assigned to each
     configured: Dict[str, str] = {}
-    for role, key in (("annotate", "model_annotate"), ("segmentation", "model_segmentation"), ("yolo", "model_yolo")):
+    for role, key in (("annotate", "model_annotate"), ("segmentation", "model_segmentation")):
         val = pget(key, None)
         if val:
             configured[val] = role

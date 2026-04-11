@@ -109,13 +109,11 @@ def cmd_version_init(args):
 _MODEL_KEYS = {
     "annotate": "model_annotate",
     "segmentation": "model_segmentation",
-    "yolo": "model_yolo",
     "embed": "model_embed",
 }
 _MODEL_DEFAULTS = {
     "annotate": "gemma4-e4b",
     "segmentation": "sam2.1_b.pt",
-    "yolo": "yolov8n.pt",
     "embed": "BAAI/bge-small-en-v1.5",
 }
 
@@ -2341,7 +2339,7 @@ def cmd_composition(args):
 # ---------------------------------------------------------------------------
 
 def cmd_mosaic(args):
-    """Generate a mosaic contact sheet from thumbnails, personas, or search results."""
+    """Generate a mosaic contact sheet from thumbnails or search results."""
     _require_path()
     if getattr(args, "visualizer", False):
         _mosaic_visualizer(args)
@@ -2352,8 +2350,6 @@ def cmd_mosaic(args):
         sys.exit(1)
     if sub == "thumbnails":
         _mosaic_thumbnails(args)
-    elif sub == "personas":
-        _persona_mosaic(args)
     elif sub == "search":
         _mosaic_search(args)
     elif sub == "export":
@@ -2577,283 +2573,6 @@ def _mosaic_export(args):
         traceback.print_exc()
         sys.exit(1)
 
-
-# ---------------------------------------------------------------------------
-# persona command family
-# ---------------------------------------------------------------------------
-
-def cmd_persona(args):
-    """Dispatch persona subcommands."""
-    _require_path()
-    sub = args.persona_subcommand
-    if sub == "detect":
-        _persona_detect(args)
-    elif sub == "get":
-        _persona_get(args)
-
-
-def _persona_get(args):
-    """Print the persona JSON for a single film."""
-    from services.persona.io import read_persona_json, get_persona_json_path
-    from data.shotlist import resolve_filename
-
-    project_path = prefs.get("path")
-    media_type = args.media
-
-    query_words = getattr(args, "query", None) or []
-    query_str = " ".join(query_words).strip() if query_words else None
-
-    if args.tmdb is None and not query_str:
-        print("✗ Provide a title query or --tmdb <id>.", file=sys.stderr)
-        sys.exit(1)
-
-    try:
-        filename = resolve_filename(project_path, args.tmdb, query_str, media_type)
-    except ValueError as exc:
-        print(f"✗ {exc}", file=sys.stderr)
-        sys.exit(1)
-
-    try:
-        doc = read_persona_json(project_path, filename, media_type)
-    except FileNotFoundError:
-        path = get_persona_json_path(project_path, filename, media_type)
-        print(f"✗ No persona JSON found: {path}", file=sys.stderr)
-        print(f"  Run: crossing persona detect {query_str or f'--tmdb {args.tmdb}'}", file=sys.stderr)
-        sys.exit(1)
-
-    from services.persona.io import document_to_dict
-    print(json.dumps(document_to_dict(doc), indent=2))
-
-
-def _persona_mosaic(args):
-    """Generate one mosaic image per persona in a subfolder."""
-    from services.persona.mosaic import persona_mosaic
-    from services.persona.io import get_persona_json_path
-    from data.shotlist import resolve_filename
-
-    project_path = prefs.get("path")
-    media_type = args.media
-    layout = getattr(args, "layout", "landscape")
-    max_per = getattr(args, "max_per_persona", 6)
-    output_path = Path(args.output) if getattr(args, "output", None) else None
-    open_result = not getattr(args, "no_open", False)
-    notify = getattr(args, "notify", False)
-
-    query_words = getattr(args, "query", None) or []
-    query_str = " ".join(query_words).strip() if query_words else None
-
-    if args.tmdb is None and not query_str:
-        print("✗ Provide a title query or --tmdb <id>.", file=sys.stderr)
-        sys.exit(1)
-
-    try:
-        filename = resolve_filename(project_path, args.tmdb, query_str, media_type)
-    except ValueError as exc:
-        print(f"✗ {exc}", file=sys.stderr)
-        sys.exit(1)
-
-    json_path = get_persona_json_path(project_path, filename, media_type)
-    if not json_path.exists():
-        print(f"✗ No persona JSON found: {json_path}", file=sys.stderr)
-        print(f"  Run: crossing persona detect {query_str or f'--tmdb {args.tmdb}'}", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"Building persona mosaics: {filename}")
-
-    try:
-        out = persona_mosaic(
-            project_path,
-            filename,
-            media_type=media_type,
-            max_per_persona=max_per,
-            output_path=output_path,
-            layout=layout,
-            open_result=open_result,
-        )
-        n_images = len(list(out.glob("*.png")))
-        print(f"✓ Saved {n_images} persona images → {out}/")
-        if notify:
-            from services.notify import discord_notify
-            discord_notify(
-                f"✓ Persona mosaics complete: {filename}\n"
-                f"  {n_images} images → {out.name}/",
-                project_path,
-            )
-    except ValueError as exc:
-        print(f"✗ {exc}", file=sys.stderr)
-        sys.exit(1)
-    except Exception as exc:
-        print(f"✗ Render failed: {exc}", file=sys.stderr)
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
-
-
-
-def _persona_detect(args):
-    """Detect recurring anonymous personas in one film or all films."""
-    from data.shotlist import resolve_filename
-    from services.persona.detect import (
-        detect_personas,
-        detect_personas_for_all,
-        _DEFAULT_FRAMES_PER_SHOT,
-        _DEFAULT_MIN_PERSON_CONF,
-        _DEFAULT_CLUSTER_THRESHOLD,
-        _DEFAULT_MIN_SHOTS,
-    )
-    from services.persona.io import write_persona_json, get_persona_json_path
-
-    project_path = prefs.get("path")
-    media_type = args.media
-    force = getattr(args, "force", False)
-    do_all = getattr(args, "all", False)
-    frames_per_shot = getattr(args, "frames_per_shot", _DEFAULT_FRAMES_PER_SHOT)
-    cluster_threshold = getattr(args, "cluster_threshold", _DEFAULT_CLUSTER_THRESHOLD)
-    min_confidence = getattr(args, "min_confidence", _DEFAULT_MIN_PERSON_CONF)
-    min_shots = getattr(args, "min_shots", _DEFAULT_MIN_SHOTS)
-    linkage_method = getattr(args, "linkage", "average")
-    include_background = getattr(args, "include_background", False)
-    require_face = not getattr(args, "no_face_filter", False)
-    verbose = getattr(args, "verbose", False)
-
-    # ── batch mode ───────────────────────────────────────────────────────────
-    if do_all:
-        import time as _time
-
-        print(f"Running persona detection for all {media_type} with shotlists...")
-        print(f"  frames/shot: {frames_per_shot}  |  cluster threshold: {cluster_threshold}  |  linkage: {linkage_method}")
-        print(f"  min confidence: {min_confidence}  |  min shots: {min_shots}  |  face filter: {require_face}  |  include background: {include_background}")
-        print()
-
-        t0 = _time.time()
-        results = detect_personas_for_all(
-            project_path,
-            media_type=media_type,
-            force=force,
-            frames_per_shot=frames_per_shot,
-            min_person_confidence=min_confidence,
-            cluster_threshold=cluster_threshold,
-            min_shots_to_be_persona=min_shots,
-            linkage=linkage_method,
-            include_background=include_background,
-            require_face=require_face,
-            verbose=verbose,
-        )
-        elapsed = _time.time() - t0
-
-        ok = [(fn, p) for fn, p, e in results if p is not None]
-        skipped = [(fn, e) for fn, p, e in results if p is None and e and "skipped" in e]
-        failed  = [(fn, e) for fn, p, e in results if p is None and not (e and "skipped" in e)]
-
-        print()
-        for fn, out_path in ok:
-            print(f"  ✓  {fn}  →  {out_path.name}")
-        for fn, err in skipped:
-            print(f"  –  {fn}  ({err})")
-        for fn, err in failed:
-            print(f"  ✗  {fn}  {err}", file=sys.stderr)
-
-        print(f"\nDone in {elapsed:.1f}s — {len(ok)} processed, {len(skipped)} skipped, {len(failed)} failed.")
-
-        if getattr(args, "notify", False):
-            from services.notify import discord_notify
-            summary = (
-                f"Persona detection batch complete: {len(ok)}/{len(ok)+len(failed)} succeeded "
-                f"in {elapsed:.1f}s"
-            )
-            if failed:
-                summary += "\nFailed:\n" + "\n".join(f"  {fn}" for fn, _ in failed)
-            discord_notify(summary, project_path)
-
-        if failed:
-            sys.exit(1)
-        return
-
-    # ── single film mode ─────────────────────────────────────────────────────
-    query_words = getattr(args, "query", None) or []
-    query_str = " ".join(query_words).strip() if query_words else None
-
-    if args.tmdb is None and not query_str:
-        print("✗ Provide a title query or --tmdb <id> (or --all for batch).", file=sys.stderr)
-        sys.exit(1)
-
-    try:
-        filename = resolve_filename(project_path, args.tmdb, query_str, media_type)
-    except ValueError as exc:
-        print(f"✗ {exc}", file=sys.stderr)
-        sys.exit(1)
-
-    out_path = get_persona_json_path(project_path, filename, media_type)
-    if out_path.exists() and not force:
-        print(f"✗ Output already exists: {out_path}", file=sys.stderr)
-        print("  Pass --force to overwrite.", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"Persona detection: {filename}")
-    print(f"  frames/shot: {frames_per_shot}  |  cluster threshold: {cluster_threshold}  |  linkage: {linkage_method}")
-    print(f"  min confidence: {min_confidence}  |  min shots: {min_shots}  |  face filter: {require_face}  |  include background: {include_background}")
-    print()
-
-    import time as _time
-    t0 = _time.time()
-
-    try:
-        doc = detect_personas(
-            project_path,
-            filename,
-            media_type=media_type,
-            frames_per_shot=frames_per_shot,
-            min_person_confidence=min_confidence,
-            cluster_threshold=cluster_threshold,
-            min_shots_to_be_persona=min_shots,
-            linkage=linkage_method,
-            include_background=include_background,
-            require_face=require_face,
-            verbose=verbose,
-        )
-    except FileNotFoundError as exc:
-        print(f"✗ {exc}", file=sys.stderr)
-        sys.exit(1)
-    except RuntimeError as exc:
-        print(f"✗ {exc}", file=sys.stderr)
-        sys.exit(1)
-    except ImportError as exc:
-        print(f"✗ Missing dependency: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except Exception as exc:
-        print(f"✗ Unexpected error: {exc}", file=sys.stderr)
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
-
-    elapsed = _time.time() - t0
-
-    try:
-        saved = write_persona_json(doc, project_path, filename, media_type, force=force)
-    except FileExistsError as exc:
-        print(f"✗ {exc}", file=sys.stderr)
-        sys.exit(1)
-
-    n_personas = len(doc.personas)
-    print(f"\n✓ {n_personas} persona(s) found in {elapsed:.1f}s")
-    print(f"  Saved: {saved}")
-
-    if n_personas and getattr(args, "verbose", False):
-        print()
-        for p in doc.personas:
-            ambig_str = f"  ambiguous with {p.ambiguous_with}" if p.ambiguous_with else ""
-            print(
-                f"  {p.persona_id}  shots {p.first_shot}–{p.last_shot} "
-                f"({p.shot_count} shots)  conf={p.cluster_confidence:.2f}{ambig_str}"
-            )
-
-    if getattr(args, "notify", False):
-        from services.notify import discord_notify
-        discord_notify(
-            f"✓ Persona detection complete: {filename}\n"
-            f"{n_personas} persona(s) in {elapsed:.1f}s",
-            project_path,
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -3670,37 +3389,6 @@ def build_parser():
     p_mosaic_search.add_argument("--no-open", action="store_true", dest="no_open", help="Do not open result")
     p_mosaic_search.add_argument("--notify", action="store_true", help="Send a Discord notification when done")
 
-    p_mosaic_personas = mosaic_sub.add_parser(
-        "personas",
-        help="Contact-sheet mosaic of persona appearances for a film",
-    )
-    p_mosaic_personas.add_argument(
-        "query", nargs="*",
-        help="Title words to match (e.g. young guns), or omit and use --tmdb",
-    )
-    p_mosaic_personas.add_argument("--tmdb", type=int, default=None, help="TMDb ID of the film")
-    p_mosaic_personas.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-    p_mosaic_personas.add_argument(
-        "--max-per-persona", type=int, default=6, dest="max_per_persona", metavar="N",
-        help="Maximum appearance frames shown per persona row (default: 6)",
-    )
-    p_mosaic_personas.add_argument(
-        "--layout", choices=["portrait", "landscape"], default="landscape",
-        help="Grid orientation (default: landscape)",
-    )
-    p_mosaic_personas.add_argument(
-        "--output", default=None, metavar="PATH",
-        help="Override output file path",
-    )
-    p_mosaic_personas.add_argument(
-        "--no-open", action="store_true", dest="no_open",
-        help="Do not open the result in the desktop viewer after saving",
-    )
-    p_mosaic_personas.add_argument(
-        "--notify", action="store_true",
-        help="Send a Discord notification when the run finishes",
-    )
-
     # generate mosaic export
     p_mosaic_export = mosaic_sub.add_parser(
         "export",
@@ -3949,111 +3637,6 @@ def build_parser():
     p_meta_prune.add_argument("--confirm", action="store_true",
                               help="Actually remove the entries (default is a dry run)")
 
-    # persona command group
-    p_persona = sub.add_parser(
-        "persona",
-        help="Detect and manage recurring anonymous personas (characters) in films",
-    )
-    p_persona.set_defaults(func=cmd_persona)
-    persona_sub = p_persona.add_subparsers(dest="persona_subcommand", required=True)
-
-    p_persona_detect = persona_sub.add_parser(
-        "detect",
-        help=(
-            "Detect recurring anonymous personas in a film by clustering "
-            "person re-ID embeddings across shots"
-        ),
-    )
-    p_persona_detect.add_argument(
-        "query", nargs="*",
-        help="Title words to match (e.g. young guns), or omit and use --tmdb",
-    )
-    p_persona_detect.add_argument(
-        "--tmdb", type=int, default=None,
-        help="TMDb ID of the film to process",
-    )
-    p_persona_detect.add_argument(
-        "--all", action="store_true",
-        help="Process all films that have a shotlist (skips already-processed films unless --force)",
-    )
-    p_persona_detect.add_argument(
-        "--media", choices=["movies", "gameplay"], default="movies",
-        help="Media type (default: movies)",
-    )
-    p_persona_detect.add_argument(
-        "--force", action="store_true",
-        help="Overwrite existing persona JSON if it already exists",
-    )
-    p_persona_detect.add_argument(
-        "--frames-per-shot", type=int, default=2, dest="frames_per_shot",
-        metavar="N",
-        help="Number of frames to sample per shot, 1–3 (default: 2)",
-    )
-    p_persona_detect.add_argument(
-        "--cluster-threshold", type=float, default=0.45, dest="cluster_threshold",
-        metavar="T",
-        help=(
-            "Maximum cosine distance to group detections into one persona. "
-            "Lower = stricter (default: 0.45)"
-        ),
-    )
-    p_persona_detect.add_argument(
-        "--linkage", choices=["complete", "average"], default="average",
-        dest="linkage",
-        help=(
-            "Hierarchical clustering linkage method.  'average' (default) chains "
-            "appearances across lighting/angle changes.  'complete' is stricter "
-            "and requires every pair within a cluster to be within threshold."
-        ),
-    )
-    p_persona_detect.add_argument(
-        "--include-background", action="store_true", dest="include_background",
-        help=(
-            "Include background-visibility detections in clustering.  "
-            "By default, only foreground and mid-ground persons are used."
-        ),
-    )
-    p_persona_detect.add_argument(
-        "--no-face-filter", action="store_true", dest="no_face_filter",
-        help=(
-            "Disable the face-presence filter.  By default, crops with no "
-            "detectable face (backs-of-heads, silhouettes, animals) are "
-            "discarded before embedding."
-        ),
-    )
-    p_persona_detect.add_argument(
-        "--min-confidence", type=float, default=0.25, dest="min_confidence",
-        metavar="C",
-        help="Minimum YOLO person detection confidence (default: 0.40)",
-    )
-    p_persona_detect.add_argument(
-        "--min-shots", type=int, default=3, dest="min_shots",
-        metavar="N",
-        help=(
-            "Minimum number of shots a persona must appear in to be recorded "
-            "(default: 3)"
-        ),
-    )
-    p_persona_detect.add_argument(
-        "--verbose", action="store_true",
-        help="Print per-shot progress during detection",
-    )
-    p_persona_detect.add_argument(
-        "--notify", action="store_true",
-        help="Send a Discord notification when the run finishes",
-    )
-
-    p_persona_get = persona_sub.add_parser(
-        "get",
-        help="Print the persona JSON for a film",
-    )
-    p_persona_get.add_argument(
-        "query", nargs="*",
-        help="Title words to match (e.g. young guns), or omit and use --tmdb",
-    )
-    p_persona_get.add_argument("--tmdb", type=int, default=None, help="TMDb ID of the film")
-    p_persona_get.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-
     # media remove
     p_remove = media_sub.add_parser("remove", help="Remove a film and all its associated files")
     p_remove.set_defaults(func=cmd_remove)
@@ -4237,7 +3820,7 @@ def build_parser():
     p_tool_model_set.add_argument(
         "role",
         choices=list(_MODEL_KEYS),
-        help="Which role to configure: annotate, segmentation, or yolo",
+        help="Which role to configure: annotate or segmentation",
     )
     p_tool_model_set.add_argument("name", help="Model name or path")
 
