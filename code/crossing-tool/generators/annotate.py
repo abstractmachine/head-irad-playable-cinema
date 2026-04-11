@@ -951,6 +951,87 @@ def _build_prompt(
     return "\n".join(parts)
 
 
+# ---------------------------------------------------------------------------
+# ETA helpers — used by annotate_file_shots and annotate_all_files
+# ---------------------------------------------------------------------------
+
+def _load_existing_agg(project_path: str, filename: str, media_type: str) -> Dict[int, Any]:
+    """Load the aggregated annotations JSON for *filename*, keyed by shot_id (1-based).
+
+    Returns an empty dict if the file does not exist or cannot be parsed.
+    """
+    stem = Path(filename).stem
+    agg_path = (
+        Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{stem}.json"
+    )
+    result: Dict[int, Any] = {}
+    if not agg_path.exists():
+        return result
+    try:
+        raw = json.loads(agg_path.read_text(encoding="utf-8"))
+        for entry in raw:
+            s = entry.get("shot") if isinstance(entry, dict) else None
+            if isinstance(s, dict) and s.get("shot_id") is not None:
+                result[int(s["shot_id"])] = entry
+    except Exception:
+        pass
+    return result
+
+
+def _count_pending_shots(
+    shots: List[Dict[str, Any]],
+    existing_agg: Dict[int, Any],
+    force: bool,
+    skip_existing: bool,
+    scene_str: Optional[str],
+    shot_index: Optional[int],
+    limit: Optional[int],
+) -> int:
+    """Count shots that will actually be attempted in *annotate_file_shots*.
+
+    Mirrors the skip logic in the annotation loop without any I/O or model
+    calls.  Used to pre-compute ETA shot counts.
+    """
+    count = 0
+    for i, shot in enumerate(shots):
+        if limit is not None and i >= limit:
+            break
+        if scene_str is not None and str(shot.get("Scene", "")) != scene_str:
+            continue
+        if shot_index is not None and i != shot_index:
+            continue
+        _shot_id = i + 1
+        _prior = existing_agg.get(_shot_id)
+        if not force and skip_existing and _prior is not None:
+            _prior_ann = _prior.get("shot", {}).get("annotation", {})
+            if isinstance(_prior_ann, dict) and _prior_ann.get("setting"):
+                continue
+        count += 1
+    return count
+
+
+def _count_file_pending_shots(
+    project_path: str,
+    filename: str,
+    media_type: str,
+    force: bool,
+    skip_existing: bool,
+    limit: Optional[int],
+) -> int:
+    """Count annotation-pending shots for *filename* without loading the model.
+
+    Intended for the corpus-level ETA pre-pass in *annotate_all_files*.
+    Returns 0 on any error so that ETA calculation degrades gracefully.
+    """
+    try:
+        from data.shotlist import read_shotlist
+        shots = read_shotlist(project_path, filename, media_type)
+        existing_agg = _load_existing_agg(project_path, filename, media_type)
+        return _count_pending_shots(shots, existing_agg, force, skip_existing, None, None, limit)
+    except Exception:
+        return 0
+
+
 def annotate_file_shots(
     project_path: str,
     filename: str,
@@ -973,6 +1054,8 @@ def annotate_file_shots(
     stop_event=None,
     write_log: bool = False,
     reload_every_n_shots: int = 25,
+    timer: Optional[Any] = None,
+    subsequent_shots: int = 0,
 ) -> Dict[str, Any]:
     """Annotate all shots in a single file and write canonical outputs.
 
@@ -1110,6 +1193,24 @@ def annotate_file_shots(
         except Exception:
             pass
 
+    # Create a per-file timer when in verbose mode and no shared timer was provided.
+    # When called from annotate_all_files, a shared timer is passed in so that
+    # the rolling window spans the whole corpus run.
+    if timer is None and verbose:
+        try:
+            from services.annotation_timer import AnnotationTimer
+            timer = AnnotationTimer()
+        except ImportError:
+            pass
+
+    # Pre-compute how many shots in this file need annotation so we can report
+    # shots-remaining without scanning ahead on every iteration.
+    _movie_pending = (
+        _count_pending_shots(shots, _existing_agg, force, skip_existing, scene_str, shot_index, limit)
+        if timer is not None
+        else 0
+    )
+
     for i, shot in enumerate(shots):
         # Allow an external stop signal to abort iteration gracefully
         if stop_event is not None and stop_event.is_set():
@@ -1145,6 +1246,8 @@ def annotate_file_shots(
                 skipped += 1
                 results.append(_prior)
                 continue
+
+        _shot_start = time.time()
 
         # Sample frames (best-effort). Prefer pre-baked frames under
         # media/frames/<media_type>/<stem>/ if present (useful for debugging).
@@ -1309,8 +1412,13 @@ def annotate_file_shots(
             results.append(shot_annotation)
             updated += 1
             _consecutive_failures = 0
+            if timer is not None:
+                timer.record(time.time() - _shot_start)
             if verbose:
                 print(f"    ✓ Shot {i}")
+                if timer is not None:
+                    _remaining_movie = max(0, _movie_pending - updated)
+                    timer.print_estimates(_remaining_movie, _remaining_movie + subsequent_shots)
         else:
             # Do NOT append failed shots to results: they are omitted from the JSON
             # so the validator shows them as unannotated (? not ✗), and they are
@@ -1467,17 +1575,50 @@ def annotate_all_files(
     verbose: bool = False,
     write_log: bool = False,
     reload_every_n_shots: int = 25,
+    on_file_done=None,
 ) -> List[Dict[str, Any]]:
     from data.metadata import get_metadata
 
     entries = get_metadata(project_path, media_type=media_type)
+
+    # Pre-compute pending shot counts so we can project corpus-level ETA from
+    # the very first annotation.  Failures are silently treated as 0.
+    _pending_counts: Dict[str, int] = {}
+    for _e in entries:
+        _fn = _e.get("filename")
+        if _fn:
+            _pending_counts[_fn] = _count_file_pending_shots(
+                project_path, _fn, media_type, force, skip_existing, limit
+            )
+
+    # Shared timer spans the entire corpus run so the rolling window reflects
+    # realistic throughput even when individual files are small.
+    _timer = None
+    if verbose:
+        try:
+            from services.annotation_timer import AnnotationTimer
+            _timer = AnnotationTimer()
+        except ImportError:
+            pass
+
+    _all_filenames = [_e.get("filename") for _e in entries if _e.get("filename")]
+    # _corpus_subsequent starts at the total and is decremented before each file,
+    # so it represents shots in movies *after* the current one while that file
+    # is being processed.
+    _corpus_subsequent = sum(_pending_counts.get(_fn, 0) for _fn in _all_filenames)
+
     results = []
     for e in entries:
         fn = e.get("filename")
         if not fn:
             continue
+        # Subtract this movie's pending count before processing it so that
+        # subsequent_shots passed to annotate_file_shots reflects only the
+        # movies that come after the current one.
+        _corpus_subsequent -= _pending_counts.get(fn, 0)
         if verbose:
             print(f"\n--- {fn} ---")
+        _t0 = time.time()
         summary = annotate_file_shots(
             project_path,
             fn,
@@ -1494,8 +1635,16 @@ def annotate_all_files(
             verbose=verbose,
             write_log=write_log,
             reload_every_n_shots=reload_every_n_shots,
+            timer=_timer,
+            subsequent_shots=_corpus_subsequent,
         )
+        _elapsed = time.time() - _t0
         results.append(summary)
+        if on_file_done is not None:
+            try:
+                on_file_done(summary, _elapsed)
+            except Exception:
+                pass
     return results
 
 

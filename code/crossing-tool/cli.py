@@ -975,6 +975,25 @@ def _shotlist_annotate(args):
             from generators.annotate import annotate_file_shots, annotate_all_files
 
             if getattr(args, "all", False):
+                _notify_items = getattr(args, "notify_items", False)
+
+                def _on_file_done(summary, elapsed):
+                    if not _notify_items:
+                        return
+                    from services.notify import discord_notify
+                    failed_count = len(summary.get("failed", [])) if summary.get("failed") else 0
+                    h, rem = divmod(int(elapsed), 3600)
+                    m, s = divmod(rem, 60)
+                    elapsed_str = f"{h}h{m:02d}m{s:02d}s" if h else (f"{m}m{s:02d}s" if m else f"{s}s")
+                    msg = (
+                        f"\u2713 Annotated: {summary.get('filename')}\n"
+                        f"updated={summary.get('updated')} "
+                        f"skipped={summary.get('skipped')} "
+                        f"failed={failed_count} "
+                        f"({elapsed_str})"
+                    )
+                    discord_notify(msg, project_path)
+
                 results = annotate_all_files(
                     project_path,
                     media_type=args.media,
@@ -990,6 +1009,7 @@ def _shotlist_annotate(args):
                     verbose=getattr(args, "verbose", False),
                     write_log=getattr(args, "log", False),
                     reload_every_n_shots=getattr(args, "reload_every_n_shots", 25),
+                    on_file_done=_on_file_done,
                 )
                 for r in results:
                     failed_count = len(r.get("failed", [])) if r.get("failed") else 0
@@ -3512,6 +3532,7 @@ def build_parser():
     p_annotate_shot.add_argument("--verbose", action="store_true", help="Print per-shot progress to stdout")
     p_annotate_shot.add_argument("--log", action="store_true", help="Write a debug log file alongside the annotation JSON")
     p_annotate_shot.add_argument("--notify", action="store_true", help="Send a Discord notification when the run finishes")
+    p_annotate_shot.add_argument("--notify-items", action="store_true", dest="notify_items", help="Send a Discord notification after each movie is annotated in a --all batch")
     p_annotate_shot.add_argument(
         "--reload-every", type=int, default=25, dest="reload_every_n_shots", metavar="N",
         help="Reload the model pipeline every N processed shots to prevent output drift (default: 25; set 0 to disable)",
