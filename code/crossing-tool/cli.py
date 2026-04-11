@@ -1076,6 +1076,8 @@ def _shotlist_annotate(args):
                         return
                     from services.notify import discord_notify
                     failed_count = len(summary.get("failed", [])) if summary.get("failed") else 0
+                    if summary.get("updated", 0) == 0 and failed_count == 0:
+                        return  # nothing changed — skip notification
                     h, rem = divmod(int(elapsed), 3600)
                     m, s = divmod(rem, 60)
                     elapsed_str = f"{h}h{m:02d}m{s:02d}s" if h else (f"{m}m{s:02d}s" if m else f"{s}s")
@@ -1143,7 +1145,7 @@ def _shotlist_annotate(args):
             )
             failed_count = len(summary.get("failed", [])) if summary.get("failed") else 0
             print(f"✓ Annotated: {filename} — updated={summary['updated']} skipped={summary['skipped']} failed={failed_count}")
-            if getattr(args, "notify", False):
+            if getattr(args, "notify", False) and (summary.get("updated", 0) > 0 or failed_count > 0):
                 try:
                     from services.notify import discord_notify
                     discord_notify(f"✓ Annotated: {filename} — updated={summary['updated']} skipped={summary['skipped']} failed={failed_count}", project_path)

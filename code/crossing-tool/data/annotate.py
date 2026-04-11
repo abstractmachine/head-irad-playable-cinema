@@ -1344,12 +1344,27 @@ def annotate_file_shots(
 
         _shot_start = time.time()
 
+        # Compute adaptive frame count for this shot based on duration.
+        # Acts as a cap: never exceeds the user-supplied frames_per_shot.
+        _shot_start_s = _timecode_to_seconds(shot.get("start_time", "0:00:00"))
+        _shot_end_s = _timecode_to_seconds(shot.get("end_time", shot.get("start_time", "0:00:00")))
+        _shot_duration = max(0.0, _shot_end_s - _shot_start_s)
+        if _shot_duration < 2.5:
+            _heuristic_frames = 1
+        elif _shot_duration < 6.0:
+            _heuristic_frames = 2
+        elif _shot_duration < 12.0:
+            _heuristic_frames = 3
+        else:
+            _heuristic_frames = frames_per_shot
+        adaptive_frames = min(frames_per_shot, _heuristic_frames)
+
         # Sample frames (best-effort). Prefer pre-baked frames under
         # media/frames/<media_type>/<stem>/ if present (useful for debugging).
         frames: List[str] = []
         if frames_per_shot and frames_per_shot > 0:
             try:
-                prebaked = _find_prebaked_frames(str(project_path), media_type, filename, i, frames_per_shot)
+                prebaked = _find_prebaked_frames(str(project_path), media_type, filename, i, adaptive_frames)
                 if prebaked:
                     frames = prebaked
                     try:
@@ -1361,7 +1376,7 @@ def annotate_file_shots(
                         str(video_path),
                         shot.get("start_time", "0:00:00"),
                         shot.get("end_time", shot.get("start_time", "0:00:00")),
-                        frames_per_shot,
+                        adaptive_frames,
                         sample_mode,
                     )
             except Exception as exc:
@@ -1400,7 +1415,8 @@ def annotate_file_shots(
 
         if verbose:
             frame_names = ", ".join(Path(f).name for f in frames)
-            print(f"  Shot {i+1} [{shot.get('start_time', '?')} → {shot.get('end_time', '?')}] — {len(pil_frames)} frame(s): {frame_names}")
+            _adaptive_label = " [adaptive]" if adaptive_frames < frames_per_shot else ""
+            print(f"  Shot {i+1} [{shot.get('start_time', '?')} → {shot.get('end_time', '?')}] — {len(pil_frames)} frame(s){_adaptive_label}: {frame_names}")
 
         # Build structured messages with runtime variable substitution
         variables = {
