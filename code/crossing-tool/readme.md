@@ -85,13 +85,6 @@ pip install PyQt5 opencv-python-headless
 ```
 > Use `opencv-python-headless` (not `opencv-python`) to avoid Qt conflicts with PyQt5.
 
-**Text detection** (PaddleOCR — requires CUDA):
-```bash
-pip install paddlepaddle-gpu==3.2.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu130/
-pip install "paddleocr>=3.2"
-```
-> Requires CUDA 13.0. PP-OCRv5 models are downloaded automatically on first run to `~/.paddlex/official_models/`.
-
 **Compose generator** (SAM 2):
 ```bash
 pip install ultralytics
@@ -557,7 +550,7 @@ crossing tool model set annotate quen3-vl-8b-thinking
 
 ### Discord Notifications
 
-Long-running batch commands (`shotlist shot detect`, `text detect`) support optional
+Long-running batch commands (`shotlist shot detect`, `annotate shot`) support optional
 Discord notifications via a webhook URL.
 
 **One-time setup:**
@@ -594,19 +587,27 @@ crossing shotlist shot detect --all --notify --notify-items
 ```
 <project>/
 ├── data/
+│   ├── annotations/
+│   │   ├── scenes/
+│   │   │   ├── movies/             # scene-level annotation JSON (when generated)
+│   │   │   └── gameplay/
+│   │   └── shots/
+│   │       ├── movies/
+│   │       │   ├── <filename>.json          # shot annotations (aggregated)
+│   │       │   ├── <filename>.log           # annotation run log (optional)
+│   │       │   ├── <filename>.txt           # serialized text for indexing
+│   │       │   ├── <filename>.npy           # embedding vectors
+│   │       │   └── <filename>.manifest.json # index manifest/state
+│   │       └── gameplay/
+│   ├── markdown/                  # markdown exports (e.g., vocabulary output)
 │   ├── metadata/
 │   │   ├── movies.csv              # movie metadata
 │   │   └── gameplay.csv            # gameplay metadata
 │   ├── shotlists/
 │   │   ├── movies/                 # shot-level data for movies
-│   │   │   ├── <filename>.csv      # shot timecodes and annotations
-│   │   │   ├── <filename>.npy      # visual encodings
-│   │   │   └── <filename>.txt      # encoding metadata
+│   │   │   └── <filename>.csv      # shot boundaries and timing data
 │   │   └── gameplay/               # shot-level data for gameplay
-│   └── text/
-│       ├── movies/                 # on-screen text events for movies
-│       │   └── <filename>.csv      # text events with timecodes and type
-│       └── gameplay/               # on-screen text events for gameplay
+│   │       └── <filename>.csv
 ├── media/
 │   ├── videos/
 │   │   ├── movies/                 # imported movie files
@@ -624,6 +625,7 @@ crossing shotlist shot detect --all --notify --notify-items
 │   └── sam2.1_b.pt                 # SAM 2 model (required for `crossing generate compose`)
 └── preferences/
     ├── keys/                       # API keys
+    │   ├── discord_api_key.txt
     │   ├── tmdb_api_key.txt
     │   └── opensubtitles_api_key.txt
     └── version.txt                 # data structure version
@@ -656,4 +658,3 @@ Movies and gameplay metadata includes:
 - python3-tk (optional, for GUI file picker): `sudo apt install python3-tk`
 - TransNetV2 (optional, for shot detection) — see Install section above
 - PyQt5 + opencv-python-headless (optional, for shot validation UI) — see Install section above
-- PaddleOCR 3.x + paddlepaddle-gpu (for text detection) — requires CUDA; GPU strongly recommended for batch processing
