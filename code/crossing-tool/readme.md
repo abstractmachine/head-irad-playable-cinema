@@ -41,8 +41,8 @@ crossing media import /path/to/film.mkv
 # 5. Detect shot boundaries
 crossing shotlist shot detect "Film Title"
 
-# 6. Validate and edit shots in the GUI (optional)
-crossing shotlist validate "Film Title"
+# 6. Open the shot visualizer GUI (optional)
+crossing shotlist --visualizer
 
 # 7. Annotate shots with an LLM
 crossing annotate shot "Film Title"
@@ -79,7 +79,7 @@ pip install git+https://github.com/soCzech/TransNetV2.git
 pip install "tensorflow>=2.5" ffmpeg-python
 ```
 
-**Shot validation GUI**:
+**Shot visualizer GUI**:
 ```bash
 pip install PyQt5 opencv-python-headless
 ```
@@ -280,13 +280,11 @@ crossing shotlist shot detect --all --notify         # notify when the whole bat
 # Ignore,Scene,Start,End,Start_Frame,End_Frame,Shot_Caption,Scene_Caption,Shot_Source,Shot_Confidence
 # No,0,00:00:00.000,00:00:05.123,0,123,"","",auto,0.876
 
-# Validate and correct shot/scene data (launches GUI)
-crossing shotlist validate <filename_substring>
-crossing shotlist validate --tmdb 56966         # use TMDb ID
-crossing shotlist validate --all                # validate all movies with shotlists
+# Open the shot visualizer GUI
+crossing shotlist --visualizer
   --media {movies,gameplay}                     # media type (default: movies)
 
-# Keyboard shortcuts in validator (OpenCV-based frame-precise):
+# Keyboard shortcuts in shot visualizer (OpenCV-based frame-precise):
 # Space      - Play/Pause
 # ↑/↓        - Previous/Next shot (resumes playback if was playing)
 # ←/→        - Step one frame backward/forward
@@ -648,7 +646,7 @@ Movies and gameplay metadata includes:
 - Use `--field` with `shotlist show` commands to extract specific fields from caption JSON (table or JSON output)
 - Use `--json` flag for raw JSON output (full shot data or filtered fields with `--field`)
 - Shot detection uses TransNetV2 and creates CSV files with `Shot_Source="auto"`, confidence scores, and exact frame numbers (`Start_Frame`/`End_Frame`)
-- Shot validation GUI (`crossing shotlist validate`) uses OpenCV for frame-precise display — each frame is seeked by exact integer frame index, not timecode
+- Shot visualizer GUI (`crossing shotlist --visualizer`) uses OpenCV for frame-precise display — each frame is seeked by exact integer frame index, not timecode
 - `crossing index update` checks for changes in annotation files before re-serializing or re-embedding, making it safe to run repeatedly
 
 ## Requirements
