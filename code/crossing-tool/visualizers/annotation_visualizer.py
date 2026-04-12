@@ -732,11 +732,11 @@ class AnnotationValidator(QMainWindow):
         return "⚠ FAILED — no output recorded"
 
     def _render_annotation_json(self, shot_index: int) -> str:
-        ann = self.annotation_index.get(shot_index)
-        if ann is None:
+        entry = self._annotation_entry_index.get(shot_index)
+        if entry is None:
             return "(not annotated)"
         try:
-            return json.dumps(ann, indent=2, ensure_ascii=False)
+            return json.dumps(entry, indent=2, ensure_ascii=False)
         except Exception as exc:
             return f"(JSON serialization error: {exc})"
 

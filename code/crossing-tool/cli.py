@@ -3612,15 +3612,25 @@ def build_parser():
     p_remove.add_argument("--confirm", action="store_true", help="Actually delete (default is a dry run)")
 
     # search command
-    p_search = sub.add_parser("search", help="Search shot annotations")
+    p_search = sub.add_parser(
+        "search",
+        help="Search shot annotations",
+        epilog=(
+            "query modes:\n"
+            "  crossing search \"<phrase>\"          semantic search across all fields\n"
+            "  crossing search text \"<phrase>\"     search the annotation text field\n"
+            "  crossing search vocabulary <field>  list distinct values in a field\n"
+            "  crossing search vocabulary --all-fields  vocabulary for every field (JSON)\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p_search.add_argument(
         "query",
         help=(
-            "Search string (e.g. \"sunset\").  "
-            "Special values: "
-            "\"text <phrase>\" — search the annotation text field "
-            "(e.g. crossing search text \"WANTED\"); "
-            "\"vocabulary <field>\" — list distinct values in a field."
+            "Search phrase, or a special mode keyword: "
+            "\"text\" (search annotation text field) or "
+            "\"vocabulary\" (list distinct field values). "
+            "See query modes below."
         ),
     )
     p_search.add_argument("scope", nargs="*", help="Fuzzy movie-title filter(s); omit to search all movies")

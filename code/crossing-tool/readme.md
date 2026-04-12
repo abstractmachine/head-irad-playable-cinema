@@ -1,16 +1,120 @@
 # Crossing
 
-Traverses image archives and produces associations between one media format to another using machine learning models.
+A CLI + GUI tool for relating moving images across media — connecting gameplay sequences to cinema, live gameplay input to archived material. Manages a local project folder as its database. All models run locally; no external services required.
 
-Crossing is a CLI + GUI tool for relating moving images across media — connecting gameplay sequences to cinema sequences, live gameplay input to archived material. It manages a local project folder as its database, with no external services required. All models are downloaded and then run locally.
+---
+
+## Commands at a Glance
+
+| Command | What it does |
+|---------|-------------|
+| `crossing tool` | Configure project path, name, models, and API keys |
+| `crossing media import` | Import and transcode video files into the project |
+| `crossing media remove` | Remove a film and all its associated data |
+| `crossing media subtitle` | Fetch and list subtitles via OpenSubtitles |
+| `crossing metadata` | List, get, update, validate, and audit metadata |
+| `crossing shotlist` | Manage shot/scene CSV files and run shot detection |
+| `crossing annotate` | Run LLM annotation on shots and scenes |
+| `crossing search` | Search shot annotations by query, field, or vocabulary |
+| `crossing index` | Build and maintain the semantic search index (txt + embeddings) |
+| `crossing generate mosaic` | Generate contact-sheet grids from thumbnails or search results |
+| `crossing generate compose` | Generate experimental poster compositions (SAM 2 + text patches) |
+
+---
+
+## Quickstart
+
+```bash
+# 1. Activate the virtual environment
+source ~/venvs/crossing-tool/bin/activate
+
+# 2. Point crossing at your project folder (created automatically)
+crossing tool path ~/my-project
+
+# 3. Set your API keys (TMDb required for metadata; others optional)
+crossing tool api_key set tmdb <key>
+crossing tool api_key set opensubtitles <key>
+
+# 4. Import a film (transcodes to H.264/AAC, fetches metadata + subtitles)
+crossing media import /path/to/film.mkv
+
+# 5. Detect shot boundaries
+crossing shotlist shot detect "Film Title"
+
+# 6. Validate and edit shots in the GUI (optional)
+crossing shotlist validate "Film Title"
+
+# 7. Annotate shots with an LLM
+crossing annotate shot "Film Title"
+
+# 8. Search annotations
+crossing search "close-up of a gun"
+```
+
+---
+
+## Install
+
+### System dependencies
+
+```bash
+sudo apt install ffmpeg
+sudo apt install python3-tk   # optional — GUI file picker
+```
+
+### Create the virtual environment
+
+```bash
+python3 -m venv ~/venvs/crossing-tool
+source ~/venvs/crossing-tool/bin/activate
+cd /path/to/crossing-tool
+pip install -e .
+```
+
+### Optional components
+
+**Shot detection** (TransNetV2):
+```bash
+pip install git+https://github.com/soCzech/TransNetV2.git
+pip install "tensorflow>=2.5" ffmpeg-python
+```
+
+**Shot validation GUI**:
+```bash
+pip install PyQt5 opencv-python-headless
+```
+> Use `opencv-python-headless` (not `opencv-python`) to avoid Qt conflicts with PyQt5.
+
+**Text detection** (PaddleOCR — requires CUDA):
+```bash
+pip install paddlepaddle-gpu==3.2.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu130/
+pip install "paddleocr>=3.2"
+```
+> Requires CUDA 13.0. PP-OCRv5 models are downloaded automatically on first run to `~/.paddlex/official_models/`.
+
+**Compose generator** (SAM 2):
+```bash
+pip install ultralytics
+```
+> Place `sam2.1_b.pt` in `<project>/models/` before running.
+
+### API keys
+
+```bash
+crossing tool api_key set tmdb <key>
+crossing tool api_key set opensubtitles <key>
+crossing tool api_key set discord <webhook-url>   # optional — batch notifications
+```
+
+### Verify
+
+```bash
+crossing tool version
+```
+
+---
 
 ## Commands
-
-
-### Activate
-```bash
-source ~/venvs/crossing-tool/bin/activate
-```
 
 ### Tool Setup
 
@@ -25,9 +129,20 @@ crossing tool path [folder]
 # Get or set the project name
 crossing tool name [name]
 
-# Get or set the model used for a role
-crossing tool model get [annotate|segmentation|yolo]        # show current model (all or one role)
-crossing tool model set {annotate,segmentation,yolo} <name> # set model folder name
+# Manage models
+crossing tool model get [annotate|segmentation|embed]        # show current model (all or one role)
+crossing tool model set {annotate,segmentation,embed} <name> # set model for a role
+crossing tool model list                                     # list models in project models/ folder
+crossing tool model download <hf-repo-id> [--name <folder>] # download a model from HuggingFace
+crossing tool model size [<name>]                            # show model disk usage
+crossing tool model remove <name> [--confirm]                # delete a model folder
+
+# Get or set persistent defaults (e.g. frames-per-shot for annotate)
+crossing tool default get [key]
+crossing tool default set <key> <value>
+
+# Send a test notification to verify a service is configured
+crossing tool notify discord
 ```
 
 ### Media
@@ -80,6 +195,11 @@ crossing metadata list
 crossing metadata get [query]
   --media {movies,gameplay}
 
+# Set a metadata field manually
+crossing metadata set <filename_substring> <field> <value>
+crossing metadata set --tmdb 391 director "Sergio Leone"
+  --media {movies,gameplay}
+
 # Update metadata (fetch from TMDb/OpenSubtitles)
 crossing metadata update
   --file <filename>                 # update single file
@@ -104,6 +224,10 @@ crossing metadata count
 crossing metadata prune
   --confirm                         # actually remove (default: dry run)
   --media {movies,gameplay}
+
+# Audit metadata — show entries missing shotlists, subtitles, or annotations
+crossing metadata audit
+  --media {movies,gameplay}
 ```
 
 ### Shotlist Management
@@ -118,16 +242,6 @@ crossing shotlist list
 crossing shotlist get <filename>
 crossing shotlist get --tmdb 391     # use TMDb ID instead of filename
   --scene 0                         # filter by scene number
-  --media {movies,gameplay}
-
-# Annotate a specific shot
-crossing shotlist annotate shot <filename> <shot_index> "caption"
-crossing shotlist annotate shot --tmdb 391 5 "Close-up of gun"
-  --media {movies,gameplay}
-
-# Annotate all shots in a scene
-crossing shotlist annotate scene <filename> <scene_number> "caption"
-crossing shotlist annotate scene --tmdb 391 0 "Opening sequence"
   --media {movies,gameplay}
 
 # Show specific shot data
@@ -188,36 +302,138 @@ crossing shotlist validate --all                # validate all movies with shotl
 # Continue button - toggle playback past shot boundaries (ON/OFF)
 ```
 
-### Text Detection
+### Annotate
+
+Use an LLM to annotate shots or scenes. Requires a vision model configured via `crossing tool model set annotate <model-folder>`.
 
 ```bash
-# Detect on-screen text events for a single film
-crossing text detect <filename_substring>
-crossing text detect --tmdb 391             # use TMDb ID
-  --media {movies,gameplay}                 # media type (default: movies)
-  --force                                   # overwrite existing CSV
-  --sample-fps 1.0                          # frames per second to sample (default: 1.0)
-  --lang en                                 # PaddleOCR language code (default: en)
-  --min-confidence 0.75                     # minimum OCR confidence (default: 0.75)
-  --verbose                                 # print per-frame OCR output
-  --notify                                  # Discord notification when finished
-  --notify-items                            # Discord notification after each item (batch only)
+# Annotate all shots in a single film (uses configured model)
+crossing annotate shot <filename_substring>
+crossing annotate shot --tmdb 391
+  --media {movies,gameplay}
+  --model <model-folder-name>       # override configured model
+  --frames-per-shot 3               # frames to sample per shot
+  --sample-mode {center,start,end}  # frame sampling position (default: center)
+  --force                           # overwrite existing annotations
+  --skip-existing                   # skip already-annotated shots (default: true)
+  --limit N                         # process only first N shots
+  --prompt-file <file>              # system prompt file
+  --prompt-text <text>              # inline system prompt
+  --verbose                         # print per-shot progress
+  --log                             # write debug log file
+  --notify                          # Discord notification on finish
+  --notify-items                    # Discord notification after each film (batch)
 
-# Detect text events for all films
-crossing text detect --all
-crossing text detect --all --force          # reprocess everything
-crossing text detect --all --notify         # notify when the whole batch finishes
-crossing text detect --all --notify-items   # notify after each film
+# Annotate all films in project
+crossing annotate shot --all
+crossing annotate shot --all --force
+crossing annotate shot --all --notify
 
-# List all text CSVs
-crossing text list
-  --media {movies,gameplay}                 # filter by media type
-  --json                                    # output as JSON
+# Manual annotation (provide caption text directly)
+crossing annotate shot <filename> <shot_index> "caption text"
+crossing annotate shot --tmdb 391 5 "Close-up of revolver"
 
-# Validate and edit text events (GUI)
-crossing text validate <filename_substring>
-crossing text validate --tmdb 391
-crossing text validate --all                # validate all films with text CSVs
+# Annotate a specific scene with LLM
+crossing annotate scene <filename> <scene_number>
+crossing annotate scene --tmdb 391 2
+  --model <model-folder-name>
+  --force
+
+# Manual scene annotation
+crossing annotate scene <filename> <scene_number> "caption text"
+
+# Remove annotations for a film
+crossing annotate remove <filename_substring>
+crossing annotate remove --tmdb 391
+crossing annotate remove --all
+
+# Audit annotation status across all films
+crossing annotate audit
+  --media {movies,gameplay}
+
+# Open the annotation visualizer GUI
+crossing annotate --visualizer
+  --media {movies,gameplay}
+```
+
+### Search
+
+Search shot annotations by semantic query, field value, or vocabulary.
+
+`crossing search` is a single flat command. `vocabulary` and `text` are special values for the positional `query` argument, not subcommands.
+
+```bash
+crossing search <query> [scope ...] [options]
+```
+
+```bash
+# Semantic search across all annotation fields
+crossing search "close-up of a gun"
+crossing search "close-up of a gun" --all
+crossing search "close-up of a gun" Django "Fistful"   # restrict to specific films
+  --media {movies,gameplay}
+  --field <field>                   # restrict to one annotation field (e.g. objects)
+  --limit N                         # max total results
+  --limit-per-item N                # max results per film
+
+# Search within the annotation text field specifically (query = "text")
+crossing search text "WANTED"
+crossing search text "WANTED" --all
+
+# List all distinct values for a given annotation field (query = "vocabulary")
+crossing search vocabulary place
+crossing search vocabulary place --all
+crossing search vocabulary place Django              # restrict to one film
+  --sort {alphabetical,count}
+  --show_count                      # include occurrence counts
+  --media {movies,gameplay}
+
+# Vocabulary across all fields (outputs JSON)
+crossing search vocabulary --all-fields
+crossing search vocabulary --all-fields --exclude description humans
+
+# Save vocabulary output as Markdown
+crossing search vocabulary place --markdown --open
+crossing search vocabulary --all-fields --markdown
+```
+
+### Index
+
+Build and maintain the semantic search index (serialized text + embeddings) that powers `crossing search`.
+
+```bash
+# Serialize annotation JSON to per-shot text lines
+crossing index serialize <filename_substring>
+crossing index serialize --tmdb 391
+  --shot N                          # serialize a single shot
+  --save                            # write to .txt file
+  --print                           # also print when --save is used
+  --force                           # overwrite existing .txt
+  --verbose
+  --media {movies,gameplay}
+
+# Embed serialized text into a .npy vector file
+crossing index embed <filename_substring>
+crossing index embed --tmdb 391
+  --model <model-name>              # embedding model (default: BAAI/bge-small-en-v1.5)
+  --force
+  --verbose
+  --media {movies,gameplay}
+
+# Reconcile .txt, .npy, and manifest (re-serializes/re-embeds only when source changed)
+crossing index update <filename_substring>
+crossing index update --tmdb 391
+crossing index update --all
+  --model <model-name>
+  --force                           # rebuild even if up to date
+  --verbose
+  --media {movies,gameplay}
+
+# Inspect index status without modifying files
+crossing index audit
+crossing index audit <filename_substring>
+crossing index audit --tmdb 391
+  --verbose
   --media {movies,gameplay}
 ```
 
@@ -310,18 +526,6 @@ crossing generate compose --all --width 2480 --height 3508
 
 Output is saved to `<project>/media/compositions/`.
 
-### Audit
-
-```bash
-# Show which entries are missing metadata, shotlists, or subtitles
-crossing audit
-  --media {movies,gameplay}         # media type (default: movies)
-
-# Examples:
-crossing audit                       # report for all movies
-crossing audit --media gameplay      # report for gameplay entries
-```
-
 ### API Keys
 
 ```bash
@@ -333,16 +537,24 @@ crossing tool api_key set {discord,opensubtitles,tmdb} <key>
 ```
 
 ### Models
-For now there is no model downloader. This might be implemented in the future. So you will have to manualy download into your project folder:
 
-```
-hf download HF_ORG_ID/HF_MODEL_ID --local-dir /<project-root>/models/MODEL_FOLDER_NAME
+Download models from HuggingFace using the built-in downloader:
+
+```bash
+crossing tool model download <hf-repo-id>
+crossing tool model download <hf-repo-id> --name <folder-name>  # custom folder name
 ```
 
-For example:
+Example:
 
+```bash
+crossing tool model download Qwen/Qwen3-VL-8B-Thinking --name quen3-vl-8b-thinking
 ```
-hf download Qwen/Qwen3-VL-8B-Thinking --local-dir /<project-root>/models/quen3-vl-8b-thinking
+
+Models are saved to `<project>/models/`. After downloading, set the model for a role:
+
+```bash
+crossing tool model set annotate quen3-vl-8b-thinking
 ```
 
 ### Discord Notifications
@@ -372,10 +584,10 @@ crossing tool api_key get discord
 
 ```bash
 # Notify on batch completion
-crossing text detect --all --notify
+crossing shotlist shot detect --all --notify
 
 # Notify after every film + on completion
-crossing text detect --all --notify --notify-items
+crossing annotate shot --all --notify --notify-items
 crossing shotlist shot detect --all --notify --notify-items
 ```
 
@@ -431,80 +643,19 @@ Movies and gameplay metadata includes:
 - All video files are transcoded to H.264/AAC MP4 format on import
 - Metadata is automatically fetched from TMDb during import
 - Thumbnails and subtitles are automatically downloaded when available
-- Shotlist commands accept either full filename or `--tmdb <id>` for convenience
-- The `--pick` flag on import opens a native GUI file picker (requires python3-tk)
-- Use `--field` with shotlist show commands to extract specific fields from caption JSON (table or JSON output)
+- Shotlist commands accept either a full filename substring or `--tmdb <id>` for convenience
+- The `--pick` flag on import opens a native GUI file picker (requires `python3-tk`)
+- Use `--field` with `shotlist show` commands to extract specific fields from caption JSON (table or JSON output)
 - Use `--json` flag for raw JSON output (full shot data or filtered fields with `--field`)
-- Shot detection uses TransNetV2 and creates CSV files with Shot_Source="auto", confidence scores, and exact frame numbers (Start_Frame/End_Frame)
-- Shot validation GUI (`crossing shot validate`) uses OpenCV for frame-precise display — each frame is seeked by exact integer frame index, not timecode
-- Text detection uses PaddleOCR 3.x with PP-OCRv5 models (GPU-accelerated via PaddlePaddle). Samples at 1 fps by default; each frame is upscaled 2× before OCR; adjacent frames with matching text are merged into a single timed event
+- Shot detection uses TransNetV2 and creates CSV files with `Shot_Source="auto"`, confidence scores, and exact frame numbers (`Start_Frame`/`End_Frame`)
+- Shot validation GUI (`crossing shotlist validate`) uses OpenCV for frame-precise display — each frame is seeked by exact integer frame index, not timecode
+- `crossing index update` checks for changes in annotation files before re-serializing or re-embedding, making it safe to run repeatedly
 
 ## Requirements
 
 - Python 3.11+
 - ffmpeg: `sudo apt install ffmpeg`
 - python3-tk (optional, for GUI file picker): `sudo apt install python3-tk`
-- TransNetV2 (optional, for shot detection) - see Install section below
-- PyQt5 + opencv-python-headless (optional, for shot validation UI) - see Install section below
+- TransNetV2 (optional, for shot detection) — see Install section above
+- PyQt5 + opencv-python-headless (optional, for shot validation UI) — see Install section above
 - PaddleOCR 3.x + paddlepaddle-gpu (for text detection) — requires CUDA; GPU strongly recommended for batch processing
-
-## Fresh Install Checklist
-
-Follow these steps when setting up from scratch in a new environment.
-
-### 1. System dependencies
-- [ ] `sudo apt install ffmpeg`
-- [ ] `sudo apt install python3-tk` *(optional — for GUI file picker)*
-
-### 2. Create the virtual environment
-- [ ] `python3 -m venv ~/venvs/crossing-tool`
-
-### 3. Activate and install the package
-- [ ] `source ~/venvs/crossing-tool/bin/activate`
-- [ ] `cd /path/to/crossing-tool` *(your local clone of this repo)*
-- [ ] `pip install -e .`
-
-### 4. Shot detection *(optional)*
-- [ ] `pip install git+https://github.com/soCzech/TransNetV2.git`
-- [ ] `pip install tensorflow>=2.5 ffmpeg-python`
-
-### 5. Shot validation UI *(optional)*
-- [ ] `pip install PyQt5 opencv-python-headless`
-
-> Use `opencv-python-headless` (not `opencv-python`) to avoid Qt plugin conflicts with PyQt5.
-
-### 6. Text detection *(required for `crossing text detect`)*
-- [ ] `pip install paddlepaddle-gpu==3.2.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu130/`
-- [ ] `pip install "paddleocr>=3.2"`
-
-> Requires CUDA 13.0 and a CUDA-capable GPU. The PP-OCRv5 models are downloaded automatically on first run to `~/.paddlex/official_models/`. CPU-only installs are not supported — use `paddlepaddle` (non-GPU) and remove `device="gpu"` from the engine if needed.
-
-### 7. Compose *(required for `crossing generate compose`)*
-- [ ] `pip install ultralytics`
-
-> Requires a CUDA-capable GPU for practical performance. Place `sam2.1_b.pt` in `<project>/models/` before running.
-
-### 8. API keys *(as needed)*
-- [ ] `crossing tool api_key set tmdb <key>`
-- [ ] `crossing tool api_key set opensubtitles <key>`
-
-### 9. Verify
-- [ ] `crossing tool version`
-
-## Virtual Python Environment
-
-**Create** (first time only):
-```bash
-python3 -m venv ~/venvs/crossing-tool
-source ~/venvs/crossing-tool/bin/activate
-```
-
-**Load** (each new terminal session):
-```bash
-source ~/venvs/crossing-tool/bin/activate
-```
-
-**Deactivate** when done:
-```bash
-deactivate
-```

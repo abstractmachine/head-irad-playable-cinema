@@ -52,7 +52,11 @@ def find_latest_prompt(project_path: str, media_type: str = "movies", prefix: st
     files = [p for p in d.glob(pattern) if p.is_file()]
     if not files:
         return None
-    files.sort(key=lambda p: p.name, reverse=True)
+    import re as _re
+    def _natural_key(p: Path):
+        parts = _re.split(r'(\d+)', p.name)
+        return [int(x) if x.isdigit() else x for x in parts]
+    files.sort(key=_natural_key, reverse=True)
     return files[0]
 
 
@@ -1203,6 +1207,42 @@ def annotate_file_shots(
                 f"Run shot detection first or ensure the video file is accessible."
             )
 
+    # Determine scene filter and aggregated path early so we can skip loading
+    # the model when there are no shots that need annotation for this file.
+    scene_str = str(scene_number) if scene_number is not None else None
+    if shot_index is not None:
+        if shot_index < 0 or shot_index >= len(shots):
+            raise IndexError(f"Shot index {shot_index} out of range (0-{len(shots)-1})")
+    aggregated = annotations_dir / f"{stem}.json"
+    _existing_agg: Dict[int, Any] = {}
+    if aggregated.exists():
+        try:
+            _raw = json.loads(aggregated.read_text(encoding="utf-8"))
+            for _entry in _raw:
+                _s = _entry.get("shot") if isinstance(_entry, dict) else None
+                if isinstance(_s, dict) and _s.get("shot_id") is not None:
+                    _existing_agg[int(_s["shot_id"])] = _entry
+        except Exception:
+            pass
+
+    # Early exit: if there are no shots pending annotation, skip loading the
+    # model entirely.  This avoids the weight-loading cost for fully-annotated
+    # or empty files when running with --all.
+    _pending_count = _count_pending_shots(
+        shots, _existing_agg, force, skip_existing, scene_str, shot_index, limit
+    )
+    if _pending_count == 0:
+        if verbose:
+            print(f"  (no shots to annotate, skipping)")
+        return {
+            "filename": filename,
+            "movie": movie_info,
+            "updated": 0,
+            "skipped": len(shots),
+            "failed": [],
+            "annotations_path": str(aggregated),
+        }
+
     # Initialize model pipeline (local-first). If this fails we abort early
     try:
         pipeline = _load_text_generation_pipeline(project_path, model_name)
@@ -1246,15 +1286,6 @@ def annotate_file_shots(
     _consecutive_failures = 0  # triggers pipeline reload when too many shots fail in a row
     _shots_since_reload = 0    # counts shots processed since last reload (or run start)
 
-    # video_path already defined above (before model load for early-exit check)
-
-    scene_str = str(scene_number) if scene_number is not None else None
-
-    # Validate shot_index if provided
-    if shot_index is not None:
-        if shot_index < 0 or shot_index >= len(shots):
-            raise IndexError(f"Shot index {shot_index} out of range (0-{len(shots)-1})")
-
     # Load subtitle file for this film (best-effort; silently absent if not found)
     _srt_entries: List[Tuple[float, float, str]] = []
     _srt_dir = project / "media" / "subtitles" / media_type
@@ -1270,23 +1301,6 @@ def annotate_file_shots(
         _srt_entries = _parse_srt(_srt_path)
         if verbose:
             print(f"  Loaded {len(_srt_entries)} subtitle entries from {_srt_path.name}")
-
-    # Aggregated output path — defined before the loop for incremental writes
-    aggregated = annotations_dir / f"{stem}.json"
-
-    # Load any pre-existing aggregated JSON so we can preserve good annotations
-    # across runs.  The shotlist CSV never has Shot_Caption populated (annotations
-    # are stored here, not there), so this is the only reliable skip-source.
-    _existing_agg: Dict[int, Any] = {}
-    if aggregated.exists():
-        try:
-            _raw = json.loads(aggregated.read_text(encoding="utf-8"))
-            for _entry in _raw:
-                _s = _entry.get("shot") if isinstance(_entry, dict) else None
-                if isinstance(_s, dict) and _s.get("shot_id") is not None:
-                    _existing_agg[int(_s["shot_id"])] = _entry
-        except Exception:
-            pass
 
     # Create a per-file timer when in verbose mode and no shared timer was provided.
     # When called from annotate_all_files, a shared timer is passed in so that
