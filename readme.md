@@ -31,7 +31,7 @@ In this current form, the project explores how hybrid strategies can emerge new 
 - [Colin Castellano](https://ebenisterie-castellano.ch), Wood construction consulting & production
 
 ## Software
-A [training and playback tool](./code/playable-tool/readme.md) is currently in development.
+A [training and playback tool](./code/crossing-tool/readme.md) is currently in development.
 
 ![Playable-Cinema-Tool](./code/playable-tool/screenshots/playable-cinema-tool-2025-09-09.png)
 
