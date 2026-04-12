@@ -264,6 +264,73 @@ def cmd_import(args):
                 print(f"  ✗  {filename}: {exc}")
 
 
+# ---------------------------------------------------------------------------
+# Markdown export helpers
+# ---------------------------------------------------------------------------
+
+def _markdown_output_path(project_path: str, stem: str, kind: str) -> Path:
+    """Return <project>/data/markdown/<stem> [<kind>].md, creating the dir if needed."""
+    out_dir = Path(project_path) / "data" / "markdown"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir / f"{stem} [{kind}].md"
+
+
+def _resolve_movie_stem(project_path: str, query: str, media_type: str) -> str:
+    """Resolve a fuzzy movie query to the actual filename stem. Falls back to the raw query."""
+    try:
+        from data.metadata import get_metadata
+        rows = get_metadata(project_path, query, media_type=media_type)
+        if rows:
+            filename = rows[0].get("filename", "")
+            if filename:
+                return Path(filename).stem
+    except Exception:
+        pass
+    return query
+
+
+def _vocabulary_to_markdown(vocab: dict, title: str) -> str:
+    """Render a {field: [{value, count}]} vocabulary dict as Markdown."""
+    lines = [f"# {title}", ""]
+    for field, items in sorted(vocab.items()):
+        lines.append(f"## {field}")
+        lines.append("")
+        if not items:
+            lines.append("_(no values)_")
+        else:
+            lines.append("| Value | Count |")
+            lines.append("|-------|------:|")
+            for item in items:
+                val = str(item["value"]).replace("|", "\\|")
+                lines.append(f"| {val} | {item['count']} |")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _metadata_to_markdown(entries: list, title: str) -> str:
+    """Render a list of metadata dicts as a Markdown document."""
+    lines = [f"# {title}", ""]
+    for entry in entries:
+        name = entry.get("title") or entry.get("filename", "Unknown")
+        year = entry.get("year", "")
+        lines.append(f"## {name}{f' ({year})' if year else ''}")
+        lines.append("")
+        field_order = ["title", "year", "director", "duration", "tmdb", "imdb",
+                       "tagline", "overview", "shotlist", "encodings", "filename"]
+        shown = set()
+        for key in field_order:
+            if key in entry:
+                val = entry[key]
+                if val not in (None, "", "null"):
+                    lines.append(f"**{key}**: {val}  ")
+                shown.add(key)
+        for key, val in entry.items():
+            if key not in shown and val not in (None, "", "null"):
+                lines.append(f"**{key}**: {val}  ")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def cmd_search(args):
     _require_path()
 
@@ -271,26 +338,93 @@ def cmd_search(args):
     if args.query == "vocabulary":
         from services.search import vocabulary_from_field
         remaining = args.scope or []
-        if not remaining:
-            print("error: 'vocabulary' requires a field name, e.g. crossing search vocabulary objects", file=sys.stderr)
-            sys.exit(1)
-        field = remaining[0]
-        scopes = (remaining[1:] or []) + (getattr(args, "movie", None) or [])
-        scopes = scopes or None
+        all_fields = getattr(args, "all_fields", False)
+        # For --all-fields there is no field name at remaining[0]; scopes start at [0].
+        # For a named field, remaining[0] is the field and scopes start at [1].
+        if all_fields:
+            scopes = list(remaining) + (getattr(args, "movie", None) or [])
+        else:
+            scopes = (remaining[1:] or []) + (getattr(args, "movie", None) or [])
         use_all = getattr(args, "all", False)
         show_count = getattr(args, "show_count", False)
         sort = getattr(args, "sort", "alphabetical")
         media_type = getattr(args, "media", "movies")
+        project_path = prefs.get("path")
+
+        exclude_fields = set(getattr(args, "exclude", None) or [])
+
+        if all_fields:
+            # Discover every annotation field used across all files, then
+            # emit a single JSON object {field: [{value, count}]} sorted by count.
+            import re as _re
+            ann_base = Path(project_path) / "data" / "annotations" / "shots" / media_type
+            fields_seen: set[str] = set()
+            for ann_file in ann_base.glob("*.json"):
+                try:
+                    entries = json.loads(ann_file.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                for entry in entries:
+                    if not isinstance(entry, dict):
+                        continue
+                    ann = entry.get("shot", {}).get("annotation") if isinstance(entry.get("shot"), dict) else None
+                    if isinstance(ann, dict):
+                        fields_seen.update(ann.keys())
+            if not fields_seen:
+                print(json.dumps({}))
+                return
+            scopes_arg = scopes or None
+            output: dict = {}
+            for f in sorted(fields_seen):
+                if f in exclude_fields:
+                    continue
+                output[f] = vocabulary_from_field(
+                    field=f,
+                    scopes=scopes_arg,
+                    use_all=use_all,
+                    show_count=True,
+                    project_path=project_path,
+                    media_type=media_type,
+                    sort="count",
+                )
+            if getattr(args, "markdown", False) or getattr(args, "open", False):
+                scope_stem = _resolve_movie_stem(project_path, scopes[0], media_type) if scopes else f"{media_type}-all"
+                md_path = _markdown_output_path(project_path, scope_stem, "vocabulary-all")
+                title = f"Vocabulary (all fields) — {scopes[0] if scopes else media_type + ' (all)'}"
+                md_path.write_text(_vocabulary_to_markdown(output, title), encoding="utf-8")
+                print(f"✓ Saved: {md_path}")
+                if getattr(args, "open", False):
+                    import subprocess; subprocess.Popen(["xdg-open", str(md_path)])
+            else:
+                print(json.dumps(output, indent=2))
+            return
+
+        if not remaining:
+            print("error: 'vocabulary' requires a field name or --all-fields, e.g. crossing search vocabulary objects", file=sys.stderr)
+            sys.exit(1)
+        field = remaining[0]
+        if field in exclude_fields:
+            return
+        scopes = scopes or None
         result = vocabulary_from_field(
             field=field,
             scopes=scopes,
             use_all=use_all,
-            show_count=show_count,
-            project_path=prefs.get("path"),
+            show_count=True,
+            project_path=project_path,
             media_type=media_type,
             sort=sort,
         )
-        print(json.dumps(result, indent=2))
+        if getattr(args, "markdown", False) or getattr(args, "open", False):
+            scope_stem = _resolve_movie_stem(project_path, scopes[0], media_type) if scopes else f"{media_type}-all"
+            md_path = _markdown_output_path(project_path, scope_stem, f"vocabulary-{field}")
+            title = f"Vocabulary ({field}) — {scopes[0] if scopes else media_type + ' (all)'}"
+            md_path.write_text(_vocabulary_to_markdown({field: result}, title), encoding="utf-8")
+            print(f"✓ Saved: {md_path}")
+            if getattr(args, "open", False):
+                import subprocess; subprocess.Popen(["xdg-open", str(md_path)])
+        else:
+            print(json.dumps(result, indent=2))
         return
 
     # Dispatch: `crossing search text <query> [scope...]`
@@ -389,7 +523,23 @@ def _meta_get(args):
     else:
         result = get_metadata(project_path, query, media_type=media_type)
 
-    print(json.dumps(result, indent=2))
+    if getattr(args, "markdown", False) or getattr(args, "open", False):
+        if query:
+            stem = _resolve_movie_stem(project_path, query, media_type)
+        elif tmdb:
+            stem = _resolve_movie_stem(project_path, None, media_type) if result else f"tmdb-{tmdb}"
+            # use the resolved filename from the result itself
+            stem = Path(result[0]["filename"]).stem if result and result[0].get("filename") else f"tmdb-{tmdb}"
+        else:
+            stem = f"{media_type}-all"
+        title_label = query or (f"TMDb {tmdb}" if tmdb else f"{media_type} (all)")
+        md_path = _markdown_output_path(project_path, stem, "metadata")
+        md_path.write_text(_metadata_to_markdown(result, f"Metadata — {title_label}"), encoding="utf-8")
+        print(f"✓ Saved: {md_path}")
+        if getattr(args, "open", False):
+            import subprocess; subprocess.Popen(["xdg-open", str(md_path)])
+    else:
+        print(json.dumps(result, indent=2))
 
 
 def _meta_set(args):
@@ -3415,6 +3565,8 @@ def build_parser():
                             help="index (int) or title/filename substring")
     p_meta_get.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
     p_meta_get.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    p_meta_get.add_argument("--markdown", action="store_true", help="Save output as Markdown to <project>/data/markdown/")
+    p_meta_get.add_argument("--open", action="store_true", help="Open the saved Markdown file after writing (implies --markdown)")
 
     p_meta_set = meta_sub.add_parser("set", help="Set/update metadata from a JSON string")
     p_meta_set.add_argument("json_data", metavar="json")
@@ -3479,6 +3631,10 @@ def build_parser():
     p_search.add_argument("--all", action="store_true", help="Search all movies (overrides positional scopes)")
     p_search.add_argument("--show_count", action="store_true", help="(vocabulary mode) include occurrence counts in output")
     p_search.add_argument("--sort", choices=["alphabetical", "count"], default="alphabetical", help="(vocabulary mode) sort order: alphabetical (default) or count")
+    p_search.add_argument("--all-fields", dest="all_fields", action="store_true", help="(vocabulary mode) emit vocabulary for every annotation field as a single JSON object")
+    p_search.add_argument("--exclude", nargs="+", default=None, metavar="FIELD", help="(vocabulary mode) exclude one or more fields from output (e.g. --exclude description humans)")
+    p_search.add_argument("--markdown", action="store_true", help="Save output as Markdown to <project>/data/markdown/")
+    p_search.add_argument("--open", action="store_true", help="Open the saved Markdown file after writing (implies --markdown)")
     p_search.add_argument("--media", choices=["movies", "gameplay"], default="movies")
     p_search.set_defaults(func=cmd_search)
 
@@ -3675,7 +3831,16 @@ def main():
     if len(sys.argv) == 1:
         parser.print_help()
         return
-    args = parser.parse_args()
+    args, unknown = parser.parse_known_args()
+    # argparse nargs="*" positionals don't consume tokens that appear after flags;
+    # append any unrecognized *positional* tokens to the scope list when present,
+    # and error-out on any unrecognized options.
+    if unknown:
+        unrecognized_opts = [u for u in unknown if u.startswith("-")]
+        if unrecognized_opts:
+            parser.error(f"unrecognized arguments: {' '.join(unrecognized_opts)}")
+        if hasattr(args, "scope"):
+            args.scope = list(args.scope or []) + [u for u in unknown if not u.startswith("-")]
     args.func(args)
 
 

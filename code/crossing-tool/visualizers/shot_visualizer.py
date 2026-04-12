@@ -260,13 +260,15 @@ class OpenCVValidator(QMainWindow):
         else:
             self.playback_timer.setInterval(42)  # ~24fps fallback
         
-        self.setWindowTitle(f"Shot Validator \u2014 {_display_name(self.filename)}  (1/{len(self.filenames)})")
+        self.setWindowTitle(f"Shotlist Visualizer \u2014 {_display_name(self.filename)}  (1/{len(self.filenames)})")
         
         self.init_ui()
         self.load_first_shot()
     
     def init_ui(self):
         """Initialize the user interface."""
+        from PyQt5.QtWidgets import QGridLayout
+
         main_widget = QWidget()
         main_widget.setStyleSheet("background-color: #808080; color: white;")
         self.setCentralWidget(main_widget)
@@ -274,37 +276,22 @@ class OpenCVValidator(QMainWindow):
         outer_layout.setContentsMargins(4, 4, 4, 4)
         outer_layout.setSpacing(4)
 
-        # Movie selector
-        movie_row = QHBoxLayout()
-        movie_label = QLabel("Movie:")
-        movie_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        movie_row.addWidget(movie_label)
-        self.movie_combo = QComboBox()
-        self.movie_combo.setFocusPolicy(Qt.NoFocus)
-        for fn in self.filenames:
-            self.movie_combo.addItem(_display_name(fn), fn)
-        self.movie_combo.setCurrentIndex(self.current_movie_index)
-        self.movie_combo.currentIndexChanged.connect(self.on_movie_combo_changed)
-        movie_row.addWidget(self.movie_combo, stretch=1)
-        outer_layout.addLayout(movie_row)
-
-        # Splitter for frame display / sidebar
         splitter = QSplitter(Qt.Horizontal)
         outer_layout.addWidget(splitter, stretch=1)
-        
-        # Left side: Frame display
-        frame_container = QWidget()
-        frame_layout = QVBoxLayout(frame_container)
-        
-        # Frame display (no scroll area - just fit to width)
+
+        # ---- LEFT: video + timeline ----
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(2)
+
         self.frame_label = QLabel()
         self.frame_label.setAlignment(Qt.AlignCenter)
         self.frame_label.setScaledContents(False)
         self.frame_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
         self.frame_label.setMinimumSize(1, 1)
-        frame_layout.addWidget(self.frame_label, stretch=1)
+        left_layout.addWidget(self.frame_label, stretch=1)
 
-        # Timeline scrub bar
         self.timeline_slider = ClickSeekSlider(Qt.Horizontal)
         self.timeline_slider.setMinimum(0)
         self.timeline_slider.setMaximum(max(0, self.total_frames - 1))
@@ -312,82 +299,24 @@ class OpenCVValidator(QMainWindow):
         self.timeline_slider.setFocusPolicy(Qt.NoFocus)
         self.timeline_slider.valueChanged.connect(self.on_timeline_seek)
         self.timeline_slider.setToolTip("Scrub timeline — click or drag to seek  [←/→ frame  Shift+←/→ 1 second]")
-        frame_layout.addWidget(self.timeline_slider)
+        left_layout.addWidget(self.timeline_slider)
 
-        # Control buttons — single row
-        controls_layout = QHBoxLayout()
+        # ---- RIGHT: controls panel ----
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(2, 2, 2, 2)
+        right_layout.setSpacing(4)
 
-        self.play_pause_button = QPushButton("▶ Play")
-        self.play_pause_button.clicked.connect(self.toggle_play_pause)
-        self.play_pause_button.setFocusPolicy(Qt.NoFocus)
-        self.play_pause_button.setMinimumWidth(100)
-        self.play_pause_button.setToolTip("Play / Pause  [Space]")
-        controls_layout.addWidget(self.play_pause_button)
-
-        self.continue_button = QPushButton("Continue")
-        self.continue_button.setCheckable(True)
-        self.continue_button.setChecked(True)
-        self.continue_button.clicked.connect(self.toggle_continue)
-        self.continue_button.setFocusPolicy(Qt.NoFocus)
-        self.continue_button.setToolTip("Toggle playback past shot boundaries")
-        controls_layout.addWidget(self.continue_button)
-
-        self.ignore_button = QPushButton("⊗ Ignore")
-        self.ignore_button.clicked.connect(self.toggle_current_ignore)
-        self.ignore_button.setFocusPolicy(Qt.NoFocus)
-        self.ignore_button.setToolTip("Toggle Ignore on current shot  [I]")
-        controls_layout.addWidget(self.ignore_button)
-
-        self.show_end_button = QPushButton("Shot End")
-        self.show_end_button.clicked.connect(self.show_end_frame)
-        self.show_end_button.setFocusPolicy(Qt.NoFocus)
-        self.show_end_button.setToolTip("Jump to end frame of current shot  [E]")
-        controls_layout.addWidget(self.show_end_button)
-
-        self.merge_button = QPushButton("Merge Shot")
-        self.merge_button.clicked.connect(self.merge_with_previous)
-        self.merge_button.setFocusPolicy(Qt.NoFocus)
-        self.merge_button.setToolTip("Merge current shot with previous shot  [M]")
-        controls_layout.addWidget(self.merge_button)
-
-        self.split_button = QPushButton("New Shot")
-        self.split_button.clicked.connect(self.split_shot_at_current_frame)
-        self.split_button.setFocusPolicy(Qt.NoFocus)
-        self.split_button.setToolTip("Split current shot at current frame  [N]")
-        controls_layout.addWidget(self.split_button)
-
-        self.merge_scene_button = QPushButton("Merge Scene")
-        self.merge_scene_button.clicked.connect(self.merge_scene_at_current_shot)
-        self.merge_scene_button.setFocusPolicy(Qt.NoFocus)
-        self.merge_scene_button.setToolTip("Merge current shot into previous scene  [Shift+M]")
-        controls_layout.addWidget(self.merge_scene_button)
-
-        self.split_scene_button = QPushButton("New Scene")
-        self.split_scene_button.clicked.connect(self.split_scene_at_current_shot)
-        self.split_scene_button.setFocusPolicy(Qt.NoFocus)
-        self.split_scene_button.setToolTip("Start a new scene at current shot  [Shift+N]")
-        controls_layout.addWidget(self.split_scene_button)
-
-        self.save_button = QPushButton("💾 Save")
-        self.save_button.clicked.connect(self.save_changes)
-        self.save_button.setEnabled(False)
-        self.save_button.setFocusPolicy(Qt.NoFocus)
-        self.save_button.setToolTip("Save changes to CSV  [Ctrl+S]")
-        controls_layout.addWidget(self.save_button)
-
-        self.gremlins_button = QPushButton("👾 Gremlins")
-        self.gremlins_button.setCheckable(True)
-        self.gremlins_button.setChecked(False)
-        self.gremlins_button.clicked.connect(self.toggle_gremlins)
-        self.gremlins_button.setFocusPolicy(Qt.NoFocus)
-        self.gremlins_button.setToolTip("Randomly jump movies/timecodes every second  [G]")
-        controls_layout.addWidget(self.gremlins_button)
-
-        frame_layout.addLayout(controls_layout)
-        
-        # Right side: Scene list + Shot list + controls
-        sidebar = QWidget()
-        sidebar_layout = QVBoxLayout(sidebar)
+        # Movie selector
+        movie_row = QHBoxLayout()
+        self.movie_combo = QComboBox()
+        self.movie_combo.setFocusPolicy(Qt.NoFocus)
+        for fn in self.filenames:
+            self.movie_combo.addItem(_display_name(fn), fn)
+        self.movie_combo.setCurrentIndex(self.current_movie_index)
+        self.movie_combo.currentIndexChanged.connect(self.on_movie_combo_changed)
+        movie_row.addWidget(self.movie_combo, stretch=1)
+        right_layout.addLayout(movie_row)
 
         # Scene and shot lists side by side
         lists_container = QWidget()
@@ -429,27 +358,99 @@ class OpenCVValidator(QMainWindow):
         shot_col_layout.addWidget(self.shot_list)
         lists_layout.addWidget(shot_col, stretch=1)
 
-        sidebar_layout.addWidget(lists_container, stretch=3)
+        right_layout.addWidget(lists_container, stretch=1)
 
         # Stats
         self.stats_label = QLabel()
         self.stats_label.setWordWrap(True)
         self.update_stats()
-        sidebar_layout.addWidget(self.stats_label, stretch=0)
+        right_layout.addWidget(self.stats_label, stretch=0)
 
-        # Save button lives in the controls row now — remove from sidebar
         # Frame info
         self.info_label = QLabel()
         self.info_label.setFont(QFont("Monospace", 9))
         self.info_label.setAlignment(Qt.AlignLeft)
         self.info_label.setWordWrap(True)
         self.info_label.setMinimumHeight(80)
-        sidebar_layout.addWidget(self.info_label, stretch=0)
+        right_layout.addWidget(self.info_label, stretch=0)
 
-        # Add to splitter
-        splitter.addWidget(frame_container)
-        splitter.addWidget(sidebar)
-        sidebar.setMinimumWidth(350)
+        # Buttons in a grid — 3 rows
+        btn_grid = QGridLayout()
+        btn_grid.setSpacing(4)
+
+        # Row 0: shot editing
+        self.split_button = QPushButton("New Shot")
+        self.split_button.clicked.connect(self.split_shot_at_current_frame)
+        self.split_button.setFocusPolicy(Qt.NoFocus)
+        self.split_button.setToolTip("Split current shot at current frame  [Shift+N]")
+        btn_grid.addWidget(self.split_button, 0, 0)
+
+        self.merge_button = QPushButton("Merge Shot")
+        self.merge_button.clicked.connect(self.merge_with_previous)
+        self.merge_button.setFocusPolicy(Qt.NoFocus)
+        self.merge_button.setToolTip("Merge current shot with previous shot  [Shift+M]")
+        btn_grid.addWidget(self.merge_button, 0, 1)
+
+        self.save_button = QPushButton("💾 Save")
+        self.save_button.clicked.connect(self.save_changes)
+        self.save_button.setEnabled(False)
+        self.save_button.setFocusPolicy(Qt.NoFocus)
+        self.save_button.setToolTip("Save changes to CSV  [Ctrl+S]")
+        btn_grid.addWidget(self.save_button, 0, 2)
+
+        # Row 1: scene editing
+        self.split_scene_button = QPushButton("New Scene")
+        self.split_scene_button.clicked.connect(self.split_scene_at_current_shot)
+        self.split_scene_button.setFocusPolicy(Qt.NoFocus)
+        self.split_scene_button.setToolTip("Start a new scene at current shot  [N]")
+        btn_grid.addWidget(self.split_scene_button, 1, 0)
+
+        self.merge_scene_button = QPushButton("Merge Scene")
+        self.merge_scene_button.clicked.connect(self.merge_scene_at_current_shot)
+        self.merge_scene_button.setFocusPolicy(Qt.NoFocus)
+        self.merge_scene_button.setToolTip("Merge current scene into previous scene  [M]")
+        btn_grid.addWidget(self.merge_scene_button, 1, 1)
+
+        self.ignore_button = QPushButton("⊗ Ignore")
+        self.ignore_button.clicked.connect(self.toggle_current_ignore)
+        self.ignore_button.setFocusPolicy(Qt.NoFocus)
+        self.ignore_button.setToolTip("Toggle Ignore on current shot  [I]")
+        btn_grid.addWidget(self.ignore_button, 1, 2)
+
+        # Row 2: playback
+        self.play_pause_button = QPushButton("▶ Play")
+        self.play_pause_button.clicked.connect(self.toggle_play_pause)
+        self.play_pause_button.setFocusPolicy(Qt.NoFocus)
+        self.play_pause_button.setToolTip("Play / Pause  [Space]")
+        btn_grid.addWidget(self.play_pause_button, 2, 0)
+
+        self.continue_button = QPushButton("Continue")
+        self.continue_button.setCheckable(True)
+        self.continue_button.setChecked(True)
+        self.continue_button.clicked.connect(self.toggle_continue)
+        self.continue_button.setFocusPolicy(Qt.NoFocus)
+        self.continue_button.setToolTip("Toggle playback past shot boundaries")
+        btn_grid.addWidget(self.continue_button, 2, 1)
+
+        self.gremlins_button = QPushButton("👾 Gremlins")
+        self.gremlins_button.setCheckable(True)
+        self.gremlins_button.setChecked(False)
+        self.gremlins_button.clicked.connect(self.toggle_gremlins)
+        self.gremlins_button.setFocusPolicy(Qt.NoFocus)
+        self.gremlins_button.setToolTip("Randomly jump movies/timecodes every second  [G]")
+        btn_grid.addWidget(self.gremlins_button, 2, 2)
+
+        right_layout.addLayout(btn_grid)
+
+        # Keyboard hint
+        hint = QLabel("↑↓ shot  Space play  ←→ frame  Shift+←→ 1s  PgUp/Dn scene  Home/End movie")
+        hint.setFont(QFont("Monospace", 7))
+        hint.setStyleSheet("color: #bbb;")
+        right_layout.addWidget(hint)
+
+        splitter.addWidget(left)
+        splitter.addWidget(right)
+        right.setMinimumWidth(350)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 1)
 
@@ -611,7 +612,7 @@ class OpenCVValidator(QMainWindow):
             if self.frame_rate > 0:
                 self.playback_timer.setInterval(int(1000 / self.frame_rate))
             self.timeline_slider.setMaximum(max(0, self.total_frames - 1))
-            self.setWindowTitle(f"Shot Validator \u2014 {_display_name(self.filename)}  ({self.current_movie_index + 1}/{len(self.filenames)}) \ud83d\udc7e")
+            self.setWindowTitle(f"Shotlist Visualizer \u2014 {_display_name(self.filename)}  ({self.current_movie_index + 1}/{len(self.filenames)}) \ud83d\udc7e")
             self._updating_combo = True
             self.movie_combo.setCurrentIndex(index)
             self._updating_combo = False
@@ -800,7 +801,7 @@ class OpenCVValidator(QMainWindow):
         self.timeline_slider.setMaximum(max(0, self.total_frames - 1))
         self.timeline_slider.setValue(0)
         self.save_button.setEnabled(False)
-        self.setWindowTitle(f"Shot Validator — {_display_name(self.filename)}  ({self.current_movie_index + 1}/{len(self.filenames)})")
+        self.setWindowTitle(f"Shotlist Visualizer — {_display_name(self.filename)}  ({self.current_movie_index + 1}/{len(self.filenames)})")
 
         self._updating_combo = True
         self.movie_combo.setCurrentIndex(index)
@@ -1189,14 +1190,14 @@ class OpenCVValidator(QMainWindow):
             self.toggle_current_ignore()
         elif key == Qt.Key_M:
             if mods & Qt.ShiftModifier:
-                self.merge_scene_at_current_shot()
-            else:
                 self.merge_with_previous()
+            else:
+                self.merge_scene_at_current_shot()
         elif key == Qt.Key_N:
             if mods & Qt.ShiftModifier:
-                self.split_scene_at_current_shot()
-            else:
                 self.split_shot_at_current_frame()
+            else:
+                self.split_scene_at_current_shot()
         elif key == Qt.Key_S and event.modifiers() & Qt.ControlModifier:
             if self.modified:
                 self.save_changes()

@@ -399,9 +399,6 @@ class AnnotationValidator(QMainWindow):
         mid_layout.setSpacing(4)
 
         repr_row = QHBoxLayout()
-        repr_lbl = QLabel("View:")
-        repr_lbl.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        repr_row.addWidget(repr_lbl)
         self.ann_repr_combo = QComboBox()
         self.ann_repr_combo.setFocusPolicy(Qt.NoFocus)
         for _mode in ("fields", "json", "txt", "vector", "mapping"):
@@ -428,9 +425,6 @@ class AnnotationValidator(QMainWindow):
 
         # Movie selector
         movie_row = QHBoxLayout()
-        movie_lbl = QLabel("Movie:")
-        movie_lbl.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        movie_row.addWidget(movie_lbl)
         self.movie_combo = QComboBox()
         self.movie_combo.setFocusPolicy(Qt.NoFocus)
         for fn in self.filenames:

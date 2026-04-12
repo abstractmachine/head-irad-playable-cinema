@@ -1351,10 +1351,14 @@ def annotate_file_shots(
         _shot_duration = max(0.0, _shot_end_s - _shot_start_s)
         if _shot_duration < 2.5:
             _heuristic_frames = 1
-        elif _shot_duration < 6.0:
+        elif _shot_duration < 5.0:
             _heuristic_frames = 2
-        elif _shot_duration < 12.0:
+        elif _shot_duration < 8.0:
             _heuristic_frames = 3
+        elif _shot_duration < 12.0:
+            _heuristic_frames = 4
+        elif _shot_duration < 20.0:
+            _heuristic_frames = 5
         else:
             _heuristic_frames = frames_per_shot
         adaptive_frames = min(frames_per_shot, _heuristic_frames)
