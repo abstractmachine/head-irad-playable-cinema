@@ -17,6 +17,7 @@ from __future__ import annotations
 FRAMES_PER_SHOT = 10
 
 import json
+import math
 import shutil
 import subprocess
 import tempfile
@@ -338,6 +339,41 @@ def sample_frames_for_shot(
             continue
 
     return frame_paths
+
+
+def _adaptive_frames_for_duration(
+    duration_s: float,
+    frames_per_shot: int,
+    min_frame_interval_s: float,
+    max_frames_per_shot: int,
+) -> int:
+    """Return adaptive frame count based on shot duration.
+
+    Behavior:
+    - Keep short-shot speed optimizations with conservative sampling buckets.
+    - For long shots, enforce a minimum density of one frame every
+      ``min_frame_interval_s`` seconds, capped by ``max_frames_per_shot``.
+    - ``frames_per_shot`` remains the baseline/default target.
+    """
+    base = max(1, int(frames_per_shot))
+    max_cap = max(1, int(max_frames_per_shot))
+    interval = max(0.1, float(min_frame_interval_s))
+
+    if duration_s < 2.5:
+        return min(base, 1)
+    if duration_s < 5.0:
+        return min(base, 2)
+    if duration_s < 8.0:
+        return min(base, 3)
+    if duration_s < 12.0:
+        return min(base, 4)
+    if duration_s < 20.0:
+        return min(base, 5)
+
+    # Long shots: guarantee cadence (at least one frame every interval), while
+    # honoring user baseline and max cap.
+    required_by_interval = int(math.ceil(duration_s / interval))
+    return min(max(base, required_by_interval), max_cap)
 
 
 def _find_prebaked_frames(project_path: str, media_type: str, filename: str, shot_index: int, frames_per_shot: int) -> List[str]:
@@ -1140,6 +1176,8 @@ def annotate_file_shots(
     prompt_text: Optional[str] = None,
     user_prompt_file: Optional[str] = None,
     frames_per_shot: int = FRAMES_PER_SHOT,
+    min_frame_interval_s: float = 4.0,
+    max_frames_per_shot: int = 16,
     sample_mode: str = "center",
     force: bool = False,
     skip_existing: bool = True,
@@ -1359,23 +1397,18 @@ def annotate_file_shots(
         _shot_start = time.time()
 
         # Compute adaptive frame count for this shot based on duration.
-        # Acts as a cap: never exceeds the user-supplied frames_per_shot.
+        # Short shots are sampled with fewer frames; long shots can exceed
+        # the configured default to improve coverage (especially on text-heavy
+        # credits/title sequences).
         _shot_start_s = _timecode_to_seconds(shot.get("start_time", "0:00:00"))
         _shot_end_s = _timecode_to_seconds(shot.get("end_time", shot.get("start_time", "0:00:00")))
         _shot_duration = max(0.0, _shot_end_s - _shot_start_s)
-        if _shot_duration < 2.5:
-            _heuristic_frames = 1
-        elif _shot_duration < 5.0:
-            _heuristic_frames = 2
-        elif _shot_duration < 8.0:
-            _heuristic_frames = 3
-        elif _shot_duration < 12.0:
-            _heuristic_frames = 4
-        elif _shot_duration < 20.0:
-            _heuristic_frames = 5
-        else:
-            _heuristic_frames = frames_per_shot
-        adaptive_frames = min(frames_per_shot, _heuristic_frames)
+        adaptive_frames = _adaptive_frames_for_duration(
+            _shot_duration,
+            frames_per_shot,
+            min_frame_interval_s,
+            max_frames_per_shot,
+        )
 
         # Sample frames (best-effort). Prefer pre-baked frames under
         # media/frames/<media_type>/<stem>/ if present (useful for debugging).
@@ -1433,7 +1466,9 @@ def annotate_file_shots(
 
         if verbose:
             frame_names = ", ".join(Path(f).name for f in frames)
-            _adaptive_label = " [adaptive]" if adaptive_frames < frames_per_shot else ""
+            _adaptive_label = ""
+            if adaptive_frames != frames_per_shot:
+                _adaptive_label = f" [adaptive {frames_per_shot}->{adaptive_frames} @ {_shot_duration:.1f}s]"
             print(f"  Shot {i+1} [{shot.get('start_time', '?')} → {shot.get('end_time', '?')}] — {len(pil_frames)} frame(s){_adaptive_label}: {frame_names}")
 
         # Build structured messages with runtime variable substitution
@@ -1550,7 +1585,7 @@ def annotate_file_shots(
                     timer.print_estimates(_remaining_movie, _remaining_movie + subsequent_shots)
         else:
             # Do NOT append failed shots to results: they are omitted from the JSON
-            # so the validator shows them as unannotated (? not ✗), and they are
+            # so the visualizer shows them as unannotated (? not ✗), and they are
             # retried automatically on the next run without --force.
             _consecutive_failures += 1
             if _consecutive_failures >= 5:
@@ -1697,6 +1732,8 @@ def annotate_all_files(
     prompt_text: Optional[str] = None,
     user_prompt_file: Optional[str] = None,
     frames_per_shot: int = FRAMES_PER_SHOT,
+    min_frame_interval_s: float = 4.0,
+    max_frames_per_shot: int = 16,
     sample_mode: str = "center",
     force: bool = False,
     skip_existing: bool = True,
@@ -1757,6 +1794,8 @@ def annotate_all_files(
             prompt_text=prompt_text,
             user_prompt_file=user_prompt_file,
             frames_per_shot=frames_per_shot,
+            min_frame_interval_s=min_frame_interval_s,
+            max_frames_per_shot=max_frames_per_shot,
             sample_mode=sample_mode,
             force=force,
             skip_existing=skip_existing,

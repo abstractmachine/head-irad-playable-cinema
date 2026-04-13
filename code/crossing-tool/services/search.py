@@ -30,6 +30,7 @@ Example
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -88,6 +89,59 @@ def _resolve_movies(
                 seen[filename] = entry
 
     return list(seen.values()), list(scopes)
+
+
+def _normalize_scope_text(value: str) -> str:
+    """Normalize titles/queries for robust exact matching."""
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", value.lower())).strip()
+
+
+def _resolve_movies_exact_first(
+    scopes: list[str] | None,
+    use_all: bool,
+    all_entries: list[dict],
+) -> tuple[list[dict], list[str]]:
+    """Resolve scopes with exact matching first, then fuzzy fallback.
+
+    Exact pass checks normalized values against:
+      - metadata title
+      - filename stem
+      - full filename
+      - tmdb id (if scope is numeric)
+    """
+    if use_all or not scopes:
+        return all_entries, []
+
+    normalized_scopes = [_normalize_scope_text(s) for s in scopes if s and s.strip()]
+    if not normalized_scopes:
+        return all_entries, []
+
+    exact_seen: dict[str, dict] = {}
+    for entry in all_entries:
+        filename = entry.get("filename", "")
+        if not filename:
+            continue
+
+        title = str(entry.get("title") or Path(filename).stem)
+        stem = Path(filename).stem
+        tmdb = str(entry.get("tmdb") or entry.get("tmdb_id") or "").strip()
+
+        candidates = {
+            _normalize_scope_text(title),
+            _normalize_scope_text(stem),
+            _normalize_scope_text(filename),
+        }
+        if tmdb:
+            candidates.add(_normalize_scope_text(tmdb))
+
+        if any(scope in candidates for scope in normalized_scopes):
+            exact_seen[filename] = entry
+
+    if exact_seen:
+        return list(exact_seen.values()), list(scopes)
+
+    # No exact matches found; preserve existing fuzzy behavior.
+    return _resolve_movies(scopes, use_all, all_entries)
 
 
 def _annotation_searchable_text(
@@ -384,7 +438,7 @@ def vocabulary_from_field(
         raise RuntimeError("project_path is required")
 
     all_entries = get_metadata(project_path, media_type=media_type)
-    selected, _ = _resolve_movies(scopes, use_all, all_entries)
+    selected, _ = _resolve_movies_exact_first(scopes, use_all, all_entries)
 
     ann_base = Path(project_path) / "data" / "annotations" / "shots" / media_type
 

@@ -235,7 +235,7 @@ class AnnotateWorker(QThread):
 # Main window
 # ---------------------------------------------------------------------------
 
-class AnnotationValidator(QMainWindow):
+class AnnotationVisualizer(QMainWindow):
     """Read-only viewer for VLM shot annotations alongside video frames."""
 
     def __init__(self, project_path: str, filenames: list, current_index: int = 0,
@@ -283,7 +283,7 @@ class AnnotationValidator(QMainWindow):
         self.playback_timer.setInterval(interval)
 
         self.setWindowTitle(
-            f"Annotation Validator — {_display_name(self.filename)}  "
+            f"Annotation Visualizer — {_display_name(self.filename)}  "
             f"({current_index + 1}/{len(filenames)})"
         )
         self._init_ui()
@@ -348,7 +348,7 @@ class AnnotationValidator(QMainWindow):
         interval = int(1000 / self.frame_rate) if self.frame_rate > 0 else 42
         self.playback_timer.setInterval(interval)
         self.setWindowTitle(
-            f"Annotation Validator — {_display_name(self.filename)}  "
+            f"Annotation Visualizer — {_display_name(self.filename)}  "
             f"({index + 1}/{len(self.filenames)})"
         )
         self.timeline_slider.setMaximum(max(0, self.total_frames - 1))
@@ -1019,7 +1019,7 @@ def main():
     parser.add_argument("--filenames", nargs="+",
                         help="Explicit list of video filenames (passed by cli.py)")
     parser.add_argument("--all", action="store_true",
-                        help="Validate all films with annotation files")
+                        help="Open all films with annotation files")
     args = parser.parse_args()
 
     # Resolve project path
@@ -1099,11 +1099,11 @@ def main():
         """
     )
 
-    validator = AnnotationValidator(project_path, valid, 0, args.media)
+    visualizer = AnnotationVisualizer(project_path, valid, 0, args.media)
     screen = QApplication.primaryScreen()
     avail = screen.availableGeometry()
-    validator.setGeometry(avail)
-    validator.show()
+    visualizer.setGeometry(avail)
+    visualizer.show()
     sys.exit(app.exec_())
 
 

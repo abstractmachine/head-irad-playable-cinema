@@ -189,8 +189,8 @@ class ShotItem(QListWidgetItem):
         self.update_display()
 
 
-class OpenCVValidator(QMainWindow):
-    """Frame-precise shot validator."""
+class OpenCVShotVisualizer(QMainWindow):
+    """Frame-precise shot visualizer."""
 
     def __init__(self, project_path: str, filenames: list, current_index: int = 0, media_type: str = "movies"):
         super().__init__()
@@ -1337,13 +1337,13 @@ def main():
         QSplitter::handle { background-color: #666; }
         QMessageBox      { background-color: #808080; color: white; }
     """)
-    validator = OpenCVValidator(project_path, filenames, 0, args.media)
+    visualizer = OpenCVShotVisualizer(project_path, filenames, 0, args.media)
 
     # Open maximised on whatever screen the window appears on
     screen = QApplication.primaryScreen()
     avail = screen.availableGeometry()
-    validator.setGeometry(avail)
-    validator.show()
+    visualizer.setGeometry(avail)
+    visualizer.show()
 
     sys.exit(app.exec_())
 

@@ -303,7 +303,9 @@ crossing annotate shot <filename_substring>
 crossing annotate shot --tmdb 391
   --media {movies,gameplay}
   --model <model-folder-name>       # override configured model
-  --frames-per-shot 3               # frames to sample per shot
+  --frames-per-shot 3               # baseline frames to sample per shot (fast default)
+  --min-frame-interval 4            # for long shots, sample at least 1 frame every N seconds
+  --max-frames-per-shot 16          # hard cap on adaptive long-shot sampling
   --sample-mode {center,start,end}  # frame sampling position (default: center)
   --force                           # overwrite existing annotations
   --skip-existing                   # skip already-annotated shots (default: true)
@@ -328,6 +330,9 @@ crossing annotate shot --tmdb 391 5 "Close-up of revolver"
 crossing annotate scene <filename> <scene_number>
 crossing annotate scene --tmdb 391 2
   --model <model-folder-name>
+  --frames-per-shot 3
+  --min-frame-interval 4
+  --max-frames-per-shot 16
   --force
 
 # Manual scene annotation
@@ -346,6 +351,13 @@ crossing annotate audit
 crossing annotate --visualizer
   --media {movies,gameplay}
 ```
+
+Adaptive frame sampling notes:
+
+- `--frames-per-shot` remains the baseline target (recommended default: `3` for speed).
+- Short shots are still downsampled aggressively for performance.
+- Long shots use interval-based sampling: at least one frame every `--min-frame-interval` seconds.
+- Long-shot sampling is bounded by `--max-frames-per-shot`.
 
 ### Search
 

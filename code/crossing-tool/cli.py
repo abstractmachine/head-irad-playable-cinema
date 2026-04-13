@@ -121,6 +121,8 @@ _MODEL_DEFAULTS = {
 # key = prefs key, value = built-in fallback
 _ANNOTATE_DEFAULT_KEYS = {
     "frames-per-shot": ("annotate_frames_per_shot", 3),
+    "min-frame-interval": ("annotate_min_frame_interval", 4.0),
+    "max-frames-per-shot": ("annotate_max_frames_per_shot", 16),
 }
 
 
@@ -1248,6 +1250,8 @@ def _shotlist_annotate(args):
                     prompt_text=args.prompt_text,
                     user_prompt_file=getattr(args, "user_prompt_file", None),
                     frames_per_shot=args.frames_per_shot,
+                    min_frame_interval_s=getattr(args, "min_frame_interval", 4.0),
+                    max_frames_per_shot=getattr(args, "max_frames_per_shot", 16),
                     sample_mode=args.sample_mode,
                     force=args.force,
                     skip_existing=args.skip_existing,
@@ -1282,6 +1286,8 @@ def _shotlist_annotate(args):
                 prompt_text=args.prompt_text,
                 user_prompt_file=getattr(args, "user_prompt_file", None),
                 frames_per_shot=args.frames_per_shot,
+                min_frame_interval_s=getattr(args, "min_frame_interval", 4.0),
+                max_frames_per_shot=getattr(args, "max_frames_per_shot", 16),
                 sample_mode=args.sample_mode,
                 force=args.force,
                 skip_existing=args.skip_existing,
@@ -1330,6 +1336,8 @@ def _shotlist_annotate(args):
                 prompt_text=args.prompt_text,
                 user_prompt_file=getattr(args, "user_prompt_file", None),
                 frames_per_shot=args.frames_per_shot,
+                min_frame_interval_s=getattr(args, "min_frame_interval", 4.0),
+                max_frames_per_shot=getattr(args, "max_frames_per_shot", 16),
                 sample_mode=args.sample_mode,
                 force=args.force,
                 skip_existing=args.skip_existing,
@@ -1692,10 +1700,10 @@ def _shot_visualizer(args):
     from data.metadata import get_metadata
 
     cli_dir = Path(__file__).parent
-    validator_path = cli_dir / "visualizers" / "shot_visualizer.py"
+    visualizer_path = cli_dir / "visualizers" / "shot_visualizer.py"
 
-    if not validator_path.exists():
-        print(f"✗ Error: {validator_path.name} not found at {validator_path}", file=sys.stderr)
+    if not visualizer_path.exists():
+        print(f"✗ Error: {visualizer_path.name} not found at {visualizer_path}", file=sys.stderr)
         sys.exit(1)
 
     _require_path()
@@ -1734,7 +1742,7 @@ def _shot_visualizer(args):
         sys.exit(1)
 
     cmd = [
-        sys.executable, str(validator_path),
+        sys.executable, str(visualizer_path),
         "--media", media_type,
         "--project", project_path,
         "--filenames",
@@ -2144,9 +2152,9 @@ def _annotate_visualizer(args):
     media_type = getattr(args, "media", "movies")
 
     import subprocess
-    validator_path = Path(__file__).parent / "visualizers" / "annotation_visualizer.py"
-    if not validator_path.exists():
-        print(f"\u2717 Error: annotation_visualizer.py not found at {validator_path}", file=sys.stderr)
+    visualizer_path = Path(__file__).parent / "visualizers" / "annotation_visualizer.py"
+    if not visualizer_path.exists():
+        print(f"\u2717 Error: annotation_visualizer.py not found at {visualizer_path}", file=sys.stderr)
         sys.exit(1)
 
     if getattr(args, "all", False):
@@ -2182,7 +2190,7 @@ def _annotate_visualizer(args):
     valid = filenames
 
     cmd = [
-        sys.executable, str(validator_path),
+        sys.executable, str(visualizer_path),
         "--media", media_type,
         "--project", project_path,
         "--filenames",
@@ -3204,6 +3212,18 @@ def build_parser():
     p_annotate_shot.add_argument("--prompt-text", default=None, help="Inline system prompt text (overrides prompt file)")
     p_annotate_shot.add_argument("--user-prompt-file", default=None, dest="user_prompt_file", help="User prompt file (user-*.txt under prompts/<media>/shots/)")
     p_annotate_shot.add_argument("--frames-per-shot", type=int, default=prefs.get(_ANNOTATE_DEFAULT_KEYS["frames-per-shot"][0], _ANNOTATE_DEFAULT_KEYS["frames-per-shot"][1]), help="Frames to sample per shot")
+    p_annotate_shot.add_argument(
+        "--min-frame-interval",
+        type=float,
+        default=prefs.get(_ANNOTATE_DEFAULT_KEYS["min-frame-interval"][0], _ANNOTATE_DEFAULT_KEYS["min-frame-interval"][1]),
+        help="For long shots, ensure at least one sampled frame every N seconds (default: 4.0)",
+    )
+    p_annotate_shot.add_argument(
+        "--max-frames-per-shot",
+        type=int,
+        default=prefs.get(_ANNOTATE_DEFAULT_KEYS["max-frames-per-shot"][0], _ANNOTATE_DEFAULT_KEYS["max-frames-per-shot"][1]),
+        help="Hard cap for adaptive frame sampling on long shots (default: 16)",
+    )
     p_annotate_shot.add_argument("--limit", type=int, default=None, help="Limit to first N shots (process shots with index < N)")
     p_annotate_shot.add_argument("--sample-mode", choices=["center", "start", "end"], default="center", help="Frame sampling mode")
     p_annotate_shot.add_argument("--force", action="store_true", help="Overwrite existing annotations")
@@ -3240,6 +3260,18 @@ def build_parser():
     p_annotate_scene.add_argument("--prompt-text", default=None, help="Inline system prompt text (overrides prompt file)")
     p_annotate_scene.add_argument("--user-prompt-file", default=None, dest="user_prompt_file", help="User prompt file (user-*.txt under prompts/<media>/shots/)")
     p_annotate_scene.add_argument("--frames-per-shot", type=int, default=prefs.get(_ANNOTATE_DEFAULT_KEYS["frames-per-shot"][0], _ANNOTATE_DEFAULT_KEYS["frames-per-shot"][1]), help="Frames to sample per shot")
+    p_annotate_scene.add_argument(
+        "--min-frame-interval",
+        type=float,
+        default=prefs.get(_ANNOTATE_DEFAULT_KEYS["min-frame-interval"][0], _ANNOTATE_DEFAULT_KEYS["min-frame-interval"][1]),
+        help="For long shots, ensure at least one sampled frame every N seconds (default: 4.0)",
+    )
+    p_annotate_scene.add_argument(
+        "--max-frames-per-shot",
+        type=int,
+        default=prefs.get(_ANNOTATE_DEFAULT_KEYS["max-frames-per-shot"][0], _ANNOTATE_DEFAULT_KEYS["max-frames-per-shot"][1]),
+        help="Hard cap for adaptive frame sampling on long shots (default: 16)",
+    )
     p_annotate_scene.add_argument("--limit", type=int, default=None, help="Limit to first N shots (process shots with index < N)")
     p_annotate_scene.add_argument("--sample-mode", choices=["center", "start", "end"], default="center", help="Frame sampling mode")
     p_annotate_scene.add_argument("--force", action="store_true", help="Overwrite existing annotations")
