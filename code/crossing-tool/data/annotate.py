@@ -1419,7 +1419,7 @@ def annotate_file_shots(
                 if prebaked:
                     frames = prebaked
                     try:
-                        _append_log(log_path, f"Using pre-baked frames for shot {i+1}: {', '.join(Path(p).name for p in frames)}")
+                        _append_log(log_path, f"Using pre-baked frames for shot {i}: {', '.join(Path(p).name for p in frames)}")
                     except Exception:
                         pass
                 elif video_path.exists():
@@ -1431,12 +1431,12 @@ def annotate_file_shots(
                         sample_mode,
                     )
             except Exception as exc:
-                _append_log(log_path, f"SHOT {i+1} - frame sampling failed: {exc}")
+                _append_log(log_path, f"SHOT {i} - frame sampling failed: {exc}")
                 failed.append((i, f"frame sampling failed: {exc}"))
                 continue
 
         if not frames:
-            _append_log(log_path, f"SHOT {i+1} - no frames available (video missing or shot has zero duration)")
+            _append_log(log_path, f"SHOT {i} - no frames available (video missing or shot has zero duration)")
             failed.append((i, "no frames available"))
             continue
 
@@ -1450,17 +1450,17 @@ def annotate_file_shots(
                 try:
                     pil_frames.append(_PILImage.open(fp).convert("RGB"))
                 except Exception as exc:
-                    _append_log(log_path, f"SHOT {i+1} - failed to open frame {fp}: {exc}")
+                    _append_log(log_path, f"SHOT {i} - failed to open frame {fp}: {exc}")
                     raise RuntimeError(f"Failed to open frame {fp}: {exc}") from exc
         except RuntimeError:
             raise
         except Exception as exc:
-            _append_log(log_path, f"SHOT {i+1} - PIL unavailable or frame load failed: {exc}")
+            _append_log(log_path, f"SHOT {i} - PIL unavailable or frame load failed: {exc}")
             failed.append((i, f"frame load failed: {exc}"))
             continue
 
         if not pil_frames:
-            _append_log(log_path, f"SHOT {i+1} - no PIL frames loaded")
+            _append_log(log_path, f"SHOT {i} - no PIL frames loaded")
             failed.append((i, "no PIL frames loaded"))
             continue
 
@@ -1469,7 +1469,7 @@ def annotate_file_shots(
             _adaptive_label = ""
             if adaptive_frames != frames_per_shot:
                 _adaptive_label = f" [adaptive {frames_per_shot}->{adaptive_frames} @ {_shot_duration:.1f}s]"
-            print(f"  Shot {i+1} [{shot.get('start_time', '?')} → {shot.get('end_time', '?')}] — {len(pil_frames)} frame(s){_adaptive_label}: {frame_names}")
+            print(f"  Shot {i} [{shot.get('start_time', '?')} → {shot.get('end_time', '?')}] — {len(pil_frames)} frame(s){_adaptive_label}: {frame_names}")
 
         # Build structured messages with runtime variable substitution
         variables = {
@@ -1510,7 +1510,7 @@ def annotate_file_shots(
                     full_raw, raw, _dev_log = _call_model(pipeline, messages, overrides=cfg, images=pil_frames if pil_frames else None)
                     last_full = full_raw
                     last_generated = raw
-                    _append_log(log_path, f"SHOT {i+1} ATTEMPT {attempt_no} cfg={cfg}  {_dev_log}")
+                    _append_log(log_path, f"SHOT {i} ATTEMPT {attempt_no} cfg={cfg}  {_dev_log}")
                     if verbose:
                         print(f"    Attempt {attempt_no}/{len(attempt_configs)} (max_new_tokens={cfg.get('max_new_tokens')})...")
                         if _dev_log and "MISMATCH" in _dev_log:
@@ -1523,7 +1523,7 @@ def annotate_file_shots(
                         success = True
                         break
                 except Exception as e:
-                    _append_log(log_path, f"SHOT {i+1} ATTEMPT {attempt_no} exception: {e}")
+                    _append_log(log_path, f"SHOT {i} ATTEMPT {attempt_no} exception: {e}")
                     continue
 
             if not parsed:
@@ -1531,7 +1531,7 @@ def annotate_file_shots(
                 ann = {"model_output": (last_generated or "").strip(), "model_output_full": (last_full or "").strip()}
                 failed.append((i, "no JSON found in model output after retries"))
                 try:
-                    _append_log(log_path, f"SHOT {i+1} - no JSON found after {len(attempt_configs)} attempts")
+                    _append_log(log_path, f"SHOT {i} - no JSON found after {len(attempt_configs)} attempts")
                     _append_log(log_path, "PROMPT (user):\n" + (filled_user[:2000] + "..." if len(filled_user) > 2000 else filled_user))
                     _append_log(log_path, "MODEL_FULL_OUTPUT:\n" + (last_full[:8000] + "..." if last_full and len(last_full) > 8000 else (last_full or "<empty>")))
                     _append_log(log_path, "MODEL_GENERATED_ONLY:\n" + (last_generated[:4000] + "..." if last_generated and len(last_generated) > 4000 else (last_generated or "<empty>")))
@@ -1542,7 +1542,7 @@ def annotate_file_shots(
             failed.append((i, str(exc)))
             ann = {"error": str(exc), "raw_output": raw_output}
             try:
-                _append_log(log_path, f"SHOT {i+1} - exception during model call: {exc}")
+                _append_log(log_path, f"SHOT {i} - exception during model call: {exc}")
                 _append_log(log_path, "TRACEBACK:\n" + traceback.format_exc())
                 _append_log(log_path, "MODEL_FULL_OUTPUT:\n" + (raw_output[:8000] + "..." if raw_output and len(raw_output) > 8000 else (raw_output or "<empty>")))
                 _append_log(log_path, "PROMPT (user):\n" + (filled_user[:2000] + "..." if len(filled_user) > 2000 else filled_user))
@@ -1579,7 +1579,7 @@ def annotate_file_shots(
             if timer is not None:
                 timer.record(time.time() - _shot_start)
             if verbose:
-                print(f"    ✓ Shot {i+1}")
+                print(f"    ✓ Shot {i}")
                 if timer is not None:
                     _remaining_movie = max(0, _movie_pending - updated)
                     timer.print_estimates(_remaining_movie, _remaining_movie + subsequent_shots)
@@ -1607,7 +1607,7 @@ def annotate_file_shots(
                         print(f"  [pipeline reload failed: {_reload_exc}]", file=sys.stderr)
             if verbose:
                 reason = failed[-1][1] if failed and failed[-1][0] == i else "failed"
-                print(f"    ✗ Shot {i+1}: {reason}")
+                print(f"    ✗ Shot {i}: {reason}")
 
         # Count this shot as processed (attempted annotation, not a skip).
         # Trigger a periodic pipeline reload after every reload_every_n_shots attempts
@@ -1692,7 +1692,7 @@ def _export_annotations_csv(results: List[Dict[str, Any]], dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     with dest.open("w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["shot_id", "start_time", "end_time", "scene", "main_focus", "overall_description"])
+        writer.writerow(["shot_index", "start_time", "end_time", "scene", "main_focus", "overall_description"])
         for r in results:
             shot = r.get("shot", {})
             ann = shot.get("annotation") if isinstance(shot, dict) else None
@@ -1700,8 +1700,9 @@ def _export_annotations_csv(results: List[Dict[str, Any]], dest: Path) -> None:
                 main = ann.get("main_focus") if isinstance(ann.get("main_focus"), (list, str)) else ""
                 if isinstance(main, list):
                     main = ", ".join(main)
+                _sid = shot.get("shot_id")
                 writer.writerow([
-                    shot.get("shot_id"),
+                    (_sid - 1) if _sid is not None else "",
                     ann.get("start_time") if ann else "",
                     ann.get("end_time") if ann else "",
                     ann.get("Scene") if ann else "",
@@ -1716,7 +1717,8 @@ def _export_annotations_markdown(results: List[Dict[str, Any]], dest: Path) -> N
         for r in results:
             shot = r.get("shot", {})
             ann = shot.get("annotation") if isinstance(shot, dict) else None
-            f.write(f"## Shot {shot.get('shot_id')}\n\n")
+            _sid = shot.get("shot_id")
+            f.write(f"## Shot {(_sid - 1) if _sid is not None else '?'}\n\n")
             if isinstance(ann, dict):
                 f.write(f"- **Overall**: {ann.get('overall_description', '')}\n")
                 f.write(f"- **Framing**: {ann.get('framing', '')}\n")
@@ -1785,27 +1787,38 @@ def annotate_all_files(
         if verbose:
             print(f"\n--- {fn} ---")
         _t0 = time.time()
-        summary = annotate_file_shots(
-            project_path,
-            fn,
-            media_type=media_type,
-            model_name=model_name,
-            prompt_file=prompt_file,
-            prompt_text=prompt_text,
-            user_prompt_file=user_prompt_file,
-            frames_per_shot=frames_per_shot,
-            min_frame_interval_s=min_frame_interval_s,
-            max_frames_per_shot=max_frames_per_shot,
-            sample_mode=sample_mode,
-            force=force,
-            skip_existing=skip_existing,
-            limit=limit,
-            verbose=verbose,
-            write_log=write_log,
-            reload_every_n_shots=reload_every_n_shots,
-            timer=_timer,
-            subsequent_shots=_corpus_subsequent,
-        )
+        try:
+            summary = annotate_file_shots(
+                project_path,
+                fn,
+                media_type=media_type,
+                model_name=model_name,
+                prompt_file=prompt_file,
+                prompt_text=prompt_text,
+                user_prompt_file=user_prompt_file,
+                frames_per_shot=frames_per_shot,
+                min_frame_interval_s=min_frame_interval_s,
+                max_frames_per_shot=max_frames_per_shot,
+                sample_mode=sample_mode,
+                force=force,
+                skip_existing=skip_existing,
+                limit=limit,
+                verbose=verbose,
+                write_log=write_log,
+                reload_every_n_shots=reload_every_n_shots,
+                timer=_timer,
+                subsequent_shots=_corpus_subsequent,
+            )
+        except RuntimeError as exc:
+            if verbose:
+                print(f"  ✗ Skipping {fn}: {exc}")
+            summary = {
+                "filename": fn,
+                "updated": 0,
+                "skipped": 0,
+                "failed": [str(exc)],
+                "annotations_path": None,
+            }
         _elapsed = time.time() - _t0
         results.append(summary)
         if on_file_done is not None:

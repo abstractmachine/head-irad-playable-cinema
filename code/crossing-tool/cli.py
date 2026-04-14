@@ -1359,6 +1359,14 @@ def _shotlist_annotate(args):
                     pass
             return
 
+    except ImportError as e:
+        print(f"✗ {e}", file=sys.stderr)
+        print("  Annotation requires the 'annotate' extra.", file=sys.stderr)
+        print("  Installed as a tool? Re-install with the extra:", file=sys.stderr)
+        print("    uv tool install --reinstall \"crossing[annotate] @ git+https://github.com/abstractmachine/head-irad-playable-cinema.git#subdirectory=code/crossing-tool\"", file=sys.stderr)
+        print("  Working from source? Sync the extra into your dev environment:", file=sys.stderr)
+        print("    uv sync --extra annotate", file=sys.stderr)
+        sys.exit(1)
     except ValueError as e:
         print(f"✗ Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -1692,12 +1700,42 @@ def _shot_detect_all(
         discord_notify(summary, project_path)
 
 
+def _require_visualizer_deps():
+    """Exit with a helpful message if the visualizer optional deps are missing."""
+    import importlib.util
+    missing = [pkg for pkg in ("PyQt5", "cv2") if importlib.util.find_spec(pkg) is None]
+    if missing:
+        print(
+            "✗ Visualizer dependencies not installed (PyQt5, opencv).",
+            file=sys.stderr,
+        )
+        print(
+            "  Installed as a tool? Re-install with the extra:",
+            file=sys.stderr,
+        )
+        print(
+            "    uv tool install --reinstall \"crossing[visualizer] @ git+https://github.com/abstractmachine/head-irad-playable-cinema.git#subdirectory=code/crossing-tool\"",
+            file=sys.stderr,
+        )
+        print(
+            "  Working from source? Sync the extra into your dev environment:",
+            file=sys.stderr,
+        )
+        print(
+            "    uv sync --extra visualizer",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
 def _shot_visualizer(args):
     """Launch shot visualizer GUI."""
     import subprocess
     from pathlib import Path
     from data.shotlist import get_shotlist_path
     from data.metadata import get_metadata
+
+    _require_visualizer_deps()
 
     cli_dir = Path(__file__).parent
     visualizer_path = cli_dir / "visualizers" / "shot_visualizer.py"
@@ -2145,6 +2183,8 @@ def _annotate_audit(args):
 
 def _annotate_visualizer(args):
     """Launch the annotation visualizer GUI."""
+    _require_visualizer_deps()
+
     from data.annotate import get_annotation_json_path as _ann_json_path
 
     _require_path()

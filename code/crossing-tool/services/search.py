@@ -363,7 +363,7 @@ def search_shots(
                 "tmdb_id": tmdb_id,
                 "movie_id": movie_id,
                 "movie_title": movie_title,
-                "shot_index": shot_id,
+                "shot_id_num": shot_id,
                 "shot_id": f"shot_{shot_id:05d}",
                 "start_time": timing.get("start_time", ""),
                 "end_time": timing.get("end_time", ""),

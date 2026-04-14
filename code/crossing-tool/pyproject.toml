@@ -35,6 +35,9 @@ shot-detection = [
   "tensorflow>=2.5",
   "ffmpeg-python",
 ]
+all = [
+  "crossing[annotate,visualizer,shot-detection]",
+]
 
 [project.scripts]
 crossing = "cli:main"

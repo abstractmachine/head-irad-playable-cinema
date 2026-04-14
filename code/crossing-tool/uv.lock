@@ -564,6 +564,17 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+all = [
+    { name = "accelerate" },
+    { name = "ffmpeg-python" },
+    { name = "huggingface-hub" },
+    { name = "opencv-python-headless" },
+    { name = "pyqt5" },
+    { name = "safetensors" },
+    { name = "tensorflow" },
+    { name = "transformers" },
+    { name = "transnetv2" },
+]
 annotate = [
     { name = "accelerate" },
     { name = "huggingface-hub" },
@@ -584,6 +595,7 @@ visualizer = [
 requires-dist = [
     { name = "accelerate", marker = "extra == 'annotate'" },
     { name = "av" },
+    { name = "crossing", extras = ["annotate", "visualizer", "shot-detection"], marker = "extra == 'all'" },
     { name = "ffmpeg-python", marker = "extra == 'shot-detection'" },
     { name = "gdown" },
     { name = "huggingface-hub", marker = "extra == 'annotate'", specifier = ">=0.15.0" },
@@ -602,7 +614,7 @@ requires-dist = [
     { name = "transnetv2", marker = "extra == 'shot-detection'", git = "https://github.com/soCzech/TransNetV2.git" },
     { name = "ultralytics" },
 ]
-provides-extras = ["annotate", "visualizer", "shot-detection"]
+provides-extras = ["annotate", "visualizer", "shot-detection", "all"]
 
 [[package]]
 name = "cuda-bindings"
