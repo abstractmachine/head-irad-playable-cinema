@@ -18,7 +18,9 @@ A CLI + GUI tool for relating moving images across media — connecting gameplay
 | `crossing search` | Search shot annotations by query, field, or vocabulary |
 | `crossing index` | Build and maintain the semantic search index (txt + embeddings) |
 | `crossing generate mosaic` | Generate contact-sheet grids from thumbnails or search results |
-| `crossing generate compose` | Generate experimental poster compositions (SAM 2 + text patches) |
+| `crossing generate mosaic search` | Mosaic of frames matching a shot annotation search query |
+| `crossing generate mosaic export` | Export individual JPEG frames for each search result |
+| `crossing generate composition` | Build a single tableau image from a semantic search result |
 
 ---
 
@@ -187,6 +189,8 @@ crossing metadata list
 # Get metadata (all, by index, or by filename substring)
 crossing metadata get [query]
   --media {movies,gameplay}
+  --markdown                        # save output as Markdown to <project>/data/markdown/
+  --open                            # open the saved Markdown file (implies --markdown)
 
 # Set a metadata field manually
 crossing metadata set <filename_substring> <field> <value>
@@ -277,6 +281,11 @@ crossing shotlist shot detect --all --notify         # notify when the whole bat
 crossing shotlist --visualizer
   --media {movies,gameplay}                     # media type (default: movies)
 
+# Migrate shotlist CSVs from legacy column names to the canonical naming scheme
+crossing shotlist migrate
+  --media {movies,gameplay}         # limit to one media type (default: both)
+  --dry-run                         # report changes without writing files
+
 # Keyboard shortcuts in shot visualizer (OpenCV-based frame-precise):
 # Space      - Play/Pause
 # ↑/↓        - Previous/Next shot (resumes playback if was playing)
@@ -309,11 +318,16 @@ crossing annotate shot --tmdb 391
   --sample-mode {center,start,end}  # frame sampling position (default: center)
   --force                           # overwrite existing annotations
   --skip-existing                   # skip already-annotated shots (default: true)
+  --no-skip-existing                # process all shots including already-annotated ones
   --limit N                         # process only first N shots
   --prompt-file <file>              # system prompt file
   --prompt-text <text>              # inline system prompt
+  --user-prompt-file <file>         # user prompt file
+  --export-csv <path>               # export annotations as CSV
+  --export-md <path>                # export annotations as Markdown
   --verbose                         # print per-shot progress
   --log                             # write debug log file
+  --reload-every N                  # reload model every N shots to prevent drift (default: 25)
   --notify                          # Discord notification on finish
   --notify-items                    # Discord notification after each film (batch)
 
@@ -446,70 +460,76 @@ Generate content from project data.
 
 #### Mosaic
 
-Generates a contact-sheet grid image from thumbnails or representative text frames.
+Generates a contact-sheet grid image from thumbnails or shot frames.
 
 ```bash
 # Mosaic of all movie thumbnails
 crossing generate mosaic thumbnails --media movies --all
 
-# Mosaic of representative frames for all text events in one film
-crossing generate mosaic text --tmdb 40575 --all
+# Mosaic of frames matching a shot annotation search query
+crossing generate mosaic search "close-up gun" --all
+crossing generate mosaic search "close-up gun" Django    # restrict to one film
+  --field <field>                   # restrict to one annotation field
+  --limit N                         # max results / tiles
+  --layout {landscape,portrait}     # grid orientation (default: landscape)
+  --frame_pct 0.5                   # frame position in shot (0.0=start, 1.0=end)
+  --no-open                         # do not open result
+  --notify                          # Discord notification when finished
 
-# Mosaic of persona appearances for a film
-crossing generate mosaic personas "Young Guns"
-crossing generate mosaic personas --tmdb 10772 --max-per-persona 4
+# Export individual JPEG frames for each search result
+crossing generate mosaic export "close-up gun" --all
+  --limit N                         # max results to export
+  --frame_pct 0.5
+  --no-open
+  --notify
+
+# Open the interactive mosaic explorer GUI
+crossing generate mosaic --visualizer
 ```
 
-**Flags (thumbnails / text):**
+**Flags (thumbnails):**
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--media` | `movies` | `movies` or `gameplay` |
-| `--all` | — | Include all items (required for now) |
+| `--all` | — | Include all entries (required for now) |
 | `--layout` | `landscape` | `landscape` (wider grid) or `portrait` (taller grid) |
-| `--caption` | `short` | `short` (title + year / text) or `none` |
+| `--caption` | `short` | `short` (title + year) or `none` |
 | `--output` | auto | Full save path override |
 | `--notify` | — | Discord notification when finished |
 
-**Additional flags (personas):**
+**Flags (search / export):**
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--max-per-persona` | `6` | Maximum appearance frames per persona row |
+| `--media` | `movies` | `movies` or `gameplay` |
+| `--all` | — | Search all movies (overrides positional scopes) |
+| `--field` | — | Restrict search to one annotation field |
+| `--limit` | — | Max search results / tiles |
+| `--layout` | `landscape` | Grid orientation: `landscape` or `portrait` |
+| `--frame_pct` | `0.5` | Frame position within shot (0.0=start, 0.5=middle, 1.0=end) |
+| `--output` | auto | Override output file path |
 | `--no-open` | — | Do not open the result in the desktop viewer |
+| `--notify` | — | Discord notification when finished |
 
 Output is saved to `<project>/output/mosaics/`.
 
-- Thumbnails mosaic: `movies-thumbnails-mosaic.png`
-- Text mosaic: `tmdb-<id>-text-mosaic.png`
+#### Composition
 
-#### Compose
-
-Generates an experimental poster or landscape canvas by compositing SAM-masked text
-patches from one or more films on top of a randomly sampled background frame.
-SAM 2 (via `ultralytics`) is required — see the install checklist.
+Builds a single tableau image by compositing a randomly sampled background frame against
+a search-driven foreground. Uses the semantic search index.
 
 ```bash
-# Single film — random everything
-crossing generate compose "Sunrise"
+# Build a composition with a background matching a search query
+crossing generate composition "Sunrise"
+crossing generate composition "close-up gun"
+  --orientation {portrait,landscape}  # canvas preset (default: portrait)
+  --output <path>                     # override output file path
+  --no-open                           # do not open result in desktop viewer
+  --notify                            # Discord notification when done
 
-# Multiple films via query (substring match returns >1 result)
-crossing generate compose "Chaplin"
-
-# All films that have text CSVs
-crossing generate compose --all
-
-# Landscape canvas, 12 elements, fixed seed for reproducibility
-crossing generate compose --all --orientation landscape --count 12 --seed 42
-
-# Darken the background, output as PDF, don't open automatically
-crossing generate compose --all --bg-treatment darken --format pdf --no-open
-
-# Pin the background to a specific frame number
-crossing generate compose "10 000 Dollari" --bg-frame 9420
-
-# Override canvas size (pixels)
-crossing generate compose --all --width 2480 --height 3508
+# Open the interactive composition visualizer
+crossing generate composition --visualizer
 ```
 
 **Flags:**
@@ -517,17 +537,12 @@ crossing generate compose --all --width 2480 --height 3508
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--orientation` | `portrait` | `portrait` (1240×1754) or `landscape` (1920×1080) |
-| `--width` / `--height` | — | Override canvas dimensions in pixels |
-| `--count` | random 6–18 | Number of text patches to composite |
-| `--bg-frame` | random | Specific source frame number for the background |
-| `--bg-treatment` | random | `desaturate`, `tint`, `darken`, or `original` |
-| `--seed` | random | Integer seed for fully reproducible output |
-| `--format` | `jpg` | `jpg` or `pdf` |
 | `--output` | auto | Full save path override |
 | `--no-open` | — | Skip opening the result in the desktop viewer |
-| `--verbose` | — | Print per-patch progress |
+| `--notify` | — | Discord notification when done |
+| `--visualizer` | — | Open the interactive GUI instead of saving |
 
-Output is saved to `<project>/media/compositions/`.
+Output is saved to `<project>/output/compositions/`.
 
 ### API Keys
 
@@ -630,9 +645,9 @@ crossing shotlist shot detect --all --notify --notify-items
 │   ├── subtitles/
 │   │   ├── movies/                 # English subtitles from OpenSubtitles
 │   │   └── gameplay/               # gameplay subtitles
-│   └── compositions/               # output from `crossing generate compose`
 ├── output/
-│   └── mosaics/                    # output from `crossing generate mosaic`
+│   ├── mosaics/                    # output from `crossing generate mosaic`
+│   └── compositions/               # output from `crossing generate composition`
 ├── models/
 │   └── sam2.1_b.pt                 # SAM 2 model (required for `crossing generate compose`)
 └── preferences/
