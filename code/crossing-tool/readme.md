@@ -27,10 +27,7 @@ A CLI + GUI tool for relating moving images across media — connecting gameplay
 ## Quickstart
 
 ```bash
-# 1. Activate the virtual environment
-source ~/venvs/crossing-tool/bin/activate
-
-# 2. Point crossing at your project folder (created automatically)
+# 1. Point crossing at your project folder (created automatically)
 crossing tool path ~/my-project
 
 # 3. Set your API keys (TMDb required for metadata; others optional)
@@ -60,38 +57,65 @@ crossing search "close-up of a gun"
 ### System dependencies
 
 ```bash
+# Linux
 sudo apt install ffmpeg
 sudo apt install python3-tk   # optional — GUI file picker
+
+# macOS
+brew install ffmpeg
 ```
 
-### Create the virtual environment
+### Install uv (once, system-wide)
 
 ```bash
-python3 -m venv ~/venvs/crossing-tool
-source ~/venvs/crossing-tool/bin/activate
-cd /path/to/crossing-tool
-pip install -e .
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
+
+> `uv` manages Python automatically — no separate Python install needed.
+
+### Install crossing
+
+```bash
+uv tool install git+https://github.com/yourorg/crossing-tool.git
+```
+
+The `crossing` command is now available globally.
 
 ### Optional components
 
-**Shot detection** (TransNetV2):
+**Annotation** (LLM vision models):
 ```bash
-pip install git+https://github.com/soCzech/TransNetV2.git
-pip install "tensorflow>=2.5" ffmpeg-python
+uv tool install --reinstall --with "crossing[annotate]" git+https://github.com/yourorg/crossing-tool.git
 ```
 
-**Shot visualizer GUI**:
+**Shot detection** (TransNetV2 + TensorFlow):
 ```bash
-pip install PyQt5 opencv-python-headless
+uv tool install --reinstall --with "crossing[shot-detection]" git+https://github.com/yourorg/crossing-tool.git
 ```
-> Use `opencv-python-headless` (not `opencv-python`) to avoid Qt conflicts with PyQt5.
 
-**Compose generator** (SAM 2):
+**Shot/annotation/mosaic visualizer GUIs** (PyQt5):
 ```bash
-pip install ultralytics
+uv tool install --reinstall --with "crossing[visualizer]" git+https://github.com/yourorg/crossing-tool.git
 ```
-> Place `sam2.1_b.pt` in `<project>/models/` before running.
+
+Extras can be combined:
+```bash
+uv tool install --reinstall --with "crossing[annotate,visualizer,shot-detection]" git+https://github.com/yourorg/crossing-tool.git
+```
+
+> After downloading a segmentation model, place `.pt` files in `<project>/models/` before running.
+
+### Developer setup
+
+To work on the source code directly:
+
+```bash
+git clone https://github.com/yourorg/crossing-tool.git
+cd crossing-tool
+uv sync                        # creates .venv, installs all core deps
+uv sync --extra annotate       # also install annotation extras
+uv run crossing --help
+```
 
 ### API keys
 

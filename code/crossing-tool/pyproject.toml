@@ -26,6 +26,15 @@ annotate = [
   "safetensors",
   "accelerate",
 ]
+visualizer = [
+  "PyQt5",
+  "opencv-python-headless",
+]
+shot-detection = [
+  "TransNetV2 @ git+https://github.com/soCzech/TransNetV2.git",
+  "tensorflow>=2.5",
+  "ffmpeg-python",
+]
 
 [project.scripts]
 crossing = "cli:main"
