@@ -838,10 +838,26 @@ def _call_model(pipeline, messages: List[Dict[str, Any]], overrides: Optional[Di
         else:
             # Qwen3-VL and other models: apply chat template first as plain text,
             # then encode text + images together in a separate processor call.
+            #
+            # Qwen3-VL-Instruct runs in thinking mode by default, emitting a
+            # <think>…</think> preamble before the JSON answer.  With small
+            # max_new_tokens budgets (e.g. 512) the thinking phase can exhaust all
+            # available tokens, leaving no room for the JSON output.  Passing
+            # enable_thinking=False disables this for structured annotation tasks.
+            # Non-Qwen3 tokenizers don't accept this kwarg; the TypeError fallback
+            # retries without it so other models are unaffected.
             try:
                 formatted = tokenizer.apply_chat_template(
-                    chat_messages, tokenize=False, add_generation_prompt=True
+                    chat_messages, tokenize=False, add_generation_prompt=True,
+                    enable_thinking=False,
                 )
+            except TypeError:
+                try:
+                    formatted = tokenizer.apply_chat_template(
+                        chat_messages, tokenize=False, add_generation_prompt=True
+                    )
+                except Exception:
+                    formatted = _fallback_text()
             except Exception:
                 formatted = _fallback_text()
             if images:
@@ -849,7 +865,6 @@ def _call_model(pipeline, messages: List[Dict[str, Any]], overrides: Optional[Di
                     images=images,
                     text=formatted,
                     return_tensors="pt",
-                    padding=True,
                 )
             else:
                 inputs = tokenizer(text=formatted, return_tensors="pt")
@@ -1017,6 +1032,32 @@ def _extract_json(text: str) -> Optional[Dict[str, Any]]:
     if not text:
         return None
 
+    import re as _re
+
+    def _repair_bare_string_lists(s: str) -> str:
+        """Fix lines where a JSON field value is bare comma-separated strings instead
+        of a JSON array.  Applied line-by-line to avoid accidentally spanning fields.
+
+        E.g.:
+            "text": "SIGN A", "SIGN B", "SIGN C"
+        becomes:
+            "text": ["SIGN A", "SIGN B", "SIGN C"]
+        """
+        result = []
+        for line in s.split('\n'):
+            m = _re.match(
+                r'^(\s*"[^"]*":\s*)("(?:[^"\\]|\\.)*"(?:\s*,\s*"(?:[^"\\]|\\.)*")+)(,?\s*)$',
+                line,
+            )
+            if m:
+                strings = _re.findall(r'"((?:[^"\\]|\\.)*)', m.group(2))
+                # findall above captures the content inside quotes; clean it
+                strings = _re.findall(r'"((?:[^"\\]|\\.)*?)"', m.group(2))
+                if len(strings) > 1:
+                    line = m.group(1) + '[' + ', '.join(f'"{v}"' for v in strings) + ']' + m.group(3)
+            result.append(line)
+        return '\n'.join(result)
+
     # Scan for balanced JSON braces and try to parse the first valid object
     L = len(text)
     for start in range(L):
@@ -1034,6 +1075,11 @@ def _extract_json(text: str) -> Optional[Dict[str, Any]]:
                     try:
                         return json.loads(candidate)
                     except json.JSONDecodeError:
+                        # Repair bare comma-separated string values (model omits array brackets)
+                        try:
+                            return json.loads(_repair_bare_string_lists(candidate))
+                        except Exception:
+                            pass
                         # try quick heuristics: replace single quotes
                         try:
                             return json.loads(candidate.replace("'", '"'))
@@ -1052,6 +1098,10 @@ def _extract_json(text: str) -> Optional[Dict[str, Any]]:
     try:
         return json.loads(candidate)
     except Exception:
+        try:
+            return json.loads(_repair_bare_string_lists(candidate))
+        except Exception:
+            pass
         try:
             return json.loads(candidate.replace("'", '"'))
         except Exception:
@@ -1515,8 +1565,10 @@ def annotate_file_shots(
                         print(f"    Attempt {attempt_no}/{len(attempt_configs)} (max_new_tokens={cfg.get('max_new_tokens')})...")
                         if _dev_log and "MISMATCH" in _dev_log:
                             print(f"    [WARNING] {_dev_log}", file=sys.stderr)
-                    _append_log(log_path, "MODEL_FULL_OUTPUT (truncated):\n" + (full_raw[:8000] + "..." if full_raw and len(full_raw) > 8000 else (full_raw or "<empty>")))
-                    _append_log(log_path, "MODEL_GENERATED_ONLY (truncated):\n" + (raw[:4000] + "..." if raw and len(raw) > 4000 else (raw or "<empty>")))
+                    # Log only the model's generated tokens — the full sequence
+                    # (prompt + response decoded together) is too large and obscures
+                    # the actual output in log viewers.
+                    _append_log(log_path, "MODEL_OUTPUT:\n" + (raw[:6000] + "..." if raw and len(raw) > 6000 else (raw or "<empty>")))
                     parsed = _extract_json(raw) or _extract_json(full_raw)
                     if parsed:
                         ann = _validate_annotation(parsed)
@@ -1532,9 +1584,7 @@ def annotate_file_shots(
                 failed.append((i, "no JSON found in model output after retries"))
                 try:
                     _append_log(log_path, f"SHOT {i} - no JSON found after {len(attempt_configs)} attempts")
-                    _append_log(log_path, "PROMPT (user):\n" + (filled_user[:2000] + "..." if len(filled_user) > 2000 else filled_user))
-                    _append_log(log_path, "MODEL_FULL_OUTPUT:\n" + (last_full[:8000] + "..." if last_full and len(last_full) > 8000 else (last_full or "<empty>")))
-                    _append_log(log_path, "MODEL_GENERATED_ONLY:\n" + (last_generated[:4000] + "..." if last_generated and len(last_generated) > 4000 else (last_generated or "<empty>")))
+                    _append_log(log_path, "LAST_MODEL_OUTPUT:\n" + (last_generated[:6000] + "..." if last_generated and len(last_generated) > 6000 else (last_generated or "<empty>")))
                 except Exception:
                     pass
                 success = False
@@ -1544,8 +1594,6 @@ def annotate_file_shots(
             try:
                 _append_log(log_path, f"SHOT {i} - exception during model call: {exc}")
                 _append_log(log_path, "TRACEBACK:\n" + traceback.format_exc())
-                _append_log(log_path, "MODEL_FULL_OUTPUT:\n" + (raw_output[:8000] + "..." if raw_output and len(raw_output) > 8000 else (raw_output or "<empty>")))
-                _append_log(log_path, "PROMPT (user):\n" + (filled_user[:2000] + "..." if len(filled_user) > 2000 else filled_user))
             except Exception:
                 pass
 
