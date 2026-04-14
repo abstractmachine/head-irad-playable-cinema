@@ -17,6 +17,7 @@ dependencies = [
     "torchreid",
     "gdown",
     "tensorboard",
+    "mcp[cli]>=1.27.0",
 ]
 
 [project.optional-dependencies]
