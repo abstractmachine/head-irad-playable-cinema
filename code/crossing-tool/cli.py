@@ -3204,7 +3204,9 @@ def _index_audit(args):
 
 def cmd_visualizer(args):
     sub = args.visualizer_subcommand
-    if sub == "annotate":
+    if sub in (None, "project"):
+        _project_visualizer(args)
+    elif sub == "annotate":
         _require_path()
         args.all = True
         args.query = None
@@ -3223,6 +3225,13 @@ def cmd_visualizer(args):
     elif sub == "mosaic":
         _require_path()
         _mosaic_visualizer(args)
+
+
+def _project_visualizer(args):
+    """Launch the project launcher and configuration GUI."""
+    _require_visualizer_deps()
+    from visualizers.project_visualizer import run_visualizer
+    run_visualizer()
 
 
 def _require_path():
@@ -3933,8 +3942,13 @@ def build_parser():
         "visualizer",
         help="Open a visualizer GUI (annotate, shotlist, composition, mosaic)",
     )
-    p_visualizer.set_defaults(func=cmd_visualizer)
-    visualizer_sub = p_visualizer.add_subparsers(dest="visualizer_subcommand", required=True)
+    p_visualizer.set_defaults(func=cmd_visualizer, visualizer_subcommand="project")
+    visualizer_sub = p_visualizer.add_subparsers(dest="visualizer_subcommand", required=False)
+
+    visualizer_sub.add_parser(
+        "project",
+        help="Open the project launcher and configuration window (default)",
+    )
 
     p_vis_annotate = visualizer_sub.add_parser(
         "annotate",
