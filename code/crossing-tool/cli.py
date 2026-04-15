@@ -3202,6 +3202,29 @@ def _index_audit(args):
         )
 
 
+def cmd_visualizer(args):
+    sub = args.visualizer_subcommand
+    if sub == "annotate":
+        _require_path()
+        args.all = True
+        args.query = None
+        args.tmdb = None
+        _annotate_visualizer(args)
+    elif sub == "shot":
+        _require_path()
+        args.all = True
+        args.query = None
+        args.tmdb = None
+        _shot_visualizer(args)
+    elif sub == "composition":
+        _require_path()
+        args.query = getattr(args, "query", "") or ""
+        cmd_composition(args)
+    elif sub == "mosaic":
+        _require_path()
+        _mosaic_visualizer(args)
+
+
 def _require_path():
     if not prefs.get("path"):
         print("✗ Error: no project path set. Run: crossing tool path <folder>", file=sys.stderr)
@@ -3903,6 +3926,55 @@ def build_parser():
         "--confirm",
         action="store_true",
         help="Actually delete the model (default is a dry run)",
+    )
+
+    # visualizer command group — shortcut to all visualizer GUIs
+    p_visualizer = sub.add_parser(
+        "visualizer",
+        help="Open a visualizer GUI (annotate, shot, composition, mosaic)",
+    )
+    p_visualizer.set_defaults(func=cmd_visualizer)
+    visualizer_sub = p_visualizer.add_subparsers(dest="visualizer_subcommand", required=True)
+
+    p_vis_annotate = visualizer_sub.add_parser(
+        "annotate",
+        help="Open the annotation visualizer GUI (all films)",
+    )
+    p_vis_annotate.add_argument(
+        "--media", choices=["movies", "gameplay"], default="movies",
+        help="Media type (default: movies)",
+    )
+
+    p_vis_shot = visualizer_sub.add_parser(
+        "shot",
+        help="Open the shot visualizer GUI (all films)",
+    )
+    p_vis_shot.add_argument(
+        "--media", choices=["movies", "gameplay"], default="movies",
+        help="Media type (default: movies)",
+    )
+
+    p_vis_composition = visualizer_sub.add_parser(
+        "composition",
+        help="Open the interactive composition visualizer",
+    )
+    p_vis_composition.add_argument(
+        "query", nargs="?", default="",
+        help="Optional initial search query",
+    )
+    p_vis_composition.add_argument(
+        "--media", choices=["movies", "gameplay"], default="movies",
+        help="Media type (default: movies)",
+    )
+    p_vis_composition.set_defaults(visualizer=True, no_open=False, orientation="portrait", output=None, notify=False)
+
+    p_vis_mosaic = visualizer_sub.add_parser(
+        "mosaic",
+        help="Open the interactive mosaic explorer GUI",
+    )
+    p_vis_mosaic.add_argument(
+        "--media", choices=["movies", "gameplay"], default="movies",
+        help="Media type (default: movies)",
     )
 
     return parser
