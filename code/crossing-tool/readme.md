@@ -43,8 +43,8 @@ crossing media import /path/to/film.mkv
 # 5. Detect shot boundaries
 crossing shotlist shot detect "Film Title"
 
-# 6. Open the shot visualizer GUI
-crossing shotlist --visualizer
+# 6. Open the shotlist visualizer GUI
+crossing visualizer shotlist
 
 # 7. Annotate shots with an LLM
 crossing annotate shot "Film Title"
@@ -331,8 +331,8 @@ crossing shotlist shot detect --all --notify         # notify when the whole bat
 # Ignore,Scene,Start,End,Start_Frame,End_Frame,Shot_Caption,Scene_Caption,Shot_Source,Shot_Confidence
 # No,0,00:00:00.000,00:00:05.123,0,123,"","",auto,0.876
 
-# Open the shot visualizer GUI
-crossing shotlist --visualizer
+# Open the shotlist visualizer GUI
+crossing visualizer shotlist
   --media {movies,gameplay}                     # media type (default: movies)
 
 # Migrate shotlist CSVs from legacy column names to the canonical naming scheme
@@ -340,7 +340,7 @@ crossing shotlist migrate
   --media {movies,gameplay}         # limit to one media type (default: both)
   --dry-run                         # report changes without writing files
 
-# Keyboard shortcuts in shot visualizer (OpenCV-based frame-precise):
+# Keyboard shortcuts in shotlist visualizer (OpenCV-based frame-precise):
 # Space      - Play/Pause
 # ↑/↓        - Previous/Next shot (resumes playback if was playing)
 # ←/→        - Step one frame backward/forward
@@ -821,7 +821,7 @@ Movies and gameplay metadata includes:
 - Use `--field` with `shotlist show` commands to extract specific fields from caption JSON (table or JSON output)
 - Use `--json` flag for raw JSON output (full shot data or filtered fields with `--field`)
 - Shot detection uses TransNetV2 and creates CSV files with `Shot_Source="auto"`, confidence scores, and exact frame numbers (`Start_Frame`/`End_Frame`)
-- Shot visualizer GUI (`crossing shotlist --visualizer`) uses OpenCV for frame-precise display — each frame is seeked by exact integer frame index, not timecode
+- Shotlist visualizer GUI (`crossing visualizer shotlist`) uses OpenCV for frame-precise display — each frame is seeked by exact integer frame index, not timecode
 - `crossing index update` checks for changes in annotation files before re-serializing or re-embedding, making it safe to run repeatedly
 
 ## Requirements

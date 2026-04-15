@@ -21,7 +21,8 @@ from pathlib import Path
 
 # Allow imports from the tool root (data/, services/, generators/)
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from typing import Optional
+
+from styles import theme
 
 # Fix Qt plugin conflict with OpenCV — import PyQt5 before cv2
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
@@ -54,6 +55,8 @@ import numpy as np
 if "QT_QPA_PLATFORM_PLUGIN_PATH" in os.environ:
     del os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"]
 
+from typing import Optional
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -75,13 +78,6 @@ DEFAULT_TILE_SIZE = 200
 MIN_TILE_SIZE = 80
 MAX_TILE_SIZE = 480
 ZOOM_STEP = 24
-
-_DARK_BG    = "#121212"
-_PANEL_BG   = "#1e1e1e"
-_CTRL_BG    = "#232323"
-_BORDER     = "#444"
-_TEXT       = "#dddddd"
-_TEXT_DIM   = "#888888"
 
 
 # ---------------------------------------------------------------------------
@@ -322,7 +318,7 @@ class ExportWorker(QThread):
 class TileWidget(QFrame):
     """A single mosaic tile: scaled video frame + short caption + hover tooltip."""
 
-    _PLACEHOLDER_BG = "#2a2a2a"
+    _PLACEHOLDER_BG = theme.CANVAS_BG
 
     def __init__(
         self,
@@ -338,7 +334,7 @@ class TileWidget(QFrame):
         self.setFrameShape(QFrame.Box)
         self.setFrameShadow(QFrame.Plain)
         self.setLineWidth(1)
-        self.setStyleSheet(f"TileWidget {{ border: 1px solid {_BORDER}; background: {_PANEL_BG}; }}")
+        self.setStyleSheet(f"TileWidget {{ border: 1px solid {theme.UI_BORDER}; background: {theme.BG}; }}")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
@@ -352,7 +348,7 @@ class TileWidget(QFrame):
         caption_text = _short_title(result.get("movie_title", "") or result.get("movie_id", ""))
         self._cap_label = QLabel(caption_text)
         self._cap_label.setAlignment(Qt.AlignCenter)
-        self._cap_label.setStyleSheet(f"color: {_TEXT_DIM}; font-size: 9px; border: none;")
+        self._cap_label.setStyleSheet(f"color: {theme.TEXT_DIM}; border: none;")
         self._cap_label.setMaximumHeight(16)
         layout.addWidget(self._cap_label)
 
@@ -402,7 +398,7 @@ class TileWidget(QFrame):
             self._img_label.setPixmap(QPixmap())
             self._img_label.setText("⚠")
             self._img_label.setStyleSheet(
-                f"background: {self._PLACEHOLDER_BG}; color: #555; font-size: 24px; border: none;"
+                f"background: {self._PLACEHOLDER_BG}; color: {theme.TEXT_DIM}; font-size: 24px; border: none;"
             )
 
     def resize_tile(self, tile_size: int) -> None:
@@ -426,14 +422,14 @@ class MosaicCanvas(QScrollArea):
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.setStyleSheet(f"QScrollArea {{ border: none; background: {_DARK_BG}; }}")
+        self.setStyleSheet(f"QScrollArea {{ border: none; background: {theme.CANVAS_BG}; }}")
 
         self._tile_size: int = DEFAULT_TILE_SIZE
         self._tiles: list[TileWidget] = []
         self._col_count: int = 0
 
         self._container = QWidget()
-        self._container.setStyleSheet(f"background: {_DARK_BG};")
+        self._container.setStyleSheet(f"background: {theme.CANVAS_BG};")
         self._grid = QGridLayout(self._container)
         self._grid.setSpacing(4)
         self._grid.setContentsMargins(8, 8, 8, 8)
@@ -516,37 +512,6 @@ class MosaicCanvas(QScrollArea):
 # Main window
 # ---------------------------------------------------------------------------
 
-_STYLESHEET = f"""
-QMainWindow, QWidget      {{ background: {_PANEL_BG}; color: {_TEXT}; }}
-QLabel                    {{ color: {_TEXT}; }}
-QComboBox, QLineEdit      {{
-    background: #2d2d2d; color: {_TEXT};
-    border: 1px solid #555; padding: 4px 6px;
-    border-radius: 3px;
-}}
-QComboBox::drop-down      {{ border: none; }}
-QPushButton               {{
-    background: #2d2d2d; color: {_TEXT};
-    border: 1px solid #555; padding: 5px 12px;
-    border-radius: 3px;
-}}
-QPushButton:hover         {{ background: #3a3a3a; }}
-QPushButton:pressed       {{ background: #484848; }}
-QPushButton:disabled      {{ color: #555; border-color: #3a3a3a; }}
-QGroupBox                 {{
-    border: 1px solid {_BORDER}; border-radius: 4px;
-    margin-top: 10px; color: #999;
-    font-size: 10px;
-}}
-QGroupBox::title          {{
-    subcontrol-origin: margin; left: 8px; padding: 0 4px;
-}}
-QCheckBox                 {{ color: #ccc; spacing: 6px; }}
-QScrollBar:vertical       {{ background: #1a1a1a; width: 10px; }}
-QScrollBar::handle:vertical {{ background: #444; border-radius: 4px; }}
-QStatusBar                {{ background: #1a1a1a; color: {_TEXT_DIM}; }}
-"""
-
 _CTRL_PANEL_WIDTH = 270
 
 
@@ -563,7 +528,6 @@ class MosaicVisualizer(QMainWindow):
 
         self.setWindowTitle("Crossing — Mosaic Visualizer")
         self.resize(1440, 900)
-        self.setStyleSheet(_STYLESHEET)
 
         # Central splitter: left = canvas, right = controls
         splitter = QSplitter(Qt.Horizontal)
@@ -588,7 +552,7 @@ class MosaicVisualizer(QMainWindow):
     def _build_control_panel(self) -> QWidget:
         panel = QWidget()
         panel.setFixedWidth(_CTRL_PANEL_WIDTH)
-        panel.setStyleSheet(f"QWidget {{ background: {_CTRL_BG}; }}")
+        panel.setStyleSheet(f"QWidget {{ background: {theme.PANEL_BG}; }}")
 
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(14, 14, 14, 14)
@@ -600,6 +564,7 @@ class MosaicVisualizer(QMainWindow):
         scope_layout.setContentsMargins(8, 12, 8, 8)
         self.movie_combo = QComboBox()
         self.movie_combo.addItem("--all")
+        self.movie_combo.currentIndexChanged.connect(self._on_field_changed)
         scope_layout.addWidget(self.movie_combo)
         layout.addWidget(scope_group)
 
@@ -663,17 +628,17 @@ class MosaicVisualizer(QMainWindow):
         self.vocab_list = QListWidget()
         self.vocab_list.setStyleSheet(f"""
             QListWidget {{
-                background: #1a1a1a;
+                background: {theme.INPUT_BG};
                 border: none;
-                color: {_TEXT};
-                font-size: 11px;
+                color: {theme.TEXT};
+                font-family: "{theme.FAMILY_MONO}";
+                font-size: {theme.BASE_PT}pt;
             }}
             QListWidget::item {{
                 padding: 3px 8px;
-                border-bottom: 1px solid #252525;
             }}
-            QListWidget::item:hover     {{ background: #2a2a2a; }}
-            QListWidget::item:selected  {{ background: #333; }}
+            QListWidget::item:hover     {{ background: {theme.BTN_HOVER}; }}
+            QListWidget::item:selected  {{ background: {theme.ACCENT}; }}
         """)
         self.vocab_list.itemClicked.connect(self._on_vocab_item_clicked)
         vocab_layout.addWidget(self.vocab_list)
@@ -850,6 +815,12 @@ class MosaicVisualizer(QMainWindow):
         if value:
             self.query_input.setText(value)
 
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key_Q, Qt.Key_W) and event.modifiers() & Qt.ControlModifier:
+            self.close()
+            return
+        super().keyPressEvent(event)
+
 
 # ---------------------------------------------------------------------------
 # Public launcher
@@ -858,6 +829,7 @@ class MosaicVisualizer(QMainWindow):
 def run_visualizer(project_path: str) -> None:
     """Create the QApplication (if needed) and launch the visualizer window."""
     app = QApplication.instance() or QApplication(sys.argv)
+    theme.apply_theme(app)
     win = MosaicVisualizer(project_path)
     win.show()
     sys.exit(app.exec_())

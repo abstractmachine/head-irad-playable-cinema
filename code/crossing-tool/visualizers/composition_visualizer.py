@@ -18,6 +18,8 @@ from typing import Optional
 # Allow imports from the tool root (data/, services/, generators/)
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from styles import theme
+
 # Fix Qt plugin conflict with OpenCV — import PyQt5 before cv2
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (
@@ -100,39 +102,10 @@ class ComposeWorker(QThread):
 
 
 # ---------------------------------------------------------------------------
-# Style constants
+# Layout constants
 # ---------------------------------------------------------------------------
 
-_DARK_BG   = "#121212"
-_PANEL_BG  = "#1e1e1e"
-_CTRL_BG   = "#1a1a1a"
-_LAYER_BG  = "#232323"
-_TEXT      = "#dddddd"
-_TEXT_DIM  = "#888888"
-_ACCENT    = "#444"
-
-_STYLESHEET = f"""
-QMainWindow, QWidget  {{ background: {_PANEL_BG}; color: {_TEXT}; }}
-QLabel                {{ color: {_TEXT}; }}
-QComboBox, QLineEdit  {{
-    background: #2d2d2d; color: {_TEXT};
-    border: 1px solid #555; padding: 4px 6px; border-radius: 3px;
-}}
-QComboBox::drop-down  {{ border: none; }}
-QPushButton           {{
-    background: #2d2d2d; color: {_TEXT};
-    border: 1px solid #555; padding: 6px 12px; border-radius: 3px;
-}}
-QPushButton:hover     {{ background: #3a3a3a; }}
-QPushButton:pressed   {{ background: #484848; }}
-QPushButton:disabled  {{ color: #555; border-color: #3a3a3a; }}
-QStatusBar            {{ background: #141414; color: {_TEXT_DIM}; }}
-QFrame[frameShape="4"],
-QFrame[frameShape="5"]  {{ color: #333; }}
-"""
-
 _PANEL_W   = 260
-_LAYER_FONT_SIZE = 10
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +124,6 @@ class ComposeVisualizer(QMainWindow):
 
         self.setWindowTitle("Crossing — Composition Visualizer")
         self.resize(1440, 900)
-        self.setStyleSheet(_STYLESHEET)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -163,7 +135,7 @@ class ComposeVisualizer(QMainWindow):
         self.image_label = QLabel()
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.image_label.setStyleSheet(f"background: {_DARK_BG};")
+        self.image_label.setStyleSheet(f"background: {theme.CANVAS_BG};")
         root.addWidget(self.image_label, stretch=1)
 
         # -- Divider ----------------------------------------------------------
@@ -171,31 +143,29 @@ class ComposeVisualizer(QMainWindow):
         divider.setFrameShape(QFrame.VLine)
         divider.setFrameShadow(QFrame.Plain)
         divider.setFixedWidth(1)
-        divider.setStyleSheet("background: #333;")
+        divider.setStyleSheet(f"background: {theme.UI_BORDER};")
         root.addWidget(divider)
 
         # -- Right: control panel ---------------------------------------------
         right_panel = QWidget()
         right_panel.setFixedWidth(_PANEL_W)
-        right_panel.setStyleSheet(f"background: {_CTRL_BG};")
+        right_panel.setStyleSheet(f"background: {theme.PANEL_BG};")
         rp = QVBoxLayout(right_panel)
         rp.setContentsMargins(14, 18, 14, 14)
         rp.setSpacing(0)
         root.addWidget(right_panel)
 
-        label_font = QFont()
-        label_font.setPointSize(_LAYER_FONT_SIZE)
+        label_font = theme.font_ui()
         label_font.setCapitalization(QFont.AllUppercase)
         label_font.setLetterSpacing(QFont.AbsoluteSpacing, 1.2)
 
-        dim_style  = f"color: {_TEXT_DIM}; font-size: 9px;"
-        group_style = f"background: {_LAYER_BG}; border-radius: 4px; padding: 2px;"
+        dim_style   = f"color: {theme.TEXT_DIM};"
 
         def _add_layer(title: str, placeholder: str) -> QLineEdit:
             """Add a labelled layer group and return its QLineEdit."""
             lbl = QLabel(title)
             lbl.setFont(label_font)
-            lbl.setStyleSheet(f"color: {_TEXT}; padding-bottom: 4px;")
+            lbl.setStyleSheet(f"color: {theme.TEXT}; padding-bottom: 4px;")
             rp.addWidget(lbl)
             inp = QLineEdit()
             inp.setPlaceholderText(placeholder)
@@ -213,14 +183,14 @@ class ComposeVisualizer(QMainWindow):
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
         sep.setFrameShadow(QFrame.Plain)
-        sep.setStyleSheet("background: #333;")
+        sep.setStyleSheet(f"background: {theme.UI_BORDER};")
         rp.addWidget(sep)
         rp.addSpacing(14)
 
-        # -- Orientation ------------------------------------------------------
+        # -- Orientation --
         ori_lbl = QLabel("Orientation")
         ori_lbl.setFont(label_font)
-        ori_lbl.setStyleSheet(f"color: {_TEXT}; padding-bottom: 4px;")
+        ori_lbl.setStyleSheet(f"color: {theme.TEXT}; padding-bottom: 4px;")
         rp.addWidget(ori_lbl)
 
         self.orientation_combo = QComboBox()
@@ -319,6 +289,12 @@ class ComposeVisualizer(QMainWindow):
         super().resizeEvent(event)
         self._refresh_display()
 
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key_Q, Qt.Key_W) and event.modifiers() & Qt.ControlModifier:
+            self.close()
+            return
+        super().keyPressEvent(event)
+
 
 # ---------------------------------------------------------------------------
 # Public launcher
@@ -327,6 +303,7 @@ class ComposeVisualizer(QMainWindow):
 def run_visualizer(project_path: str, initial_query: str = "") -> None:
     """Create the QApplication (if needed) and launch the visualizer window."""
     app = QApplication.instance() or QApplication(sys.argv)
+    theme.apply_theme(app)
     win = ComposeVisualizer(project_path, initial_query=initial_query)
     win.show()
     sys.exit(app.exec_())

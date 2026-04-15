@@ -16,6 +16,8 @@ from pathlib import Path
 # Allow imports from the tool root (data/, services/, generators/)
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from styles import theme
+
 try:
     import av as _av
     import sounddevice as _sd
@@ -270,7 +272,6 @@ class OpenCVShotVisualizer(QMainWindow):
         from PyQt5.QtWidgets import QGridLayout
 
         main_widget = QWidget()
-        main_widget.setStyleSheet("background-color: #808080; color: white;")
         self.setCentralWidget(main_widget)
         outer_layout = QVBoxLayout(main_widget)
         outer_layout.setContentsMargins(4, 4, 4, 4)
@@ -368,7 +369,7 @@ class OpenCVShotVisualizer(QMainWindow):
 
         # Frame info
         self.info_label = QLabel()
-        self.info_label.setFont(QFont("Monospace", 9))
+        self.info_label.setFont(theme.font_mono())
         self.info_label.setAlignment(Qt.AlignLeft)
         self.info_label.setWordWrap(True)
         self.info_label.setMinimumHeight(80)
@@ -444,8 +445,8 @@ class OpenCVShotVisualizer(QMainWindow):
 
         # Keyboard hint
         hint = QLabel("↑↓ shot  Space play  ←→ frame  Shift+←→ 1s  PgUp/Dn scene  Home/End movie")
-        hint.setFont(QFont("Monospace", 7))
-        hint.setStyleSheet("color: #bbb;")
+        hint.setFont(theme.font_mono())
+        hint.setStyleSheet(f"color: {theme.TEXT_DIM};")
         right_layout.addWidget(hint)
 
         splitter.addWidget(left)
@@ -1162,8 +1163,10 @@ class OpenCVShotVisualizer(QMainWindow):
     def keyPressEvent(self, event):
         """Handle keyboard shortcuts."""
         key = event.key()
-        
         mods = event.modifiers()
+        if key in (Qt.Key_Q, Qt.Key_W) and mods & Qt.ControlModifier:
+            self.close()
+            return
         if key == Qt.Key_Space:
             self.toggle_play_pause()
         elif key == Qt.Key_Left:
@@ -1315,28 +1318,7 @@ def main():
 
     # Launch Qt application
     app = QApplication(sys.argv)
-    app.setStyleSheet("""
-        QWidget          { background-color: #808080; color: white; }
-        QPushButton      { background-color: #666; color: white; border: 1px solid #999; padding: 3px 8px; border-radius: 3px; }
-        QPushButton:hover      { background-color: #777; }
-        QPushButton:pressed    { background-color: #555; }
-        QPushButton:checked    { background-color: #ff00ff; border-color: #ff66ff; }
-        QPushButton:disabled   { color: #aaa; border-color: #777; }
-        QComboBox        { background-color: #666; color: white; border: 1px solid #999; padding: 2px 6px; }
-        QComboBox QAbstractItemView { background-color: #666; color: white; selection-background-color: #ff00ff; }
-        QListWidget      { background-color: #5a5a5a; color: white; border: 1px solid #888; }
-        QListWidget::item:selected { background-color: #ff00ff; color: white; }
-        QListWidget::item:hover    { background-color: #6a6a6a; }
-        QSlider::groove:horizontal { background: #555; height: 6px; border-radius: 3px; }
-        QSlider::handle:horizontal { background: #ccc; width: 14px; height: 14px; margin: -4px 0; border-radius: 7px; }
-        QSlider::sub-page:horizontal { background: #ff00ff; border-radius: 3px; }
-        QScrollBar:vertical        { background: #666; width: 10px; }
-        QScrollBar::handle:vertical { background: #999; border-radius: 4px; min-height: 20px; }
-        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-        QLabel           { background-color: transparent; color: white; }
-        QSplitter::handle { background-color: #666; }
-        QMessageBox      { background-color: #808080; color: white; }
-    """)
+    theme.apply_theme(app)
     visualizer = OpenCVShotVisualizer(project_path, filenames, 0, args.media)
 
     # Open maximised on whatever screen the window appears on

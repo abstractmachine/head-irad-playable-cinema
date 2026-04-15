@@ -8,6 +8,7 @@ import sys
 import os
 import re
 import json
+import html
 import time
 import argparse
 import faulthandler
@@ -15,6 +16,8 @@ from pathlib import Path
 
 # Allow imports from the tool root (data/, services/, generators/)
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from styles import theme
 
 # Fix Qt plugin conflict with OpenCV — import PyQt5 first
 from PyQt5.QtCore import Qt, QTimer, QEvent, QThread, pyqtSignal
@@ -175,7 +178,7 @@ class ShotAnnotationItem(QListWidgetItem):
         end = self.shot.get("end_time", "?")
         if self.annotation is None:
             status = "?"
-            self.setForeground(QColor("#aaaaaa"))
+            self.setForeground(QColor(theme.TEXT_DIM))
         elif _is_valid_annotation(self.annotation):
             status = "✓"
             self.setForeground(QColor("#88ff88"))
@@ -361,7 +364,6 @@ class AnnotationVisualizer(QMainWindow):
 
     def _init_ui(self):
         root = QWidget()
-        root.setStyleSheet("background-color: #808080; color: white;")
         self.setCentralWidget(root)
         outer = QVBoxLayout(root)
         outer.setContentsMargins(4, 4, 4, 4)
@@ -410,11 +412,7 @@ class AnnotationVisualizer(QMainWindow):
 
         self.ann_display = QTextEdit()
         self.ann_display.setReadOnly(True)
-        self.ann_display.setFont(QFont("Monospace", 9))
         self.ann_display.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.ann_display.setStyleSheet(
-            "QTextEdit { background-color: #4a4a4a; color: white; border: none; }"
-        )
         mid_layout.addWidget(self.ann_display, stretch=1)
 
         # ---- COL 3: shotlist + controls ----
@@ -435,7 +433,6 @@ class AnnotationVisualizer(QMainWindow):
         right_layout.addLayout(movie_row)
 
         self.shot_list = QListWidget()
-        self.shot_list.setFont(QFont("Monospace", 8))
         self.shot_list.itemClicked.connect(self._on_shot_clicked)
         self.shot_list.installEventFilter(self)
         self.shot_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -443,10 +440,10 @@ class AnnotationVisualizer(QMainWindow):
 
         # Status / frame info
         self.status_label = QLabel()
-        self.status_label.setFont(QFont("Monospace", 8))
+        self.status_label.setFont(theme.font_mono())
         self.status_label.setWordWrap(True)
         self.status_label.setStyleSheet(
-            "background-color: #5a5a5a; padding: 4px; border: 1px solid #888;"
+            f"background-color: {theme.INPUT_BG}; padding: 4px;"
         )
         right_layout.addWidget(self.status_label)
 
@@ -490,8 +487,8 @@ class AnnotationVisualizer(QMainWindow):
 
         # Keyboard hint
         hint = QLabel("↑↓ shot  Space play  ←→ frame  Shift+←→ 1s  Home/End movie")
-        hint.setFont(QFont("Monospace", 7))
-        hint.setStyleSheet("color: #bbb;")
+        hint.setFont(theme.font_mono())
+        hint.setStyleSheet(f"color: {theme.TEXT_DIM};")
         right_layout.addWidget(hint)
 
         splitter.addWidget(left)
@@ -687,16 +684,15 @@ class AnnotationVisualizer(QMainWindow):
 
         mode = self.ann_repr_combo.currentText() if hasattr(self, "ann_repr_combo") else "fields"
         if mode == "json":
-            text = self._render_annotation_json(shot_index)
+            self.ann_display.setPlainText(self._render_annotation_json(shot_index))
         elif mode == "txt":
-            text = self._render_annotation_txt(shot_index)
+            self.ann_display.setPlainText(self._render_annotation_txt(shot_index))
         elif mode == "vector":
-            text = self._render_annotation_vector(shot_index)
+            self.ann_display.setPlainText(self._render_annotation_vector(shot_index))
         elif mode == "mapping":
-            text = self._render_annotation_mapping()
+            self.ann_display.setPlainText(self._render_annotation_mapping())
         else:
-            text = self._render_annotation_fields(shot_index)
-        self.ann_display.setPlainText(text)
+            self.ann_display.setHtml(self._render_annotation_fields(shot_index))
 
         self._status_shot_text = (
             f"Shot {shot_index} / {n - 1}  ·  Scene {shot.get('Scene', '?')}\n"
@@ -705,31 +701,34 @@ class AnnotationVisualizer(QMainWindow):
         self._refresh_status_label()
 
     def _render_annotation_fields(self, shot_index: int) -> str:
+        """Returns an HTML string for the fields display mode."""
         ann = self.annotation_index.get(shot_index)
         if ann is None:
-            return "(not annotated)"
+            return "<p><i>(not annotated)</i></p>"
         if _is_valid_annotation(ann):
-            lines = []
+            sep = f'<hr color="{theme.UI_BORDER}" size="1">'
+            chunks = []
             for key, val in ann.items():
-                label = key.replace("_", " ").capitalize()
+                label = html.escape(key.replace("_", " ").capitalize())
                 if isinstance(val, list):
-                    if val:
-                        lines.append(f"{label}:")
-                        for v in val:
-                            lines.append(f"  • {v}")
-                    else:
-                        lines.append(f"{label}:\n  —")
+                    content = "<br>".join(
+                        f"&bull;&nbsp;{html.escape(str(v))}" for v in val
+                    ) if val else "&mdash;"
                 else:
-                    lines.append(f"{label}:\n  {val or '—'}")
-                lines.append("")
-            return "\n".join(lines).strip()
+                    content = html.escape(str(val)) if val else "&mdash;"
+                chunks.append(
+                    f'<p style="margin:2px 0 1px 0"><b>{label}</b></p>'
+                    f'<p style="margin:0 0 4px 0">{content}</p>'
+                    f'{sep}'
+                )
+            return "".join(chunks)
         raw = ann.get("model_output") or ann.get("error") or ""
         full = ann.get("model_output_full") or ""
         if raw:
-            return f"⚠ FAILED — model output:\n\n{raw[:2000]}"
+            return f"<p>&#9888; FAILED &mdash; model output:</p><pre>{html.escape(raw[:2000])}</pre>"
         if full:
-            return f"⚠ FAILED — full output:\n\n{full[:2000]}"
-        return "⚠ FAILED — no output recorded"
+            return f"<p>&#9888; FAILED &mdash; full output:</p><pre>{html.escape(full[:2000])}</pre>"
+        return "<p>&#9888; FAILED &mdash; no output recorded</p>"
 
     def _render_annotation_json(self, shot_index: int) -> str:
         entry = self._annotation_entry_index.get(shot_index)
@@ -866,6 +865,9 @@ class AnnotationVisualizer(QMainWindow):
     def keyPressEvent(self, event):
         key = event.key()
         mod = event.modifiers()
+        if key in (Qt.Key_Q, Qt.Key_W) and mod & Qt.ControlModifier:
+            self.close()
+            return
         if key == Qt.Key_Space:
             self._toggle_play_pause()
         elif key == Qt.Key_Up:
@@ -1073,31 +1075,7 @@ def main():
     faulthandler.enable()
 
     app = QApplication(sys.argv)
-    app.setStyleSheet(
-        """
-        QWidget          { background-color: #808080; color: white; }
-        QPushButton      { background-color: #666; color: white; border: 1px solid #999; padding: 3px 8px; border-radius: 3px; }
-        QPushButton:hover      { background-color: #777; }
-        QPushButton:pressed    { background-color: #555; }
-        QPushButton:checked    { background-color: #ff00ff; border-color: #ff66ff; }
-        QPushButton:disabled   { color: #aaa; border-color: #777; }
-        QComboBox        { background-color: #666; color: white; border: 1px solid #999; padding: 2px 6px; }
-        QComboBox QAbstractItemView { background-color: #666; color: white; selection-background-color: #ff00ff; }
-        QListWidget      { background-color: #5a5a5a; color: white; border: 1px solid #888; }
-        QListWidget::item:selected { background-color: #ff00ff; color: white; }
-        QListWidget::item:hover    { background-color: #6a6a6a; }
-        QSlider::groove:horizontal { background: #555; height: 6px; border-radius: 3px; }
-        QSlider::handle:horizontal { background: #ccc; width: 14px; height: 14px; margin: -4px 0; border-radius: 7px; }
-        QSlider::sub-page:horizontal { background: #ff00ff; border-radius: 3px; }
-        QScrollBar:vertical        { background: #666; width: 10px; }
-        QScrollBar::handle:vertical { background: #999; border-radius: 4px; min-height: 20px; }
-        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-        QLabel           { background-color: transparent; color: white; }
-        QSplitter::handle { background-color: #666; }
-        QMessageBox      { background-color: #808080; color: white; }
-        QTextEdit        { background-color: #5a5a5a; color: white; border: 1px solid #888; }
-        """
-    )
+    theme.apply_theme(app)
 
     visualizer = AnnotationVisualizer(project_path, valid, 0, args.media)
     screen = QApplication.primaryScreen()

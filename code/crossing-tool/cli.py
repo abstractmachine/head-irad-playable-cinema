@@ -3210,7 +3210,7 @@ def cmd_visualizer(args):
         args.query = None
         args.tmdb = None
         _annotate_visualizer(args)
-    elif sub == "shot":
+    elif sub == "shotlist":
         _require_path()
         args.all = True
         args.query = None
@@ -3931,7 +3931,7 @@ def build_parser():
     # visualizer command group — shortcut to all visualizer GUIs
     p_visualizer = sub.add_parser(
         "visualizer",
-        help="Open a visualizer GUI (annotate, shot, composition, mosaic)",
+        help="Open a visualizer GUI (annotate, shotlist, composition, mosaic)",
     )
     p_visualizer.set_defaults(func=cmd_visualizer)
     visualizer_sub = p_visualizer.add_subparsers(dest="visualizer_subcommand", required=True)
@@ -3946,8 +3946,8 @@ def build_parser():
     )
 
     p_vis_shot = visualizer_sub.add_parser(
-        "shot",
-        help="Open the shot visualizer GUI (all films)",
+        "shotlist",
+        help="Open the shotlist visualizer GUI (all films)",
     )
     p_vis_shot.add_argument(
         "--media", choices=["movies", "gameplay"], default="movies",

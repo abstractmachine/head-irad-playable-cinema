@@ -287,7 +287,7 @@ def search_shots(
 
     # Step 1 – resolve movies
     all_entries = get_metadata(project_path, media_type=media_type)
-    selected, effective_scopes = _resolve_movies(scopes, use_all, all_entries)
+    selected, effective_scopes = _resolve_movies_exact_first(scopes, use_all, all_entries)
 
     if scopes and not use_all and not selected:
         print(
