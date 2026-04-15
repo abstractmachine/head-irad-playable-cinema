@@ -21,6 +21,12 @@ A CLI + GUI tool for relating moving images across media — connecting gameplay
 | `crossing generate mosaic search` | Mosaic of frames matching a shot annotation search query |
 | `crossing generate mosaic export` | Export individual JPEG frames for each search result |
 | `crossing generate composition` | Build a single tableau image from a semantic search result |
+| `crossing visualizer` | Open the project launcher — configure path, models, and open any visualizer |
+| `crossing visualizer project` | Same as above (explicit subcommand) |
+| `crossing visualizer annotate` | Review LLM annotations alongside video frames |
+| `crossing visualizer shotlist` | Inspect and edit shot boundaries frame-precisely |
+| `crossing visualizer mosaic` | Interactive search-driven mosaic explorer |
+| `crossing visualizer composition` | Interactive composition search GUI |
 
 ---
 
@@ -43,7 +49,10 @@ crossing media import /path/to/film.mkv
 # 5. Detect shot boundaries
 crossing shotlist shot detect "Film Title"
 
-# 6. Open the shotlist visualizer GUI
+# 6. Open the project launcher (configure path, models, open any visualizer)
+crossing visualizer
+
+# 6b. Or open the shotlist visualizer directly
 crossing visualizer shotlist
 
 # 7. Annotate shots with an LLM
@@ -62,7 +71,6 @@ crossing search "close-up of a gun"
 ```bash
 # Linux
 sudo apt install curl ffmpeg
-sudo apt install python3-tk   # optional — GUI file picker
 
 # macOS
 brew install ffmpeg
@@ -355,6 +363,28 @@ crossing shotlist migrate
 # Ctrl+S     - Save changes
 # Continue button - toggle playback past shot boundaries (ON/OFF)
 ```
+
+### Visualizers
+
+All visualizer GUIs share the same theme and support **Ctrl+Q** / **Ctrl+W** to close.
+
+```bash
+# Open the project launcher (default — no subcommand needed)
+crossing visualizer
+crossing visualizer project
+
+# Open individual visualizers directly
+crossing visualizer annotate           # review LLM annotations alongside frames
+crossing visualizer shotlist           # inspect / edit shot boundaries
+crossing visualizer mosaic             # interactive search-driven mosaic explorer
+crossing visualizer composition        # interactive composition search GUI
+```
+
+The **project** visualizer lets you:
+- Set (via folder picker) and display the current project path
+- Adjust annotation defaults (frames-per-shot, min-frame-interval, max-frames-per-shot)
+- Select models for each role (annotate, segmentation, embed) from installed local models
+- Launch any of the four other visualizers
 
 ### Annotate
 
@@ -667,93 +697,33 @@ crossing shotlist shot detect --all --notify --notify-items
 
 `crossing_mcp.py` exposes crossing data to LLMs via the [Model Context Protocol](https://modelcontextprotocol.io). This lets you query your film library directly from Claude Desktop (or any MCP-compatible client) without leaving the chat.
 
-#### Server setup (Ubuntu)
+See [mcp](./mcp.md) for more information on setup and usage.
 
-**1. Install the MCP library into the project environment:**
+## Metadata Fields
 
-```bash
-uv add "mcp[cli]"
-```
+Movies and gameplay metadata includes:
+- `title`, `year`, `director`, `tmdb`, `imdb`
+- `filename`, `duration` (actual file duration in minutes)
+- `overview`, `tagline`
 
-**2. Set the project path** (if not already configured):
+## Notes
 
-```bash
-crossing tool path /path/to/your/project
-```
+- All video files are transcoded to H.264/AAC MP4 format on import
+- Metadata is automatically fetched from TMDb during import
+- Thumbnails and subtitles are automatically downloaded when available
+- Shotlist commands accept either a full filename substring or `--tmdb <id>` for convenience
+- The `--pick` flag on import opens a native GUI file picker — uses PyQt5 (installed with `[visualizer]`), or falls back to `zenity`/`kdialog` (Linux), `osascript` (macOS), or PowerShell (Windows)
+- Use `--field` with `shotlist show` commands to extract specific fields from caption JSON (table or JSON output)
+- Use `--json` flag for raw JSON output (full shot data or filtered fields with `--field`)
+- Shot detection uses TransNetV2 and creates CSV files with `Shot_Source="auto"`, confidence scores, and exact frame numbers (`Start_Frame`/`End_Frame`)
+- Shotlist visualizer GUI (`crossing visualizer shotlist`) uses OpenCV for frame-precise display — each frame is seeked by exact integer frame index, not timecode
+- `crossing index update` checks for changes in annotation files before re-serializing or re-embedding, making it safe to run repeatedly
 
-The server reads this saved preference automatically — no environment variable needed.
+## Requirements
 
-**3. Make the launcher script executable** (one-time, after cloning):
+- **ffmpeg** (system): `sudo apt install ffmpeg` — required for video transcoding
 
-```bash
-chmod +x run_mcp.sh
-```
-
-`run_mcp.sh` is a thin wrapper that locates itself at runtime using `$SCRIPT_DIR` and `$HOME` — no hardcoded paths, safe to commit to git.
-
-**4. Test the server locally:**
-
-```bash
-uv run python crossing_mcp.py
-```
-
-The server speaks stdio (no port, no HTTP). It hangs silently waiting for input — that means it is working. Press `Ctrl+C` to exit.
-
-#### Client setup (Claude Desktop on macOS or Windows)
-
-Edit `claude_desktop_config.json`:
-
-- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
-
-Add a `crossing` entry under `mcpServers`. The config file may already contain a `preferences` key — add `mcpServers` alongside it:
-
-```json
-{
-  "preferences": { ... },
-  "mcpServers": {
-    "crossing": {
-      "command": "ssh",
-      "args": [
-        "-T",
-        "playable-cinema",
-        "/path/to/crossing-tool/run_mcp.sh"
-      ]
-    }
-  }
-}
-```
-
-Replace `playable-cinema` with your SSH host alias (or `user@hostname`), and update the path to `run_mcp.sh`. The `-T` flag disables pseudo-TTY allocation, which prevents SSH from sending terminal control codes that would corrupt the JSON-RPC stream.
-
-> **Tip — SSH host alias:** Define `playable-cinema` in `~/.ssh/config` on the Mac so you do not have to repeat connection details:
-> ```
-> Host playable-cinema
->     HostName <ip-or-hostname>
->     User <your-username>
->     IdentityFile ~/.ssh/id_ed25519
->     AddKeysToAgent yes
->     UseKeychain yes
-> ```
->
-> The `UseKeychain yes` / `AddKeysToAgent yes` lines are important: Claude Desktop is a GUI app and does not inherit your terminal's SSH agent. Without these, the key is not available to Claude Desktop and every connection attempt will fail with `Permission denied`.
->
-> Add your key to the macOS keychain once:
-> ```bash
-> ssh-add --apple-use-keychain ~/.ssh/id_ed25519
-> ```
-
-**Test the connection before opening Claude Desktop:**
-
-```bash
-ssh -T playable-cinema /path/to/crossing-tool/run_mcp.sh
-```
-
-It should hang silently. Press `Ctrl+C`, then restart Claude Desktop.
-
-**Using the tools in Claude Desktop:**
-
-After restarting, click the `+` button in the chat input area, choose **Connectors**, and select **crossing** to attach it to your conversation. Then ask naturally — e.g. "List my movies" — and Claude will call the tool automatically.
+Python 3.11+ and all Python packages are managed automatically by `uv` — no manual installation needed.
 
 ### Project Folder Structure
 
@@ -804,30 +774,3 @@ After restarting, click the `+` button in the chat input area, choose **Connecto
     └── version.txt                 # data structure version
 ```
 
-## Metadata Fields
-
-Movies and gameplay metadata includes:
-- `title`, `year`, `director`, `tmdb`, `imdb`
-- `filename`, `duration` (actual file duration in minutes)
-- `overview`, `tagline`
-
-## Notes
-
-- All video files are transcoded to H.264/AAC MP4 format on import
-- Metadata is automatically fetched from TMDb during import
-- Thumbnails and subtitles are automatically downloaded when available
-- Shotlist commands accept either a full filename substring or `--tmdb <id>` for convenience
-- The `--pick` flag on import opens a native GUI file picker (requires `python3-tk`)
-- Use `--field` with `shotlist show` commands to extract specific fields from caption JSON (table or JSON output)
-- Use `--json` flag for raw JSON output (full shot data or filtered fields with `--field`)
-- Shot detection uses TransNetV2 and creates CSV files with `Shot_Source="auto"`, confidence scores, and exact frame numbers (`Start_Frame`/`End_Frame`)
-- Shotlist visualizer GUI (`crossing visualizer shotlist`) uses OpenCV for frame-precise display — each frame is seeked by exact integer frame index, not timecode
-- `crossing index update` checks for changes in annotation files before re-serializing or re-embedding, making it safe to run repeatedly
-
-## Requirements
-
-- Python 3.11+
-- ffmpeg: `sudo apt install ffmpeg`
-- python3-tk (optional, for GUI file picker): `sudo apt install python3-tk`
-- TransNetV2 (optional, for shot detection) — see Install section above
-- PyQt5 + opencv-python-headless (optional, for shot validation UI) — see Install section above

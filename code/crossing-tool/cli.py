@@ -17,51 +17,176 @@ _TOOL_VERSION = "2.0.0"  # Updated for new folder structure (videos/thumbnails/s
 
 
 def _pick_files_or_folder():
-    """Open a GUI file/folder picker dialog. Returns list of selected paths."""
+    """Open a native file/folder picker dialog. Returns list of selected paths.
+
+    Tries in order:
+      1. PyQt5 QFileDialog  (available when [visualizer] extra is installed)
+      2. Platform subprocess — zenity (Linux/GNOME), kdialog (Linux/KDE),
+                               osascript (macOS), PowerShell (Windows)
+      3. tkinter fallback    (Python built-in on macOS/Windows; needs python3-tk on Linux)
+    """
+    import platform as _platform
+
+    print("\n📁 Opening file picker...")
+    print("   Select files (multi-select supported) or cancel to choose a folder.")
+
+    # ------------------------------------------------------------------
+    # 1. PyQt5 (already present if [visualizer] extra is installed)
+    # ------------------------------------------------------------------
+    try:
+        from PyQt5.QtWidgets import QApplication, QFileDialog
+        _app = QApplication.instance() or QApplication(sys.argv)
+        files, _ = QFileDialog.getOpenFileNames(
+            None,
+            "Select file(s) to import — cancel to pick a folder instead",
+            "",
+            "Video files (*.mp4 *.mkv *.avi *.mov);;All files (*.*)",
+        )
+        if files:
+            return list(files)
+        folder = QFileDialog.getExistingDirectory(None, "Select folder to import")
+        return [folder] if folder else []
+    except ImportError:
+        pass
+
+    # ------------------------------------------------------------------
+    # 2. Platform-native subprocess (no Python packages needed)
+    # ------------------------------------------------------------------
+    import subprocess as _sp
+
+    _sys = _platform.system()
+
+    if _sys == "Linux":
+        # zenity (GNOME) ------------------------------------------------
+        try:
+            r = _sp.run(
+                ["zenity", "--file-selection", "--multiple", "--separator=\n",
+                 "--file-filter=Video files|*.mp4 *.mkv *.avi *.mov",
+                 "--title=Select file(s) to import — cancel to pick a folder"],
+                capture_output=True, text=True, timeout=120,
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                return [p for p in r.stdout.strip().split("\n") if p]
+            # User cancelled files picker → try folder
+            r2 = _sp.run(
+                ["zenity", "--file-selection", "--directory",
+                 "--title=Select folder to import"],
+                capture_output=True, text=True, timeout=120,
+            )
+            if r2.returncode == 0 and r2.stdout.strip():
+                return [r2.stdout.strip()]
+            return []
+        except FileNotFoundError:
+            pass
+
+        # kdialog (KDE) -------------------------------------------------
+        try:
+            r = _sp.run(
+                ["kdialog", "--getopenfilename", ".",
+                 "*.mp4 *.mkv *.avi *.mov|Video files",
+                 "--multiple", "--separate-output"],
+                capture_output=True, text=True, timeout=120,
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                return [p for p in r.stdout.strip().split("\n") if p]
+            r2 = _sp.run(
+                ["kdialog", "--getexistingdirectory", "."],
+                capture_output=True, text=True, timeout=120,
+            )
+            if r2.returncode == 0 and r2.stdout.strip():
+                return [r2.stdout.strip()]
+            return []
+        except FileNotFoundError:
+            pass
+
+    elif _sys == "Darwin":
+        # osascript (built-in on macOS) ---------------------------------
+        try:
+            r = _sp.run(
+                ["osascript", "-e",
+                 'set fs to choose file of type {"mp4","mkv","avi","mov"}'
+                 ' with prompt "Select file(s) to import"'
+                 ' with multiple selections allowed\n'
+                 'set out to ""\n'
+                 'repeat with f in fs\n'
+                 '  set out to out & POSIX path of f & "\n"\n'
+                 'end repeat\n'
+                 'out'],
+                capture_output=True, text=True, timeout=120,
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                return [p for p in r.stdout.strip().split("\n") if p]
+            # Folder fallback
+            r2 = _sp.run(
+                ["osascript", "-e",
+                 'set f to choose folder with prompt "Select folder to import"\n'
+                 'POSIX path of f'],
+                capture_output=True, text=True, timeout=120,
+            )
+            if r2.returncode == 0 and r2.stdout.strip():
+                return [r2.stdout.strip()]
+            return []
+        except FileNotFoundError:
+            pass
+
+    elif _sys == "Windows":
+        # PowerShell with Windows.Forms (built-in on Windows) -----------
+        try:
+            ps_files = (
+                'Add-Type -AssemblyName System.Windows.Forms;'
+                '$d=New-Object System.Windows.Forms.OpenFileDialog;'
+                '$d.Multiselect=$true;'
+                '$d.Filter="Video files|*.mp4;*.mkv;*.avi;*.mov|All files|*.*";'
+                'if($d.ShowDialog()-eq"OK"){$d.FileNames -join "`n"}'
+            )
+            r = _sp.run(["powershell", "-Command", ps_files],
+                        capture_output=True, text=True, timeout=120)
+            if r.returncode == 0 and r.stdout.strip():
+                return [p for p in r.stdout.strip().split("\n") if p]
+            ps_folder = (
+                'Add-Type -AssemblyName System.Windows.Forms;'
+                '$d=New-Object System.Windows.Forms.FolderBrowserDialog;'
+                'if($d.ShowDialog()-eq"OK"){$d.SelectedPath}'
+            )
+            r2 = _sp.run(["powershell", "-Command", ps_folder],
+                         capture_output=True, text=True, timeout=120)
+            if r2.returncode == 0 and r2.stdout.strip():
+                return [r2.stdout.strip()]
+            return []
+        except FileNotFoundError:
+            pass
+
+    # ------------------------------------------------------------------
+    # 3. tkinter last-resort fallback
+    # ------------------------------------------------------------------
     try:
         from tkinter import Tk, filedialog
-        
         root = Tk()
-        root.withdraw()  # Hide the main window
-        root.attributes('-topmost', True)  # Bring dialog to front
-        
-        # Ask user what they want to pick
-        print("\n📁 Opening file picker...")
-        print("   Select: files (Ctrl+Click for multiple) or a folder")
-        
-        # Try to pick files first (with multiple selection)
+        root.withdraw()
+        root.attributes('-topmost', True)
         files = filedialog.askopenfilenames(
             title="Select file(s) to import (or Cancel to pick folder)",
             filetypes=[("Video files", "*.mp4 *.mkv *.avi *.mov"), ("All files", "*.*")]
         )
-        
         root.destroy()
-        
         if files:
             return list(files)
-        
-        # If no files selected, try folder picker
         root = Tk()
         root.withdraw()
         root.attributes('-topmost', True)
-        
-        folder = filedialog.askdirectory(
-            title="Select folder to import"
-        )
-        
+        folder = filedialog.askdirectory(title="Select folder to import")
         root.destroy()
-        
-        if folder:
-            return [folder]
-        
-        return []
-        
+        return [folder] if folder else []
     except ImportError:
-        print("✗ Error: tkinter not available. Install python3-tk package.", file=sys.stderr)
-        return []
-    except Exception as e:
-        print(f"✗ Error: Failed to open file picker: {e}", file=sys.stderr)
-        return []
+        pass
+
+    print(
+        "✗ No file picker available.\n"
+        "  Install the visualizer extra:  uv tool install --reinstall \"crossing[visualizer] @ ...\"\n"
+        "  Or pass file paths directly:   crossing media import /path/to/film.mkv",
+        file=sys.stderr,
+    )
+    return []
 
 
 def _get_data_version(project_path: str) -> str | None:
@@ -3940,7 +4065,7 @@ def build_parser():
     # visualizer command group — shortcut to all visualizer GUIs
     p_visualizer = sub.add_parser(
         "visualizer",
-        help="Open a visualizer GUI (annotate, shotlist, composition, mosaic)",
+        help="Open a visualizer GUI (project, annotate, shotlist, composition, mosaic)",
     )
     p_visualizer.set_defaults(func=cmd_visualizer, visualizer_subcommand="project")
     visualizer_sub = p_visualizer.add_subparsers(dest="visualizer_subcommand", required=False)
