@@ -141,11 +141,21 @@ def _validate_annotation(data: Dict[str, Any]) -> Dict[str, Any]:
             result[field] = str(val) if val is not None else ""
         elif expected_type is list:
             if isinstance(val, list):
-                result[field] = [str(v) for v in val]
+                items = [str(v) for v in val]
             elif val is None:
-                result[field] = []
+                items = []
             else:
-                result[field] = [str(val)]
+                items = [str(val)]
+            # Deduplicate (preserve order) and cap to prevent runaway model
+            # outputs (e.g. hundreds of identical "sheep" entries) from bloating
+            # the annotation JSON.
+            seen: set = set()
+            deduped = []
+            for item in items:
+                if item not in seen:
+                    seen.add(item)
+                    deduped.append(item)
+            result[field] = deduped[:20]
     return result
 
 
@@ -844,16 +854,27 @@ def _call_model(pipeline, messages: List[Dict[str, Any]], overrides: Optional[Di
             # max_new_tokens budgets (e.g. 512) the thinking phase can exhaust all
             # available tokens, leaving no room for the JSON output.  Passing
             # enable_thinking=False disables this for structured annotation tasks.
-            # Non-Qwen3 tokenizers don't accept this kwarg; the TypeError fallback
-            # retries without it so other models are unaffected.
+            #
+            # FIX: In transformers 5.x, ProcessorMixin.apply_chat_template validates
+            # all **kwargs against the Jinja template's undeclared variables via
+            # _get_template_variables().  For Qwen3-VL the chat template does NOT
+            # include enable_thinking (it's a Qwen3 text-only feature), so passing
+            # it through the processor triggers:
+            #   "Kwargs passed to `processor.__call__` have to be in
+            #    `processor_kwargs` dict, not in **kwargs"
+            # Using the inner tokenizer's apply_chat_template bypasses this
+            # validation — **kwargs are passed straight to Jinja, which ignores
+            # unknown variables.  Non-Qwen3 tokenizers without a chat_template
+            # raise AttributeError/TypeError caught by the fallback below.
+            _template_tok = getattr(tokenizer, "tokenizer", None) or tokenizer
             try:
-                formatted = tokenizer.apply_chat_template(
+                formatted = _template_tok.apply_chat_template(
                     chat_messages, tokenize=False, add_generation_prompt=True,
                     enable_thinking=False,
                 )
             except TypeError:
                 try:
-                    formatted = tokenizer.apply_chat_template(
+                    formatted = _template_tok.apply_chat_template(
                         chat_messages, tokenize=False, add_generation_prompt=True
                     )
                 except Exception:
@@ -1092,20 +1113,78 @@ def _extract_json(text: str) -> Optional[Dict[str, Any]]:
     # Fallback: try the original simple approach
     s = text.find("{")
     e = text.rfind("}")
-    if s == -1 or e == -1 or e <= s:
-        return None
-    candidate = text[s : e + 1]
+    if s != -1 and e != -1 and e > s:
+        candidate = text[s : e + 1]
+        try:
+            return json.loads(candidate)
+        except Exception:
+            try:
+                return json.loads(_repair_bare_string_lists(candidate))
+            except Exception:
+                pass
+            try:
+                return json.loads(candidate.replace("'", '"'))
+            except Exception:
+                pass
+
+    # Last-resort: attempt to repair truncated JSON caused by token-budget
+    # exhaustion (e.g. the model fills an array with hundreds of identical
+    # items until it hits max_new_tokens, leaving the JSON incomplete).
+    #
+    # Step 1 – collapse repeated array items.  "sheep", "sheep", "sheep"…
+    #           (any number) becomes just "sheep".  This shrinks the string
+    #           dramatically and often unmasks the end of the object.
+    # Step 2 – strip any trailing half-written string value left by truncation.
+    # Step 3 – count unclosed brackets/braces and close them.
     try:
-        return json.loads(candidate)
+        s = text.find("{")
+        if s != -1:
+            raw = text[s:]
+            # Step 1: collapse identical consecutive quoted values in arrays
+            raw = _re.sub(r'"([^"]+)"(?:,\s*"\1")+', r'"\1"', raw)
+            # Step 2: remove trailing truncated string (last , "partial<eof>)
+            raw = _re.sub(r',\s*"[^"]*$', '', raw.rstrip())
+            # Step 3: count open structure depths to know what to close
+            d_brace = 0
+            d_bracket = 0
+            in_str = False
+            idx = 0
+            while idx < len(raw):
+                ch = raw[idx]
+                if ch == '\\' and in_str:
+                    idx += 2
+                    continue
+                if ch == '"':
+                    in_str = not in_str
+                elif not in_str:
+                    if ch == '{':
+                        d_brace += 1
+                    elif ch == '}':
+                        d_brace -= 1
+                    elif ch == '[':
+                        d_bracket += 1
+                    elif ch == ']':
+                        d_bracket -= 1
+                idx += 1
+            # If we're still inside a string, close it first
+            if in_str:
+                raw += '"'
+            # Remove any dangling trailing comma before we close
+            raw = _re.sub(r',\s*$', '', raw.rstrip())
+            # Close unclosed arrays then objects
+            raw += ']' * max(0, d_bracket)
+            raw += '}' * max(0, d_brace)
+            try:
+                return json.loads(raw)
+            except Exception:
+                try:
+                    return json.loads(_repair_bare_string_lists(raw))
+                except Exception:
+                    pass
     except Exception:
-        try:
-            return json.loads(_repair_bare_string_lists(candidate))
-        except Exception:
-            pass
-        try:
-            return json.loads(candidate.replace("'", '"'))
-        except Exception:
-            return None
+        pass
+
+    return None
 
 
 def _build_prompt(
@@ -1680,9 +1759,21 @@ def annotate_file_shots(
         # small pause to be polite to model infra
         time.sleep(0.1)
 
-        # Incremental write — keeps the JSON current so GUI watchers see each result
+        # Incremental write — keeps the JSON current so GUI watchers see each result.
+        # Merge with _existing_agg so that shots not yet reached in this pass are
+        # preserved: without this, a run that starts mid-movie would progressively
+        # truncate the JSON to only the shots processed so far, erasing all
+        # not-yet-processed entries from an earlier complete run.
         try:
-            aggregated.write_text(json.dumps(results, indent=2), encoding="utf-8")
+            _write_map = dict(_existing_agg)
+            for _r in results:
+                _sid = _r.get("shot", {}).get("shot_id") if isinstance(_r.get("shot"), dict) else None
+                if _sid is not None:
+                    _write_map[int(_sid)] = _r
+            aggregated.write_text(
+                json.dumps([_write_map[k] for k in sorted(_write_map)], indent=2),
+                encoding="utf-8",
+            )
         except Exception:
             pass
         if on_shot_done is not None and success:
@@ -1705,9 +1796,18 @@ def annotate_file_shots(
         raise RuntimeError(f"Annotation failed: no successful annotations produced; {len(failed)} shots failed. Aborting without writing output.")
 
     # Final canonical write (incremental writes inside the loop keep this current;
-    # this also covers the all-skipped case where no incremental writes ran)
+    # this also covers the all-skipped case where no incremental writes ran).
+    # Merge with _existing_agg for the same reason as the incremental write above.
     try:
-        aggregated.write_text(json.dumps(results, indent=2), encoding="utf-8")
+        _write_map = dict(_existing_agg)
+        for _r in results:
+            _sid = _r.get("shot", {}).get("shot_id") if isinstance(_r.get("shot"), dict) else None
+            if _sid is not None:
+                _write_map[int(_sid)] = _r
+        aggregated.write_text(
+            json.dumps([_write_map[k] for k in sorted(_write_map)], indent=2),
+            encoding="utf-8",
+        )
     except Exception:
         pass
 
