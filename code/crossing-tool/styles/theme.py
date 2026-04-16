@@ -153,8 +153,9 @@ QListWidget {{
     font-family: "{FAMILY_MONO}";
     font-size: {BASE_PT}pt;
 }}
-QListWidget::item:selected {{ background-color: {ACCENT}; color: {TEXT}; }}
-QListWidget::item:hover    {{ background-color: {BTN_HOVER}; }}
+QListWidget::item:selected       {{ background-color: {ACCENT}; color: {TEXT}; }}
+QListWidget::item:hover          {{ background-color: {BTN_HOVER}; }}
+QListWidget::item:selected:hover {{ background-color: {ACCENT}; color: {TEXT}; }}
 
 /* ── Text areas ────────────────────────────────────────────── */
 QTextEdit {{

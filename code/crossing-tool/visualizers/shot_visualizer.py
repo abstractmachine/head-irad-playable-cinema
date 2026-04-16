@@ -37,6 +37,7 @@ from PyQt5.QtGui import QFont, QPixmap, QImage, QMouseEvent
 
 from data.shotlist import read_shotlist, write_shotlist, get_shotlist_path
 from data.metadata import get_metadata
+from data.annotate import reindex_annotations_for_merge, reindex_annotations_for_split
 
 
 def _get_sar(video_path: str) -> tuple[int, int]:
@@ -1024,7 +1025,13 @@ class OpenCVShotVisualizer(QMainWindow):
         
         # Remove current shot
         self.shots.pop(self.current_shot_index)
-        
+
+        # Reindex annotation data to match new shot list
+        reindex_annotations_for_merge(
+            self.project_path, self.filename, self.media_type,
+            self.current_shot_index,
+        )
+
         # Rebuild lists
         self.rebuild_shot_list()
         self.rebuild_scene_list()
@@ -1073,6 +1080,12 @@ class OpenCVShotVisualizer(QMainWindow):
 
         # Replace the current shot with the two new ones
         self.shots[self.current_shot_index:self.current_shot_index + 1] = [first_shot, second_shot]
+
+        # Reindex annotation data to match new shot list
+        reindex_annotations_for_split(
+            self.project_path, self.filename, self.media_type,
+            self.current_shot_index + 1,
+        )
 
         # Rebuild lists
         self.rebuild_shot_list()

@@ -1983,6 +1983,161 @@ def get_annotation_json_path(project_path: str, filename: str, media_type: str) 
     return Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{stem}.json"
 
 
+def _merge_annotation_dicts(prev_ann: Dict[str, Any], removed_ann: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge two annotation dicts (field-by-field) for a shot merge operation.
+
+    Lists are concatenated (deduplicated, order-preserved).
+    Strings are joined with " | " when both are non-empty.
+    For any other type the previous shot's value is kept.
+    """
+    result = dict(prev_ann)
+    for key, removed_val in removed_ann.items():
+        prev_val = prev_ann.get(key)
+        if isinstance(removed_val, list) and isinstance(prev_val, list):
+            # Deduplicate while preserving order
+            seen: set = set()
+            merged: list = []
+            for v in prev_val + removed_val:
+                if v not in seen:
+                    seen.add(v)
+                    merged.append(v)
+            result[key] = merged
+        elif isinstance(removed_val, str) and isinstance(prev_val, str):
+            if removed_val and prev_val:
+                result[key] = prev_val + " | " + removed_val
+            elif removed_val:
+                result[key] = removed_val
+            # else keep prev_val as-is
+        # For all other types leave prev_val unchanged
+    return result
+
+
+def reindex_annotations_for_merge(
+    project_path: str,
+    filename: str,
+    media_type: str,
+    removed_shot_index: int,
+) -> None:
+    """Update the annotation JSON after two shots have been merged.
+
+    *removed_shot_index* is the 0-based index of the shot that was removed
+    (merged into the previous shot at removed_shot_index - 1).
+
+    The function:
+    1. Merges the text/list content of the removed shot's annotation into the
+       previous shot's annotation (best-effort; keeps previous values on conflict).
+    2. Drops the entry for the removed shot.
+    3. Decrements shot_id by 1 for every entry whose shot_id was above the
+       removed shot.
+
+    Silently does nothing if the annotation JSON does not exist.
+    """
+    path = get_annotation_json_path(project_path, filename, media_type)
+    if not path.exists():
+        return
+    try:
+        entries: list = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+
+    removed_shot_id = removed_shot_index + 1        # 1-based
+    prev_shot_id    = removed_shot_index             # 1-based for the previous shot
+
+    new_entries = []
+    for entry in entries:
+        shot = entry.get("shot") if isinstance(entry, dict) else None
+        if not isinstance(shot, dict):
+            new_entries.append(entry)
+            continue
+        sid = shot.get("shot_id")
+        if sid is None:
+            new_entries.append(entry)
+            continue
+        sid = int(sid)
+        if sid == removed_shot_id:
+            # Merge this annotation into the previous entry (handled below) — skip for now
+            continue
+        elif sid == prev_shot_id:
+            # Merge removed annotation into this entry if both are valid
+            removed_entry = next(
+                (e for e in entries
+                 if isinstance(e, dict)
+                 and isinstance(e.get("shot"), dict)
+                 and int(e["shot"].get("shot_id", -1)) == removed_shot_id),
+                None,
+            )
+            if removed_entry is not None:
+                prev_ann = shot.get("annotation")
+                removed_ann = removed_entry.get("shot", {}).get("annotation")
+                if isinstance(prev_ann, dict) and "setting" in prev_ann \
+                        and isinstance(removed_ann, dict) and "setting" in removed_ann:
+                    entry = dict(entry)
+                    entry["shot"] = dict(shot)
+                    entry["shot"]["annotation"] = _merge_annotation_dicts(prev_ann, removed_ann)
+            new_entries.append(entry)
+        elif sid > removed_shot_id:
+            # Shift down by 1
+            entry = dict(entry)
+            entry["shot"] = dict(shot)
+            entry["shot"]["shot_id"] = sid - 1
+            new_entries.append(entry)
+        else:
+            new_entries.append(entry)
+
+    try:
+        path.write_text(json.dumps(new_entries, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def reindex_annotations_for_split(
+    project_path: str,
+    filename: str,
+    media_type: str,
+    new_shot_index: int,
+) -> None:
+    """Update the annotation JSON after a shot has been split.
+
+    *new_shot_index* is the 0-based index of the newly created second half
+    of the split.  All annotations with shot_id >= new_shot_index+1 have
+    their shot_id incremented by 1 to stay aligned with the new shotlist.
+    The new shot starts unannotated.
+
+    Silently does nothing if the annotation JSON does not exist.
+    """
+    path = get_annotation_json_path(project_path, filename, media_type)
+    if not path.exists():
+        return
+    try:
+        entries: list = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+
+    new_shot_id = new_shot_index + 1  # 1-based threshold
+
+    new_entries = []
+    for entry in entries:
+        shot = entry.get("shot") if isinstance(entry, dict) else None
+        if not isinstance(shot, dict):
+            new_entries.append(entry)
+            continue
+        sid = shot.get("shot_id")
+        if sid is None:
+            new_entries.append(entry)
+            continue
+        sid = int(sid)
+        if sid >= new_shot_id:
+            entry = dict(entry)
+            entry["shot"] = dict(shot)
+            entry["shot"]["shot_id"] = sid + 1
+        new_entries.append(entry)
+
+    try:
+        path.write_text(json.dumps(new_entries, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def remove_file_annotations(
     project_path: str,
     filename: str,

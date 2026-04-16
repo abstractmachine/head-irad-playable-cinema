@@ -165,11 +165,12 @@ class ClickSeekSlider(QSlider):
 class ShotAnnotationItem(QListWidgetItem):
     """List item representing a shot with its annotation status."""
 
-    def __init__(self, shot_index: int, shot: dict, annotation):
+    def __init__(self, shot_index: int, shot: dict, annotation, edited: bool = False):
         super().__init__()
         self.shot_index = shot_index
         self.shot = shot
         self.annotation = annotation
+        self.edited = edited
         self.update_display()
 
     def update_display(self):
@@ -189,7 +190,8 @@ class ShotAnnotationItem(QListWidgetItem):
             scene_str = f"S{int(scene):03d}"
         except (ValueError, TypeError):
             scene_str = f"S{scene}"
-        self.setText(f"[{status}] {scene_str} · {self.shot_index:04d} · {start} → {end}")
+        edited_mark = "✎ " if self.edited else ""
+        self.setText(f"[{status}] {edited_mark}{scene_str} · {self.shot_index:04d} · {start} → {end}")
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +271,9 @@ class AnnotationVisualizer(QMainWindow):
         self._play_start_frame = 0
         self._current_shot_end_frame = 0
         self._annotate_worker = None
+        self._edited_shots: set = set()    # shot indices edited manually in this session
+        self._ann_dirty = False            # ann_display has unsaved user edits
+        self._updating_ann_display = False # guard against textChanged feedback loop
         try:
             import prefs as _prefs
             self._model_name = _prefs.get("model_annotate", "gemma4-e4b")
@@ -344,6 +349,7 @@ class AnnotationVisualizer(QMainWindow):
     def _reload_for_movie(self, index: int):
         self.current_movie_index = index
         self.filename = self.filenames[index]
+        self._edited_shots.clear()
         if self.cap is not None:
             self.cap.release()
         self._open_video()
@@ -413,7 +419,14 @@ class AnnotationVisualizer(QMainWindow):
         self.ann_display = QTextEdit()
         self.ann_display.setReadOnly(True)
         self.ann_display.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.ann_display.textChanged.connect(self._on_ann_text_changed)
         mid_layout.addWidget(self.ann_display, stretch=1)
+
+        self.ann_dirty_label = QLabel()
+        self.ann_dirty_label.setFont(theme.font_mono())
+        self.ann_dirty_label.setStyleSheet(f"color: {theme.ACCENT};")
+        self.ann_dirty_label.hide()
+        mid_layout.addWidget(self.ann_dirty_label)
 
         # ---- COL 3: shotlist + controls ----
         right = QWidget()
@@ -511,11 +524,12 @@ class AnnotationVisualizer(QMainWindow):
         self.shot_list.clear()
         for i, shot in enumerate(self.shots):
             ann = self.annotation_index.get(i)
-            self.shot_list.addItem(ShotAnnotationItem(i, shot, ann))
+            self.shot_list.addItem(ShotAnnotationItem(i, shot, ann, i in self._edited_shots))
 
     def _refresh_shot_item(self, index: int):
         item = self.shot_list.item(index)
         if isinstance(item, ShotAnnotationItem):
+            item.edited = index in self._edited_shots
             item.update_display()
 
     # ------------------------------------------------------------------
@@ -654,6 +668,8 @@ class AnnotationVisualizer(QMainWindow):
         if not self.shots:
             return
         index = max(0, min(index, len(self.shots) - 1))
+        if self._ann_dirty:
+            self._discard_ann_edit()
         if self.is_playing:
             self._stop_playback()
 
@@ -683,16 +699,31 @@ class AnnotationVisualizer(QMainWindow):
         unannotated = n - len(self.annotation_index)
 
         mode = self.ann_repr_combo.currentText() if hasattr(self, "ann_repr_combo") else "fields"
+        self._updating_ann_display = True
+        ann = self.annotation_index.get(shot_index)
         if mode == "json":
-            self.ann_display.setPlainText(self._render_annotation_json(shot_index))
+            if _is_valid_annotation(ann):
+                self.ann_display.setReadOnly(False)
+                self.ann_display.setPlainText(json.dumps(ann, indent=2, ensure_ascii=False))
+            else:
+                self.ann_display.setReadOnly(True)
+                self.ann_display.setPlainText(self._render_annotation_json(shot_index))
         elif mode == "txt":
+            self.ann_display.setReadOnly(True)
             self.ann_display.setPlainText(self._render_annotation_txt(shot_index))
         elif mode == "vector":
+            self.ann_display.setReadOnly(True)
             self.ann_display.setPlainText(self._render_annotation_vector(shot_index))
         elif mode == "mapping":
+            self.ann_display.setReadOnly(True)
             self.ann_display.setPlainText(self._render_annotation_mapping())
         else:
+            self.ann_display.setReadOnly(True)
             self.ann_display.setHtml(self._render_annotation_fields(shot_index))
+        self._updating_ann_display = False
+        self._ann_dirty = False
+        if hasattr(self, "ann_dirty_label"):
+            self.ann_dirty_label.hide()
 
         self._status_shot_text = (
             f"Shot {shot_index} / {n - 1}  ·  Scene {shot.get('Scene', '?')}\n"
@@ -841,12 +872,101 @@ class AnnotationVisualizer(QMainWindow):
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
+    # Annotation editing
+    # ------------------------------------------------------------------
+
+    def _on_ann_text_changed(self):
+        if self._updating_ann_display:
+            return
+        mode = self.ann_repr_combo.currentText() if hasattr(self, "ann_repr_combo") else "fields"
+        if mode != "json" or self.ann_display.isReadOnly():
+            return
+        if not self._ann_dirty:
+            self._ann_dirty = True
+            if hasattr(self, "ann_dirty_label"):
+                self.ann_dirty_label.setText("● unsaved  (Ctrl+S to save)")
+                self.ann_dirty_label.show()
+
+    def _discard_ann_edit(self):
+        self._ann_dirty = False
+        if hasattr(self, "ann_dirty_label"):
+            self.ann_dirty_label.hide()
+
+    def _save_annotation_edit(self):
+        mode = self.ann_repr_combo.currentText() if hasattr(self, "ann_repr_combo") else "fields"
+        if mode != "json" or self.ann_display.isReadOnly():
+            return
+        if not self._ann_dirty:
+            return
+        raw = self.ann_display.toPlainText()
+        try:
+            new_ann = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            QMessageBox.warning(self, "JSON error", f"Could not parse annotation:\n{exc}")
+            return
+        if not isinstance(new_ann, dict):
+            QMessageBox.warning(self, "JSON error", "Annotation must be a JSON object (dict).")
+            return
+
+        shot_index = self.current_shot_index
+        ann_path = _get_annotation_json_path(self.project_path, self.filename, self.media_type)
+        ann_entries = _read_annotation_json(ann_path)
+
+        updated = False
+        for entry in ann_entries:
+            shot = entry.get("shot")
+            if isinstance(shot, dict) and int(shot.get("shot_id", -1)) - 1 == shot_index:
+                entry["shot"]["annotation"] = new_ann
+                updated = True
+                break
+
+        if not updated:
+            QMessageBox.warning(
+                self, "Not found",
+                f"Could not find shot {shot_index} in annotation file to update.",
+            )
+            return
+
+        try:
+            ann_path.write_text(
+                json.dumps(ann_entries, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+        except OSError as exc:
+            QMessageBox.critical(self, "Save error", f"Could not write annotation file:\n{exc}")
+            return
+
+        # Refresh in-memory state
+        self.annotation_index[shot_index] = new_ann
+        self._annotation_entry_index[shot_index] = next(
+            (e for e in ann_entries
+             if isinstance(e.get("shot"), dict)
+             and int(e["shot"].get("shot_id", -1)) - 1 == shot_index),
+            self._annotation_entry_index.get(shot_index),
+        )
+
+        # Mark as edited and clear dirty state
+        self._edited_shots.add(shot_index)
+        self._ann_dirty = False
+        if hasattr(self, "ann_dirty_label"):
+            self.ann_dirty_label.setText("✓ saved")
+            QTimer.singleShot(1500, self.ann_dirty_label.hide)
+
+        # Refresh shot list item
+        item = self.shot_list.item(shot_index)
+        if isinstance(item, ShotAnnotationItem):
+            item.annotation = new_ann
+            item.edited = True
+            item.update_display()
+
+    # ------------------------------------------------------------------
     # Movie selector
     # ------------------------------------------------------------------
 
     def _on_repr_changed(self, _index: int):
         if not self.shots:
             return
+        if self._ann_dirty:
+            self._discard_ann_edit()
         self._update_annotation_panel(
             self.current_shot_index, self.shots[self.current_shot_index]
         )
@@ -865,6 +985,9 @@ class AnnotationVisualizer(QMainWindow):
     def keyPressEvent(self, event):
         key = event.key()
         mod = event.modifiers()
+        if key == Qt.Key_S and mod & Qt.ControlModifier:
+            self._save_annotation_edit()
+            return
         if key in (Qt.Key_Q, Qt.Key_W) and mod & Qt.ControlModifier:
             self.close()
             return

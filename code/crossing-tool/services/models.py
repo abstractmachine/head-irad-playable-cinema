@@ -183,10 +183,20 @@ def list_models(project_path: str) -> None:
 
     # Load configured roles to annotate which model is assigned to each
     configured: Dict[str, str] = {}
-    for role, key in (("annotate", "model_annotate"), ("segmentation", "model_segmentation")):
-        val = pget(key, None)
+    for role, key_or_pair in (
+        ("annotate",     ("model_annotate",     None)),
+        ("segmentation", ("model_segmentation", None)),
+        ("embed",        ("model_embed",        "BAAI/bge-small-en-v1.5")),
+        ("assistant",    ("model_assistant",    None)),
+    ):
+        key, default = key_or_pair
+        val = pget(key, default)
         if val:
             configured[val] = role
+            # Also index by basename so "BAAI/bge-small-en-v1.5" matches folder "bge-small-en-v1.5"
+            basename = val.split("/")[-1]
+            if basename != val:
+                configured.setdefault(basename, role)
 
     items = sorted(mdir.iterdir(), key=lambda p: p.name.lower())
     if not items:
