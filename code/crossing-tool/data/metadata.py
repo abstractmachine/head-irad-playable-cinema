@@ -464,3 +464,225 @@ def fetch_metadata(filename: str, project_path: str) -> dict[str, Any]:
         "overview": movie.get("overview", ""),
         "tagline": movie.get("tagline", ""),
     }
+
+
+# ---------------------------------------------------------------------------
+# JSON metadata layer  (additive — CSV files are kept in place)
+# ---------------------------------------------------------------------------
+
+_JSON_VERSION = "1"
+
+
+def _json_path(project_path: str, media_type: str) -> Path:
+    return Path(project_path) / "data" / "metadata" / f"{media_type}.json"
+
+
+def load_json_metadata(project_path: str, media_type: str) -> list[dict]:
+    """Load records from the JSON metadata file.  Returns [] if the file does not exist."""
+    path = _json_path(project_path, media_type)
+    if not path.exists():
+        return []
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return data.get("media", [])
+
+
+def save_json_metadata(project_path: str, media_type: str, records: list[dict]) -> Path:
+    """Write *records* to the JSON metadata file (overwrites atomically)."""
+    path = _json_path(project_path, media_type)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"version": _JSON_VERSION, "media": records}
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return path
+
+
+def upsert_json_record(
+    project_path: str,
+    record: dict,
+    media_type: str,
+    match_key: str = "media_id",
+) -> Path:
+    """Insert or update a single record in the JSON file, keyed by *match_key*.
+
+    If a record with the same match_key value already exists it is replaced;
+    otherwise the new record is appended.  The list is sorted by title after
+    the upsert.
+    """
+    records = load_json_metadata(project_path, media_type)
+    key_val = record.get(match_key)
+
+    updated = False
+    if key_val:
+        for i, r in enumerate(records):
+            if r.get(match_key) == key_val:
+                records[i] = {**r, **record}
+                updated = True
+                break
+    if not updated:
+        records.append(record)
+
+    records.sort(key=lambda r: str(r.get("title", "")).lower())
+    return save_json_metadata(project_path, media_type, records)
+
+
+def migrate_csv_to_json(project_path: str, media_type: str) -> dict:
+    """Read the CSV for *media_type*, assign media_ids, and write a JSON file.
+
+    Records already in the JSON that have no corresponding CSV entry (i.e. new
+    ingests added via ``ingest_gameplay``) are preserved unchanged.  CSV rows
+    take precedence for records present in both.
+
+    The CSV file is left untouched.  Returns a summary dict:
+        {"written": int, "path": str, "skipped_ids": [str, ...]}
+    """
+    from data.media_id import compute_media_id
+
+    csv_path = _csv_path(project_path, media_type)
+    if not csv_path.exists():
+        return {"written": 0, "path": None, "skipped_ids": []}
+
+    with csv_path.open(newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        rows = [{k: v for k, v in row.items() if k is not None} for row in reader]
+
+    # Build a map of existing JSON records keyed by original_filename so that
+    # JSON-only entries (new ingests) are preserved after the migration.
+    existing_json = {
+        (r.get("original_filename") or r.get("filename", "")): r
+        for r in load_json_metadata(project_path, media_type)
+    }
+
+    records: list[dict] = []
+    csv_filenames: set[str] = set()
+    skipped: list[str] = []
+    for row in rows:
+        mid = compute_media_id(row, media_type=media_type)
+        if not mid:
+            skipped.append(row.get("filename", "?"))
+            continue
+        record = {"media_id": mid, **row}
+        if "original_filename" not in record:
+            record["original_filename"] = row.get("filename", "")
+        records.append(record)
+        csv_filenames.add(record["original_filename"])
+
+    # Re-add JSON-only records that are not present in the CSV
+    for orig_fn, json_rec in existing_json.items():
+        if orig_fn not in csv_filenames:
+            records.append(json_rec)
+
+    records.sort(key=lambda r: str(r.get("title", "")).lower())
+    path = save_json_metadata(project_path, media_type, records)
+    return {"written": len(records), "path": str(path), "skipped_ids": skipped}
+
+
+def check_metadata_sync(project_path: str, media_type: str) -> dict:
+    """Compare the CSV and JSON metadata for *media_type*.
+
+    Returns a report dict with keys:
+        csv_count, json_count,
+        missing_media_id,       # JSON records without media_id (error)
+        in_csv_not_json,        # filenames in CSV but absent from JSON (error: migration gap)
+        in_json_not_csv,        # filenames in JSON but absent from CSV (informational: new ingest)
+        ok                      # True when all *error* checks pass
+    """
+    csv_rows = _all_metadata(project_path, media_type)
+    json_records = load_json_metadata(project_path, media_type)
+
+    csv_filenames  = {r.get("filename", "") for r in csv_rows  if r.get("filename")}
+    json_filenames = {r.get("original_filename") or r.get("filename", "")
+                      for r in json_records if r.get("original_filename") or r.get("filename")}
+
+    missing_media_id = [
+        r.get("media_id", "(none)") or r.get("filename", "?")
+        for r in json_records
+        if not r.get("media_id")
+    ]
+    in_csv_not_json  = sorted(csv_filenames  - json_filenames)
+    in_json_not_csv  = sorted(json_filenames - csv_filenames)
+
+    ok = (
+        len(missing_media_id) == 0
+        and len(in_csv_not_json) == 0
+        # in_json_not_csv is informational: records added via the new ingest
+        # path are JSON-only by design and do not constitute an error.
+    )
+
+    return {
+        "media_type":      media_type,
+        "csv_count":       len(csv_rows),
+        "json_count":      len(json_records),
+        "missing_media_id": missing_media_id,
+        "in_csv_not_json": in_csv_not_json,
+        "in_json_not_csv": in_json_not_csv,
+        "ok":              ok,
+    }
+
+
+def ingest_gameplay(
+    src_path: "str | Path",
+    project_path: str,
+    title: str | None = None,
+    game: str | None = None,
+) -> dict:
+    """Ingest a gameplay clip into the project.
+
+    Steps:
+      1. Compute a stable media_id from the original filename.
+      2. Build the on-disk destination: ``<media_id> - <title>.<ext>``
+      3. Copy the file to ``media/videos/gameplay/``.
+      4. Upsert a metadata record in ``gameplay.json``.
+
+    Returns the metadata record that was written (including media_id and
+    both filenames).
+    """
+    import shutil
+    from data.media_id import compute_media_id
+
+    src = Path(src_path).resolve()
+    if not src.exists():
+        raise FileNotFoundError(f"Source file not found: {src}")
+
+    original_filename = src.name
+    ext = src.suffix.lower() or ".mp4"
+
+    # Derive a display title if none supplied
+    if not title:
+        stem = re.sub(r"[-_]+", " ", src.stem)
+        title = stem.title()
+
+    # Build a minimal record so compute_media_id can inspect it
+    partial = {
+        "title": title,
+        "filename": original_filename,
+    }
+    if game:
+        partial["game"] = game
+
+    media_id = compute_media_id(partial, media_type="gameplay")
+
+    # On-disk filename: "<media_id> - <title><ext>"
+    dest_filename = f"{media_id} - {title}{ext}"
+    dest_dir = Path(project_path) / "media" / "videos" / "gameplay"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_path = dest_dir / dest_filename
+
+    if not dest_path.exists():
+        shutil.copy2(str(src), str(dest_path))
+
+    # Build full metadata record
+    record: dict = {
+        "media_id":          media_id,
+        "title":             title,
+        "filename":          dest_filename,
+        "original_filename": original_filename,
+        "duration":          "",
+        "overview":          "",
+        "tagline":           "",
+        "shotlist":          "false",
+        "encodings":         "false",
+    }
+    if game:
+        record["game"] = game
+
+    upsert_json_record(project_path, record, media_type="gameplay")
+    return record

@@ -340,10 +340,34 @@ def cmd_media(args):
     sub = args.media_subcommand
     if sub == "import":
         cmd_import(args)
+    elif sub == "ingest":
+        cmd_ingest(args)
     elif sub == "remove":
         cmd_remove(args)
     elif sub == "subtitle":
         cmd_subtitle(args)
+
+
+def cmd_ingest(args):
+    """Ingest a gameplay clip: copy with media_id filename, write to gameplay.json."""
+    _require_path()
+    from data.metadata import ingest_gameplay
+
+    project_path = prefs.get("path")
+    src = args.source
+    title = getattr(args, "title", None) or None
+    game  = getattr(args, "game",  None) or None
+
+    try:
+        record = ingest_gameplay(src, project_path, title=title, game=game)
+    except FileNotFoundError as exc:
+        print(f"\u2717 {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"\u2713  {record['media_id']}")
+    print(f"   on-disk:           {record['filename']}")
+    print(f"   original_filename: {record['original_filename']}")
+    print(json.dumps(record, indent=2))
 
 
 def cmd_import(args):
@@ -634,6 +658,10 @@ def cmd_metadata(args):
         _meta_prune(args)
     elif sub == "audit":
         _meta_audit(args)
+    elif sub == "migrate":
+        _meta_migrate(args)
+    elif sub == "check":
+        _meta_check(args)
 
 
 def _meta_get(args):
@@ -996,13 +1024,61 @@ def _meta_audit(args):
         print(f"  Subtitles:  ✓ all {n}")
 
 
+def _meta_migrate(args):
+    """Migrate CSV → JSON for one or both media types, assigning media_ids."""
+    from data.metadata import migrate_csv_to_json
+    project_path = prefs.get("path")
+    types = [args.media] if getattr(args, "media", None) else ["movies", "gameplay"]
+    for mt in types:
+        result = migrate_csv_to_json(project_path, mt)
+        if result["path"] is None:
+            print(f"  skip  {mt}: no CSV found")
+        else:
+            path = Path(result["path"]).relative_to(project_path)
+            print(f"  ok    {mt}: {result['written']} record(s) → {path}")
+            if result["skipped_ids"]:
+                print(f"        skipped (no id): {result['skipped_ids']}")
+
+
+def _meta_check(args):
+    """Validate that JSON and CSV metadata agree and every record has a media_id."""
+    from data.metadata import check_metadata_sync
+    project_path = prefs.get("path")
+    types = [args.media] if getattr(args, "media", None) else ["movies", "gameplay"]
+    all_ok = True
+    for mt in types:
+        report = check_metadata_sync(project_path, mt)
+        status = "✓" if report["ok"] else "✗"
+        print(f"{status}  {mt}  (csv: {report['csv_count']}, json: {report['json_count']})")
+        if report["missing_media_id"]:
+            print(f"    missing media_id ({len(report['missing_media_id'])}):")
+            for x in report["missing_media_id"]:
+                print(f"      {x}")
+        if report["in_csv_not_json"]:
+            print(f"    in CSV but not JSON ({len(report['in_csv_not_json'])}):")
+            for x in report["in_csv_not_json"]:
+                print(f"      {x}")
+        if report["in_json_not_csv"]:
+            print(f"    JSON-only / new ingests ({len(report['in_json_not_csv'])}):")
+            for x in report["in_json_not_csv"]:
+                print(f"      {x}")
+        if report["ok"]:
+            print(f"    all records present and have media_id")
+        else:
+            all_ok = False
+    if not all_ok:
+        sys.exit(1)
+
+
 # ---------------------------------------------------------------------------
 # remove command
 # ---------------------------------------------------------------------------
 
 def cmd_remove(args):
     _require_path()
-    from data.metadata import get_metadata, prune_metadata
+    import csv as _csv
+    from data.metadata import (get_metadata, prune_metadata,
+                                load_json_metadata, save_json_metadata, _csv_path)
     from data.shotlist import resolve_filename
 
     project_path = prefs.get("path")
@@ -1014,7 +1090,18 @@ def cmd_remove(args):
         print("✗ Provide a title query or --tmdb <id>.", file=sys.stderr)
         sys.exit(1)
 
-    rows = get_metadata(project_path, media_type=media_type)
+    # Search CSV records
+    csv_rows = get_metadata(project_path, media_type=media_type)
+    csv_filenames = {r.get("filename", "") for r in csv_rows}
+
+    # Also include JSON-only records (new ingests not yet in CSV)
+    json_records = load_json_metadata(project_path, media_type)
+    json_only = [
+        r for r in json_records
+        if r.get("filename") not in csv_filenames
+        and r.get("original_filename", r.get("filename", "")) not in csv_filenames
+    ]
+    all_rows = csv_rows + json_only
 
     if tmdb is not None:
         try:
@@ -1022,13 +1109,14 @@ def cmd_remove(args):
         except ValueError as exc:
             print(f"✗ {exc}", file=sys.stderr)
             sys.exit(1)
-        matches = [r for r in rows if r.get("filename") == filename]
+        matches = [r for r in all_rows if r.get("filename") == filename]
     else:
         q = query.lower()
         matches = [
-            r for r in rows
+            r for r in all_rows
             if q in str(r.get("filename", "")).lower()
             or q in str(r.get("title", "")).lower()
+            or q in str(r.get("original_filename", "")).lower()
         ]
 
     if not matches:
@@ -1039,12 +1127,19 @@ def cmd_remove(args):
     if len(matches) > 1:
         print(f"✗ '{query}' matches {len(matches)} entries — be more specific or use --tmdb:", file=sys.stderr)
         for r in matches:
-            print(f"  [{r.get('tmdb', '?')}]  {r.get('filename', '')}  —  {r.get('title', '')} ({r.get('year', '')})", file=sys.stderr)
+            mid = r.get('tmdb') or r.get('media_id', '?')
+            print(f"  [{mid}]  {r.get('filename', '')}  —  {r.get('title', '')} ({r.get('year', '')})", file=sys.stderr)
         sys.exit(1)
 
     row = matches[0]
     filename = row.get("filename", "")
     stem = Path(filename).stem
+    in_csv  = filename in csv_filenames
+    in_json = any(
+        r.get("filename") == filename
+        or (row.get("media_id") and r.get("media_id") == row.get("media_id"))
+        for r in json_records
+    )
 
     video_path     = Path(project_path) / "media" / "videos"     / media_type / filename
     thumbnail_path = Path(project_path) / "media" / "thumbnails" / media_type / (stem + ".jpg")
@@ -1053,20 +1148,22 @@ def cmd_remove(args):
     npy_path       = Path(project_path) / "data"  / "shotlists"  / media_type / (stem + ".npy")
 
     candidates = [
-        ("video",     video_path),
-        ("thumbnail", thumbnail_path),
-        ("subtitle",  subtitle_path),
-        ("shotlist",  shotlist_path),
-        ("embeddings",npy_path),
+        ("video",      video_path),
+        ("thumbnail",  thumbnail_path),
+        ("subtitle",   subtitle_path),
+        ("shotlist",   shotlist_path),
+        ("embeddings", npy_path),
     ]
     present = [(label, p) for label, p in candidates if p.exists()]
 
     print(f"Will remove: {row.get('title', filename)} ({row.get('year', '?')})")
-    print(f"  metadata row in {media_type}.csv")
+    if in_csv:
+        print(f"  metadata row in {media_type}.csv")
+    if in_json:
+        print(f"  metadata record in {media_type}.json  (media_id: {row.get('media_id', 'n/a')})")
     for label, p in present:
         print(f"  {label}: {p.relative_to(project_path)}")
-    absent = [(label, p) for label, p in candidates if not p.exists()]
-    for label, _ in absent:
+    for label, _ in [(l, p) for l, p in candidates if not p.exists()]:
         print(f"  {label}: (not present)")
 
     if not args.confirm:
@@ -1077,22 +1174,33 @@ def cmd_remove(args):
     for _, p in present:
         p.unlink()
 
-    # Remove metadata row by rewriting the CSV without this filename
-    import csv as _csv
-    from data.metadata import _csv_path
-    dest = _csv_path(project_path, media_type)
-    if dest.exists():
-        with dest.open(newline="", encoding="utf-8") as f:
-            reader = _csv.DictReader(f)
-            fieldnames = list(reader.fieldnames or [])
-            kept = [r for r in reader if r.get("filename") != filename]
-        with dest.open("w", newline="", encoding="utf-8") as f:
-            writer = _csv.DictWriter(f, fieldnames=fieldnames, restval="")
-            writer.writeheader()
-            writer.writerows(kept)
+    # Remove from CSV
+    if in_csv:
+        dest = _csv_path(project_path, media_type)
+        if dest.exists():
+            with dest.open(newline="", encoding="utf-8") as f:
+                reader = _csv.DictReader(f)
+                fieldnames = list(reader.fieldnames or [])
+                kept = [r for r in reader if r.get("filename") != filename]
+            with dest.open("w", newline="", encoding="utf-8") as f:
+                writer = _csv.DictWriter(f, fieldnames=fieldnames, restval="")
+                writer.writeheader()
+                writer.writerows(kept)
+
+    # Remove from JSON
+    if in_json:
+        media_id = row.get("media_id", "")
+        updated = [
+            r for r in json_records
+            if not (
+                r.get("filename") == filename
+                or (media_id and r.get("media_id") == media_id)
+            )
+        ]
+        save_json_metadata(project_path, media_type, updated)
 
     removed_files = len(present)
-    print(f"\nRemoved: metadata row + {removed_files} file(s).")
+    print(f"\nRemoved: metadata + {removed_files} file(s).")
 
 
 def _meta_fixname(args):
@@ -3811,6 +3919,16 @@ def build_parser():
     p_import.add_argument("--skip-metadata", action="store_true", help="Skip automatic metadata fetch")
     p_import.set_defaults(func=cmd_import, _parser=p_import)
 
+    # media ingest (gameplay-only: assigns media_id, writes to gameplay.json)
+    p_ingest = media_sub.add_parser(
+        "ingest",
+        help="Ingest a gameplay clip: assign media_id, copy to project, update gameplay.json",
+    )
+    p_ingest.add_argument("source", help="Path to the source video file")
+    p_ingest.add_argument("--title", default=None, help="Human-readable display title (default: derived from filename)")
+    p_ingest.add_argument("--game",  default=None, help="Game slug override for the media_id prefix (e.g. rdr2, rdr1)")
+    p_ingest.set_defaults(func=cmd_ingest)
+
     # metadata command group
     p_meta = sub.add_parser("metadata", help="Manage media metadata")
     p_meta.set_defaults(func=cmd_metadata)
@@ -3858,6 +3976,14 @@ def build_parser():
 
     p_meta_audit = meta_sub.add_parser("audit", help="Report missing metadata, shotlists, and subtitles")
     p_meta_audit.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+
+    p_meta_migrate = meta_sub.add_parser("migrate", help="Migrate CSV metadata to JSON and assign media_ids")
+    p_meta_migrate.add_argument("--media", choices=["movies", "gameplay"], default=None,
+                                help="Limit to one media type (default: both)")
+
+    p_meta_check = meta_sub.add_parser("check", help="Validate that JSON and CSV metadata agree")
+    p_meta_check.add_argument("--media", choices=["movies", "gameplay"], default=None,
+                              help="Limit to one media type (default: both)")
 
     # media remove
     p_remove = media_sub.add_parser("remove", help="Remove a film and all its associated files")
