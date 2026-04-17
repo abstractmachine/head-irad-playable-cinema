@@ -331,13 +331,11 @@ class TileWidget(QFrame):
         self.result          = result
         self.original_pixmap = pixmap
 
-        self.setFrameShape(QFrame.Box)
-        self.setFrameShadow(QFrame.Plain)
-        self.setLineWidth(1)
-        self.setStyleSheet(f"TileWidget {{ border: 1px solid {theme.UI_BORDER}; background: {theme.BG}; }}")
+        self.setFrameShape(QFrame.NoFrame)
+        self.setStyleSheet(f"TileWidget {{ border: none; background: {theme.CANVAS_BG}; }}")
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
 
         self._img_label = QLabel()
@@ -348,7 +346,10 @@ class TileWidget(QFrame):
         caption_text = _short_title(result.get("movie_title", "") or result.get("movie_id", ""))
         self._cap_label = QLabel(caption_text)
         self._cap_label.setAlignment(Qt.AlignCenter)
-        self._cap_label.setStyleSheet(f"color: {theme.TEXT_DIM}; border: none;")
+        self._cap_label.setStyleSheet(
+            f"color: {theme.TEXT_DIM}; border: none;"
+            f" font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
+        )
         self._cap_label.setMaximumHeight(16)
         layout.addWidget(self._cap_label)
 
@@ -378,7 +379,7 @@ class TileWidget(QFrame):
 
     def _render(self, tile_size: int) -> None:
         img_w, img_h = self._tile_dimensions(tile_size)
-        self.setFixedSize(img_w + 4, img_h + 22)
+        self.setFixedSize(img_w, img_h + 18)
         self._img_label.setFixedSize(img_w, img_h)
 
         if self.original_pixmap is not None and not self.original_pixmap.isNull():
