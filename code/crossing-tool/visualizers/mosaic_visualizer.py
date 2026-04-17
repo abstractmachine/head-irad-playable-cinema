@@ -14,9 +14,12 @@ Pan:  scroll wheel / scrollbars
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import subprocess
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 # Allow imports from the tool root (data/, services/, generators/)
@@ -84,8 +87,30 @@ ZOOM_STEP = 24
 # Helpers
 # ---------------------------------------------------------------------------
 
+@lru_cache(maxsize=64)
+def _get_sar(video_path: str) -> tuple:
+    """Return (sar_num, sar_den) for video_path via ffprobe. Falls back to (1, 1)."""
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=sample_aspect_ratio", "-of", "json", video_path],
+            capture_output=True, text=True, timeout=5,
+        )
+        data = json.loads(result.stdout)
+        sar_str = data["streams"][0].get("sample_aspect_ratio", "1:1")
+        if sar_str in ("", "0:1", "1:1"):
+            return (1, 1)
+        parts = sar_str.replace("/", ":").split(":")
+        return (int(parts[0]), int(parts[1]))
+    except Exception:
+        return (1, 1)
+
+
 def _extract_frame_pixmap(video_path: Path, frame_index: int) -> Optional[QPixmap]:
-    """Extract a single video frame and return as QPixmap. Returns None on failure."""
+    """Extract a single video frame and return as QPixmap. Returns None on failure.
+
+    Applies SAR correction so the pixmap has the correct display aspect ratio.
+    """
     try:
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
@@ -96,6 +121,10 @@ def _extract_frame_pixmap(video_path: Path, frame_index: int) -> Optional[QPixma
         if not ret:
             return None
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        sar = _get_sar(str(video_path))
+        if sar != (1, 1):
+            display_w = int(round(rgb.shape[1] * sar[0] / sar[1]))
+            rgb = cv2.resize(rgb, (display_w, rgb.shape[0]), interpolation=cv2.INTER_LINEAR)
         h, w, ch = rgb.shape
         qimg = QImage(rgb.data, w, h, ch * w, QImage.Format_RGB888)
         return QPixmap.fromImage(qimg)
@@ -372,9 +401,19 @@ class TileWidget(QFrame):
     # ------------------------------------------------------------------
 
     def _tile_dimensions(self, tile_size: int) -> tuple[int, int]:
-        """Return (img_w, img_h) for the given tile_size (height)."""
+        """Return (img_w, img_h) for the given tile_size (height).
+
+        Uses the actual pixmap aspect ratio so wide/narrow films are displayed
+        correctly instead of being forced into 16:9 and cropped.
+        """
         img_h = tile_size
-        img_w = int(tile_size * 16 / 9)
+        if self.original_pixmap is not None and not self.original_pixmap.isNull():
+            pw = self.original_pixmap.width()
+            ph = self.original_pixmap.height()
+            if ph > 0:
+                img_w = max(1, int(tile_size * pw / ph))
+                return img_w, img_h
+        img_w = int(tile_size * 16 / 9)  # fallback for missing frames
         return img_w, img_h
 
     def _render(self, tile_size: int) -> None:
@@ -385,14 +424,9 @@ class TileWidget(QFrame):
         if self.original_pixmap is not None and not self.original_pixmap.isNull():
             scaled = self.original_pixmap.scaled(
                 img_w, img_h,
-                Qt.KeepAspectRatioByExpanding,
+                Qt.KeepAspectRatio,
                 Qt.SmoothTransformation,
             )
-            # Centre-crop to exact tile dimensions
-            if scaled.width() > img_w or scaled.height() > img_h:
-                x = (scaled.width()  - img_w) // 2
-                y = (scaled.height() - img_h) // 2
-                scaled = scaled.copy(x, y, img_w, img_h)
             self._img_label.setPixmap(scaled)
             self._img_label.setText("")
         else:
