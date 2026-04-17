@@ -340,44 +340,61 @@ def cmd_media(args):
     sub = args.media_subcommand
     if sub == "import":
         cmd_import(args)
-    elif sub == "ingest":
-        cmd_ingest(args)
     elif sub == "remove":
         cmd_remove(args)
     elif sub == "subtitle":
         cmd_subtitle(args)
 
 
-def cmd_ingest(args):
-    """Ingest a gameplay clip: copy with media_id filename, write to gameplay.json."""
-    _require_path()
-    from data.metadata import ingest_gameplay
-
-    project_path = prefs.get("path")
-    src = args.source
-    title = getattr(args, "title", None) or None
-    game  = getattr(args, "game",  None) or None
-
-    try:
-        record = ingest_gameplay(src, project_path, title=title, game=game)
-    except FileNotFoundError as exc:
-        print(f"\u2717 {exc}", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"\u2713  {record['media_id']}")
-    print(f"   on-disk:           {record['filename']}")
-    print(f"   original_filename: {record['original_filename']}")
-    print(json.dumps(record, indent=2))
-
-
 def cmd_import(args):
     _require_path()
+
+    if not args.media:
+        args._parser.error("--media is required: choose 'movie' or 'gameplay'")
+
+    media_type = _MEDIA_FOLDER[args.media]
+
+    if media_type == "gameplay":
+        # Gameplay path: assign media_id, copy with readable name, write to gameplay.json
+        import re as _re
+        from data.metadata import ingest_gameplay
+
+        if not args.game:
+            args._parser.error("--game is required for gameplay imports (e.g. --game rdr2)")
+
+        # Get sources from picker or arguments
+        if args.pick:
+            sources = _pick_files_or_folder()
+            if not sources:
+                print("No files or folder selected.")
+                return
+        else:
+            if not args.sources:
+                args._parser.error("the following arguments are required: source (or use --pick)")
+            sources = args.sources
+
+        project_path = prefs.get("path")
+        for src in sources:
+            # Default title: filename stem with separators replaced by spaces
+            if args.title:
+                title = args.title
+            else:
+                from pathlib import Path as _Path
+                stem = _Path(src).stem
+                title = _re.sub(r"[-_]+", " ", stem).strip()
+            try:
+                record = ingest_gameplay(src, project_path, title=title, game=args.game)
+                print(f"  \u2713  {record['media_id']}  {record['filename']}")
+            except FileNotFoundError as exc:
+                print(f"  \u2717  {exc}", file=sys.stderr)
+        return
+
+    # Movie path: transcode + TMDB metadata fetch
     from services.import_media import import_files
     from data.metadata import fetch_metadata, fetch_thumbnail, fetch_subtitle, set_metadata
-    
+
     project_path = prefs.get("path")
-    media_type = _MEDIA_FOLDER[args.media]
-    
+
     # Get sources from picker or arguments
     if args.pick:
         sources = _pick_files_or_folder()
@@ -388,10 +405,10 @@ def cmd_import(args):
         if not args.sources:
             args._parser.error("the following arguments are required: source (or use --pick)")
         sources = args.sources
-    
+
     # Import files
-    imported_files = import_files(sources, project_path, dest=media_type, platform=args.platform)
-    
+    imported_files = import_files(sources, project_path, dest=media_type, platform=args.optimize)
+
     # Auto-update metadata for imported files
     if imported_files and not args.skip_metadata:
         print(f"\nUpdating metadata for {len(imported_files)} imported file{'s' if len(imported_files) > 1 else ''}...")
@@ -412,9 +429,9 @@ def cmd_import(args):
                         candidate.get("title", ""),
                         candidate.get("year")
                     )
-                print(f"  ✓  {filename}")
+                print(f"  \u2713  {filename}")
             except (RuntimeError, LookupError) as exc:
-                print(f"  ✗  {filename}: {exc}")
+                print(f"  \u2717  {filename}: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -1082,6 +1099,11 @@ def cmd_remove(args):
     from data.shotlist import resolve_filename
 
     project_path = prefs.get("path")
+
+    if not args.media:
+        print("\u2717 --media is required: choose 'movies' or 'gameplay'", file=sys.stderr)
+        sys.exit(1)
+
     media_type = args.media
     tmdb = getattr(args, "tmdb", None)
     query = " ".join(args.query).strip() if args.query else ""
@@ -3911,23 +3933,25 @@ def build_parser():
     media_sub = p_media.add_subparsers(dest="media_subcommand", required=True)
 
     # media import
-    p_import = media_sub.add_parser("import", help="Import media files into the project")
+    p_import = media_sub.add_parser(
+        "import",
+        help="Import media files into the project",
+        epilog=(
+            "movie:    crossing media import --media movie film.mkv\n"
+            "gameplay: crossing media import --media gameplay --game rdr2 clip.mp4"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p_import.add_argument("sources", nargs="*", metavar="source", help="File(s) or folder to import")
     p_import.add_argument("--pick", action="store_true", help="Open GUI file/folder picker")
-    p_import.add_argument("--media", choices=["movie", "gameplay"], default="movie")
-    p_import.add_argument("--platform", choices=["universal", "pi5"], default="universal")
-    p_import.add_argument("--skip-metadata", action="store_true", help="Skip automatic metadata fetch")
+    p_import.add_argument("--media", choices=["movie", "gameplay"], default=None, required=True,
+                          help="Media type to import")
+    p_import.add_argument("--optimize", choices=["universal", "pi5"], default=None,
+                          help="Re-encode for a target platform (movie only; omit to copy as-is)")
+    p_import.add_argument("--skip-metadata", action="store_true", help="Skip automatic metadata fetch (movie only)")
+    p_import.add_argument("--title", default=None, help="Display title (gameplay only; default: derived from filename)")
+    p_import.add_argument("--game", default=None, help="Game slug for media_id prefix (gameplay only, required; e.g. rdr2)")
     p_import.set_defaults(func=cmd_import, _parser=p_import)
-
-    # media ingest (gameplay-only: assigns media_id, writes to gameplay.json)
-    p_ingest = media_sub.add_parser(
-        "ingest",
-        help="Ingest a gameplay clip: assign media_id, copy to project, update gameplay.json",
-    )
-    p_ingest.add_argument("source", help="Path to the source video file")
-    p_ingest.add_argument("--title", default=None, help="Human-readable display title (default: derived from filename)")
-    p_ingest.add_argument("--game",  default=None, help="Game slug override for the media_id prefix (e.g. rdr2, rdr1)")
-    p_ingest.set_defaults(func=cmd_ingest)
 
     # metadata command group
     p_meta = sub.add_parser("metadata", help="Manage media metadata")
@@ -3990,7 +4014,8 @@ def build_parser():
     p_remove.set_defaults(func=cmd_remove)
     p_remove.add_argument("query", nargs="*", help="Filename or title words to match")
     p_remove.add_argument("--tmdb", type=int, default=None, help="TMDb ID (unambiguous)")
-    p_remove.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    p_remove.add_argument("--media", choices=["movies", "gameplay"], default=None, required=True,
+                          help="Media type to remove from")
     p_remove.add_argument("--confirm", action="store_true", help="Actually delete (default is a dry run)")
 
     # search command
