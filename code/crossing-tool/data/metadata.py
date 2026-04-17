@@ -23,13 +23,7 @@ def _all_metadata(project_path: str, media_type: str | None = None) -> list[dict
     types = (media_type,) if media_type else _MEDIA_TYPES
     results = []
     for mt in types:
-        path = _csv_path(project_path, mt)
-        if not path.exists():
-            continue
-        with path.open(newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                results.append(dict(row))
+        results.extend(load_json_metadata(project_path, mt))
     return results
 
 
@@ -64,103 +58,61 @@ def get_metadata(project_path: str, query: str | None = None, media_type: str = 
 
 
 def set_metadata(project_path: str, data: dict, match_filename: str | None = None) -> Path:
-    """Write metadata to the CSV file for the appropriate media type.
+    """Write metadata to the JSON file for the appropriate media type.
 
     The data dict must contain 'filename'. 'media_type' defaults to 'movies'.
-    If a row with the same filename exists it is replaced; otherwise appended.
-    match_filename lets callers rename an existing row (pass the old filename).
+    If a record with the same media_id exists it is replaced; otherwise appended.
+    match_filename lets callers rename an existing record (pass the old filename).
     """
+    from data.media_id import compute_media_id
     media_type = data.get("media_type", "movies")
     filename = data.get("filename")
     if not filename:
         raise ValueError("metadata must include a 'filename' field")
 
-    dest = _csv_path(project_path, media_type)
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    record = {k: v for k, v in data.items() if k != "media_type"}
 
-    existing_rows: list[dict] = []
-    fieldnames: list[str] = []
-    if dest.exists():
-        with dest.open(newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            fieldnames = list(reader.fieldnames or [])
-            existing_rows = [{k: v for k, v in row.items() if k is not None} for row in reader]
+    # Ensure media_id is present
+    if not record.get("media_id"):
+        record["media_id"] = compute_media_id(record, media_type)
 
-    # Strip internal routing key before writing
-    row_data = {k: v for k, v in data.items() if k != "media_type"}
+    # Ensure original_filename is set
+    if not record.get("original_filename"):
+        record["original_filename"] = filename
 
-    # Extend fieldnames with any new keys from data
-    for key in row_data:
-        if key not in fieldnames:
-            fieldnames.append(key)
+    # Handle rename: find by old filename and replace in-place
+    if match_filename and match_filename != filename:
+        records = load_json_metadata(project_path, media_type)
+        updated = False
+        for i, r in enumerate(records):
+            if r.get("filename") == match_filename:
+                records[i] = {**r, **record}
+                updated = True
+                break
+        if not updated:
+            records.append(record)
+        records.sort(key=lambda r: str(r.get("title", "")).lower())
+        return save_json_metadata(project_path, media_type, records)
 
-    # Upsert by filename (match_filename lets callers rename an existing row)
-    lookup = match_filename if match_filename is not None else filename
-    updated = False
-    for i, row in enumerate(existing_rows):
-        if row.get("filename") == lookup:
-            existing_rows[i] = {**row, **row_data}
-            updated = True
-            break
-    if not updated:
-        existing_rows.append(row_data)
-
-    existing_rows.sort(key=lambda r: r.get("title", "").lower())
-
-    with dest.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames, restval="")
-        writer.writeheader()
-        writer.writerows(existing_rows)
-
-    return dest
+    return upsert_json_record(project_path, record, media_type, match_key="media_id")
 
 
 def prune_metadata(project_path: str, media_type: str = "movies") -> list[dict]:
-    """Delete metadata rows whose file no longer exists on disk.
+    """Delete metadata records whose file no longer exists on disk.
 
-    Returns the list of pruned rows.
+    Returns the list of pruned records.
     """
-    # Canonical videos location. Legacy media/<media_type> is deprecated.
-    media_dir_new = Path(project_path) / "media" / "videos" / media_type
-    media_dir_legacy = Path(project_path) / "media" / media_type
-    dest = _csv_path(project_path, media_type)
-
-    if not dest.exists():
-        return []
-
-    with dest.open(newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        fieldnames = list(reader.fieldnames or [])
-        rows = [{k: v for k, v in row.items() if k is not None} for row in reader]
-
+    records = load_json_metadata(project_path, media_type)
+    media_dir = Path(project_path) / "media" / "videos" / media_type
     kept, pruned = [], []
-    legacy_detected: list[str] = []
-    for row in rows:
-        filename = row.get("filename", "")
-        if not filename:
-            pruned.append(row)
-            continue
-        # Only canonical location is accepted. Legacy files are treated as missing.
-        if (media_dir_new / filename).exists():
-            kept.append(row)
+    for r in records:
+        filename = r.get("filename", "")
+        if filename and (media_dir / filename).exists():
+            kept.append(r)
         else:
-            # If a legacy file exists, record it for a single warning and treat as missing.
-            if (media_dir_legacy / filename).exists():
-                legacy_detected.append(filename)
-            pruned.append(row)
-
-    if legacy_detected:
-        warnings.warn(
-            f"Found {len(legacy_detected)} media file(s) in legacy location {media_dir_legacy}. "
-            f"These files will be treated as missing. Move them to {media_dir_new}.",
-            UserWarning,
-        )
-
-    with dest.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames, restval="")
-        writer.writeheader()
-        writer.writerows(kept)
-
+            pruned.append(r)
+    if pruned:
+        save_json_metadata(project_path, media_type, kept)
     return pruned
 
 
@@ -669,7 +621,11 @@ def ingest_gameplay(
     if not dest_path.exists():
         shutil.copy2(str(src), str(dest_path))
 
-    # Build full metadata record
+    # Extract thumbnail from ~5% into the video
+    from services.transcode import extract_video_thumbnail
+    thumb_dir = Path(project_path) / "media" / "thumbnails" / "gameplay"
+    thumb_path = thumb_dir / (Path(dest_filename).stem + ".jpg")
+    extract_video_thumbnail(dest_path, thumb_path)
     record: dict = {
         "media_id":          media_id,
         "title":             title,

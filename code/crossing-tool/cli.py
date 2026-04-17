@@ -344,6 +344,12 @@ def cmd_media(args):
         cmd_remove(args)
     elif sub == "subtitle":
         cmd_subtitle(args)
+    elif sub == "audit":
+        _require_path()
+        _meta_audit(args)
+    elif sub == "update":
+        _require_path()
+        _meta_update(args)
 
 
 def cmd_import(args):
@@ -407,6 +413,10 @@ def cmd_import(args):
         sources = args.sources
 
     # Import files
+    if getattr(args, "verbose", False):
+        for src in sources:
+            from pathlib import Path as _Path
+            print(f"  importing  {_Path(src).name} ...", flush=True)
     imported_files = import_files(sources, project_path, dest=media_type, platform=args.optimize)
 
     # Auto-update metadata for imported files
@@ -420,6 +430,13 @@ def cmd_import(args):
                 # Download thumbnail and subtitle
                 if candidate.get("tmdb"):
                     fetch_thumbnail(filename, project_path, media_type, candidate["tmdb"])
+                else:
+                    from services.transcode import extract_video_thumbnail
+                    from pathlib import Path as _Path
+                    video_path = _Path(project_path) / "media" / "videos" / media_type / filename
+                    thumb_dir = _Path(project_path) / "media" / "thumbnails" / media_type
+                    thumb_path = thumb_dir / (_Path(filename).stem + ".jpg")
+                    extract_video_thumbnail(video_path, thumb_path)
                 if candidate.get("imdb"):
                     fetch_subtitle(
                         filename,
@@ -661,12 +678,8 @@ def cmd_metadata(args):
         _meta_get(args)
     elif sub == "set":
         _meta_set(args)
-    elif sub == "validate":
-        _meta_validate(args)
     elif sub == "update":
         _meta_update(args)
-    elif sub == "fixname":
-        _meta_fixname(args)
     elif sub == "count":
         _meta_count(args)
     elif sub == "list":
@@ -675,10 +688,6 @@ def cmd_metadata(args):
         _meta_prune(args)
     elif sub == "audit":
         _meta_audit(args)
-    elif sub == "migrate":
-        _meta_migrate(args)
-    elif sub == "check":
-        _meta_check(args)
 
 
 def _meta_get(args):
@@ -733,111 +742,61 @@ def _meta_set(args):
     print(f"Saved: {dest}")
 
 
-def _meta_validate(args):
-    from pathlib import Path
-    from data.metadata import get_metadata
-    from services.normalize import normalize_filename
-
-    project_path = prefs.get("path")
-    media_type = args.media
-    media_dir = Path(project_path) / "media" / "videos" / media_type
-
-    rows = get_metadata(project_path, media_type=media_type)
-    if not rows:
-        print("No metadata entries found.")
-        return
-
-    missing = []
-    for row in rows:
-        filename = row.get("filename", "")
-        if not filename:
-            continue
-        if not (media_dir / filename).exists():
-            missing.append(filename)
-
-    if missing:
-        print(f"{len(missing)} file(s) missing from {media_dir}:")
-        for f in missing:
-            print(f"  missing  {f}")
-        sys.exit(1)
-    else:
-        print(f"All {len(rows)} file(s) present.")
-
-    # Check for thumbnails if requested
-    if args.check_thumbnails:
-        thumbnail_dir = Path(project_path) / "media" / "thumbnails" / media_type
-        missing_thumbnails = []
-        
-        for row in rows:
-            filename = row.get("filename", "")
-            if not filename:
-                continue
-            
-            # Expected thumbnail name
-            thumbnail_name = Path(filename).stem + ".jpg"
-            thumbnail_path = thumbnail_dir / thumbnail_name
-            
-            # Also check old dash-separated format
-            old_thumbnail_name = thumbnail_name.replace(" ", "-")
-            old_thumbnail_path = thumbnail_dir / old_thumbnail_name
-            
-            if not thumbnail_path.exists() and not old_thumbnail_path.exists():
-                missing_thumbnails.append(filename)
-        
-        if missing_thumbnails:
-            print(f"\n{len(missing_thumbnails)} thumbnail(s) missing:")
-            for f in missing_thumbnails:
-                print(f"  no thumbnail  {f}")
-        else:
-            print(f"\nAll {len(rows)} thumbnail(s) present.")
-
-    # Check for subtitles if requested
-    if args.check_subtitles:
-        subtitle_dir = Path(project_path) / "media" / "subtitles" / media_type
-        missing_subtitles = []
-        
-        for row in rows:
-            filename = row.get("filename", "")
-            if not filename:
-                continue
-            
-            # Expected subtitle name
-            subtitle_name = Path(filename).stem + ".srt"
-            subtitle_path = subtitle_dir / subtitle_name
-            
-            # Also check old dash-separated format
-            old_subtitle_name = subtitle_name.replace(" ", "-")
-            old_subtitle_path = subtitle_dir / old_subtitle_name
-            
-            if not subtitle_path.exists() and not old_subtitle_path.exists():
-                missing_subtitles.append(filename)
-        
-        if missing_subtitles:
-            print(f"\n{len(missing_subtitles)} subtitle(s) missing:")
-            for f in missing_subtitles:
-                print(f"  no subtitle  {f}")
-        else:
-            print(f"\nAll {len(rows)} subtitle(s) present.")
-
-
 def _meta_update(args):
-    from data.metadata import fetch_metadata, fetch_thumbnail, fetch_subtitle, set_metadata, get_metadata
+    from data.metadata import fetch_metadata, fetch_thumbnail, fetch_subtitle, set_metadata, get_metadata, load_json_metadata
     project_path = prefs.get("path")
     media_type = getattr(args, "media", "movies")
     force = getattr(args, "force", False)
     single_file = getattr(args, "file", None)
 
+    def _ensure_thumbnail(filename, candidate):
+        """Fetch TMDB thumbnail or extract a frame from the video if missing."""
+        from services.transcode import extract_video_thumbnail
+        thumb_dir = Path(project_path) / "media" / "thumbnails" / media_type
+        thumb_path = thumb_dir / (Path(filename).stem + ".jpg")
+        old_thumb  = thumb_dir / (Path(filename).stem.replace(" ", "-") + ".jpg")
+        if thumb_path.exists() or old_thumb.exists():
+            return  # already present
+        if candidate.get("tmdb"):
+            fetch_thumbnail(filename, project_path, media_type, candidate["tmdb"])
+        else:
+            video_path = Path(project_path) / "media" / "videos" / media_type / filename
+            extract_video_thumbnail(video_path, thumb_path)
+
+    # ------------------------------------------------------------------ #
+    # Gameplay: no TMDb lookup — only ensure thumbnails exist             #
+    # ------------------------------------------------------------------ #
+    if media_type == "gameplay":
+        # Collect all known gameplay filenames from JSON metadata + disk
+        json_records = load_json_metadata(project_path, "gameplay")
+        known = {r["filename"] for r in json_records if r.get("filename")}
+        media_dir = Path(project_path) / "media" / "videos" / "gameplay"
+        disk_files = sorted(f.name for f in media_dir.iterdir() if f.is_file()) if media_dir.is_dir() else []
+        targets = list(known | set(disk_files)) if force else list(known | set(disk_files))
+
+        if single_file:
+            targets = [single_file]
+
+        ok_count = 0
+        for filename in sorted(targets):
+            # Build a minimal candidate just to satisfy _ensure_thumbnail signature
+            rec = next((r for r in json_records if r.get("filename") == filename), {})
+            _ensure_thumbnail(filename, rec)
+            print(f"  ok  {filename}")
+            ok_count += 1
+        print(f"Done. {ok_count} gameplay file(s) checked.")
+        return
+
+    # ------------------------------------------------------------------ #
+    # Movies (and other TMDb-backed types)                                #
+    # ------------------------------------------------------------------ #
     # Single file update
     if single_file:
         try:
             candidate = fetch_metadata(single_file, project_path)
             candidate["media_type"] = media_type
             set_metadata(project_path, candidate, match_filename=single_file)
-            # Download thumbnail and subtitle
-            if candidate.get("tmdb"):
-                thumbnail_path = fetch_thumbnail(single_file, project_path, media_type, candidate["tmdb"])
-                if thumbnail_path:
-                    print(f"Thumbnail: {thumbnail_path}")
+            _ensure_thumbnail(single_file, candidate)
             if candidate.get("imdb"):
                 subtitle_path = fetch_subtitle(
                     single_file,
@@ -851,10 +810,10 @@ def _meta_update(args):
                     print(f"Subtitle: {subtitle_path}")
             print(f"  ok  {single_file}")
         except RuntimeError as exc:
-            print(f"✗ Error: {exc}", file=sys.stderr)
+            print(f"\u2717 Error: {exc}", file=sys.stderr)
             sys.exit(1)
         except LookupError as exc:
-            print(f"✗ Error: {exc}", file=sys.stderr)
+            print(f"\u2717 Error: {exc}", file=sys.stderr)
             sys.exit(1)
         return
 
@@ -862,13 +821,11 @@ def _meta_update(args):
     REQUIRED = {"title", "year", "director", "overview"}
     rows = get_metadata(project_path, media_type=media_type)
     known = {r["filename"] for r in rows if r.get("filename")}
-    
+
     if force:
-        # Force update all existing entries
         missing = [r for r in rows if r.get("filename")]
     else:
         incomplete = [r for r in rows if any(not r.get(f) for f in REQUIRED)]
-        # files on disk not in CSV at all
         media_dir = Path(project_path) / "media" / "videos" / media_type
         unregistered = []
         if media_dir.is_dir():
@@ -876,7 +833,7 @@ def _meta_update(args):
                 if f.is_file() and f.name not in known:
                     unregistered.append({"filename": f.name})
         missing = incomplete + unregistered
-    
+
     if not missing:
         print("All entries already have metadata.")
         return
@@ -890,13 +847,11 @@ def _meta_update(args):
             candidate = fetch_metadata(filename, project_path)
             candidate["media_type"] = media_type
             set_metadata(project_path, candidate, match_filename=filename)
-            # Download thumbnail and subtitle
-            if candidate.get("tmdb"):
-                fetch_thumbnail(filename, project_path, media_type, candidate["tmdb"])
+            _ensure_thumbnail(filename, candidate)
             if candidate.get("imdb"):
                 fetch_subtitle(
-                    filename, 
-                    project_path, 
+                    filename,
+                    project_path,
                     media_type,
                     candidate["imdb"],
                     candidate.get("title", ""),
@@ -981,18 +936,19 @@ def _meta_prune(args):
 
 
 def _meta_audit(args):
-    """Report missing metadata, shotlists, and subtitles."""
+    """Report missing metadata, shotlists, subtitles, and thumbnails."""
     from data.metadata import get_metadata
 
     project_path = prefs.get("path")
     media_type = getattr(args, "media", "movies")
 
-    video_dir    = Path(project_path) / "media" / "videos"    / media_type
-    subtitle_dir = Path(project_path) / "media" / "subtitles" / media_type
-    shotlist_dir = Path(project_path) / "data"  / "shotlists" / media_type
+    video_dir     = Path(project_path) / "media" / "videos"     / media_type
+    subtitle_dir  = Path(project_path) / "media" / "subtitles"  / media_type
+    shotlist_dir  = Path(project_path) / "data"  / "shotlists"  / media_type
+    thumbnail_dir = Path(project_path) / "media" / "thumbnails" / media_type
 
-    video_files   = sorted(f.name for f in video_dir.glob("*") if f.is_file()) if video_dir.exists() else []
-    entries       = get_metadata(project_path, media_type=media_type)
+    video_files    = sorted(f.name for f in video_dir.glob("*") if f.is_file()) if video_dir.exists() else []
+    entries        = get_metadata(project_path, media_type=media_type)
     meta_filenames = {e["filename"] for e in entries if e.get("filename")}
 
     no_metadata = [f for f in video_files if f not in meta_filenames]
@@ -1013,6 +969,16 @@ def _meta_audit(args):
            not (subtitle_dir / (stem.replace(" ", "-") + ".srt")).exists():
             no_subtitle.append(fn)
 
+    no_thumbnail = []
+    for entry in entries:
+        fn = entry.get("filename", "")
+        if not fn:
+            continue
+        stem = Path(fn).stem
+        if not (thumbnail_dir / (stem + ".jpg")).exists() and \
+           not (thumbnail_dir / (stem.replace(" ", "-") + ".jpg")).exists():
+            no_thumbnail.append(fn)
+
     n = len(entries)
     print(f"Audit · {media_type}  ({len(video_files)} video file(s) · {n} metadata entry(ies))")
 
@@ -1023,6 +989,14 @@ def _meta_audit(args):
             print(f"    {f}")
     else:
         print(f"  Metadata:   ✓ all {n}")
+
+    print()
+    if no_thumbnail:
+        print(f"  No thumbnail  ({len(no_thumbnail)} / {n}):")
+        for f in no_thumbnail:
+            print(f"    {f}")
+    else:
+        print(f"  Thumbnails: ✓ all {n}")
 
     print()
     if no_shotlist:
@@ -1041,61 +1015,13 @@ def _meta_audit(args):
         print(f"  Subtitles:  ✓ all {n}")
 
 
-def _meta_migrate(args):
-    """Migrate CSV → JSON for one or both media types, assigning media_ids."""
-    from data.metadata import migrate_csv_to_json
-    project_path = prefs.get("path")
-    types = [args.media] if getattr(args, "media", None) else ["movies", "gameplay"]
-    for mt in types:
-        result = migrate_csv_to_json(project_path, mt)
-        if result["path"] is None:
-            print(f"  skip  {mt}: no CSV found")
-        else:
-            path = Path(result["path"]).relative_to(project_path)
-            print(f"  ok    {mt}: {result['written']} record(s) → {path}")
-            if result["skipped_ids"]:
-                print(f"        skipped (no id): {result['skipped_ids']}")
-
-
-def _meta_check(args):
-    """Validate that JSON and CSV metadata agree and every record has a media_id."""
-    from data.metadata import check_metadata_sync
-    project_path = prefs.get("path")
-    types = [args.media] if getattr(args, "media", None) else ["movies", "gameplay"]
-    all_ok = True
-    for mt in types:
-        report = check_metadata_sync(project_path, mt)
-        status = "✓" if report["ok"] else "✗"
-        print(f"{status}  {mt}  (csv: {report['csv_count']}, json: {report['json_count']})")
-        if report["missing_media_id"]:
-            print(f"    missing media_id ({len(report['missing_media_id'])}):")
-            for x in report["missing_media_id"]:
-                print(f"      {x}")
-        if report["in_csv_not_json"]:
-            print(f"    in CSV but not JSON ({len(report['in_csv_not_json'])}):")
-            for x in report["in_csv_not_json"]:
-                print(f"      {x}")
-        if report["in_json_not_csv"]:
-            print(f"    JSON-only / new ingests ({len(report['in_json_not_csv'])}):")
-            for x in report["in_json_not_csv"]:
-                print(f"      {x}")
-        if report["ok"]:
-            print(f"    all records present and have media_id")
-        else:
-            all_ok = False
-    if not all_ok:
-        sys.exit(1)
-
-
 # ---------------------------------------------------------------------------
 # remove command
 # ---------------------------------------------------------------------------
 
 def cmd_remove(args):
     _require_path()
-    import csv as _csv
-    from data.metadata import (get_metadata, prune_metadata,
-                                load_json_metadata, save_json_metadata, _csv_path)
+    from data.metadata import get_metadata, load_json_metadata, save_json_metadata
     from data.shotlist import resolve_filename
 
     project_path = prefs.get("path")
@@ -1112,18 +1038,7 @@ def cmd_remove(args):
         print("✗ Provide a title query or --tmdb <id>.", file=sys.stderr)
         sys.exit(1)
 
-    # Search CSV records
-    csv_rows = get_metadata(project_path, media_type=media_type)
-    csv_filenames = {r.get("filename", "") for r in csv_rows}
-
-    # Also include JSON-only records (new ingests not yet in CSV)
-    json_records = load_json_metadata(project_path, media_type)
-    json_only = [
-        r for r in json_records
-        if r.get("filename") not in csv_filenames
-        and r.get("original_filename", r.get("filename", "")) not in csv_filenames
-    ]
-    all_rows = csv_rows + json_only
+    all_rows = get_metadata(project_path, media_type=media_type)
 
     if tmdb is not None:
         try:
@@ -1156,12 +1071,7 @@ def cmd_remove(args):
     row = matches[0]
     filename = row.get("filename", "")
     stem = Path(filename).stem
-    in_csv  = filename in csv_filenames
-    in_json = any(
-        r.get("filename") == filename
-        or (row.get("media_id") and r.get("media_id") == row.get("media_id"))
-        for r in json_records
-    )
+    media_id = row.get("media_id", "")
 
     video_path     = Path(project_path) / "media" / "videos"     / media_type / filename
     thumbnail_path = Path(project_path) / "media" / "thumbnails" / media_type / (stem + ".jpg")
@@ -1179,10 +1089,7 @@ def cmd_remove(args):
     present = [(label, p) for label, p in candidates if p.exists()]
 
     print(f"Will remove: {row.get('title', filename)} ({row.get('year', '?')})")
-    if in_csv:
-        print(f"  metadata row in {media_type}.csv")
-    if in_json:
-        print(f"  metadata record in {media_type}.json  (media_id: {row.get('media_id', 'n/a')})")
+    print(f"  metadata record in {media_type}.json  (media_id: {media_id or 'n/a'})")
     for label, p in present:
         print(f"  {label}: {p.relative_to(project_path)}")
     for label, _ in [(l, p) for l, p in candidates if not p.exists()]:
@@ -1196,125 +1103,18 @@ def cmd_remove(args):
     for _, p in present:
         p.unlink()
 
-    # Remove from CSV
-    if in_csv:
-        dest = _csv_path(project_path, media_type)
-        if dest.exists():
-            with dest.open(newline="", encoding="utf-8") as f:
-                reader = _csv.DictReader(f)
-                fieldnames = list(reader.fieldnames or [])
-                kept = [r for r in reader if r.get("filename") != filename]
-            with dest.open("w", newline="", encoding="utf-8") as f:
-                writer = _csv.DictWriter(f, fieldnames=fieldnames, restval="")
-                writer.writeheader()
-                writer.writerows(kept)
-
     # Remove from JSON
-    if in_json:
-        media_id = row.get("media_id", "")
-        updated = [
-            r for r in json_records
-            if not (
-                r.get("filename") == filename
-                or (media_id and r.get("media_id") == media_id)
-            )
-        ]
-        save_json_metadata(project_path, media_type, updated)
+    updated = [
+        r for r in all_rows
+        if not (
+            r.get("filename") == filename
+            or (media_id and r.get("media_id") == media_id)
+        )
+    ]
+    save_json_metadata(project_path, media_type, updated)
 
     removed_files = len(present)
     print(f"\nRemoved: metadata + {removed_files} file(s).")
-
-
-def _meta_fixname(args):
-    from pathlib import Path
-    from services.normalize import normalize_filename
-    from data.metadata import get_metadata, set_metadata
-
-    project_path = prefs.get("path")
-    media_type = args.media
-    media_dir = Path(project_path) / "media" / "videos" / media_type
-
-    # Fix media files and CSV
-    rows = get_metadata(project_path, media_type=media_type)
-    if not rows:
-        print("No metadata entries found.")
-        return
-
-    renamed = 0
-    for row in rows:
-        old_name = row.get("filename", "")
-        if not old_name:
-            continue
-        normalized = normalize_filename(old_name)
-        if normalized == old_name:
-            continue
-
-        # Rename physical file if it exists
-        old_path = media_dir / old_name
-        new_path = media_dir / normalized
-        if old_path.exists():
-            if new_path.exists():
-                print(f"  warn  {old_name} → {normalized}  (skipped, target exists)")
-                continue
-            old_path.rename(new_path)
-
-        # Update CSV — pass old name so set_metadata can find and replace the row
-        set_metadata(project_path, {**row, "filename": normalized, "media_type": media_type}, match_filename=old_name)
-        print(f"  {old_name} → {normalized}")
-        renamed += 1
-
-    # Fix thumbnail files
-    art_dir = Path(project_path) / "media" / "thumbnails" / media_type
-    
-    art_renamed = 0
-    if art_dir.is_dir():
-        for old_path in sorted(art_dir.iterdir()):
-            if not old_path.is_file():
-                continue
-            old_name = old_path.name
-            normalized = normalize_filename(old_name)
-            if normalized == old_name:
-                continue
-            
-            new_path = art_dir / normalized
-            if new_path.exists():
-                print(f"  warn  thumbnails/{old_name} → {normalized}  (skipped, target exists)")
-                continue
-            
-            old_path.rename(new_path)
-            print(f"  thumbnails/{old_name} → {normalized}")
-            art_renamed += 1
-        
-        if art_renamed > 0:
-            print(f"Renamed {art_renamed} thumbnails.")
-
-    # Fix subtitle files
-    subtitle_renamed = 0
-    if True:
-        subtitle_dir = Path(project_path) / "media" / "subtitles" / media_type
-        if subtitle_dir.is_dir():
-            for old_path in sorted(subtitle_dir.iterdir()):
-                if not old_path.is_file() or old_path.suffix != ".srt":
-                    continue
-                old_name = old_path.name
-                normalized = normalize_filename(old_name)
-                if normalized == old_name:
-                    continue
-                
-                new_path = subtitle_dir / normalized
-                if new_path.exists():
-                    print(f"  warn  subtitles/{old_name} → {normalized}  (skipped, target exists)")
-                    continue
-                
-                old_path.rename(new_path)
-                print(f"  subtitles/{old_name} → {normalized}")
-                subtitle_renamed += 1
-            
-            if subtitle_renamed > 0:
-                print(f"Renamed {subtitle_renamed} subtitle(s).")
-
-    if renamed == 0 and art_renamed == 0 and subtitle_renamed == 0:
-        print("Nothing to rename.")
 
 
 # ---------------------------------------------------------------------------
@@ -3951,6 +3751,7 @@ def build_parser():
     p_import.add_argument("--skip-metadata", action="store_true", help="Skip automatic metadata fetch (movie only)")
     p_import.add_argument("--title", default=None, help="Display title (gameplay only; default: derived from filename)")
     p_import.add_argument("--game", default=None, help="Game slug for media_id prefix (gameplay only, required; e.g. rdr2)")
+    p_import.add_argument("--verbose", action="store_true", help="Print a message as each file import begins")
     p_import.set_defaults(func=cmd_import, _parser=p_import)
 
     # metadata command group
@@ -3969,18 +3770,10 @@ def build_parser():
     p_meta_set = meta_sub.add_parser("set", help="Set/update metadata from a JSON string")
     p_meta_set.add_argument("json_data", metavar="json")
 
-    p_meta_validate = meta_sub.add_parser("validate", help="Check that all metadata files exist on disk")
-    p_meta_validate.add_argument("--media", choices=["movies", "gameplay"], default="movies")
-    p_meta_validate.add_argument("--check-thumbnails", action="store_true", help="Also verify thumbnails exist")
-    p_meta_validate.add_argument("--check-subtitles", action="store_true", help="Also verify subtitles exist")
-
     p_meta_update = meta_sub.add_parser("update", help="Fetch and save metadata for entries missing key fields")
     p_meta_update.add_argument("--file", default=None, help="Update a single file by filename")
     p_meta_update.add_argument("--media", choices=["movies", "gameplay"], default="movies")
     p_meta_update.add_argument("--force", action="store_true", help="Force re-fetch metadata for all entries (including duration)")
-
-    p_meta_fixname = meta_sub.add_parser("fixname", help="Normalize filenames and update metadata CSV")
-    p_meta_fixname.add_argument("--media", choices=["movies", "gameplay"], default="movies")
 
     p_meta_count = meta_sub.add_parser("count", help="Print the number of metadata entries")
     p_meta_count.add_argument("--media", choices=["movies", "gameplay"], default="movies")
@@ -4001,13 +3794,19 @@ def build_parser():
     p_meta_audit = meta_sub.add_parser("audit", help="Report missing metadata, shotlists, and subtitles")
     p_meta_audit.add_argument("--media", choices=["movies", "gameplay"], default="movies")
 
-    p_meta_migrate = meta_sub.add_parser("migrate", help="Migrate CSV metadata to JSON and assign media_ids")
-    p_meta_migrate.add_argument("--media", choices=["movies", "gameplay"], default=None,
-                                help="Limit to one media type (default: both)")
 
-    p_meta_check = meta_sub.add_parser("check", help="Validate that JSON and CSV metadata agree")
-    p_meta_check.add_argument("--media", choices=["movies", "gameplay"], default=None,
-                              help="Limit to one media type (default: both)")
+
+    # media audit (alias for metadata audit)
+    p_media_audit = media_sub.add_parser("audit", help="Report missing metadata, thumbnails, shotlists, and subtitles")
+    p_media_audit.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    p_media_audit.set_defaults(func=cmd_media)
+
+    # media update (alias for metadata update)
+    p_media_update = media_sub.add_parser("update", help="Fetch and save metadata/thumbnails for entries missing key fields")
+    p_media_update.add_argument("--file", default=None, help="Update a single file by filename")
+    p_media_update.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    p_media_update.add_argument("--force", action="store_true", help="Force re-fetch metadata for all entries")
+    p_media_update.set_defaults(func=cmd_media)
 
     # media remove
     p_remove = media_sub.add_parser("remove", help="Remove a film and all its associated files")

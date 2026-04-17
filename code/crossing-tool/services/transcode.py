@@ -94,3 +94,38 @@ def _get_duration(src: Path) -> float | None:
         return float(result.stdout.strip())
     except (ValueError, FileNotFoundError):
         return None
+
+
+def extract_video_thumbnail(video_path: "str | Path", thumb_path: "str | Path") -> "Path | None":
+    """Extract a single frame from ~5% into *video_path* and save as JPEG at *thumb_path*.
+
+    Returns *thumb_path* on success, ``None`` on failure.
+    Skips silently if the thumbnail already exists.
+    """
+    video_path = Path(video_path)
+    thumb_path = Path(thumb_path)
+
+    if thumb_path.exists():
+        return thumb_path
+
+    thumb_path.parent.mkdir(parents=True, exist_ok=True)
+
+    duration = _get_duration(video_path)
+    offset = round(duration * 0.05, 3) if duration else 3.0
+
+    cmd = [
+        "ffmpeg",
+        "-ss", str(offset),
+        "-i", str(video_path),
+        "-frames:v", "1",
+        "-q:v", "2",
+        "-y", str(thumb_path),
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True)
+        if result.returncode == 0 and thumb_path.exists():
+            return thumb_path
+        return None
+    except FileNotFoundError:
+        return None
