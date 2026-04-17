@@ -442,11 +442,14 @@ def vocabulary_from_field(
 
     ann_base = Path(project_path) / "data" / "annotations" / "shots" / media_type
 
-    # canonical_key → (display_form, shot_count)
-    counts: dict[str, list] = {}  # key → [display, count]
-
     def _norm_key(v: str) -> str:
         return re.sub(r"\s+", " ", v.strip()).lower()
+
+    # Pass 1 – collect every shot's field text and every unique value (display form).
+    # We store one searchable text string per shot (same concatenation used by
+    # search_shots) so that pass 2 can reuse _score_text for counting.
+    shot_texts: list[str] = []
+    all_values: dict[str, str] = {}  # normalized_key → display_form
 
     for entry in selected:
         filename = entry.get("filename", "")
@@ -481,16 +484,24 @@ def vocabulary_from_field(
                 s = str(val).strip()
                 raw_values = [s] if s else []
 
-            # Count each distinct value once per shot
-            seen_in_shot: set[str] = set()
+            if not raw_values:
+                continue
+
+            # Build the same searchable text that search_shots uses for this field
+            shot_texts.append(" ".join(raw_values))
+
+            # Record unique values (keep first-seen display form)
             for rv in raw_values:
                 key = _norm_key(rv)
-                if not key or key in seen_in_shot:
-                    continue
-                seen_in_shot.add(key)
-                if key not in counts:
-                    counts[key] = [rv.strip(), 0]
-                counts[key][1] += 1
+                if key and key not in all_values:
+                    all_values[key] = rv.strip()
+
+    # Pass 2 – for every unique value, count the shots that _score_text would
+    # match. This makes the vocabulary count consistent with actual search results.
+    counts: dict[str, list] = {
+        key: [display, sum(1 for t in shot_texts if _score_text(key, t) > 0)]
+        for key, display in all_values.items()
+    }
 
     # Sort: alphabetical by default; count desc + alpha tiebreak if requested
     if sort == "count":

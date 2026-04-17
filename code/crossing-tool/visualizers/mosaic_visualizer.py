@@ -677,8 +677,8 @@ class MosaicVisualizer(QMainWindow):
         self._current_results = []
         self.export_btn.setEnabled(False)
 
-        scope_text      = self.movie_combo.currentText()
-        scope           = None if scope_text == "--all" else scope_text
+        scope_data      = self.movie_combo.currentData()  # filename stored as userData
+        scope           = scope_data if scope_data else None
         field_text      = self.field_combo.currentText()
         field           = None if field_text == "--all" else field_text
         limit_text      = self.limit_combo.currentText()
@@ -779,8 +779,8 @@ class MosaicVisualizer(QMainWindow):
         if self._vocab_worker and self._vocab_worker.isRunning():
             self._vocab_worker.wait(1000)
 
-        scope_text = self.movie_combo.currentText()
-        scope      = None if scope_text == "--all" else scope_text
+        scope_data = self.movie_combo.currentData()  # filename stored as userData
+        scope      = scope_data if scope_data else None
 
         loading = QListWidgetItem("Loading…")
         loading.setFlags(loading.flags() & ~Qt.ItemIsEnabled)
