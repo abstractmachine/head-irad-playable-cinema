@@ -30,9 +30,11 @@ except ImportError:
 from PyQt5.QtCore import Qt, QTimer, QEvent
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QListWidget, QListWidgetItem, QSplitter,
-    QMessageBox, QSizePolicy, QSlider, QStyle, QComboBox
+    QPushButton, QLabel, QListWidget, QListWidgetItem,
+    QMessageBox, QSizePolicy, QSlider, QStyle, QComboBox,
+    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QFrame,
 )
+from styles.theme import GripSplitter
 from PyQt5.QtGui import QFont, QPixmap, QImage, QMouseEvent
 
 from data.shotlist import read_shotlist, write_shotlist, get_shotlist_path
@@ -163,33 +165,13 @@ class ClickSeekSlider(QSlider):
         return opt
 
 
-class ShotItem(QListWidgetItem):
-    """List item representing a shot."""
-    def __init__(self, index: int, shot: dict):
-        super().__init__()
-        self.index = index
-        self.shot = shot
-        self.is_ignored = shot.get('Ignore', 'No') == 'Yes'
-        self.update_display()
-    
-    def update_display(self):
-        """Update the display text."""
-        # pad scene and shot with values for proper sorting (up to 9999 scenes/shots)
-        scene_value = f"{int(self.shot.get('Scene', 0)):04d}"
-        shot_value = f"{self.index:04d}"
-        start_frame = self.shot.get('start_frame', '?')
-        end_frame = self.shot.get('end_frame', '?')
-        # confidence = self.shot.get('Shot_Confidence', '')
-        ignored = " [X]" if self.is_ignored else ""
-        # conf_str = f" ({confidence})" if confidence else ""
-        # if ignored show (x) at end of line
-        self.setText(f"{scene_value} | {shot_value} | f{start_frame:07d} → f{end_frame:07d} | {ignored}")
-
-    def toggle_ignore(self):
-        """Toggle ignore status."""
-        self.is_ignored = not self.is_ignored
-        self.shot['Ignore'] = 'Yes' if self.is_ignored else 'No'
-        self.update_display()
+def _make_shot_row(index: int, shot: dict) -> list:
+    """Return [shot_str, start_str, stop_str, ignored_str] for a table row."""
+    shot_str    = f"{index:04d}"
+    start_str   = shot.get('start_time', f"f{shot.get('start_frame', '?')}")
+    stop_str    = shot.get('end_time',   f"f{shot.get('end_frame',   '?')}")
+    ignored_str = "✗" if shot.get('Ignore', 'No') == 'Yes' else ""
+    return [shot_str, start_str, stop_str, ignored_str]
 
 
 class OpenCVShotVisualizer(QMainWindow):
@@ -278,7 +260,7 @@ class OpenCVShotVisualizer(QMainWindow):
         outer_layout.setContentsMargins(4, 4, 4, 4)
         outer_layout.setSpacing(4)
 
-        splitter = QSplitter(Qt.Horizontal)
+        splitter = GripSplitter(Qt.Horizontal)
         outer_layout.addWidget(splitter, stretch=1)
 
         # ---- LEFT: video + timeline ----
@@ -324,47 +306,90 @@ class OpenCVShotVisualizer(QMainWindow):
         lists_container = QWidget()
         lists_layout = QHBoxLayout(lists_container)
         lists_layout.setContentsMargins(0, 0, 0, 0)
-        lists_layout.setSpacing(4)
+        lists_layout.setSpacing(1)
 
-        # Scene list (narrow — just scene index numbers)
-        scene_col = QWidget()
-        scene_col_layout = QVBoxLayout(scene_col)
-        scene_col_layout.setContentsMargins(0, 0, 0, 0)
-        scene_col_layout.setSpacing(2)
-        scene_header = QLabel("Scene")
-        scene_header.setAlignment(Qt.AlignCenter)
-        scene_col_layout.addWidget(scene_header)
-        self.scene_list = QListWidget()
-        self.scene_list.setMaximumWidth(65)
-        self.scene_list.setMinimumWidth(50)
+        # Scene table (single column)
+        _tbl_style = f"""
+            QTableWidget {{
+                background: transparent;
+                border: none;
+                gridline-color: {theme.BG};
+            }}
+            QTableWidget::item {{
+                background: #666666;
+                color: {theme.TEXT};
+                border: none;
+                padding: 2px;
+            }}
+            QTableWidget::item:selected {{
+                background: {theme.ACCENT};
+                color: {theme.TEXT};
+            }}
+            QHeaderView::section {{
+                background: {theme.PANEL_BG};
+                color: {theme.TEXT};
+                font-weight: bold;
+                border: none;
+                padding: 4px 2px;
+            }}
+            QTableCornerButton::section {{
+                background: {theme.PANEL_BG};
+                border: none;
+            }}
+        """
+
+        self.scene_list = QTableWidget()
+        self.scene_list.setColumnCount(1)
+        self.scene_list.setHorizontalHeaderLabels(["Scene"])
+        self.scene_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.scene_list.verticalHeader().setVisible(False)
+        self.scene_list.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.scene_list.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.scene_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.scene_list.setShowGrid(True)
+        self.scene_list.setGridStyle(Qt.SolidLine)
+        self.scene_list.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        self.scene_list.setMaximumWidth(68)
+        self.scene_list.setMinimumWidth(56)
         self.scene_list.setFocusPolicy(Qt.NoFocus)
-        self.scene_list.itemClicked.connect(self.on_scene_selected)
+        self.scene_list.cellClicked.connect(self.on_scene_selected)
         self.scene_list.setToolTip("Scenes — click to jump  [PgUp/PgDn navigate  ✂/⬅ split/merge]")
-        scene_col_layout.addWidget(self.scene_list)
-        lists_layout.addWidget(scene_col)
+        self.scene_list.setFrameShape(QFrame.NoFrame)
+        self.scene_list.setStyleSheet(_tbl_style)
+        lists_layout.addWidget(self.scene_list)
 
-        # Shot list
-        shot_col = QWidget()
-        shot_col_layout = QVBoxLayout(shot_col)
-        shot_col_layout.setContentsMargins(0, 0, 0, 0)
-        shot_col_layout.setSpacing(2)
-        shot_header = QLabel("Scene | Shot | Frames     | Ignored")
-        shot_col_layout.addWidget(shot_header)
-        self.shot_list = QListWidget()
-        self.shot_list.itemClicked.connect(self.on_shot_selected)
+        # Shot table
+        self.shot_list = QTableWidget()
+        self.shot_list.setColumnCount(4)
+        self.shot_list.setHorizontalHeaderLabels(["Shot", "Start", "Stop", "Ignore"])
+        self.shot_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.shot_list.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.shot_list.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.shot_list.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        self.shot_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.shot_list.verticalHeader().setVisible(False)
+        self.shot_list.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.shot_list.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.shot_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.shot_list.setShowGrid(True)
+        self.shot_list.setGridStyle(Qt.SolidLine)
         self.shot_list.installEventFilter(self)
         self.shot_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.shot_list.setToolTip("Shots — click to jump  [↑/↓ navigate]")
+        self.shot_list.cellClicked.connect(self.on_shot_selected)
+        self.shot_list.setFrameShape(QFrame.NoFrame)
+        self.shot_list.setStyleSheet(_tbl_style)
         for i, shot in enumerate(self.shots):
-            self.shot_list.addItem(ShotItem(i, shot))
-        shot_col_layout.addWidget(self.shot_list)
-        lists_layout.addWidget(shot_col, stretch=1)
+            self._append_shot_row(i, shot)
+        lists_layout.addWidget(self.shot_list, stretch=1)
 
         right_layout.addWidget(lists_container, stretch=1)
 
         # Stats
         self.stats_label = QLabel()
+        self.stats_label.setFont(theme.font_mono())
         self.stats_label.setWordWrap(True)
+        self.stats_label.setStyleSheet(f"background-color: {theme.INPUT_BG}; padding: 4px;")
         self.update_stats()
         right_layout.addWidget(self.stats_label, stretch=0)
 
@@ -374,6 +399,7 @@ class OpenCVShotVisualizer(QMainWindow):
         self.info_label.setAlignment(Qt.AlignLeft)
         self.info_label.setWordWrap(True)
         self.info_label.setMinimumHeight(80)
+        self.info_label.setStyleSheet(f"background-color: {theme.INPUT_BG}; padding: 4px;")
         right_layout.addWidget(self.info_label, stretch=0)
 
         # Buttons in a grid — 3 rows
@@ -672,6 +698,23 @@ class OpenCVShotVisualizer(QMainWindow):
                 end_frame = int(current_shot.get('end_frame', self.total_frames - 1))
                 
                 if self.current_frame_number > end_frame:
+                    # Update info label to show we're now on the stop frame
+                    self.current_frame_number = end_frame
+                    frame = self.get_frame(end_frame)
+                    if frame is not None:
+                        self.display_frame(frame)
+                    current_shot = self.shots[self.current_shot_index]
+                    start_tc = current_shot.get('start_time', '?')
+                    end_tc = current_shot.get('end_time', '?')
+                    confidence = current_shot.get('Shot_Confidence', '')
+                    conf_str = f"\nConfidence: {confidence}" if confidence else ""
+                    self.info_label.setText(
+                        f"Scene {current_shot.get('Scene', '0')}  Shot #{self.current_shot_index}\n"
+                        f"Frame: {end_frame}\n"
+                        f"Timecode: {start_tc}\u2192{end_tc}\n"
+                        f"Viewing: STOP frame{conf_str}"
+                    )
+                    self.update_timeline_slider()
                     self.stop_playback()
                     return
         
@@ -708,28 +751,47 @@ class OpenCVShotVisualizer(QMainWindow):
             if start_frame <= self.current_frame_number <= end_frame:
                 if i != self.current_shot_index:
                     self.current_shot_index = i
-                    self.shot_list.setCurrentRow(i)
+                    self.shot_list.selectRow(i)
                     self.sync_scene_list_selection()
                 return
     
+    def _append_shot_row(self, index: int, shot: dict):
+        """Insert one row at the end of the shot table."""
+        row = self.shot_list.rowCount()
+        self.shot_list.insertRow(row)
+        for col, text in enumerate(_make_shot_row(index, shot)):
+            item = QTableWidgetItem(text)
+            item.setTextAlignment(Qt.AlignCenter)
+            self.shot_list.setItem(row, col, item)
+
+    def _refresh_shot_row(self, index: int):
+        """Re-render a single row without rebuilding the whole table."""
+        shot = self.shots[index]
+        for col, text in enumerate(_make_shot_row(index, shot)):
+            item = self.shot_list.item(index, col)
+            if item:
+                item.setText(text)
+
     def rebuild_shot_list(self):
-        """Rebuild the shot list widget from self.shots."""
-        self.shot_list.clear()
+        """Rebuild the shot table from self.shots."""
+        self.shot_list.setRowCount(0)
         for i, shot in enumerate(self.shots):
-            self.shot_list.addItem(ShotItem(i, shot))
+            self._append_shot_row(i, shot)
 
     def rebuild_scene_list(self):
-        """Rebuild the scene list from unique Scene values in self.shots."""
-        self.scene_list.clear()
+        """Rebuild the scene table from unique Scene values in self.shots."""
+        self.scene_list.setRowCount(0)
         seen = set()
         for shot in self.shots:
             scene = int(shot.get('Scene', 0))
             if scene not in seen:
                 seen.add(scene)
-                item = QListWidgetItem(str(scene))
+                row = self.scene_list.rowCount()
+                self.scene_list.insertRow(row)
+                item = QTableWidgetItem(str(scene))
                 item.setData(Qt.UserRole, scene)
                 item.setTextAlignment(Qt.AlignCenter)
-                self.scene_list.addItem(item)
+                self.scene_list.setItem(row, 0, item)
 
     def on_movie_combo_changed(self, index: int):
         """Handle movie selection from the dropdown."""
@@ -821,13 +883,16 @@ class OpenCVShotVisualizer(QMainWindow):
         if not (0 <= self.current_shot_index < len(self.shots)):
             return
         current_scene = int(self.shots[self.current_shot_index].get('Scene', 0))
-        for i in range(self.scene_list.count()):
-            if self.scene_list.item(i).data(Qt.UserRole) == current_scene:
-                self.scene_list.setCurrentRow(i)
+        for i in range(self.scene_list.rowCount()):
+            if self.scene_list.item(i, 0).data(Qt.UserRole) == current_scene:
+                self.scene_list.selectRow(i)
                 return
 
-    def on_scene_selected(self, item: QListWidgetItem):
+    def on_scene_selected(self, row: int, col: int = 0):
         """Jump to the first shot of the selected scene."""
+        item = self.scene_list.item(row, 0)
+        if item is None:
+            return
         scene = item.data(Qt.UserRole)
         for i, shot in enumerate(self.shots):
             if int(shot.get('Scene', 0)) == scene:
@@ -881,7 +946,7 @@ class OpenCVShotVisualizer(QMainWindow):
             # Get frame number
             if show_end:
                 frame_number = int(shot.get('end_frame', 0))
-                frame_type = "END"
+                frame_type = "STOP"
             else:
                 frame_number = int(shot.get('start_frame', 0))
                 frame_type = "START"
@@ -915,7 +980,7 @@ class OpenCVShotVisualizer(QMainWindow):
                 self.info_label.setText(f"Failed to load frame {frame_number}")
             
             # Update selection in list
-            self.shot_list.setCurrentRow(index)
+            self.shot_list.selectRow(index)
             self.sync_scene_list_selection()
             self.update_buttons()
             
@@ -995,19 +1060,19 @@ class OpenCVShotVisualizer(QMainWindow):
                 f"Status: STEPPING{conf_str}"
             )
     
-    def on_shot_selected(self, item: ShotItem):
-        """Handle shot selection from list."""
-        self.jump_to_shot(item.index)
+    def on_shot_selected(self, row: int, col: int = 0):
+        """Handle shot selection from table. Col 2 (Stop) shows the end frame."""
+        self.jump_to_shot(row, show_end=(col == 2))
     
     def toggle_current_ignore(self):
         """Toggle ignore status for current shot."""
         if 0 <= self.current_shot_index < len(self.shots):
-            item = self.shot_list.item(self.current_shot_index)
-            if isinstance(item, ShotItem):
-                item.toggle_ignore()
-                self.modified = True
-                self.save_button.setEnabled(True)
-                self.update_stats()
+            shot = self.shots[self.current_shot_index]
+            shot['Ignore'] = 'No' if shot.get('Ignore', 'No') == 'Yes' else 'Yes'
+            self._refresh_shot_row(self.current_shot_index)
+            self.modified = True
+            self.save_button.setEnabled(True)
+            self.update_stats()
     
     def merge_with_previous(self):
         """Merge current shot with previous shot."""
@@ -1106,7 +1171,7 @@ class OpenCVShotVisualizer(QMainWindow):
             self.shots[i]['Scene'] = str(int(self.shots[i].get('Scene', 0)) + 1)
         self.rebuild_shot_list()
         self.rebuild_scene_list()
-        self.shot_list.setCurrentRow(self.current_shot_index)
+        self.shot_list.selectRow(self.current_shot_index)
         self.sync_scene_list_selection()
         self.modified = True
         self.save_button.setEnabled(True)
@@ -1125,7 +1190,7 @@ class OpenCVShotVisualizer(QMainWindow):
             self.shots[i]['Scene'] = str(max(0, int(self.shots[i].get('Scene', 0)) - 1))
         self.rebuild_shot_list()
         self.rebuild_scene_list()
-        self.shot_list.setCurrentRow(self.current_shot_index)
+        self.shot_list.selectRow(self.current_shot_index)
         self.sync_scene_list_selection()
         self.modified = True
         self.save_button.setEnabled(True)

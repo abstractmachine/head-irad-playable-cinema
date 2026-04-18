@@ -186,28 +186,44 @@ QSlider::sub-page:horizontal {{
 
 /* ── Scroll bars ───────────────────────────────────────────── */
 QScrollBar:vertical {{
-    background: {PANEL_BG};
-    width: 10px;
+    background: transparent;
+    width: 16px;
 }}
 QScrollBar::handle:vertical {{
-    background: {TEXT_DIM};
-    border-radius: 4px;
+    background: transparent;
+    border-top: none;
+    border-bottom: none;
+    border-left: 2px solid #ff00ff;
+    border-right: none;
+    border-radius: 0;
     min-height: 20px;
+}}
+QScrollBar::handle:vertical:hover, QScrollBar::handle:vertical:pressed {{
+    background: #ff00ff;
+    border-left: 2px solid #ff00ff;
 }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
 QScrollBar:horizontal {{
-    background: {PANEL_BG};
-    height: 10px;
+    background: transparent;
+    height: 16px;
 }}
 QScrollBar::handle:horizontal {{
-    background: {TEXT_DIM};
-    border-radius: 4px;
+    background: transparent;
+    border-left: none;
+    border-right: none;
+    border-top: 2px solid #ff00ff;
+    border-bottom: none;
+    border-radius: 0;
     min-width: 20px;
+}}
+QScrollBar::handle:horizontal:hover, QScrollBar::handle:horizontal:pressed {{
+    background: #ff00ff;
+    border-top: 2px solid #ff00ff;
 }}
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
 
 /* ── Splitter handles ──────────────────────────────────────── */
-QSplitter::handle {{ background-color: {SPLITTER}; }}
+QSplitter::handle {{ background: transparent; width: 10px; height: 10px; }}
 
 /* ── Status bar ────────────────────────────────────────────── */
 QStatusBar {{
@@ -278,3 +294,59 @@ def apply_theme(app) -> None:
     app.setStyleSheet(_STYLESHEET)
     from PyQt5.QtGui import QFont
     app.setFont(QFont(FAMILY_UI, BASE_PT))
+
+
+# ---------------------------------------------------------------------------
+# GripSplitter — QSplitter with painted grip-dot handles
+# ---------------------------------------------------------------------------
+
+from PyQt5.QtWidgets import QSplitter, QSplitterHandle  # noqa: E402
+from PyQt5.QtCore import Qt                              # noqa: E402
+from PyQt5.QtGui import QPainter, QColor                # noqa: E402
+
+
+class _GripHandle(QSplitterHandle):
+    """Splitter handle drawn as a short column of grip dots."""
+
+    _DOT_COLOUR   = QColor("#666666")
+    _HOVER_COLOUR = QColor("#ff00ff")
+    _DOT_R   = 2   # dot radius (px)
+    _DOT_GAP = 6   # centre-to-centre spacing (px)
+    _N_DOTS  = 5   # number of dots
+
+    def __init__(self, orientation, parent):
+        super().__init__(orientation, parent)
+        self._hovered = False
+
+    def enterEvent(self, event):
+        self._hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        colour = self._HOVER_COLOUR if self._hovered else self._DOT_COLOUR
+        p.setBrush(colour)
+        p.setPen(Qt.NoPen)
+        w, h = self.width(), self.height()
+        cx = w // 2
+        span = (self._N_DOTS - 1) * self._DOT_GAP
+        y0 = (h - span) // 2
+        for i in range(self._N_DOTS):
+            cy = y0 + i * self._DOT_GAP
+            p.drawEllipse(cx - self._DOT_R, cy - self._DOT_R,
+                          self._DOT_R * 2, self._DOT_R * 2)
+        p.end()
+
+
+class GripSplitter(QSplitter):
+    """QSplitter that uses grip-dot handles instead of a solid bar."""
+
+    def createHandle(self):
+        return _GripHandle(self.orientation(), self)

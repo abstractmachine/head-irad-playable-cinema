@@ -24,9 +24,11 @@ from PyQt5.QtCore import Qt, QTimer, QEvent, QThread, pyqtSignal
 import threading
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QListWidget, QListWidgetItem, QSplitter,
+    QPushButton, QLabel,
     QMessageBox, QSizePolicy, QComboBox, QSlider, QStyle, QTextEdit, QFrame,
+    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
 )
+from styles.theme import GripSplitter
 from PyQt5.QtGui import QFont, QPixmap, QImage, QColor, QMouseEvent
 
 from data.metadata import get_metadata
@@ -162,36 +164,36 @@ class ClickSeekSlider(QSlider):
 # Shot list item
 # ---------------------------------------------------------------------------
 
-class ShotAnnotationItem(QListWidgetItem):
-    """List item representing a shot with its annotation status."""
-
-    def __init__(self, shot_index: int, shot: dict, annotation, edited: bool = False):
-        super().__init__()
-        self.shot_index = shot_index
-        self.shot = shot
-        self.annotation = annotation
-        self.edited = edited
-        self.update_display()
-
-    def update_display(self):
-        scene = self.shot.get("Scene", "?")
-        start = self.shot.get("start_time", "?")
-        end = self.shot.get("end_time", "?")
-        if self.annotation is None:
-            status = "?"
-            self.setForeground(QColor(theme.TEXT_DIM))
-        elif _is_valid_annotation(self.annotation):
-            status = "✓"
-            self.setForeground(QColor("#88ff88"))
-        else:
-            status = "✗"
-            self.setForeground(QColor("#ff8888"))
-        try:
-            scene_str = f"S{int(scene):03d}"
-        except (ValueError, TypeError):
-            scene_str = f"S{scene}"
-        edited_mark = "✎ " if self.edited else ""
-        self.setText(f"[{status}] {edited_mark}{scene_str} · {self.shot_index:04d} · {start} → {end}")
+def _make_annotation_row(shot_index: int, shot: dict, annotation, edited: bool) -> list:
+    """Return [status, scene, shot, start, stop] QTableWidgetItems for a table row."""
+    scene = shot.get("Scene", "?")
+    start = shot.get("start_time", "?")
+    end = shot.get("end_time", "?")
+    if annotation is None:
+        status = "?"
+        color = QColor(theme.TEXT_DIM)
+    elif _is_valid_annotation(annotation):
+        status = "✓"
+        color = QColor("#88ff88")
+    else:
+        status = "✗"
+        color = QColor("#ff8888")
+    try:
+        scene_str = f"S{int(scene):03d}"
+    except (ValueError, TypeError):
+        scene_str = f"S{scene}"
+    status_str = ("✎" if edited else "") + status
+    items = [
+        QTableWidgetItem(status_str),
+        QTableWidgetItem(scene_str),
+        QTableWidgetItem(f"{shot_index:04d}"),
+        QTableWidgetItem(str(start)),
+        QTableWidgetItem(str(end)),
+    ]
+    for item in items:
+        item.setForeground(color)
+        item.setTextAlignment(Qt.AlignCenter)
+    return items
 
 
 # ---------------------------------------------------------------------------
@@ -375,7 +377,7 @@ class AnnotationVisualizer(QMainWindow):
         outer.setContentsMargins(4, 4, 4, 4)
         outer.setSpacing(4)
 
-        splitter = QSplitter(Qt.Horizontal)
+        splitter = GripSplitter(Qt.Horizontal)
         outer.addWidget(splitter, stretch=1)
 
         # ---- COL 1: video ----
@@ -445,10 +447,54 @@ class AnnotationVisualizer(QMainWindow):
         movie_row.addWidget(self.movie_combo, stretch=1)
         right_layout.addLayout(movie_row)
 
-        self.shot_list = QListWidget()
-        self.shot_list.itemClicked.connect(self._on_shot_clicked)
+        _tbl_style = f"""
+            QTableWidget {{
+                background: transparent;
+                border: none;
+                gridline-color: {theme.BG};
+            }}
+            QTableWidget::item {{
+                background: #666666;
+                color: {theme.TEXT};
+                border: none;
+                padding: 2px;
+            }}
+            QTableWidget::item:selected {{
+                background: {theme.ACCENT};
+                color: {theme.TEXT};
+            }}
+            QHeaderView::section {{
+                background: {theme.PANEL_BG};
+                color: {theme.TEXT};
+                font-weight: bold;
+                border: none;
+                padding: 4px 2px;
+            }}
+            QTableCornerButton::section {{
+                background: {theme.PANEL_BG};
+                border: none;
+            }}
+        """
+        self.shot_list = QTableWidget()
+        self.shot_list.setColumnCount(5)
+        self.shot_list.setHorizontalHeaderLabels(["✓", "Scene", "Shot", "Start", "Stop"])
+        self.shot_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.shot_list.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.shot_list.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.shot_list.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.shot_list.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+        self.shot_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.shot_list.verticalHeader().setVisible(False)
+        self.shot_list.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.shot_list.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.shot_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.shot_list.setShowGrid(True)
+        self.shot_list.setGridStyle(Qt.SolidLine)
+        self.shot_list.setFrameShape(QFrame.NoFrame)
         self.shot_list.installEventFilter(self)
         self.shot_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.shot_list.cellClicked.connect(self._on_shot_clicked)
+        self.shot_list.setStyleSheet(_tbl_style)
         right_layout.addWidget(self.shot_list, stretch=1)
 
         # Status / frame info
@@ -499,7 +545,7 @@ class AnnotationVisualizer(QMainWindow):
         right_layout.addLayout(action_row)
 
         # Keyboard hint
-        hint = QLabel("↑↓ shot  Space play  ←→ frame  Shift+←→ 1s  Home/End movie")
+        hint = QLabel("↑↓ shot  PgUp/Dn scene  Space play  ←→ frame  Shift+←→ 1s  Home/End movie")
         hint.setFont(theme.font_mono())
         hint.setStyleSheet(f"color: {theme.TEXT_DIM};")
         right_layout.addWidget(hint)
@@ -508,29 +554,54 @@ class AnnotationVisualizer(QMainWindow):
         splitter.addWidget(mid)
         splitter.addWidget(right)
         mid.setMinimumWidth(220)
-        right.setMinimumWidth(300)
-        splitter.setStretchFactor(0, 4)
-        splitter.setStretchFactor(1, 3)
-        splitter.setStretchFactor(2, 2)
+        right.setMinimumWidth(200)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+        splitter.setStretchFactor(2, 0)
+        self._splitter = splitter
+        self._right_widget = right
 
         self._populate_shot_list()
+        QTimer.singleShot(0, self._fit_right_panel)
         self.setFocus()
+
+    def _fit_right_panel(self):
+        """Resize the right splitter panel to exactly fit the shot table content width."""
+        # Temporarily switch all cols to ResizeToContents to measure natural widths
+        hdr = self.shot_list.horizontalHeader()
+        for c in range(self.shot_list.columnCount()):
+            hdr.setSectionResizeMode(c, QHeaderView.ResizeToContents)
+        self.shot_list.resizeColumnsToContents()
+        table_w = sum(self.shot_list.columnWidth(c) for c in range(self.shot_list.columnCount()))
+        # Restore last col to Stretch
+        hdr.setSectionResizeMode(4, QHeaderView.Stretch)
+        table_w += self.shot_list.verticalScrollBar().sizeHint().width()
+        margins = self._right_widget.layout().contentsMargins()
+        right_w = table_w + margins.left() + margins.right()
+        sizes = self._splitter.sizes()
+        total = sum(sizes)
+        mid_w = sizes[1]
+        left_w = max(200, total - mid_w - right_w)
+        self._splitter.setSizes([left_w, mid_w, right_w])
 
     # ------------------------------------------------------------------
     # Shot list population
     # ------------------------------------------------------------------
 
     def _populate_shot_list(self):
-        self.shot_list.clear()
+        self.shot_list.setRowCount(0)
         for i, shot in enumerate(self.shots):
             ann = self.annotation_index.get(i)
-            self.shot_list.addItem(ShotAnnotationItem(i, shot, ann, i in self._edited_shots))
+            row = self.shot_list.rowCount()
+            self.shot_list.insertRow(row)
+            for col, item in enumerate(_make_annotation_row(i, shot, ann, i in self._edited_shots)):
+                self.shot_list.setItem(row, col, item)
 
     def _refresh_shot_item(self, index: int):
-        item = self.shot_list.item(index)
-        if isinstance(item, ShotAnnotationItem):
-            item.edited = index in self._edited_shots
-            item.update_display()
+        shot = self.shots[index]
+        ann = self.annotation_index.get(index)
+        for col, item in enumerate(_make_annotation_row(index, shot, ann, index in self._edited_shots)):
+            self.shot_list.setItem(index, col, item)
 
     # ------------------------------------------------------------------
     # Frame display
@@ -686,11 +757,11 @@ class AnnotationVisualizer(QMainWindow):
             self._display_frame(frame)
         self._update_frame_info()
 
-        self.shot_list.setCurrentRow(index)
+        self.shot_list.selectRow(index)
         self._update_annotation_panel(index, shot)
 
-    def _on_shot_clicked(self, item: ShotAnnotationItem):
-        self._jump_to_shot(item.shot_index)
+    def _on_shot_clicked(self, row: int, _col: int = 0):
+        self._jump_to_shot(row)
 
     def _update_annotation_panel(self, shot_index: int, shot: dict):
         n = len(self.shots)
@@ -952,11 +1023,7 @@ class AnnotationVisualizer(QMainWindow):
             QTimer.singleShot(1500, self.ann_dirty_label.hide)
 
         # Refresh shot list item
-        item = self.shot_list.item(shot_index)
-        if isinstance(item, ShotAnnotationItem):
-            item.annotation = new_ann
-            item.edited = True
-            item.update_display()
+        self._refresh_shot_item(shot_index)
 
     # ------------------------------------------------------------------
     # Movie selector
@@ -997,6 +1064,10 @@ class AnnotationVisualizer(QMainWindow):
             self._jump_to_shot(self.current_shot_index - 1)
         elif key == Qt.Key_Down:
             self._jump_to_shot(self.current_shot_index + 1)
+        elif key == Qt.Key_PageUp:
+            self._prev_scene()
+        elif key == Qt.Key_PageDown:
+            self._next_scene()
         elif key == Qt.Key_Left:
             if mod & Qt.ShiftModifier:
                 self._step_seconds(-1)
@@ -1019,6 +1090,28 @@ class AnnotationVisualizer(QMainWindow):
             self.keyPressEvent(event)
             return True
         return super().eventFilter(obj, event)
+
+    def _prev_scene(self):
+        if not (0 <= self.current_shot_index < len(self.shots)):
+            return
+        current_scene = int(self.shots[self.current_shot_index].get('Scene', 0))
+        for i in range(self.current_shot_index - 1, -1, -1):
+            if int(self.shots[i].get('Scene', 0)) < current_scene:
+                target_scene = int(self.shots[i].get('Scene', 0))
+                for j, shot in enumerate(self.shots):
+                    if int(shot.get('Scene', 0)) == target_scene:
+                        self._jump_to_shot(j)
+                        return
+                return
+
+    def _next_scene(self):
+        if not (0 <= self.current_shot_index < len(self.shots)):
+            return
+        current_scene = int(self.shots[self.current_shot_index].get('Scene', 0))
+        for i in range(self.current_shot_index + 1, len(self.shots)):
+            if int(self.shots[i].get('Scene', 0)) > current_scene:
+                self._jump_to_shot(i)
+                return
 
     def _step_frame(self, direction: int):
         if self.is_playing:
@@ -1081,10 +1174,7 @@ class AnnotationVisualizer(QMainWindow):
         self.annotation_index = _build_annotation_index(ann_entries)
         self._annotation_entry_index = _build_entry_index(ann_entries)
         ann = self.annotation_index.get(shot_index)
-        item = self.shot_list.item(shot_index)
-        if isinstance(item, ShotAnnotationItem):
-            item.annotation = ann
-            item.update_display()
+        self._refresh_shot_item(shot_index)
         if shot_index == self.current_shot_index:
             self._update_annotation_panel(shot_index, self.shots[shot_index])
 
