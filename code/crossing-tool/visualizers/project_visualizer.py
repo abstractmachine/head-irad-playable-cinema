@@ -98,6 +98,7 @@ class ProjectVisualizer(QMainWindow):
         layout.addWidget(self._build_project_group())
         layout.addWidget(self._build_defaults_group())
         layout.addWidget(self._build_models_group())
+        layout.addWidget(self._build_media_group())
         layout.addWidget(self._build_launchers_group())
 
         self.setFixedWidth(380)
@@ -202,6 +203,72 @@ class ProjectVisualizer(QMainWindow):
             combo.blockSignals(False)
 
     # ------------------------------------------------------------------
+    # Media import
+
+    def _build_media_group(self) -> QGroupBox:
+        group = QGroupBox("Media")
+        form = QFormLayout(group)
+        form.setContentsMargins(8, 12, 8, 8)
+        form.setSpacing(6)
+
+        self.media_type_combo = QComboBox()
+        self.media_type_combo.addItems(["movie", "gameplay"])
+        form.addRow("Type", self.media_type_combo)
+
+        self.media_game_edit = QLineEdit()
+        self.media_game_edit.setPlaceholderText("game slug (e.g. rdr2)")
+        form.addRow("Game", self.media_game_edit)
+        # Keep a reference to the game row widgets so we can show/hide them
+        self._media_game_label = form.itemAt(form.rowCount() - 1, QFormLayout.LabelRole).widget()
+        self._media_game_field = form.itemAt(form.rowCount() - 1, QFormLayout.FieldRole).widget()
+
+        import_btn = QPushButton("Import")
+        import_btn.clicked.connect(self._on_media_import)
+        form.addRow("", import_btn)
+
+        self.media_type_combo.currentTextChanged.connect(self._on_media_type_changed)
+        # Set initial visibility
+        self._on_media_type_changed(self.media_type_combo.currentText())
+
+        return group
+
+    def _on_media_type_changed(self, media_type: str):
+        visible = (media_type == "gameplay")
+        self._media_game_label.setVisible(visible)
+        self._media_game_field.setVisible(visible)
+
+    def _on_media_import(self):
+        project_path = _prefs.get("path")
+        if not project_path:
+            QMessageBox.warning(self, "No Project", "Please set a project folder first.")
+            return
+
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "Select file(s) to import", "",
+            "Video files (*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.mpg *.mpeg);;All files (*)",
+        )
+        if not files:
+            return
+
+        media = self.media_type_combo.currentText()
+        cmd = [
+            sys.executable, str(_CLI_PATH),
+            "media", "import",
+            "--media", media,
+        ]
+        if media == "gameplay":
+            game = self.media_game_edit.text().strip()
+            if not game:
+                QMessageBox.warning(self, "Game required", "Please enter a game slug for gameplay imports.")
+                return
+            cmd += ["--game", game]
+        cmd += files
+
+        try:
+            subprocess.Popen(cmd)
+        except Exception as exc:
+            QMessageBox.critical(self, "Import failed", str(exc))
+
     # Launcher buttons
 
     def _build_launchers_group(self) -> QGroupBox:
@@ -219,7 +286,7 @@ class ProjectVisualizer(QMainWindow):
         ]):
             btn = QPushButton(label)
             btn.clicked.connect(lambda _, s=sub: self._launch(s))
-            grid.addWidget(btn, i // 2, i % 2)
+            grid.addWidget(btn, 0, i)
 
         outer = QVBoxLayout(group)
         outer.setContentsMargins(8, 12, 8, 8)

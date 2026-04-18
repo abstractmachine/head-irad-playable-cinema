@@ -210,13 +210,13 @@ def _build_annotation_index(entries: list) -> dict:
 
 def _build_entry_index(entries: list) -> dict:
     idx = {}
-    for entry in entries:
+    for i, entry in enumerate(entries):
         shot = entry.get("shot")
         if not isinstance(shot, dict):
             continue
         shot_id = shot.get("shot_id")
         if shot_id is not None:
-            idx[int(shot_id) - 1] = entry
+            idx[int(shot_id) - 1] = i
     return idx
 
 
@@ -281,7 +281,8 @@ class AnnotateWorker(QThread):
     shot_done = pyqtSignal(int)
     finished  = pyqtSignal(str)
 
-    def __init__(self, project_path, filename, media_type, model_name, frames_per_shot):
+    def __init__(self, project_path, filename, media_type, model_name, frames_per_shot,
+                 shot_indices=None, shots=None):
         super().__init__()
         self._stop_event    = threading.Event()
         self.project_path   = project_path
@@ -289,6 +290,8 @@ class AnnotateWorker(QThread):
         self.media_type     = media_type
         self.model_name     = model_name
         self.frames_per_shot = frames_per_shot
+        self.shot_indices   = shot_indices
+        self.shots          = shots
 
     def stop(self):
         self._stop_event.set()
@@ -527,7 +530,27 @@ class ShotlistVisualizer(QMainWindow):
         self.ann_display.setReadOnly(True)
         self.ann_display.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.ann_display.textChanged.connect(self._on_ann_text_changed)
+        self.ann_display.installEventFilter(self)
+        self.ann_display.hide()  # hidden when mode == "fields"
         mid_layout.addWidget(self.ann_display, stretch=1)
+
+        self.ann_fields_table = QTableWidget()
+        self.ann_fields_table.setColumnCount(1)
+        self.ann_fields_table.horizontalHeader().hide()
+        self.ann_fields_table.verticalHeader().hide()
+        self.ann_fields_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.ann_fields_table.horizontalHeader().setStretchLastSection(True)
+        self.ann_fields_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.ann_fields_table.setEditTriggers(
+            QAbstractItemView.DoubleClicked |
+            QAbstractItemView.SelectedClicked |
+            QAbstractItemView.EditKeyPressed
+        )
+        self.ann_fields_table.setWordWrap(True)
+        self.ann_fields_table.setFont(theme.font_mono())
+        self.ann_fields_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.ann_fields_table.itemChanged.connect(self._on_fields_cell_changed)
+        mid_layout.addWidget(self.ann_fields_table, stretch=1)
 
         self.ann_dirty_label = QLabel()
         self.ann_dirty_label.setFont(theme.font_mono())
@@ -1318,7 +1341,7 @@ class ShotlistVisualizer(QMainWindow):
         active_shots  = total_shots - ignored_shots
         total_scenes  = len(set(shot.get('Scene', '0') for shot in self.shots))
         ann_count     = len(self.annotation_index)
-        ann_str       = f"  Annotatedotated: {ann_count}/{total_shots}" if self._has_ann_file else ""
+        ann_str       = f"  Annotated: {ann_count}/{total_shots}" if self._has_ann_file else ""
         self.stats_label.setText(
             f"Scenes: {total_scenes}  Shots: {total_shots}\n"
             f"Active: {active_shots}  Ignored: {ignored_shots}{ann_str}"
@@ -1341,15 +1364,28 @@ class ShotlistVisualizer(QMainWindow):
     def eventFilter(self, obj, event):
         """Intercept events from child widgets to handle keyboard shortcuts globally."""
         try:
-            if obj == self.shot_list and event.type() == QEvent.KeyPress:
-                # Redirect keyboard events to main window
-                key = event.key()
-                if key in (Qt.Key_Space, Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down,
-                          Qt.Key_PageUp, Qt.Key_PageDown, Qt.Key_Home, Qt.Key_End,
-                          Qt.Key_C, Qt.Key_E, Qt.Key_F, Qt.Key_I, Qt.Key_M, Qt.Key_N, Qt.Key_G):
-                    # Handle it ourselves instead of letting the list widget process it
-                    self.keyPressEvent(event)
-                    return True  # Event handled, don't pass to list widget
+            if event.type() == QEvent.KeyPress:
+                key  = event.key()
+                mods = event.modifiers()
+                if obj == self.ann_display:
+                    # Ctrl+S saves a dirty JSON edit; Escape discards it.
+                    # QTextEdit consumes these before they reach keyPressEvent, so
+                    # we must intercept them here.
+                    if key == Qt.Key_S and mods & Qt.ControlModifier:
+                        if self._ann_dirty:
+                            self._save_annotation_edit()
+                        return True
+                    if key == Qt.Key_Escape:
+                        if self._ann_dirty:
+                            self._discard_ann_edit()
+                        return True
+                elif obj == self.shot_list:
+                    # Redirect keyboard events to main window
+                    if key in (Qt.Key_Space, Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down,
+                               Qt.Key_PageUp, Qt.Key_PageDown, Qt.Key_Home, Qt.Key_End,
+                               Qt.Key_C, Qt.Key_E, Qt.Key_F, Qt.Key_I, Qt.Key_M, Qt.Key_N, Qt.Key_G):
+                        self.keyPressEvent(event)
+                        return True
             return super().eventFilter(obj, event)
         except Exception:
             traceback.print_exc(file=sys.stderr)
@@ -1451,33 +1487,125 @@ class ShotlistVisualizer(QMainWindow):
         """Refresh the annotation display panel for a given shot."""
         ann = self.annotation_index.get(index)
         mode = self.ann_repr_combo.currentText()
-        self.ann_display.blockSignals(True)
         if mode == "fields":
-            self.ann_display.setHtml(self._render_annotation_fields(ann, shot))
-        elif mode == "json":
-            self.ann_display.setPlainText(self._render_annotation_json(ann))
-        elif mode == "txt":
-            self.ann_display.setPlainText(self._render_annotation_txt(ann))
-        elif mode == "vector":
-            self.ann_display.setPlainText(self._render_annotation_vector(index))
-        elif mode == "mapping":
-            self.ann_display.setPlainText(self._render_annotation_mapping(index))
-        self.ann_display.blockSignals(False)
+            self.ann_display.hide()
+            self.ann_fields_table.show()
+            self._populate_fields_table(ann, shot)
+        else:
+            self.ann_fields_table.hide()
+            self.ann_display.show()
+            self.ann_display.blockSignals(True)
+            if mode == "json":
+                self.ann_display.setPlainText(self._render_annotation_json(ann))
+            elif mode == "txt":
+                self.ann_display.setPlainText(self._render_annotation_txt(ann))
+            elif mode == "vector":
+                self.ann_display.setPlainText(self._render_annotation_vector(index))
+            elif mode == "mapping":
+                self.ann_display.setPlainText(self._render_annotation_mapping(index))
+            self.ann_display.setReadOnly(mode != "json")
+            self.ann_display.blockSignals(False)
         self._ann_dirty = False
         self.ann_dirty_label.hide()
 
-    def _render_annotation_fields(self, ann: dict | None, shot: dict) -> str:
-        import html as _html
+    def _populate_fields_table(self, ann: dict | None, shot: dict):
+        """Fill ann_fields_table with alternating title/content rows."""
+        tbl = self.ann_fields_table
+        tbl.blockSignals(True)
+        tbl.clearContents()
         if ann is None:
-            return "<i>(no annotation)</i>"
-        parts = []
-        for k, v in ann.items():
-            if k == "shot_index":
-                continue
-            v_str = ", ".join(str(i) for i in v) if isinstance(v, list) else str(v)
-            escaped_v = _html.escape(v_str).replace("\n", "<br>")
-            parts.append(f"<b>{_html.escape(k)}</b><br>{escaped_v}")
-        return "<br><br>".join(parts) if parts else "<i>(empty annotation)</i>"
+            tbl.setRowCount(1)
+            item = QTableWidgetItem("(no annotation)")
+            item.setFlags(Qt.ItemIsEnabled)
+            item.setForeground(QColor(theme.TEXT_DIM))
+            tbl.setItem(0, 0, item)
+            tbl.blockSignals(False)
+            return
+
+        try:
+            from data.index import load_fields
+            ordered_keys = load_fields(self.project_path)
+        except Exception:
+            ordered_keys = [k for k in ann if k != "shot_index"]
+        keys = [k for k in ordered_keys if k in ann]
+
+        tbl.setRowCount(len(keys) * 2)
+        title_bg   = QColor(theme.PANEL_BG)
+        content_bg = QColor(theme.BG)
+        text_fg    = QColor(theme.TEXT)
+
+        for i, k in enumerate(keys):
+            title_row   = i * 2
+            content_row = i * 2 + 1
+
+            # ---- title row (non-editable, bold) ----
+            title_item = QTableWidgetItem(k)
+            title_item.setFont(theme.font_mono(bold=True))
+            title_item.setBackground(title_bg)
+            title_item.setForeground(text_fg)
+            title_item.setFlags(Qt.ItemIsEnabled)
+            tbl.setItem(title_row, 0, title_item)
+
+            # ---- content row (editable) ----
+            v = ann[k]
+            v_str = ", ".join(str(x) for x in v) if isinstance(v, list) else str(v)
+            content_item = QTableWidgetItem(v_str)
+            content_item.setBackground(content_bg)
+            content_item.setForeground(text_fg)
+            content_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsEditable | Qt.ItemIsSelectable)
+            tbl.setItem(content_row, 0, content_item)
+
+        tbl.resizeRowsToContents()
+        tbl.blockSignals(False)
+
+    def _on_fields_cell_changed(self, item: "QTableWidgetItem"):
+        """Called when a content cell in the fields table is edited."""
+        row = item.row()
+        if row % 2 == 0:
+            # Title row — skip
+            return
+
+        key_item = self.ann_fields_table.item(row - 1, 0)
+        if key_item is None:
+            return
+        key = key_item.text()
+
+        raw = item.text()
+        # Commas → list; otherwise plain string
+        value = [v.strip() for v in raw.split(",")] if "," in raw else raw
+
+        idx = self.current_shot_index
+        ann = self.annotation_index.get(idx)
+        if ann is None:
+            return
+        ann[key] = value
+        self.annotation_index[idx] = ann
+
+        import json as _json
+        path = _get_annotation_json_path(self.project_path, self.filename, self.media_type)
+        if path is None:
+            return
+        try:
+            if path.exists():
+                with open(path, encoding="utf-8") as fh:
+                    existing = _json.load(fh)
+            else:
+                existing = []
+            entry_idx = self._annotation_entry_index.get(idx)
+            if entry_idx is not None and 0 <= entry_idx < len(existing):
+                existing[entry_idx].update(ann)
+            else:
+                existing.append(ann)
+                self._annotation_entry_index[idx] = len(existing) - 1
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_json.dumps(existing, indent=2, ensure_ascii=False))
+            self._edited_shots.add(idx)
+            self._refresh_shot_row(idx)
+        except Exception as exc:
+            QMessageBox.critical(self, "Save failed", str(exc))
+
+        # Resize the edited row in case text wrapped
+        self.ann_fields_table.resizeRowToContents(row)
 
     def _render_annotation_json(self, ann: dict | None) -> str:
         if ann is None:
@@ -1487,13 +1615,16 @@ class ShotlistVisualizer(QMainWindow):
 
     def _render_annotation_txt(self, ann: dict | None) -> str:
         if ann is None:
-            return ""
-        parts = []
-        for k, v in ann.items():
-            if k == "shot_index":
-                continue
-            parts.append(str(v))
-        return "\n\n".join(parts)
+            return "(no annotation)"
+        try:
+            from data.index import load_mapping, serialize_annotation_item
+            mapping = load_mapping(self.project_path)
+            item = {"shot": {"annotation": ann}}
+            return serialize_annotation_item(item, mapping)
+        except FileNotFoundError:
+            return "(no mapping file — run: crossing index)"
+        except Exception as exc:
+            return f"(error: {exc})"
 
     def _render_annotation_vector(self, index: int) -> str:
         emb = self._load_embeddings_cached()
@@ -1506,15 +1637,14 @@ class ShotlistVisualizer(QMainWindow):
         return f"dim={len(vec)}\n[{', '.join(f'{x:.4f}' for x in vec[:8])} ...]"
 
     def _render_annotation_mapping(self, index: int) -> str:
-        mapping = self._get_mapping()
-        if not mapping:
-            return "(no mapping)"
-        lines = []
-        for other_idx, sim in sorted(mapping.get(index, {}).items(), key=lambda x: -x[1])[:10]:
-            ann = self.annotation_index.get(other_idx)
-            label = ann.get("caption", "") if ann else ""
-            lines.append(f"[{other_idx}] {sim:.3f}  {label}")
-        return "\n".join(lines) if lines else "(no similar shots)"
+        from pathlib import Path
+        mapping_path = Path(self.project_path) / "preferences" / "data" / "mapping.yaml"
+        if not mapping_path.exists():
+            return f"(mapping file not found:\n{mapping_path})"
+        try:
+            return mapping_path.read_text(encoding="utf-8")
+        except Exception as exc:
+            return f"(error reading mapping file: {exc})"
 
     def _get_mapping(self) -> dict:
         emb = self._load_embeddings_cached()
@@ -1569,7 +1699,6 @@ class ShotlistVisualizer(QMainWindow):
                 self._ann_dirty = True
                 self.ann_dirty_label.setText("\u2022 unsaved annotation edit — Ctrl+S to save, Esc to discard")
                 self.ann_dirty_label.show()
-                self.ann_display.setReadOnly(False)
 
     def _discard_ann_edit(self):
         """Discard any pending annotation edit without saving."""
@@ -1630,7 +1759,7 @@ class ShotlistVisualizer(QMainWindow):
     def _toggle_auto_annotate(self):
         """Start or stop background LLM annotation."""
         if self._annotate_worker is not None and self._annotate_worker.isRunning():
-            self._annotate_worker.requestInterruption()
+            self._annotate_worker.stop()
             self.annotate_button.setChecked(False)
             self.annotate_button.setText("\u26a1 Auto-Annotate")
             return
@@ -1654,6 +1783,7 @@ class ShotlistVisualizer(QMainWindow):
         self._annotate_worker.shot_done.connect(self._on_shot_annotated)
         self._annotate_worker.finished.connect(self._on_annotate_finished)
         self._annotate_worker.start()
+        self.annotate_button.setChecked(True)
         self.annotate_button.setText("\u26a1 Stop Annotating")
 
     def _on_shot_annotated(self, index: int):
@@ -1680,6 +1810,10 @@ class ShotlistVisualizer(QMainWindow):
         self.annotate_button.setChecked(False)
         self.annotate_button.setText("\u26a1 Auto-Annotate")
         self._annotate_worker = None
+        if message.startswith("\u2717"):
+            print(message, flush=True)
+        else:
+            print(message, flush=True)
 
     def _remove_current_annotation(self):
         """Delete the annotation for the currently selected shot."""

@@ -1243,6 +1243,9 @@ def _shotlist_annotate(args):
     if args.annotate_type == "audit":
         _annotate_audit(args)
         return
+    if args.annotate_type == "validate":
+        _annotate_validate(args)
+        return
     from data.shotlist import annotate_shot, annotate_scene, resolve_filename
     project_path = prefs.get("path")
 
@@ -1891,36 +1894,73 @@ def cmd_tool_default(args):
     sub = args.default_subcommand
     if sub == "set":
         key = args.key
-        if key not in _ANNOTATE_DEFAULT_KEYS:
-            print(f"✗ Unknown default key '{key}'. Available keys: {', '.join(_ANNOTATE_DEFAULT_KEYS)}", file=sys.stderr)
+        if key == "fields":
+            project_path = prefs.get("path")
+            if not project_path:
+                print("✗ No project path set. Run: crossing tool path <path>", file=sys.stderr)
+                sys.exit(1)
+            from data.index import save_fields
+            field_list = [f.strip() for f in args.value.split(",") if f.strip()]
+            save_fields(project_path, field_list)
+            print(f"✓ Display fields set to: {', '.join(field_list)}")
+        elif key not in _ANNOTATE_DEFAULT_KEYS:
+            print(f"✗ Unknown default key '{key}'. Available keys: fields, {', '.join(_ANNOTATE_DEFAULT_KEYS)}", file=sys.stderr)
             sys.exit(1)
-        pref_key, _ = _ANNOTATE_DEFAULT_KEYS[key]
-        prefs.set(pref_key, args.value)
-        print(f"✓ Default '{key}' set to '{args.value}'")
+        else:
+            pref_key, _ = _ANNOTATE_DEFAULT_KEYS[key]
+            prefs.set(pref_key, args.value)
+            print(f"✓ Default '{key}' set to '{args.value}'")
     elif sub == "get" or sub is None:
         key = getattr(args, "key", None)
-        keys = [key] if key else list(_ANNOTATE_DEFAULT_KEYS)
-        for k in keys:
-            pref_key, fallback = _ANNOTATE_DEFAULT_KEYS[k]
-            val = prefs.get(pref_key, fallback)
-            print(f"{k}: {val}")
-        if not key:
-            # Show the index mapping when displaying all defaults
+        if key == "fields":
             project_path = prefs.get("path")
-            if project_path:
-                try:
-                    from data.index import load_mapping
-                    mapping = load_mapping(project_path)
-                    print()
-                    print("mapping:")
-                    print(f"  fields:         {', '.join(mapping.get('fields', []))}")
-                    print(f"  include_labels: {mapping.get('include_labels', True)}")
-                    print(f"  separator:      {mapping.get('separator', ' | ')!r}")
-                    print(f"  skip_empty:     {mapping.get('skip_empty', True)}")
-                except FileNotFoundError:
-                    print("\nmapping: (no mapping.yaml found in project)")
-                except (ValueError, ImportError) as exc:
-                    print(f"\nmapping: (error loading — {exc})")
+            if not project_path:
+                print("fields: (no project path set)", file=sys.stderr)
+                sys.exit(1)
+            try:
+                from data.index import load_fields
+                fields = load_fields(project_path)
+                print(f"fields: {', '.join(fields)}")
+            except FileNotFoundError:
+                print("fields: (no fields.yaml found in project)")
+            except (ValueError, ImportError) as exc:
+                print(f"fields: (error loading — {exc})")
+        else:
+            keys = [key] if key else list(_ANNOTATE_DEFAULT_KEYS)
+            for k in keys:
+                if k not in _ANNOTATE_DEFAULT_KEYS:
+                    print(f"✗ Unknown default key '{k}'. Available keys: fields, {', '.join(_ANNOTATE_DEFAULT_KEYS)}", file=sys.stderr)
+                    sys.exit(1)
+                pref_key, fallback = _ANNOTATE_DEFAULT_KEYS[k]
+                val = prefs.get(pref_key, fallback)
+                print(f"{k}: {val}")
+            if not key:
+                # Show fields when displaying all defaults
+                project_path = prefs.get("path")
+                if project_path:
+                    try:
+                        from data.index import load_fields
+                        fields = load_fields(project_path)
+                        print(f"fields: {', '.join(fields)}")
+                    except FileNotFoundError:
+                        print("fields: (no fields.yaml found in project)")
+                    except (ValueError, ImportError) as exc:
+                        print(f"fields: (error loading — {exc})")
+                # Show the index mapping when displaying all defaults
+                if project_path:
+                    try:
+                        from data.index import load_mapping
+                        mapping = load_mapping(project_path)
+                        print()
+                        print("mapping:")
+                        print(f"  fields:         {', '.join(mapping.get('fields', []))}")
+                        print(f"  include_labels: {mapping.get('include_labels', True)}")
+                        print(f"  separator:      {mapping.get('separator', ' | ')!r}")
+                        print(f"  skip_empty:     {mapping.get('skip_empty', True)}")
+                    except FileNotFoundError:
+                        print("\nmapping: (no mapping.yaml found in project)")
+                    except (ValueError, ImportError) as exc:
+                        print(f"\nmapping: (error loading — {exc})")
 
 
 def cmd_notify(args):
@@ -2126,6 +2166,106 @@ def _annotate_remove(args):
             skipped += 1
 
     print(f"\nRemoved {removed}  |  already absent {skipped}")
+
+
+def _annotate_validate(args):
+    """Validate and repair annotation JSON files.
+
+    For each annotation file:
+    - Checks that the file is valid JSON.
+    - Fixes fields that should be arrays but were stored as a comma-separated
+      string (e.g. ``"diegetic, graphics"`` → ``["diegetic", "graphics"]``).
+    """
+    _require_path()
+    from data.shotlist import resolve_filename
+
+    project_path = prefs.get("path")
+    media_type   = getattr(args, "media", "movies")
+    dry_run      = getattr(args, "dry_run", False)
+
+    # Fields whose values must always be lists, never a plain string.
+    _ARRAY_FIELDS = {"type", "humans", "action", "wearing", "animals", "objects", "text"}
+
+    ann_dir = Path(project_path) / "data" / "annotations" / "shots" / media_type
+
+    if getattr(args, "all", False):
+        from data.metadata import get_metadata
+        entries  = get_metadata(project_path, media_type=media_type)
+        filenames = [e["filename"] for e in entries if e.get("filename")]
+    else:
+        query = getattr(args, "filename", None)
+        tmdb  = getattr(args, "tmdb", None)
+        if not query and not tmdb:
+            print("✗ Provide a keyword, --tmdb, or --all", file=sys.stderr)
+            sys.exit(1)
+        try:
+            filenames = [resolve_filename(project_path, tmdb, query, media_type)]
+        except ValueError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            sys.exit(1)
+
+    total_files   = 0
+    total_fixes   = 0
+    invalid_files = 0
+
+    for fn in filenames:
+        stem     = Path(fn).stem
+        ann_path = ann_dir / f"{stem}.json"
+
+        if not ann_path.exists():
+            print(f"  ?  {fn}  (no annotation file)")
+            continue
+
+        total_files += 1
+
+        raw = ann_path.read_text(encoding="utf-8")
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            print(f"  ✗  {fn}: invalid JSON — {exc}")
+            invalid_files += 1
+            continue
+
+        if not isinstance(data, list):
+            print(f"  ✗  {fn}: expected a JSON array at the top level")
+            invalid_files += 1
+            continue
+
+        file_fixes = 0
+        for entry in data:
+            if not isinstance(entry, dict):
+                continue
+            shot_block = entry.get("shot")
+            if not isinstance(shot_block, dict):
+                continue
+            ann = shot_block.get("annotation")
+            if not isinstance(ann, dict):
+                continue
+            for field in _ARRAY_FIELDS:
+                val = ann.get(field)
+                if isinstance(val, str) and "," in val:
+                    parts = [p.strip() for p in val.split(",") if p.strip()]
+                    ann[field] = parts
+                    file_fixes += 1
+
+        if file_fixes > 0:
+            if not dry_run:
+                ann_path.write_text(
+                    json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+            verb = "would fix" if dry_run else "fixed"
+            print(f"  ✓  {fn}: {verb} {file_fixes} field(s)")
+            total_fixes += file_fixes
+        else:
+            print(f"  ✓  {fn}: ok")
+
+    action_label = "would be fixed" if dry_run else "fixed"
+    print(
+        f"\n{total_files} file(s) checked  ·  "
+        f"{total_fixes} value(s) {action_label}  ·  "
+        f"{invalid_files} invalid JSON file(s)"
+    )
 
 
 def _annotate_audit(args):
@@ -3373,6 +3513,28 @@ def build_parser():
     p_annotate_audit = annotate_sub.add_parser("audit", help="Report annotation status per film (complete, incomplete, missing)")
     p_annotate_audit.set_defaults(func=_shotlist_annotate)
     p_annotate_audit.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+
+    p_annotate_validate = annotate_sub.add_parser(
+        "validate",
+        help="Validate annotation JSON and fix comma-separated values in array fields",
+    )
+    p_annotate_validate.set_defaults(func=_shotlist_annotate)
+    p_annotate_validate.add_argument(
+        "filename", nargs="?", default=None,
+        help="Fuzzy keyword to match a movie or game title (or use --tmdb / --all)",
+    )
+    p_annotate_validate.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
+    p_annotate_validate.add_argument(
+        "--media", choices=["movies", "gameplay"], default="movies",
+    )
+    p_annotate_validate.add_argument(
+        "--all", action="store_true",
+        help="Validate annotations for all films/games in metadata",
+    )
+    p_annotate_validate.add_argument(
+        "--dry-run", dest="dry_run", action="store_true",
+        help="Report issues without writing any changes",
+    )
 
     # (moved under 'crossing tool model' — see tool_sub below)
 

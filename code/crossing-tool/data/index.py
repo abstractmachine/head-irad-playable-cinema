@@ -43,6 +43,53 @@ def load_mapping(project_path: str) -> dict:
     return raw["mapping"]
 
 
+def load_fields(project_path: str) -> list[str]:
+    """Load the display field list from <project>/preferences/data/fields.yaml.
+
+    Returns the ordered list of field names under the top-level ``fields`` key.
+
+    Raises:
+        FileNotFoundError: If the YAML file does not exist.
+        ValueError: If the YAML structure is missing the required ``fields`` key.
+    """
+    fields_path = Path(project_path) / "preferences" / "data" / "fields.yaml"
+    if not fields_path.exists():
+        raise FileNotFoundError(f"Fields file not found: {fields_path}")
+
+    try:
+        import yaml
+    except ImportError as exc:
+        raise ImportError(
+            "PyYAML is required for fields support. Install with: pip install pyyaml"
+        ) from exc
+
+    with fields_path.open("r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f)
+
+    if not isinstance(raw, dict) or "fields" not in raw:
+        raise ValueError(
+            f"Invalid fields YAML at {fields_path}: "
+            "expected a top-level 'fields' key"
+        )
+
+    return list(raw["fields"])
+
+
+def save_fields(project_path: str, fields: list[str]) -> None:
+    """Write an ordered field list to <project>/preferences/data/fields.yaml."""
+    try:
+        import yaml
+    except ImportError as exc:
+        raise ImportError(
+            "PyYAML is required for fields support. Install with: pip install pyyaml"
+        ) from exc
+
+    fields_path = Path(project_path) / "preferences" / "data" / "fields.yaml"
+    fields_path.parent.mkdir(parents=True, exist_ok=True)
+    with fields_path.open("w", encoding="utf-8") as f:
+        yaml.dump({"fields": fields}, f, default_flow_style=False, allow_unicode=True)
+
+
 def serialize_annotation_item(item: dict, mapping: dict) -> str:
     """Serialize one annotation item to a single line of text.
 
