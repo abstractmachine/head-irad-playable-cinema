@@ -284,6 +284,38 @@ QToolTip {{
 # Public API
 # ---------------------------------------------------------------------------
 
+def table_stylesheet() -> str:
+    """Return the shared QTableWidget stylesheet used by list visualizers."""
+    return f"""
+        QTableWidget {{
+            background: transparent;
+            border: none;
+            gridline-color: {BG};
+        }}
+        QTableWidget::item {{
+            background: #666666;
+            color: {TEXT};
+            border: none;
+            padding: 2px;
+        }}
+        QTableWidget::item:selected {{
+            background: {ACCENT};
+            color: {TEXT};
+        }}
+        QHeaderView::section {{
+            background: {PANEL_BG};
+            color: {TEXT};
+            font-weight: bold;
+            border: none;
+            padding: 4px 2px;
+        }}
+        QTableCornerButton::section {{
+            background: {PANEL_BG};
+            border: none;
+        }}
+    """
+
+
 def apply_theme(app) -> None:
     """Register bundled fonts and apply the shared stylesheet to *app*.
 

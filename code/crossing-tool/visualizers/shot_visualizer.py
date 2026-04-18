@@ -309,34 +309,7 @@ class OpenCVShotVisualizer(QMainWindow):
         lists_layout.setSpacing(1)
 
         # Scene table (single column)
-        _tbl_style = f"""
-            QTableWidget {{
-                background: transparent;
-                border: none;
-                gridline-color: {theme.BG};
-            }}
-            QTableWidget::item {{
-                background: #666666;
-                color: {theme.TEXT};
-                border: none;
-                padding: 2px;
-            }}
-            QTableWidget::item:selected {{
-                background: {theme.ACCENT};
-                color: {theme.TEXT};
-            }}
-            QHeaderView::section {{
-                background: {theme.PANEL_BG};
-                color: {theme.TEXT};
-                font-weight: bold;
-                border: none;
-                padding: 4px 2px;
-            }}
-            QTableCornerButton::section {{
-                background: {theme.PANEL_BG};
-                border: none;
-            }}
-        """
+        _tbl_style = theme.table_stylesheet()
 
         self.scene_list = QTableWidget()
         self.scene_list.setColumnCount(1)

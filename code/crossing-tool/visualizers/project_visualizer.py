@@ -74,11 +74,20 @@ def _local_models(project_path: str) -> list[str]:
 # Main window
 # ---------------------------------------------------------------------------
 
+_VISUALIZER_TITLE = {
+    "annotate":    "Annotation Visualizer",
+    "shotlist":    "Shotlist Visualizer",
+    "mosaic":      "Mosaic Visualizer",
+    "composition": "Composition Visualizer",
+}
+
+
 class ProjectVisualizer(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Crossing — Project")
+        self._procs: dict[str, subprocess.Popen] = {}
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -224,7 +233,25 @@ class ProjectVisualizer(QMainWindow):
         if not _prefs.get("path"):
             QMessageBox.warning(self, "No Project", "Please set a project folder first.")
             return
-        subprocess.Popen([sys.executable, str(_CLI_PATH), "visualizer", subcommand])
+        proc = self._procs.get(subcommand)
+        if proc is not None and proc.poll() is None:
+            # Already running — raise its window
+            title = _VISUALIZER_TITLE.get(subcommand, subcommand.capitalize())
+            raised = False
+            for cmd in (
+                ["wmctrl", "-a", title],
+                ["xdotool", "search", "--name", title, "windowactivate", "--sync"],
+            ):
+                try:
+                    subprocess.Popen(cmd)
+                    raised = True
+                    break
+                except FileNotFoundError:
+                    continue
+            return
+        self._procs[subcommand] = subprocess.Popen(
+            [sys.executable, str(_CLI_PATH), "visualizer", subcommand]
+        )
 
     # ------------------------------------------------------------------
     # Keyboard

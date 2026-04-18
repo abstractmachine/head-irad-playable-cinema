@@ -447,34 +447,7 @@ class AnnotationVisualizer(QMainWindow):
         movie_row.addWidget(self.movie_combo, stretch=1)
         right_layout.addLayout(movie_row)
 
-        _tbl_style = f"""
-            QTableWidget {{
-                background: transparent;
-                border: none;
-                gridline-color: {theme.BG};
-            }}
-            QTableWidget::item {{
-                background: #666666;
-                color: {theme.TEXT};
-                border: none;
-                padding: 2px;
-            }}
-            QTableWidget::item:selected {{
-                background: {theme.ACCENT};
-                color: {theme.TEXT};
-            }}
-            QHeaderView::section {{
-                background: {theme.PANEL_BG};
-                color: {theme.TEXT};
-                font-weight: bold;
-                border: none;
-                padding: 4px 2px;
-            }}
-            QTableCornerButton::section {{
-                background: {theme.PANEL_BG};
-                border: none;
-            }}
-        """
+        _tbl_style = theme.table_stylesheet()
         self.shot_list = QTableWidget()
         self.shot_list.setColumnCount(5)
         self.shot_list.setHorizontalHeaderLabels(["✓", "Scene", "Shot", "Start", "Stop"])
