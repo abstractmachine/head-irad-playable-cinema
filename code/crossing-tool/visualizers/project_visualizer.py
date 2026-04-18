@@ -75,7 +75,6 @@ def _local_models(project_path: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 _VISUALIZER_TITLE = {
-    "annotate":    "Annotation Visualizer",
     "shotlist":    "Shotlist Visualizer",
     "mosaic":      "Mosaic Visualizer",
     "composition": "Composition Visualizer",
@@ -214,7 +213,6 @@ class ProjectVisualizer(QMainWindow):
         grid.setSpacing(6)
 
         for i, (label, sub) in enumerate([
-            ("Annotate",    "annotate"),
             ("Shotlist",    "shotlist"),
             ("Mosaic",      "mosaic"),
             ("Composition", "composition"),

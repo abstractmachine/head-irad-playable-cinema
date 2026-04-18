@@ -630,68 +630,7 @@ class ShotlistVisualizer(QMainWindow):
         btn_grid = QGridLayout()
         btn_grid.setSpacing(4)
 
-        # Row 0: shot editing
-        self.split_button = QPushButton("New Shot")
-        self.split_button.clicked.connect(self.split_shot_at_current_frame)
-        self.split_button.setFocusPolicy(Qt.NoFocus)
-        self.split_button.setToolTip("Split current shot at current frame  [Shift+N]")
-        btn_grid.addWidget(self.split_button, 0, 0)
-
-        self.merge_button = QPushButton("Merge Shot")
-        self.merge_button.clicked.connect(self.merge_with_previous)
-        self.merge_button.setFocusPolicy(Qt.NoFocus)
-        self.merge_button.setToolTip("Merge current shot with previous shot  [Shift+M]")
-        btn_grid.addWidget(self.merge_button, 0, 1)
-
-        self.save_button = QPushButton("\U0001f4be Save")
-        self.save_button.clicked.connect(self.save_changes)
-        self.save_button.setEnabled(False)
-        self.save_button.setFocusPolicy(Qt.NoFocus)
-        self.save_button.setToolTip("Save shotlist changes to CSV  [Ctrl+S]")
-        btn_grid.addWidget(self.save_button, 0, 2)
-
-        # Row 1: scene editing
-        self.split_scene_button = QPushButton("New Scene")
-        self.split_scene_button.clicked.connect(self.split_scene_at_current_shot)
-        self.split_scene_button.setFocusPolicy(Qt.NoFocus)
-        self.split_scene_button.setToolTip("Start a new scene at current shot  [N]")
-        btn_grid.addWidget(self.split_scene_button, 1, 0)
-
-        self.merge_scene_button = QPushButton("Merge Scene")
-        self.merge_scene_button.clicked.connect(self.merge_scene_at_current_shot)
-        self.merge_scene_button.setFocusPolicy(Qt.NoFocus)
-        self.merge_scene_button.setToolTip("Merge current scene into previous scene  [M]")
-        btn_grid.addWidget(self.merge_scene_button, 1, 1)
-
-        self.ignore_button = QPushButton("\u2297 Ignore")
-        self.ignore_button.clicked.connect(self.toggle_current_ignore)
-        self.ignore_button.setFocusPolicy(Qt.NoFocus)
-        self.ignore_button.setToolTip("Toggle Ignore on current shot  [I]")
-        btn_grid.addWidget(self.ignore_button, 1, 2)
-
-        # Row 2: playback
-        self.play_pause_button = QPushButton("\u25b6 Play")
-        self.play_pause_button.clicked.connect(self.toggle_play_pause)
-        self.play_pause_button.setFocusPolicy(Qt.NoFocus)
-        self.play_pause_button.setToolTip("Play / Pause  [Space]")
-        btn_grid.addWidget(self.play_pause_button, 2, 0)
-
-        self.continue_button = QPushButton("Continue")
-        self.continue_button.setCheckable(True)
-        self.continue_button.setChecked(True)
-        self.continue_button.setFocusPolicy(Qt.NoFocus)
-        self.continue_button.setToolTip("When OFF: playback stops at the end of the current shot")
-        btn_grid.addWidget(self.continue_button, 2, 1)
-
-        self.gremlins_button = QPushButton("\U0001f47e Gremlins")
-        self.gremlins_button.setCheckable(True)
-        self.gremlins_button.setChecked(False)
-        self.gremlins_button.clicked.connect(self.toggle_gremlins)
-        self.gremlins_button.setFocusPolicy(Qt.NoFocus)
-        self.gremlins_button.setToolTip("Randomly jump movies/timecodes every 5 s  [G]")
-        btn_grid.addWidget(self.gremlins_button, 2, 2)
-
-        # Row 3: annotation actions
+        # Row 0: annotation actions
         self.annotate_button = QPushButton("\u26a1 Auto-Annotate")
         self.annotate_button.setCheckable(True)
         self.annotate_button.setChecked(False)
@@ -700,13 +639,82 @@ class ShotlistVisualizer(QMainWindow):
         self.annotate_button.setToolTip(
             "Start / stop background LLM annotation of unannotated shots in this film"
         )
-        btn_grid.addWidget(self.annotate_button, 3, 0)
+        btn_grid.addWidget(self.annotate_button, 0, 0)
 
-        self.remove_ann_button = QPushButton("\U0001f5d1 Remove Ann.")
-        self.remove_ann_button.clicked.connect(self._remove_annotations)
+        self.remove_ann_button = QPushButton("\U0001f5d1 Remove")
+        self.remove_ann_button.clicked.connect(self._remove_current_annotation)
         self.remove_ann_button.setFocusPolicy(Qt.NoFocus)
-        self.remove_ann_button.setToolTip("Delete all shot annotations for this film (cannot be undone)")
-        btn_grid.addWidget(self.remove_ann_button, 3, 1)
+        self.remove_ann_button.setToolTip("Delete the annotation for the currently selected shot")
+        btn_grid.addWidget(self.remove_ann_button, 0, 1)
+
+        self.remove_all_ann_button = QPushButton("\U0001f5d1 Remove All")
+        self.remove_all_ann_button.clicked.connect(self._remove_all_annotations)
+        self.remove_all_ann_button.setFocusPolicy(Qt.NoFocus)
+        self.remove_all_ann_button.setToolTip("Delete all shot annotations for this film (cannot be undone)")
+        btn_grid.addWidget(self.remove_all_ann_button, 0, 2)
+
+        # Row 1: shot editing
+        self.split_button = QPushButton("New Shot")
+        self.split_button.clicked.connect(self.split_shot_at_current_frame)
+        self.split_button.setFocusPolicy(Qt.NoFocus)
+        self.split_button.setToolTip("Split current shot at current frame  [Shift+N]")
+        btn_grid.addWidget(self.split_button, 1, 0)
+
+        self.merge_button = QPushButton("Merge Shot")
+        self.merge_button.clicked.connect(self.merge_with_previous)
+        self.merge_button.setFocusPolicy(Qt.NoFocus)
+        self.merge_button.setToolTip("Merge current shot with previous shot  [Shift+M]")
+        btn_grid.addWidget(self.merge_button, 1, 1)
+
+        self.ignore_button = QPushButton("\u2297 Ignore")
+        self.ignore_button.clicked.connect(self.toggle_current_ignore)
+        self.ignore_button.setFocusPolicy(Qt.NoFocus)
+        self.ignore_button.setToolTip("Toggle Ignore on current shot  [I]")
+        btn_grid.addWidget(self.ignore_button, 1, 2)
+
+        # Row 2: scene editing
+        self.split_scene_button = QPushButton("New Scene")
+        self.split_scene_button.clicked.connect(self.split_scene_at_current_shot)
+        self.split_scene_button.setFocusPolicy(Qt.NoFocus)
+        self.split_scene_button.setToolTip("Start a new scene at current shot  [N]")
+        btn_grid.addWidget(self.split_scene_button, 2, 0)
+
+        self.merge_scene_button = QPushButton("Merge Scene")
+        self.merge_scene_button.clicked.connect(self.merge_scene_at_current_shot)
+        self.merge_scene_button.setFocusPolicy(Qt.NoFocus)
+        self.merge_scene_button.setToolTip("Merge current scene into previous scene  [M]")
+        btn_grid.addWidget(self.merge_scene_button, 2, 1)
+
+        self.save_button = QPushButton("\U0001f4be Save")
+        self.save_button.clicked.connect(self.save_changes)
+        self.save_button.setEnabled(False)
+        self.save_button.setFocusPolicy(Qt.NoFocus)
+        self.save_button.setToolTip("Save shotlist changes to CSV  [Ctrl+S]")
+        btn_grid.addWidget(self.save_button, 2, 2)
+
+        # Row 3: playback
+        self.play_pause_button = QPushButton("\u25b6 Play")
+        self.play_pause_button.clicked.connect(self.toggle_play_pause)
+        self.play_pause_button.setFocusPolicy(Qt.NoFocus)
+        self.play_pause_button.setToolTip("Play / Pause  [Space]")
+        btn_grid.addWidget(self.play_pause_button, 3, 0)
+
+        self.continue_button = QPushButton("Continue")
+        self.continue_button.setCheckable(True)
+        self.continue_button.setChecked(True)
+        self.continue_button.setFocusPolicy(Qt.NoFocus)
+        self.continue_button.setToolTip("When OFF: playback stops at the end of the current shot  [C]")
+        btn_grid.addWidget(self.continue_button, 3, 1)
+
+        self.gremlins_button = QPushButton("\U0001f47e Gremlins")
+        self.gremlins_button.setCheckable(True)
+        self.gremlins_button.setChecked(False)
+        self.gremlins_button.clicked.connect(self.toggle_gremlins)
+        self.gremlins_button.setFocusPolicy(Qt.NoFocus)
+        self.gremlins_button.setToolTip("Randomly jump movies/timecodes every 5 s  [G]")
+        btn_grid.addWidget(self.gremlins_button, 3, 2)
+
+        # Row 3 annotation buttons moved to row 0
 
         controls_layout.addLayout(btn_grid)
 
@@ -1310,7 +1318,7 @@ class ShotlistVisualizer(QMainWindow):
         active_shots  = total_shots - ignored_shots
         total_scenes  = len(set(shot.get('Scene', '0') for shot in self.shots))
         ann_count     = len(self.annotation_index)
-        ann_str       = f"  Ann: {ann_count}/{total_shots}" if self._has_ann_file else ""
+        ann_str       = f"  Annotatedotated: {ann_count}/{total_shots}" if self._has_ann_file else ""
         self.stats_label.setText(
             f"Scenes: {total_scenes}  Shots: {total_shots}\n"
             f"Active: {active_shots}  Ignored: {ignored_shots}{ann_str}"
@@ -1338,7 +1346,7 @@ class ShotlistVisualizer(QMainWindow):
                 key = event.key()
                 if key in (Qt.Key_Space, Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down,
                           Qt.Key_PageUp, Qt.Key_PageDown, Qt.Key_Home, Qt.Key_End,
-                          Qt.Key_E, Qt.Key_F, Qt.Key_M, Qt.Key_N, Qt.Key_G):
+                          Qt.Key_C, Qt.Key_E, Qt.Key_F, Qt.Key_I, Qt.Key_M, Qt.Key_N, Qt.Key_G):
                     # Handle it ourselves instead of letting the list widget process it
                     self.keyPressEvent(event)
                     return True  # Event handled, don't pass to list widget
@@ -1376,6 +1384,8 @@ class ShotlistVisualizer(QMainWindow):
             self.next_scene()
         elif key == Qt.Key_E:
             self.show_end_frame()
+        elif key == Qt.Key_C:
+            self.continue_button.setChecked(not self.continue_button.isChecked())
         elif key == Qt.Key_I:
             self.toggle_current_ignore()
         elif key == Qt.Key_M:
@@ -1443,7 +1453,7 @@ class ShotlistVisualizer(QMainWindow):
         mode = self.ann_repr_combo.currentText()
         self.ann_display.blockSignals(True)
         if mode == "fields":
-            self.ann_display.setPlainText(self._render_annotation_fields(ann, shot))
+            self.ann_display.setHtml(self._render_annotation_fields(ann, shot))
         elif mode == "json":
             self.ann_display.setPlainText(self._render_annotation_json(ann))
         elif mode == "txt":
@@ -1457,14 +1467,17 @@ class ShotlistVisualizer(QMainWindow):
         self.ann_dirty_label.hide()
 
     def _render_annotation_fields(self, ann: dict | None, shot: dict) -> str:
+        import html as _html
         if ann is None:
-            return "(no annotation)"
-        lines = []
+            return "<i>(no annotation)</i>"
+        parts = []
         for k, v in ann.items():
             if k == "shot_index":
                 continue
-            lines.append(f"{k}: {v}")
-        return "\n".join(lines) if lines else "(empty annotation)"
+            v_str = ", ".join(str(i) for i in v) if isinstance(v, list) else str(v)
+            escaped_v = _html.escape(v_str).replace("\n", "<br>")
+            parts.append(f"<b>{_html.escape(k)}</b><br>{escaped_v}")
+        return "<br><br>".join(parts) if parts else "<i>(empty annotation)</i>"
 
     def _render_annotation_json(self, ann: dict | None) -> str:
         if ann is None:
@@ -1552,7 +1565,7 @@ class ShotlistVisualizer(QMainWindow):
         """Called whenever the annotation text display changes."""
         if not self._ann_dirty:
             mode = self.ann_repr_combo.currentText()
-            if mode in ("json", "fields"):
+            if mode == "json":
                 self._ann_dirty = True
                 self.ann_dirty_label.setText("\u2022 unsaved annotation edit — Ctrl+S to save, Esc to discard")
                 self.ann_dirty_label.show()
@@ -1575,7 +1588,7 @@ class ShotlistVisualizer(QMainWindow):
             QMessageBox.warning(self, "Invalid JSON", str(exc))
             return
 
-        path = self._get_annotation_json_path()
+        path = _get_annotation_json_path(self.project_path, self.filename, self.media_type)
         if path is None:
             QMessageBox.warning(self, "No annotation file", "Cannot determine annotation file path.")
             return
@@ -1649,12 +1662,12 @@ class ShotlistVisualizer(QMainWindow):
         if ann is None:
             # Re-read from disk
             try:
-                path = self._get_annotation_json_path()
+                path = _get_annotation_json_path(self.project_path, self.filename, self.media_type)
                 if path:
-                    all_anns = self._read_annotation_json(path)
-                    self.annotation_index     = self._build_annotation_index(all_anns)
-                    self._annotation_entry_index = self._build_entry_index(all_anns)
-                    self._embedding_row_index = self._build_embedding_row_index(all_anns)
+                    all_anns = _read_annotation_json(path)
+                    self.annotation_index           = _build_annotation_index(all_anns)
+                    self._annotation_entry_index    = _build_entry_index(all_anns)
+                    self._embedding_row_index       = _build_embedding_row_index(all_anns)
             except Exception:
                 pass
         self._refresh_shot_row(index)
@@ -1668,9 +1681,38 @@ class ShotlistVisualizer(QMainWindow):
         self.annotate_button.setText("\u26a1 Auto-Annotate")
         self._annotate_worker = None
 
-    def _remove_annotations(self):
+    def _remove_current_annotation(self):
+        """Delete the annotation for the currently selected shot."""
+        import json as _json
+        idx = self.current_shot_index
+        path = _get_annotation_json_path(self.project_path, self.filename, self.media_type)
+        if not path.exists() or idx not in self.annotation_index:
+            QMessageBox.information(self, "No Annotation", "No annotation found for the selected shot.")
+            return
+        try:
+            with open(path, encoding="utf-8") as fh:
+                entries = _json.load(fh)
+            # Remove the entry whose shot_id matches (1-based)
+            entries = [
+                e for e in entries
+                if not (isinstance(e.get("shot"), dict)
+                        and int(e["shot"].get("shot_id", -1)) - 1 == idx)
+            ]
+            with open(path, "w", encoding="utf-8") as fh:
+                _json.dump(entries, fh, indent=2, ensure_ascii=False)
+            self.annotation_index.pop(idx, None)
+            self._annotation_entry_index.pop(idx, None)
+            self._embedding_row_index.pop(idx, None)
+            self._has_ann_file = path.exists()
+            self._refresh_shot_row(idx)
+            self.update_stats()
+            self._update_annotation_panel(idx, self.shots[idx] if self.shots else {})
+        except Exception as exc:
+            QMessageBox.critical(self, "Error", str(exc))
+
+    def _remove_all_annotations(self):
         """Delete all annotation data for the current film."""
-        path = self._get_annotation_json_path()
+        path = _get_annotation_json_path(self.project_path, self.filename, self.media_type)
         if path is None or not path.exists():
             QMessageBox.information(self, "No Annotations", "No annotation file found.")
             return
