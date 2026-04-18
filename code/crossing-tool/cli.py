@@ -1237,15 +1237,8 @@ def _shotlist_get(args):
 
 
 def _shotlist_annotate(args):
-    if getattr(args, "visualizer", False):
-        _require_path()
-        args.all = True
-        args.query = None
-        args.tmdb = None
-        _annotate_visualizer(args)
-        return
     if getattr(args, "annotate_type", None) is None:
-        print("✗ annotate: specify a subcommand or use --visualizer.", file=sys.stderr)
+        print("✗ annotate: specify a subcommand.", file=sys.stderr)
         sys.exit(1)
     if args.annotate_type == "audit":
         _annotate_audit(args)
@@ -2238,69 +2231,6 @@ def _annotate_audit(args):
     print(f"  {len(complete)} complete  {len(incomplete)} incomplete  {len(empty)} empty  {len(missing)} missing  —  {n} total")
 
 
-def _annotate_visualizer(args):
-    """Launch the annotation visualizer GUI."""
-    _require_visualizer_deps()
-
-    from data.annotate import get_annotation_json_path as _ann_json_path
-
-    _require_path()
-    project_path = prefs.get("path")
-    media_type = getattr(args, "media", "movies")
-
-    import subprocess
-    visualizer_path = Path(__file__).parent / "visualizers" / "annotation_visualizer.py"
-    if not visualizer_path.exists():
-        print(f"\u2717 Error: annotation_visualizer.py not found at {visualizer_path}", file=sys.stderr)
-        sys.exit(1)
-
-    if getattr(args, "all", False):
-        from data.metadata import get_metadata
-        entries = get_metadata(project_path, media_type=media_type)
-        filenames = [e["filename"] for e in entries if e.get("filename")]
-        if not filenames:
-            print("\u2717 No films found in metadata.", file=sys.stderr)
-            sys.exit(1)
-    elif getattr(args, "tmdb", None) is not None:
-        from data.metadata import get_metadata
-        entries = get_metadata(project_path, media_type=media_type)
-        filenames = [e["filename"] for e in entries if e.get("tmdb") == str(args.tmdb)]
-        if not filenames:
-            print(f"\u2717 No file found with TMDb ID: {args.tmdb}", file=sys.stderr)
-            sys.exit(1)
-    elif getattr(args, "query", None):
-        from data.metadata import get_metadata
-        entries = get_metadata(project_path, query=args.query, media_type=media_type)
-        if not entries:
-            print(f"\u2717 No file found matching '{args.query}'", file=sys.stderr)
-            sys.exit(1)
-        if len(entries) > 1:
-            print(f"\u2717 Multiple files match '{args.query}':", file=sys.stderr)
-            for e in entries:
-                print(f"  - {e['filename']}", file=sys.stderr)
-            sys.exit(1)
-        filenames = [entries[0]["filename"]]
-    else:
-        print("\u2717 Must provide a query, --tmdb, or --all", file=sys.stderr)
-        sys.exit(1)
-
-    valid = filenames
-
-    cmd = [
-        sys.executable, str(visualizer_path),
-        "--media", media_type,
-        "--project", project_path,
-        "--filenames",
-    ] + valid
-
-    try:
-        subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError as e:
-        sys.exit(e.returncode)
-    except KeyboardInterrupt:
-        sys.exit(0)
-
-
 def cmd_generate(args):
     sub = args.generate_subcommand
     if sub == "composition":
@@ -3288,12 +3218,6 @@ def cmd_visualizer(args):
     sub = args.visualizer_subcommand
     if sub in (None, "project"):
         _project_visualizer(args)
-    elif sub == "annotate":
-        _require_path()
-        args.all = True
-        args.query = None
-        args.tmdb = None
-        _annotate_visualizer(args)
     elif sub == "shotlist":
         _require_path()
         args.all = True
@@ -3341,8 +3265,6 @@ def build_parser():
     # annotate command: annotate shots or scenes (LLM)
     p_annotate = sub.add_parser("annotate", help="Annotate shots or scenes (LLM)")
     p_annotate.set_defaults(func=_shotlist_annotate)
-    p_annotate.add_argument("--visualizer", action="store_true", help="Open the annotation visualizer GUI (all films)")
-    p_annotate.add_argument("--media", choices=["movies", "gameplay"], default="movies", help="Media type for --visualizer (default: movies)")
     annotate_sub = p_annotate.add_subparsers(dest="annotate_type", required=False)
 
     p_annotate_shot = annotate_sub.add_parser("shot", help="Annotate shot(s)")
@@ -4064,7 +3986,7 @@ def build_parser():
     # visualizer command group — shortcut to all visualizer GUIs
     p_visualizer = sub.add_parser(
         "visualizer",
-        help="Open a visualizer GUI (project, annotate, shotlist, composition, mosaic)",
+        help="Open a visualizer GUI (project, shotlist, composition, mosaic)",
     )
     p_visualizer.set_defaults(func=cmd_visualizer, visualizer_subcommand="project")
     visualizer_sub = p_visualizer.add_subparsers(dest="visualizer_subcommand", required=False)
@@ -4072,15 +3994,6 @@ def build_parser():
     visualizer_sub.add_parser(
         "project",
         help="Open the project launcher and configuration window (default)",
-    )
-
-    p_vis_annotate = visualizer_sub.add_parser(
-        "annotate",
-        help="Open the annotation visualizer GUI (all films)",
-    )
-    p_vis_annotate.add_argument(
-        "--media", choices=["movies", "gameplay"], default="movies",
-        help="Media type (default: movies)",
     )
 
     p_vis_shot = visualizer_sub.add_parser(

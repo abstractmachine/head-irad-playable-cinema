@@ -23,8 +23,7 @@ A CLI + GUI tool for relating moving images across media — connecting gameplay
 | `crossing generate composition` | Build a single tableau image from a semantic search result |
 | `crossing visualizer` | Open the project launcher — configure path, models, and open any visualizer |
 | `crossing visualizer project` | Same as above (explicit subcommand) |
-| `crossing visualizer annotate` | Review LLM annotations alongside video frames |
-| `crossing visualizer shotlist` | Inspect and edit shot boundaries frame-precisely |
+| `crossing visualizer shotlist` | Inspect and edit shot boundaries, and review LLM annotations alongside video frames |
 | `crossing visualizer mosaic` | Interactive search-driven mosaic explorer |
 | `crossing visualizer composition` | Interactive composition search GUI |
 
@@ -374,8 +373,7 @@ crossing visualizer
 crossing visualizer project
 
 # Open individual visualizers directly
-crossing visualizer annotate           # review LLM annotations alongside frames
-crossing visualizer shotlist           # inspect / edit shot boundaries
+crossing visualizer shotlist           # inspect / edit shot boundaries and review LLM annotations
 crossing visualizer mosaic             # interactive search-driven mosaic explorer
 crossing visualizer composition        # interactive composition search GUI
 ```
@@ -443,10 +441,6 @@ crossing annotate remove --all
 
 # Audit annotation status across all films
 crossing annotate audit
-  --media {movies,gameplay}
-
-# Open the annotation visualizer GUI
-crossing annotate --visualizer
   --media {movies,gameplay}
 ```
 
