@@ -7,3 +7,4 @@
 - [ ]   Add Scene field panel in Shotlist Visualizer
 - [ ]   Test/Vertify/Confirm previous Index system is still working with new shot_id system
 - [ ]   Figure out why some movies (Cowboys & Aliens, Days of Heaven, others?) seem to use the wrong audio channel in the current sync-audio-to-OpenCV-frame system in Shotlist Visualizer
+- [ ]   Normalize *all* the audio levels across all the films (via a new `crossing media movies normalize` command)
