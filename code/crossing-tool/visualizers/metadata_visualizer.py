@@ -97,10 +97,14 @@ class _BaseCard(QFrame):
 
     def enterEvent(self, event) -> None:
         self.setStyleSheet(_CARD_HOVER)
+        for child in self.findChildren(QLabel, "dim"):
+            child.setStyleSheet(f"background-color: transparent; border: none; color: #333333;")
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:
         self.setStyleSheet(_CARD_NORMAL)
+        for child in self.findChildren(QLabel, "dim"):
+            child.setStyleSheet(f"background-color: transparent; border: none; color: {theme.TEXT_DIM};")
         super().leaveEvent(event)
 
     def mousePressEvent(self, event) -> None:
@@ -153,6 +157,7 @@ class _MovieCard(_BaseCard):
         meta_parts = [p for p in (year, director) if p]
         if meta_parts:
             meta_label = QLabel(" · ".join(meta_parts))
+            meta_label.setObjectName("dim")
             meta_label.setFont(theme.font_mono())
             meta_label.setStyleSheet(f"background-color: transparent; border: none; color: {theme.TEXT_DIM};")
             meta_label.setWordWrap(True)
@@ -161,6 +166,7 @@ class _MovieCard(_BaseCard):
         overview = _truncate(record.get("overview", ""), OVERVIEW_MAX_CHARS)
         if overview:
             overview_label = QLabel(overview)
+            overview_label.setObjectName("dim")
             overview_label.setFont(theme.font_ui())
             overview_label.setStyleSheet(f"background-color: transparent; border: none; color: {theme.TEXT_DIM};")
             overview_label.setWordWrap(True)
@@ -208,6 +214,7 @@ class _GameplayCard(_BaseCard):
         game = record.get("game", "")
         if game:
             game_label = QLabel(game)
+            game_label.setObjectName("dim")
             game_label.setFont(theme.font_mono())
             game_label.setStyleSheet(f"background-color: transparent; border: none; color: {theme.TEXT_DIM};")
             game_label.setWordWrap(True)
@@ -216,6 +223,7 @@ class _GameplayCard(_BaseCard):
         overview = _truncate(record.get("overview", ""), OVERVIEW_MAX_CHARS)
         if overview:
             overview_label = QLabel(overview)
+            overview_label.setObjectName("dim")
             overview_label.setFont(theme.font_ui())
             overview_label.setStyleSheet(f"background-color: transparent; border: none; color: {theme.TEXT_DIM};")
             overview_label.setWordWrap(True)
