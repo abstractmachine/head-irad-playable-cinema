@@ -2006,7 +2006,7 @@ def _export_annotations_csv(results: List[Dict[str, Any]], dest: Path) -> None:
                     main = ", ".join(main)
                 _sid = shot.get("shot_id")
                 writer.writerow([
-                    (_sid - 1) if _sid is not None else "",
+                    _sid if _sid is not None else "",
                     ann.get("start_time") if ann else "",
                     ann.get("end_time") if ann else "",
                     ann.get("Scene") if ann else "",
@@ -2022,7 +2022,7 @@ def _export_annotations_markdown(results: List[Dict[str, Any]], dest: Path) -> N
             shot = r.get("shot", {})
             ann = shot.get("annotation") if isinstance(shot, dict) else None
             _sid = shot.get("shot_id")
-            f.write(f"## Shot {(_sid - 1) if _sid is not None else '?'}\n\n")
+            f.write(f"## Shot {_sid if _sid is not None else '?'}\n\n")
             if isinstance(ann, dict):
                 f.write(f"- **Overall**: {ann.get('overall_description', '')}\n")
                 f.write(f"- **Framing**: {ann.get('framing', '')}\n")

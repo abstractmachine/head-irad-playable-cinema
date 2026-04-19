@@ -33,7 +33,7 @@ In this current form, the project explores how hybrid strategies can emerge new 
 ## Software
 A [training and playback tool](./code/crossing-tool/readme.md) is currently in development.
 
-![Playable-Cinema-Tool](./code/playable-tool/screenshots/playable-cinema-tool-2025-09-09.png)
+![Playable-Cinema-Tool](./code/crossing-tool/documentation/images/crossing-shotlist-visualizer-2026-04-19-13-00-07.png)
 
 ## Demo
 You can watch a short excerpt of the software synchronizing in real-time images from gameplay and shots from historical western cinema:

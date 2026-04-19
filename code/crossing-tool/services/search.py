@@ -7,7 +7,7 @@ Annotation files live at:
     <project>/data/annotations/shots/<media_type>/<stem>.json
 
 Each file is a JSON list of entries shaped like:
-    {"shot": {"shot_id": 1, "annotation": {"setting": "...", "objects": [...], ...}}}
+    {"shot": {"shot_id": "tmdb_391@f000000-f000050", "annotation": {"setting": "...", "objects": [...], ...}}}
 
 Timing (start/end time and frames) is read from the corresponding shotlist CSV
 at <project>/data/shotlists/<media_type>/<stem>.csv.
@@ -321,17 +321,24 @@ def search_shots(
         except Exception:
             continue
 
-        # Build shot_id (1-based) → timing dict from shotlist CSV
+        # Build timing lookups from shotlist CSV.
+        # shot_timing: 0-based index → timing dict  (legacy integer shot_ids)
+        # shot_timing_by_frame: start_frame → timing dict  (stable string shot_ids)
         shot_timing: dict[int, dict] = {}
+        shot_timing_by_frame: dict[int, dict] = {}
         try:
             shots_csv = read_shotlist(project_path, filename, media_type)
             for idx, row in enumerate(shots_csv):
-                shot_timing[idx] = {
+                timing_row = {
                     "start_time": row.get("start_time", ""),
                     "end_time": row.get("end_time", ""),
                     "start_frame": _safe_int(row.get("start_frame")),
                     "end_frame": _safe_int(row.get("end_frame")),
                 }
+                shot_timing[idx] = timing_row
+                sf_key = _safe_int(row.get("start_frame"))
+                if sf_key is not None:
+                    shot_timing_by_frame[sf_key] = timing_row
         except FileNotFoundError:
             pass  # timing fields will be empty strings / None
 
@@ -345,7 +352,27 @@ def search_shots(
             shot_id_raw = shot_meta.get("shot_id")
             if shot_id_raw is None:
                 continue
-            shot_id = int(shot_id_raw)  # 1-based
+
+            # Resolve timing — stable IDs encode frames directly; legacy integer
+            # IDs use a 1-based index into the shotlist CSV.
+            from data.media_id import parse_shot_id as _parse_shot_id
+            try:
+                _, _sf, _ef = _parse_shot_id(str(shot_id_raw))
+                # Stable ID: frames come from the ID itself
+                timing = shot_timing_by_frame.get(_sf, {})
+                shot_id_display = str(shot_id_raw)
+                start_frame = _sf
+                end_frame = _ef
+            except ValueError:
+                # Legacy integer ID
+                try:
+                    _shot_id_int = int(shot_id_raw)
+                except (TypeError, ValueError):
+                    continue
+                timing = shot_timing.get(_shot_id_int - 1, {})
+                shot_id_display = f"shot_{_shot_id_int:05d}"
+                start_frame = timing.get("start_frame")
+                end_frame = timing.get("end_frame")
 
             searchable, _ = _annotation_searchable_text(ann, field)
             score = _score_text(query, searchable)
@@ -355,20 +382,16 @@ def search_shots(
             matched_fields = _find_matched_fields(query, ann, field)
             matched_text = _build_matched_text(ann, matched_fields)
 
-            # shot_id is 1-based; CSV rows are 0-based
-            timing = shot_timing.get(shot_id - 1, {})
-
             results.append({
                 "filename": filename,
                 "tmdb_id": tmdb_id,
                 "movie_id": movie_id,
                 "movie_title": movie_title,
-                "shot_id_num": shot_id,
-                "shot_id": f"shot_{shot_id:05d}",
+                "shot_id": shot_id_display,
                 "start_time": timing.get("start_time", ""),
                 "end_time": timing.get("end_time", ""),
-                "start_frame": timing.get("start_frame"),
-                "end_frame": timing.get("end_frame"),
+                "start_frame": start_frame,
+                "end_frame": end_frame,
                 "matched_fields": matched_fields,
                 "matched_text": matched_text,
                 "score": round(score, 4),

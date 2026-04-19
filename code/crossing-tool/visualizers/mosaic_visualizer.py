@@ -45,7 +45,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QSplitter,
+    QSplitter,  # noqa: F401 (unused after refactor, kept for import compatibility)
     QStatusBar,
     QVBoxLayout,
     QWidget,
@@ -564,16 +564,25 @@ class MosaicVisualizer(QMainWindow):
         self.setWindowTitle("Crossing — Mosaic Visualizer")
         self.resize(1440, 900)
 
-        # Central splitter: left = canvas, right = controls
-        splitter = QSplitter(Qt.Horizontal)
-        self.setCentralWidget(splitter)
+        # Central layout: left = canvas (expands), divider, right = controls (fixed)
+        central = QWidget()
+        self.setCentralWidget(central)
+        root = QHBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
         self.canvas = MosaicCanvas()
-        splitter.addWidget(self.canvas)
+        root.addWidget(self.canvas, stretch=1)
+
+        divider = QFrame()
+        divider.setFrameShape(QFrame.VLine)
+        divider.setFrameShadow(QFrame.Plain)
+        divider.setFixedWidth(1)
+        divider.setStyleSheet(f"background: {theme.UI_BORDER};")
+        root.addWidget(divider)
 
         ctrl = self._build_control_panel()
-        splitter.addWidget(ctrl)
-        splitter.setSizes([1150, _CTRL_PANEL_WIDTH])
+        root.addWidget(ctrl)
 
         self.status = QStatusBar()
         self.setStatusBar(self.status)

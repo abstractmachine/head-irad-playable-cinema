@@ -101,7 +101,7 @@ def serialize_annotation_item(item: dict, mapping: dict) -> str:
     Args:
         item:    One entry from the annotation JSON list.  Expected shape:
                  ``{ movie: {...}, annotation: {...},
-                     shot: { shot_id: int, annotation: { field: value, ... } } }``
+                     shot: { shot_id: "<media_id>@fSTART-fEND", annotation: { field: value, ... } } }``
         mapping: Parsed mapping config dict with keys:
                  ``fields``, ``include_labels``, ``separator``, ``skip_empty``.
 
