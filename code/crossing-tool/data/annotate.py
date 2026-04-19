@@ -1392,7 +1392,7 @@ def _count_pending_shots(
         _prior = existing_agg.get(_shot_id)
         if not force and skip_existing and _prior is not None:
             _prior_ann = _prior.get("shot", {}).get("annotation", {})
-            if isinstance(_prior_ann, dict) and _prior_ann.get("setting"):
+            if isinstance(_prior_ann, dict) and _prior_ann.get("description"):
                 continue
         count += 1
     return count
@@ -1674,7 +1674,7 @@ def annotate_file_shots(
         # Preserve existing valid annotation from the aggregated JSON unless force
         if not force and skip_existing and _prior is not None:
             _prior_ann = _prior.get("shot", {}).get("annotation", {})
-            if isinstance(_prior_ann, dict) and _prior_ann.get("setting"):
+            if isinstance(_prior_ann, dict) and _prior_ann.get("description"):
                 skipped += 1
                 results.append(_prior)
                 continue
