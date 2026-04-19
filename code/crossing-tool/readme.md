@@ -25,6 +25,7 @@ A CLI + GUI tool for relating moving images across media — connecting gameplay
 | `crossing generate composition` | Build a single tableau image from a semantic search result |
 | `crossing visualizer` | Open the project launcher — configure path, models, and open any visualizer |
 | `crossing visualizer project` | Same as above (explicit subcommand) |
+| `crossing visualizer metadata` | Browse all movies and gameplay as card tiles — click to open in Shotlist Visualizer |
 | `crossing visualizer shotlist` | Inspect and edit shot boundaries, and review LLM annotations alongside video frames |
 | `crossing visualizer mosaic` | Interactive search-driven mosaic explorer |
 | `crossing visualizer composition` | Interactive composition search GUI |
@@ -53,7 +54,10 @@ crossing shotlist shot detect "Film Title"
 # 6. Open the project launcher (configure path, models, open any visualizer)
 crossing visualizer
 
-# 6b. Or open the shotlist visualizer directly
+# 6b. Or open the metadata browser to browse all films
+crossing visualizer metadata
+
+# 6c. Or open the shotlist visualizer directly
 crossing visualizer shotlist
 
 # 7. Annotate shots with an LLM
@@ -382,16 +386,24 @@ crossing visualizer
 crossing visualizer project
 
 # Open individual visualizers directly
-crossing visualizer shotlist           # inspect / edit shot boundaries and review LLM annotations
-crossing visualizer mosaic             # interactive search-driven mosaic explorer
-crossing visualizer composition        # interactive composition search GUI
+crossing visualizer metadata              # browse all movies and gameplay as card tiles
+crossing visualizer shotlist              # inspect / edit shot boundaries and review LLM annotations
+  --media {movies,gameplay}              # media type (default: movies)
+  --filename <filename>                  # jump to (or load) a specific film; sends to a running
+                                         # instance via IPC first, falls back to opening a new window
+crossing visualizer mosaic               # interactive search-driven mosaic explorer
+crossing visualizer composition          # interactive composition search GUI
 ```
 
 The **project** visualizer lets you:
 - Set (via folder picker) and display the current project path
 - Adjust annotation defaults (frames-per-shot, min-frame-interval, max-frames-per-shot)
 - Select models for each role (annotate, segmentation, embed) from installed local models
-- Launch any of the four other visualizers
+- Launch any of the four other visualizers from a 2×2 grid (Metadata, Shotlist, Mosaic, Composition)
+
+The **metadata** visualizer shows all movies and gameplay as scrollable card tiles in two columns. Each card displays a thumbnail, title, year/director (movies) or game (gameplay), and a short overview. Cards highlight fuchsia on hover; clicking a card opens that film in the Shotlist Visualizer. If the Shotlist Visualizer is already open it receives the film via an IPC socket (no second window is opened); if not, a new window is launched.
+
+The **shotlist** visualizer always populates its film selector with the full list of all films in the project for the active media type, regardless of how many were specified on the command line.
 
 ### Annotate
 
@@ -743,6 +755,7 @@ Gameplay metadata includes:
 - Shotlist visualizer GUI (`crossing visualizer shotlist`) uses OpenCV for frame-precise display — each frame is seeked by exact integer frame index, not timecode
 - `crossing index update` checks for changes in annotation files before re-serializing or re-embedding, making it safe to run repeatedly
 - Annotation IDs use a stable `<media_id>@fSTART-fEND` format; use `crossing annotate migrate` to upgrade existing projects from legacy integer IDs
+- The **metadata visualizer** communicates with a running Shotlist Visualizer via a Unix domain socket (`/tmp/crossing_shotlist_<hash>.sock`); the socket is created when the Shotlist Visualizer opens and removed when it closes
 
 ## Requirements
 
