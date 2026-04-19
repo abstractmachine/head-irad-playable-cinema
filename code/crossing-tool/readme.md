@@ -9,10 +9,12 @@ A CLI + GUI tool for relating moving images across media — connecting gameplay
 | Command | What it does |
 |---------|-------------|
 | `crossing tool` | Configure project path, name, models, and API keys |
-| `crossing media import` | Import and transcode video files into the project |
+| `crossing media import` | Import video files into the project (movies or gameplay) |
 | `crossing media remove` | Remove a film and all its associated data |
+| `crossing media audit` | Report missing metadata, thumbnails, shotlists, and subtitles |
+| `crossing media update` | Fetch and save metadata/thumbnails for entries missing key fields |
 | `crossing media subtitle` | Fetch and list subtitles via OpenSubtitles |
-| `crossing metadata` | List, get, update, validate, and audit metadata |
+| `crossing metadata` | List, get, update, and audit metadata |
 | `crossing shotlist` | Manage shot/scene CSV files and run shot detection |
 | `crossing annotate` | Run LLM annotation on shots and scenes |
 | `crossing search` | Search shot annotations by query, field, or vocabulary |
@@ -209,20 +211,37 @@ Manage content: videos, subtitles, posters, and thumbnails.
 # Import video files (supports individual files, multiple files, or folders)
 crossing media import <file(s)|folder>
 crossing media import --pick              # open GUI file/folder picker
-  --media {movie,gameplay}                # destination (default: movie)
-  --platform {universal,pi5}              # encoding profile (default: universal)
-  --skip-metadata                         # skip automatic metadata fetch
+  --media {movie,gameplay}                # destination (required)
+  --optimize {universal,pi5}             # re-encode for a target platform (movie only; omit to copy as-is)
+  --skip-metadata                         # skip automatic metadata fetch (movie only)
+  --title <title>                         # display title (gameplay only; default: derived from filename)
+  --game <slug>                           # game identifier for media_id prefix (gameplay only, required; e.g. rdr2)
+  --verbose                               # print a message as each file import begins
 
-# Examples:
-crossing media import /path/to/video.mp4
-crossing media import /path/to/movies/
-crossing media import --pick              # GUI picker for single/multiple files or folder
+# Movie examples:
+crossing media import /path/to/video.mp4 --media movie
+crossing media import /path/to/movies/ --media movie
+crossing media import --pick --media movie    # GUI picker for single/multiple files or folder
+
+# Gameplay examples:
+crossing media import clip.mp4 --media gameplay --game rdr2
+crossing media import /path/to/clips/ --media gameplay --game rdr2 --title "Red Dead Redemption 2"
 
 # Remove a film and all its associated files
 crossing media remove [query]             # match by filename or title words
 crossing media remove --tmdb 391         # match by TMDb ID
-  --media {movies,gameplay}              # media type (default: movies)
+  --media {movies,gameplay}              # media type (required)
   --confirm                              # actually delete (default is a dry run)
+
+# Audit — report missing metadata, thumbnails, shotlists, and subtitles
+crossing media audit
+  --media {movies,gameplay}              # media type (default: movies)
+
+# Update — fetch and save metadata/thumbnails for entries missing key fields
+crossing media update
+  --file <filename>                      # update a single file by filename
+  --force                                # force re-fetch for all entries
+  --media {movies,gameplay}              # media type (default: movies)
 
 # Download and manage subtitles
 crossing media subtitle fetch [query]    # fetch missing subtitles from OpenSubtitles
@@ -254,25 +273,14 @@ crossing metadata get [query]
   --open                            # open the saved Markdown file (implies --markdown)
 
 # Set a metadata field manually
-crossing metadata set <filename_substring> <field> <value>
-crossing metadata set --tmdb 391 director "Sergio Leone"
-  --media {movies,gameplay}
+crossing metadata set '<json>'
+# Example: crossing metadata set '{"filename": "Django (1966).mp4", "director": "Sergio Corbucci"}'
 
 # Update metadata (fetch from TMDb/OpenSubtitles)
 crossing metadata update
   --file <filename>                 # update single file
   --force                           # re-fetch all entries (including duration)
   --media {movies}
-
-# Validate metadata
-crossing metadata validate
-  --check-thumbnails                # verify thumbnails exist
-  --check-subtitles                 # verify subtitles exist
-  --media {movies,gameplay}
-
-# Fix filenames (normalize to standard format)
-crossing metadata fixname
-  --media {movies,gameplay}
 
 # Count entries
 crossing metadata count
@@ -323,7 +331,7 @@ crossing shotlist shot detect --tmdb 391             # use TMDb ID
   --force                                            # overwrite existing shotlist
   --all                                              # process all entries in project (skips existing)
   --notify                                           # Discord notification when finished
-  --notify-items                                     # Discord notification after each item (batch only)
+  --notify-each                                      # Discord notification after each item (batch only)
 
 # Examples:
 crossing shotlist shot detect Django                 # find by filename substring
@@ -333,6 +341,7 @@ crossing shotlist shot detect --all                  # detect shots for all movi
 crossing shotlist shot detect --all --media gameplay # detect shots for all gameplay entries
 crossing shotlist shot detect --all --force          # reprocess everything
 crossing shotlist shot detect --all --notify         # notify when the whole batch finishes
+crossing shotlist shot detect --all --notify-each    # notify after every film in the batch
 
 # Output CSV format:
 # Ignore,Scene,Start,End,Start_Frame,End_Frame,Shot_Caption,Scene_Caption,Shot_Source,Shot_Confidence
@@ -411,7 +420,7 @@ crossing annotate shot --tmdb 391
   --log                             # write debug log file
   --reload-every N                  # reload model every N shots to prevent drift (default: 25)
   --notify                          # Discord notification on finish
-  --notify-items                    # Discord notification after each film (batch)
+  --notify-each                     # Discord notification after each film (batch)
 
 # Annotate all films in project
 crossing annotate shot --all
@@ -441,6 +450,19 @@ crossing annotate remove --all
 
 # Audit annotation status across all films
 crossing annotate audit
+  --media {movies,gameplay}
+
+# Validate and repair annotation JSON (fix comma-separated values in array fields)
+crossing annotate validate <filename_substring>
+crossing annotate validate --tmdb 391
+crossing annotate validate --all
+  --media {movies,gameplay}
+  --dry-run                         # report issues without writing any changes
+
+# Migrate annotation JSON from legacy integer shot_ids to stable <media_id>@fSTART-fEND IDs
+crossing annotate migrate <filename_substring>
+crossing annotate migrate --tmdb 391
+crossing annotate migrate --all
   --media {movies,gameplay}
 ```
 
@@ -547,6 +569,7 @@ crossing generate mosaic thumbnails --media movies --all
 # Mosaic of frames matching a shot annotation search query
 crossing generate mosaic search "close-up gun" --all
 crossing generate mosaic search "close-up gun" Django    # restrict to one film
+crossing generate mosaic search text "WANTED" --all      # restrict to annotation text field
   --field <field>                   # restrict to one annotation field
   --limit N                         # max results / tiles
   --layout {landscape,portrait}     # grid orientation (default: landscape)
@@ -676,15 +699,15 @@ crossing tool api_key get discord
 | Flag | Behaviour |
 |------|-----------|
 | `--notify` | Send one message when the entire process finishes (single film or full batch) |
-| `--notify-items` | Send a message after each individual film in a batch, including elapsed time |
+| `--notify-each` | Send a message after each individual film in a batch, including elapsed time |
 
 ```bash
 # Notify on batch completion
 crossing shotlist shot detect --all --notify
 
 # Notify after every film + on completion
-crossing annotate shot --all --notify --notify-items
-crossing shotlist shot detect --all --notify --notify-items
+crossing annotate shot --all --notify --notify-each
+crossing shotlist shot detect --all --notify --notify-each
 ```
 
 ### MCP Server (Claude Desktop integration)
@@ -695,23 +718,31 @@ See [mcp](./mcp.md) for more information on setup and usage.
 
 ## Metadata Fields
 
-Movies and gameplay metadata includes:
-- `title`, `year`, `director`, `tmdb`, `imdb`
-- `filename`, `duration` (actual file duration in minutes)
+Movies metadata includes:
+- `media_id`, `title`, `year`, `director`, `tmdb`, `imdb`
+- `filename`, `original_filename`, `duration` (actual file duration in minutes)
+- `overview`, `tagline`
+
+Gameplay metadata includes:
+- `media_id`, `title`, `game` (game slug, e.g. `rdr2`)
+- `filename`, `original_filename`, `duration`
 - `overview`, `tagline`
 
 ## Notes
 
-- All video files are transcoded to H.264/AAC MP4 format on import
-- Metadata is automatically fetched from TMDb during import
-- Thumbnails and subtitles are automatically downloaded when available
+- All movie files are transcoded to H.264/AAC MP4 format on import (use `--optimize` to target a platform; omit to copy as-is)
+- Gameplay files are copied as-is with a stable `<media_id> - <title>` filename and a thumbnail extracted automatically
+- Metadata is automatically fetched from TMDb during movie import; gameplay imports are metadata-free (no TMDb lookup)
+- Thumbnails and subtitles are automatically downloaded when available during movie import
 - Shotlist commands accept either a full filename substring or `--tmdb <id>` for convenience
+- `crossing media audit` and `crossing metadata audit` are equivalent; both report on metadata, thumbnails, shotlists, and subtitles
 - The `--pick` flag on import opens a native GUI file picker — uses PyQt5 (installed with `[visualizer]`), or falls back to `zenity`/`kdialog` (Linux), `osascript` (macOS), or PowerShell (Windows)
 - Use `--field` with `shotlist show` commands to extract specific fields from caption JSON (table or JSON output)
 - Use `--json` flag for raw JSON output (full shot data or filtered fields with `--field`)
 - Shot detection uses TransNetV2 and creates CSV files with `Shot_Source="auto"`, confidence scores, and exact frame numbers (`Start_Frame`/`End_Frame`)
 - Shotlist visualizer GUI (`crossing visualizer shotlist`) uses OpenCV for frame-precise display — each frame is seeked by exact integer frame index, not timecode
 - `crossing index update` checks for changes in annotation files before re-serializing or re-embedding, making it safe to run repeatedly
+- Annotation IDs use a stable `<media_id>@fSTART-fEND` format; use `crossing annotate migrate` to upgrade existing projects from legacy integer IDs
 
 ## Requirements
 
