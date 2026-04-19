@@ -1205,10 +1205,12 @@ class ShotlistVisualizer(QMainWindow):
         end_tc     = shot.get('end_time', '?')
         confidence = shot.get('Shot_Confidence', '')
         conf_str   = f"\nConf: {confidence}" if confidence else ""
+        shot_id    = shot.get('shot_id', '')
+        sid_str    = f"\n{shot_id}" if shot_id else ""
         self.info_label.setText(
             f"Scene {scene}  Shot #{self.current_shot_index}\n"
             f"Frame: {self.current_frame_number}\n"
-            f"{start_tc} → {end_tc}{conf_str}"
+            f"{start_tc} → {end_tc}{conf_str}{sid_str}"
         )
     
     def on_shot_selected(self, row: int, col: int = 0):
@@ -1646,7 +1648,7 @@ class ShotlistVisualizer(QMainWindow):
                 existing = []
             entry_idx = self._annotation_entry_index.get(shot_id)
             if entry_idx is not None and 0 <= entry_idx < len(existing):
-                existing[entry_idx].update(ann)
+                existing[entry_idx]["shot"]["annotation"].update(ann)
             else:
                 existing.append(ann)
                 self._annotation_entry_index[shot_id] = len(existing) - 1
@@ -1786,7 +1788,7 @@ class ShotlistVisualizer(QMainWindow):
             shot_id = self.shots[idx].get("shot_id", "") if 0 <= idx < len(self.shots) else ""
             entry_idx = self._annotation_entry_index.get(shot_id)
             if entry_idx is not None and 0 <= entry_idx < len(existing):
-                existing[entry_idx].update(data)
+                existing[entry_idx]["shot"]["annotation"].update(data)
             else:
                 data["shot_index"] = idx
                 existing.append(data)
@@ -1877,7 +1879,9 @@ class ShotlistVisualizer(QMainWindow):
         """Called when auto-annotation finishes (or is interrupted)."""
         self.annotate_button.setChecked(False)
         self.annotate_button.setText("\u26a1 Auto-Annotate")
-        self._annotate_worker = None
+        if self._annotate_worker is not None:
+            self._annotate_worker.deleteLater()
+            self._annotate_worker = None
         print(message, flush=True)
 
         # Reload annotation indexes from disk so partial runs are reflected.
