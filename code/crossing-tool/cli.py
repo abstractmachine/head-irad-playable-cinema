@@ -1275,6 +1275,8 @@ def _shotlist_annotate(args):
 
             if getattr(args, "all", False):
                 _notify_items = getattr(args, "notify_items", False)
+                if _notify_items:
+                    args.notify = True  # --notify-each implies --notify
 
                 def _on_file_done(summary, elapsed):
                     if not _notify_items:
@@ -1595,8 +1597,8 @@ def _shot_detect(args):
 
     project_path = prefs.get("path")
     media_type = args.media
-    notify = getattr(args, "notify", False)
     notify_items = getattr(args, "notify_items", False)
+    notify = getattr(args, "notify", False) or notify_items  # --notify-each implies --notify
 
     try:
         if getattr(args, 'all', False):
@@ -2166,6 +2168,55 @@ def _annotate_remove(args):
             skipped += 1
 
     print(f"\nRemoved {removed}  |  already absent {skipped}")
+
+
+def _annotate_migrate(args):
+    """Migrate annotation JSON files from legacy integer shot_ids to stable IDs.
+
+    The stable format is ``<media_id>@fSTART-fEND`` (e.g.
+    ``tmdb_39435@f000234-f000398``).  Files that already use stable IDs are
+    left untouched.
+    """
+    from data.annotate import migrate_annotations_to_stable_ids
+    from data.shotlist import resolve_filename
+
+    _require_path()
+    project_path = prefs.get("path")
+    media_type   = getattr(args, "media", "movies")
+
+    if getattr(args, "all", False):
+        from data.metadata import get_metadata
+        entries   = get_metadata(project_path, media_type=media_type)
+        filenames = [e["filename"] for e in entries if e.get("filename")]
+    else:
+        if not args.filename and not getattr(args, "tmdb", None):
+            print("✗ Provide a filename, --tmdb, or --all", file=sys.stderr)
+            sys.exit(1)
+        try:
+            filenames = [resolve_filename(project_path, getattr(args, "tmdb", None), args.filename, media_type)]
+        except ValueError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            sys.exit(1)
+
+    migrated = 0
+    skipped  = 0
+    errors   = 0
+    for fn in filenames:
+        try:
+            changed = migrate_annotations_to_stable_ids(project_path, fn, media_type)
+            if changed:
+                print(f"✓ Migrated  {fn}")
+                migrated += 1
+            else:
+                print(f"  (already stable or no annotations)  {fn}")
+                skipped += 1
+        except Exception as exc:
+            print(f"✗ Error migrating {fn}: {exc}", file=sys.stderr)
+            errors += 1
+
+    print(f"\nMigrated {migrated}  |  already stable/absent {skipped}  |  errors {errors}")
+    if errors:
+        sys.exit(1)
 
 
 def _annotate_validate(args):
@@ -3450,7 +3501,7 @@ def build_parser():
     p_annotate_shot.add_argument("--verbose", action="store_true", help="Print per-shot progress to stdout")
     p_annotate_shot.add_argument("--log", action="store_true", help="Write a debug log file alongside the annotation JSON")
     p_annotate_shot.add_argument("--notify", action="store_true", help="Send a Discord notification when the run finishes")
-    p_annotate_shot.add_argument("--notify-items", action="store_true", dest="notify_items", help="Send a Discord notification after each movie is annotated in a --all batch")
+    p_annotate_shot.add_argument("--notify-each", action="store_true", dest="notify_items", help="Send a Discord notification after each movie is annotated in a --all batch")
     p_annotate_shot.add_argument(
         "--reload-every", type=int, default=25, dest="reload_every_n_shots", metavar="N",
         help="Reload the model pipeline every N processed shots to prevent output drift (default: 25; set 0 to disable)",
@@ -3534,6 +3585,24 @@ def build_parser():
     p_annotate_validate.add_argument(
         "--dry-run", dest="dry_run", action="store_true",
         help="Report issues without writing any changes",
+    )
+
+    p_annotate_migrate = annotate_sub.add_parser(
+        "migrate",
+        help="Migrate annotation JSON files from legacy integer shot_ids to stable <media_id>@fSTART-fEND IDs",
+    )
+    p_annotate_migrate.set_defaults(func=_annotate_migrate)
+    p_annotate_migrate.add_argument(
+        "filename", nargs="?", default=None,
+        help="Fuzzy keyword to match a movie or game title (or use --tmdb / --all)",
+    )
+    p_annotate_migrate.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
+    p_annotate_migrate.add_argument(
+        "--media", choices=["movies", "gameplay"], default="movies",
+    )
+    p_annotate_migrate.add_argument(
+        "--all", action="store_true",
+        help="Migrate all annotation files in the project",
     )
 
     # (moved under 'crossing tool model' — see tool_sub below)
@@ -3984,7 +4053,7 @@ def build_parser():
     p_sl_shot_detect.add_argument("--force", action="store_true", help="Overwrite existing shotlist if it exists")
     p_sl_shot_detect.add_argument("--all", action="store_true", help="Process all metadata entries without a shotlist")
     p_sl_shot_detect.add_argument("--notify", action="store_true", help="Send a Discord notification when the process finishes")
-    p_sl_shot_detect.add_argument("--notify-items", action="store_true", dest="notify_items", help="Send a Discord notification after each item in a batch")
+    p_sl_shot_detect.add_argument("--notify-each", action="store_true", dest="notify_items", help="Send a Discord notification after each item in a batch")
 
     p_sl_migrate = shotlist_sub.add_parser(
         "migrate",

@@ -44,8 +44,9 @@ from PyQt5.QtWidgets import (
 from styles.theme import GripSplitter
 from PyQt5.QtGui import QFont, QPixmap, QImage, QColor, QMouseEvent
 
-from data.shotlist import read_shotlist, write_shotlist, get_shotlist_path
+from data.shotlist import read_shotlist, write_shotlist, get_shotlist_path, attach_shot_ids
 from data.metadata import get_metadata
+from data.media_id import compute_media_id
 from data.annotate import reindex_annotations_for_merge, reindex_annotations_for_split
 from data.index import (
     load_mapping,
@@ -196,6 +197,7 @@ def _read_annotation_json(path: Path) -> list:
 
 
 def _build_annotation_index(entries: list) -> dict:
+    """Build a dict keyed by string shot_id → annotation dict."""
     idx = {}
     for entry in entries:
         shot = entry.get("shot")
@@ -204,11 +206,12 @@ def _build_annotation_index(entries: list) -> dict:
         shot_id = shot.get("shot_id")
         ann = shot.get("annotation")
         if shot_id is not None and ann is not None:
-            idx[int(shot_id) - 1] = ann
+            idx[str(shot_id)] = ann
     return idx
 
 
 def _build_entry_index(entries: list) -> dict:
+    """Build a dict keyed by string shot_id → index in the entries list."""
     idx = {}
     for i, entry in enumerate(entries):
         shot = entry.get("shot")
@@ -216,11 +219,12 @@ def _build_entry_index(entries: list) -> dict:
             continue
         shot_id = shot.get("shot_id")
         if shot_id is not None:
-            idx[int(shot_id) - 1] = i
+            idx[str(shot_id)] = i
     return idx
 
 
 def _build_embedding_row_index(entries: list) -> dict:
+    """Build a dict keyed by string shot_id → row index in the embeddings array."""
     idx = {}
     for row, entry in enumerate(entries):
         shot = entry.get("shot")
@@ -228,7 +232,7 @@ def _build_embedding_row_index(entries: list) -> dict:
             continue
         shot_id = shot.get("shot_id")
         if shot_id is not None:
-            idx[int(shot_id) - 1] = row
+            idx[str(shot_id)] = row
     return idx
 
 
@@ -306,6 +310,7 @@ class AnnotateWorker(QThread):
                 model_name=self.model_name,
                 frames_per_shot=self.frames_per_shot,
                 skip_existing=True,
+                verbose=True,
                 on_shot_done=lambda i: self.shot_done.emit(i),
                 stop_event=self._stop_event,
             )
@@ -432,6 +437,12 @@ class ShotlistVisualizer(QMainWindow):
                         s[k] = int(v)
                     except ValueError:
                         s[k] = 0
+
+        # Compute stable media_id and attach shot_ids to all shots
+        _entries = get_metadata(self.project_path, media_type=self.media_type)
+        _meta = next((e for e in _entries if e.get("filename") == self.filename), {})
+        self.media_id = compute_media_id(_meta, self.media_type)
+        attach_shot_ids(self.shots, self.media_id)
 
         ann_path    = _get_annotation_json_path(self.project_path, self.filename, self.media_type)
         ann_entries = _read_annotation_json(ann_path)
@@ -964,7 +975,8 @@ class ShotlistVisualizer(QMainWindow):
     
     def _append_shot_row(self, index: int, shot: dict):
         """Insert one row at the end of the shot table."""
-        ann      = self.annotation_index.get(index)
+        shot_id  = shot.get("shot_id", "")
+        ann      = self.annotation_index.get(shot_id)
         edited   = index in self._edited_shots
         has_file = self._has_ann_file
         row      = self.shot_list.rowCount()
@@ -975,7 +987,8 @@ class ShotlistVisualizer(QMainWindow):
     def _refresh_shot_row(self, index: int):
         """Re-render a single row without rebuilding the whole table."""
         shot     = self.shots[index]
-        ann      = self.annotation_index.get(index)
+        shot_id  = shot.get("shot_id", "")
+        ann      = self.annotation_index.get(shot_id)
         edited   = index in self._edited_shots
         has_file = self._has_ann_file
         for col, item in enumerate(_make_shot_row(index, shot, ann, edited, has_file)):
@@ -1221,19 +1234,38 @@ class ShotlistVisualizer(QMainWindow):
         # Get current and previous shots
         current_shot = self.shots[self.current_shot_index]
         prev_shot = self.shots[self.current_shot_index - 1]
+
+        # Capture stable shot_ids BEFORE modification (both become invalid after merge)
+        from data.media_id import build_shot_id as _bsid
+        ids_to_remove = {
+            current_shot.get("shot_id", ""),
+            prev_shot.get("shot_id", ""),
+        }
+        ids_to_remove.discard("")
         
         # Update previous shot's end to current shot's end
         prev_shot['end_time'] = current_shot['end_time']
         prev_shot['end_frame'] = current_shot['end_frame']
+        # Assign new stable shot_id to the merged shot
+        prev_shot['shot_id'] = _bsid(
+            self.media_id,
+            int(prev_shot.get('start_frame') or 0),
+            int(prev_shot.get('end_frame') or 0),
+        )
         
         # Remove current shot
         self.shots.pop(self.current_shot_index)
 
-        # Reindex annotation data to match new shot list
+        # Remove invalidated annotations from disk and memory
         reindex_annotations_for_merge(
             self.project_path, self.filename, self.media_type,
-            self.current_shot_index,
+            ids_to_remove,
         )
+        for sid in ids_to_remove:
+            self.annotation_index.pop(sid, None)
+            self._annotation_entry_index.pop(sid, None)
+        self._edited_shots.discard(self.current_shot_index)
+        self._edited_shots.discard(self.current_shot_index - 1)
 
         # Rebuild lists
         self.rebuild_shot_list()
@@ -1267,12 +1299,21 @@ class ShotlistVisualizer(QMainWindow):
                 "Current frame is beyond the end of this shot.")
             return
 
+        # Capture stable shot_id BEFORE modifying the shot
+        original_shot_id = shot.get("shot_id", "")
+        from data.media_id import build_shot_id as _bsid
+
         # Build the two new shots
         first_shot = dict(shot)
         first_shot['end_frame'] = split_frame - 1
         first_shot['end_time'] = frames_to_timecode(split_frame - 1, self.frame_rate)
         first_shot['Shot_Caption'] = ''
         first_shot['Shot_Confidence'] = ''
+        first_shot['shot_id'] = _bsid(
+            self.media_id,
+            int(first_shot.get('start_frame') or 0),
+            int(first_shot['end_frame']),
+        )
 
         second_shot = dict(shot)
         second_shot['start_frame'] = split_frame
@@ -1280,15 +1321,25 @@ class ShotlistVisualizer(QMainWindow):
         second_shot['Shot_Caption'] = ''
         second_shot['Shot_Source'] = 'manual'
         second_shot['Shot_Confidence'] = ''
+        second_shot['shot_id'] = _bsid(
+            self.media_id,
+            int(second_shot['start_frame']),
+            int(second_shot.get('end_frame') or 0),
+        )
 
         # Replace the current shot with the two new ones
         self.shots[self.current_shot_index:self.current_shot_index + 1] = [first_shot, second_shot]
 
-        # Reindex annotation data to match new shot list
+        # Delete the original shot's annotation from disk and memory
+        ids_to_remove = {original_shot_id} if original_shot_id else set()
         reindex_annotations_for_split(
             self.project_path, self.filename, self.media_type,
-            self.current_shot_index + 1,
+            ids_to_remove,
         )
+        for sid in ids_to_remove:
+            self.annotation_index.pop(sid, None)
+            self._annotation_entry_index.pop(sid, None)
+        self._edited_shots.discard(self.current_shot_index)
 
         # Rebuild lists
         self.rebuild_shot_list()
@@ -1485,7 +1536,8 @@ class ShotlistVisualizer(QMainWindow):
 
     def _update_annotation_panel(self, index: int, shot: dict):
         """Refresh the annotation display panel for a given shot."""
-        ann = self.annotation_index.get(index)
+        shot_id = shot.get("shot_id", "") if isinstance(shot, dict) else ""
+        ann = self.annotation_index.get(shot_id)
         mode = self.ann_repr_combo.currentText()
         if mode == "fields":
             self.ann_display.hide()
@@ -1575,11 +1627,12 @@ class ShotlistVisualizer(QMainWindow):
         value = [v.strip() for v in raw.split(",")] if "," in raw else raw
 
         idx = self.current_shot_index
-        ann = self.annotation_index.get(idx)
+        shot_id = self.shots[idx].get("shot_id", "") if 0 <= idx < len(self.shots) else ""
+        ann = self.annotation_index.get(shot_id)
         if ann is None:
             return
         ann[key] = value
-        self.annotation_index[idx] = ann
+        self.annotation_index[shot_id] = ann
 
         import json as _json
         path = _get_annotation_json_path(self.project_path, self.filename, self.media_type)
@@ -1591,12 +1644,12 @@ class ShotlistVisualizer(QMainWindow):
                     existing = _json.load(fh)
             else:
                 existing = []
-            entry_idx = self._annotation_entry_index.get(idx)
+            entry_idx = self._annotation_entry_index.get(shot_id)
             if entry_idx is not None and 0 <= entry_idx < len(existing):
                 existing[entry_idx].update(ann)
             else:
                 existing.append(ann)
-                self._annotation_entry_index[idx] = len(existing) - 1
+                self._annotation_entry_index[shot_id] = len(existing) - 1
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(_json.dumps(existing, indent=2, ensure_ascii=False))
             self._edited_shots.add(idx)
@@ -1630,7 +1683,8 @@ class ShotlistVisualizer(QMainWindow):
         emb = self._load_embeddings_cached()
         if emb is None:
             return "(no embeddings)"
-        row_idx = self._embedding_row_index.get(index)
+        shot_id = self.shots[index].get("shot_id", "") if 0 <= index < len(self.shots) else ""
+        row_idx = self._embedding_row_index.get(shot_id)
         if row_idx is None:
             return "(no embedding for this shot)"
         vec = emb[row_idx]
@@ -1729,21 +1783,22 @@ class ShotlistVisualizer(QMainWindow):
             else:
                 existing = []
             idx = self.current_shot_index
-            entry_idx = self._annotation_entry_index.get(idx)
+            shot_id = self.shots[idx].get("shot_id", "") if 0 <= idx < len(self.shots) else ""
+            entry_idx = self._annotation_entry_index.get(shot_id)
             if entry_idx is not None and 0 <= entry_idx < len(existing):
                 existing[entry_idx].update(data)
             else:
                 data["shot_index"] = idx
                 existing.append(data)
                 entry_idx = len(existing) - 1
-                self._annotation_entry_index[idx] = entry_idx
+                self._annotation_entry_index[shot_id] = entry_idx
 
             # Serialise with json_repair-safe format
             out_text = _json.dumps(existing, indent=2, ensure_ascii=False)
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(out_text)
 
-            self.annotation_index[idx] = data
+            self.annotation_index[shot_id] = data
             self._edited_shots.add(idx)
             self._refresh_shot_row(idx)
             self._ann_dirty = False
@@ -1764,8 +1819,20 @@ class ShotlistVisualizer(QMainWindow):
             self.annotate_button.setText("\u26a1 Auto-Annotate")
             return
 
+        if self.modified:
+            QMessageBox.warning(
+                self,
+                "Unsaved Changes",
+                "The shotlist has unsaved changes.\nSave before running Auto-Annotate.",
+            )
+            self.annotate_button.setChecked(False)
+            return
+
         # Build list of un-annotated shot indices
-        unannotated = [i for i in range(len(self.shots)) if i not in self.annotation_index]
+        unannotated = [
+            i for i, s in enumerate(self.shots)
+            if s.get("shot_id", "") not in self.annotation_index
+        ]
         if not unannotated:
             self.annotate_button.setChecked(False)
             QMessageBox.information(self, "Done", "All shots already annotated.")
@@ -1788,7 +1855,8 @@ class ShotlistVisualizer(QMainWindow):
 
     def _on_shot_annotated(self, index: int):
         """Called when a single shot has been annotated by the background worker."""
-        ann = self.annotation_index.get(index)
+        shot_id = self.shots[index].get("shot_id", "") if 0 <= index < len(self.shots) else ""
+        ann = self.annotation_index.get(shot_id)
         if ann is None:
             # Re-read from disk
             try:
@@ -1810,33 +1878,50 @@ class ShotlistVisualizer(QMainWindow):
         self.annotate_button.setChecked(False)
         self.annotate_button.setText("\u26a1 Auto-Annotate")
         self._annotate_worker = None
-        if message.startswith("\u2717"):
-            print(message, flush=True)
-        else:
-            print(message, flush=True)
+        print(message, flush=True)
+
+        # Reload annotation indexes from disk so partial runs are reflected.
+        try:
+            path = _get_annotation_json_path(self.project_path, self.filename, self.media_type)
+            if path and path.exists():
+                all_anns = _read_annotation_json(path)
+                self.annotation_index        = _build_annotation_index(all_anns)
+                self._annotation_entry_index = _build_entry_index(all_anns)
+                self._embedding_row_index    = _build_embedding_row_index(all_anns)
+                self._has_ann_file           = True
+        except Exception as exc:
+            print(f"Warning: could not reload annotations: {exc}", flush=True)
+
+        self.rebuild_shot_list()
+        self.update_stats()
+        self._update_annotation_panel(
+            self.current_shot_index,
+            self.shots[self.current_shot_index] if self.shots else {},
+        )
 
     def _remove_current_annotation(self):
         """Delete the annotation for the currently selected shot."""
         import json as _json
         idx = self.current_shot_index
+        shot_id = self.shots[idx].get("shot_id", "") if 0 <= idx < len(self.shots) else ""
         path = _get_annotation_json_path(self.project_path, self.filename, self.media_type)
-        if not path.exists() or idx not in self.annotation_index:
+        if not path.exists() or shot_id not in self.annotation_index:
             QMessageBox.information(self, "No Annotation", "No annotation found for the selected shot.")
             return
         try:
             with open(path, encoding="utf-8") as fh:
                 entries = _json.load(fh)
-            # Remove the entry whose shot_id matches (1-based)
+            # Remove the entry matching the stable shot_id
             entries = [
                 e for e in entries
                 if not (isinstance(e.get("shot"), dict)
-                        and int(e["shot"].get("shot_id", -1)) - 1 == idx)
+                        and str(e["shot"].get("shot_id", "")) == shot_id)
             ]
             with open(path, "w", encoding="utf-8") as fh:
                 _json.dump(entries, fh, indent=2, ensure_ascii=False)
-            self.annotation_index.pop(idx, None)
-            self._annotation_entry_index.pop(idx, None)
-            self._embedding_row_index.pop(idx, None)
+            self.annotation_index.pop(shot_id, None)
+            self._annotation_entry_index.pop(shot_id, None)
+            self._embedding_row_index.pop(shot_id, None)
             self._has_ann_file = path.exists()
             self._refresh_shot_row(idx)
             self.update_stats()

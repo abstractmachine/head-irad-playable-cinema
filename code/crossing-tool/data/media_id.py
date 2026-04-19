@@ -70,3 +70,33 @@ def _game_slug(text: str) -> str:
     text = re.sub(r"[^a-z0-9\s]", "", text)     # strip special chars
     words = text.split()
     return words[0] if words else "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Stable shot identity
+# ---------------------------------------------------------------------------
+
+def build_shot_id(media_id: str, start_frame: int, end_frame: int) -> str:
+    """Return the canonical stable shot identifier.
+
+    Format:  <media_id>@fSTART-fEND   (6-digit zero-padded frame numbers)
+    Example: tmdb_39435@f000234-f000398
+
+    This is the ONLY place that defines this format.  Frames are inclusive
+    at both boundaries:  previous shot ends at f000233, next starts at f000234.
+    """
+    return f"{media_id}@f{start_frame:06d}-f{end_frame:06d}"
+
+
+def parse_shot_id(shot_id: str) -> tuple:
+    """Parse a stable shot_id back into (media_id, start_frame, end_frame).
+
+    Raises ValueError if the string does not match the expected format.
+    """
+    m = re.match(r'^(.+)@f(\d{6})-f(\d{6})$', shot_id)
+    if not m:
+        raise ValueError(
+            f"Invalid shot_id: {shot_id!r}. "
+            "Expected '<media_id>@fSTART-fEND' with 6-digit zero-padded frames."
+        )
+    return m.group(1), int(m.group(2)), int(m.group(3))

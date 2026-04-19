@@ -14,6 +14,22 @@ _TEMPORAL_FIELD_ALIASES: dict[str, str] = {
 }
 
 
+def attach_shot_ids(shots: list, media_id: str) -> list:
+    """Attach a stable shot_id to each shot dict in-place and return the list.
+
+    shot_id = build_shot_id(media_id, start_frame, end_frame)
+
+    Shots must already have 'start_frame' and 'end_frame' fields (integers or
+    numeric strings).  Call normalize_shot_fields() before this if needed.
+    """
+    from data.media_id import build_shot_id
+    for shot in shots:
+        sf = int(shot.get("start_frame") or 0)
+        ef = int(shot.get("end_frame") or 0)
+        shot["shot_id"] = build_shot_id(media_id, sf, ef)
+    return shots
+
+
 def normalize_shot_fields(shot: dict) -> dict:
     """Normalize legacy temporal field names to canonical names.
 

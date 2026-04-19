@@ -1219,8 +1219,12 @@ def _build_prompt(
 # ETA helpers — used by annotate_file_shots and annotate_all_files
 # ---------------------------------------------------------------------------
 
-def _load_existing_agg(project_path: str, filename: str, media_type: str) -> Dict[int, Any]:
-    """Load the aggregated annotations JSON for *filename*, keyed by shot_id (1-based).
+def _load_existing_agg(project_path: str, filename: str, media_type: str) -> Dict[str, Any]:
+    """Load the aggregated annotations JSON for *filename*, keyed by string shot_id.
+
+    Both old integer shot_ids and new stable string shot_ids are supported:
+    integer shot_ids are stored with str(int) keys (e.g. "1", "2") so that
+    migration can detect them by checking whether the key contains '@'.
 
     Returns an empty dict if the file does not exist or cannot be parsed.
     """
@@ -1228,7 +1232,7 @@ def _load_existing_agg(project_path: str, filename: str, media_type: str) -> Dic
     agg_path = (
         Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{stem}.json"
     )
-    result: Dict[int, Any] = {}
+    result: Dict[str, Any] = {}
     if not agg_path.exists():
         return result
     try:
@@ -1236,26 +1240,139 @@ def _load_existing_agg(project_path: str, filename: str, media_type: str) -> Dic
         for entry in raw:
             s = entry.get("shot") if isinstance(entry, dict) else None
             if isinstance(s, dict) and s.get("shot_id") is not None:
-                result[int(s["shot_id"])] = entry
+                result[str(s["shot_id"])] = entry
     except Exception:
         pass
     return result
 
 
+def _needs_migration(existing_agg: Dict[str, Any]) -> bool:
+    """Return True when *existing_agg* contains any old integer-based shot_ids.
+
+    Old IDs look like "1", "2", "3"; new IDs contain '@' (e.g. "tmdb_39435@f000234-f000398").
+    """
+    return any("@" not in k for k in existing_agg)
+
+
+def _migrate_legacy_shot_ids(
+    entries: List[Dict[str, Any]],
+    shots: List[Dict[str, Any]],
+    media_id: str,
+) -> List[Dict[str, Any]]:
+    """Migrate annotation entries from integer shot_id to stable string shot_id.
+
+    For each entry whose shot.shot_id is an integer *n*, finds the corresponding
+    shot at 0-based index *n-1* in *shots* and replaces the shot_id with the
+    computed build_shot_id value.
+
+    Out-of-range integer shot_ids (e.g. from stale annotations after a split or
+    merge) are kept unchanged with a warning printed to stderr.  The function
+    never raises — callers can always build a complete _existing_agg from the
+    returned list.
+    """
+    from data.media_id import build_shot_id
+    result = []
+    for entry in entries:
+        s = entry.get("shot") if isinstance(entry, dict) else None
+        if not isinstance(s, dict):
+            result.append(entry)
+            continue
+        sid = s.get("shot_id")
+        if sid is None or isinstance(sid, str) and "@" in sid:
+            # Already new format or missing — keep as-is
+            result.append(entry)
+            continue
+        # Legacy: sid is an integer (or a decimal string without '@')
+        try:
+            idx = int(sid) - 1
+        except (TypeError, ValueError):
+            result.append(entry)
+            continue
+        if idx < 0 or idx >= len(shots):
+            # Out-of-range after a split/merge: keep the entry unchanged so it
+            # doesn't silently vanish.  It will be treated as unannotated on the
+            # next annotation run (no matching shot in the shotlist).
+            import sys as _sys
+            print(
+                f"  [migration] shot_id={sid!r} is out of range "
+                f"(shotlist has {len(shots)} shots) — keeping entry unchanged",
+                file=_sys.stderr,
+            )
+            result.append(entry)
+            continue
+        shot = shots[idx]
+        sf = int(shot.get("start_frame") or 0)
+        ef = int(shot.get("end_frame") or 0)
+        entry = dict(entry)
+        entry["shot"] = dict(s)
+        entry["shot"]["shot_id"] = build_shot_id(media_id, sf, ef)
+        result.append(entry)
+    return result
+
+
+def migrate_annotations_to_stable_ids(
+    project_path: str,
+    filename: str,
+    media_type: str = "movies",
+) -> bool:
+    """Migrate an annotation JSON file from legacy integer shot_ids to stable IDs.
+
+    Reads the shotlist to resolve the index-to-frame mapping, then rewrites the
+    annotation JSON in-place with new shot_ids of the form
+    ``<media_id>@fSTART-fEND``.
+
+    Returns True if the file was migrated, False if it did not exist or was
+    already using stable IDs.  Raises ValueError if any shot_id is out of range.
+    """
+    from data.shotlist import read_shotlist
+    from data.metadata import get_metadata
+    from data.media_id import compute_media_id
+
+    agg_path = get_annotation_json_path(project_path, filename, media_type)
+    if not agg_path.exists():
+        return False
+
+    existing_agg = _load_existing_agg(project_path, filename, media_type)
+    if not _needs_migration(existing_agg):
+        return False
+
+    shots = read_shotlist(project_path, filename, media_type)
+    entries_raw = get_metadata(project_path, media_type=media_type)
+    meta = next((e for e in entries_raw if e.get("filename") == filename), {})
+    media_id = compute_media_id(meta, media_type)
+
+    try:
+        raw = json.loads(agg_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(f"Cannot parse annotation JSON for migration: {exc}") from exc
+
+    migrated = _migrate_legacy_shot_ids(raw, shots, media_id)
+    agg_path.write_text(
+        json.dumps(migrated, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return True
+
+
 def _count_pending_shots(
     shots: List[Dict[str, Any]],
-    existing_agg: Dict[int, Any],
+    existing_agg: Dict[str, Any],
     force: bool,
     skip_existing: bool,
     scene_str: Optional[str],
     shot_index: Optional[int],
     limit: Optional[int],
+    media_id: Optional[str] = None,
 ) -> int:
     """Count shots that will actually be attempted in *annotate_file_shots*.
 
     Mirrors the skip logic in the annotation loop without any I/O or model
     calls.  Used to pre-compute ETA shot counts.
+
+    When *media_id* is provided, the lookup key is the stable shot_id string;
+    otherwise falls back to str(i+1) to match legacy-integer-keyed dicts.
     """
+    from data.media_id import build_shot_id as _bsid
     count = 0
     for i, shot in enumerate(shots):
         if limit is not None and i >= limit:
@@ -1264,7 +1381,14 @@ def _count_pending_shots(
             continue
         if shot_index is not None and i != shot_index:
             continue
-        _shot_id = i + 1
+        if media_id is not None:
+            _shot_id = _bsid(
+                media_id,
+                int(shot.get("start_frame") or 0),
+                int(shot.get("end_frame") or 0),
+            )
+        else:
+            _shot_id = str(i + 1)
         _prior = existing_agg.get(_shot_id)
         if not force and skip_existing and _prior is not None:
             _prior_ann = _prior.get("shot", {}).get("annotation", {})
@@ -1289,9 +1413,14 @@ def _count_file_pending_shots(
     """
     try:
         from data.shotlist import read_shotlist
+        from data.metadata import get_metadata
+        from data.media_id import compute_media_id
         shots = read_shotlist(project_path, filename, media_type)
+        entries = get_metadata(project_path, media_type=media_type)
+        meta = next((e for e in entries if e.get("filename") == filename), {})
+        mid = compute_media_id(meta, media_type)
         existing_agg = _load_existing_agg(project_path, filename, media_type)
-        return _count_pending_shots(shots, existing_agg, force, skip_existing, None, None, limit)
+        return _count_pending_shots(shots, existing_agg, force, skip_existing, None, None, limit, media_id=mid)
     except Exception:
         return 0
 
@@ -1329,6 +1458,7 @@ def annotate_file_shots(
     """
     from data.shotlist import read_shotlist, write_shotlist
     from data.metadata import get_metadata
+    from data.media_id import compute_media_id, build_shot_id
 
     project = Path(project_path)
     shots = read_shotlist(project_path, filename, media_type)
@@ -1336,6 +1466,8 @@ def annotate_file_shots(
     # Movie metadata lookup (best-effort)
     entries = get_metadata(project_path, media_type=media_type)
     meta = next((e for e in entries if e.get('filename') == filename), {})
+    # Stable media_id drives the new shot identity scheme
+    media_id = compute_media_id(meta, media_type)
     movie_info = {
         "tmdb": meta.get("tmdb") if meta else None,
         "title": meta.get("title") if meta else Path(filename).stem,
@@ -1381,22 +1513,42 @@ def annotate_file_shots(
         if shot_index < 0 or shot_index >= len(shots):
             raise IndexError(f"Shot index {shot_index} out of range (0-{len(shots)-1})")
     aggregated = annotations_dir / f"{stem}.json"
-    _existing_agg: Dict[int, Any] = {}
+    _existing_agg: Dict[str, Any] = {}
     if aggregated.exists():
         try:
             _raw = json.loads(aggregated.read_text(encoding="utf-8"))
+        except Exception as _load_exc:
+            import sys as _sys
+            print(f"  [annotate] WARNING: could not parse {aggregated.name}: {_load_exc}", file=_sys.stderr)
+            _raw = []
+        if _raw:
+            try:
+                # Migrate legacy integer shot_ids to stable string shot_ids in-place.
+                # _migrate_legacy_shot_ids no longer raises — it skips bad entries.
+                if any(
+                    isinstance(_e["shot"].get("shot_id"), int)
+                    for _e in _raw
+                    if isinstance(_e, dict) and isinstance(_e.get("shot"), dict)
+                ):
+                    _raw = _migrate_legacy_shot_ids(_raw, shots, media_id)
+                    aggregated.write_text(
+                        json.dumps(_raw, indent=2, ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+            except Exception as _mig_exc:
+                import sys as _sys
+                print(f"  [annotate] WARNING: migration failed for {aggregated.name}: {_mig_exc}", file=_sys.stderr)
+            # Build lookup map regardless of whether migration succeeded
             for _entry in _raw:
                 _s = _entry.get("shot") if isinstance(_entry, dict) else None
                 if isinstance(_s, dict) and _s.get("shot_id") is not None:
-                    _existing_agg[int(_s["shot_id"])] = _entry
-        except Exception:
-            pass
+                    _existing_agg[str(_s["shot_id"])] = _entry
 
     # Early exit: if there are no shots pending annotation, skip loading the
     # model entirely.  This avoids the weight-loading cost for fully-annotated
     # or empty files when running with --all.
     _pending_count = _count_pending_shots(
-        shots, _existing_agg, force, skip_existing, scene_str, shot_index, limit
+        shots, _existing_agg, force, skip_existing, scene_str, shot_index, limit, media_id=media_id
     )
     if _pending_count == 0:
         if verbose:
@@ -1482,7 +1634,7 @@ def annotate_file_shots(
     # Pre-compute how many shots in this file need annotation so we can report
     # shots-remaining without scanning ahead on every iteration.
     _movie_pending = (
-        _count_pending_shots(shots, _existing_agg, force, skip_existing, scene_str, shot_index, limit)
+        _count_pending_shots(shots, _existing_agg, force, skip_existing, scene_str, shot_index, limit, media_id=media_id)
         if timer is not None
         else 0
     )
@@ -1495,8 +1647,12 @@ def annotate_file_shots(
         if limit is not None and i >= limit:
             break
 
-        # shot_id is 1-based (shot_index i → shot_id i+1)
-        _shot_id = i + 1
+        # shot_id is derived from content (media_id + frame range), not list position
+        _shot_id = build_shot_id(
+            media_id,
+            int(shot.get("start_frame") or 0),
+            int(shot.get("end_frame") or 0),
+        )
         _prior = _existing_agg.get(_shot_id)
 
         # If a specific scene was requested, skip shots outside that scene
@@ -1676,7 +1832,7 @@ def annotate_file_shots(
             except Exception:
                 pass
 
-        # Compose canonical structure
+        # Compose canonical structure using stable shot_id
         shot_annotation = {
             "movie": movie_info,
             "annotation": {
@@ -1686,7 +1842,7 @@ def annotate_file_shots(
                 "prompt_file": prompt_path,
             },
             "shot": {
-                "shot_id": i + 1,
+                "shot_id": _shot_id,
                 "annotation": ann,
             },
         }
@@ -1769,7 +1925,7 @@ def annotate_file_shots(
             for _r in results:
                 _sid = _r.get("shot", {}).get("shot_id") if isinstance(_r.get("shot"), dict) else None
                 if _sid is not None:
-                    _write_map[int(_sid)] = _r
+                    _write_map[str(_sid)] = _r
             aggregated.write_text(
                 json.dumps([_write_map[k] for k in sorted(_write_map)], indent=2),
                 encoding="utf-8",
@@ -1803,7 +1959,7 @@ def annotate_file_shots(
         for _r in results:
             _sid = _r.get("shot", {}).get("shot_id") if isinstance(_r.get("shot"), dict) else None
             if _sid is not None:
-                _write_map[int(_sid)] = _r
+                _write_map[str(_sid)] = _r
         aggregated.write_text(
             json.dumps([_write_map[k] for k in sorted(_write_map)], indent=2),
             encoding="utf-8",
@@ -2016,19 +2172,16 @@ def reindex_annotations_for_merge(
     project_path: str,
     filename: str,
     media_type: str,
-    removed_shot_index: int,
+    shot_ids_to_remove: set,
 ) -> None:
-    """Update the annotation JSON after two shots have been merged.
+    """Remove annotation entries for shots that were merged.
 
-    *removed_shot_index* is the 0-based index of the shot that was removed
-    (merged into the previous shot at removed_shot_index - 1).
+    When two shots are merged, both their annotations are invalidated: the
+    resulting merged shot has a new shot_id (new frame range) and must be
+    re-annotated from scratch.
 
-    The function:
-    1. Merges the text/list content of the removed shot's annotation into the
-       previous shot's annotation (best-effort; keeps previous values on conflict).
-    2. Drops the entry for the removed shot.
-    3. Decrements shot_id by 1 for every entry whose shot_id was above the
-       removed shot.
+    *shot_ids_to_remove* is the set of string shot_ids whose entries must be
+    deleted from the annotation JSON.
 
     Silently does nothing if the annotation JSON does not exist.
     """
@@ -2040,49 +2193,14 @@ def reindex_annotations_for_merge(
     except Exception:
         return
 
-    removed_shot_id = removed_shot_index + 1        # 1-based
-    prev_shot_id    = removed_shot_index             # 1-based for the previous shot
-
-    new_entries = []
-    for entry in entries:
-        shot = entry.get("shot") if isinstance(entry, dict) else None
-        if not isinstance(shot, dict):
-            new_entries.append(entry)
-            continue
-        sid = shot.get("shot_id")
-        if sid is None:
-            new_entries.append(entry)
-            continue
-        sid = int(sid)
-        if sid == removed_shot_id:
-            # Merge this annotation into the previous entry (handled below) — skip for now
-            continue
-        elif sid == prev_shot_id:
-            # Merge removed annotation into this entry if both are valid
-            removed_entry = next(
-                (e for e in entries
-                 if isinstance(e, dict)
-                 and isinstance(e.get("shot"), dict)
-                 and int(e["shot"].get("shot_id", -1)) == removed_shot_id),
-                None,
-            )
-            if removed_entry is not None:
-                prev_ann = shot.get("annotation")
-                removed_ann = removed_entry.get("shot", {}).get("annotation")
-                if isinstance(prev_ann, dict) and "setting" in prev_ann \
-                        and isinstance(removed_ann, dict) and "setting" in removed_ann:
-                    entry = dict(entry)
-                    entry["shot"] = dict(shot)
-                    entry["shot"]["annotation"] = _merge_annotation_dicts(prev_ann, removed_ann)
-            new_entries.append(entry)
-        elif sid > removed_shot_id:
-            # Shift down by 1
-            entry = dict(entry)
-            entry["shot"] = dict(shot)
-            entry["shot"]["shot_id"] = sid - 1
-            new_entries.append(entry)
-        else:
-            new_entries.append(entry)
+    remove_set = {str(sid) for sid in shot_ids_to_remove}
+    new_entries = [
+        e for e in entries
+        if not (
+            isinstance(e.get("shot"), dict)
+            and str(e["shot"].get("shot_id", "")) in remove_set
+        )
+    ]
 
     try:
         path.write_text(json.dumps(new_entries, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -2094,14 +2212,15 @@ def reindex_annotations_for_split(
     project_path: str,
     filename: str,
     media_type: str,
-    new_shot_index: int,
+    shot_ids_to_remove: set,
 ) -> None:
-    """Update the annotation JSON after a shot has been split.
+    """Remove annotation entries for the shot that was split.
 
-    *new_shot_index* is the 0-based index of the newly created second half
-    of the split.  All annotations with shot_id >= new_shot_index+1 have
-    their shot_id incremented by 1 to stay aligned with the new shotlist.
-    The new shot starts unannotated.
+    When a shot is split, its annotation is invalidated: both resulting shots
+    have new shot_ids (new frame ranges) and must be re-annotated from scratch.
+
+    *shot_ids_to_remove* is the set of string shot_ids whose entries must be
+    deleted from the annotation JSON.
 
     Silently does nothing if the annotation JSON does not exist.
     """
@@ -2113,24 +2232,14 @@ def reindex_annotations_for_split(
     except Exception:
         return
 
-    new_shot_id = new_shot_index + 1  # 1-based threshold
-
-    new_entries = []
-    for entry in entries:
-        shot = entry.get("shot") if isinstance(entry, dict) else None
-        if not isinstance(shot, dict):
-            new_entries.append(entry)
-            continue
-        sid = shot.get("shot_id")
-        if sid is None:
-            new_entries.append(entry)
-            continue
-        sid = int(sid)
-        if sid >= new_shot_id:
-            entry = dict(entry)
-            entry["shot"] = dict(shot)
-            entry["shot"]["shot_id"] = sid + 1
-        new_entries.append(entry)
+    remove_set = {str(sid) for sid in shot_ids_to_remove}
+    new_entries = [
+        e for e in entries
+        if not (
+            isinstance(e.get("shot"), dict)
+            and str(e["shot"].get("shot_id", "")) in remove_set
+        )
+    ]
 
     try:
         path.write_text(json.dumps(new_entries, indent=2, ensure_ascii=False), encoding="utf-8")
