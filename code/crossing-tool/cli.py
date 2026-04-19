@@ -3384,10 +3384,31 @@ def cmd_visualizer(args):
         _project_visualizer(args)
     elif sub == "shotlist":
         _require_path()
-        args.all = True
-        args.query = None
-        args.tmdb = None
-        _shot_visualizer(args)
+        filename = getattr(args, "filename", None)
+        if filename:
+            # Try to send to a running Shotlist Visualizer first.
+            from visualizers.shot_visualizer import ipc_send_load
+            media_type = getattr(args, "media", "movies")
+            project_path = prefs.get("path")
+            if ipc_send_load(project_path, filename, media_type):
+                return  # delivered to running instance
+            # No running instance — launch a new one with this film.
+            _require_visualizer_deps()
+            from visualizers.shot_visualizer import ipc_send_load  # noqa: already imported
+            cli_dir = Path(__file__).parent
+            visualizer_path = cli_dir / "visualizers" / "shot_visualizer.py"
+            import subprocess as _sp
+            _sp.Popen([
+                sys.executable, str(visualizer_path),
+                "--media", media_type,
+                "--project", project_path,
+                "--filenames", filename,
+            ])
+        else:
+            args.all = True
+            args.query = None
+            args.tmdb = None
+            _shot_visualizer(args)
     elif sub == "composition":
         _require_path()
         args.query = getattr(args, "query", "") or ""
@@ -3395,6 +3416,9 @@ def cmd_visualizer(args):
     elif sub == "mosaic":
         _require_path()
         _mosaic_visualizer(args)
+    elif sub == "metadata":
+        _require_path()
+        _metadata_visualizer(args)
 
 
 def _project_visualizer(args):
@@ -3402,6 +3426,13 @@ def _project_visualizer(args):
     _require_visualizer_deps()
     from visualizers.project_visualizer import run_visualizer
     run_visualizer()
+
+
+def _metadata_visualizer(args):
+    """Launch the metadata browser GUI."""
+    _require_visualizer_deps()
+    from visualizers.metadata_visualizer import run_visualizer
+    run_visualizer(prefs.get("path"))
 
 
 def _require_path():
@@ -4186,6 +4217,10 @@ def build_parser():
         "--media", choices=["movies", "gameplay"], default="movies",
         help="Media type (default: movies)",
     )
+    p_vis_shot.add_argument(
+        "--filename",
+        help="Open (or jump to) a specific film by filename",
+    )
 
     p_vis_composition = visualizer_sub.add_parser(
         "composition",
@@ -4208,6 +4243,11 @@ def build_parser():
     p_vis_mosaic.add_argument(
         "--media", choices=["movies", "gameplay"], default="movies",
         help="Media type (default: movies)",
+    )
+
+    visualizer_sub.add_parser(
+        "metadata",
+        help="Open the metadata browser GUI (movies and gameplay cards)",
     )
 
     return parser

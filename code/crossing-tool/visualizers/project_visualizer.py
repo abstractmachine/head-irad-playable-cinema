@@ -78,6 +78,7 @@ _VISUALIZER_TITLE = {
     "shotlist":    "Shotlist Visualizer",
     "mosaic":      "Mosaic Visualizer",
     "composition": "Composition Visualizer",
+    "metadata":    "Metadata Visualizer",
 }
 
 
@@ -279,14 +280,20 @@ class ProjectVisualizer(QMainWindow):
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(6)
 
-        for i, (label, sub) in enumerate([
-            ("Shotlist",    "shotlist"),
-            ("Mosaic",      "mosaic"),
-            ("Composition", "composition"),
-        ]):
+        for (label, sub, enabled), (row, col) in zip(
+            [
+                ("Metadata",    "metadata",    True),
+                ("Shotlist",    "shotlist",    True),
+                ("Mosaic",      "mosaic",      True),
+                ("Composition", "composition", False),
+            ],
+            [(0, 0), (0, 1), (1, 0), (1, 1)],
+        ):
             btn = QPushButton(label)
-            btn.clicked.connect(lambda _, s=sub: self._launch(s))
-            grid.addWidget(btn, 0, i)
+            btn.setEnabled(enabled)
+            if enabled:
+                btn.clicked.connect(lambda _, s=sub: self._launch(s))
+            grid.addWidget(btn, row, col)
 
         outer = QVBoxLayout(group)
         outer.setContentsMargins(8, 12, 8, 8)

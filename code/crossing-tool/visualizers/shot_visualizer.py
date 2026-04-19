@@ -43,6 +43,7 @@ from PyQt5.QtWidgets import (
 )
 from styles.theme import GripSplitter
 from PyQt5.QtGui import QFont, QPixmap, QImage, QColor, QMouseEvent
+from PyQt5.QtCore import pyqtSignal as _pyqtSignal, QThread as _QThread
 
 from data.shotlist import read_shotlist, write_shotlist, get_shotlist_path, attach_shot_ids
 from data.metadata import get_metadata
@@ -54,6 +55,95 @@ from data.index import (
     get_embeddings_path,
     load_embeddings,
 )
+
+
+# ---------------------------------------------------------------------------
+# IPC: socket server so external processes can tell a running Shotlist
+# Visualizer to load a specific film without opening a second window.
+# ---------------------------------------------------------------------------
+
+def _ipc_socket_path(project_path: str) -> Path:
+    """Return a per-project socket file path inside the system temp dir."""
+    import tempfile, hashlib
+    h = hashlib.md5(str(project_path).encode()).hexdigest()[:8]
+    return Path(tempfile.gettempdir()) / f"crossing_shotlist_{h}.sock"
+
+
+class _IpcServer(_QThread):
+    """Listens on a Unix-domain socket and emits load_requested(filename, media_type)."""
+
+    load_requested = _pyqtSignal(str, str)   # filename, media_type
+
+    def __init__(self, project_path: str, parent=None) -> None:
+        super().__init__(parent)
+        self._project_path = project_path
+        self._running = True
+
+    def run(self) -> None:
+        import socket as _socket
+        sock_path = _ipc_socket_path(self._project_path)
+        # Remove stale socket file
+        try:
+            sock_path.unlink()
+        except FileNotFoundError:
+            pass
+        srv = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        try:
+            srv.bind(str(sock_path))
+            srv.listen(5)
+            srv.settimeout(1.0)
+            while self._running:
+                try:
+                    conn, _ = srv.accept()
+                except _socket.timeout:
+                    continue
+                try:
+                    data = b""
+                    while True:
+                        chunk = conn.recv(4096)
+                        if not chunk:
+                            break
+                        data += chunk
+                    msg = json.loads(data.decode())
+                    if msg.get("action") == "load":
+                        self.load_requested.emit(
+                            msg.get("filename", ""),
+                            msg.get("media_type", "movies"),
+                        )
+                except Exception:
+                    pass
+                finally:
+                    conn.close()
+        finally:
+            srv.close()
+            try:
+                sock_path.unlink()
+            except FileNotFoundError:
+                pass
+
+    def stop(self) -> None:
+        self._running = False
+
+
+def ipc_send_load(project_path: str, filename: str, media_type: str) -> bool:
+    """Send a load request to a running Shotlist Visualizer.
+
+    Returns True if the message was delivered, False if no server is listening.
+    """
+    import socket as _socket
+    sock_path = _ipc_socket_path(project_path)
+    if not sock_path.exists():
+        return False
+    try:
+        conn = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        conn.settimeout(2.0)
+        conn.connect(str(sock_path))
+        msg = json.dumps({"action": "load", "filename": filename, "media_type": media_type})
+        conn.sendall(msg.encode())
+        conn.close()
+        return True
+    except (ConnectionRefusedError, FileNotFoundError, OSError):
+        return False
 
 
 def _get_sar(video_path: str) -> tuple:
@@ -334,10 +424,35 @@ class ShotlistVisualizer(QMainWindow):
 
         # ---- Core state ----
         self.project_path        = project_path
-        self.filenames           = filenames
-        self.current_movie_index = current_index
-        self.filename            = filenames[current_index]
         self.media_type          = media_type
+
+        # Expand the provided filenames list to include ALL films of this
+        # media type known to the project, so the combo is always fully
+        # populated regardless of how many files were passed as arguments.
+        try:
+            from data.metadata import get_metadata as _get_meta
+            all_entries = _get_meta(project_path, media_type=media_type)
+            all_filenames = [e["filename"] for e in all_entries if e.get("filename")]
+        except Exception:
+            all_filenames = []
+        # Preserve order: all known files first, then any extras from the
+        # caller that aren't in metadata (e.g. manually specified files).
+        seen = set(all_filenames)
+        for fn in filenames:
+            if fn not in seen:
+                all_filenames.append(fn)
+                seen.add(fn)
+        # Determine which index to start at (the first filename in the
+        # original argument list, or 0 if nothing matches).
+        start_filename = filenames[current_index] if filenames else None
+        if start_filename and start_filename in all_filenames:
+            resolved_index = all_filenames.index(start_filename)
+        else:
+            resolved_index = current_index
+
+        self.filenames           = all_filenames if all_filenames else filenames
+        self.current_movie_index = resolved_index
+        self.filename            = self.filenames[resolved_index]
         self.shots: list         = []
         self.current_shot_index  = 0
         self.modified            = False
@@ -393,11 +508,35 @@ class ShotlistVisualizer(QMainWindow):
 
         self.setWindowTitle(
             f"Shotlist Visualizer \u2014 {_display_name(self.filename)}  "
-            f"({current_index + 1}/{len(filenames)})"
+            f"({resolved_index + 1}/{len(self.filenames)})"
         )
 
         self._init_ui()
         self.load_first_shot()
+
+        # Start the IPC server so the Metadata Visualizer (and CLI) can
+        # tell this window to load a different film without opening a second instance.
+        self._ipc_server = _IpcServer(project_path, self)
+        self._ipc_server.load_requested.connect(self._on_ipc_load)
+        self._ipc_server.start()
+
+    def _on_ipc_load(self, filename: str, media_type: str) -> None:
+        """Handle a load request arriving from the IPC socket."""
+        self.raise_()
+        self.activateWindow()
+        if media_type != self.media_type:
+            # Different media type — not supported mid-session; ignore silently.
+            return
+        if filename in self.filenames:
+            idx = self.filenames.index(filename)
+            self.switch_to_movie(idx)
+        else:
+            # Film not in the current playlist — add it and switch.
+            self.filenames.append(filename)
+            self._updating_combo = True
+            self.movie_combo.addItem(_display_name(filename), filename)
+            self._updating_combo = False
+            self.switch_to_movie(len(self.filenames) - 1)
 
     # ------------------------------------------------------------------
     # Data loading
@@ -1514,6 +1653,11 @@ class ShotlistVisualizer(QMainWindow):
 
         if self.cap is not None:
             self.cap.release()
+
+        # Stop the IPC server thread cleanly.
+        if hasattr(self, "_ipc_server"):
+            self._ipc_server.stop()
+            self._ipc_server.wait(1000)
 
         if self.modified:
             reply = QMessageBox.question(
