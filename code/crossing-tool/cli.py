@@ -235,13 +235,11 @@ _MODEL_KEYS = {
     "annotate": "model_annotate",
     "segmentation": "model_segmentation",
     "embed": "model_embed",
-    "assistant": "model_assistant",
 }
 _MODEL_DEFAULTS = {
     "annotate": "gemma4-e4b",
     "segmentation": "sam2.1_b.pt",
     "embed": "BAAI/bge-small-en-v1.5",
-    "assistant": "",
 }
 
 # Persistent defaults for annotate (and other commands)
@@ -3380,31 +3378,6 @@ def _index_audit(args):
         )
 
 
-def cmd_assistant(args):
-    sub = args.assistant_subcommand
-    if sub == "query":
-        cmd_assistant_query(args)
-
-
-def cmd_assistant_query(args):
-    _require_path()
-    model_name = prefs.get(_MODEL_KEYS["assistant"], _MODEL_DEFAULTS["assistant"])
-    if not model_name:
-        print(
-            "✗ No assistant model configured. "
-            "Run: crossing tool model set assistant <model-name>",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    from services.assistant import run_query
-    try:
-        result = run_query(args.query, model_name, prefs.get("path"), verbose=getattr(args, "verbose", False))
-        print(result)
-    except (RuntimeError, ImportError) as exc:
-        print(f"✗ {exc}", file=sys.stderr)
-        sys.exit(1)
-
-
 def cmd_visualizer(args):
     sub = args.visualizer_subcommand
     if sub in (None, "project"):
@@ -4190,28 +4163,6 @@ def build_parser():
         "--confirm",
         action="store_true",
         help="Actually delete the model (default is a dry run)",
-    )
-
-    # assistant command group
-    p_assistant = sub.add_parser(
-        "assistant",
-        help="Natural language interface to the project via a local LLM",
-    )
-    p_assistant.set_defaults(func=cmd_assistant)
-    assistant_sub = p_assistant.add_subparsers(dest="assistant_subcommand", required=True)
-
-    p_assistant_query = assistant_sub.add_parser(
-        "query",
-        help="Send a natural language query to the assistant",
-    )
-    p_assistant_query.add_argument(
-        "query",
-        help="Natural language query (e.g. \"List all movies\")",
-    )
-    p_assistant_query.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="Print MCP calls and filtering steps to stderr",
     )
 
     # visualizer command group — shortcut to all visualizer GUIs
