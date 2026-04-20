@@ -1839,6 +1839,9 @@ def _shot_visualizer(args):
         "--filenames",
     ] + filenames
 
+    if getattr(args, "verbose", False):
+        cmd.append("--verbose")
+
     try:
         subprocess.run(cmd, check=True)
     except subprocess.CalledProcessError as e:
@@ -3403,6 +3406,7 @@ def cmd_visualizer(args):
                 "--media", media_type,
                 "--project", project_path,
                 "--filenames", filename,
+                *( ["--verbose"] if getattr(args, "verbose", False) else [] ),
             ])
         else:
             args.all = True
@@ -4220,6 +4224,11 @@ def build_parser():
     p_vis_shot.add_argument(
         "--filename",
         help="Open (or jump to) a specific film by filename",
+    )
+    p_vis_shot.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose logging in the shotlist visualizer",
     )
 
     p_vis_composition = visualizer_sub.add_parser(

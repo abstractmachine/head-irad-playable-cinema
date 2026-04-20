@@ -186,19 +186,22 @@ def frames_to_timecode(frame_number: int, fps: float) -> str:
 class AudioPlayer:
     """Streams audio from a video file in a background thread (PyAV + sounddevice)."""
 
-    def __init__(self):
+    def __init__(self, verbose: bool = False):
         self._stop_event = threading.Event()
         self._thread = None
+        self._verbose = verbose
 
     def play(self, video_path: str, start_secs: float):
         """Start audio playback from start_secs. Stops any current playback first."""
         self.stop()
         if not _AUDIO_AVAILABLE:
             return
+        if self._verbose:
+            print(f"[audio] play  {Path(video_path).name}  @{start_secs:.2f}s", file=sys.stderr, flush=True)
         self._stop_event = threading.Event()
         self._thread = threading.Thread(
             target=self._stream,
-            args=(str(video_path), start_secs, self._stop_event),
+            args=(str(video_path), start_secs, self._stop_event, self._verbose),
             daemon=True,
         )
         self._thread.start()
@@ -209,7 +212,7 @@ class AudioPlayer:
         self._thread = None
 
     @staticmethod
-    def _stream(video_path: str, start_secs: float, stop: threading.Event):
+    def _stream(video_path: str, start_secs: float, stop: threading.Event, verbose: bool = False):
         container = None
         # Map PyAV format names to numpy dtypes (mirrors av.audio.frame.format_dtypes).
         _fmt_dtype = {
@@ -227,31 +230,65 @@ class AudioPlayer:
             audio_stream = audio_streams[0]
             sample_rate = audio_stream.codec_context.sample_rate
             channels = audio_stream.codec_context.channels or 2
+            if verbose:
+                codec_name = audio_stream.codec_context.codec.name if audio_stream.codec_context.codec else '?'
+                print(
+                    f"[audio] stream  {Path(video_path).name}"
+                    f"  codec={codec_name}  {sample_rate}Hz  ch={channels}",
+                    file=sys.stderr, flush=True,
+                )
             if start_secs > 0:
                 # seek uses microseconds in container time base
                 container.seek(int(start_secs * 1_000_000))
+            frame_count = 0
             with _sd.OutputStream(samplerate=sample_rate, channels=channels, dtype='float32') as out:
                 for frame in container.decode(audio_stream):
                     if stop.is_set():
                         break
                     n = frame.samples
                     dtype = _fmt_dtype.get(frame.format.name, 'f4')
+                    nc = frame.layout.nb_channels or channels
+                    if verbose and frame_count == 0:
+                        print(
+                            f"[audio] first frame  fmt={frame.format.name}  samples={n}"
+                            f"  channels={nc}  planes={len(frame.planes)}"
+                            f"  linesize={frame.planes[0].buffer_size if frame.planes else '?'}",
+                            file=sys.stderr, flush=True,
+                        )
+                    frame_count += 1
                     if frame.format.is_planar:
                         # bytes(p) copies each plane out of libav's buffer pool into a
                         # Python-owned bytes object before numpy touches the memory.
                         # count=n trims any alignment padding present in linesize[0].
                         # This prevents np.vstack from reading libav-managed memory while
                         # codec C threads may be recycling it (FF_THREAD_FRAME).
-                        planes = [np.frombuffer(bytes(p), dtype=dtype, count=n) for p in frame.planes]
-                        pcm = np.ascontiguousarray(np.vstack(planes).T)
+                        available = len(frame.planes)
+                        use_planes = min(available, nc)
+                        if verbose and available != nc:
+                            print(
+                                f"[audio] plane/channel mismatch  channels={nc} planes={available}"
+                                f"  file={Path(video_path).name}",
+                                file=sys.stderr, flush=True,
+                            )
+                        if use_planes <= 0:
+                            continue
+                        plane_arrays = []
+                        for i in range(use_planes):
+                            plane_arrays.append(np.frombuffer(bytes(frame.planes[i]), dtype=dtype, count=n))
+                        # Keep stream channel count stable; if fewer planes are exposed,
+                        # pad missing channels with silence.
+                        while len(plane_arrays) < nc:
+                            plane_arrays.append(np.zeros(n, dtype=dtype))
+                        pcm = np.ascontiguousarray(np.column_stack(plane_arrays))
                     else:
-                        nc = frame.layout.nb_channels
                         raw = np.frombuffer(bytes(frame.planes[0]), dtype=dtype, count=n * nc)
                         pcm = raw.reshape(n, nc)
                     out.write(pcm)
         except Exception:
             pass
         finally:
+            if verbose:
+                print(f"[audio] stopped  {Path(video_path).name}  ({frame_count} frames decoded)", file=sys.stderr, flush=True)
             if container is not None:
                 try:
                     container.close()
@@ -439,8 +476,9 @@ class ShotlistVisualizer(QMainWindow):
     """Frame-precise shot editing and annotation review — merged Shotlist + Annotation window."""
 
     def __init__(self, project_path: str, filenames: list, current_index: int = 0,
-                 media_type: str = "movies"):
+                 media_type: str = "movies", verbose: bool = False):
         super().__init__()
+        self._verbose = verbose
 
         # ---- Core state ----
         self.project_path        = project_path
@@ -487,7 +525,7 @@ class ShotlistVisualizer(QMainWindow):
         self._play_start_time     = 0.0
         self._play_start_frame    = 0
         self._current_shot_end_frame = 0
-        self.audio                = AudioPlayer()
+        self.audio                = AudioPlayer(verbose=self._verbose)
 
         # ---- Gremlins ----
         self.gremlins_active = False
@@ -1065,12 +1103,21 @@ class ShotlistVisualizer(QMainWindow):
             return
         was_playing = self.is_playing
         index = random.randrange(len(self.filenames))
+        if self._verbose:
+            print(
+                f"[gremlins] → [{index}] {self.filenames[index]}"
+                f"  (was [{self.current_movie_index}] {self.filenames[self.current_movie_index]})",
+                file=sys.stderr, flush=True,
+            )
         if index != self.current_movie_index:
             if self.is_playing:
                 self.stop_playback()
             self._reload_for_movie(index)
         if self.shots:
             shot_index = random.randrange(len(self.shots))
+            if self._verbose:
+                shot = self.shots[shot_index]
+                print(f"[gremlins] shot {shot_index}/{len(self.shots)}  frame={shot.get('start_frame', '?')}", file=sys.stderr, flush=True)
             self.is_playing = was_playing
             self.jump_to_shot(shot_index)
     
@@ -2137,6 +2184,7 @@ def main():
     parser.add_argument('--project', help="Project path (default: current directory)")
     parser.add_argument('--filenames', nargs='+', help="Explicit list of filenames (passed by cli.py)")
     parser.add_argument('--all', action='store_true', help="Validate all movies with shotlists")
+    parser.add_argument('--verbose', action='store_true', help="Print audio/gremlins diagnostics to stderr (also writes a crash log)")
 
     args = parser.parse_args()
 
@@ -2195,13 +2243,23 @@ def main():
             print("Run 'crossing shotlist shot detect' first to generate shotlist.", file=sys.stderr)
             sys.exit(1)
 
-    # Enable low-level fault handler so C-level crashes (segfaults etc.) print a traceback
-    faulthandler.enable()
+    # Enable low-level fault handler so C-level crashes (segfaults etc.) print a traceback.
+    # In verbose mode also write the crash output to a dedicated log file so it survives
+    # even if the terminal scrollback is lost.
+    _fault_log = None
+    if args.verbose:
+        _fault_log_path = Path(project_path) / "crossing_crash.log"
+        _fault_log = open(_fault_log_path, 'w', buffering=1)  # line-buffered
+        faulthandler.enable(file=_fault_log)
+        print(f"[verbose] crash log → {_fault_log_path}", file=sys.stderr, flush=True)
+        print(f"[verbose] launching with {len(filenames)} file(s): {filenames}", file=sys.stderr, flush=True)
+    else:
+        faulthandler.enable()
 
     # Launch Qt application
     app = QApplication(sys.argv)
     theme.apply_theme(app)
-    visualizer = ShotlistVisualizer(project_path, filenames, 0, args.media)
+    visualizer = ShotlistVisualizer(project_path, filenames, 0, args.media, verbose=args.verbose)
 
     # Open maximised on whatever screen the window appears on
     screen = QApplication.primaryScreen()
