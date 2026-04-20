@@ -226,8 +226,17 @@ class AudioPlayer:
                 for frame in container.decode(audio_stream):
                     if stop.is_set():
                         break
-                    # fltp = planar float: shape (channels, samples) — transpose to (samples, channels)
-                    pcm = np.ascontiguousarray(frame.to_ndarray().T)
+                    # Copy each plane's bytes out of libav's buffer pool before creating
+                    # numpy views. frame.to_ndarray() for planar formats (fltp) calls
+                    # np.vstack on views into libav-managed memory; if a concurrent stream
+                    # causes libav to recycle that buffer the vstack segfaults.
+                    plane_copies = [bytes(p) for p in frame.planes]
+                    if len(plane_copies) == 1:
+                        pcm = np.frombuffer(plane_copies[0], dtype='float32').reshape(-1, 1)
+                    else:
+                        pcm = np.column_stack(
+                            [np.frombuffer(b, dtype='float32') for b in plane_copies]
+                        )
                     out.write(pcm)
         except Exception:
             pass
