@@ -211,6 +211,14 @@ class AudioPlayer:
     @staticmethod
     def _stream(video_path: str, start_secs: float, stop: threading.Event):
         container = None
+        # Map PyAV format names to numpy dtypes (mirrors av.audio.frame.format_dtypes).
+        _fmt_dtype = {
+            'dbl': 'f8', 'dblp': 'f8',
+            'flt': 'f4', 'fltp': 'f4',
+            's16': 'i2', 's16p': 'i2',
+            's32': 'i4', 's32p': 'i4',
+            'u8': 'u1',  'u8p': 'u1',
+        }
         try:
             container = _av.open(video_path)
             audio_streams = [s for s in container.streams if s.type == 'audio']
@@ -226,17 +234,20 @@ class AudioPlayer:
                 for frame in container.decode(audio_stream):
                     if stop.is_set():
                         break
-                    # Copy each plane's bytes out of libav's buffer pool before creating
-                    # numpy views. frame.to_ndarray() for planar formats (fltp) calls
-                    # np.vstack on views into libav-managed memory; if a concurrent stream
-                    # causes libav to recycle that buffer the vstack segfaults.
-                    plane_copies = [bytes(p) for p in frame.planes]
-                    if len(plane_copies) == 1:
-                        pcm = np.frombuffer(plane_copies[0], dtype='float32').reshape(-1, 1)
+                    n = frame.samples
+                    dtype = _fmt_dtype.get(frame.format.name, 'f4')
+                    if frame.format.is_planar:
+                        # bytes(p) copies each plane out of libav's buffer pool into a
+                        # Python-owned bytes object before numpy touches the memory.
+                        # count=n trims any alignment padding present in linesize[0].
+                        # This prevents np.vstack from reading libav-managed memory while
+                        # codec C threads may be recycling it (FF_THREAD_FRAME).
+                        planes = [np.frombuffer(bytes(p), dtype=dtype, count=n) for p in frame.planes]
+                        pcm = np.ascontiguousarray(np.vstack(planes).T)
                     else:
-                        pcm = np.column_stack(
-                            [np.frombuffer(b, dtype='float32') for b in plane_copies]
-                        )
+                        nc = frame.layout.nb_channels
+                        raw = np.frombuffer(bytes(frame.planes[0]), dtype=dtype, count=n * nc)
+                        pcm = raw.reshape(n, nc)
                     out.write(pcm)
         except Exception:
             pass
