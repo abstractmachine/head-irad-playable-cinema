@@ -16,6 +16,7 @@ import threading
 import time
 import random
 import traceback
+import math
 import faulthandler
 from pathlib import Path
 
@@ -191,17 +192,22 @@ class AudioPlayer:
         self._thread = None
         self._verbose = verbose
 
-    def play(self, video_path: str, start_secs: float):
+    def play(self, video_path: str, start_secs: float, gain_db: float = 0.0, channel_map: dict | None = None):
         """Start audio playback from start_secs. Stops any current playback first."""
         self.stop()
         if not _AUDIO_AVAILABLE:
             return
         if self._verbose:
-            print(f"[audio] play  {Path(video_path).name}  @{start_secs:.2f}s", file=sys.stderr, flush=True)
+            print(
+                f"[audio] play  {Path(video_path).name}  @{start_secs:.2f}s"
+                f"  gain={gain_db:+.3f} dB  map={channel_map or {}}",
+                file=sys.stderr,
+                flush=True,
+            )
         self._stop_event = threading.Event()
         self._thread = threading.Thread(
             target=self._stream,
-            args=(str(video_path), start_secs, self._stop_event, self._verbose),
+            args=(str(video_path), start_secs, self._stop_event, self._verbose, float(gain_db), channel_map),
             daemon=True,
         )
         self._thread.start()
@@ -212,7 +218,64 @@ class AudioPlayer:
         self._thread = None
 
     @staticmethod
-    def _stream(video_path: str, start_secs: float, stop: threading.Event, verbose: bool = False):
+    def _to_float32_pcm(pcm: np.ndarray) -> np.ndarray:
+        """Convert decoded PCM to float32 in [-1, 1] for sounddevice output."""
+        arr = np.asarray(pcm)
+        if arr.dtype.kind == 'f':
+            return arr.astype(np.float32, copy=False)
+
+        if arr.dtype.kind == 'u':
+            max_val = float(np.iinfo(arr.dtype).max)
+            mid = max_val / 2.0
+            out = (arr.astype(np.float32) - mid) / max(mid, 1.0)
+            return out
+
+        if arr.dtype.kind == 'i':
+            info = np.iinfo(arr.dtype)
+            scale = float(max(abs(info.min), info.max))
+            out = arr.astype(np.float32) / max(scale, 1.0)
+            return out
+
+        return arr.astype(np.float32)
+
+    @staticmethod
+    def _channel_indices_from_map(channel_map: dict | None, available_channels: int) -> list[int]:
+        """Resolve output channel indices from metadata mapping and stream width."""
+        if available_channels <= 1:
+            return [0]
+
+        if isinstance(channel_map, dict):
+            if "mono" in channel_map:
+                try:
+                    mono_idx = int(channel_map.get("mono", 0))
+                except (TypeError, ValueError):
+                    mono_idx = 0
+                mono_idx = max(0, min(available_channels - 1, mono_idx))
+                return [mono_idx]
+
+            if "left" in channel_map and "right" in channel_map:
+                try:
+                    left = int(channel_map.get("left"))
+                    right = int(channel_map.get("right"))
+                except (TypeError, ValueError):
+                    left, right = 0, 1
+                left = max(0, min(available_channels - 1, left))
+                right = max(0, min(available_channels - 1, right))
+                if left == right:
+                    return [left]
+                return [left, right]
+
+        return [0, 1]
+
+    @staticmethod
+    def _stream(
+        video_path: str,
+        start_secs: float,
+        stop: threading.Event,
+        verbose: bool = False,
+        gain_db: float = 0.0,
+        channel_map: dict | None = None,
+    ):
         container = None
         # Map PyAV format names to numpy dtypes (mirrors av.audio.frame.format_dtypes).
         _fmt_dtype = {
@@ -241,7 +304,12 @@ class AudioPlayer:
                 # seek uses microseconds in container time base
                 container.seek(int(start_secs * 1_000_000))
             frame_count = 0
-            with _sd.OutputStream(samplerate=sample_rate, channels=channels, dtype='float32') as out:
+            mismatch_count = 0
+            mismatch_logged = False
+            gain_linear = math.pow(10.0, gain_db / 20.0)
+            selected_channels = AudioPlayer._channel_indices_from_map(channel_map, channels)
+            out_channels = max(1, len(selected_channels))
+            with _sd.OutputStream(samplerate=sample_rate, channels=out_channels, dtype='float32') as out:
                 for frame in container.decode(audio_stream):
                     if stop.is_set():
                         break
@@ -264,12 +332,17 @@ class AudioPlayer:
                         # codec C threads may be recycling it (FF_THREAD_FRAME).
                         available = len(frame.planes)
                         use_planes = min(available, nc)
-                        if verbose and available != nc:
-                            print(
-                                f"[audio] plane/channel mismatch  channels={nc} planes={available}"
-                                f"  file={Path(video_path).name}",
-                                file=sys.stderr, flush=True,
-                            )
+                        if available != nc:
+                            mismatch_count += 1
+                            if verbose and not mismatch_logged:
+                                mismatch_logged = True
+                                print(
+                                    f"[audio] plane/channel mismatch  channels={nc} planes={available}"
+                                    f"  file={Path(video_path).name}"
+                                    "  (additional mismatches suppressed)",
+                                    file=sys.stderr,
+                                    flush=True,
+                                )
                         if use_planes <= 0:
                             continue
                         plane_arrays = []
@@ -283,11 +356,34 @@ class AudioPlayer:
                     else:
                         raw = np.frombuffer(bytes(frame.planes[0]), dtype=dtype, count=n * nc)
                         pcm = raw.reshape(n, nc)
-                    out.write(pcm)
+
+                    pcm_f32 = AudioPlayer._to_float32_pcm(pcm)
+                    if pcm_f32.ndim == 1:
+                        pcm_f32 = pcm_f32.reshape(-1, 1)
+
+                    frame_channels = pcm_f32.shape[1]
+                    channel_arrays = []
+                    for idx in selected_channels:
+                        if 0 <= idx < frame_channels:
+                            channel_arrays.append(pcm_f32[:, idx])
+                        else:
+                            channel_arrays.append(np.zeros(pcm_f32.shape[0], dtype=np.float32))
+                    pcm_f32 = np.column_stack(channel_arrays)
+
+                    if gain_linear != 1.0:
+                        pcm_f32 = np.clip(pcm_f32 * gain_linear, -1.0, 1.0)
+                    out.write(pcm_f32)
         except Exception:
             pass
         finally:
             if verbose:
+                if mismatch_count > 0:
+                    print(
+                        f"[audio] plane/channel mismatch summary  {Path(video_path).name}"
+                        f"  count={mismatch_count}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
                 print(f"[audio] stopped  {Path(video_path).name}  ({frame_count} frames decoded)", file=sys.stderr, flush=True)
             if container is not None:
                 try:
@@ -639,6 +735,12 @@ class ShotlistVisualizer(QMainWindow):
         _entries = get_metadata(self.project_path, media_type=self.media_type)
         _meta = next((e for e in _entries if e.get("filename") == self.filename), {})
         self.media_id = compute_media_id(_meta, self.media_type)
+        try:
+            self.audio_gain_db = float(_meta.get("audio_gain_db", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            self.audio_gain_db = 0.0
+        raw_channel_map = _meta.get("audio_channels")
+        self.audio_channels = raw_channel_map if isinstance(raw_channel_map, dict) else None
         attach_shot_ids(self.shots, self.media_id)
 
         ann_path    = _get_annotation_json_path(self.project_path, self.filename, self.media_type)
@@ -1056,7 +1158,12 @@ class ShotlistVisualizer(QMainWindow):
         self.play_pause_button.setText("⏸ Pause")
         self._play_start_frame = self.current_frame_number
         start_secs = self.current_frame_number / self.frame_rate if self.frame_rate > 0 else 0.0
-        self.audio.play(str(self.video_path), start_secs)
+        self.audio.play(
+            str(self.video_path),
+            start_secs,
+            gain_db=getattr(self, "audio_gain_db", 0.0),
+            channel_map=getattr(self, "audio_channels", None),
+        )
         # Delay video timer start to let audio initialize, then anchor the clock
         QTimer.singleShot(130, self._begin_video_timer)
 

@@ -13,6 +13,7 @@ A CLI + GUI tool for relating moving images across media — connecting gameplay
 | `crossing media remove` | Remove a film and all its associated data |
 | `crossing media audit` | Report missing metadata, thumbnails, shotlists, and subtitles |
 | `crossing media update` | Fetch and save metadata/thumbnails for entries missing key fields |
+| `crossing media normalize` | Measure loudness and save one playback gain (`audio_gain_db`) per asset |
 | `crossing media subtitle` | Fetch and list subtitles via OpenSubtitles |
 | `crossing metadata` | List, get, update, and audit metadata |
 | `crossing shotlist` | Manage shot/scene CSV files and run shot detection |
@@ -203,6 +204,10 @@ crossing tool model remove <name> [--confirm]                # delete a model fo
 crossing tool default get [key]
 crossing tool default set <key> <value>
 
+# Audio normalization baseline (global target LUFS, default: -23.0)
+crossing tool default get audio-target-lufs
+crossing tool default set audio-target-lufs -23.0
+
 # Send a test notification to verify a service is configured
 crossing tool notify discord
 ```
@@ -246,6 +251,20 @@ crossing media update
   --file <filename>                      # update a single file by filename
   --force                                # force re-fetch for all entries
   --media {movies,gameplay}              # media type (default: movies)
+
+# Normalize audio — writes one scalar field (audio_gain_db) to metadata
+crossing media normalize movie "Film Title"
+crossing media normalize gameplay "rdr2-clip-id"
+crossing media normalize --all
+
+# Scan audio channel layouts — writes audio_channels mapping to metadata
+crossing media channels movie "Film Title"
+crossing media channels gameplay "rdr2-clip-id"
+crossing media channels --all
+
+# Read-only channel distribution (does not save metadata)
+crossing media channels --count
+crossing media channels --count --format json
 
 # Download and manage subtitles
 crossing media subtitle fetch [query]    # fetch missing subtitles from OpenSubtitles

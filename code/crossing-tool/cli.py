@@ -250,6 +250,11 @@ _ANNOTATE_DEFAULT_KEYS = {
     "max-frames-per-shot": ("annotate_max_frames_per_shot", 16),
 }
 
+_TOOL_DEFAULT_KEYS = {
+    **_ANNOTATE_DEFAULT_KEYS,
+    "audio-target-lufs": ("audio_target_lufs", -23.0),
+}
+
 
 def cmd_model(args):
     sub = args.model_subcommand
@@ -348,6 +353,337 @@ def cmd_media(args):
     elif sub == "update":
         _require_path()
         _meta_update(args)
+    elif sub == "normalize":
+        _require_path()
+        cmd_media_normalize(args)
+    elif sub == "channels":
+        _require_path()
+        cmd_media_channels(args)
+
+
+def _resolve_normalize_matches(project_path: str, media_type: str, query: str) -> list[dict]:
+    from data.metadata import get_metadata
+
+    rows = get_metadata(project_path, media_type=media_type)
+    q = query.lower()
+    exact_media_id = [
+        r for r in rows
+        if str(r.get("media_id", "")).lower() == q
+    ]
+    if exact_media_id:
+        return exact_media_id
+
+    return [
+        r for r in rows
+        if q in str(r.get("filename", "")).lower()
+        or q in str(r.get("title", "")).lower()
+        or q in str(r.get("original_filename", "")).lower()
+    ]
+
+
+def cmd_media_channels(args):
+    from data.metadata import get_metadata, set_metadata
+    from services.audio_channels import inspect_audio_channel_count, suggest_audio_channels_mapping
+    from services.notify import discord_notify
+    from collections import Counter
+
+    project_path = prefs.get("path")
+
+    selector = getattr(args, "target", None)
+    type_map = {
+        "movie": "movies",
+        "movies": "movies",
+        "gameplay": "gameplay",
+    }
+    selected_media_type = type_map.get(selector) if selector else None
+
+    do_all = getattr(args, "all", False)
+    count_only = getattr(args, "count", False)
+    output_format = getattr(args, "format", "text")
+    verbose = getattr(args, "verbose", False)
+    notify_each = getattr(args, "notify_items", False)
+    notify = getattr(args, "notify", False) or notify_each  # --notify-each implies --notify
+    force = getattr(args, "force", False)
+    query_words = getattr(args, "query", None) or []
+    query = " ".join(query_words).strip()
+
+    # Convenience mode: `crossing media channels --count` defaults to all movies.
+    if count_only and not do_all and not selected_media_type and not query:
+        do_all = True
+        selected_media_type = "movies"
+
+    if not do_all and (not selected_media_type or not query):
+        print("✗ Provide either --all, or: crossing media channels {movie|gameplay} <query>", file=sys.stderr)
+        sys.exit(1)
+
+    media_types = [selected_media_type] if selected_media_type else ["movies", "gameplay"]
+
+    total = 0
+    ok = 0
+    skipped = 0
+    failed = 0
+    distribution: Counter[int] = Counter()
+
+    for media_type in media_types:
+        if do_all:
+            targets = [r for r in get_metadata(project_path, media_type=media_type) if r.get("filename")]
+        else:
+            targets = _resolve_normalize_matches(project_path, media_type, query)
+            if not targets:
+                print(f"✗ No {media_type} entries match '{query}'.", file=sys.stderr)
+                sys.exit(1)
+            if len(targets) > 1:
+                print(f"✗ '{query}' matches {len(targets)} {media_type} entries — be more specific:", file=sys.stderr)
+                for row in targets:
+                    ident = row.get("media_id") or row.get("tmdb") or "?"
+                    print(f"  [{ident}]  {row.get('filename', '')}  —  {row.get('title', '')}", file=sys.stderr)
+                sys.exit(1)
+
+        for row in targets:
+            filename = row.get("filename", "")
+            if not filename:
+                skipped += 1
+                continue
+
+            if count_only:
+                total += 1
+                video_path = Path(project_path) / "media" / "videos" / media_type / filename
+                if not video_path.exists():
+                    if verbose:
+                        print(f"  fail  {media_type}/{filename}: file not found", file=sys.stderr)
+                    failed += 1
+                    continue
+                try:
+                    channel_count = inspect_audio_channel_count(video_path)
+                except RuntimeError as exc:
+                    if "No audio stream found" in str(exc):
+                        channel_count = 0
+                    else:
+                        if verbose:
+                            print(f"  fail  {media_type}/{filename}: {exc}", file=sys.stderr)
+                        failed += 1
+                        continue
+
+                distribution[channel_count] += 1
+                if verbose:
+                    print(f"  ok    {media_type}/{filename}  channels={channel_count}")
+                continue
+
+            if row.get("audio_channels") is not None and not force:
+                if verbose:
+                    print(f"  skip  {media_type}/{filename}: audio_channels already set")
+                skipped += 1
+                continue
+
+            total += 1
+            video_path = Path(project_path) / "media" / "videos" / media_type / filename
+            if not video_path.exists():
+                if verbose:
+                    print(f"  skip  {media_type}/{filename}: file not found")
+                skipped += 1
+                continue
+
+            try:
+                channel_count = inspect_audio_channel_count(video_path)
+                mapping = suggest_audio_channels_mapping(channel_count)
+                updated = dict(row)
+                updated["audio_channels"] = mapping
+                updated["media_type"] = media_type
+                set_metadata(project_path, updated, match_filename=filename)
+                if verbose:
+                    print(
+                        f"  ok    {media_type}/{filename}  "
+                        f"channels={channel_count}  map={json.dumps(mapping, ensure_ascii=False)}"
+                    )
+                if notify_each:
+                    discord_notify(
+                        f"✓ Channels {media_type}/{filename} — channels={channel_count}, map={mapping}",
+                        project_path,
+                    )
+                ok += 1
+            except RuntimeError as exc:
+                if verbose:
+                    print(f"  fail  {media_type}/{filename}: {exc}", file=sys.stderr)
+                if notify_each:
+                    discord_notify(
+                        f"✗ Channel scan failed for {media_type}/{filename}: {exc}",
+                        project_path,
+                    )
+                failed += 1
+
+    if count_only:
+        if total == 0 and failed == 0:
+            print("No eligible media entries found.")
+            return
+
+        ordered = {k: distribution[k] for k in sorted(distribution)}
+        if output_format == "json":
+            print(json.dumps({"total": total, "distribution": ordered}, indent=2))
+        elif output_format == "markdown":
+            print("| Channels | Movies |")
+            print("|---------:|-------:|")
+            for channels, count in ordered.items():
+                print(f"| {channels} | {count} |")
+            print(f"\nTotal scanned: {total}")
+        else:
+            print("Audio channel distribution:")
+            for channels, count in ordered.items():
+                print(f"  {channels}: {count}")
+            print(f"\nTotal scanned: {total}")
+
+        if failed:
+            sys.exit(1)
+        return
+
+    if total == 0 and failed == 0:
+        print("No eligible media entries found.")
+        return
+
+    print(
+        f"\nAudio channel scan complete: "
+        f"{ok} updated, {skipped} skipped, {failed} failed"
+    )
+
+    if notify:
+        lines = [
+            "Audio channel scan complete",
+            f"Updated: {ok}",
+            f"Skipped: {skipped}",
+            f"Failed: {failed}",
+        ]
+        discord_notify("\n".join(lines), project_path)
+
+    if failed:
+        sys.exit(1)
+
+
+def cmd_media_normalize(args):
+    from data.metadata import get_metadata, set_metadata
+    from services.audio_normalize import measure_audio_gain_db
+    from services.notify import discord_notify
+
+    project_path = prefs.get("path")
+    raw_target_lufs = prefs.get("audio_target_lufs", -23.0)
+    try:
+        target_lufs = float(raw_target_lufs)
+    except (TypeError, ValueError):
+        print(
+            "✗ Invalid global default for audio target LUFS. "
+            "Set it with: crossing tool default set audio-target-lufs -23.0",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Accept both singular and plural names from CLI selectors/options.
+    selector = getattr(args, "target", None)
+    type_map = {
+        "movie": "movies",
+        "movies": "movies",
+        "gameplay": "gameplay",
+    }
+    selected_media_type = type_map.get(selector) if selector else None
+
+    normalize_all = getattr(args, "all", False)
+    verbose = getattr(args, "verbose", False)
+    notify_each = getattr(args, "notify_items", False)
+    notify = getattr(args, "notify", False) or notify_each  # --notify-each implies --notify
+    force = getattr(args, "force", False)
+    query_words = getattr(args, "query", None) or []
+    query = " ".join(query_words).strip()
+
+    if not normalize_all and (not selected_media_type or not query):
+        print("✗ Provide either --all, or: crossing media normalize {movie|gameplay} <query>", file=sys.stderr)
+        sys.exit(1)
+
+    media_types = [selected_media_type] if selected_media_type else ["movies", "gameplay"]
+
+    total = 0
+    ok = 0
+    skipped = 0
+    failed = 0
+
+    for media_type in media_types:
+        if normalize_all:
+            targets = [r for r in get_metadata(project_path, media_type=media_type) if r.get("filename")]
+        else:
+            targets = _resolve_normalize_matches(project_path, media_type, query)
+            if not targets:
+                print(f"✗ No {media_type} entries match '{query}'.", file=sys.stderr)
+                sys.exit(1)
+            if len(targets) > 1:
+                print(f"✗ '{query}' matches {len(targets)} {media_type} entries — be more specific:", file=sys.stderr)
+                for row in targets:
+                    ident = row.get("media_id") or row.get("tmdb") or "?"
+                    print(f"  [{ident}]  {row.get('filename', '')}  —  {row.get('title', '')}", file=sys.stderr)
+                sys.exit(1)
+
+        for row in targets:
+            filename = row.get("filename", "")
+            if not filename:
+                skipped += 1
+                continue
+
+            if row.get("audio_gain_db") is not None and not force:
+                if verbose:
+                    print(f"  skip  {media_type}/{filename}: audio_gain_db already set")
+                skipped += 1
+                continue
+
+            total += 1
+            video_path = Path(project_path) / "media" / "videos" / media_type / filename
+            if not video_path.exists():
+                if verbose:
+                    print(f"  skip  {media_type}/{filename}: file not found")
+                skipped += 1
+                continue
+
+            try:
+                gain_db, integrated_lufs = measure_audio_gain_db(video_path, target_lufs)
+                updated = dict(row)
+                updated["audio_gain_db"] = gain_db
+                updated["media_type"] = media_type
+                set_metadata(project_path, updated, match_filename=filename)
+                if verbose:
+                    print(
+                        f"  ok    {media_type}/{filename}  "
+                        f"integrated={integrated_lufs:.2f} LUFS  gain={gain_db:+.3f} dB"
+                    )
+                if notify_each:
+                    discord_notify(
+                        f"✓ Normalized {media_type}/{filename} — integrated={integrated_lufs:.2f} LUFS, gain={gain_db:+.3f} dB",
+                        project_path,
+                    )
+                ok += 1
+            except RuntimeError as exc:
+                if verbose:
+                    print(f"  fail  {media_type}/{filename}: {exc}", file=sys.stderr)
+                if notify_each:
+                    discord_notify(
+                        f"✗ Normalize failed for {media_type}/{filename}: {exc}",
+                        project_path,
+                    )
+                failed += 1
+
+    if total == 0 and failed == 0:
+        print("No eligible media entries found.")
+        return
+
+    print(
+        f"\nNormalization complete — target {target_lufs:.1f} LUFS: "
+        f"{ok} updated, {skipped} skipped, {failed} failed"
+    )
+
+    if notify:
+        lines = [
+            f"Normalization complete — target {target_lufs:.1f} LUFS",
+            f"Updated: {ok}",
+            f"Skipped: {skipped}",
+            f"Failed: {failed}",
+        ]
+        discord_notify("\n".join(lines), project_path)
+
+    if failed:
+        sys.exit(1)
 
 
 def cmd_import(args):
@@ -1888,7 +2224,7 @@ def cmd_tool(args):
         cmd_notify(args)
     elif sub == "model":
         cmd_model(args)
-    elif sub == "default":
+    elif sub in ("default", "defaults"):
         cmd_tool_default(args)
 
 
@@ -1906,13 +2242,26 @@ def cmd_tool_default(args):
             field_list = [f.strip() for f in args.value.split(",") if f.strip()]
             save_fields(project_path, field_list)
             print(f"✓ Display fields set to: {', '.join(field_list)}")
-        elif key not in _ANNOTATE_DEFAULT_KEYS:
-            print(f"✗ Unknown default key '{key}'. Available keys: fields, {', '.join(_ANNOTATE_DEFAULT_KEYS)}", file=sys.stderr)
+        elif key not in _TOOL_DEFAULT_KEYS:
+            print(f"✗ Unknown default key '{key}'. Available keys: fields, {', '.join(_TOOL_DEFAULT_KEYS)}", file=sys.stderr)
             sys.exit(1)
         else:
-            pref_key, _ = _ANNOTATE_DEFAULT_KEYS[key]
-            prefs.set(pref_key, args.value)
-            print(f"✓ Default '{key}' set to '{args.value}'")
+            pref_key, fallback = _TOOL_DEFAULT_KEYS[key]
+            value = args.value
+            if isinstance(fallback, float):
+                try:
+                    value = float(args.value)
+                except ValueError:
+                    print(f"✗ Invalid value for '{key}': expected a number.", file=sys.stderr)
+                    sys.exit(1)
+            elif isinstance(fallback, int):
+                try:
+                    value = int(args.value)
+                except ValueError:
+                    print(f"✗ Invalid value for '{key}': expected an integer.", file=sys.stderr)
+                    sys.exit(1)
+            prefs.set(pref_key, value)
+            print(f"✓ Default '{key}' set to '{value}'")
     elif sub == "get" or sub is None:
         key = getattr(args, "key", None)
         if key == "fields":
@@ -1929,12 +2278,12 @@ def cmd_tool_default(args):
             except (ValueError, ImportError) as exc:
                 print(f"fields: (error loading — {exc})")
         else:
-            keys = [key] if key else list(_ANNOTATE_DEFAULT_KEYS)
+            keys = [key] if key else list(_TOOL_DEFAULT_KEYS)
             for k in keys:
-                if k not in _ANNOTATE_DEFAULT_KEYS:
-                    print(f"✗ Unknown default key '{k}'. Available keys: fields, {', '.join(_ANNOTATE_DEFAULT_KEYS)}", file=sys.stderr)
+                if k not in _TOOL_DEFAULT_KEYS:
+                    print(f"✗ Unknown default key '{k}'. Available keys: fields, {', '.join(_TOOL_DEFAULT_KEYS)}", file=sys.stderr)
                     sys.exit(1)
-                pref_key, fallback = _ANNOTATE_DEFAULT_KEYS[k]
+                pref_key, fallback = _TOOL_DEFAULT_KEYS[k]
                 val = prefs.get(pref_key, fallback)
                 print(f"{k}: {val}")
             if not key:
@@ -3969,6 +4318,105 @@ def build_parser():
     p_media_update.add_argument("--force", action="store_true", help="Force re-fetch metadata for all entries")
     p_media_update.set_defaults(func=cmd_media)
 
+    # media normalize
+    p_media_normalize = media_sub.add_parser(
+        "normalize",
+        help="Measure loudness and save one playback gain value (audio_gain_db) per asset",
+    )
+    p_media_normalize.add_argument(
+        "target",
+        nargs="?",
+        choices=["movie", "gameplay"],
+        help="Normalize one media type: movie or gameplay",
+    )
+    p_media_normalize.add_argument(
+        "query",
+        nargs="*",
+        help="Title/filename/media_id query for a single asset (omit with --all)",
+    )
+    p_media_normalize.add_argument(
+        "--all",
+        action="store_true",
+        help="Normalize all eligible metadata entries (both movies and gameplay unless a target is provided)",
+    )
+    p_media_normalize.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing audio_gain_db values instead of skipping already-normalized assets",
+    )
+    p_media_normalize.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print per-asset loudness and gain details during normalization",
+    )
+    p_media_normalize.add_argument(
+        "--notify",
+        action="store_true",
+        help="Send a Discord notification when normalization finishes",
+    )
+    p_media_normalize.add_argument(
+        "--notify-each",
+        action="store_true",
+        dest="notify_items",
+        help="Send a Discord notification after each processed asset",
+    )
+    p_media_normalize.set_defaults(func=cmd_media)
+
+    # media channels
+    p_media_channels = media_sub.add_parser(
+        "channels",
+        help="Inspect audio stream channels and save a playback mapping (audio_channels) per asset",
+    )
+    p_media_channels.add_argument(
+        "target",
+        nargs="?",
+        choices=["movie", "gameplay"],
+        help="Scan one media type: movie or gameplay",
+    )
+    p_media_channels.add_argument(
+        "query",
+        nargs="*",
+        help="Title/filename/media_id query for a single asset (omit with --all)",
+    )
+    p_media_channels.add_argument(
+        "--all",
+        action="store_true",
+        help="Scan all eligible metadata entries (both movies and gameplay unless a target is provided)",
+    )
+    p_media_channels.add_argument(
+        "--count",
+        action="store_true",
+        help="Read-only mode: do not save metadata, print a channel-count distribution",
+    )
+    p_media_channels.add_argument(
+        "--format",
+        choices=["text", "json", "markdown"],
+        default="text",
+        help="Output format for --count mode (default: text)",
+    )
+    p_media_channels.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing audio_channels values instead of skipping already-scanned assets",
+    )
+    p_media_channels.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print per-asset channel details during scanning",
+    )
+    p_media_channels.add_argument(
+        "--notify",
+        action="store_true",
+        help="Send a Discord notification when channel scanning finishes",
+    )
+    p_media_channels.add_argument(
+        "--notify-each",
+        action="store_true",
+        dest="notify_items",
+        help="Send a Discord notification after each processed asset",
+    )
+    p_media_channels.set_defaults(func=cmd_media)
+
     # media remove
     p_remove = media_sub.add_parser("remove", help="Remove a film and all its associated files")
     p_remove.set_defaults(func=cmd_remove)
@@ -4121,7 +4569,10 @@ def build_parser():
     p_tool_default = tool_sub.add_parser("default", help="Get or set persistent defaults for annotate and other commands")
     default_sub = p_tool_default.add_subparsers(dest="default_subcommand")
 
-    _default_key_choices = list(_ANNOTATE_DEFAULT_KEYS)
+    p_tool_defaults = tool_sub.add_parser("defaults", help="Alias for 'tool default'")
+    defaults_sub = p_tool_defaults.add_subparsers(dest="default_subcommand")
+
+    _default_key_choices = list(_TOOL_DEFAULT_KEYS)
 
     p_tool_default_set = default_sub.add_parser("set", help="Set a default value")
     p_tool_default_set.add_argument("key", choices=_default_key_choices, help="Setting name")
@@ -4129,6 +4580,13 @@ def build_parser():
 
     p_tool_default_get = default_sub.add_parser("get", help="Show a default value (omit key to show all)")
     p_tool_default_get.add_argument("key", nargs="?", choices=_default_key_choices, default=None, help="Setting name")
+
+    p_tool_defaults_set = defaults_sub.add_parser("set", help="Set a default value")
+    p_tool_defaults_set.add_argument("key", choices=_default_key_choices, help="Setting name")
+    p_tool_defaults_set.add_argument("value", help="New value")
+
+    p_tool_defaults_get = defaults_sub.add_parser("get", help="Show a default value (omit key to show all)")
+    p_tool_defaults_get.add_argument("key", nargs="?", choices=_default_key_choices, default=None, help="Setting name")
 
     p_tool_model = tool_sub.add_parser("model", help="Get or set the model used for each subcommand")
     tool_model_sub = p_tool_model.add_subparsers(dest="model_subcommand")
