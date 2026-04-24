@@ -378,13 +378,16 @@ class AudioPlayer:
 
                     if gain_linear != 1.0:
                         pcm_f32 = np.clip(pcm_f32 * gain_linear, -1.0, 1.0)
+                    out.write(pcm_f32)
                     if first_frame:
-                        audio_start_time = time.perf_counter()
+                        latency = out.latency if hasattr(out, "latency") and out.latency else 0.0
+                        audio_start_time = time.perf_counter() + latency
                         if on_start_callback:
-                            on_start_callback(audio_start_time, start_secs)
+                            on_start_callback.emit(audio_start_time, start_secs)
+                        if verbose:
+                            print(f"[sync] latency={latency:.4f}s", file=sys.stderr, flush=True)
                         print(f"[sync] audio_start={audio_start_time:.6f} start_secs={start_secs}", file=sys.stderr, flush=True)
                         first_frame = False
-                    out.write(pcm_f32)
         except Exception:
             pass
         finally:
@@ -646,6 +649,7 @@ class ShotlistVisualizer(QMainWindow):
         self._timeline_was_playing = False
         self._play_start_time     = 0.0
         self._play_start_frame    = 0
+        self._playback_speed      = 1.0
         self._current_shot_end_frame = 0
         self.audio                = AudioPlayer(verbose=self._verbose)
         self._audio_start_signal.connect(self._on_audio_start_main_thread)
@@ -1204,7 +1208,7 @@ class ShotlistVisualizer(QMainWindow):
             start_secs,
             gain_db=getattr(self, "audio_gain_db", 0.0),
             channel_map=getattr(self, "audio_channels", None),
-            on_start_callback=self._audio_start_signal.emit,
+            on_start_callback=self._audio_start_signal,
         )
 
     def _on_audio_start_main_thread(self, audio_start_time: float, start_secs: float):
@@ -1278,7 +1282,8 @@ class ShotlistVisualizer(QMainWindow):
             return
 
         elapsed      = time.perf_counter() - self._play_start_time
-        target_frame = self._play_start_frame + int(elapsed * self.frame_rate)
+        speed        = getattr(self, "_playback_speed", 1.0)
+        target_frame = self._play_start_frame + int(elapsed * self.frame_rate * speed)
         target_frame = max(0, min(target_frame, self.total_frames - 1))
 
         if target_frame <= self.current_frame_number:
