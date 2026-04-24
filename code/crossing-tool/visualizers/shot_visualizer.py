@@ -193,7 +193,7 @@ class AudioPlayer:
         self._thread = None
         self._verbose = verbose
 
-    def play(self, video_path: str, start_secs: float, gain_db: float = 0.0, channel_map: dict | None = None):
+    def play(self, video_path: str, start_secs: float, gain_db: float = 0.0, channel_map: dict | None = None, on_start_callback=None):
         """Start audio playback from start_secs. Stops any current playback first."""
         self.stop()
         if not _AUDIO_AVAILABLE:
@@ -208,7 +208,7 @@ class AudioPlayer:
         self._stop_event = threading.Event()
         self._thread = threading.Thread(
             target=self._stream,
-            args=(str(video_path), start_secs, self._stop_event, self._verbose, float(gain_db), channel_map),
+            args=(str(video_path), start_secs, self._stop_event, self._verbose, float(gain_db), channel_map, on_start_callback),
             daemon=True,
         )
         self._thread.start()
@@ -276,6 +276,7 @@ class AudioPlayer:
         verbose: bool = False,
         gain_db: float = 0.0,
         channel_map: dict | None = None,
+        on_start_callback=None,
     ):
         container = None
         # Map PyAV format names to numpy dtypes (mirrors av.audio.frame.format_dtypes).
@@ -311,9 +312,13 @@ class AudioPlayer:
             selected_channels = AudioPlayer._channel_indices_from_map(channel_map, channels)
             out_channels = max(1, len(selected_channels))
             with _sd.OutputStream(samplerate=sample_rate, channels=out_channels, dtype='float32') as out:
+                first_frame = True
                 for frame in container.decode(audio_stream):
                     if stop.is_set():
                         break
+                    # Discard pre-seek frames (decoder starts from previous keyframe)
+                    if start_secs > 0 and frame.time is not None and frame.time < start_secs:
+                        continue
                     n = frame.samples
                     dtype = _fmt_dtype.get(frame.format.name, 'f4')
                     nc = frame.layout.nb_channels or channels
@@ -373,6 +378,12 @@ class AudioPlayer:
 
                     if gain_linear != 1.0:
                         pcm_f32 = np.clip(pcm_f32 * gain_linear, -1.0, 1.0)
+                    if first_frame:
+                        audio_start_time = time.perf_counter()
+                        if on_start_callback:
+                            on_start_callback(audio_start_time, start_secs)
+                        print(f"[sync] audio_start={audio_start_time:.6f} start_secs={start_secs}", file=sys.stderr, flush=True)
+                        first_frame = False
                     out.write(pcm_f32)
         except Exception:
             pass
@@ -583,6 +594,8 @@ class AnnotateWorker(QThread):
 class ShotlistVisualizer(QMainWindow):
     """Frame-precise shot editing and annotation review — merged Shotlist + Annotation window."""
 
+    _audio_start_signal = pyqtSignal(float, float)
+
     def __init__(self, project_path: str, filenames: list, current_index: int = 0,
                  media_type: str = "movies", verbose: bool = False):
         super().__init__()
@@ -635,6 +648,7 @@ class ShotlistVisualizer(QMainWindow):
         self._play_start_frame    = 0
         self._current_shot_end_frame = 0
         self.audio                = AudioPlayer(verbose=self._verbose)
+        self._audio_start_signal.connect(self._on_audio_start_main_thread)
 
         # ---- Gremlins ----
         self.gremlins_active = False
@@ -1190,20 +1204,16 @@ class ShotlistVisualizer(QMainWindow):
             start_secs,
             gain_db=getattr(self, "audio_gain_db", 0.0),
             channel_map=getattr(self, "audio_channels", None),
+            on_start_callback=self._audio_start_signal.emit,
         )
-        # Delay video timer start to let audio initialize, then anchor the clock
-        QTimer.singleShot(130, self._begin_video_timer)
 
-    def _begin_video_timer(self):
-        """Called after audio startup delay — anchors the wall clock and starts the video timer."""
-        try:
-            if not self.is_playing:
-                return
-            self._play_start_time = time.perf_counter()
-            self.playback_timer.start()
-        except Exception:
-            traceback.print_exc(file=sys.stderr)
-            self.stop_playback()
+    def _on_audio_start_main_thread(self, audio_start_time: float, start_secs: float):
+        """Anchor video clock to actual audio start time — called on main thread via signal."""
+        if not self.is_playing:
+            return
+        self._play_start_time = audio_start_time
+        self._play_start_frame = int(start_secs * self.frame_rate)
+        self.playback_timer.start()
     
     def stop_playback(self):
         """Stop video playback."""
@@ -1269,7 +1279,7 @@ class ShotlistVisualizer(QMainWindow):
 
         elapsed      = time.perf_counter() - self._play_start_time
         target_frame = self._play_start_frame + int(elapsed * self.frame_rate)
-        target_frame = min(target_frame, self.total_frames - 1)
+        target_frame = max(0, min(target_frame, self.total_frames - 1))
 
         if target_frame <= self.current_frame_number:
             return
