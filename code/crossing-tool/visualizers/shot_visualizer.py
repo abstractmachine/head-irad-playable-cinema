@@ -171,6 +171,7 @@ def _get_sar(video_path: str) -> tuple:
 
 import cv2
 import numpy as np
+os.environ.setdefault("OPENCV_FFMPEG_READ_ATTEMPTS", "8192")
 if "QT_QPA_PLATFORM_PLUGIN_PATH" in os.environ:
     del os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"]
 
@@ -401,8 +402,14 @@ def _display_name(filename: str) -> str:
 
 class ClickSeekSlider(QSlider):
     """A QSlider that jumps to the exact position on a single click."""
+
+    # Fire BEFORE any value change so callers can snapshot play state first.
+    mousePressed  = pyqtSignal()
+    mouseReleased = pyqtSignal()
+
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
+            self.mousePressed.emit()   # must be before setValue
             opt = self.style().subControlRect(
                 QStyle.CC_Slider, self._style_option(), QStyle.SC_SliderGroove, self
             )
@@ -413,6 +420,11 @@ class ClickSeekSlider(QSlider):
                 value = round(self.minimum() + ratio * (self.maximum() - self.minimum()))
                 self.setValue(value)
         super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        if event.button() == Qt.LeftButton:
+            self.mouseReleased.emit()
+        super().mouseReleaseEvent(event)
 
     def _style_option(self):
         from PyQt5.QtWidgets import QStyleOptionSlider
@@ -618,6 +630,7 @@ class ShotlistVisualizer(QMainWindow):
         self.playback_timer       = None
         self._updating_slider     = False
         self._updating_combo      = False
+        self._timeline_was_playing = False
         self._play_start_time     = 0.0
         self._play_start_frame    = 0
         self._current_shot_end_frame = 0
@@ -819,6 +832,8 @@ class ShotlistVisualizer(QMainWindow):
         self.timeline_slider.setValue(0)
         self.timeline_slider.setFocusPolicy(Qt.NoFocus)
         self.timeline_slider.valueChanged.connect(self._on_timeline_seek)
+        self.timeline_slider.mousePressed.connect(self._on_timeline_press)
+        self.timeline_slider.mouseReleased.connect(self._on_timeline_release)
         self.timeline_slider.setToolTip("Scrub timeline  [←/→ frame  Shift+←/→ 1s]")
         left_layout.addWidget(self.timeline_slider)
 
@@ -1101,6 +1116,18 @@ class ShotlistVisualizer(QMainWindow):
         self._updating_slider = True
         self.timeline_slider.setValue(self.current_frame_number)
         self._updating_slider = False
+
+    def _on_timeline_press(self):
+        """Mouse pressed on timeline — remember play state and pause."""
+        self._timeline_was_playing = self.is_playing
+        if self.is_playing:
+            self.stop_playback()
+
+    def _on_timeline_release(self):
+        """Mouse released on timeline — resume playback if we were playing."""
+        if self._timeline_was_playing:
+            self._timeline_was_playing = False
+            self.start_playback()
 
     def _on_timeline_seek(self, value: int):
         """Handle timeline slider movement — seek to that frame."""
