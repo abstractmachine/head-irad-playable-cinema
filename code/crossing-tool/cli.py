@@ -235,11 +235,13 @@ _MODEL_KEYS = {
     "annotate": "model_annotate",
     "segmentation": "model_segmentation",
     "embed": "model_embed",
+    "frame_match": "model_frame_match",
 }
 _MODEL_DEFAULTS = {
     "annotate": "gemma4-e4b",
     "segmentation": "sam2.1_b.pt",
     "embed": "BAAI/bge-small-en-v1.5",
+    "frame_match": "clip-vit-base-patch32",
 }
 
 # Persistent defaults for annotate (and other commands)
@@ -976,6 +978,66 @@ def cmd_search(args):
             media_type=media_type,
         )
         print(json.dumps(result, indent=2))
+        return
+
+    # Dispatch: `crossing search frame <clip-query> [scope...]`
+    # Runs text search then enriches each result with a CLIP-based best frame.
+    if args.query == "frame":
+        from services.search import search_shots
+        from services.frame_match import _load_clip_model, find_query_best_frame_for_shot
+        remaining = args.scope or []
+        if not remaining:
+            print(
+                "error: 'search frame' requires a query, "
+                "e.g. crossing search frame \"horse\"",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        clip_query = remaining[0]
+        scopes = (remaining[1:] or []) + (getattr(args, "movie", None) or [])
+        scopes = scopes or None
+        use_all = getattr(args, "all", False)
+        limit = getattr(args, "limit", None)
+        limit_per_item = getattr(args, "limit_per_item", None)
+        media_type = getattr(args, "media", "movies")
+        project_path = prefs.get("path")
+        model_name = (
+            getattr(args, "model", None)
+            or prefs.get(_MODEL_KEYS["frame_match"], _MODEL_DEFAULTS["frame_match"])
+        )
+
+        search_result = search_shots(
+            query=clip_query,
+            scopes=scopes,
+            field=None,
+            limit=limit,
+            limit_per_item=limit_per_item,
+            use_all=use_all,
+            project_path=project_path,
+            media_type=media_type,
+        )
+
+        results = search_result.get("results", [])
+        if results:
+            model, processor, device = _load_clip_model(project_path, model_name)
+            for r in results:
+                try:
+                    frame, score = find_query_best_frame_for_shot(
+                        project_path=project_path,
+                        filename=r["filename"],
+                        shot_id=r["shot_id"],
+                        query=clip_query,
+                        media_type=media_type,
+                        model=model,
+                        processor=processor,
+                        device=device,
+                    )
+                    r["best_frame"] = frame
+                    r["best_score"] = round(score, 6)
+                except Exception:
+                    pass
+
+        print(json.dumps(search_result, indent=2))
         return
 
     from services.search import search_shots
@@ -2488,6 +2550,65 @@ def _subtitle_list(args):
 # ---------------------------------------------------------------------------
 
 
+def _annotate_frame(args):
+    """Dispatch: ``crossing annotate frame <query>``
+
+    For each shot in the film's annotation JSON, use a CLIP model to find the
+    frame that best matches the shot's ``description`` field, save it as a PNG,
+    and store ``best_frame`` metadata in the annotation JSON.
+    """
+    _require_path()
+    project_path = prefs.get("path")
+    media_type = getattr(args, "media", "movies")
+
+    from data.shotlist import resolve_filename
+    try:
+        filename = resolve_filename(
+            project_path,
+            getattr(args, "tmdb", None),
+            getattr(args, "filename", None),
+            media_type,
+        )
+    except Exception as exc:
+        print(f"✗ Could not resolve film: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    model_name = (
+        getattr(args, "model", None)
+        or prefs.get(_MODEL_KEYS["frame_match"], _MODEL_DEFAULTS["frame_match"])
+    )
+
+    try:
+        from services.frame_match import annotate_best_frames
+        summary = annotate_best_frames(
+            project_path,
+            filename,
+            media_type=media_type,
+            model_name=model_name,
+            force=getattr(args, "force", False),
+            verbose=getattr(args, "verbose", False),
+        )
+    except ImportError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    except FileNotFoundError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    low_conf = summary.get("low_confidence", [])
+    if low_conf and getattr(args, "verbose", False):
+        sample = ", ".join(low_conf[:5])
+        tail = f" (and {len(low_conf) - 5} more)" if len(low_conf) > 5 else ""
+        print(f"  Low confidence ({len(low_conf)}): {sample}{tail}")
+
+    print(f"✓ Processed: {filename}")
+    print(f"  updated: {summary.get('updated', 0)}")
+    print(f"  skipped: {summary.get('skipped', 0)}")
+
+
 def _annotate_remove(args):
     """Remove shot-annotation JSON for one or all films."""
     from data.annotate import remove_file_annotations
@@ -3909,6 +4030,37 @@ def build_parser():
     p_annotate_scene.add_argument(
         "--reload-every", type=int, default=25, dest="reload_every_n_shots", metavar="N",
         help="Reload the model pipeline every N processed shots to prevent output drift (default: 25; set 0 to disable)",
+    )
+
+    p_annotate_frame = annotate_sub.add_parser(
+        "frame",
+        help="Find best matching frame per shot using CLIP (requires prior 'annotate shot' pass)",
+    )
+    p_annotate_frame.set_defaults(func=_annotate_frame)
+    p_annotate_frame.add_argument(
+        "filename", nargs="?", default=None,
+        help="Film title keyword or filename (or use --tmdb)",
+    )
+    p_annotate_frame.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
+    p_annotate_frame.add_argument(
+        "--media", choices=["movies", "gameplay"], default="movies",
+    )
+    p_annotate_frame.add_argument(
+        "--model",
+        default=prefs.get(_MODEL_KEYS["frame_match"], _MODEL_DEFAULTS["frame_match"]),
+        help=(
+            "CLIP model for frame matching "
+            "(default: %(default)s). "
+            "Use a local folder under <project>/models/<name> or a HuggingFace repo id."
+        ),
+    )
+    p_annotate_frame.add_argument(
+        "--force", action="store_true",
+        help="Re-process shots even when best_frame already exists and the description hasn't changed",
+    )
+    p_annotate_frame.add_argument(
+        "--verbose", action="store_true",
+        help="Print per-shot progress to stdout",
     )
 
     p_annotate_remove = annotate_sub.add_parser("remove", help="Remove shot annotations for a film")

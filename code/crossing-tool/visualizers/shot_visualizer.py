@@ -2415,10 +2415,11 @@ def main():
     theme.apply_theme(app)
     visualizer = ShotlistVisualizer(project_path, filenames, 0, args.media, verbose=args.verbose)
 
-    # Open maximised on whatever screen the window appears on
-    screen = QApplication.primaryScreen()
-    avail = screen.availableGeometry()
-    visualizer.setGeometry(avail)
+    # Use saved geometry if available; otherwise open maximised.
+    import prefs as _prefs
+    if not isinstance(_prefs.get("window_shotlist"), (list, tuple)):
+        screen = QApplication.primaryScreen()
+        visualizer.setGeometry(screen.availableGeometry())
     visualizer.show()
 
     sys.exit(app.exec_())

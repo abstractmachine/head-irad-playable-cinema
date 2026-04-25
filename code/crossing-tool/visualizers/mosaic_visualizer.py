@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from styles import theme
 from styles.theme import JumpScrollBar, save_window_geometry, restore_window_geometry
+from services.frame_match import best_frame_path
 
 # Fix Qt plugin conflict with OpenCV — import PyQt5 before cv2
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
@@ -43,6 +44,7 @@ from PyQt5.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -188,6 +190,8 @@ class SearchWorker(QThread):
         limit: Optional[int],
         limit_per_movie: bool,
         project_path: str,
+        best_mode: bool = False,
+        model_name: str = "clip-vit-base-patch32",
         parent=None,
     ):
         super().__init__(parent)
@@ -197,6 +201,8 @@ class SearchWorker(QThread):
         self.limit           = limit
         self.limit_per_movie = limit_per_movie
         self.project_path    = project_path
+        self.best_mode       = best_mode
+        self.model_name      = model_name
         self._cancelled      = False
 
     def cancel(self) -> None:
@@ -222,6 +228,17 @@ class SearchWorker(QThread):
             )
             results = result.get("results", [])
 
+            # Load CLIP model once when query-based best-frame matching is needed
+            clip_model = clip_processor = clip_device = None
+            if self.best_mode and self.query and results:
+                try:
+                    from services.frame_match import _load_clip_model
+                    clip_model, clip_processor, clip_device = _load_clip_model(
+                        self.project_path, self.model_name
+                    )
+                except Exception:
+                    pass  # fall back to midpoint
+
             count = 0
             for r in results:
                 if self._cancelled:
@@ -234,12 +251,38 @@ class SearchWorker(QThread):
                 if video_path is not None:
                     sf = r.get("start_frame")
                     ef = r.get("end_frame")
-                    if sf is not None and ef is not None:
-                        frame_index = int(sf + (ef - sf) * 0.5)
-                    elif sf is not None:
-                        frame_index = int(sf)
+
+                    if self.best_mode and self.query and clip_model is not None:
+                        try:
+                            from services.frame_match import find_query_best_frame_for_shot
+                            frame_index, best_score = find_query_best_frame_for_shot(
+                                project_path=self.project_path,
+                                filename=r.get("filename", ""),
+                                shot_id=r.get("shot_id", ""),
+                                query=self.query,
+                                media_type="movies",
+                                model=clip_model,
+                                processor=clip_processor,
+                                device=clip_device,
+                            )
+                            r = dict(r)
+                            r["frame"] = frame_index
+                            r["score"] = round(best_score, 6)
+                        except Exception:
+                            if sf is not None and ef is not None:
+                                frame_index = int(sf + (ef - sf) * 0.5)
+                            elif sf is not None:
+                                frame_index = int(sf)
+                            else:
+                                frame_index = 0
                     else:
-                        frame_index = 0
+                        if sf is not None and ef is not None:
+                            frame_index = int(sf + (ef - sf) * 0.5)
+                        elif sf is not None:
+                            frame_index = int(sf)
+                        else:
+                            frame_index = 0
+
                     pixmap = _extract_frame_pixmap(video_path, frame_index)
 
                 self.tile_ready.emit(r, pixmap)
@@ -373,7 +416,11 @@ class TileWidget(QFrame):
         self._img_label.setStyleSheet(f"background: {self._PLACEHOLDER_BG}; border: none;")
         layout.addWidget(self._img_label)
 
-        caption_text = _short_title(result.get("movie_title", "") or result.get("movie_id", ""))
+        frame = result.get("frame")
+        if frame is not None:
+            caption_text = f"f{int(frame):06d}"
+        else:
+            caption_text = _short_title(result.get("movie_title", "") or result.get("movie_id", ""))
         self._cap_label = QLabel(caption_text)
         self._cap_label.setAlignment(Qt.AlignCenter)
         self._cap_label.setStyleSheet(
@@ -546,6 +593,57 @@ class MosaicCanvas(QScrollArea):
 
 
 # ---------------------------------------------------------------------------
+# Background worker: best-only tile loading
+# ---------------------------------------------------------------------------
+
+class BestOnlyWorker(QThread):
+    """Resolves precomputed best-frame PNG paths in a background thread.
+
+    Emits the result dict and the resolved path string so that QPixmap
+    construction happens on the main thread (Qt requirement).
+
+    Signals
+    -------
+    tile_ready(result_dict, img_path_str_or_None)
+        Emitted for every shot with the PNG path (or None if missing).
+    finished_signal(total_count)
+        Emitted when all shots have been processed.
+    """
+
+    tile_ready      = pyqtSignal(dict, object)
+    finished_signal = pyqtSignal(int)
+
+    def __init__(self, lookup: dict, filename: str, project_path: str, parent=None):
+        super().__init__(parent)
+        self.lookup       = lookup
+        self.filename     = filename
+        self.project_path = project_path
+        self._cancelled   = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def run(self) -> None:
+        count = 0
+        for shot_id, bf in self.lookup.items():
+            if self._cancelled:
+                break
+            img_path = best_frame_path(
+                self.project_path, "movies", self.filename, shot_id
+            )
+            path_str = str(img_path) if img_path.exists() else None
+            result = {
+                "movie_title": self.filename,
+                "movie_id":    Path(self.filename).stem,
+                "shot_id":     shot_id,
+                "frame":       bf.get("frame"),
+            }
+            self.tile_ready.emit(result, path_str)
+            count += 1
+        self.finished_signal.emit(count)
+
+
+# ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
 
@@ -559,9 +657,13 @@ class MosaicVisualizer(QMainWindow):
         super().__init__()
         self.project_path = project_path
         self._worker: Optional[SearchWorker] = None
+        self._best_worker: Optional[BestOnlyWorker] = None
         self._vocab_worker: Optional[VocabularyWorker] = None
         self._export_worker: Optional[ExportWorker] = None
         self._current_results: list = []   # results for the last completed search
+        self.best_mode: bool = False
+        self._best_lookup: dict = {}
+        self._query_best_active: bool = False
 
         self.setWindowTitle("Crossing — Mosaic Visualizer")
         self.resize(1440, 900)
@@ -575,7 +677,28 @@ class MosaicVisualizer(QMainWindow):
         root.setSpacing(0)
 
         self.canvas = MosaicCanvas()
-        root.addWidget(self.canvas, stretch=1)
+
+        # 1px fuchsia progress bar sits between canvas and the rest of the layout
+        self._progress = QProgressBar()
+        self._progress.setFixedHeight(1)
+        self._progress.setTextVisible(False)
+        self._progress.setRange(0, 1)
+        self._progress.setValue(0)
+        self._progress.setStyleSheet(
+            f"QProgressBar {{ background-color: {theme.UI_BORDER}; border: none; "
+            f"border-radius: 0px; max-height: 1px; }}"
+            f"QProgressBar::chunk {{ background-color: {theme.ACCENT}; "
+            f"border-radius: 0px; }}"
+        )
+
+        canvas_col = QWidget()
+        canvas_col.setStyleSheet("QWidget { background: transparent; }")
+        canvas_vbox = QVBoxLayout(canvas_col)
+        canvas_vbox.setContentsMargins(0, 0, 0, 0)
+        canvas_vbox.setSpacing(0)
+        canvas_vbox.addWidget(self._progress)
+        canvas_vbox.addWidget(self.canvas, stretch=1)
+        root.addWidget(canvas_col, stretch=1)
 
         divider = QFrame()
         divider.setFrameShape(QFrame.VLine)
@@ -599,7 +722,17 @@ class MosaicVisualizer(QMainWindow):
     def _build_control_panel(self) -> QWidget:
         panel = QWidget()
         panel.setFixedWidth(_CTRL_PANEL_WIDTH)
-        panel.setStyleSheet(f"QWidget {{ background: {theme.PANEL_BG}; }}")
+        panel.setStyleSheet(
+            f"QWidget {{ background: {theme.PANEL_BG}; }}"
+            f" QPushButton {{ background-color: {theme.BTN_BG}; border: none;"
+            f" padding: 0 10px; border-radius: 3px;"
+            f" min-height: {theme.BTN_H}px; max-height: {theme.BTN_H}px; }}"
+            f" QPushButton:hover    {{ background-color: {theme.BTN_HOVER}; }}"
+            f" QPushButton:pressed  {{ background-color: {theme.BTN_PRESSED}; }}"
+            f" QPushButton:checked  {{ background-color: {theme.ACCENT}; color: {theme.TEXT}; }}"
+            f" QPushButton:disabled {{ color: {theme.TEXT_DIM};"
+            f" background-color: {theme.BTN_BG}; }}"
+        )
 
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(14, 14, 14, 14)
@@ -612,6 +745,7 @@ class MosaicVisualizer(QMainWindow):
         self.movie_combo = QComboBox()
         self.movie_combo.addItem("--all")
         self.movie_combo.currentIndexChanged.connect(self._on_field_changed)
+        self.movie_combo.currentIndexChanged.connect(self._update_best_button)
         scope_layout.addWidget(self.movie_combo)
         layout.addWidget(scope_group)
 
@@ -633,18 +767,36 @@ class MosaicVisualizer(QMainWindow):
         self.query_input = QLineEdit()
         self.query_input.setPlaceholderText("e.g. gun,  sunset,  rain…")
         self.query_input.returnPressed.connect(self._on_search)
+        self.query_input.textChanged.connect(self._update_search_button)
         query_layout.addWidget(self.query_input)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(4)
         self.search_btn = QPushButton("Search")
+        self.search_btn.setEnabled(False)
         self.search_btn.clicked.connect(self._on_search)
-        query_layout.addWidget(self.search_btn)
-        self.export_btn = QPushButton("Export JPEGs…")
+        btn_row.addWidget(self.search_btn)
+        self.best_btn = QPushButton("Best")
+        self.best_btn.setCheckable(True)
+        self.best_btn.setEnabled(False)
+        self.best_btn.clicked.connect(self._on_best_toggle)
+        btn_row.addWidget(self.best_btn)
+        self.export_btn = QPushButton("Export")
         self.export_btn.setEnabled(False)
         self.export_btn.setToolTip(
             "Export each result as an individual JPEG with search info overlay\n"
             "into output/exports/<query>-<timestamp>/"
         )
         self.export_btn.clicked.connect(self._on_export)
-        query_layout.addWidget(self.export_btn)
+        btn_row.addWidget(self.export_btn)
+
+        btn_container = QFrame()
+        btn_container.setStyleSheet(
+            f"QFrame {{ background: {theme.INPUT_BG}; border-radius: 3px; }}"
+        )
+        btn_container.setLayout(btn_row)
+        btn_row.setContentsMargins(4, 4, 4, 4)
+        query_layout.addWidget(btn_container)
         layout.addWidget(query_group)
 
         # Options
@@ -708,10 +860,35 @@ class MosaicVisualizer(QMainWindow):
             self.status.showMessage(f"Warning: could not load movie list — {exc}")
 
     # ------------------------------------------------------------------
+    # Best-mode helpers
+
+    def _update_best_button(self) -> None:
+        has_single_movie = self.movie_combo.currentData() is not None
+        self.best_btn.setEnabled(has_single_movie)
+        if not has_single_movie:
+            self.best_btn.setChecked(False)
+            self.best_mode = False
+        self._update_search_button()
+
+    def _update_search_button(self) -> None:
+        has_query = bool(self.query_input.text().strip())
+        self.search_btn.setEnabled(has_query or self.best_mode)
+
+    def _on_best_toggle(self) -> None:
+        self.best_mode = self.best_btn.isChecked()
+        self._update_search_button()
+
+    # ------------------------------------------------------------------
     # Search flow
 
     def _on_search(self) -> None:
-        query = self.query_input.text().strip()
+        query    = self.query_input.text().strip()
+        filename = self.movie_combo.currentData()
+
+        if self.best_mode and not query and filename:
+            self._render_best_only(filename)
+            return
+
         if not query:
             self.status.showMessage("Enter a search query first.")
             return
@@ -725,7 +902,7 @@ class MosaicVisualizer(QMainWindow):
         self._current_results = []
         self.export_btn.setEnabled(False)
 
-        scope_data      = self.movie_combo.currentData()  # filename stored as userData
+        scope_data      = filename  # already resolved above
         scope           = scope_data if scope_data else None
         field_text      = self.field_combo.currentText()
         field           = None if field_text == "--all" else field_text
@@ -735,6 +912,19 @@ class MosaicVisualizer(QMainWindow):
 
         self.search_btn.setEnabled(False)
         self.status.showMessage(f"Searching for '{query}'…")
+        self._progress.setRange(0, 0)  # indeterminate while searching
+        self._progress.setValue(0)
+
+        self._best_lookup = {}
+        self._query_best_active = self.best_mode and bool(query)
+        if self.best_mode and filename and not self._query_best_active:
+            from services.frame_match import load_best_frame_lookup
+            self._best_lookup = load_best_frame_lookup(
+                self.project_path, filename, "movies"
+            )
+
+        import prefs as _prefs
+        model_name = _prefs.get("model_frame_match", "clip-vit-base-patch32")
 
         self._worker = SearchWorker(
             query          = query,
@@ -743,6 +933,8 @@ class MosaicVisualizer(QMainWindow):
             limit          = limit,
             limit_per_movie= limit_per_movie,
             project_path   = self.project_path,
+            best_mode      = self._query_best_active,
+            model_name     = model_name,
         )
         self._worker.tile_ready.connect(self._on_tile_ready)
         self._worker.finished_signal.connect(self._on_search_done)
@@ -750,11 +942,29 @@ class MosaicVisualizer(QMainWindow):
         self._worker.start()
 
     def _on_tile_ready(self, result: dict, pixmap) -> None:
+        if self.best_mode and not self._query_best_active:
+            shot_id = result.get("shot_id")
+            bf      = self._best_lookup.get(shot_id)
+            if bf:
+                img_path = best_frame_path(
+                    self.project_path,
+                    "movies",
+                    result.get("movie_id", ""),
+                    shot_id,
+                )
+                pixmap = QPixmap(str(img_path)) if img_path.exists() else None
+                result = dict(result)  # avoid mutating the original
+                result["frame"] = bf.get("frame")
+            else:
+                result = dict(result)
+                result["frame"] = None
         self._current_results.append(result)
         self.canvas.add_tile(result, pixmap)
         self.status.showMessage(f"Loading… {self.canvas.tile_count} tile(s)")
 
     def _on_search_done(self, count: int) -> None:
+        self._progress.setRange(0, 1)
+        self._progress.setValue(0)
         self.search_btn.setEnabled(True)
         self.export_btn.setEnabled(count > 0)
         if count == 0:
@@ -765,9 +975,77 @@ class MosaicVisualizer(QMainWindow):
             )
 
     def _on_search_error(self, message: str) -> None:
+        self._progress.setRange(0, 1)
+        self._progress.setValue(0)
         self.search_btn.setEnabled(True)
         preview = message.splitlines()[0][:120]
         self.status.showMessage(f"Error: {preview}")
+
+    # ------------------------------------------------------------------
+    # Best-only render (no query)
+
+    def _render_best_only(self, filename: str) -> None:
+        from services.frame_match import load_best_frame_lookup
+
+        # Stop any in-flight best worker
+        if self._best_worker and self._best_worker.isRunning():
+            self._best_worker.cancel()
+            self._best_worker.wait(3000)
+
+        # Show immediate feedback — indeterminate bar while JSON loads
+        self._progress.setRange(0, 0)
+        self._progress.setValue(0)
+        self.search_btn.setEnabled(False)
+        self.best_btn.setEnabled(False)
+        self.status.showMessage("Loading best frames…")
+
+        self.canvas.clear()
+        self._current_results = []
+        self.export_btn.setEnabled(False)
+
+        lookup = load_best_frame_lookup(self.project_path, filename, "movies")
+        if not lookup:
+            self._progress.setRange(0, 1)
+            self._progress.setValue(0)
+            self.search_btn.setEnabled(True)
+            self.best_btn.setEnabled(True)
+            self.status.showMessage("No best frames found.")
+            return
+
+        self._total_best = len(lookup)
+        self.status.showMessage(f"Loading {self._total_best} best frame(s)…")
+
+        self._best_worker = BestOnlyWorker(lookup, filename, self.project_path)
+        self._best_worker.tile_ready.connect(self._on_best_tile_ready)
+        self._best_worker.finished_signal.connect(self._on_best_done)
+        self._best_worker.start()
+
+    def _on_best_tile_ready(self, result: dict, path_str) -> None:
+        pixmap = QPixmap(path_str) if path_str else None
+        self._current_results.append(result)
+        self.canvas.add_tile(result, pixmap)
+        n = self.canvas.tile_count
+        # Switch from indeterminate to determinate on first tile so the chunk
+        # is always visible (starting at 1/total rather than 0/total).
+        if n == 1 and hasattr(self, "_total_best") and self._total_best > 0:
+            self._progress.setRange(0, self._total_best)
+            self._progress.setValue(1)
+        else:
+            self._progress.setValue(n)
+        self.status.showMessage(f"Loading… {n} tile(s)")
+
+    def _on_best_done(self, count: int) -> None:
+        self._progress.setRange(0, 1)
+        self._progress.setValue(0)
+        self.search_btn.setEnabled(True)
+        self.best_btn.setEnabled(True)
+        self.export_btn.setEnabled(count > 0)
+        if count == 0:
+            self.status.showMessage("No best frames found.")
+        else:
+            self.status.showMessage(
+                f"{count} best frame(s)  —  Ctrl + scroll to zoom,  scroll to pan"
+            )
 
     # ------------------------------------------------------------------
     # Export
