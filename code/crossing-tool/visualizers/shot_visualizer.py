@@ -42,7 +42,7 @@ from PyQt5.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QFrame,
     QTextEdit, QGridLayout,
 )
-from styles.theme import GripSplitter, JumpScrollBar
+from styles.theme import GripSplitter, JumpScrollBar, save_window_geometry, restore_window_geometry
 from PyQt5.QtGui import QFont, QPixmap, QImage, QColor, QMouseEvent
 from PyQt5.QtCore import pyqtSignal as _pyqtSignal, QThread as _QThread
 
@@ -386,7 +386,7 @@ class AudioPlayer:
                             on_start_callback.emit(audio_start_time, start_secs)
                         if verbose:
                             print(f"[sync] latency={latency:.4f}s", file=sys.stderr, flush=True)
-                        print(f"[sync] audio_start={audio_start_time:.6f} start_secs={start_secs}", file=sys.stderr, flush=True)
+                            print(f"[sync] audio_start={audio_start_time:.6f} start_secs={start_secs}", file=sys.stderr, flush=True)
                         first_frame = False
         except Exception:
             pass
@@ -697,6 +697,7 @@ class ShotlistVisualizer(QMainWindow):
         )
 
         self._init_ui()
+        restore_window_geometry(self, "window_shotlist")
         self.load_first_shot()
 
         # Start the IPC server so the Metadata Visualizer (and CLI) can
@@ -1863,6 +1864,7 @@ class ShotlistVisualizer(QMainWindow):
     
     def closeEvent(self, event):
         """Handle window close."""
+        save_window_geometry(self, "window_shotlist")
         if self._annotate_worker is not None:
             self._annotate_worker.requestInterruption()
 

@@ -19,6 +19,7 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from styles import theme
+from styles.theme import save_window_geometry, restore_window_geometry
 
 # Fix Qt plugin conflict with OpenCV — import PyQt5 before cv2
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
@@ -124,6 +125,7 @@ class ComposeVisualizer(QMainWindow):
 
         self.setWindowTitle("Crossing — Composition Visualizer")
         self.resize(1440, 900)
+        restore_window_geometry(self, "window_composition")
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -299,6 +301,11 @@ class ComposeVisualizer(QMainWindow):
 # ---------------------------------------------------------------------------
 # Public launcher
 # ---------------------------------------------------------------------------
+
+    def closeEvent(self, event) -> None:
+        save_window_geometry(self, "window_composition")
+        super().closeEvent(event)
+
 
 def run_visualizer(project_path: str, initial_query: str = "") -> None:
     """Create the QApplication (if needed) and launch the visualizer window."""

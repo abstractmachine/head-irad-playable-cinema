@@ -15,6 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from styles import theme
+from styles.theme import save_window_geometry, restore_window_geometry
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
@@ -102,6 +103,11 @@ class ProjectVisualizer(QMainWindow):
         layout.addWidget(self._build_launchers_group())
 
         self.setFixedWidth(380)
+        restore_window_geometry(self, "window_project")
+
+    def closeEvent(self, event) -> None:
+        save_window_geometry(self, "window_project")
+        super().closeEvent(event)
 
     # ------------------------------------------------------------------
     # Project path

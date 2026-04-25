@@ -26,7 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from styles import theme
-from styles.theme import JumpScrollBar
+from styles.theme import JumpScrollBar, save_window_geometry, restore_window_geometry
 
 # Fix Qt plugin conflict with OpenCV — import PyQt5 before cv2
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
@@ -565,6 +565,7 @@ class MosaicVisualizer(QMainWindow):
 
         self.setWindowTitle("Crossing — Mosaic Visualizer")
         self.resize(1440, 900)
+        restore_window_geometry(self, "window_mosaic")
 
         # Central layout: left = canvas (expands), divider, right = controls (fixed)
         central = QWidget()
@@ -867,6 +868,15 @@ class MosaicVisualizer(QMainWindow):
             self.close()
             return
         super().keyPressEvent(event)
+
+
+# ---------------------------------------------------------------------------
+# Public launcher
+# ---------------------------------------------------------------------------
+
+    def closeEvent(self, event) -> None:
+        save_window_geometry(self, "window_mosaic")
+        super().closeEvent(event)
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 # TODO List
 - [x]   Fix occasional audio unsnycing when jumping to new shot or sequence or movie; rare occurence that can quickly be resynced by pressing Arrow Up then Down again, suggesting this is an easy fix
+- [ ]   Create key frames that represent the frame that most matches the scene description
 - [ ]   Start work on gameplay <> movie Sync Visualizer
 - [ ]   Add media type selector (Movie/Gameplay) in Shotlist Visualizer. Question: should Movie Shotlist Visualizer be a separate instance from Gameplay Shotlist Visualizer even if they are the same code (just different instances)?
 - [ ]   Finish setting more/all Scene breaks in database

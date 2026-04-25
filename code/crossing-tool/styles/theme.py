@@ -493,3 +493,35 @@ class JumpScrollBar(QScrollBar):
                 self.setStyleSheet(self._STYLE_IDLE)
             return
         super().mouseReleaseEvent(event)
+
+
+# ---------------------------------------------------------------------------
+# Window geometry persistence helpers
+# ---------------------------------------------------------------------------
+
+def save_window_geometry(win, key: str) -> None:
+    """Save *win*'s current screen geometry to prefs under *key*."""
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).parent.parent))
+    import prefs as _prefs
+    g = win.geometry()
+    _prefs.set(key, [g.x(), g.y(), g.width(), g.height()])
+
+
+def restore_window_geometry(win, key: str) -> None:
+    """Restore *win*'s geometry from prefs.  No-op if nothing was saved yet.
+
+    Clamps the position so the window is never placed fully off-screen.
+    """
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).parent.parent))
+    import prefs as _prefs
+    geom = _prefs.get(key)
+    if not (isinstance(geom, (list, tuple)) and len(geom) == 4):
+        return
+    from PyQt5.QtWidgets import QApplication
+    x, y, w, h = (int(v) for v in geom)
+    screen = QApplication.primaryScreen().availableGeometry()
+    x = max(screen.left(), min(x, screen.right()  - 100))
+    y = max(screen.top(),  min(y, screen.bottom() - 100))
+    win.setGeometry(x, y, w, h)

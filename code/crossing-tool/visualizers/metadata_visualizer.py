@@ -20,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from styles import theme
+from styles.theme import save_window_geometry, restore_window_geometry
 
 from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
@@ -372,6 +373,7 @@ class MetadataVisualizer(QMainWindow):
         outer.addWidget(self._gameplay_col, 1)
 
         self.resize(900, 700)
+        restore_window_geometry(self, "window_metadata")
         self._start_loaders()
 
     def _start_loaders(self) -> None:
@@ -462,6 +464,15 @@ class MetadataVisualizer(QMainWindow):
             self.close()
             return
         super().keyPressEvent(event)
+
+
+# ---------------------------------------------------------------------------
+# Public launcher
+# ---------------------------------------------------------------------------
+
+    def closeEvent(self, event) -> None:
+        save_window_geometry(self, "window_metadata")
+        super().closeEvent(event)
 
 
 # ---------------------------------------------------------------------------

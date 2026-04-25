@@ -2224,7 +2224,7 @@ def cmd_tool(args):
         cmd_notify(args)
     elif sub == "model":
         cmd_model(args)
-    elif sub in ("default", "defaults"):
+    elif sub == "default":
         cmd_tool_default(args)
 
 
@@ -4569,9 +4569,6 @@ def build_parser():
     p_tool_default = tool_sub.add_parser("default", help="Get or set persistent defaults for annotate and other commands")
     default_sub = p_tool_default.add_subparsers(dest="default_subcommand")
 
-    p_tool_defaults = tool_sub.add_parser("defaults", help="Alias for 'tool default'")
-    defaults_sub = p_tool_defaults.add_subparsers(dest="default_subcommand")
-
     _default_key_choices = list(_TOOL_DEFAULT_KEYS)
 
     p_tool_default_set = default_sub.add_parser("set", help="Set a default value")
@@ -4580,13 +4577,6 @@ def build_parser():
 
     p_tool_default_get = default_sub.add_parser("get", help="Show a default value (omit key to show all)")
     p_tool_default_get.add_argument("key", nargs="?", choices=_default_key_choices, default=None, help="Setting name")
-
-    p_tool_defaults_set = defaults_sub.add_parser("set", help="Set a default value")
-    p_tool_defaults_set.add_argument("key", choices=_default_key_choices, help="Setting name")
-    p_tool_defaults_set.add_argument("value", help="New value")
-
-    p_tool_defaults_get = defaults_sub.add_parser("get", help="Show a default value (omit key to show all)")
-    p_tool_defaults_get.add_argument("key", nargs="?", choices=_default_key_choices, default=None, help="Setting name")
 
     p_tool_model = tool_sub.add_parser("model", help="Get or set the model used for each subcommand")
     tool_model_sub = p_tool_model.add_subparsers(dest="model_subcommand")
