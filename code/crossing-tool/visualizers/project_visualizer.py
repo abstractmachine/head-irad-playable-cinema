@@ -37,7 +37,6 @@ _MODEL_KEYS = {
     "annotate":     "model_annotate",
     "segmentation": "model_segmentation",
     "embed":        "model_embed",
-    "assistant":    "model_assistant",
 }
 _MODEL_DEFAULTS = {
     "annotate":     "gemma4-e4b",

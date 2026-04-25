@@ -42,7 +42,7 @@ from PyQt5.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QFrame,
     QTextEdit, QGridLayout,
 )
-from styles.theme import GripSplitter
+from styles.theme import GripSplitter, JumpScrollBar
 from PyQt5.QtGui import QFont, QPixmap, QImage, QColor, QMouseEvent
 from PyQt5.QtCore import pyqtSignal as _pyqtSignal, QThread as _QThread
 
@@ -893,6 +893,7 @@ class ShotlistVisualizer(QMainWindow):
         self.ann_fields_table.setFont(theme.font_mono())
         self.ann_fields_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.ann_fields_table.itemChanged.connect(self._on_fields_cell_changed)
+        self.ann_fields_table.setVerticalScrollBar(JumpScrollBar())
         mid_layout.addWidget(self.ann_fields_table, stretch=1)
 
         self.ann_dirty_label = QLabel()
@@ -946,6 +947,7 @@ class ShotlistVisualizer(QMainWindow):
         self.scene_list.setToolTip("Scenes — click to jump  [PgUp/PgDn navigate  N/M split/merge]")
         self.scene_list.setFrameShape(QFrame.NoFrame)
         self.scene_list.setStyleSheet(_tbl)
+        self.scene_list.setVerticalScrollBar(JumpScrollBar())
         tables_layout.addWidget(self.scene_list)
 
         self.shot_list = QTableWidget()
@@ -969,6 +971,7 @@ class ShotlistVisualizer(QMainWindow):
         self.shot_list.setToolTip("Shots \u2014 click to jump  (click Stop col to show end frame)  [\u2191/\u2193 navigate]")
         self.shot_list.cellClicked.connect(self.on_shot_selected)
         self.shot_list.setStyleSheet(_tbl)
+        self.shot_list.setVerticalScrollBar(JumpScrollBar())
         tables_layout.addWidget(self.shot_list, stretch=1)
 
         v_splitter.addWidget(tables_widget)

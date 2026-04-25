@@ -382,3 +382,114 @@ class GripSplitter(QSplitter):
 
     def createHandle(self):
         return _GripHandle(self.orientation(), self)
+
+
+# ---------------------------------------------------------------------------
+# JumpScrollBar — vertical scrollbar with hover highlight + click-to-jump
+# ---------------------------------------------------------------------------
+
+from PyQt5.QtWidgets import QScrollBar, QStyle, QStyleOptionSlider  # noqa: E402
+from PyQt5.QtGui import QCursor                                      # noqa: E402
+
+
+class JumpScrollBar(QScrollBar):
+    """Vertical scrollbar with two UX improvements over the default:
+
+    1. Hovering *anywhere* on the bar immediately highlights the handle fuchsia
+       (not just when the cursor is directly on the handle thumb).
+    2. Clicking in the track (not on the handle) jumps the viewport to that
+       position instantly instead of doing a page-step.  Click+drag is also
+       supported for continuous scrubbing.
+    """
+
+    _STYLE_IDLE = (
+        "QScrollBar:vertical { background: transparent; width: 16px; }"
+        "QScrollBar::handle:vertical {"
+        "    background: transparent;"
+        f"   border-left: 2px solid {ACCENT};"
+        "    border-radius: 0; min-height: 20px; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+        "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }"
+    )
+    _STYLE_HOVER = (
+        "QScrollBar:vertical { background: transparent; width: 16px; }"
+        "QScrollBar::handle:vertical {"
+        f"   background: {ACCENT};"
+        f"   border-left: 2px solid {ACCENT};"
+        "    border-radius: 0; min-height: 20px; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+        "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }"
+    )
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(Qt.Vertical, parent)
+        self.setStyleSheet(self._STYLE_IDLE)
+        self._drag_active = False
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        # If the scrollbar becomes visible while the cursor is already over it
+        # (common with ScrollBarAsNeeded), Qt won't fire enterEvent.  Apply the
+        # hover style immediately so the user gets visual feedback right away.
+        if self.underMouse():
+            self.setStyleSheet(self._STYLE_HOVER)
+
+    def _groove(self):
+        opt = QStyleOptionSlider()
+        self.initStyleOption(opt)
+        groove = self.style().subControlRect(
+            QStyle.CC_ScrollBar, opt, QStyle.SC_ScrollBarGroove, self
+        )
+        return groove, opt.upsideDown
+
+    def enterEvent(self, event) -> None:
+        self.setStyleSheet(self._STYLE_HOVER)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        if not self._drag_active:
+            self.setStyleSheet(self._STYLE_IDLE)
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            opt = QStyleOptionSlider()
+            self.initStyleOption(opt)
+            handle_rect = self.style().subControlRect(
+                QStyle.CC_ScrollBar, opt, QStyle.SC_ScrollBarSlider, self
+            )
+            if not handle_rect.contains(event.pos()):
+                groove = self.style().subControlRect(
+                    QStyle.CC_ScrollBar, opt, QStyle.SC_ScrollBarGroove, self
+                )
+                pos = event.y() - groove.y()
+                value = QStyle.sliderValueFromPosition(
+                    self.minimum(), self.maximum(), pos, groove.height(),
+                    opt.upsideDown,
+                )
+                self.setValue(value)
+                self._drag_active = True
+                self.grabMouse()
+                return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._drag_active:
+            local = self.mapFromGlobal(QCursor.pos())
+            groove, upside_down = self._groove()
+            pos = local.y() - groove.y()
+            value = QStyle.sliderValueFromPosition(
+                self.minimum(), self.maximum(), pos, groove.height(), upside_down
+            )
+            self.setValue(value)
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if self._drag_active and event.button() == Qt.LeftButton:
+            self._drag_active = False
+            self.releaseMouse()
+            if not self.rect().contains(self.mapFromGlobal(QCursor.pos())):
+                self.setStyleSheet(self._STYLE_IDLE)
+            return
+        super().mouseReleaseEvent(event)

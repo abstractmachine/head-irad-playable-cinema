@@ -187,7 +187,6 @@ def list_models(project_path: str) -> None:
         ("annotate",     ("model_annotate",     None)),
         ("segmentation", ("model_segmentation", None)),
         ("embed",        ("model_embed",        "BAAI/bge-small-en-v1.5")),
-        ("assistant",    ("model_assistant",    None)),
     ):
         key, default = key_or_pair
         val = pget(key, default)

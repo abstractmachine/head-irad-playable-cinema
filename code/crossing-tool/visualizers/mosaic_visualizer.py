@@ -26,6 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from styles import theme
+from styles.theme import JumpScrollBar
 
 # Fix Qt plugin conflict with OpenCV — import PyQt5 before cv2
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
@@ -458,6 +459,7 @@ class MosaicCanvas(QScrollArea):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setStyleSheet(f"QScrollArea {{ border: none; background: {theme.CANVAS_BG}; }}")
+        self.setVerticalScrollBar(JumpScrollBar())
 
         self._tile_size: int = DEFAULT_TILE_SIZE
         self._tiles: list[TileWidget] = []
@@ -685,6 +687,7 @@ class MosaicVisualizer(QMainWindow):
             QListWidget::item:selected  {{ background: {theme.ACCENT}; }}
         """)
         self.vocab_list.itemClicked.connect(self._on_vocab_item_clicked)
+        self.vocab_list.setVerticalScrollBar(JumpScrollBar())
         vocab_layout.addWidget(self.vocab_list)
         layout.addWidget(vocab_group, 1)  # stretch=1 fills remaining space
         return panel
