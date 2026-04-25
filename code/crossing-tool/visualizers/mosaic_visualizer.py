@@ -48,6 +48,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSpinBox,
     QSplitter,  # noqa: F401 (unused after refactor, kept for import compatibility)
     QStatusBar,
     QVBoxLayout,
@@ -150,6 +151,25 @@ def _find_video_path(project_path: str, movie_id: str) -> Optional[Path]:
             if f.is_file() and f.stem == movie_id:
                 return f
     return None
+
+
+def _open_video_looping(path: str) -> None:
+    """Open a video file in a looping player.
+
+    Tries mpv, vlc, and ffplay (all with a loop flag) in order before
+    falling back to xdg-open (which typically plays once and exits).
+    """
+    import shutil
+    import subprocess
+
+    if shutil.which("mpv"):
+        subprocess.Popen(["mpv", "--loop=inf", path])
+    elif shutil.which("vlc"):
+        subprocess.Popen(["vlc", "--repeat", path])
+    elif shutil.which("ffplay"):
+        subprocess.Popen(["ffplay", "-loop", "0", path])
+    else:
+        subprocess.Popen(["xdg-open", path])
 
 
 def _short_title(raw_title: str) -> str:
@@ -379,6 +399,62 @@ class ExportWorker(QThread):
                 field=self.field,
             )
             self.finished_signal.emit(str(out_dir))
+        except Exception as exc:
+            import traceback
+            self.error.emit(f"{exc}\n{traceback.format_exc()}")
+
+
+# ---------------------------------------------------------------------------
+# Background worker: video mosaic generation
+# ---------------------------------------------------------------------------
+
+class VideoMosaicWorker(QThread):
+    """Runs mosaic_video_from_search_results() in a background thread.
+
+    Signals
+    -------
+    finished_signal(output_path_str)
+        Emitted with the saved .mp4 path when done.
+    error(message)
+        Emitted on failure.
+    """
+
+    finished_signal = pyqtSignal(str)
+    error           = pyqtSignal(str)
+
+    def __init__(
+        self,
+        results: list,
+        project_path: str,
+        query: str,
+        fps: int,
+        duration: int,
+        layout: str,
+        limit: int,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.results      = results
+        self.project_path = project_path
+        self.query        = query
+        self.fps          = fps
+        self.duration     = duration
+        self.layout       = layout
+        self.limit        = limit
+
+    def run(self) -> None:
+        try:
+            from generators.mosaic import mosaic_video_from_search_results
+            out = mosaic_video_from_search_results(
+                self.results,
+                self.project_path,
+                layout   = self.layout,
+                fps      = self.fps,
+                duration = self.duration,
+                limit    = self.limit,
+                query    = self.query,
+            )
+            self.finished_signal.emit(str(out))
         except Exception as exc:
             import traceback
             self.error.emit(f"{exc}\n{traceback.format_exc()}")
@@ -660,6 +736,7 @@ class MosaicVisualizer(QMainWindow):
         self._best_worker: Optional[BestOnlyWorker] = None
         self._vocab_worker: Optional[VocabularyWorker] = None
         self._export_worker: Optional[ExportWorker] = None
+        self._video_worker: Optional[VideoMosaicWorker] = None
         self._current_results: list = []   # results for the last completed search
         self.best_mode: bool = False
         self._best_lookup: dict = {}
@@ -789,6 +866,14 @@ class MosaicVisualizer(QMainWindow):
         )
         self.export_btn.clicked.connect(self._on_export)
         btn_row.addWidget(self.export_btn)
+        self._export_btn_image_tip = (
+            "Export each result as an individual JPEG with search info overlay\n"
+            "into output/exports/<query>-<timestamp>/"
+        )
+        self._export_btn_video_tip = (
+            "Generate a looping video mosaic (.mp4) from the current results\n"
+            "saved to output/mosaics/video/search/"
+        )
 
         btn_container = QFrame()
         btn_container.setStyleSheet(
@@ -817,6 +902,47 @@ class MosaicVisualizer(QMainWindow):
 
         self.limit_per_movie_cb = QCheckBox("Limit per movie")
         opt_layout.addWidget(self.limit_per_movie_cb)
+
+        # Output mode
+        mode_row = QHBoxLayout()
+        mode_label = QLabel("Mode:")
+        mode_label.setFixedWidth(54)
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItem("image")
+        self.mode_combo.addItem("video")
+        self.mode_combo.currentTextChanged.connect(self._on_mode_changed)
+        mode_row.addWidget(mode_label)
+        mode_row.addWidget(self.mode_combo)
+        opt_layout.addLayout(mode_row)
+
+        # FPS row — shown only in video mode
+        self._fps_row = QWidget()
+        fps_row_layout = QHBoxLayout(self._fps_row)
+        fps_row_layout.setContentsMargins(0, 0, 0, 0)
+        fps_label = QLabel("FPS:")
+        fps_label.setFixedWidth(54)
+        self.fps_spin = QSpinBox()
+        self.fps_spin.setRange(1, 30)
+        self.fps_spin.setValue(8)
+        fps_row_layout.addWidget(fps_label)
+        fps_row_layout.addWidget(self.fps_spin)
+        opt_layout.addWidget(self._fps_row)
+        self._fps_row.setVisible(False)
+
+        # Duration row — shown only in video mode
+        self._dur_row = QWidget()
+        dur_row_layout = QHBoxLayout(self._dur_row)
+        dur_row_layout.setContentsMargins(0, 0, 0, 0)
+        dur_label = QLabel("Dur (s):")
+        dur_label.setFixedWidth(54)
+        self.dur_spin = QSpinBox()
+        self.dur_spin.setRange(1, 10)
+        self.dur_spin.setValue(2)
+        dur_row_layout.addWidget(dur_label)
+        dur_row_layout.addWidget(self.dur_spin)
+        opt_layout.addWidget(self._dur_row)
+        self._dur_row.setVisible(False)
+
         layout.addWidget(opt_group)
 
         # Vocabulary
@@ -864,8 +990,10 @@ class MosaicVisualizer(QMainWindow):
 
     def _update_best_button(self) -> None:
         has_single_movie = self.movie_combo.currentData() is not None
-        self.best_btn.setEnabled(has_single_movie)
-        if not has_single_movie:
+        is_video_mode    = self.mode_combo.currentText() == "video"
+        can_use_best     = has_single_movie and not is_video_mode
+        self.best_btn.setEnabled(can_use_best)
+        if not can_use_best:
             self.best_btn.setChecked(False)
             self.best_mode = False
         self._update_search_button()
@@ -973,6 +1101,10 @@ class MosaicVisualizer(QMainWindow):
             self.status.showMessage(
                 f"{count} result(s)  —  Ctrl + scroll to zoom,  scroll to pan"
             )
+            # In video mode, automatically start video generation once results
+            # are loaded — the user doesn't need to click "Save Video" separately.
+            if self.mode_combo.currentText() == "video":
+                self._on_save_video()
 
     def _on_search_error(self, message: str) -> None:
         self._progress.setRange(0, 1)
@@ -1048,9 +1180,33 @@ class MosaicVisualizer(QMainWindow):
             )
 
     # ------------------------------------------------------------------
+    # Mode switching
+
+    def _on_mode_changed(self, mode: str) -> None:
+        is_video = (mode == "video")
+        self._fps_row.setVisible(is_video)
+        self._dur_row.setVisible(is_video)
+        if is_video:
+            self.export_btn.setText("Save Video")
+            self.export_btn.setToolTip(self._export_btn_video_tip)
+            # Best mode is incompatible with video mosaic
+            self.best_btn.setChecked(False)
+            self.best_btn.setEnabled(False)
+            self.best_mode = False
+        else:
+            self.export_btn.setText("Export")
+            self.export_btn.setToolTip(self._export_btn_image_tip)
+            # Re-evaluate whether Best can be enabled
+            self._update_best_button()
+
+    # ------------------------------------------------------------------
     # Export
 
     def _on_export(self) -> None:
+        if self.mode_combo.currentText() == "video":
+            self._on_save_video()
+            return
+
         if not self._current_results:
             self.status.showMessage("No results to export — run a search first.")
             return
@@ -1091,6 +1247,57 @@ class MosaicVisualizer(QMainWindow):
         self.search_btn.setEnabled(True)
         preview = message.splitlines()[0][:120]
         self.status.showMessage(f"Export error: {preview}")
+
+    def _on_save_video(self) -> None:
+        """Generate a looping video mosaic (.mp4) from the current results."""
+        if not self._current_results:
+            self.status.showMessage("No results to generate video from — run a search first.")
+            return
+
+        if self._video_worker and self._video_worker.isRunning():
+            return
+
+        query = self.query_input.text().strip()
+        limit_text = self.limit_combo.currentText()
+        limit = 50 if limit_text == "all" else int(limit_text)
+        fps      = self.fps_spin.value()
+        duration = self.dur_spin.value()
+
+        self.export_btn.setEnabled(False)
+        self.search_btn.setEnabled(False)
+        self.status.showMessage(
+            f"Generating video mosaic: {len(self._current_results)} tile(s) …"
+        )
+        self._progress.setRange(0, 0)
+
+        self._video_worker = VideoMosaicWorker(
+            results      = list(self._current_results),
+            project_path = self.project_path,
+            query        = query,
+            fps          = fps,
+            duration     = duration,
+            layout       = "landscape",
+            limit        = limit,
+        )
+        self._video_worker.finished_signal.connect(self._on_video_done)
+        self._video_worker.error.connect(self._on_video_error)
+        self._video_worker.start()
+
+    def _on_video_done(self, out_path: str) -> None:
+        self._progress.setRange(0, 1)
+        self._progress.setValue(0)
+        self.export_btn.setEnabled(True)
+        self.search_btn.setEnabled(True)
+        self.status.showMessage(f"✓ Saved: {out_path}  — opening in looping player…")
+        _open_video_looping(out_path)
+
+    def _on_video_error(self, message: str) -> None:
+        self._progress.setRange(0, 1)
+        self._progress.setValue(0)
+        self.export_btn.setEnabled(True)
+        self.search_btn.setEnabled(True)
+        preview = message.splitlines()[0][:120]
+        self.status.showMessage(f"Video error: {preview}")
 
     # ------------------------------------------------------------------
     # Vocabulary panel

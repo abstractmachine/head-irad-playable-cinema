@@ -422,6 +422,218 @@ def mosaic_from_search_results(
 # Per-frame JPEG exporter
 # ---------------------------------------------------------------------------
 
+def _extract_frames_for_tile(
+    video_path: Path, frame_indices: "list[int]"
+) -> "list[Image.Image | None]":
+    """Extract multiple frames from a single video in one open/close cycle.
+
+    More efficient than calling ``extract_frame_pil`` N times because the
+    VideoCapture is opened only once.  Frames are sought in the order given
+    by *frame_indices*; each element of the returned list corresponds to the
+    same-index element of *frame_indices* and is ``None`` on failure.
+    """
+    try:
+        import cv2
+        import numpy as np  # noqa: F401 – needed by cv2.cvtColor
+
+        cap = cv2.VideoCapture(str(video_path))
+        if not cap.isOpened():
+            return [None] * len(frame_indices)
+
+        out: list[Image.Image | None] = []
+        for fi in frame_indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, fi)
+            ret, bgr = cap.read()
+            if ret:
+                rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+                out.append(Image.fromarray(rgb))
+            else:
+                out.append(None)
+        cap.release()
+        return out
+    except Exception:
+        return [None] * len(frame_indices)
+
+
+# ---------------------------------------------------------------------------
+# Video mosaic
+# ---------------------------------------------------------------------------
+
+def mosaic_video_from_search_results(
+    results: "list[dict]",
+    project_path: str,
+    *,
+    layout: str = "landscape",
+    fps: int = 8,
+    duration: int = 2,
+    limit: int = 50,
+    query: "str | None" = None,
+) -> Path:
+    """Render a looping video mosaic from ``search_shots()`` results.
+
+    Each tile in the grid shows a short temporal loop around the best/midpoint
+    frame of the matched shot.  All tiles are synchronised – every frame of the
+    output video advances all tiles by one time step simultaneously.
+
+    Args:
+        results:      List of result dicts from ``search_shots()["results"]``.
+        project_path: Project root directory.
+        layout:       ``"landscape"`` (wider) or ``"portrait"`` (taller grid).
+        fps:          Output frame rate (default 8).
+        duration:     Loop length in seconds (default 2).
+        limit:        Maximum number of tiles (default 50).
+        query:        Optional query string used in the output filename.
+
+    Returns:
+        Path to the saved ``.mp4`` file.
+
+    Raises:
+        ValueError: If no frames could be extracted from any result.
+    """
+    import datetime
+    import re
+
+    import numpy as np
+
+    try:
+        import cv2
+    except ImportError as exc:  # pragma: no cover
+        raise ImportError("opencv-python is required for video mosaic generation") from exc
+
+    results = results[:limit]
+    if not results:
+        raise ValueError("mosaic_video_from_search_results: results list is empty")
+
+    num_frames = fps * duration
+    offsets = np.linspace(-0.5, 0.5, num_frames)
+
+    cols, rows_count = _compute_grid(len(results), layout)
+
+    # ------------------------------------------------------------------
+    # Pass 1: collect frame indices per tile and extract them in batches
+    # ------------------------------------------------------------------
+    tile_frame_arrs: list[list["np.ndarray | None"]] = []
+    tile_w: int | None = None
+    tile_h: int | None = None
+
+    for r in results:
+        movie_id   = r.get("movie_id", "")
+        video_path = _find_video_path(project_path, movie_id)
+
+        sf = r.get("start_frame")
+        ef = r.get("end_frame")
+        sf = int(sf) if sf is not None else 0
+        ef = int(ef) if ef is not None else sf + 1
+        shot_len = max(1, ef - sf)
+
+        if r.get("best_frame") is not None:
+            center = int(r["best_frame"])
+        else:
+            center = (sf + ef) // 2
+
+        frame_indices = [
+            max(sf, min(ef, int(round(center + o * shot_len))))
+            for o in offsets
+        ]
+
+        if video_path is not None:
+            pil_frames = _extract_frames_for_tile(video_path, frame_indices)
+        else:
+            print(f"  ⚠ video not found for movie_id={movie_id!r} — skipping tile", flush=True)
+            pil_frames = [None] * num_frames
+
+        # Convert PIL → numpy (RGB); determine tile size from first valid frame
+        arr_frames: list[np.ndarray | None] = []
+        for pil in pil_frames:
+            if pil is None:
+                arr_frames.append(None)
+                continue
+            arr = np.asarray(pil.convert("RGB"))
+            if tile_w is None:
+                h, w = arr.shape[:2]
+                scale = _TILE_MAX_DIM / max(w, h)
+                tile_w = max(1, int(w * scale))
+                tile_h = max(1, int(h * scale))
+            arr_frames.append(arr)
+        tile_frame_arrs.append(arr_frames)
+
+    if tile_w is None:
+        raise ValueError(
+            "mosaic_video_from_search_results: no frames could be extracted — "
+            "check that video files are present for the matched movies."
+        )
+
+    # ------------------------------------------------------------------
+    # Pass 2: resize all frames to a uniform tile size; fill placeholders
+    # ------------------------------------------------------------------
+    placeholder = np.full((tile_h, tile_w, 3), _TILE_BG, dtype=np.uint8)
+
+    for tile_list in tile_frame_arrs:
+        for t, arr in enumerate(tile_list):
+            if arr is None:
+                tile_list[t] = placeholder
+            elif arr.shape[:2] != (tile_h, tile_w):
+                pil_r = Image.fromarray(arr).resize((tile_w, tile_h), Image.LANCZOS)
+                tile_list[t] = np.asarray(pil_r)
+
+    # ------------------------------------------------------------------
+    # Pass 3: compute canvas dimensions
+    # ------------------------------------------------------------------
+    canvas_w = _PADDING * 2 + cols * tile_w + (cols - 1) * _MARGIN
+    canvas_h = _PADDING * 2 + rows_count * tile_h + (rows_count - 1) * _MARGIN
+
+    # ------------------------------------------------------------------
+    # Pass 4: output path
+    # ------------------------------------------------------------------
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    if query:
+        safe_q = re.sub(r"[^\w\-]", "_", query)[:40].strip("_")
+        filename = f"{safe_q}-mosaic-video-{stamp}.mp4"
+    else:
+        filename = f"mosaic-video-{stamp}.mp4"
+
+    output_path = (
+        Path(project_path) / "output" / "mosaics" / "video" / "search" / filename
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # ------------------------------------------------------------------
+    # Pass 5: encode video
+    # ------------------------------------------------------------------
+    writer = cv2.VideoWriter(
+        str(output_path),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        float(fps),
+        (canvas_w, canvas_h),
+    )
+
+    bg_color_bgr = (_BG_COLOR[2], _BG_COLOR[1], _BG_COLOR[0])
+    n_tiles = len(tile_frame_arrs)
+
+    for t in range(num_frames):
+        canvas = np.full((canvas_h, canvas_w, 3), bg_color_bgr, dtype=np.uint8)
+
+        for idx in range(n_tiles):
+            col = idx % cols
+            row = idx // cols
+            x0 = _PADDING + col * (tile_w + _MARGIN)
+            y0 = _PADDING + row * (tile_h + _MARGIN)
+
+            arr = tile_frame_arrs[idx][t]
+            # Convert RGB → BGR for OpenCV
+            bgr_tile = arr[:, :, ::-1]
+            canvas[y0:y0 + tile_h, x0:x0 + tile_w] = bgr_tile
+
+        writer.write(canvas)
+
+    writer.release()
+    return output_path
+
+
+# ---------------------------------------------------------------------------
+# Per-frame JPEG exporter
+# ---------------------------------------------------------------------------
+
 def export_frames_from_search_results(
     results: list[dict],
     project_path: str,

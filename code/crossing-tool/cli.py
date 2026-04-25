@@ -3002,6 +3002,8 @@ def cmd_mosaic(args):
         _mosaic_search(args)
     elif sub == "export":
         _mosaic_export(args)
+    elif sub == "video":
+        _mosaic_video(args)
 
 
 def _mosaic_thumbnails(args):
@@ -3157,6 +3159,60 @@ def _mosaic_search(args):
                 f"✓ Mosaic search complete: '{query}' → {out.name}",
                 project_path,
             )
+    except ValueError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        print(f"✗ Render failed: {exc}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+def _mosaic_video(args):
+    """mosaic video <query> — generate a looping video mosaic from search results."""
+    import subprocess
+    from services.search import search_shots
+    from generators.mosaic import mosaic_video_from_search_results
+
+    project_path = prefs.get("path")
+    query    = args.query
+    limit    = getattr(args, "limit", 50)
+    fps      = getattr(args, "fps", 8)
+    duration = getattr(args, "duration", 2)
+    layout   = getattr(args, "layout", "landscape")
+    open_result = not getattr(args, "no_open", False)
+
+    search_result = search_shots(
+        query=query,
+        scopes=None,
+        field=None,
+        limit=limit,
+        limit_per_item=None,
+        use_all=True,
+        project_path=project_path,
+    )
+    results = search_result["results"]
+
+    if not results:
+        print(f"✗ No results for query '{query}'.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Building video mosaic: {min(len(results), limit)} tile(s) (query: {query!r})…")
+
+    try:
+        out = mosaic_video_from_search_results(
+            results,
+            project_path,
+            layout=layout,
+            fps=fps,
+            duration=duration,
+            limit=limit,
+            query=query,
+        )
+        print(f"✓ Saved: {out}")
+        if open_result:
+            subprocess.Popen(["xdg-open", str(out)])
     except ValueError as exc:
         print(f"✗ {exc}", file=sys.stderr)
         sys.exit(1)
@@ -4216,6 +4272,30 @@ def build_parser():
     )
     p_mosaic_export.add_argument("--no-open", action="store_true", dest="no_open", help="Do not open result folder")
     p_mosaic_export.add_argument("--notify", action="store_true", help="Send a Discord notification when done")
+
+    # generate mosaic video
+    p_mosaic_video = mosaic_sub.add_parser(
+        "video",
+        help="Generate a looping video mosaic from shot search results",
+    )
+    p_mosaic_video.add_argument("query", help="Search query (e.g. \"horse\" or \"sunset\")")
+    p_mosaic_video.add_argument(
+        "--limit", type=int, default=50,
+        help="Maximum number of tiles (default: 50)",
+    )
+    p_mosaic_video.add_argument(
+        "--fps", type=int, default=8,
+        help="Output frame rate (default: 8)",
+    )
+    p_mosaic_video.add_argument(
+        "--duration", type=int, default=2,
+        help="Loop length in seconds per tile (default: 2)",
+    )
+    p_mosaic_video.add_argument(
+        "--layout", choices=["portrait", "landscape"], default="landscape",
+        help="Grid orientation (default: landscape)",
+    )
+    p_mosaic_video.add_argument("--no-open", action="store_true", dest="no_open", help="Do not open result in desktop viewer")
 
     # index command group
     p_index = sub.add_parser(

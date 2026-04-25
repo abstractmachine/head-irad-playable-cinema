@@ -4,6 +4,7 @@
 - [ ]   Start work on gameplay <> movie Sync Visualizer
 - [ ]   Add media type selector (Movie/Gameplay) in Shotlist Visualizer. Question: should Movie Shotlist Visualizer be a separate instance from Gameplay Shotlist Visualizer even if they are the same code (just different instances)?
 - [ ]   Finish setting more/all Scene breaks in database
+- [ ]   When searching for `Best` frame, avoid blurry images
 - [ ]   Start Scene detections with scene-specific system & user prompts
 - [ ]   Add Scene field panel in Shotlist Visualizer
 - [ ]   Test/Vertify/Confirm previous Index system is still working with new shot_id system
