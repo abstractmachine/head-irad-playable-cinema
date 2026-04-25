@@ -1675,6 +1675,46 @@ def _shotlist_annotate(args):
                     args.notify = True  # --notify-each implies --notify
 
                 def _on_file_done(summary, elapsed):
+                    # --- frame matching after shot annotation (--with-frame) ---
+                    if getattr(args, "with_frame", False):
+                        fn = summary.get("filename")
+                        if fn:
+                            import gc
+                            gc.collect()
+                            try:
+                                import torch
+                                if torch.cuda.is_available():
+                                    torch.cuda.empty_cache()
+                            except Exception:
+                                pass
+                            _frame_model = getattr(args, "frame_model", None) or prefs.get(_MODEL_KEYS["frame_match"], _MODEL_DEFAULTS["frame_match"])
+                            if getattr(args, "verbose", False):
+                                print(f"\n  [frame matching: {fn}]")
+                            try:
+                                from services.frame_match import annotate_best_frames
+                                frame_summary = annotate_best_frames(
+                                    project_path,
+                                    fn,
+                                    media_type=args.media,
+                                    model_name=_frame_model,
+                                    force=getattr(args, "force", False),
+                                    verbose=getattr(args, "verbose", False),
+                                )
+                                low_conf = frame_summary.get("low_confidence", [])
+                                low_conf_str = f" low_confidence={len(low_conf)}" if low_conf else ""
+                                print(f"  {fn} (frames): updated={frame_summary.get('updated', 0)} skipped={frame_summary.get('skipped', 0)}{low_conf_str}")
+                            except FileNotFoundError as _exc:
+                                print(f"  ✗ Frame matching skipped for {fn}: {_exc}", file=sys.stderr)
+                            except Exception as _exc:
+                                print(f"  ✗ Frame matching failed for {fn}: {_exc}", file=sys.stderr)
+                            gc.collect()
+                            try:
+                                import torch
+                                if torch.cuda.is_available():
+                                    torch.cuda.empty_cache()
+                            except Exception:
+                                pass
+
                     if not _notify_items:
                         return
                     from services.notify import discord_notify
@@ -2561,6 +2601,76 @@ def _annotate_frame(args):
     project_path = prefs.get("path")
     media_type = getattr(args, "media", "movies")
 
+    model_name = (
+        getattr(args, "model", None)
+        or prefs.get(_MODEL_KEYS["frame_match"], _MODEL_DEFAULTS["frame_match"])
+    )
+
+    # --all: run frame matching for every registered movie
+    if getattr(args, "all", False):
+        _notify_items = getattr(args, "notify_items", False)
+        if _notify_items:
+            args.notify = True  # --notify-each implies --notify
+
+        from data.metadata import get_metadata
+        try:
+            from services.frame_match import annotate_best_frames
+        except ImportError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        entries = get_metadata(project_path, media_type=media_type)
+        total_updated = 0
+        total_skipped = 0
+        all_summaries = []
+        for e in entries:
+            fn = e.get("filename")
+            if not fn:
+                continue
+            try:
+                summary = annotate_best_frames(
+                    project_path,
+                    fn,
+                    media_type=media_type,
+                    model_name=model_name,
+                    force=getattr(args, "force", False),
+                    verbose=getattr(args, "verbose", False),
+                )
+            except FileNotFoundError as exc:
+                print(f"  ✗ Skipping {fn}: {exc}", file=sys.stderr)
+                continue
+            except Exception as exc:
+                print(f"  ✗ Error on {fn}: {exc}", file=sys.stderr)
+                continue
+            total_updated += summary.get("updated", 0)
+            total_skipped += summary.get("skipped", 0)
+            low_conf = summary.get("low_confidence", [])
+            low_conf_str = f" low_confidence={len(low_conf)}" if low_conf else ""
+            print(f"  {fn}: updated={summary.get('updated', 0)} skipped={summary.get('skipped', 0)}{low_conf_str}")
+            all_summaries.append({"filename": fn, **summary})
+            if _notify_items and summary.get("updated", 0) > 0:
+                try:
+                    from services.notify import discord_notify
+                    discord_notify(
+                        f"✓ Frame match: {fn}\nupdated={summary.get('updated', 0)} skipped={summary.get('skipped', 0)}{low_conf_str}",
+                        project_path,
+                    )
+                except Exception:
+                    pass
+        print(f"✓ Batch complete: updated={total_updated} skipped={total_skipped}")
+        if getattr(args, "notify", False):
+            try:
+                from services.notify import discord_notify
+                lines = [f"Frame match batch complete: {len(all_summaries)} file(s)"]
+                for s in all_summaries:
+                    low_conf = s.get("low_confidence", [])
+                    low_conf_str = f" low_confidence={len(low_conf)}" if low_conf else ""
+                    lines.append(f"{s.get('filename')}: updated={s.get('updated', 0)} skipped={s.get('skipped', 0)}{low_conf_str}")
+                discord_notify("\n".join(lines), project_path)
+            except Exception:
+                pass
+        return
+
     from data.shotlist import resolve_filename
     try:
         filename = resolve_filename(
@@ -2572,11 +2682,6 @@ def _annotate_frame(args):
     except Exception as exc:
         print(f"✗ Could not resolve film: {exc}", file=sys.stderr)
         sys.exit(1)
-
-    model_name = (
-        getattr(args, "model", None)
-        or prefs.get(_MODEL_KEYS["frame_match"], _MODEL_DEFAULTS["frame_match"])
-    )
 
     try:
         from services.frame_match import annotate_best_frames
@@ -4040,6 +4145,16 @@ def build_parser():
         "--reload-every", type=int, default=25, dest="reload_every_n_shots", metavar="N",
         help="Reload the model pipeline every N processed shots to prevent output drift (default: 25; set 0 to disable)",
     )
+    p_annotate_shot.add_argument(
+        "--with-frame", action="store_true", dest="with_frame",
+        help="After annotating each movie's shots (in --all mode), also run 'annotate frame' for that movie",
+    )
+    p_annotate_shot.add_argument(
+        "--frame-model",
+        default=prefs.get(_MODEL_KEYS["frame_match"], _MODEL_DEFAULTS["frame_match"]),
+        dest="frame_model",
+        help="CLIP model to use for --with-frame (default: %(default)s)",
+    )
 
     p_annotate_scene = annotate_sub.add_parser("scene", help="Annotate scene(s)")
     p_annotate_scene.add_argument("filename", nargs="?", default=None, help="Video filename (or use --tmdb)")
@@ -4117,6 +4232,18 @@ def build_parser():
     p_annotate_frame.add_argument(
         "--verbose", action="store_true",
         help="Print per-shot progress to stdout",
+    )
+    p_annotate_frame.add_argument(
+        "--all", action="store_true",
+        help="Run frame matching for all registered movies (ignores positional filename / --tmdb)",
+    )
+    p_annotate_frame.add_argument(
+        "--notify", action="store_true",
+        help="Send a Discord notification when the batch finishes (--all mode)",
+    )
+    p_annotate_frame.add_argument(
+        "--notify-each", action="store_true", dest="notify_items",
+        help="Send a Discord notification after each movie is processed in --all mode",
     )
 
     p_annotate_remove = annotate_sub.add_parser("remove", help="Remove shot annotations for a film")
