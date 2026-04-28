@@ -12,3 +12,4 @@
 - [x]   Add audio channel setting to metadata
 - [x]   Add audio normalization analysis tool + adjustment during runtime
 - [x]   Normalize *all* the audio levels across all the films (via a new `crossing media movies normalize` command)
+- [ ]   Add a way to adjust the *best* frame corresponding to the current, annotated, shot
