@@ -1675,8 +1675,8 @@ def _shotlist_annotate(args):
                     args.notify = True  # --notify-each implies --notify
 
                 def _on_file_done(summary, elapsed):
-                    # --- frame matching after shot annotation (--with-frame) ---
-                    if getattr(args, "with_frame", False):
+                    # --- frame matching after shot annotation (--with-frame or auto) ---
+                    if getattr(args, "with_frame", False) or not getattr(args, "no_best", False):
                         fn = summary.get("filename")
                         if fn:
                             import gc
@@ -1798,6 +1798,34 @@ def _shotlist_annotate(args):
                     discord_notify(f"✓ Annotated: {filename} — updated={summary['updated']} skipped={summary['skipped']} failed={failed_count}", project_path)
                 except Exception:
                     pass
+
+            # Automatic best-frame detection (skip with --no-best)
+            if not getattr(args, "no_best", False):
+                _frame_model = getattr(args, "frame_model", None) or prefs.get(_MODEL_KEYS["frame_match"], _MODEL_DEFAULTS["frame_match"])
+                print("Running best-frame detection...")
+                try:
+                    from services.frame_match import annotate_best_frames
+                    frame_summary = annotate_best_frames(
+                        project_path,
+                        filename,
+                        media_type=args.media,
+                        model_name=_frame_model,
+                        force=False,
+                        verbose=getattr(args, "verbose", False),
+                    )
+                    skipped_bf = frame_summary.get("skipped", 0)
+                    updated_bf = frame_summary.get("updated", 0)
+                    low_conf = frame_summary.get("low_confidence", [])
+                    if skipped_bf:
+                        print(f"Skipping existing best frames: {skipped_bf}")
+                    if updated_bf:
+                        print(f"Updated best frames: {updated_bf}")
+                    if low_conf:
+                        print(f"Low-confidence best frames: {len(low_conf)}")
+                except FileNotFoundError as _exc:
+                    print(f"  ✗ Best-frame detection skipped: {_exc}", file=sys.stderr)
+                except Exception as _exc:
+                    print(f"  ✗ Best-frame detection failed: {_exc}", file=sys.stderr)
             return
 
         elif args.annotate_type == "scene":
@@ -4176,7 +4204,11 @@ def build_parser():
         "--frame-model",
         default=prefs.get(_MODEL_KEYS["frame_match"], _MODEL_DEFAULTS["frame_match"]),
         dest="frame_model",
-        help="CLIP model to use for --with-frame (default: %(default)s)",
+        help="CLIP model to use for best-frame detection (default: %(default)s)",
+    )
+    p_annotate_shot.add_argument(
+        "--no-best", action="store_true", dest="no_best",
+        help="Skip automatic best-frame detection after shot annotation",
     )
 
     p_annotate_scene = annotate_sub.add_parser("scene", help="Annotate scene(s)")

@@ -559,6 +559,38 @@ def annotate_best_frames(
     if not entries:
         return {"filename": filename, "updated": 0, "skipped": 0, "low_confidence": []}
 
+    mapping = load_mapping(project_path)
+
+    # Pre-scan: count how many shots actually need processing before loading the model.
+    # This avoids wasting GPU cycles when all best_frame entries are already up to date.
+    needs_work = 0
+    for _entry in entries:
+        _shot_data = _entry.get("shot")
+        if not isinstance(_shot_data, dict):
+            continue
+        if not isinstance(_shot_data.get("annotation"), dict):
+            continue
+        _text = serialize_annotation_item(_entry, mapping)
+        if not _text:
+            continue
+        _hash = compute_description_hash(_text)
+        _existing = _shot_data.get("best_frame")
+        if (
+            not force
+            and isinstance(_existing, dict)
+            and _existing.get("source_description_hash") == _hash
+        ):
+            continue
+        needs_work += 1
+
+    if needs_work == 0:
+        # All shots are already up to date — count them as skipped.
+        skipped_count = sum(
+            1 for e in entries
+            if isinstance(e.get("shot"), dict)
+        )
+        return {"filename": filename, "updated": 0, "skipped": skipped_count, "low_confidence": []}
+
     # Build a lookup from shot_id → shotlist row for timing data
     shots = read_shotlist(project_path, filename, media_type)
     meta_entries = get_metadata(project_path, media_type=media_type)
@@ -579,9 +611,7 @@ def annotate_best_frames(
 
     fps = _get_video_fps(str(video_path))
 
-    mapping = load_mapping(project_path)
-
-    # Load CLIP model once for the entire file
+    # Load CLIP model once for the entire file (only reached when there is actual work to do)
     model, processor, device = _load_clip_model(project_path, model_name)
 
     updated = 0
