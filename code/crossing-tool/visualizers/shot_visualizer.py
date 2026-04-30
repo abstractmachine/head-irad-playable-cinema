@@ -451,6 +451,14 @@ class ClickSeekSlider(QSlider):
 # Annotation helpers
 # ---------------------------------------------------------------------------
 
+try:
+    from services.frame_match import LOW_CONFIDENCE_THRESHOLD
+except ImportError:
+    LOW_CONFIDENCE_THRESHOLD = 0.18
+
+# Best-frame column index
+_BEST_COLUMN_INDEX = 3
+
 def _get_annotation_json_path(project_path: str, filename: str, media_type: str) -> Path:
     stem = Path(filename).stem
     return Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{stem}.json"
@@ -505,16 +513,30 @@ def _build_embedding_row_index(entries: list) -> dict:
     return idx
 
 
+def _build_best_frame_index(entries: list) -> dict:
+    """Build a dict keyed by string shot_id → best_frame dict."""
+    idx = {}
+    for entry in entries:
+        shot = entry.get("shot")
+        if not isinstance(shot, dict):
+            continue
+        shot_id = shot.get("shot_id")
+        bf = shot.get("best_frame")
+        if shot_id is not None and bf is not None:
+            idx[str(shot_id)] = bf
+    return idx
+
+
 def _is_valid_annotation(ann) -> bool:
     return isinstance(ann, dict) and "setting" in ann
 
 
 # ---------------------------------------------------------------------------
-# Shot table row builder  (5 cols: status | shot | start | stop | ignore)
+# Shot table row builder  (6 cols: status | shot | start | best | stop | ignore)
 # ---------------------------------------------------------------------------
 
 def _make_shot_row(index: int, shot: dict, annotation, edited: bool, has_ann_file: bool) -> list:
-    """Return [status, shot, start, stop, ignore] as QTableWidgetItems."""
+    """Return [status, shot, start, best, stop, ignore] as QTableWidgetItems."""
     if not has_ann_file:
         status = ""
         color  = QColor(theme.TEXT)
@@ -533,16 +555,44 @@ def _make_shot_row(index: int, shot: dict, annotation, edited: bool, has_ann_fil
     stop_str    = shot.get("end_time",   f"f{shot.get('end_frame',   '?')}")
     ignored_str = "✗" if shot.get("Ignore", "No") == "Yes" else ""
 
+    # Best-frame cell
+    bf = shot.get("best_frame")
+    if bf is None:
+        best_text = ""
+        best_bg   = QColor("#ff6666")
+    else:
+        frame  = bf.get("frame", 0)
+        score  = bf.get("score", 0.0)
+        source = bf.get("source", "model")
+        best_text = f"f{frame}"
+        if source == "user":
+            best_bg = QColor("#66ff66")
+        elif source == "fallback":
+            best_bg = QColor("#ffb347")
+        elif score < LOW_CONFIDENCE_THRESHOLD:
+            best_bg = QColor("#ffff66")
+        else:
+            best_bg = None  # default
+
     items = [
         QTableWidgetItem(status),
         QTableWidgetItem(shot_str),
         QTableWidgetItem(start_str),
+        QTableWidgetItem(best_text),
         QTableWidgetItem(stop_str),
         QTableWidgetItem(ignored_str),
     ]
     for item in items:
         item.setForeground(color)
         item.setTextAlignment(Qt.AlignCenter)
+
+    # Apply best-frame background to the Best column item specifically
+    best_item = items[_BEST_COLUMN_INDEX]
+    if best_bg is not None:
+        best_item.setBackground(best_bg)
+        # Use dark text for coloured cells so it remains readable
+        best_item.setForeground(QColor("#222222"))
+
     return items
 
 
@@ -784,6 +834,18 @@ class ShotlistVisualizer(QMainWindow):
         self._embeddings                = None
         self._embeddings_loaded         = False
 
+        # Merge best_frame data from annotation JSON into shotlist dicts so
+        # _make_shot_row (and keyboard shortcuts) can access shot["best_frame"].
+        self._ann_path                  = ann_path
+        self._ann_entries               = ann_entries
+        bf_index = _build_best_frame_index(ann_entries)
+        for shot in self.shots:
+            sid = shot.get("shot_id", "")
+            if sid in bf_index:
+                shot["best_frame"] = bf_index[sid]
+            elif "best_frame" not in shot:
+                shot["best_frame"] = None
+
     def _reload_for_movie(self, index: int):
         """Reload video + data for movie *index*, then refresh the UI."""
         self.current_movie_index = index
@@ -952,13 +1014,14 @@ class ShotlistVisualizer(QMainWindow):
         tables_layout.addWidget(self.scene_list)
 
         self.shot_list = QTableWidget()
-        self.shot_list.setColumnCount(5)
-        self.shot_list.setHorizontalHeaderLabels(["\u2713", "Shot", "Start", "Stop", "Ignore"])
+        self.shot_list.setColumnCount(6)
+        self.shot_list.setHorizontalHeaderLabels(["\u2713", "Shot", "Start", "Best", "Stop", "Ignore"])
         self.shot_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.shot_list.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.shot_list.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.shot_list.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        self.shot_list.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+        self.shot_list.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.shot_list.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
         self.shot_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.shot_list.verticalHeader().setVisible(False)
         self.shot_list.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -969,7 +1032,7 @@ class ShotlistVisualizer(QMainWindow):
         self.shot_list.setFrameShape(QFrame.NoFrame)
         self.shot_list.installEventFilter(self)
         self.shot_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.shot_list.setToolTip("Shots \u2014 click to jump  (click Stop col to show end frame)  [\u2191/\u2193 navigate]")
+        self.shot_list.setToolTip("Shots \u2014 click to jump  (click Best to jump to best frame, click Stop to show end frame)  [b jump to best  Shift+B set best  Ctrl+B clear best  \u2191/\u2193 navigate]")
         self.shot_list.cellClicked.connect(self.on_shot_selected)
         self.shot_list.setStyleSheet(_tbl)
         self.shot_list.setVerticalScrollBar(JumpScrollBar())
@@ -1355,6 +1418,7 @@ class ShotlistVisualizer(QMainWindow):
             if old:
                 old.setText(item.text())
                 old.setForeground(item.foreground())
+                old.setBackground(item.background())
 
     def rebuild_shot_list(self):
         """Rebuild the shot table from self.shots."""
@@ -1501,6 +1565,37 @@ class ShotlistVisualizer(QMainWindow):
     def show_end_frame(self):
         """Show the end frame of the current shot."""
         self.jump_to_shot(self.current_shot_index, show_end=True)
+
+    def _seek_to_frame(self, frame_number: int):
+        """Seek the player to an arbitrary frame number without changing current_shot_index."""
+        if self.is_playing:
+            self.stop_playback()
+        self.current_frame_number = max(0, min(frame_number, self.total_frames - 1))
+        self._update_timeline_slider()
+        frame = self._get_frame(self.current_frame_number)
+        if frame is not None:
+            self._display_frame(frame)
+        self.update_frame_info()
+
+    def _persist_best_frame(self, shot: dict) -> None:
+        """Write the shot's current best_frame value to the annotation JSON on disk."""
+        shot_id = shot.get("shot_id", "")
+        if not shot_id:
+            return
+        path = self._ann_path
+        if path is None:
+            return
+        try:
+            entries = _read_annotation_json(path)
+            entry_idx = self._annotation_entry_index.get(shot_id)
+            if entry_idx is not None and 0 <= entry_idx < len(entries):
+                entries[entry_idx]["shot"]["best_frame"] = shot.get("best_frame")
+                path.write_text(
+                    json.dumps(entries, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+        except Exception as exc:
+            QMessageBox.critical(self, "Save failed", str(exc))
     
     def next_shot(self):
         """Move to next shot."""
@@ -1573,8 +1668,23 @@ class ShotlistVisualizer(QMainWindow):
         )
     
     def on_shot_selected(self, row: int, col: int = 0):
-        """Handle shot selection from table. Col 3 (Stop) shows the end frame."""
-        self.jump_to_shot(row, show_end=(col == 3))
+        """Handle shot selection from table.
+
+        Col 3 (Best) jumps to the best frame.
+        Col 4 (Stop) shows the end frame.
+        """
+        if col == _BEST_COLUMN_INDEX:
+            # Jump to best frame of the clicked row without changing current shot
+            self.jump_to_shot(row)
+            if 0 <= row < len(self.shots):
+                shot = self.shots[row]
+                bf = shot.get("best_frame")
+                if bf and isinstance(bf, dict):
+                    frame_num = bf.get("frame")
+                    if frame_num is not None:
+                        self._seek_to_frame(int(frame_num))
+            return
+        self.jump_to_shot(row, show_end=(col == 4))
     
     def toggle_current_ignore(self):
         """Toggle ignore status for current shot."""
@@ -1853,6 +1963,27 @@ class ShotlistVisualizer(QMainWindow):
                 self.save_changes()
         elif key == Qt.Key_G:
             self.toggle_gremlins()
+        elif key == Qt.Key_B:
+            shot = self.shots[self.current_shot_index] if 0 <= self.current_shot_index < len(self.shots) else None
+            if shot is not None:
+                if mods & Qt.ControlModifier:
+                    # Ctrl+B — clear best frame
+                    shot["best_frame"] = None
+                    self._persist_best_frame(shot)
+                    self._refresh_shot_row(self.current_shot_index)
+                elif mods & Qt.ShiftModifier:
+                    # Shift+B — set current frame as user best frame
+                    from services.frame_match import set_best_frame as _set_bf
+                    _set_bf(shot, self.current_frame_number, source="user", score=1.0, method="manual")
+                    self._persist_best_frame(shot)
+                    self._refresh_shot_row(self.current_shot_index)
+                else:
+                    # B — jump to best frame
+                    bf = shot.get("best_frame")
+                    if bf and isinstance(bf, dict):
+                        frame_num = bf.get("frame")
+                        if frame_num is not None:
+                            self._seek_to_frame(int(frame_num))
         elif key == Qt.Key_Home:
             if self.current_movie_index > 0:
                 self.switch_to_movie(self.current_movie_index - 1)

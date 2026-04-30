@@ -661,16 +661,33 @@ def annotate_best_frames(
             if not png_ok and verbose:
                 print(f"  [warn] could not save PNG for {shot_id!r}")
 
+            # Determine source and fallback_reason
+            if best_score == FALLBACK_SCORE:
+                bf_source = "fallback"
+                bf_fallback_reason: Optional[str] = "low_confidence"
+            elif best_score < LOW_CONFIDENCE_THRESHOLD:
+                # score > 0 but below threshold (shouldn't normally happen after
+                # _find_best_frame_for_shot, but guard for direct callers)
+                bf_source = "fallback"
+                bf_fallback_reason = "low_confidence"
+            else:
+                bf_source = "model"
+                bf_fallback_reason = None
+
             # Update the in-memory annotation entry (at the shot level, not inside annotation)
-            shot_data["best_frame"] = {
+            bf_dict: Dict[str, Any] = {
                 "frame": best_frame_num,
                 "score": round(float(best_score), 6),
                 "method": "clip",
+                "source": bf_source,
                 "source_description_hash": desc_hash,
                 "computed_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
             }
+            if bf_fallback_reason is not None:
+                bf_dict["fallback_reason"] = bf_fallback_reason
+            shot_data["best_frame"] = bf_dict
 
-            if best_score == FALLBACK_SCORE:
+            if bf_source == "fallback":
                 low_confidence.append(shot_id)
                 if verbose:
                     print(
@@ -690,3 +707,105 @@ def annotate_best_frames(
         "skipped": skipped,
         "low_confidence": low_confidence,
     }
+
+
+# ---------------------------------------------------------------------------
+# Best-frame helpers (data access)
+# ---------------------------------------------------------------------------
+
+def get_best_frame(shot: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Return the best_frame dict for a shot, or None if absent."""
+    return shot.get("best_frame") or None
+
+
+def set_best_frame(
+    shot: Dict[str, Any],
+    frame: int,
+    source: str = "user",
+    score: float = 1.0,
+    method: str = "manual",
+) -> None:
+    """Write a best_frame entry onto *shot* in-place."""
+    bf: Dict[str, Any] = {
+        "frame": frame,
+        "score": score,
+        "method": method,
+        "source": source,
+    }
+    shot["best_frame"] = bf
+
+
+def clear_best_frame(shot: Dict[str, Any]) -> None:
+    """Remove the best_frame entry from *shot* in-place."""
+    shot["best_frame"] = None
+
+
+# ---------------------------------------------------------------------------
+# Migration: backfill source / fallback_reason on legacy best_frame entries
+# ---------------------------------------------------------------------------
+
+def migrate_best_frame_sources(
+    project_path: str,
+    media_type: str = "movies",
+) -> Dict[str, Any]:
+    """Backfill ``source`` (and ``fallback_reason``) on existing best_frame dicts.
+
+    Iterates all annotation JSON files for *media_type* and, for each shot
+    whose ``best_frame`` lacks a ``source`` field, sets:
+
+    * ``source = "fallback"``  and  ``fallback_reason = "low_confidence"``
+      when ``score == 0.0``
+    * ``source = "model"``  otherwise
+
+    Files are only written when at least one entry was changed.
+
+    Returns a summary dict with keys ``files_updated``, ``shots_updated``.
+    """
+    from data.annotate import get_annotation_json_path
+    from data.metadata import get_metadata
+
+    ann_dir = (
+        Path(project_path) / "data" / "annotations" / "shots" / media_type
+    )
+    if not ann_dir.exists():
+        return {"files_updated": 0, "shots_updated": 0}
+
+    meta_entries = get_metadata(project_path, media_type=media_type)
+    filenames = [e["filename"] for e in meta_entries if e.get("filename")]
+
+    files_updated = 0
+    shots_updated = 0
+
+    for filename in filenames:
+        agg_path = get_annotation_json_path(project_path, filename, media_type)
+        if not agg_path.exists():
+            continue
+
+        entries = _load_annotation_entries(agg_path)
+        file_dirty = False
+
+        for entry in entries:
+            shot_data = entry.get("shot")
+            if not isinstance(shot_data, dict):
+                continue
+            bf = shot_data.get("best_frame")
+            if not isinstance(bf, dict):
+                continue
+            if "source" in bf:
+                continue  # already migrated
+
+            score = bf.get("score", 0.0)
+            if score == 0.0:
+                bf["source"] = "fallback"
+                bf["fallback_reason"] = "low_confidence"
+            else:
+                bf["source"] = "model"
+
+            file_dirty = True
+            shots_updated += 1
+
+        if file_dirty:
+            _save_annotation_entries(agg_path, entries)
+            files_updated += 1
+
+    return {"files_updated": files_updated, "shots_updated": shots_updated}

@@ -2746,6 +2746,29 @@ def _annotate_remove(args):
     print(f"\nRemoved {removed}  |  already absent {skipped}")
 
 
+def _annotate_best(args):
+    """Dispatch: ``crossing annotate best <subcommand>``."""
+    best_action = getattr(args, "best_action", None)
+    if best_action == "migrate":
+        _require_path()
+        project_path = prefs.get("path")
+        media_type = getattr(args, "media", "movies")
+        try:
+            from services.frame_match import migrate_best_frame_sources
+            summary = migrate_best_frame_sources(project_path, media_type)
+        except Exception as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            sys.exit(1)
+        print(
+            f"✓ Migration complete: "
+            f"{summary['shots_updated']} shots updated "
+            f"across {summary['files_updated']} file(s)"
+        )
+        return
+    print("✗ annotate best: specify a subcommand (e.g. migrate)", file=sys.stderr)
+    sys.exit(1)
+
+
 def _annotate_migrate(args):
     """Migrate annotation JSON files from legacy integer shot_ids to stable IDs.
 
@@ -4244,6 +4267,22 @@ def build_parser():
     p_annotate_frame.add_argument(
         "--notify-each", action="store_true", dest="notify_items",
         help="Send a Discord notification after each movie is processed in --all mode",
+    )
+
+    p_annotate_best = annotate_sub.add_parser(
+        "best",
+        help="Best-frame utilities (e.g. migrate source/fallback fields into existing annotations)",
+    )
+    p_annotate_best.set_defaults(func=_annotate_best)
+    best_sub = p_annotate_best.add_subparsers(dest="best_action", required=True)
+
+    p_annotate_best_migrate = best_sub.add_parser(
+        "migrate",
+        help="Backfill 'source' and 'fallback_reason' fields on existing best_frame entries",
+    )
+    p_annotate_best_migrate.add_argument(
+        "--media", choices=["movies", "gameplay"], default="movies",
+        help="Media type to migrate (default: movies)",
     )
 
     p_annotate_remove = annotate_sub.add_parser("remove", help="Remove shot annotations for a film")
