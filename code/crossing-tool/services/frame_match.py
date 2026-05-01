@@ -19,6 +19,9 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+import cv2
+import numpy as np
+
 from data.index import load_mapping, serialize_annotation_item
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -29,6 +32,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 LOW_CONFIDENCE_THRESHOLD = 0.18
 FALLBACK_SCORE = 0.0
+
+
+def compute_blur_score(image) -> float:
+    """Return a normalized sharpness score (0–1)."""
+    gray = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
+    variance = cv2.Laplacian(gray, cv2.CV_64F).var()
+    return min(1.0, variance / 100.0)
 
 
 # ---------------------------------------------------------------------------
@@ -392,6 +402,7 @@ def _find_best_frame_for_shot(
     processor,
     device: str,
     tmp_dir: Path,
+    verbose: bool = False,
 ) -> Tuple[int, float]:
     """Two-stage CLIP frame search for a single shot.
 
@@ -417,7 +428,16 @@ def _find_best_frame_for_shot(
     if not coarse_frames:
         return int(round(center * fps)), FALLBACK_SCORE
 
-    coarse_scores = clip_score_batch(coarse_frames, description, model, processor, device)
+    coarse_scores_raw = clip_score_batch(coarse_frames, description, model, processor, device)
+
+    coarse_scores = []
+    for img, score in zip(coarse_frames, coarse_scores_raw):
+        blur = compute_blur_score(img)
+        final_score = score * blur
+        if verbose:
+            print(f"    blur={blur:.3f} clip={score:.3f} final={final_score:.3f}")
+        coarse_scores.append(final_score)
+
     best_coarse_idx = max(range(len(coarse_scores)), key=lambda i: coarse_scores[i])
     best_pos = coarse_valid_positions[best_coarse_idx]
     best_score = float(coarse_scores[best_coarse_idx])
@@ -434,7 +454,16 @@ def _find_best_frame_for_shot(
             refine_valid_positions.append(pos)
 
     if refine_frames:
-        refine_scores = clip_score_batch(refine_frames, description, model, processor, device)
+        refine_scores_raw = clip_score_batch(refine_frames, description, model, processor, device)
+
+        refine_scores = []
+        for img, score in zip(refine_frames, refine_scores_raw):
+            blur = compute_blur_score(img)
+            final_score = score * blur
+            if verbose:
+                print(f"    blur={blur:.3f} clip={score:.3f} final={final_score:.3f}")
+            refine_scores.append(final_score)
+
         best_refine_idx = max(range(len(refine_scores)), key=lambda i: refine_scores[i])
         if float(refine_scores[best_refine_idx]) > best_score:
             best_pos = refine_valid_positions[best_refine_idx]
@@ -675,6 +704,7 @@ def annotate_best_frames(
                     processor,
                     device,
                     tmp_dir,
+                    verbose=verbose,
                 )
             except Exception as exc:
                 if verbose:

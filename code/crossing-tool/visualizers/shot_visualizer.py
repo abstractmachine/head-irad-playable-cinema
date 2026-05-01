@@ -43,7 +43,7 @@ from PyQt5.QtWidgets import (
     QTextEdit, QGridLayout,
 )
 from styles.theme import GripSplitter, JumpScrollBar, save_window_geometry, restore_window_geometry
-from PyQt5.QtGui import QFont, QPixmap, QImage, QColor, QMouseEvent
+from PyQt5.QtGui import QFont, QPixmap, QImage, QColor, QMouseEvent, QPalette, QBrush
 from PyQt5.QtCore import pyqtSignal as _pyqtSignal, QThread as _QThread
 
 from data.shotlist import read_shotlist, write_shotlist, get_shotlist_path, attach_shot_ids
@@ -545,10 +545,10 @@ def _make_shot_row(index: int, shot: dict, annotation, edited: bool, has_ann_fil
         color  = QColor(theme.TEXT_DIM)
     elif _is_valid_annotation(annotation):
         status = ("✎" if edited else "") + "✓"
-        color  = QColor("#88ff88")
+        color  = QColor(theme.TEXT)
     else:
         status = ("✎" if edited else "") + "✗"
-        color  = QColor("#ff8888")
+        color  = QColor(theme.TEXT)
 
     shot_str    = f"{index:04d}"
     start_str   = shot.get("start_time", f"f{shot.get('start_frame', '?')}")
@@ -559,21 +559,23 @@ def _make_shot_row(index: int, shot: dict, annotation, edited: bool, has_ann_fil
     bf = shot.get("best_frame")
     if bf is None:
         best_text = ""
-        best_bg   = QColor("#ff6666")
+        best_bg   = None
+        best_fg   = None
     else:
         frame  = bf.get("frame", 0)
-        score  = bf.get("score", 0.0)
         source = bf.get("source", "model")
         best_text = f"f{frame}"
         if source == "user":
-            best_bg = QColor("#66ff66")
-        elif source == "fallback":
-            best_bg = QColor("#ffb347")
-        elif score < LOW_CONFIDENCE_THRESHOLD:
-            best_bg = QColor("#ffff66")
+            best_bg = QColor("#00aa00")
+            best_fg = QColor("#ffffff")
+        elif source == "fallback" or bf.get("score", 1.0) < LOW_CONFIDENCE_THRESHOLD:
+            best_bg = QColor("#cc6600")
+            best_fg = QColor("#ffffff")
         else:
-            best_bg = None  # default
+            best_bg = None
+            best_fg = QColor("#ffffff")  # always white text on Best cell when populated
 
+    _DEFAULT_BG = QColor("#666666")
     items = [
         QTableWidgetItem(status),
         QTableWidgetItem(shot_str),
@@ -582,16 +584,19 @@ def _make_shot_row(index: int, shot: dict, annotation, edited: bool, has_ann_fil
         QTableWidgetItem(stop_str),
         QTableWidgetItem(ignored_str),
     ]
-    for item in items:
-        item.setForeground(color)
+    _white = QColor(theme.TEXT)
+    for i, item in enumerate(items):
+        item.setBackground(_DEFAULT_BG)
+        # Status colour (green/red/dim) only on the status cell (col 0)
+        item.setForeground(color if i == 0 else _white)
         item.setTextAlignment(Qt.AlignCenter)
 
-    # Apply best-frame background to the Best column item specifically
+    # Apply best-frame background/foreground to the Best column item specifically
     best_item = items[_BEST_COLUMN_INDEX]
     if best_bg is not None:
         best_item.setBackground(best_bg)
-        # Use dark text for coloured cells so it remains readable
-        best_item.setForeground(QColor("#222222"))
+    if best_fg is not None:
+        best_item.setForeground(best_fg)
 
     return items
 
@@ -1034,7 +1039,37 @@ class ShotlistVisualizer(QMainWindow):
         self.shot_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.shot_list.setToolTip("Shots \u2014 click to jump  (click Best to jump to best frame, click Stop to show end frame)  [b jump to best  Shift+B set best  Ctrl+B clear best  \u2191/\u2193 navigate]")
         self.shot_list.cellClicked.connect(self.on_shot_selected)
-        self.shot_list.setStyleSheet(_tbl)
+        # Use a stylesheet WITHOUT any QTableWidget::item rules.
+        # Any QTableWidget::item QSS rule (even without background:) causes
+        # Qt's QStyleSheetStyle to override item.setBackground() calls.
+        # Selection colour is applied via the palette instead.
+        _shot_list_stylesheet = f"""
+            QTableWidget {{
+                background: transparent;
+                border: none;
+                gridline-color: {theme.BG};
+            }}
+            QTableWidget::item:selected {{
+                background: {theme.ACCENT};
+                color: {theme.TEXT};
+            }}
+            QHeaderView::section {{
+                background: {theme.PANEL_BG};
+                color: {theme.TEXT};
+                font-weight: bold;
+                border: none;
+                padding: 4px 2px;
+            }}
+            QTableCornerButton::section {{
+                background: {theme.PANEL_BG};
+                border: none;
+            }}
+        """
+        self.shot_list.setStyleSheet(_shot_list_stylesheet)
+        _pal = self.shot_list.palette()
+        _pal.setColor(QPalette.Highlight, QColor(theme.ACCENT))
+        _pal.setColor(QPalette.HighlightedText, QColor(theme.TEXT))
+        self.shot_list.setPalette(_pal)
         self.shot_list.setVerticalScrollBar(JumpScrollBar())
         tables_layout.addWidget(self.shot_list, stretch=1)
 
