@@ -1905,7 +1905,7 @@ class ShotlistVisualizer(QMainWindow):
                     # Redirect keyboard events to main window
                     if key in (Qt.Key_Space, Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down,
                                Qt.Key_PageUp, Qt.Key_PageDown, Qt.Key_Home, Qt.Key_End,
-                               Qt.Key_C, Qt.Key_E, Qt.Key_F, Qt.Key_I, Qt.Key_M, Qt.Key_N, Qt.Key_G):
+                               Qt.Key_B, Qt.Key_C, Qt.Key_E, Qt.Key_F, Qt.Key_I, Qt.Key_M, Qt.Key_N, Qt.Key_G, Qt.Key_S):
                         self.keyPressEvent(event)
                         return True
             return super().eventFilter(obj, event)
