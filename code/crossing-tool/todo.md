@@ -7,9 +7,10 @@
 - [ ]   When searching for `Best` frame, avoid blurry images
 - [ ]   Start Scene detections with scene-specific system & user prompts
 - [ ]   Add Scene field panel in Shotlist Visualizer
-- [ ]   Test/Vertify/Confirm previous Index system is still working with new shot_id system
-- [ ]   Figure out why some movies (Cowboys & Aliens, Days of Heaven, others?) seem to use the wrong audio channel in the current sync-audio-to-OpenCV-frame system in Shotlist Visualizer
+- [ ]   Test/Vertify/Confirm previous Index () system is still working with new shot_id system
+- [x]   Figure out why some movies (Cowboys & Aliens, Days of Heaven, others?) seem to use the wrong audio channel in the current sync-audio-to-OpenCV-frame system in Shotlist Visualizer
+- [ ]   Create a better fix than the oreviously implemented solution: currently these films (Cowboys & Aliens, Days of Heaven, ...) have been set to mono audio output whereas their channel count is often `6` according to `ffmpeg` info
 - [x]   Add audio channel setting to metadata
 - [x]   Add audio normalization analysis tool + adjustment during runtime
 - [x]   Normalize *all* the audio levels across all the films (via a new `crossing media movies normalize` command)
-- [ ]   Add a way to adjust the *best* frame corresponding to the current, annotated, shot
+- [x]   Add a way to adjust the *best* frame corresponding to the current, annotated, shot

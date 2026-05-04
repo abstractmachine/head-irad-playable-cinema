@@ -432,8 +432,8 @@ def _find_best_frame_for_shot(
 
     coarse_scores = []
     for img, score in zip(coarse_frames, coarse_scores_raw):
-        blur = compute_blur_score(img)
-        final_score = score * blur
+        blur = compute_blur_score(img)  # keep for logging
+        final_score = score
         if verbose:
             print(f"    blur={blur:.3f} clip={score:.3f} final={final_score:.3f}")
         coarse_scores.append(final_score)
@@ -458,8 +458,8 @@ def _find_best_frame_for_shot(
 
         refine_scores = []
         for img, score in zip(refine_frames, refine_scores_raw):
-            blur = compute_blur_score(img)
-            final_score = score * blur
+            blur = compute_blur_score(img)  # keep for logging
+            final_score = score
             if verbose:
                 print(f"    blur={blur:.3f} clip={score:.3f} final={final_score:.3f}")
             refine_scores.append(final_score)
@@ -470,7 +470,10 @@ def _find_best_frame_for_shot(
             best_score = float(refine_scores[best_refine_idx])
 
     # Fallback: low-confidence → use centre frame, score 0.0
-    if best_score < LOW_CONFIDENCE_THRESHOLD:
+    # Only fall back when scores are both absolutely low AND uniformly spread
+    # (i.e. no meaningful distinction between frames).
+    spread = max(coarse_scores) - min(coarse_scores) if len(coarse_scores) > 1 else 0.0
+    if best_score < LOW_CONFIDENCE_THRESHOLD and spread < 0.02:
         best_pos = center
         best_score = FALLBACK_SCORE
 

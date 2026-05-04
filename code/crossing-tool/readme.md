@@ -18,6 +18,7 @@ A CLI + GUI tool for relating moving images across media — connecting gameplay
 | `crossing metadata` | List, get, update, and audit metadata |
 | `crossing shotlist` | Manage shot/scene CSV files and run shot detection |
 | `crossing annotate` | Run LLM annotation on shots and scenes |
+| `crossing annotate frame` | Find the best matching frame per shot using CLIP (requires prior `annotate shot` pass) |
 | `crossing search` | Search shot annotations by query, field, or vocabulary |
 | `crossing index` | Build and maintain the semantic search index (txt + embeddings) |
 | `crossing generate mosaic` | Generate contact-sheet grids from thumbnails or search results |
@@ -198,6 +199,7 @@ crossing-tool/
 │   ├── annotation_timer.py         # Per-shot ETA estimation during annotation
 │   ├── audio_channels.py           # ffprobe channel count inspection
 │   ├── audio_normalize.py          # ffmpeg loudnorm measurement and gain computation
+│   ├── frame_match.py              # CLIP-based best-frame matching for shot annotations
 │   ├── import_media.py             # File copy and transcode pipeline
 │   ├── models.py                   # HuggingFace model download and management
 │   ├── normalize.py                # Filename normalisation (dash-separated → Title Case)
@@ -321,6 +323,17 @@ crossing-tool/
 | `measure_audio_gain_db(video_path, target_lufs)` | Runs ffmpeg loudnorm and returns `(gain_db, integrated_lufs)` |
 | `compute_audio_gain_db(integrated_lufs, target_lufs)` | Computes the dB gain offset to reach a target LUFS |
 
+#### `services/frame_match.py`
+
+| Function | Description |
+|---|---|
+| `annotate_best_frames(project_path, filename, media_type, model_name, force, verbose)` | Iterates all shots in a film's annotation JSON, finds the best-matching frame for each via CLIP, saves it as a PNG, and stores `best_frame` metadata in the JSON |
+| `find_query_best_frame_for_shot(video_path, start_time, end_time, query, model, processor, device)` | Samples frames from a shot's time range and returns `(frame_index, score)` for the frame most similar to the query text |
+| `best_frame_path(project_path, media_type, filename, shot_id)` | Returns the deterministic output path for a best-frame PNG |
+| `load_best_frame_lookup(project_path, filename, media_type)` | Returns a `{shot_id: best_frame_dict}` mapping loaded from the annotation JSON |
+| `compute_blur_score(image)` | Returns a normalized sharpness score (0–1) used to penalize blurry frame candidates |
+| `compute_description_hash(description)` | Returns a short stable hash of a description string for change detection |
+
 #### `services/models.py`
 
 | Function | Description |
@@ -356,8 +369,8 @@ crossing tool path [folder]
 crossing tool name [name]
 
 # Manage models
-crossing tool model get [annotate|segmentation|embed]        # show current model (all or one role)
-crossing tool model set {annotate,segmentation,embed} <name> # set model for a role
+crossing tool model get [annotate|segmentation|embed|frame_match]        # show current model (all or one role)
+crossing tool model set {annotate,segmentation,embed,frame_match} <name> # set model for a role
 crossing tool model list                                     # list models in project models/ folder
 crossing tool model download <hf-repo-id> [--name <folder>] # download a model from HuggingFace
 crossing tool model size [<name>]                            # show model disk usage
@@ -615,6 +628,9 @@ crossing annotate shot --tmdb 391
   --reload-every N                  # reload model every N shots to prevent drift (default: 25)
   --notify                          # Discord notification on finish
   --notify-each                     # Discord notification after each film (batch)
+  --with-frame                      # also run 'annotate frame' after each annotated movie (--all mode)
+  --frame-model <model-name>        # CLIP model for best-frame detection (default: clip-vit-base-patch32)
+  --no-best                         # skip automatic best-frame detection after shot annotation
 
 # Annotate all films in project
 crossing annotate shot --all
@@ -658,6 +674,20 @@ crossing annotate migrate <filename_substring>
 crossing annotate migrate --tmdb 391
 crossing annotate migrate --all
   --media {movies,gameplay}
+
+# Find the best matching frame per shot using CLIP
+# Reads the 'description' field from each shot's existing annotation and selects the
+# video frame that best matches it. Saves frames to media/frames/best/ and stores
+# best_frame metadata in the annotation JSON. Requires a prior 'annotate shot' pass.
+crossing annotate frame <filename_substring>
+crossing annotate frame --tmdb 391
+crossing annotate frame --all
+  --media {movies,gameplay}
+  --model <model-name>              # CLIP model (default: clip-vit-base-patch32)
+  --force                           # re-process shots even when best_frame already exists
+  --verbose                         # print per-shot progress
+  --notify                          # Discord notification when batch finishes (--all)
+  --notify-each                     # Discord notification after each film (--all)
 ```
 
 Adaptive frame sampling notes:
@@ -916,6 +946,8 @@ Movies metadata includes:
 - `media_id`, `title`, `year`, `director`, `tmdb`, `imdb`
 - `filename`, `original_filename`, `duration` (actual file duration in minutes)
 - `overview`, `tagline`
+- `audio_gain_db` (loudnorm gain offset in dB to reach target LUFS; added by `crossing media normalize`)
+- `audio_channels` (channel layout mapping used by the audio player; added by `crossing media channels`)
 
 Gameplay metadata includes:
 - `media_id`, `title`, `game` (game slug, e.g. `rdr2`)
@@ -981,6 +1013,10 @@ Python 3.11+ and all Python packages are managed automatically by `uv` — no ma
 │   ├── subtitles/
 │   │   ├── movies/                 # English subtitles from OpenSubtitles
 │   │   └── gameplay/               # gameplay subtitles
+│   ├── frames/
+│   │   └── best/
+│   │       ├── movies/             # best-frame PNGs per shot (from `crossing annotate frame`)
+│   │       └── gameplay/
 ├── output/
 │   ├── mosaics/                    # output from `crossing generate mosaic`
 │   └── compositions/               # output from `crossing generate composition`

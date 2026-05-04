@@ -171,7 +171,7 @@ def _get_sar(video_path: str) -> tuple:
 
 import cv2
 import numpy as np
-os.environ.setdefault("OPENCV_FFMPEG_READ_ATTEMPTS", "8192")
+os.environ.setdefault("OPENCV_FFMPEG_READ_ATTEMPTS", "65536")
 if "QT_QPA_PLATFORM_PLUGIN_PATH" in os.environ:
     del os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"]
 
