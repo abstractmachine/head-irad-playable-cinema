@@ -469,6 +469,8 @@ class TileWidget(QFrame):
 
     _PLACEHOLDER_BG = theme.CANVAS_BG
 
+    clicked = pyqtSignal(dict)   # emitted with the result dict on left-click
+
     def __init__(
         self,
         result: dict,
@@ -482,6 +484,7 @@ class TileWidget(QFrame):
 
         self.setFrameShape(QFrame.NoFrame)
         self.setStyleSheet(f"TileWidget {{ border: none; background: {theme.CANVAS_BG}; }}")
+        self.setCursor(Qt.PointingHandCursor)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -564,6 +567,11 @@ class TileWidget(QFrame):
         """Re-render at a new tile_size (called when user zooms)."""
         self._render(tile_size)
 
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(self.result)
+        super().mousePressEvent(event)
+
 
 # ---------------------------------------------------------------------------
 # Mosaic canvas — scrollable grid of tiles
@@ -576,9 +584,11 @@ class MosaicCanvas(QScrollArea):
     Plain scroll wheel   → vertical scroll (default)
     """
 
+    tile_clicked = pyqtSignal(dict)   # forwarded from individual TileWidget clicks
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWidgetResizable(True)
+        self.setWidgetResizable(False)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setStyleSheet(f"QScrollArea {{ border: none; background: {theme.CANVAS_BG}; }}")
@@ -586,14 +596,13 @@ class MosaicCanvas(QScrollArea):
 
         self._tile_size: int = DEFAULT_TILE_SIZE
         self._tiles: list[TileWidget] = []
-        self._col_count: int = 0
 
         self._container = QWidget()
         self._container.setStyleSheet(f"background: {theme.CANVAS_BG};")
-        self._grid = QGridLayout(self._container)
-        self._grid.setSpacing(4)
-        self._grid.setContentsMargins(8, 8, 8, 8)
         self.setWidget(self._container)
+
+    _SPACING = 4
+    _MARGIN  = 8
 
     # ------------------------------------------------------------------
     # Public API
@@ -604,45 +613,55 @@ class MosaicCanvas(QScrollArea):
 
     def clear(self) -> None:
         for tile in self._tiles:
-            self._grid.removeWidget(tile)
             tile.deleteLater()
         self._tiles.clear()
-        self._col_count = 0
+        self._container.setFixedSize(max(self.viewport().width(), 1), 1)
 
     def add_tile(self, result: dict, pixmap) -> None:
-        tile = TileWidget(result, pixmap, self._tile_size)
+        tile = TileWidget(result, pixmap, self._tile_size, parent=self._container)
+        tile.clicked.connect(self.tile_clicked)
+        tile.show()
         self._tiles.append(tile)
-        self._place_last_tile()
+        self._do_flow_layout()
 
     # ------------------------------------------------------------------
-    # Layout
+    # Flow layout
 
-    def _columns_for_width(self) -> int:
-        tile_w = int(self._tile_size * 16 / 9) + 4 + self._grid.horizontalSpacing()
-        vp_w   = max(self.viewport().width(), tile_w + 1)
-        return max(1, vp_w // tile_w)
-
-    def _place_last_tile(self) -> None:
-        """Fast-path: only append the very last tile if column count is stable."""
-        cols = self._columns_for_width()
-        if cols != self._col_count:
-            self._col_count = cols
-            self._full_reflow()
+    def _do_flow_layout(self) -> None:
+        """Position all tiles with word-wrap: wrap to the next row when a
+        tile's right edge would exceed the viewport width."""
+        if not self._tiles:
+            self._container.setFixedSize(max(self.viewport().width(), 1), 1)
             return
-        idx = len(self._tiles) - 1
-        self._grid.addWidget(self._tiles[-1], idx // cols, idx % cols)
 
-    def _full_reflow(self) -> None:
-        cols = self._col_count or 1
-        for i, tile in enumerate(self._tiles):
-            self._grid.addWidget(tile, i // cols, i % cols)
+        spacing = self._SPACING
+        margin  = self._MARGIN
+        vp_w    = self.viewport().width()
+
+        x     = margin
+        y     = margin
+        row_h = 0
+
+        for tile in self._tiles:
+            tw = tile.width()
+            th = tile.height()
+
+            # If this tile's right edge would exceed the usable width, wrap.
+            if x > margin and x + tw > vp_w - margin:
+                x      = margin
+                y     += row_h + spacing
+                row_h  = 0
+
+            tile.move(x, y)
+            x    += tw + spacing
+            row_h = max(row_h, th)
+
+        total_h = y + row_h + margin
+        self._container.setFixedSize(max(vp_w, 1), max(total_h, 1))
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        new_cols = self._columns_for_width()
-        if new_cols != self._col_count:
-            self._col_count = new_cols
-            self._full_reflow()
+        self._do_flow_layout()
 
     # ------------------------------------------------------------------
     # Zoom
@@ -662,10 +681,7 @@ class MosaicCanvas(QScrollArea):
     def _apply_zoom(self) -> None:
         for tile in self._tiles:
             tile.resize_tile(self._tile_size)
-        self._col_count = 0
-        cols = self._columns_for_width()
-        self._col_count = cols
-        self._full_reflow()
+        self._do_flow_layout()
 
 
 # ---------------------------------------------------------------------------
@@ -791,7 +807,53 @@ class MosaicVisualizer(QMainWindow):
         self.setStatusBar(self.status)
         self.status.showMessage("Ready — enter a query and press Search.")
 
+        self.canvas.tile_clicked.connect(self._on_tile_clicked)
         self._populate_movies()
+
+    # ------------------------------------------------------------------
+    # Control panel
+
+    def _on_tile_clicked(self, result: dict) -> None:
+        """Open the clicked shot in the Shotlist Visualizer.
+
+        If the Shotlist Visualizer is already running, jumps via IPC.
+        Otherwise, launches a new process and passes --shot-id so it opens
+        directly at the correct shot.
+        """
+        filename = result.get("filename") or result.get("movie_title", "")
+        shot_id  = str(result.get("shot_id", ""))
+        if not filename:
+            self.status.showMessage("Cannot open shot: no filename in result.", 4000)
+            return
+
+        from visualizers.shot_visualizer import ipc_send_load
+        sent = ipc_send_load(
+            self.project_path,
+            filename,
+            "movies",
+            shot_id=shot_id,
+            playback="pause",
+        )
+        if sent:
+            self.status.showMessage(
+                f"Jumped Shotlist Visualizer → {filename}  shot {shot_id}", 4000
+            )
+            return
+
+        # No running instance — launch one.
+        visualizer_path = Path(__file__).parent / "shot_visualizer.py"
+        cmd = [
+            sys.executable, str(visualizer_path),
+            "--project", self.project_path,
+            "--media", "movies",
+            "--filenames", filename,
+        ]
+        if shot_id:
+            cmd += ["--shot-id", shot_id]
+        subprocess.Popen(cmd)
+        self.status.showMessage(
+            f"Launching Shotlist Visualizer → {filename}  shot {shot_id}", 4000
+        )
 
     # ------------------------------------------------------------------
     # Control panel

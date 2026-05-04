@@ -71,9 +71,9 @@ def _ipc_socket_path(project_path: str) -> Path:
 
 
 class _IpcServer(_QThread):
-    """Listens on a Unix-domain socket and emits load_requested(filename, media_type)."""
+    """Listens on a Unix-domain socket and emits load_requested(filename, media_type, shot_id, playback)."""
 
-    load_requested = _pyqtSignal(str, str)   # filename, media_type
+    load_requested = _pyqtSignal(str, str, str, str)   # filename, media_type, shot_id, playback
 
     def __init__(self, project_path: str, parent=None) -> None:
         super().__init__(parent)
@@ -110,6 +110,8 @@ class _IpcServer(_QThread):
                         self.load_requested.emit(
                             msg.get("filename", ""),
                             msg.get("media_type", "movies"),
+                            msg.get("shot_id", ""),
+                            msg.get("playback", "pause"),
                         )
                 except Exception:
                     pass
@@ -126,8 +128,20 @@ class _IpcServer(_QThread):
         self._running = False
 
 
-def ipc_send_load(project_path: str, filename: str, media_type: str) -> bool:
+def ipc_send_load(
+    project_path: str,
+    filename: str,
+    media_type: str,
+    shot_id: str = "",
+    playback: str = "pause",
+) -> bool:
     """Send a load request to a running Shotlist Visualizer.
+
+    Parameters
+    ----------
+    shot_id:  Optional shot_id to jump to after loading the film.
+    playback: ``"pause"`` (default) keeps the player stopped on the shot;
+              ``"play"`` resumes playback after jumping.
 
     Returns True if the message was delivered, False if no server is listening.
     """
@@ -139,7 +153,13 @@ def ipc_send_load(project_path: str, filename: str, media_type: str) -> bool:
         conn = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
         conn.settimeout(2.0)
         conn.connect(str(sock_path))
-        msg = json.dumps({"action": "load", "filename": filename, "media_type": media_type})
+        msg = json.dumps({
+            "action":     "load",
+            "filename":   filename,
+            "media_type": media_type,
+            "shot_id":    shot_id,
+            "playback":   playback,
+        })
         conn.sendall(msg.encode())
         conn.close()
         return True
@@ -761,7 +781,7 @@ class ShotlistVisualizer(QMainWindow):
         self._ipc_server.load_requested.connect(self._on_ipc_load)
         self._ipc_server.start()
 
-    def _on_ipc_load(self, filename: str, media_type: str) -> None:
+    def _on_ipc_load(self, filename: str, media_type: str, shot_id: str, playback: str) -> None:
         """Handle a load request arriving from the IPC socket."""
         self.raise_()
         self.activateWindow()
@@ -778,6 +798,17 @@ class ShotlistVisualizer(QMainWindow):
             self.movie_combo.addItem(_display_name(filename), filename)
             self._updating_combo = False
             self.switch_to_movie(len(self.filenames) - 1)
+
+        # Jump to the requested shot if one was provided.
+        if shot_id:
+            for i, shot in enumerate(self.shots):
+                if str(shot.get("shot_id", "")) == str(shot_id):
+                    self.jump_to_shot(i)
+                    break
+
+        # Enforce playback state requested by the caller.
+        if playback == "pause" and self.is_playing:
+            self.stop_playback()
 
     # ------------------------------------------------------------------
     # Data loading
@@ -2505,6 +2536,7 @@ def main():
     parser.add_argument('--filenames', nargs='+', help="Explicit list of filenames (passed by cli.py)")
     parser.add_argument('--all', action='store_true', help="Validate all movies with shotlists")
     parser.add_argument('--verbose', action='store_true', help="Print audio/gremlins diagnostics to stderr (also writes a crash log)")
+    parser.add_argument('--shot-id', dest='shot_id', default='', help="Jump to this shot_id on startup")
 
     args = parser.parse_args()
 
@@ -2587,6 +2619,18 @@ def main():
         screen = QApplication.primaryScreen()
         visualizer.setGeometry(screen.availableGeometry())
     visualizer.show()
+
+    # Jump to a specific shot if requested (e.g. launched from the Mosaic Visualizer).
+    if args.shot_id:
+        _target_shot_id = args.shot_id
+        def _jump_on_start():
+            for i, shot in enumerate(visualizer.shots):
+                if str(shot.get("shot_id", "")) == _target_shot_id:
+                    visualizer.jump_to_shot(i)
+                    if visualizer.is_playing:
+                        visualizer.stop_playback()
+                    break
+        QTimer.singleShot(250, _jump_on_start)
 
     sys.exit(app.exec_())
 
