@@ -1282,18 +1282,13 @@ def _meta_list(args):
         rows = [r for r in rows if needle in str(r.get("director", "")).lower()]
 
     # Add subtitle status
-    subtitle_dir = Path(project_path) / "media" / "subtitles" / media_type
-    if True:
-        for row in rows:
-            filename = row.get("filename", "")
-            if filename:
-                subtitle_name = Path(filename).stem + ".srt"
-                subtitle_path = subtitle_dir / subtitle_name
-                old_subtitle_name = subtitle_name.replace(" ", "-")
-                old_subtitle_path = subtitle_dir / old_subtitle_name
-                row["has_subtitle"] = subtitle_path.exists() or old_subtitle_path.exists()
-            else:
-                row["has_subtitle"] = False
+    from data.subtitles import subtitle_exists as _subtitle_exists
+    for row in rows:
+        filename = row.get("filename", "")
+        if filename:
+            row["has_subtitle"] = _subtitle_exists(project_path, media_type, filename)
+        else:
+            row["has_subtitle"] = False
 
     if args.fields:
         fields = [f.strip() for f in args.fields.split(",")]
@@ -1334,12 +1329,12 @@ def _meta_prune(args):
 def _meta_audit(args):
     """Report missing metadata, shotlists, subtitles, and thumbnails."""
     from data.metadata import get_metadata
+    from data.subtitles import subtitle_exists as _subtitle_exists
 
     project_path = prefs.get("path")
     media_type = getattr(args, "media", "movies")
 
     video_dir     = Path(project_path) / "media" / "videos"     / media_type
-    subtitle_dir  = Path(project_path) / "media" / "subtitles"  / media_type
     shotlist_dir  = Path(project_path) / "data"  / "shotlists"  / media_type
     thumbnail_dir = Path(project_path) / "media" / "thumbnails" / media_type
 
@@ -1360,9 +1355,7 @@ def _meta_audit(args):
         fn = entry.get("filename", "")
         if not fn:
             continue
-        stem = Path(fn).stem
-        if not (subtitle_dir / (stem + ".srt")).exists() and \
-           not (subtitle_dir / (stem.replace(" ", "-") + ".srt")).exists():
+        if not _subtitle_exists(project_path, media_type, fn):
             no_subtitle.append(fn)
 
     no_thumbnail = []
@@ -2516,7 +2509,7 @@ def _subtitle_fetch(args):
         print("✗ Provide a search query, --tmdb, or --all", file=sys.stderr)
         sys.exit(1)
 
-    subtitle_dir = Path(project_path) / "media" / "subtitles" / media_type
+    from data.subtitles import subtitle_exists as _subtitle_exists
     ok = skip_exists = skip_no_imdb = failed = 0
 
     for row in targets:
@@ -2529,10 +2522,7 @@ def _subtitle_fetch(args):
             skip_no_imdb += 1
             continue
 
-        stem = Path(filename).stem
-        existing = (subtitle_dir / (stem + ".srt")).exists() or \
-                   (subtitle_dir / (stem.replace(" ", "-") + ".srt")).exists()
-        if existing and not force:
+        if _subtitle_exists(project_path, media_type, filename) and not force:
             print(f"  skip (exists)   {filename}")
             skip_exists += 1
             continue
@@ -2567,10 +2557,10 @@ def _subtitle_fetch(args):
 
 def _subtitle_list(args):
     from data.metadata import get_metadata
+    from data.subtitles import subtitle_exists as _subtitle_exists
 
     project_path = prefs.get("path")
     media_type = args.media
-    subtitle_dir = Path(project_path) / "media" / "subtitles" / media_type
 
     rows = get_metadata(project_path, media_type=media_type)
     if not rows:
@@ -2585,9 +2575,7 @@ def _subtitle_list(args):
         filename = row.get("filename", "")
         if not filename:
             continue
-        stem = Path(filename).stem
-        has = (subtitle_dir / (stem + ".srt")).exists() or \
-              (subtitle_dir / (stem.replace(" ", "-") + ".srt")).exists()
+        has = _subtitle_exists(project_path, media_type, filename)
         label = f"{row.get('title', filename)} ({row.get('year', '?')})"
         if has:
             present.append(label)

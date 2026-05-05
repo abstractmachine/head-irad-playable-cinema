@@ -45,9 +45,11 @@ from styles.theme import JumpScrollBar
 
 THUMB_W = 90
 THUMB_H = 60
+CARD_H = 124           # fixed height: title + date + ~5 lines overview at 10pt
+CARD_FONT_PT  = theme.BASE_PT + 1   # one step up from global base
 CARD_SPACING = 6
 COLUMN_MIN_W = 300
-OVERVIEW_MAX_CHARS = 180
+OVERVIEW_MAX_CHARS = 340
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +85,41 @@ _CARD_HOVER  = f"QFrame {{ background-color: {theme.ACCENT}; border: none; }}"
 _CLI_PATH    = Path(__file__).parent.parent / "cli.py"
 
 
+class _ThumbLabel(QLabel):
+    """Label that scales its pixmap to fill the card height; width follows aspect ratio."""
+
+    def __init__(self, pix: QPixmap, parent=None):
+        super().__init__(parent)
+        self._src = pix
+        self._resizing = False
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        self.setStyleSheet("border: none; background-color: transparent;")
+        # Set an initial width from aspect ratio at THUMB_H so layout has a starting size
+        if pix and not pix.isNull() and pix.height() > 0:
+            w = max(1, round(pix.width() * THUMB_H / pix.height()))
+        else:
+            w = THUMB_H
+        self.setFixedWidth(w)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._resizing or not self._src or self._src.isNull() or self.height() <= 0:
+            return
+        self._resizing = True
+        try:
+            # Scale to fill exact height; width derived from aspect ratio — no cropping
+            scaled = self._src.scaled(
+                self._src.width() * 4, self.height(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+            if scaled.width() != self.width():
+                self.setFixedWidth(scaled.width())
+            self.setPixmap(scaled)
+        finally:
+            self._resizing = False
+
+
 class _BaseCard(QFrame):
     """Common hover-highlight and click-to-open behaviour."""
 
@@ -91,6 +128,7 @@ class _BaseCard(QFrame):
         self._filename   = filename
         self._media_type = media_type
         self.setFrameShape(QFrame.NoFrame)
+        self.setFixedHeight(CARD_H)
         self.setStyleSheet(_CARD_NORMAL)
         self.setCursor(Qt.PointingHandCursor)
 
@@ -124,29 +162,25 @@ class _MovieCard(_BaseCard):
         super().__init__(record.get("filename", ""), "movies", parent)
 
         row = QHBoxLayout(self)
-        row.setContentsMargins(6, 6, 6, 6)
-        row.setSpacing(8)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
 
-        # Thumbnail
-        thumb_label = QLabel()
-        thumb_label.setFixedSize(THUMB_W, THUMB_H)
-        thumb_label.setAlignment(Qt.AlignCenter)
-        thumb_label.setStyleSheet(f"background-color: {theme.CANVAS_BG}; border: none;")
+        # Thumbnail — cover-fills full card height, no border/background
+        pix = QPixmap()
         if thumb_bytes:
-            pix = QPixmap()
             pix.loadFromData(thumb_bytes)
-            pix = pix.scaled(THUMB_W, THUMB_H, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            thumb_label.setPixmap(pix)
-        row.addWidget(thumb_label, 0, Qt.AlignTop)
+        thumb_label = _ThumbLabel(pix)
+        row.addWidget(thumb_label)
 
         # Text block
         text_col = QVBoxLayout()
-        text_col.setContentsMargins(0, 0, 0, 0)
+        text_col.setContentsMargins(6, 6, 6, 6)
         text_col.setSpacing(2)
 
         title = record.get("title") or "(untitled)"
         title_label = QLabel(title)
-        title_label.setFont(theme.font_ui(bold=True))
+        _f = theme.font_ui(bold=True); _f.setPointSize(CARD_FONT_PT)
+        title_label.setFont(_f)
         title_label.setWordWrap(True)
         title_label.setStyleSheet("background-color: transparent; border: none; color: #ffffff;")
         text_col.addWidget(title_label)
@@ -157,7 +191,8 @@ class _MovieCard(_BaseCard):
         if meta_parts:
             meta_label = QLabel(" · ".join(meta_parts))
             meta_label.setObjectName("dim")
-            meta_label.setFont(theme.font_mono())
+            _fm = theme.font_mono(); _fm.setPointSize(CARD_FONT_PT)
+            meta_label.setFont(_fm)
             meta_label.setStyleSheet(f"background-color: transparent; border: none; color: {theme.TEXT_DIM};")
             meta_label.setWordWrap(True)
             text_col.addWidget(meta_label)
@@ -166,10 +201,11 @@ class _MovieCard(_BaseCard):
         if overview:
             overview_label = QLabel(overview)
             overview_label.setObjectName("dim")
-            overview_label.setFont(theme.font_ui())
+            _fo = theme.font_ui(); _fo.setPointSize(CARD_FONT_PT)
+            overview_label.setFont(_fo)
             overview_label.setStyleSheet(f"background-color: transparent; border: none; color: {theme.TEXT_DIM};")
             overview_label.setWordWrap(True)
-            overview_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            overview_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
             text_col.addWidget(overview_label)
 
         text_col.addStretch(1)
@@ -183,29 +219,25 @@ class _GameplayCard(_BaseCard):
         super().__init__(record.get("filename", ""), "gameplay", parent)
 
         row = QHBoxLayout(self)
-        row.setContentsMargins(6, 6, 6, 6)
-        row.setSpacing(8)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
 
-        # Thumbnail
-        thumb_label = QLabel()
-        thumb_label.setFixedSize(THUMB_W, THUMB_H)
-        thumb_label.setAlignment(Qt.AlignCenter)
-        thumb_label.setStyleSheet(f"background-color: {theme.CANVAS_BG}; border: none;")
+        # Thumbnail — cover-fills full card height, no border/background
+        pix = QPixmap()
         if thumb_bytes:
-            pix = QPixmap()
             pix.loadFromData(thumb_bytes)
-            pix = pix.scaled(THUMB_W, THUMB_H, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            thumb_label.setPixmap(pix)
-        row.addWidget(thumb_label, 0, Qt.AlignTop)
+        thumb_label = _ThumbLabel(pix)
+        row.addWidget(thumb_label)
 
         # Text block
         text_col = QVBoxLayout()
-        text_col.setContentsMargins(0, 0, 0, 0)
+        text_col.setContentsMargins(6, 6, 6, 6)
         text_col.setSpacing(2)
 
         title = record.get("title") or "(untitled)"
         title_label = QLabel(title)
-        title_label.setFont(theme.font_ui(bold=True))
+        _f = theme.font_ui(bold=True); _f.setPointSize(CARD_FONT_PT)
+        title_label.setFont(_f)
         title_label.setWordWrap(True)
         title_label.setStyleSheet("background-color: transparent; border: none; color: #ffffff;")
         text_col.addWidget(title_label)
@@ -214,7 +246,8 @@ class _GameplayCard(_BaseCard):
         if game:
             game_label = QLabel(game)
             game_label.setObjectName("dim")
-            game_label.setFont(theme.font_mono())
+            _fm = theme.font_mono(); _fm.setPointSize(CARD_FONT_PT)
+            game_label.setFont(_fm)
             game_label.setStyleSheet(f"background-color: transparent; border: none; color: {theme.TEXT_DIM};")
             game_label.setWordWrap(True)
             text_col.addWidget(game_label)
@@ -223,10 +256,11 @@ class _GameplayCard(_BaseCard):
         if overview:
             overview_label = QLabel(overview)
             overview_label.setObjectName("dim")
-            overview_label.setFont(theme.font_ui())
+            _fo = theme.font_ui(); _fo.setPointSize(CARD_FONT_PT)
+            overview_label.setFont(_fo)
             overview_label.setStyleSheet(f"background-color: transparent; border: none; color: {theme.TEXT_DIM};")
             overview_label.setWordWrap(True)
-            overview_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            overview_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
             text_col.addWidget(overview_label)
 
         text_col.addStretch(1)

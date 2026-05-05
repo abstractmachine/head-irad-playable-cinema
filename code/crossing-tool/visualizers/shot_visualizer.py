@@ -40,7 +40,7 @@ from PyQt5.QtWidgets import (
     QPushButton, QLabel,
     QMessageBox, QSizePolicy, QSlider, QStyle, QComboBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QFrame,
-    QTextEdit, QGridLayout,
+    QTextEdit, QGridLayout, QStackedLayout,
 )
 from styles.theme import GripSplitter, JumpScrollBar, save_window_geometry, restore_window_geometry
 from PyQt5.QtGui import QFont, QPixmap, QImage, QColor, QMouseEvent, QPalette, QBrush
@@ -729,6 +729,9 @@ class ShotlistVisualizer(QMainWindow):
         self.audio                = AudioPlayer(verbose=self._verbose)
         self._audio_start_signal.connect(self._on_audio_start_main_thread)
 
+        # ---- Subtitle state ----
+        self.subtitle_cues: list  = []
+
         # ---- Gremlins ----
         self.gremlins_active = False
         self.gremlins_timer  = QTimer()
@@ -882,6 +885,15 @@ class ShotlistVisualizer(QMainWindow):
             elif "best_frame" not in shot:
                 shot["best_frame"] = None
 
+        # Load subtitle cues (movies only; gameplay has no subtitles)
+        if self.media_type == "movies":
+            from data.subtitles import load_subtitle_cues as _load_cues
+            self.subtitle_cues = _load_cues(
+                self.project_path, self.media_type, self.filename
+            )
+        else:
+            self.subtitle_cues = []
+
     def _reload_for_movie(self, index: int):
         """Reload video + data for movie *index*, then refresh the UI."""
         self.current_movie_index = index
@@ -941,7 +953,38 @@ class ShotlistVisualizer(QMainWindow):
         self.frame_label.setScaledContents(False)
         self.frame_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
         self.frame_label.setMinimumSize(1, 1)
-        left_layout.addWidget(self.frame_label, stretch=1)
+
+        # Subtitle overlay — sits on top of the video frame, anchored to the
+        # bottom, and is never part of the vertical flow so video position is
+        # unaffected by subtitle content or height.
+        self.subtitle_label = QLabel()
+        self.subtitle_label.setAlignment(Qt.AlignCenter)
+        self.subtitle_label.setFont(theme.font_subtitle())
+        self.subtitle_label.setWordWrap(True)
+        self.subtitle_label.setStyleSheet(
+            f"color: {theme.TEXT}; background-color: transparent; padding: 2px 8px;"
+            f" font-size: {theme.SUBTITLE_PT}pt;"
+        )
+
+        _sub_overlay = QWidget()
+        _sub_overlay.setAttribute(Qt.WA_TransparentForMouseEvents)
+        _sub_overlay.setStyleSheet("background: transparent;")
+        _sub_ol = QVBoxLayout(_sub_overlay)
+        _sub_ol.setContentsMargins(0, 0, 0, 8)
+        _sub_ol.setSpacing(0)
+        _sub_ol.addStretch()
+        _sub_ol.addWidget(self.subtitle_label)
+
+        video_container = QWidget()
+        video_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
+        _stack = QStackedLayout(video_container)
+        _stack.setStackingMode(QStackedLayout.StackAll)
+        _stack.setContentsMargins(0, 0, 0, 0)
+        _stack.addWidget(self.frame_label)
+        _stack.addWidget(_sub_overlay)
+        _stack.setCurrentIndex(1)
+
+        left_layout.addWidget(video_container, stretch=1)
 
         self.timeline_slider = ClickSeekSlider(Qt.Horizontal)
         self.timeline_slider.setMinimum(0)
@@ -993,10 +1036,14 @@ class ShotlistVisualizer(QMainWindow):
         self.ann_fields_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.ann_fields_table.itemChanged.connect(self._on_fields_cell_changed)
         self.ann_fields_table.setVerticalScrollBar(JumpScrollBar())
+        # Re-fit row heights whenever the column is resized (e.g. splitter drag).
+        self.ann_fields_table.horizontalHeader().sectionResized.connect(
+            lambda _l, _o, _n: self.ann_fields_table.resizeRowsToContents()
+        )
         mid_layout.addWidget(self.ann_fields_table, stretch=1)
 
         self.ann_dirty_label = QLabel()
-        self.ann_dirty_label.setFont(theme.font_mono())
+        self.ann_dirty_label.setFont(theme.font_ui())
         self.ann_dirty_label.setStyleSheet(f"color: {theme.ACCENT};")
         self.ann_dirty_label.hide()
         mid_layout.addWidget(self.ann_dirty_label)
@@ -1218,7 +1265,7 @@ class ShotlistVisualizer(QMainWindow):
         controls_layout.addLayout(btn_grid)
 
         hint = QLabel("\u2191\u2193 shot  PgUp/Dn scene  Space play  \u2190\u2192 frame  Shift+\u2190\u2192 1s  Home/End movie")
-        hint.setFont(theme.font_mono())
+        hint.setFont(theme.font_ui())
         hint.setStyleSheet(f"color: {theme.TEXT_DIM};")
         controls_layout.addWidget(hint)
 
@@ -1237,6 +1284,7 @@ class ShotlistVisualizer(QMainWindow):
         h_splitter.setStretchFactor(2, 0)
         self._h_splitter   = h_splitter
         self._right_widget = right
+        self._mid_widget   = mid
 
         self.rebuild_shot_list()
         self.rebuild_scene_list()
@@ -1258,7 +1306,9 @@ class ShotlistVisualizer(QMainWindow):
         right_w = table_w + margins.left() + margins.right() + self.scene_list.maximumWidth() + 4
         sizes   = self._h_splitter.sizes()
         total   = sum(sizes)
-        mid_w   = sizes[1]
+        # Start the mid (fields) panel at a compact width — just wide enough
+        # for field titles at the current font size, no wider.
+        mid_w   = self._mid_widget.minimumWidth()
         left_w  = max(200, total - mid_w - right_w)
         self._h_splitter.setSizes([left_w, mid_w, right_w])
 
@@ -1292,6 +1342,7 @@ class ShotlistVisualizer(QMainWindow):
         if frame is not None:
             self._display_frame(frame)
         self.update_frame_info()
+        self._update_subtitle_display()
 
     def _get_frame(self, frame_number: int) -> np.ndarray | None:
         """Extract a specific frame using OpenCV (frame-precise)."""
@@ -1715,6 +1766,18 @@ class ShotlistVisualizer(QMainWindow):
             self._display_frame(frame)
         self.update_frame_info()
     
+    def _update_subtitle_display(self):
+        """Refresh the subtitle label for the current playback position."""
+        if not hasattr(self, "subtitle_label"):
+            return
+        if not self.subtitle_cues or self.frame_rate <= 0:
+            self.subtitle_label.setText("")
+            return
+        from data.subtitles import active_subtitle as _active_subtitle
+        secs = self.current_frame_number / self.frame_rate
+        text = _active_subtitle(self.subtitle_cues, secs)
+        self.subtitle_label.setText(text)
+
     def update_frame_info(self):
         """Update info label with current frame details."""
         if not (0 <= self.current_shot_index < len(self.shots)):
@@ -1732,6 +1795,7 @@ class ShotlistVisualizer(QMainWindow):
             f"Frame: {self.current_frame_number}\n"
             f"{start_tc} → {end_tc}{conf_str}{sid_str}"
         )
+        self._update_subtitle_display()
     
     def on_shot_selected(self, row: int, col: int = 0):
         """Handle shot selection from table.

@@ -181,8 +181,10 @@ _BG_COLOR      = (18, 18, 18)    # canvas background
 _TILE_BG       = (38, 38, 38)    # placeholder color for missing images
 _CAPTION_COLOR = (195, 195, 195) # caption text color
 
-# Font search: prefer a clean system font, fall back gracefully
+# Font search: prefer bundled Hanken Grotesk, fall back to system fonts
+_FONTS_DIR = Path(__file__).parent.parent / "styles" / "fonts"
 _FONT_CANDIDATES = [
+    str(_FONTS_DIR / "Hanken_Grotesk" / "HankenGrotesk-VariableFont_wght.ttf"),
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
     "/usr/share/fonts/truetype/freefont/FreeSans.ttf",

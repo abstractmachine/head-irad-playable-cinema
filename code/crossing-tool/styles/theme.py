@@ -6,7 +6,7 @@ Design language:
   - UI borders  : 25% grey   (#404040)  — splitter handles, group-box and
                               section frames  (controlled by UI_BORDER)
   - Highlight   : fuchsia    (#ff00ff)
-  - Typography  : Roboto for UI chrome, Roboto Mono for data / info fields
+  - Typography  : Hanken Grotesk for UI chrome, Roboto Mono for data / info fields
   - Single base font size; individual components may adjust later.
 
 Usage (in each visualizer's public launcher function)::
@@ -46,10 +46,11 @@ CANVAS_BG    = "#3a3a3a"   # video / image display areas (dark so content pops)
 # Typography
 # ---------------------------------------------------------------------------
 
-BASE_PT      = 10          # single base point size for all UI elements
+BASE_PT      = 9           # single base point size for all UI elements
+SUBTITLE_PT  = 12          # subtitle overlay — larger for readability
 
-FAMILY_UI    = "Roboto"       # buttons, labels, combos, window chrome
-FAMILY_MONO  = "Roboto Mono"  # lists, text areas, info / data labels
+FAMILY_UI    = "Hanken Grotesk"  # buttons, labels, combos, window chrome
+FAMILY_MONO  = "Roboto Mono"     # lists, text areas, info / data labels
 
 # ---------------------------------------------------------------------------
 # Font registration
@@ -58,10 +59,10 @@ FAMILY_MONO  = "Roboto Mono"  # lists, text areas, info / data labels
 _FONTS_DIR   = Path(__file__).parent / "fonts"
 
 _FONT_FILES  = [
-    _FONTS_DIR / "Roboto"      / "Roboto-VariableFont_wdth,wght.ttf",
-    _FONTS_DIR / "Roboto"      / "Roboto-Italic-VariableFont_wdth,wght.ttf",
-    _FONTS_DIR / "Roboto_Mono" / "RobotoMono-VariableFont_wght.ttf",
-    _FONTS_DIR / "Roboto_Mono" / "RobotoMono-Italic-VariableFont_wght.ttf",
+    _FONTS_DIR / "Hanken_Grotesk" / "HankenGrotesk-VariableFont_wght.ttf",
+    _FONTS_DIR / "Hanken_Grotesk" / "HankenGrotesk-Italic-VariableFont_wght.ttf",
+    _FONTS_DIR / "Roboto_Mono"    / "RobotoMono-VariableFont_wght.ttf",
+    _FONTS_DIR / "Roboto_Mono"    / "RobotoMono-Italic-VariableFont_wght.ttf",
 ]
 
 
@@ -95,6 +96,12 @@ def font_mono(bold: bool = False) -> "QFont":
     return f
 
 
+def font_subtitle() -> "QFont":
+    """Return a Hanken Grotesk QFont at SUBTITLE_PT (subtitle overlay)."""
+    from PyQt5.QtGui import QFont
+    return QFont(FAMILY_UI, SUBTITLE_PT)
+
+
 # ---------------------------------------------------------------------------
 # Stylesheet
 # ---------------------------------------------------------------------------
@@ -123,6 +130,7 @@ QPushButton {{
     border-radius: 3px;
     min-height: {BTN_H}px;
     max-height: {BTN_H}px;
+    font-size: {BASE_PT + 1}pt;
 }}
 QPushButton:hover    {{ background-color: {BTN_HOVER}; }}
 QPushButton:pressed  {{ background-color: {BTN_PRESSED}; }}
