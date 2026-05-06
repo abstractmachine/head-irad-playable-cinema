@@ -21,26 +21,44 @@ def _read_webhook(project_path: str) -> str | None:
     return url or None
 
 
-def discord_notify(message: str, project_path: str) -> bool:
-    """Post *message* to the configured Discord webhook.
+_DISCORD_MAX_LEN = 2000
 
-    Returns True on success, False on any error (errors are printed to stdout
-    so they don't interrupt batch processes).
 
-    Args:
-        message:      The text to send (plain string; no markdown required).
-        project_path: Root path of the crossing project, used to locate the
-                      key file at preferences/keys/discord_api_key.txt.
+def _split_message(message: str, limit: int = _DISCORD_MAX_LEN) -> list[str]:
+    """Split *message* into chunks that each fit within *limit* characters.
+
+    Splits on newline boundaries where possible so lines are never broken.
     """
-    webhook_url = _read_webhook(project_path)
-    if not webhook_url:
-        print(
-            "⚠ Discord notification skipped — no webhook URL set.\n"
-            "  Run: crossing tool api_key set discord <your-webhook-url>"
-        )
-        return False
+    if len(message) <= limit:
+        return [message]
 
-    payload = json.dumps({"content": message}).encode("utf-8")
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+
+    for line in message.splitlines(keepends=True):
+        if current_len + len(line) > limit:
+            if current:
+                chunks.append("".join(current))
+            # If a single line exceeds the limit, hard-split it.
+            while len(line) > limit:
+                chunks.append(line[:limit])
+                line = line[limit:]
+            current = [line]
+            current_len = len(line)
+        else:
+            current.append(line)
+            current_len += len(line)
+
+    if current:
+        chunks.append("".join(current))
+
+    return chunks
+
+
+def _post_chunk(webhook_url: str, chunk: str) -> bool:
+    """POST a single chunk to *webhook_url*. Returns True on success."""
+    payload = json.dumps({"content": chunk}).encode("utf-8")
     req = urllib.request.Request(
         webhook_url,
         data=payload,
@@ -65,3 +83,29 @@ def discord_notify(message: str, project_path: str) -> bool:
     except Exception as exc:
         print(f"⚠ Discord notification failed: {exc}")
         return False
+
+
+def discord_notify(message: str, project_path: str) -> bool:
+    """Post *message* to the configured Discord webhook.
+
+    Long messages are automatically split into multiple requests to stay within
+    Discord's 2000-character content limit.
+
+    Returns True if all chunks were sent successfully, False otherwise (errors
+    are printed to stdout so they don't interrupt batch processes).
+
+    Args:
+        message:      The text to send (plain string; no markdown required).
+        project_path: Root path of the crossing project, used to locate the
+                      key file at preferences/keys/discord_api_key.txt.
+    """
+    webhook_url = _read_webhook(project_path)
+    if not webhook_url:
+        print(
+            "⚠ Discord notification skipped — no webhook URL set.\n"
+            "  Run: crossing tool api_key set discord <your-webhook-url>"
+        )
+        return False
+
+    chunks = _split_message(message)
+    return all(_post_chunk(webhook_url, chunk) for chunk in chunks)
