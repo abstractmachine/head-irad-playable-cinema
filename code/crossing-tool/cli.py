@@ -2365,6 +2365,15 @@ def cmd_tool_default(args):
             field_list = [f.strip() for f in args.value.split(",") if f.strip()]
             save_fields(project_path, field_list)
             print(f"✓ Display fields set to: {', '.join(field_list)}")
+        elif key == "atomic-fields":
+            project_path = prefs.get("path")
+            if not project_path:
+                print("✗ No project path set. Run: crossing tool path <path>", file=sys.stderr)
+                sys.exit(1)
+            from data.index import save_atomic_fields
+            field_list = [f.strip() for f in args.value.split(",") if f.strip()]
+            save_atomic_fields(project_path, field_list)
+            print(f"✓ Atomic label fields set to: {', '.join(field_list)}")
         elif key not in _TOOL_DEFAULT_KEYS:
             print(f"✗ Unknown default key '{key}'. Available keys: fields, {', '.join(_TOOL_DEFAULT_KEYS)}", file=sys.stderr)
             sys.exit(1)
@@ -2400,6 +2409,17 @@ def cmd_tool_default(args):
                 print("fields: (no fields.yaml found in project)")
             except (ValueError, ImportError) as exc:
                 print(f"fields: (error loading — {exc})")
+        elif key == "atomic-fields":
+            project_path = prefs.get("path")
+            if not project_path:
+                print("atomic-fields: (no project path set)", file=sys.stderr)
+                sys.exit(1)
+            try:
+                from data.index import load_atomic_fields
+                fields = load_atomic_fields(project_path)
+                print(f"atomic-fields: {', '.join(fields)}")
+            except (ValueError, ImportError) as exc:
+                print(f"atomic-fields: (error loading — {exc})")
         else:
             keys = [key] if key else list(_TOOL_DEFAULT_KEYS)
             for k in keys:
@@ -2421,6 +2441,14 @@ def cmd_tool_default(args):
                         print("fields: (no fields.yaml found in project)")
                     except (ValueError, ImportError) as exc:
                         print(f"fields: (error loading — {exc})")
+                # Show atomic label fields
+                if project_path:
+                    try:
+                        from data.index import load_atomic_fields
+                        atomic = load_atomic_fields(project_path)
+                        print(f"atomic-fields: {', '.join(atomic)}")
+                    except (ValueError, ImportError) as exc:
+                        print(f"atomic-fields: (error loading — {exc})")
                 # Show the index mapping when displaying all defaults
                 if project_path:
                     try:
@@ -2841,9 +2869,14 @@ def _annotate_validate(args):
     - Checks that the file is valid JSON.
     - Fixes fields that should be arrays but were stored as a comma-separated
       string (e.g. ``"diegetic, graphics"`` → ``["diegetic", "graphics"]``).
+    - For atomic label fields (configured via ``atomic-fields`` in fields.yaml),
+      also splits comma-joined items within lists
+      (e.g. ``["pronghorn, pronghorns"]`` → ``["pronghorn", "pronghorns"]``)
+      and deduplicates.
     """
     _require_path()
     from data.shotlist import resolve_filename
+    from data.annotate import normalize_label_list, load_label_list_fields
 
     project_path = prefs.get("path")
     media_type   = getattr(args, "media", "movies")
@@ -2851,6 +2884,9 @@ def _annotate_validate(args):
 
     # Fields whose values must always be lists, never a plain string.
     _ARRAY_FIELDS = {"type", "humans", "action", "wearing", "animals", "objects", "text"}
+
+    # Atomic label fields: items within the list are also split on commas.
+    label_fields = load_label_list_fields(project_path)
 
     ann_dir = Path(project_path) / "data" / "annotations" / "shots" / media_type
 
@@ -2910,9 +2946,16 @@ def _annotate_validate(args):
             for field in _ARRAY_FIELDS:
                 val = ann.get(field)
                 if isinstance(val, str) and "," in val:
+                    # Bare string stored where a list is expected — wrap and split.
                     parts = [p.strip() for p in val.split(",") if p.strip()]
                     ann[field] = parts
                     file_fixes += 1
+                elif isinstance(val, list) and field in label_fields:
+                    # List items may themselves contain commas ("pronghorn, pronghorns").
+                    normalized = normalize_label_list(val, field, label_fields=label_fields)
+                    if normalized != val:
+                        ann[field] = normalized
+                        file_fixes += 1
 
         if file_fixes > 0:
             if not dry_run:
@@ -4320,7 +4363,7 @@ def build_parser():
         "validate",
         help="Validate annotation JSON and fix comma-separated values in array fields",
     )
-    p_annotate_validate.set_defaults(func=_shotlist_annotate)
+    p_annotate_validate.set_defaults(func=_annotate_validate)
     p_annotate_validate.add_argument(
         "filename", nargs="?", default=None,
         help="Fuzzy keyword to match a movie or game title (or use --tmdb / --all)",
@@ -4987,7 +5030,7 @@ def build_parser():
     p_tool_default = tool_sub.add_parser("default", help="Get or set persistent defaults for annotate and other commands")
     default_sub = p_tool_default.add_subparsers(dest="default_subcommand")
 
-    _default_key_choices = list(_TOOL_DEFAULT_KEYS)
+    _default_key_choices = list(_TOOL_DEFAULT_KEYS) + ["fields", "atomic-fields"]
 
     p_tool_default_set = default_sub.add_parser("set", help="Set a default value")
     p_tool_default_set.add_argument("key", choices=_default_key_choices, help="Setting name")

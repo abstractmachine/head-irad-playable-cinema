@@ -43,6 +43,41 @@ def load_mapping(project_path: str) -> dict:
     return raw["mapping"]
 
 
+def _load_fields_yaml(project_path: str) -> dict:
+    """Read preferences/data/fields.yaml and return the parsed dict.
+
+    Returns an empty dict when the file does not exist (callers that need the
+    file to be present must check themselves).  Raises ImportError when PyYAML
+    is not installed.
+    """
+    fields_path = Path(project_path) / "preferences" / "data" / "fields.yaml"
+    if not fields_path.exists():
+        return {}
+    try:
+        import yaml
+    except ImportError as exc:
+        raise ImportError(
+            "PyYAML is required. Install with: pip install pyyaml"
+        ) from exc
+    with fields_path.open("r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f)
+    return raw if isinstance(raw, dict) else {}
+
+
+def _save_fields_yaml(project_path: str, data: dict) -> None:
+    """Write *data* to preferences/data/fields.yaml, creating the directory as needed."""
+    try:
+        import yaml
+    except ImportError as exc:
+        raise ImportError(
+            "PyYAML is required. Install with: pip install pyyaml"
+        ) from exc
+    fields_path = Path(project_path) / "preferences" / "data" / "fields.yaml"
+    fields_path.parent.mkdir(parents=True, exist_ok=True)
+    with fields_path.open("w", encoding="utf-8") as f:
+        yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+
+
 def load_fields(project_path: str) -> list[str]:
     """Load the display field list from <project>/preferences/data/fields.yaml.
 
@@ -56,17 +91,9 @@ def load_fields(project_path: str) -> list[str]:
     if not fields_path.exists():
         raise FileNotFoundError(f"Fields file not found: {fields_path}")
 
-    try:
-        import yaml
-    except ImportError as exc:
-        raise ImportError(
-            "PyYAML is required for fields support. Install with: pip install pyyaml"
-        ) from exc
+    raw = _load_fields_yaml(project_path)
 
-    with fields_path.open("r", encoding="utf-8") as f:
-        raw = yaml.safe_load(f)
-
-    if not isinstance(raw, dict) or "fields" not in raw:
+    if "fields" not in raw:
         raise ValueError(
             f"Invalid fields YAML at {fields_path}: "
             "expected a top-level 'fields' key"
@@ -76,18 +103,43 @@ def load_fields(project_path: str) -> list[str]:
 
 
 def save_fields(project_path: str, fields: list[str]) -> None:
-    """Write an ordered field list to <project>/preferences/data/fields.yaml."""
-    try:
-        import yaml
-    except ImportError as exc:
-        raise ImportError(
-            "PyYAML is required for fields support. Install with: pip install pyyaml"
-        ) from exc
+    """Write an ordered field list to the ``fields`` key in fields.yaml.
 
+    Other keys in the file (e.g. ``atomic``) are preserved.
+    """
+    data = _load_fields_yaml(project_path)
+    data["fields"] = fields
+    _save_fields_yaml(project_path, data)
+
+
+def load_atomic_fields(project_path: str) -> list[str]:
+    """Load atomic label fields from the ``atomic`` key in fields.yaml.
+
+    The ``atomic`` key lists annotation fields whose values are atomic labels
+    (not free text) and should be comma-split and quote-stripped at write time.
+
+    Returns an empty list when the key is absent — callers should treat this as
+    "no normalization configured" rather than applying any hardcoded defaults.
+
+    Raises:
+        FileNotFoundError: If fields.yaml does not exist.
+        ImportError: If PyYAML is not installed.
+    """
     fields_path = Path(project_path) / "preferences" / "data" / "fields.yaml"
-    fields_path.parent.mkdir(parents=True, exist_ok=True)
-    with fields_path.open("w", encoding="utf-8") as f:
-        yaml.dump({"fields": fields}, f, default_flow_style=False, allow_unicode=True)
+    if not fields_path.exists():
+        raise FileNotFoundError(f"Fields file not found: {fields_path}")
+    raw = _load_fields_yaml(project_path)
+    return list(raw.get("atomic", []))
+
+
+def save_atomic_fields(project_path: str, fields: list[str]) -> None:
+    """Write the atomic label fields list to the ``atomic`` key in fields.yaml.
+
+    Other keys in the file (e.g. ``fields``) are preserved.
+    """
+    data = _load_fields_yaml(project_path)
+    data["atomic"] = fields
+    _save_fields_yaml(project_path, data)
 
 
 def serialize_annotation_item(item: dict, mapping: dict) -> str:

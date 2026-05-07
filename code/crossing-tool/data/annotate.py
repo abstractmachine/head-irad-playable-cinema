@@ -127,11 +127,101 @@ _ANNOTATION_SCHEMA: Dict[str, type] = {
     "text": list,
 }
 
+# No hardcoded atomic-label fields — the project's fields.yaml ``atomic`` key
+# is the authoritative source (via load_label_list_fields).  This constant is
+# kept as an empty frozenset so that code paths without a project path do the
+# safe thing: no normalization rather than applying an opinionated default.
+_LABEL_LIST_FIELDS: frozenset = frozenset()
 
-def _validate_annotation(data: Dict[str, Any]) -> Dict[str, Any]:
+
+def load_label_list_fields(project_path: str) -> frozenset:
+    """Return the set of atomic-label field names for *project_path*.
+
+    Reads from the ``atomic`` key in ``<project>/preferences/data/fields.yaml``
+    via ``data.index.load_atomic_fields``.
+
+    Falls back to an empty frozenset (no normalization) when:
+    - *project_path* is empty/None, or
+    - ``fields.yaml`` is absent, or
+    - the ``atomic`` key is not present in the file.
+
+    No hardcoded field names are ever injected — the YAML is the only source
+    of truth.
+    """
+    if not project_path:
+        return _LABEL_LIST_FIELDS
+    try:
+        from data.index import load_atomic_fields
+        return frozenset(load_atomic_fields(project_path))
+    except Exception:
+        return _LABEL_LIST_FIELDS
+
+
+def normalize_label_list(values: List[str], field_name: str, *, label_fields: Optional[frozenset] = None) -> List[str]:
+    """Normalize a list of annotation label strings for atomic-label fields.
+
+    Behaviour for fields whose name appears in the effective label-fields set:
+    - Strip leading/trailing whitespace from each item.
+    - Remove a single layer of wrapping single or double quotes.
+    - Split on commas so that "dog, horse" becomes two separate labels.
+    - Trim each resulting token; discard empty tokens.
+    - Deduplicate while preserving first-seen order.
+
+    For all other fields (e.g. free-form subtitle text) the list is returned
+    unchanged.
+
+    The set of fields treated as atomic labels is controlled by the optional
+    *label_fields* argument.  When omitted (``None``) the module-level
+    ``_LABEL_LIST_FIELDS`` constant is used (currently empty — no normalization
+    unless the project's fields.yaml configures an ``atomic`` list).
+    Pass the result of ``load_label_list_fields(project_path)`` to use the
+    project-specific YAML configuration.
+
+    Examples::
+        normalize_label_list(['"dog, horse"', 'cat', ' bird '], 'animals')
+        # → ['dog', 'horse', 'cat', 'bird']
+        normalize_label_list(["'car'", "bus, truck"], 'objects')
+        # → ['car', 'bus', 'truck']
+        normalize_label_list(['Hello, world!'], 'text')
+        # → ['Hello, world!']  (free text: unchanged)
+    """
+    effective_fields = _LABEL_LIST_FIELDS if label_fields is None else label_fields
+    if field_name not in effective_fields:
+        return values
+
+    seen: set = set()
+    result: List[str] = []
+    for raw in values:
+        token = raw.strip()
+        # Remove a single layer of wrapping quotes
+        if len(token) >= 2 and token[0] in ('"', "'") and token[-1] == token[0]:
+            token = token[1:-1].strip()
+        # Split on commas to separate comma-joined labels
+        parts = [p.strip() for p in token.split(",")]
+        for part in parts:
+            if not part:
+                continue
+            # Strip any inner quotes that remained after splitting
+            if len(part) >= 2 and part[0] in ('"', "'") and part[-1] == part[0]:
+                part = part[1:-1].strip()
+            if not part:
+                continue
+            if part not in seen:
+                seen.add(part)
+                result.append(part)
+    return result
+
+
+def _validate_annotation(data: Dict[str, Any], *, label_fields: Optional[frozenset] = None) -> Dict[str, Any]:
     """Normalize an extracted JSON dict against the annotation schema.
 
     Coerces types: missing fields get defaults, scalars get wrapped in lists.
+    For atomic-label list fields each item is also comma-split and
+    quote-stripped via normalize_label_list().
+
+    The set of atomic-label fields defaults to the built-in ``_LABEL_LIST_FIELDS``
+    constant.  Pass ``label_fields=load_label_list_fields(project_path)`` to
+    use the project's ``atomic-fields.yaml`` configuration.
     Extra fields from the model are preserved.
     """
     result = dict(data)  # keep any extra fields the model included
@@ -146,16 +236,20 @@ def _validate_annotation(data: Dict[str, Any]) -> Dict[str, Any]:
                 items = []
             else:
                 items = [str(val)]
-            # Deduplicate (preserve order) and cap to prevent runaway model
-            # outputs (e.g. hundreds of identical "sheep" entries) from bloating
-            # the annotation JSON.
-            seen: set = set()
-            deduped = []
-            for item in items:
-                if item not in seen:
-                    seen.add(item)
-                    deduped.append(item)
-            result[field] = deduped[:20]
+            if field in (label_fields if label_fields is not None else _LABEL_LIST_FIELDS):
+                # Expand comma-joined labels, strip quotes, deduplicate.
+                items = normalize_label_list(items, field, label_fields=label_fields)
+            else:
+                # Free-text fields: deduplicate only (preserve order) and cap
+                # to prevent runaway model outputs from bloating the JSON.
+                seen: set = set()
+                deduped = []
+                for item in items:
+                    if item not in seen:
+                        seen.add(item)
+                        deduped.append(item)
+                items = deduped
+            result[field] = items[:20]
     return result
 
 
@@ -1474,6 +1568,9 @@ def annotate_file_shots(
         "filename": filename,
     }
 
+    # Load atomic label fields from project YAML (falls back to built-in defaults).
+    _label_fields = load_label_list_fields(project_path)
+
     system_prompt, prompt_path = load_system_prompt(project_path, media_type, prompt_file, prompt_text)
     # Sanitize system prompt to remove any large example JSON blocks
     sanitized_prompt = _sanitize_system_prompt(system_prompt)
@@ -1806,7 +1903,7 @@ def annotate_file_shots(
                     _append_log(log_path, "MODEL_OUTPUT:\n" + (raw[:6000] + "..." if raw and len(raw) > 6000 else (raw or "<empty>")))
                     parsed = _extract_json(raw) or _extract_json(full_raw)
                     if parsed:
-                        ann = _validate_annotation(parsed)
+                        ann = _validate_annotation(parsed, label_fields=_label_fields)
                         success = True
                         break
                 except Exception as e:
