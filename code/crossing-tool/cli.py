@@ -1625,6 +1625,61 @@ def _shotlist_get(args):
         sys.exit(1)
 
 
+# Fields whose values must always be lists, never a plain string.
+_ANNOTATION_ARRAY_FIELDS = {"type", "humans", "action", "wearing", "animals", "objects", "text"}
+
+
+def _repair_annotation_file(project_path, filename, media_type, label_fields, *, dry_run=False):
+    """Normalize a single annotation JSON file in-place.
+
+    Returns ``(fixes, invalid)`` where *fixes* is the number of fields
+    corrected and *invalid* is ``True`` when the file could not be parsed.
+    """
+    from data.annotate import normalize_label_list
+
+    ann_path = Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{Path(filename).stem}.json"
+    if not ann_path.exists():
+        return 0, False
+
+    raw = ann_path.read_text(encoding="utf-8")
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return 0, True
+
+    if not isinstance(data, list):
+        return 0, True
+
+    file_fixes = 0
+    for entry in data:
+        if not isinstance(entry, dict):
+            continue
+        shot_block = entry.get("shot")
+        if not isinstance(shot_block, dict):
+            continue
+        ann = shot_block.get("annotation")
+        if not isinstance(ann, dict):
+            continue
+        for field in _ANNOTATION_ARRAY_FIELDS:
+            val = ann.get(field)
+            if isinstance(val, str) and "," in val:
+                parts = [p.strip() for p in val.split(",") if p.strip()]
+                ann[field] = parts
+                file_fixes += 1
+            elif isinstance(val, list) and field in label_fields:
+                normalized = normalize_label_list(val, field, label_fields=label_fields)
+                if normalized != val:
+                    ann[field] = normalized
+                    file_fixes += 1
+
+    if file_fixes > 0 and not dry_run:
+        ann_path.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+    return file_fixes, False
+
+
 def _shotlist_annotate(args):
     if getattr(args, "annotate_type", None) is None:
         print("✗ annotate: specify a subcommand.", file=sys.stderr)
@@ -1707,6 +1762,15 @@ def _shotlist_annotate(args):
                                     torch.cuda.empty_cache()
                             except Exception:
                                 pass
+
+                    # Post-annotation normalisation
+                    _fn = summary.get("filename")
+                    if _fn:
+                        from data.annotate import load_label_list_fields
+                        _label_fields = load_label_list_fields(project_path)
+                        _val_fixes, _ = _repair_annotation_file(project_path, _fn, args.media, _label_fields)
+                        if _val_fixes and getattr(args, "verbose", False):
+                            print(f"  {_fn}: normalised {_val_fixes} annotation field(s)")
 
                     if not _notify_items:
                         return
@@ -1819,6 +1883,12 @@ def _shotlist_annotate(args):
                     print(f"  ✗ Best-frame detection skipped: {_exc}", file=sys.stderr)
                 except Exception as _exc:
                     print(f"  ✗ Best-frame detection failed: {_exc}", file=sys.stderr)
+            # Post-annotation normalisation (always runs, no --no-best flag needed)
+            from data.annotate import load_label_list_fields
+            _label_fields = load_label_list_fields(project_path)
+            _val_fixes, _val_invalid = _repair_annotation_file(project_path, filename, args.media, _label_fields)
+            if _val_fixes:
+                print(f"Normalised {_val_fixes} annotation field(s)")
             return
 
         elif args.annotate_type == "scene":
@@ -2876,23 +2946,17 @@ def _annotate_validate(args):
     """
     _require_path()
     from data.shotlist import resolve_filename
-    from data.annotate import normalize_label_list, load_label_list_fields
+    from data.annotate import load_label_list_fields
 
     project_path = prefs.get("path")
     media_type   = getattr(args, "media", "movies")
     dry_run      = getattr(args, "dry_run", False)
 
-    # Fields whose values must always be lists, never a plain string.
-    _ARRAY_FIELDS = {"type", "humans", "action", "wearing", "animals", "objects", "text"}
-
-    # Atomic label fields: items within the list are also split on commas.
     label_fields = load_label_list_fields(project_path)
-
-    ann_dir = Path(project_path) / "data" / "annotations" / "shots" / media_type
 
     if getattr(args, "all", False):
         from data.metadata import get_metadata
-        entries  = get_metadata(project_path, media_type=media_type)
+        entries   = get_metadata(project_path, media_type=media_type)
         filenames = [e["filename"] for e in entries if e.get("filename")]
     else:
         query = getattr(args, "filename", None)
@@ -2911,61 +2975,19 @@ def _annotate_validate(args):
     invalid_files = 0
 
     for fn in filenames:
-        stem     = Path(fn).stem
-        ann_path = ann_dir / f"{stem}.json"
-
+        ann_path = Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{Path(fn).stem}.json"
         if not ann_path.exists():
             print(f"  ?  {fn}  (no annotation file)")
             continue
-
         total_files += 1
-
-        raw = ann_path.read_text(encoding="utf-8")
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            print(f"  ✗  {fn}: invalid JSON — {exc}")
+        fixes, invalid = _repair_annotation_file(project_path, fn, media_type, label_fields, dry_run=dry_run)
+        if invalid:
+            print(f"  ✗  {fn}: invalid JSON or unexpected structure")
             invalid_files += 1
-            continue
-
-        if not isinstance(data, list):
-            print(f"  ✗  {fn}: expected a JSON array at the top level")
-            invalid_files += 1
-            continue
-
-        file_fixes = 0
-        for entry in data:
-            if not isinstance(entry, dict):
-                continue
-            shot_block = entry.get("shot")
-            if not isinstance(shot_block, dict):
-                continue
-            ann = shot_block.get("annotation")
-            if not isinstance(ann, dict):
-                continue
-            for field in _ARRAY_FIELDS:
-                val = ann.get(field)
-                if isinstance(val, str) and "," in val:
-                    # Bare string stored where a list is expected — wrap and split.
-                    parts = [p.strip() for p in val.split(",") if p.strip()]
-                    ann[field] = parts
-                    file_fixes += 1
-                elif isinstance(val, list) and field in label_fields:
-                    # List items may themselves contain commas ("pronghorn, pronghorns").
-                    normalized = normalize_label_list(val, field, label_fields=label_fields)
-                    if normalized != val:
-                        ann[field] = normalized
-                        file_fixes += 1
-
-        if file_fixes > 0:
-            if not dry_run:
-                ann_path.write_text(
-                    json.dumps(data, indent=2, ensure_ascii=False) + "\n",
-                    encoding="utf-8",
-                )
+        elif fixes > 0:
             verb = "would fix" if dry_run else "fixed"
-            print(f"  ✓  {fn}: {verb} {file_fixes} field(s)")
-            total_fixes += file_fixes
+            print(f"  ✓  {fn}: {verb} {fixes} field(s)")
+            total_fixes += fixes
         else:
             print(f"  ✓  {fn}: ok")
 
