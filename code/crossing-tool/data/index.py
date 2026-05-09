@@ -142,6 +142,35 @@ def save_atomic_fields(project_path: str, fields: list[str]) -> None:
     _save_fields_yaml(project_path, data)
 
 
+def load_vocabulary_fields(project_path: str) -> list[str]:
+    """Load the vocabulary allowlist from the ``vocabulary`` key in fields.yaml.
+
+    The ``vocabulary`` key lists annotation fields that should be enumerated by
+    ``crossing search vocabulary`` and included in the vocabulary cache.
+    Free-text fields like ``description`` and ``text`` should be excluded.
+
+    Returns an empty list when the key is absent.
+
+    Raises:
+        FileNotFoundError: If fields.yaml does not exist.
+    """
+    fields_path = Path(project_path) / "preferences" / "data" / "fields.yaml"
+    if not fields_path.exists():
+        raise FileNotFoundError(f"Fields file not found: {fields_path}")
+    raw = _load_fields_yaml(project_path)
+    return list(raw.get("vocabulary", []))
+
+
+def save_vocabulary_fields(project_path: str, fields: list[str]) -> None:
+    """Write the vocabulary allowlist to the ``vocabulary`` key in fields.yaml.
+
+    Other keys in the file (e.g. ``fields``, ``atomic``) are preserved.
+    """
+    data = _load_fields_yaml(project_path)
+    data["vocabulary"] = fields
+    _save_fields_yaml(project_path, data)
+
+
 def serialize_annotation_item(item: dict, mapping: dict) -> str:
     """Serialize one annotation item to a single line of text.
 

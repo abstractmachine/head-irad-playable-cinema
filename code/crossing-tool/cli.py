@@ -860,6 +860,7 @@ def cmd_search(args):
     # Dispatch: `crossing search vocabulary <field> [scope...]`
     if args.query == "vocabulary":
         from services.search import vocabulary_from_field
+        from services.vocabulary_format import format_vocabulary_items, format_vocabulary_map
         remaining = args.scope or []
         all_fields = getattr(args, "all_fields", False)
         # For --all-fields there is no field name at remaining[0]; scopes start at [0].
@@ -873,32 +874,43 @@ def cmd_search(args):
         sort = getattr(args, "sort", "alphabetical")
         media_type = getattr(args, "media", "movies")
         project_path = prefs.get("path")
+        output_format = getattr(args, "output_format", "auto")
+        top = getattr(args, "top", None)
 
         exclude_fields = set(getattr(args, "exclude", None) or [])
 
         if all_fields:
-            # Discover every annotation field used across all files, then
-            # emit a single JSON object {field: [{value, count}]} sorted by count.
-            import re as _re
-            ann_base = Path(project_path) / "data" / "annotations" / "shots" / media_type
-            fields_seen: set[str] = set()
-            for ann_file in ann_base.glob("*.json"):
-                try:
-                    entries = json.loads(ann_file.read_text(encoding="utf-8"))
-                except Exception:
-                    continue
-                for entry in entries:
-                    if not isinstance(entry, dict):
+            # Use the vocabulary allowlist from fields.yaml, falling back to a
+            # live scan of annotation keys when the config is absent.
+            try:
+                from data.index import load_vocabulary_fields as _load_vf
+                vocab_fields_list = _load_vf(project_path)
+            except (FileNotFoundError, Exception):
+                vocab_fields_list = []
+
+            if not vocab_fields_list:
+                # Fallback: discover fields from annotation files directly.
+                ann_base = Path(project_path) / "data" / "annotations" / "shots" / media_type
+                fields_seen: set[str] = set()
+                for ann_file in ann_base.glob("*.json"):
+                    try:
+                        entries = json.loads(ann_file.read_text(encoding="utf-8"))
+                    except Exception:
                         continue
-                    ann = entry.get("shot", {}).get("annotation") if isinstance(entry.get("shot"), dict) else None
-                    if isinstance(ann, dict):
-                        fields_seen.update(ann.keys())
-            if not fields_seen:
+                    for entry in entries:
+                        if not isinstance(entry, dict):
+                            continue
+                        ann = entry.get("shot", {}).get("annotation") if isinstance(entry.get("shot"), dict) else None
+                        if isinstance(ann, dict):
+                            fields_seen.update(ann.keys())
+                vocab_fields_list = sorted(fields_seen)
+
+            if not vocab_fields_list:
                 print(json.dumps({}))
                 return
             scopes_arg = scopes or None
             output: dict = {}
-            for f in sorted(fields_seen):
+            for f in vocab_fields_list:
                 if f in exclude_fields:
                     continue
                 output[f] = vocabulary_from_field(
@@ -919,12 +931,32 @@ def cmd_search(args):
                 if getattr(args, "open", False):
                     import subprocess; subprocess.Popen(["xdg-open", str(md_path)])
             else:
-                print(json.dumps(output, indent=2))
+                print(format_vocabulary_map(output, fmt=output_format, top=top))
             return
 
         if not remaining:
-            print("error: 'vocabulary' requires a field name or --all-fields, e.g. crossing search vocabulary objects", file=sys.stderr)
+            print("error: 'vocabulary' requires a field name, 'fields', or --all-fields", file=sys.stderr)
+            print("  crossing search vocabulary fields          # list configured vocabulary fields", file=sys.stderr)
+            print("  crossing search vocabulary objects         # list values for a field", file=sys.stderr)
+            print("  crossing search vocabulary --all-fields    # all fields as JSON", file=sys.stderr)
             sys.exit(1)
+
+        # `crossing search vocabulary fields` — list the configured vocabulary field names.
+        if remaining[0] == "fields":
+            from services.vocabulary_index import get_vocabulary_fields
+            try:
+                fields_list = get_vocabulary_fields(project_path, media_type)
+            except FileNotFoundError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                sys.exit(1)
+            # For fields listing, table/list/auto just print one per line; json stays JSON.
+            fmt = output_format if output_format == "json" else "list"
+            if fmt == "json":
+                print(json.dumps(fields_list, indent=2))
+            else:
+                print("\n".join(fields_list))
+            return
+
         field = remaining[0]
         if field in exclude_fields:
             return
@@ -947,7 +979,7 @@ def cmd_search(args):
             if getattr(args, "open", False):
                 import subprocess; subprocess.Popen(["xdg-open", str(md_path)])
         else:
-            print(json.dumps(result, indent=2))
+            print(format_vocabulary_items(result, fmt=output_format, field_name=field, top=top))
         return
 
     # Dispatch: `crossing search text <query> [scope...]`
@@ -3515,6 +3547,8 @@ def cmd_index(args):
         _index_update(args)
     elif sub == "audit":
         _index_audit(args)
+    elif sub == "vocabulary":
+        _index_vocabulary(args)
     else:
         print("✗ index: specify a subcommand.", file=sys.stderr)
         sys.exit(1)
@@ -4116,6 +4150,37 @@ def _index_audit(args):
         )
 
 
+def _index_vocabulary(args):
+    """Build a per-field vocabulary index from annotation JSON files."""
+    from services.vocabulary_index import build_vocabulary_index
+
+    project_path = prefs.get("path")
+    media_type   = getattr(args, "media", "movies")
+    force        = getattr(args, "force", False)
+    do_all       = getattr(args, "all", False)
+
+    media_types = ["movies", "gameplay"] if do_all else [media_type]
+
+    for mt in media_types:
+        print(f"Building vocabulary index ({mt})...")
+        try:
+            index = build_vocabulary_index(project_path, mt, force=force)
+        except FileNotFoundError as exc:
+            print(f"  ✗ {exc}", file=sys.stderr)
+            continue
+        meta      = index.get("meta", {})
+        n_files   = meta.get("files_processed", "?")
+        n_tokens  = meta.get("total_tokens", 0)
+        voc_flds  = meta.get("vocabulary_fields") or []
+        out_rel   = Path("data") / "index" / f"vocabulary_{mt}.json"
+        if n_files != "?":
+            print(f"Processed {n_files} files")
+        if voc_flds:
+            print(f"Fields: {', '.join(voc_flds)}")
+        print(f"Found {n_tokens} unique tokens")
+        print(f"Saved: {out_rel}")
+
+
 def cmd_visualizer(args):
     sub = args.visualizer_subcommand
     if sub in (None, "project"):
@@ -4683,6 +4748,24 @@ def build_parser():
         help="Print per-file actions (txt written, npy written, unchanged)",
     )
 
+    p_index_vocabulary = index_sub.add_parser(
+        "vocabulary",
+        help="Build a vocabulary index (per-field token counts) from annotation JSON",
+    )
+    p_index_vocabulary.set_defaults(func=cmd_index)
+    p_index_vocabulary.add_argument(
+        "--media", choices=["movies", "gameplay"], default="movies",
+        help="Media type to index (default: movies)",
+    )
+    p_index_vocabulary.add_argument(
+        "--all", action="store_true",
+        help="Build index for both movies and gameplay",
+    )
+    p_index_vocabulary.add_argument(
+        "--force", action="store_true",
+        help="Rebuild even if a cached index already exists",
+    )
+
     p_index_audit = index_sub.add_parser(
         "audit",
         help="Inspect index status for a film without modifying any files",
@@ -4941,6 +5024,8 @@ def build_parser():
     p_search.add_argument("--sort", choices=["alphabetical", "count"], default="alphabetical", help="(vocabulary mode) sort order: alphabetical (default) or count")
     p_search.add_argument("--all-fields", dest="all_fields", action="store_true", help="(vocabulary mode) emit vocabulary for every annotation field as a single JSON object")
     p_search.add_argument("--exclude", nargs="+", default=None, metavar="FIELD", help="(vocabulary mode) exclude one or more fields from output (e.g. --exclude description humans)")
+    p_search.add_argument("--format", dest="output_format", choices=["json", "table", "list", "markdown", "bar", "auto"], default="auto", metavar="FORMAT", help="(vocabulary mode) output format: auto (default), json, table, list, markdown, bar")
+    p_search.add_argument("--top", type=int, default=None, metavar="N", help="(vocabulary mode) show only the top N results")
     p_search.add_argument("--markdown", action="store_true", help="Save output as Markdown to <project>/data/markdown/")
     p_search.add_argument("--open", action="store_true", help="Open the saved Markdown file after writing (implies --markdown)")
     p_search.add_argument("--media", choices=["movies", "gameplay"], default="movies")

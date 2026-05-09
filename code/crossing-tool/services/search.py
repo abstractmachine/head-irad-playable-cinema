@@ -428,6 +428,39 @@ def search_shots(
 # Vocabulary extraction
 # ---------------------------------------------------------------------------
 
+def _vocabulary_from_cache(
+    field: str,
+    project_path: str,
+    media_type: str,
+    show_count: bool,
+    sort: str,
+) -> list | None:
+    """Try to answer a vocabulary query from the built cache.
+
+    Returns a formatted list on success, or None when the cache is missing,
+    stale, or does not contain the requested field.
+    """
+    try:
+        from services.vocabulary_index import (
+            get_vocabulary,
+            vocabulary_cache_is_stale,
+        )
+        if vocabulary_cache_is_stale(project_path, media_type):
+            return None
+        items = get_vocabulary(field, project_path, media_type, sort=sort)
+    except FileNotFoundError:
+        return None
+    except KeyError:
+        return None  # field not in vocabulary allowlist
+    except Exception:
+        return None
+
+    if show_count:
+        return items  # already [{"value": str, "count": int}, ...]
+    else:
+        return [item["value"] for item in items]
+
+
 def vocabulary_from_field(
     field: str,
     scopes: list[str] | None,
@@ -438,6 +471,11 @@ def vocabulary_from_field(
     sort: str = "alphabetical",
 ) -> list:
     """Return distinct values found in *field* across all matching shots.
+
+    When no scope filter is applied (``use_all`` or no scopes), the vocabulary
+    cache built by ``crossing index vocabulary`` is consulted first.  If the
+    cache is present and fresh the result is returned in O(1).  Otherwise the
+    function falls back to a full corpus scan.
 
     Parameters
     ----------
@@ -459,6 +497,12 @@ def vocabulary_from_field(
 
     if not project_path:
         raise RuntimeError("project_path is required")
+
+    # Fast path: use the vocabulary cache when no scope filter is active.
+    if use_all or not scopes:
+        cached = _vocabulary_from_cache(field, project_path, media_type, show_count, sort)
+        if cached is not None:
+            return cached
 
     all_entries = get_metadata(project_path, media_type=media_type)
     selected, _ = _resolve_movies_exact_first(scopes, use_all, all_entries)

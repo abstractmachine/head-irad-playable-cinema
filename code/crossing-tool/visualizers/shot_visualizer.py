@@ -2354,12 +2354,10 @@ class ShotlistVisualizer(QMainWindow):
     def _load_embeddings_cached(self):
         if self._embeddings is not None:
             return self._embeddings
-        emb_path = get_embeddings_path(self.project_path, self.filename, self.media_type)
-        if emb_path.exists():
-            try:
-                self._embeddings = load_embeddings(emb_path)
-            except Exception:
-                self._embeddings = None
+        try:
+            self._embeddings = load_embeddings(self.project_path, self.filename, self.media_type)
+        except Exception:
+            self._embeddings = None
         return self._embeddings
 
     def _on_repr_changed(self):

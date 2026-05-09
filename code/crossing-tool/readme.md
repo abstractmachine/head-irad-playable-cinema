@@ -21,6 +21,7 @@ A CLI + GUI tool for relating moving images across media — connecting gameplay
 | `crossing annotate frame` | Find the best matching frame per shot using CLIP (requires prior `annotate shot` pass) |
 | `crossing search` | Search shot annotations by query, field, or vocabulary |
 | `crossing index` | Build and maintain the semantic search index (txt + embeddings) |
+| `crossing index vocabulary` | Build a cached per-field vocabulary index from annotation JSON |
 | `crossing generate mosaic` | Generate contact-sheet grids from thumbnails or search results |
 | `crossing generate mosaic search` | Mosaic of frames matching a shot annotation search query |
 | `crossing generate mosaic export` | Export individual JPEG frames for each search result |
@@ -383,6 +384,15 @@ crossing tool default set <key> <value>
 # Audio normalization baseline (global target LUFS, default: -23.0)
 crossing tool default get audio-target-lufs
 crossing tool default set audio-target-lufs -23.0
+
+# Annotation field list (which fields appear in the index / search)
+crossing tool default get fields
+crossing tool default set fields "type, spatial, time_of_day, camera, shot, setting, description, humans, wearing, animals, objects, action, text"
+
+# Atomic label fields (comma-joined items within these fields are split during annotation)
+# Configure per-project in preferences/data/fields.yaml under the 'atomic' key.
+crossing tool default get atomic-fields
+crossing tool default set atomic-fields "humans, wearing, animals, objects, action"
 
 # Send a test notification to verify a service is configured
 crossing tool notify discord
@@ -776,6 +786,14 @@ crossing index audit <filename_substring>
 crossing index audit --tmdb 391
   --verbose
   --media {movies,gameplay}
+
+# Build a per-field vocabulary index (token → shot-count) from annotation JSON.
+# Stores result in data/index/vocabulary_<media_type>.json.
+# Used to speed up `crossing search vocabulary` (future integration).
+crossing index vocabulary
+crossing index vocabulary --media gameplay
+crossing index vocabulary --all              # both movies and gameplay
+  --force                                    # rebuild even if cache exists
 ```
 
 ### Generate
