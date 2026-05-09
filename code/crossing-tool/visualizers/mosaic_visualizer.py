@@ -235,13 +235,21 @@ class SearchWorker(QThread):
             scopes   = None if (not self.scope or self.scope == "--all") else [self.scope]
             use_all  = scopes is None
             field    = None if (not self.field or self.field == "--all") else self.field
-            limit_pi = self.limit if self.limit_per_movie else None
+
+            # When "Limit per movie" is checked the number applies per movie
+            # (limit_per_item) with no overall cap; otherwise it caps the total.
+            if self.limit_per_movie:
+                total_limit = None
+                limit_pi    = self.limit
+            else:
+                total_limit = self.limit
+                limit_pi    = None
 
             result  = search_shots(
                 query          = self.query,
                 scopes         = scopes,
                 field          = field,
-                limit          = self.limit,
+                limit          = total_limit,
                 limit_per_item = limit_pi,
                 use_all        = use_all,
                 project_path   = self.project_path,
@@ -955,7 +963,7 @@ class MosaicVisualizer(QMainWindow):
         lim_label = QLabel("Limit:")
         lim_label.setFixedWidth(46)
         self.limit_combo = QComboBox()
-        for opt in ["10", "50", "200", "all"]:
+        for opt in ["1", "5", "10", "50", "200", "all"]:
             self.limit_combo.addItem(opt)
         self.limit_combo.setCurrentText("50")
         limit_row.addWidget(lim_label)

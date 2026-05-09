@@ -1115,7 +1115,7 @@ class ShotlistVisualizer(QMainWindow):
         self.shot_list.setFrameShape(QFrame.NoFrame)
         self.shot_list.installEventFilter(self)
         self.shot_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.shot_list.setToolTip("Shots \u2014 click to jump  (click Best to jump to best frame, click Stop to show end frame)  [b jump to best  Shift+B set best  Ctrl+B clear best  \u2191/\u2193 navigate]")
+        self.shot_list.setToolTip("Shots \u2014 click to jump\nClick Best to jump to best frame\nclick Stop to show end frame\nb to jump to best\nShift+B set best\nCtrl+B clear best\n\u2191/\u2193 navigate]")
         self.shot_list.cellClicked.connect(self.on_shot_selected)
         # Use a stylesheet WITHOUT any QTableWidget::item rules.
         # Any QTableWidget::item QSS rule (even without background:) causes
