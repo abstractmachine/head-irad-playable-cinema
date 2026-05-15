@@ -8,6 +8,7 @@ Opened via:
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -17,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from styles import theme
 from styles.theme import save_window_geometry, restore_window_geometry
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -89,6 +90,10 @@ class ProjectVisualizer(QMainWindow):
         super().__init__()
         self.setWindowTitle("Crossing — Project")
         self._procs: dict[str, subprocess.Popen] = {}
+        self._backup_proc: subprocess.Popen | None = None
+        self._backup_poll_timer: QTimer | None = None
+        self._backup_master_fd: int = -1
+        self._backup_stdout_buf: bytes = b""
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -98,12 +103,13 @@ class ProjectVisualizer(QMainWindow):
         layout.setSpacing(8)
 
         layout.addWidget(self._build_project_group())
+        layout.addWidget(self._build_backup_group())
         layout.addWidget(self._build_defaults_group())
         layout.addWidget(self._build_models_group())
         layout.addWidget(self._build_media_group())
         layout.addWidget(self._build_launchers_group())
 
-        self.setFixedWidth(380)
+        self.setMinimumWidth(480)
         restore_window_geometry(self, "window_project")
 
     def closeEvent(self, event) -> None:
@@ -141,6 +147,139 @@ class ProjectVisualizer(QMainWindow):
             _prefs.set("path", folder)
             self.path_edit.setText(folder)
             self._reload_model_combos()
+
+    # ------------------------------------------------------------------
+    # Backup path
+
+    def _build_backup_group(self) -> QGroupBox:
+        group = QGroupBox("Backup")
+        outer = QVBoxLayout(group)
+        outer.setContentsMargins(8, 12, 8, 8)
+        outer.setSpacing(6)
+
+        row = QHBoxLayout()
+        row.setSpacing(6)
+
+        self.backup_path_edit = QLineEdit()
+        self.backup_path_edit.setReadOnly(True)
+        self.backup_path_edit.setPlaceholderText("(no backup folder set)")
+        self.backup_path_edit.setText(_prefs.get("backup_path") or "")
+        row.addWidget(self.backup_path_edit, 1)
+
+        browse_btn = QPushButton("Browse…")
+        browse_btn.clicked.connect(self._on_backup_browse)
+        row.addWidget(browse_btn)
+
+        outer.addLayout(row)
+
+        self.backup_btn = QPushButton("Backup")
+        self.backup_btn.clicked.connect(self._on_backup_run)
+        outer.addWidget(self.backup_btn)
+
+        self._refresh_backup_button()
+        return group
+
+    def _on_backup_browse(self) -> None:
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Select Backup Folder",
+            self.backup_path_edit.text() or str(Path.home()),
+        )
+        if folder:
+            _prefs.set("backup_path", folder)
+            self.backup_path_edit.setText(folder)
+            self._refresh_backup_button()
+
+    def _refresh_backup_button(self) -> None:
+        """Enable/disable the Backup button based on lightweight path checks."""
+        import shutil
+        backup_path = _prefs.get("backup_path")
+        if not backup_path:
+            self.backup_btn.setEnabled(False)
+            return
+        p = Path(backup_path)
+        if not p.exists() or not os.access(str(p), os.W_OK):
+            self.backup_btn.setEnabled(False)
+            return
+        # Optionally verify disk_usage is accessible (non-fatal if not)
+        try:
+            shutil.disk_usage(str(p))
+        except Exception:
+            pass
+        self.backup_btn.setEnabled(True)
+
+    def _on_backup_run(self) -> None:
+        import fcntl
+        import pty
+        if self._backup_proc is not None and self._backup_proc.poll() is None:
+            return  # Already running
+
+        project_path = _prefs.get("path")
+        if not project_path:
+            QMessageBox.warning(self, "No Project", "Please set a project folder first.")
+            return
+
+        cmd = [sys.executable, str(_CLI_PATH), "backup", "update"]
+        try:
+            # Use a pty so rsync believes it is writing to a terminal and
+            # flushes progress updates immediately instead of buffering.
+            master_fd, slave_fd = pty.openpty()
+            self._backup_proc = subprocess.Popen(
+                cmd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                close_fds=True,
+            )
+            os.close(slave_fd)
+            self._backup_master_fd = master_fd
+            # Non-blocking reads so the timer never stalls
+            flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+            fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        except Exception as exc:
+            QMessageBox.critical(self, "Backup failed", str(exc))
+            return
+
+        self._backup_stdout_buf = b""
+        self.backup_btn.setEnabled(False)
+        self.backup_btn.setText("Backing Up…")
+
+        self._backup_poll_timer = QTimer(self)
+        self._backup_poll_timer.setInterval(500)
+        self._backup_poll_timer.timeout.connect(self._poll_backup_proc)
+        self._backup_poll_timer.start()
+
+    def _poll_backup_proc(self) -> None:
+        import re
+        # Read any available bytes from the pty master fd
+        if self._backup_master_fd >= 0:
+            try:
+                chunk = os.read(self._backup_master_fd, 4096)
+                if chunk:
+                    self._backup_stdout_buf += chunk
+                    # rsync --info=progress2 lines contain "  42%" followed by speed/eta
+                    matches = re.findall(rb'(\d{1,3})%', self._backup_stdout_buf)
+                    if matches:
+                        pct = matches[-1].decode()
+                        self.backup_btn.setText(f"Backing Up… {pct}%")
+                    # Trim to avoid unbounded growth
+                    if len(self._backup_stdout_buf) > 8192:
+                        self._backup_stdout_buf = self._backup_stdout_buf[-4096:]
+            except (BlockingIOError, OSError):
+                pass
+
+        if self._backup_proc is None or self._backup_proc.poll() is not None:
+            if self._backup_master_fd >= 0:
+                try:
+                    os.close(self._backup_master_fd)
+                except OSError:
+                    pass
+                self._backup_master_fd = -1
+            if self._backup_poll_timer is not None:
+                self._backup_poll_timer.stop()
+                self._backup_poll_timer = None
+            self._backup_proc = None
+            self.backup_btn.setText("Backup")
+            self._refresh_backup_button()
 
     # ------------------------------------------------------------------
     # Defaults
@@ -213,7 +352,7 @@ class ProjectVisualizer(QMainWindow):
     # Media import
 
     def _build_media_group(self) -> QGroupBox:
-        group = QGroupBox("Media")
+        group = QGroupBox("Import Media")
         form = QFormLayout(group)
         form.setContentsMargins(8, 12, 8, 8)
         form.setSpacing(6)

@@ -4324,6 +4324,156 @@ def _require_path():
         sys.exit(1)
 
 
+# ---------------------------------------------------------------------------
+# Backup
+# ---------------------------------------------------------------------------
+
+def _validate_backup_paths() -> tuple[str, str]:
+    """Validate project and backup paths. Returns (project_path, backup_path) or exits."""
+    project_path = prefs.get("path")
+    backup_path = prefs.get("backup_path")
+
+    if not project_path:
+        print("✗ No project path set. Run: crossing tool path <folder>", file=sys.stderr)
+        sys.exit(1)
+    if not backup_path:
+        print("✗ No backup path set. Run: crossing backup path <folder>", file=sys.stderr)
+        sys.exit(1)
+
+    project = Path(project_path)
+    backup = Path(backup_path)
+
+    if not project.exists():
+        print(f"✗ Project folder does not exist: {project}", file=sys.stderr)
+        sys.exit(1)
+    if not backup.exists():
+        print(f"✗ Backup folder does not exist: {backup}", file=sys.stderr)
+        sys.exit(1)
+    if not os.access(str(backup), os.W_OK):
+        print(f"✗ Backup folder is not writable: {backup}", file=sys.stderr)
+        sys.exit(1)
+
+    return str(project), str(backup_path)
+
+
+def _backup_update(project_path: str, backup_path: str, dry_run: bool = False) -> None:
+    """Synchronize project folder contents into backup folder."""
+    import shutil
+    import subprocess as _sp
+
+    project = Path(project_path)
+    backup = Path(backup_path)
+
+    # Estimate available disk space (non-fatal if it fails)
+    try:
+        usage = shutil.disk_usage(str(backup))
+        free_gb = usage.free / (1024 ** 3)
+        print(f"  Free space on backup volume: {free_gb:.1f} GB")
+    except Exception:
+        pass
+
+    # Ensure source path ends with / so rsync syncs contents, not the folder itself
+    src = str(project).rstrip("/") + "/"
+    dst = str(backup).rstrip("/") + "/"
+
+    # Try rsync first
+    rsync_available = shutil.which("rsync") is not None
+    if rsync_available:
+        cmd = ["rsync", "-a", "--info=progress2", src, dst]
+        if dry_run:
+            cmd.insert(1, "--dry-run")
+            print("  (dry run — no files will be written)")
+        print(f"  rsync {src!r} → {dst!r}")
+        try:
+            _sp.run(cmd, check=True)
+            return
+        except _sp.CalledProcessError as exc:
+            print(f"✗ rsync failed (exit {exc.returncode})", file=sys.stderr)
+            sys.exit(exc.returncode)
+
+    # Fallback: shutil-based incremental copy
+    if dry_run:
+        print("  (dry run — no files will be written)")
+        print(f"  [shutil fallback] would sync {src!r} → {dst!r}")
+        return
+
+    print(f"  rsync not found — using shutil fallback")
+    print(f"  Copying {src!r} → {dst!r}")
+    copied = 0
+    skipped = 0
+    for root, dirs, files in os.walk(str(project)):
+        rel_root = os.path.relpath(root, str(project))
+        dst_root = backup / rel_root
+        dst_root.mkdir(parents=True, exist_ok=True)
+        for filename in files:
+            src_file = Path(root) / filename
+            dst_file = dst_root / filename
+            try:
+                src_stat = src_file.stat()
+                if dst_file.exists():
+                    dst_stat = dst_file.stat()
+                    # Skip if same size and dst is not older
+                    if (dst_stat.st_size == src_stat.st_size and
+                            dst_stat.st_mtime >= src_stat.st_mtime):
+                        skipped += 1
+                        continue
+                shutil.copy2(str(src_file), str(dst_file))
+                copied += 1
+            except Exception as exc:
+                print(f"  ✗ Failed to copy {src_file}: {exc}", file=sys.stderr)
+    print(f"  Done — {copied} file(s) copied, {skipped} skipped (up to date)")
+
+
+def cmd_backup(args):
+    sub = args.backup_subcommand
+    if sub == "update":
+        project_path, backup_path = _validate_backup_paths()
+        dry_run = getattr(args, "dry_run", False)
+        print(f"Backing up project to: {backup_path}")
+        _backup_update(project_path, backup_path, dry_run=dry_run)
+    elif sub == "status":
+        cmd_backup_status(args)
+    elif sub == "path":
+        if args.folder is None:
+            val = prefs.get("backup_path")
+            print(val if val else "(not set)")
+        else:
+            p = Path(args.folder).resolve()
+            prefs.set("backup_path", str(p))
+            print(f"Backup path set to: {p}")
+
+
+def cmd_backup_status(args):
+    import shutil
+
+    project_path = prefs.get("path") or "(not set)"
+    backup_path = prefs.get("backup_path") or "(not set)"
+
+    print(f"Project path : {project_path}")
+    print(f"Backup path  : {backup_path}")
+
+    if backup_path == "(not set)":
+        print("Backup folder: not configured")
+        return
+
+    backup = Path(backup_path)
+    if not backup.exists():
+        print("Backup folder: does not exist")
+        return
+
+    writable = os.access(str(backup), os.W_OK)
+    print(f"Backup folder: exists")
+    print(f"Writable     : {'yes' if writable else 'no'}")
+
+    try:
+        usage = shutil.disk_usage(str(backup))
+        free_gb = usage.free / (1024 ** 3)
+        total_gb = usage.total / (1024 ** 3)
+        print(f"Free space   : {free_gb:.1f} GB / {total_gb:.1f} GB")
+    except Exception:
+        print("Free space   : (unavailable)")
+
+
 class _HelpfulParser(argparse.ArgumentParser):
     def error(self, message):
         sys.stderr.write(f"missing: {message}\n")
@@ -5351,6 +5501,41 @@ def build_parser():
         "--confirm",
         action="store_true",
         help="Actually delete the model (default is a dry run)",
+    )
+
+    # backup command group
+    p_backup = sub.add_parser("backup", help="Synchronize project folder to an external backup drive")
+    p_backup.set_defaults(func=cmd_backup)
+    backup_sub = p_backup.add_subparsers(dest="backup_subcommand", required=True)
+
+    p_backup_update = backup_sub.add_parser(
+        "update",
+        help="Sync project folder contents into backup folder (uses rsync when available)",
+    )
+    p_backup_update.set_defaults(func=cmd_backup)
+    p_backup_update.add_argument(
+        "--dry-run", dest="dry_run", action="store_true",
+        help="Show what would be transferred without copying any files",
+    )
+    p_backup_update.add_argument(
+        "--mirror", dest="mirror", action="store_true",
+        help="(reserved — not yet implemented)",
+    )
+
+    p_backup_status = backup_sub.add_parser(
+        "status",
+        help="Print project path, backup path, and disk space",
+    )
+    p_backup_status.set_defaults(func=cmd_backup)
+
+    p_backup_path = backup_sub.add_parser(
+        "path",
+        help="Get or set the backup destination folder",
+    )
+    p_backup_path.set_defaults(func=cmd_backup)
+    p_backup_path.add_argument(
+        "folder", nargs="?", default=None,
+        help="Absolute path to the backup folder (omit to print current value)",
     )
 
     # visualizer command group — shortcut to all visualizer GUIs
