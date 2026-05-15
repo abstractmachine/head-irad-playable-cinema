@@ -1,0 +1,45 @@
+FONTLOG for the Libre Clarendon fonts
+
+This file provides detailed information on the Libre Clarendon Font Software.
+
+This information should be distributed along with the Libre Clarendon fonts and any
+derivative works.
+
+Basic Font Information
+
+Libre Clarendon is an integrated and comprehensive Clarendon family. It provides a wide and carefully considered range of weights and widths, allowing it to be used for both Text and Display settings, in all kind of layouts.
+
+Libre Clarendon has 20 styles: 4 widths (Condensed, Narrow, Normal, Wide) in 5 weigths each (Ligth, Regular, Medium, Bold, Black).
+
+Libre Clarendon is loosely based on the original Besley's Clarendon as issued by the Fann Street Foundry in 1874. We kept the almost monoline feeling in it, but expanded into a complete multi-axis family. As a result, it's quite different from the more contrasted Hass/Stempel Clarendon version, already digitized by many foundries.
+
+To contribute to the project contact Pablo Impallari at impallari@gmail.com 
+
+08 May 2015 (Pablo Impallari, Rodrigo Fuenzalida) Libre Clarendon v0.044
+- Almost all base glyphs added in all masters. Still a few pending.
+
+30 March 2015 (Pablo Impallari, Rodrigo Fuenzalida) Libre Clarendon v0.030
+- a-z Lowercases added in all 6 masters
+
+8 January 2015 (Pablo Impallari, Rodrigo Fuenzalida) Libre Clarendon v0.010
+- After a long exploration, we finally settle down on a carefully considered weights and widths configuration for the entire family.
+
+18 December 2014 (Pablo Impallari, Rodrigo Fuenzalida) Libre Clarendon v0.001
+- Initial Beta
+
+Acknowledgements
+
+If you make modifications be sure to add your name (N), 
+email (E), web-address (if you have one) (W) and 
+description (D). This list is in alphabetical order.
+
+N: Pablo Impallari
+E: impallari@gmail.com
+W: http://www.impallari.com
+D: Designer
+
+N: Rodrigo Fuenzalida
+E: fuenzarodrigo@gmail.com
+W: http://www.impallari.com
+D: Designer
+

@@ -1,0 +1,16 @@
+{
+  "description": "Sepia / aged-paper look inspired by Western-era print culture. Ink on paper, restrained, historical, slightly warm.",
+  "background": [242, 230, 201],
+  "palette": [
+    [43,  33,  24],
+    [43,  33,  24],
+    [43,  33,  24],
+    [140, 90,  43],
+    [140, 90,  43],
+    [75,  52,  28],
+    [100, 65,  35],
+    [55,  40,  22],
+    [120, 78,  42],
+    [90,  60,  30]
+  ]
+}

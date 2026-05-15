@@ -26,11 +26,13 @@ A CLI + GUI tool for relating moving images across media — connecting gameplay
 | `crossing generate mosaic search` | Mosaic of frames matching a shot annotation search query |
 | `crossing generate mosaic export` | Export individual JPEG frames for each search result |
 | `crossing generate composition` | Build a single tableau image from a semantic search result |
+| `crossing generate cloud` | Generate a word-cloud PDF from annotation text |
 | `crossing visualizer` | Open the project launcher — configure path, models, and open any visualizer |
 | `crossing visualizer project` | Same as above (explicit subcommand) |
 | `crossing visualizer metadata` | Browse all movies and gameplay as card tiles — click to open in Shotlist Visualizer |
 | `crossing visualizer shotlist` | Inspect and edit shot boundaries, and review LLM annotations alongside video frames |
 | `crossing visualizer mosaic` | Interactive search-driven mosaic explorer |
+| `crossing visualizer cloud` | Interactive word-cloud explorer with Save PDF button |
 | `crossing visualizer composition` | Interactive composition search GUI |
 
 ---
@@ -194,6 +196,7 @@ crossing-tool/
 │   ├── shot_detection.py           # TransNetV2 shot boundary detection
 │   └── shotlist.py                 # Shotlist CSV read/write utilities
 ├── generators/
+│   ├── cloud.py                    # Word-cloud PDF generator
 │   ├── composition.py              # Tableau image generator
 │   └── mosaic.py                   # Contact-sheet mosaic generator
 ├── services/
@@ -216,6 +219,7 @@ crossing-tool/
 │   └── test_audio_normalize.py
 └── visualizers/
     ├── annotation_visualizer.py    # Backward-compat shim → shot_visualizer
+    ├── cloud_visualizer.py         # Qt word-cloud explorer with Save PDF
     ├── composition_visualizer.py   # Qt composition explorer GUI
     ├── metadata_visualizer.py      # Qt metadata card browser
     ├── mosaic_visualizer.py        # Qt mosaic search explorer
@@ -294,6 +298,14 @@ crossing-tool/
 | `export_frames_from_search_results(results, project_path, query, ...)` | Exports each search result as a numbered JPEG with a metadata info bar |
 | `render_mosaic(items, output_path, layout, ...)` | Renders a list of `MosaicItem` objects into a single contact-sheet PNG |
 | `extract_frame_pil(video_path, frame_index)` | Extracts a single video frame by index as an RGB PIL Image |
+
+#### `generators/cloud.py`
+
+| Function | Description |
+|---|---|
+| `cloud_from_annotations(project_path, scope, field, media_type, ...)` | Shared entry point: counts words from annotation JSON(s) and calls `render_cloud()` to produce a PDF |
+| `extract_annotation_words(project_path, scope, field, media_type, min_count)` | Loads annotation JSON files, tokenises all text, strips stopwords, and returns a word-frequency `Counter` |
+| `render_cloud(words, output_path, width, height, max_words, ...)` | Lays out words on an Archimedean spiral with log-frequency font sizes and saves as PDF or PNG |
 
 #### `generators/composition.py`
 
@@ -887,7 +899,49 @@ crossing generate composition --visualizer
 
 Output is saved to `<project>/output/compositions/`.
 
-### API Keys
+### Cloud
+
+Generate a word-cloud PDF from annotation text across one or all movies.
+
+```bash
+# Generate cloud for all movies, all annotation fields
+crossing generate cloud
+
+# Generate cloud for a specific movie (fuzzy match on title)
+crossing generate cloud --scope "Film Title"
+
+# Restrict to a specific annotation field
+crossing generate cloud --field description
+crossing generate cloud --field objects --scope "Film Title"
+
+# Adjust word count and minimum frequency
+crossing generate cloud --max-words 200 --min-count 3
+
+# Specify output path
+crossing generate cloud --output ~/Desktop/my-cloud.pdf
+
+# Open the interactive visualizer
+crossing generate cloud --visualizer
+crossing visualizer cloud
+```
+
+**Flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--scope` | all | Film title (fuzzy match) to restrict the cloud to a single movie |
+| `--field` | all fields | Annotation field to use: `setting`, `description`, `objects`, `action`, `humans`, `wearing`, `animals`, `text` |
+| `--media` | `movies` | Media type: `movies` or `gameplay` |
+| `--max-words` | `150` | Maximum number of words to render |
+| `--min-count` | `2` | Minimum word frequency to include |
+| `--output` | auto | Full save path override (PDF or PNG by extension) |
+| `--no-open` | — | Skip opening the result in the desktop viewer |
+| `--notify` | — | Discord notification when done |
+| `--visualizer` | — | Open the interactive GUI instead of saving |
+
+Output is saved to `<project>/output/clouds/`.
+
+
 
 ```bash
 # Get stored API key
@@ -1037,6 +1091,7 @@ Python 3.11+ and all Python packages are managed automatically by `uv` — no ma
 │   │       └── gameplay/
 ├── output/
 │   ├── mosaics/                    # output from `crossing generate mosaic`
+│   ├── clouds/                     # output from `crossing generate cloud`
 │   └── compositions/               # output from `crossing generate composition`
 ├── models/
 │   └── <model-folder>/             # local HuggingFace models (annotate, embed, segmentation)

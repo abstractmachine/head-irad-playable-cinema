@@ -3140,6 +3140,8 @@ def cmd_generate(args):
         cmd_composition(args)
     elif sub == "mosaic":
         cmd_mosaic(args)
+    elif sub == "cloud":
+        cmd_cloud(args)
 
 
 def cmd_composition(args):
@@ -3530,6 +3532,80 @@ def _mosaic_export(args):
         traceback.print_exc()
         sys.exit(1)
 
+
+# ---------------------------------------------------------------------------
+# cloud command family
+# ---------------------------------------------------------------------------
+
+def cmd_cloud(args):
+    """Generate a word-cloud PDF from annotation text."""
+    _require_path()
+    if getattr(args, "visualizer", False):
+        _cloud_visualizer(args)
+        return
+
+    import subprocess
+    from generators.cloud import cloud_from_annotations, STYLE_NAMES, PREFS_KEY_STYLE, DEFAULT_STYLE
+
+    project_path = prefs.get("path")
+    scope        = getattr(args, "scope", None) or None
+    field        = getattr(args, "field", None) or None
+    media_type   = getattr(args, "media", "movies")
+    max_words    = getattr(args, "max_words", 150)
+    min_count    = getattr(args, "min_count", 2)
+    output_path  = getattr(args, "output", None)
+    open_result  = not getattr(args, "no_open", False)
+    style        = getattr(args, "style", None) or prefs.get(PREFS_KEY_STYLE) or DEFAULT_STYLE
+
+    if getattr(args, "save_style", False):
+        prefs.set(PREFS_KEY_STYLE, style)
+        print(f"✓ Default cloud style saved: {style}")
+
+    scope_label = scope or f"{media_type} (all)"
+    field_label = field or "all fields"
+    print(f"Building cloud: {scope_label} · {field_label} [{style}]")
+
+    try:
+        out, _ = cloud_from_annotations(
+            project_path,
+            scope=scope,
+            field=field,
+            media_type=media_type,
+            output_path=output_path,
+            max_words=max_words,
+            min_count=min_count,
+            style=style,
+        )
+        print(f"✓ Saved: {out}")
+        if open_result:
+            try:
+                subprocess.Popen(["xdg-open", str(out)])
+            except Exception:
+                pass
+        if getattr(args, "notify", False):
+            from services.notify import discord_notify
+            discord_notify(
+                f"✓ Cloud complete: {scope_label} · {field_label} → {out.name}",
+                project_path,
+            )
+    except FileNotFoundError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    except ValueError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        print(f"✗ Cloud failed: {exc}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+def _cloud_visualizer(args):
+    """cloud --visualizer — launch the interactive word-cloud explorer GUI."""
+    _require_visualizer_deps()
+    from visualizers.cloud_visualizer import run_visualizer
+    run_visualizer(prefs.get("path"))
 
 
 # ---------------------------------------------------------------------------
@@ -4220,6 +4296,9 @@ def cmd_visualizer(args):
     elif sub == "mosaic":
         _require_path()
         _mosaic_visualizer(args)
+    elif sub == "cloud":
+        _require_path()
+        _cloud_visualizer(args)
     elif sub == "metadata":
         _require_path()
         _metadata_visualizer(args)
@@ -4488,8 +4567,8 @@ def build_parser():
 
     # (moved under 'crossing tool model' — see tool_sub below)
 
-    # generate command group — composition, mosaic
-    p_generate = sub.add_parser("generate", help="Generate content from project data (composition, mosaic)")
+    # generate command group — composition, mosaic, cloud
+    p_generate = sub.add_parser("generate", help="Generate content from project data (composition, mosaic, cloud)")
     p_generate.set_defaults(func=cmd_generate)
     generate_sub = p_generate.add_subparsers(dest="generate_subcommand", required=True)
 
@@ -4612,6 +4691,64 @@ def build_parser():
         help="Grid orientation (default: landscape)",
     )
     p_mosaic_video.add_argument("--no-open", action="store_true", dest="no_open", help="Do not open result in desktop viewer")
+
+    # generate cloud
+    p_cloud = generate_sub.add_parser(
+        "cloud",
+        help="Generate a word-cloud PDF from annotation text",
+    )
+    p_cloud.set_defaults(func=cmd_cloud)
+    p_cloud.add_argument(
+        "--scope", default=None, metavar="TITLE",
+        help="Movie title / id substring to restrict to (default: all movies)",
+    )
+    p_cloud.add_argument(
+        "--field", default=None, metavar="FIELD",
+        help=(
+            "Annotation field to read "
+            "(e.g. description, objects, action, setting); "
+            "omit to aggregate all text fields"
+        ),
+    )
+    p_cloud.add_argument(
+        "--media", choices=["movies", "gameplay"], default="movies",
+        help="Media type (default: movies)",
+    )
+    p_cloud.add_argument(
+        "--max-words", type=int, default=150, dest="max_words", metavar="N",
+        help="Maximum number of words to include (default: 150)",
+    )
+    p_cloud.add_argument(
+        "--min-count", type=int, default=2, dest="min_count", metavar="N",
+        help="Minimum word occurrence count to include (default: 2)",
+    )
+    p_cloud.add_argument(
+        "--output", default=None, metavar="PATH",
+        help="Override output file path (default: output/clouds/<scope>-<field>-cloud-<stamp>.pdf)",
+    )
+    p_cloud.add_argument(
+        "--no-open", action="store_true", dest="no_open",
+        help="Do not open the PDF after saving",
+    )
+    p_cloud.add_argument(
+        "--notify", action="store_true",
+        help="Send a Discord notification when done",
+    )
+    p_cloud.add_argument(
+        "--style", default=None, metavar="STYLE",
+        help=(
+            "Visual style preset (default: read from saved prefs, else 'default'). "
+            "Available: default, western"
+        ),
+    )
+    p_cloud.add_argument(
+        "--save-style", action="store_true", dest="save_style",
+        help="Save --style as the project default for future runs",
+    )
+    p_cloud.add_argument(
+        "--visualizer", action="store_true",
+        help="Open the interactive cloud visualizer instead of saving",
+    )
 
     # index command group
     p_index = sub.add_parser(
@@ -5219,7 +5356,7 @@ def build_parser():
     # visualizer command group — shortcut to all visualizer GUIs
     p_visualizer = sub.add_parser(
         "visualizer",
-        help="Open a visualizer GUI (project, shotlist, composition, mosaic)",
+        help="Open a visualizer GUI (project, shotlist, composition, mosaic, cloud)",
     )
     p_visualizer.set_defaults(func=cmd_visualizer, visualizer_subcommand="project")
     visualizer_sub = p_visualizer.add_subparsers(dest="visualizer_subcommand", required=False)
@@ -5268,6 +5405,11 @@ def build_parser():
     p_vis_mosaic.add_argument(
         "--media", choices=["movies", "gameplay"], default="movies",
         help="Media type (default: movies)",
+    )
+
+    visualizer_sub.add_parser(
+        "cloud",
+        help="Open the interactive cloud visualizer GUI",
     )
 
     visualizer_sub.add_parser(
