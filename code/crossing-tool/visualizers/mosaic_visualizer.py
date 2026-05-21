@@ -822,45 +822,17 @@ class MosaicVisualizer(QMainWindow):
     # Control panel
 
     def _on_tile_clicked(self, result: dict) -> None:
-        """Open the clicked shot in the Shotlist Visualizer.
-
-        If the Shotlist Visualizer is already running, jumps via IPC.
-        Otherwise, launches a new process and passes --shot-id so it opens
-        directly at the correct shot.
-        """
+        """Open the clicked shot in the Shotlist Visualizer."""
         filename = result.get("filename") or result.get("movie_title", "")
         shot_id  = str(result.get("shot_id", ""))
         if not filename:
             self.status.showMessage("Cannot open shot: no filename in result.", 4000)
             return
 
-        from visualizers.shot_visualizer import ipc_send_load
-        sent = ipc_send_load(
-            self.project_path,
-            filename,
-            "movies",
-            shot_id=shot_id,
-            playback="pause",
-        )
-        if sent:
-            self.status.showMessage(
-                f"Jumped Shotlist Visualizer → {filename}  shot {shot_id}", 4000
-            )
-            return
-
-        # No running instance — launch one.
-        visualizer_path = Path(__file__).parent / "shot_visualizer.py"
-        cmd = [
-            sys.executable, str(visualizer_path),
-            "--project", self.project_path,
-            "--media", "movies",
-            "--filenames", filename,
-        ]
-        if shot_id:
-            cmd += ["--shot-id", shot_id]
-        subprocess.Popen(cmd)
+        from visualizers.shot_visualizer import open_at_shot
+        open_at_shot(self.project_path, filename, "movies", shot_id=shot_id)
         self.status.showMessage(
-            f"Launching Shotlist Visualizer → {filename}  shot {shot_id}", 4000
+            f"Opening Shotlist Visualizer → {filename}  shot {shot_id}", 4000
         )
 
     # ------------------------------------------------------------------

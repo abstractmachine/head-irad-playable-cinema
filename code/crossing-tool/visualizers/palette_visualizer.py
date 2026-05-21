@@ -1,0 +1,414 @@
+#!/usr/bin/env python3
+"""Palette Visualizer — browse per-shot foreground/background colour palettes.
+
+Launched via:
+    crossing visualizer palette
+    crossing visualizer palette --media gameplay
+
+Layout:
+  TOP  — movie selector dropdown + shot-count status label
+  MAIN — scrollable grid of shot colour swatches
+
+Each swatch is a filled rectangle in the shot's background colour, with the
+best-frame number printed in the shot's foreground colour.  Swatches are
+sized at the default 16 × 9 aspect ratio and reflow automatically when the
+window is resized.
+
+Keyboard:
+  Home          — previous movie
+  End           — next movie
+  Escape / Ctrl+Q / Ctrl+W — close
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import os
+import sys
+from pathlib import Path
+from typing import Optional
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from styles import theme
+from styles.theme import save_window_geometry, restore_window_geometry
+
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
+from PyQt5.QtGui import QColor, QPainter
+
+if "QT_QPA_PLATFORM_PLUGIN_PATH" in os.environ:
+    del os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"]
+
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+_ASPECT = 16 / 9  # swatch width : height ratio
+_GAP    = 4       # px — gap between swatches
+_MARGIN = 10      # px — grid outer margin
+
+
+# ---------------------------------------------------------------------------
+# Shot swatch widget
+# ---------------------------------------------------------------------------
+
+class _ShotCell(QWidget):
+    """A single shot swatch: a background-coloured rectangle with the
+    best-frame number (or shot index) drawn in the foreground colour."""
+
+    def __init__(
+        self,
+        shot: dict,
+        project_path: str,
+        filename: str,
+        media_type: str,
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self._shot         = shot
+        self._project_path = project_path
+        self._filename     = filename
+        self._media_type   = media_type
+        self.setCursor(Qt.PointingHandCursor)
+
+        # Build a tooltip with colour values for debugging
+        bg = shot.get("background", {}).get("rgb")
+        fg = shot.get("foreground", {}).get("rgb")
+        idx = shot.get("shot_index", "?")
+        shot_id = shot.get("shot_id", "")
+        start_t = shot.get("start_time", "")
+        tt_bg = f"bg: rgb({bg[0]},{bg[1]},{bg[2]})" if bg else "bg: —"
+        tt_fg = f"fg: rgb({fg[0]},{fg[1]},{fg[2]})" if fg else "fg: —"
+        self.setToolTip(f"Shot {idx}\n{shot_id}\n{start_t}\n{tt_bg}  {tt_fg}")
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.LeftButton and self._filename:
+            from visualizers.shot_visualizer import open_at_shot
+            open_at_shot(
+                self._project_path,
+                self._filename,
+                self._media_type,
+                shot_id=self._shot.get("shot_id", ""),
+            )
+        super().mousePressEvent(event)
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        shot = self._shot
+        bg_rgb = shot.get("background", {}).get("rgb") or [60, 60, 60]
+        fg_rgb = shot.get("foreground", {}).get("rgb") or [180, 180, 180]
+
+        bg_color = QColor(bg_rgb[0], bg_rgb[1], bg_rgb[2])
+        fg_color = QColor(fg_rgb[0], fg_rgb[1], fg_rgb[2])
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.fillRect(self.rect(), bg_color)
+
+        # Japanese-flag ratio: circle diameter = 3/5 of cell height
+        diameter = int(self.height() * 3 / 5)
+        cx = self.rect().center().x()
+        cy = self.rect().center().y()
+        painter.setBrush(fg_color)
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(cx - diameter // 2, cy - diameter // 2, diameter, diameter)
+        painter.end()
+
+
+# ---------------------------------------------------------------------------
+# Grid container (manual flow layout)
+# ---------------------------------------------------------------------------
+
+class _GridWidget(QWidget):
+    """Holds shot cells in a wrap-around grid that reflows on resize."""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._cells: list[_ShotCell] = []
+
+    def load_shots(
+        self,
+        shots: list[dict],
+        project_path: str = "",
+        filename: str = "",
+        media_type: str = "movies",
+    ) -> None:
+        for cell in self._cells:
+            cell.setParent(None)  # type: ignore[arg-type]
+            cell.deleteLater()
+        self._cells = []
+
+        for shot in shots:
+            cell = _ShotCell(shot, project_path, filename, media_type, self)
+            cell.show()
+            self._cells.append(cell)
+
+        self._reflow()
+
+    def _reflow(self) -> None:
+        n = len(self._cells)
+        if n == 0:
+            return
+
+        W = max(1, self.width()  - 2 * _MARGIN)
+        H = max(1, self.height() - 2 * _MARGIN)
+
+        # Find the column count that maximises cell area while fitting all
+        # shots inside the available W × H area at a fixed aspect ratio.
+        best_area = 0.0
+        best_cols = 1
+        best_cw   = 0.0
+        best_ch   = 0.0
+
+        for cols in range(1, n + 1):
+            rows = math.ceil(n / cols)
+            # Width-first: fill columns across W
+            cw = (W - (cols - 1) * _GAP) / cols
+            ch = cw / _ASPECT
+            # If the resulting rows don't fit vertically, scale from height
+            if rows * ch + (rows - 1) * _GAP > H:
+                ch = (H - (rows - 1) * _GAP) / rows
+                cw = ch * _ASPECT
+            if cw <= 0 or ch <= 0:
+                continue
+            area = cw * ch
+            if area > best_area:
+                best_area = area
+                best_cols = cols
+                best_cw   = cw
+                best_ch   = ch
+
+        if best_area <= 0:
+            return
+
+        cell_w = max(1, int(best_cw))
+        cell_h = max(1, int(best_ch))
+        rows   = math.ceil(n / best_cols)
+
+        # Centre the grid in the available area
+        grid_w = best_cols * cell_w + (best_cols - 1) * _GAP
+        grid_h = rows      * cell_h + (rows      - 1) * _GAP
+        x0 = _MARGIN + (W - grid_w) // 2
+        y0 = _MARGIN + (H - grid_h) // 2
+
+        for i, cell in enumerate(self._cells):
+            row, col = divmod(i, best_cols)
+            x = x0 + col * (cell_w + _GAP)
+            y = y0 + row * (cell_h + _GAP)
+            cell.setGeometry(x, y, cell_w, cell_h)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._reflow()
+
+
+# ---------------------------------------------------------------------------
+# Main window
+# ---------------------------------------------------------------------------
+
+class PaletteVisualizerWindow(QMainWindow):
+    """Main window for the Palette Visualizer."""
+
+    def __init__(
+        self,
+        project_path: str,
+        media_type: str = "movies",
+    ) -> None:
+        super().__init__()
+        self.setWindowTitle("Crossing — Palette Visualizer")
+        self._project_path = project_path
+        self._media_type   = media_type
+
+        # List of (display_label, palette_data) tuples, one per loaded JSON
+        self._palettes: list[tuple[str, dict]] = []
+        self._current_idx: int = 0
+        self._updating_combo: bool = False
+
+        self._build_ui()
+        self._load_palettes()
+        restore_window_geometry(self, "window_palette")
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        save_window_geometry(self, "window_palette")
+        super().closeEvent(event)
+
+    # ------------------------------------------------------------------
+    # UI construction
+
+    def _build_ui(self) -> None:
+        central = QWidget()
+        self.setCentralWidget(central)
+
+        vbox = QVBoxLayout(central)
+        vbox.setContentsMargins(0, 6, 0, 0)
+        vbox.setSpacing(4)
+
+        # Top bar: label + combo + status
+        bar = QHBoxLayout()
+        bar.setContentsMargins(10, 0, 10, 0)
+        bar.setSpacing(6)
+
+        lbl = QLabel("Movie:")
+        lbl.setStyleSheet(
+            f"color: {theme.TEXT}; font-family: '{theme.FAMILY_UI}';"
+            f" font-size: {theme.BASE_PT}pt;"
+        )
+        bar.addWidget(lbl)
+
+        self._combo = QComboBox()
+        self._combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._combo.currentIndexChanged.connect(self._on_combo_changed)
+        bar.addWidget(self._combo, 1)
+
+        self._status_label = QLabel("")
+        self._status_label.setStyleSheet(
+            f"color: {theme.TEXT_DIM}; font-family: '{theme.FAMILY_UI}';"
+            f" font-size: {theme.BASE_PT}pt;"
+        )
+        bar.addWidget(self._status_label)
+
+        vbox.addLayout(bar)
+
+        self._grid = _GridWidget()
+        self._grid.setStyleSheet(f"background: {theme.CANVAS_BG};")
+        self._grid.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        vbox.addWidget(self._grid, 1)
+
+        self.setMinimumSize(600, 400)
+        self.resize(1200, 700)
+
+    # ------------------------------------------------------------------
+    # Data loading
+
+    def _load_palettes(self) -> None:
+        palette_dir = (
+            Path(self._project_path)
+            / "data" / "index" / "palette" / self._media_type
+        )
+        if not palette_dir.exists():
+            self._status_label.setText(
+                "No palette cache found. Run: crossing index palette create --all"
+            )
+            return
+
+        palettes: list[tuple[str, dict]] = []
+        for json_path in sorted(palette_dir.glob("*.json")):
+            try:
+                data = json.loads(json_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            movie = data.get("movie", {})
+            title = movie.get("title") or json_path.stem
+            year  = movie.get("year")
+            label = f"{title} ({year})" if year else title
+            palettes.append((label, data))
+
+        self._palettes = palettes
+
+        self._updating_combo = True
+        self._combo.clear()
+        for label, _ in palettes:
+            self._combo.addItem(label)
+        self._updating_combo = False
+
+        if palettes:
+            self._show_movie(0)
+        else:
+            self._status_label.setText("No palette files found.")
+
+    # ------------------------------------------------------------------
+    # Display
+
+    def _show_movie(self, idx: int) -> None:
+        if not self._palettes or idx < 0 or idx >= len(self._palettes):
+            return
+
+        self._current_idx = idx
+        label, data = self._palettes[idx]
+        shots    = data.get("shots", [])
+        summary  = data.get("summary", {})
+        processed = summary.get("processed", 0)
+        total     = summary.get("shot_count", len(shots))
+        created   = data.get("created_at", "")[:10]
+
+        self._status_label.setText(
+            f"{processed}/{total} shots with palette  ·  {created}"
+        )
+
+        self._grid.load_shots(
+            shots,
+            self._project_path,
+            data.get("movie", {}).get("filename", ""),
+            self._media_type,
+        )
+
+        self._updating_combo = True
+        self._combo.setCurrentIndex(idx)
+        self._updating_combo = False
+
+    # ------------------------------------------------------------------
+    # Signal handlers
+
+    def _on_combo_changed(self, idx: int) -> None:
+        if self._updating_combo:
+            return
+        self._show_movie(idx)
+
+    # ------------------------------------------------------------------
+    # Keyboard navigation
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        key = event.key()
+        mod = event.modifiers()
+
+        if key == Qt.Key_Escape or (
+            key in (Qt.Key_Q, Qt.Key_W) and mod & Qt.ControlModifier
+        ):
+            self.close()
+            return
+
+        if key == Qt.Key_Home:
+            if self._current_idx > 0:
+                self._show_movie(self._current_idx - 1)
+        elif key == Qt.Key_End:
+            if self._current_idx < len(self._palettes) - 1:
+                self._show_movie(self._current_idx + 1)
+        else:
+            super().keyPressEvent(event)
+
+
+# ---------------------------------------------------------------------------
+# Public launcher
+# ---------------------------------------------------------------------------
+
+def run_visualizer(
+    project_path: str,
+    media_type: str = "movies",
+) -> None:
+    """Create QApplication (if needed) and open the palette visualizer."""
+    app = QApplication.instance() or QApplication(sys.argv)
+    theme.apply_theme(app)
+    win = PaletteVisualizerWindow(project_path, media_type=media_type)
+    win.show()
+    sys.exit(app.exec_())
+
+
+if __name__ == "__main__":
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--project", required=True)
+    ap.add_argument("--media", default="movies")
+    parsed = ap.parse_args()
+    run_visualizer(parsed.project, media_type=parsed.media)

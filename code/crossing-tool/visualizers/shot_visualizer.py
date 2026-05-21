@@ -167,6 +167,33 @@ def ipc_send_load(
         return False
 
 
+def open_at_shot(
+    project_path: str,
+    filename: str,
+    media_type: str = "movies",
+    shot_id: str = "",
+) -> None:
+    """Open (or navigate) the Shotlist Visualizer to *filename* / *shot_id*.
+
+    Delivers via IPC to a running instance first; if none is listening,
+    spawns a new Shotlist Visualizer process directly.  This is the single
+    shared entry-point used by all visualizers and CLI commands that want to
+    open a film at a specific shot.
+    """
+    import subprocess as _sp
+    if ipc_send_load(project_path, filename, media_type, shot_id=shot_id, playback="pause"):
+        return
+    cmd = [
+        sys.executable, str(Path(__file__)),
+        "--project",   project_path,
+        "--media",     media_type,
+        "--filenames", filename,
+    ]
+    if shot_id:
+        cmd += ["--shot-id", shot_id]
+    _sp.Popen(cmd)
+
+
 def _get_sar(video_path: str) -> tuple:
     """Return (sar_num, sar_den) for video_path via ffprobe. Falls back to (1,1)."""
     try:

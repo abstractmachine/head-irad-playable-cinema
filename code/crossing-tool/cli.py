@@ -4537,25 +4537,14 @@ def cmd_visualizer(args):
         _require_path()
         filename = getattr(args, "filename", None)
         if filename:
-            # Try to send to a running Shotlist Visualizer first.
-            from visualizers.shot_visualizer import ipc_send_load
-            media_type = getattr(args, "media", "movies")
-            project_path = prefs.get("path")
-            if ipc_send_load(project_path, filename, media_type):
-                return  # delivered to running instance
-            # No running instance — launch a new one with this film.
             _require_visualizer_deps()
-            from visualizers.shot_visualizer import ipc_send_load  # noqa: already imported
-            cli_dir = Path(__file__).parent
-            visualizer_path = cli_dir / "visualizers" / "shot_visualizer.py"
-            import subprocess as _sp
-            _sp.Popen([
-                sys.executable, str(visualizer_path),
-                "--media", media_type,
-                "--project", project_path,
-                "--filenames", filename,
-                *( ["--verbose"] if getattr(args, "verbose", False) else [] ),
-            ])
+            from visualizers.shot_visualizer import open_at_shot
+            open_at_shot(
+                prefs.get("path"),
+                filename,
+                getattr(args, "media", "movies") or "movies",
+                shot_id=getattr(args, "shot_id", "") or "",
+            )
         else:
             args.all = True
             args.query = None
@@ -4577,6 +4566,9 @@ def cmd_visualizer(args):
     elif sub == "silhouette":
         _require_path()
         _silhouette_visualizer(args)
+    elif sub == "palette":
+        _require_path()
+        _palette_visualizer(args)
 
 
 def _project_visualizer(args):
@@ -4601,6 +4593,16 @@ def _silhouette_visualizer(args):
         prefs.get("path"),
         media_type=getattr(args, "media", "movies") or "movies",
         field=getattr(args, "field", None),
+    )
+
+
+def _palette_visualizer(args):
+    """Launch the palette colour browser GUI."""
+    _require_visualizer_deps()
+    from visualizers.palette_visualizer import run_visualizer
+    run_visualizer(
+        prefs.get("path"),
+        media_type=getattr(args, "media", "movies") or "movies",
     )
 
 
@@ -6001,6 +6003,12 @@ def build_parser():
         help="Open (or jump to) a specific film by filename",
     )
     p_vis_shot.add_argument(
+        "--shot-id",
+        dest="shot_id",
+        default="",
+        help="Jump to a specific shot_id on open",
+    )
+    p_vis_shot.add_argument(
         "--verbose",
         action="store_true",
         help="Enable verbose logging in the shotlist visualizer",
@@ -6052,6 +6060,15 @@ def build_parser():
         metavar="NAME",
         default=None,
         help="Show only silhouettes for this annotation field",
+    )
+
+    p_vis_palette = visualizer_sub.add_parser(
+        "palette",
+        help="Browse per-shot foreground/background colour palettes",
+    )
+    p_vis_palette.add_argument(
+        "--media", choices=["movies", "gameplay"], default="movies",
+        help="Media type (default: movies)",
     )
 
     return parser

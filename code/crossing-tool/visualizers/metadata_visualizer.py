@@ -13,7 +13,6 @@ Each card shows a thumbnail, title, and key metadata fields.
 
 from __future__ import annotations
 
-import subprocess
 import sys
 from pathlib import Path
 
@@ -146,12 +145,13 @@ class _BaseCard(QFrame):
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton and self._filename:
-            subprocess.Popen([
-                sys.executable, str(_CLI_PATH),
-                "visualizer", "shotlist",
-                "--media", self._media_type,
-                "--filename", self._filename,
-            ])
+            import prefs as _prefs
+            from visualizers.shot_visualizer import open_at_shot
+            open_at_shot(
+                _prefs.get("path") or "",
+                self._filename,
+                self._media_type,
+            )
         super().mousePressEvent(event)
 
 
