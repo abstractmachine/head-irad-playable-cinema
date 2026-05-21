@@ -36,8 +36,12 @@ shot-detection = [
   "tensorflow>=2.5",
   "ffmpeg-python",
 ]
+silhouette = [
+  "sam2 @ git+https://github.com/facebookresearch/sam2.git",
+  "opencv-python-headless",
+]
 all = [
-  "crossing[annotate,visualizer,shot-detection]",
+  "crossing[annotate,visualizer,shot-detection,silhouette]",
 ]
 
 [project.scripts]

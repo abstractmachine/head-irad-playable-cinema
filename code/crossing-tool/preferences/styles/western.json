@@ -1,16 +1,17 @@
 {
   "description": "Sepia / aged-paper look inspired by Western-era print culture. Ink on paper, restrained, historical, slightly warm.",
-  "background": [242, 230, 201],
+  "color_model": "RGB — each channel is an integer in [0, 255] representing (red, green, blue). Duplicate palette entries are intentional: they increase the probability of that colour being randomly selected for a word.",
+  "background": { "label": "aged paper",    "rgb": [242, 230, 201] },
   "palette": [
-    [43,  33,  24],
-    [43,  33,  24],
-    [43,  33,  24],
-    [140, 90,  43],
-    [140, 90,  43],
-    [75,  52,  28],
-    [100, 65,  35],
-    [55,  40,  22],
-    [120, 78,  42],
-    [90,  60,  30]
+    { "label": "deep ink",       "rgb": [43,  33,  24] },
+    { "label": "deep ink",       "rgb": [43,  33,  24] },
+    { "label": "deep ink",       "rgb": [43,  33,  24] },
+    { "label": "saddle brown",   "rgb": [140, 90,  43] },
+    { "label": "saddle brown",   "rgb": [140, 90,  43] },
+    { "label": "dark sienna",    "rgb": [75,  52,  28] },
+    { "label": "warm umber",     "rgb": [100, 65,  35] },
+    { "label": "dark espresso",  "rgb": [55,  40,  22] },
+    { "label": "russet",         "rgb": [120, 78,  42] },
+    { "label": "raw umber",      "rgb": [90,  60,  30] }
   ]
 }

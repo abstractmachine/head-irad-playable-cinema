@@ -3625,6 +3625,10 @@ def cmd_index(args):
         _index_audit(args)
     elif sub == "vocabulary":
         _index_vocabulary(args)
+    elif sub == "silhouette":
+        _index_silhouette(args)
+    elif sub == "palette":
+        _index_palette(args)
     else:
         print("✗ index: specify a subcommand.", file=sys.stderr)
         sys.exit(1)
@@ -4257,6 +4261,274 @@ def _index_vocabulary(args):
         print(f"Saved: {out_rel}")
 
 
+def _index_silhouette(args):
+    """Build and cache a best silhouette polygon for a vocabulary word in a field."""
+    from services.silhouette import build_silhouette
+
+    project_path = prefs.get("path")
+    word          = args.word
+    field         = args.field
+    media_type    = getattr(args, "media", "movies")
+    force         = getattr(args, "force", False)
+    verbose       = getattr(args, "verbose", False)
+    dry_run       = getattr(args, "dry_run", False)
+
+    sam_model     = (
+        getattr(args, "model", None)
+        or prefs.get(_MODEL_KEYS["segmentation"], _MODEL_DEFAULTS["segmentation"])
+    )
+    frame_model   = (
+        getattr(args, "frame_model", None)
+        or prefs.get(_MODEL_KEYS["frame_match"], _MODEL_DEFAULTS["frame_match"])
+    )
+
+    # Resolve scope
+    shot_id = getattr(args, "shot", None)
+    movie   = getattr(args, "movie", None)
+    tmdb    = getattr(args, "tmdb", None)
+    do_all  = getattr(args, "all", False)
+
+    if shot_id:
+        scope_type  = "shot"
+        scope_value = shot_id
+    elif tmdb is not None:
+        scope_type  = "movie"
+        scope_value = f"tmdb_{tmdb}"
+    elif movie:
+        scope_type  = "movie"
+        scope_value = movie
+    elif do_all:
+        scope_type  = "all"
+        scope_value = None
+    else:
+        print(
+            "✗ Specify a scope: --shot <shot_id>, --movie <title>, --tmdb <id>, or --all",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if verbose or dry_run:
+        scope_desc = scope_value or "all movies"
+        print(
+            f"Silhouette: word='{word}'  field='{field}'  "
+            f"scope={scope_type}:{scope_desc}  media={media_type}"
+        )
+        if dry_run:
+            print("  (dry-run — no segmentation or writes)")
+
+    result = build_silhouette(
+        project_path=project_path,
+        word=word,
+        field=field,
+        scope_type=scope_type,
+        scope_value=scope_value,
+        media_type=media_type,
+        sam_model_name=sam_model,
+        frame_model_name=frame_model,
+        force=force,
+        verbose=verbose,
+        dry_run=dry_run,
+    )
+
+    if dry_run:
+        candidates = result.get("candidates", [])
+        if not candidates:
+            print(f"  No candidates found for '{word}' in '{field}'.")
+        else:
+            print(f"  {len(candidates)} candidate shot(s):")
+            for c in candidates[:20]:
+                sid = c.get("shot_id", "?")
+                sc  = c.get("score", 0)
+                fn  = c.get("filename", "?")
+                print(f"    [{sc:.3f}] {sid}  ({fn})")
+            if len(candidates) > 20:
+                print(f"    … and {len(candidates) - 20} more")
+        return
+
+    if result["accepted"]:
+        reason = result["reason"]
+        out    = result["output_path"] or ""
+        if reason == "cached":
+            print(f"✓ (cached) {out}")
+        else:
+            payload = result.get("payload") or {}
+            score   = payload.get("score", 0)
+            pts     = len(payload.get("polygon") or [])
+            print(f"✓ Silhouette saved: {out}")
+            print(f"  score={score:.4f}  polygon_pts={pts}")
+    else:
+        reason = result["reason"]
+        print(f"✗ Silhouette not found: {reason}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _index_palette(args):
+    """Dispatch ``crossing index palette <create|get>``."""
+    palette_action = getattr(args, "palette_action", None)
+    if palette_action == "create":
+        _index_palette_create(args)
+    elif palette_action == "get":
+        _index_palette_get(args)
+    else:
+        print("✗ index palette: specify create or get", file=sys.stderr)
+        sys.exit(1)
+
+
+def _index_palette_create(args):
+    """Build and cache colour palettes from best-frame PNGs."""
+    from data.palette import create_palette_for_movie, create_palette_for_all_movies
+    from data.shotlist import resolve_filename
+
+    project_path = prefs.get("path")
+    media_type = getattr(args, "media", "movies")
+    force = getattr(args, "force", False)
+    verbose = getattr(args, "verbose", False)
+
+    do_all = getattr(args, "all", False)
+    movie_query = getattr(args, "movie", None)
+    tmdb = getattr(args, "tmdb", None)
+
+    if do_all:
+        summary = create_palette_for_all_movies(
+            project_path,
+            media_type,
+            force=force,
+            verbose=verbose,
+        )
+        cached = summary.get("total_cached", 0)
+        cached_note = f"  ({cached} already cached)" if cached else ""
+        print(
+            f"✓ Palette create complete: "
+            f"{summary['total_files']} file(s)  "
+            f"processed={summary['total_processed']}  "
+            f"skipped={summary['total_skipped']}  "
+            f"failed={summary['total_failed']}"
+            f"{cached_note}"
+        )
+        if summary.get("total_failed", 0):
+            sys.exit(1)
+        return
+
+    if tmdb is None and movie_query is None:
+        print(
+            "✗ Specify a target: --all, --movie <title>, or --tmdb <id>",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        filename = resolve_filename(project_path, tmdb, movie_query, media_type)
+    except ValueError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        summary = create_palette_for_movie(
+            project_path,
+            filename,
+            media_type,
+            force=force,
+            verbose=verbose,
+        )
+    except FileNotFoundError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    except FileExistsError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if summary.get("cached"):
+        print(f"  (cached)  {filename}  — use --force to recompute")
+        return
+
+    print(f"✓ {filename}")
+    print(f"  shots:     {summary.get('shot_count', 0)}")
+    print(f"  processed: {summary.get('processed', 0)}")
+    print(f"  skipped:   {summary.get('skipped', 0)}")
+    print(f"  failed:    {summary.get('failed', 0)}")
+
+    if summary.get("failed", 0):
+        sys.exit(1)
+
+
+def _index_palette_get(args):
+    """Print the cached colour palette for a movie."""
+    from data.palette import get_palette, get_palette_path
+    from data.shotlist import resolve_filename
+
+    project_path = prefs.get("path")
+    media_type = getattr(args, "media", "movies")
+
+    do_all = getattr(args, "all", False)
+    movie_query = getattr(args, "movie", None)
+    tmdb = getattr(args, "tmdb", None)
+    shot_index = getattr(args, "shot", None)
+
+    if do_all:
+        from data.metadata import get_metadata
+        entries = get_metadata(project_path, media_type=media_type)
+        results = []
+        for e in entries:
+            fn = e.get("filename")
+            if not fn:
+                continue
+            data = get_palette(project_path, fn, media_type)
+            if data is None:
+                results.append({"filename": fn, "status": "missing"})
+            else:
+                summary = data.get("summary", {})
+                results.append({
+                    "filename": fn,
+                    "status": "ok",
+                    "processed": summary.get("processed", 0),
+                    "skipped": summary.get("skipped", 0),
+                    "created_at": data.get("created_at"),
+                })
+        print(json.dumps(results, indent=2, ensure_ascii=False))
+        return
+
+    if tmdb is None and movie_query is None:
+        print(
+            "✗ Specify a target: --all, --movie <title>, or --tmdb <id>",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        filename = resolve_filename(project_path, tmdb, movie_query, media_type)
+    except ValueError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    data = get_palette(project_path, filename, media_type)
+    if data is None:
+        cache_path = get_palette_path(project_path, filename, media_type)
+        print(
+            f"✗ No palette cache found for '{filename}'.\n"
+            f"  Expected: {cache_path}\n"
+            f"  Run: crossing index palette create --movie {movie_query or filename}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if shot_index is not None:
+        shots = data.get("shots", [])
+        matches = [s for s in shots if s.get("shot_index") == shot_index]
+        if not matches:
+            print(
+                f"✗ Shot index {shot_index} not found in palette cache for '{filename}'.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(json.dumps(matches[0], indent=2, ensure_ascii=False))
+        return
+
+    print(json.dumps(data, indent=2, ensure_ascii=False))
+
+
 def cmd_visualizer(args):
     sub = args.visualizer_subcommand
     if sub in (None, "project"):
@@ -4302,6 +4574,9 @@ def cmd_visualizer(args):
     elif sub == "metadata":
         _require_path()
         _metadata_visualizer(args)
+    elif sub == "silhouette":
+        _require_path()
+        _silhouette_visualizer(args)
 
 
 def _project_visualizer(args):
@@ -4316,6 +4591,17 @@ def _metadata_visualizer(args):
     _require_visualizer_deps()
     from visualizers.metadata_visualizer import run_visualizer
     run_visualizer(prefs.get("path"))
+
+
+def _silhouette_visualizer(args):
+    """Launch the silhouette polygon browser GUI."""
+    _require_visualizer_deps()
+    from visualizers.silhouette_visualizer import run_visualizer
+    run_visualizer(
+        prefs.get("path"),
+        media_type=getattr(args, "media", "movies") or "movies",
+        field=getattr(args, "field", None),
+    )
 
 
 def _require_path():
@@ -5087,6 +5373,157 @@ def build_parser():
         help="Show per-field detail (json, mapping, txt, npy, manifest) for each film",
     )
 
+    p_index_silhouette = index_sub.add_parser(
+        "silhouette",
+        help=(
+            "Build and cache the best silhouette polygon for a vocabulary word "
+            "in an annotation field"
+        ),
+        epilog=(
+            "Examples:\n"
+            "  crossing index silhouette horse --field animals --all\n"
+            "  crossing index silhouette saddle --field objects --movie Django\n"
+            "  crossing index silhouette running --field action --tmdb 11969\n"
+            "  crossing index silhouette horse --field animals --shot tmdb_281957@f001240-f001310"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_index_silhouette.set_defaults(func=cmd_index)
+    p_index_silhouette.add_argument(
+        "word",
+        help="Vocabulary word to segment (e.g. horse, saddle, running)",
+    )
+    p_index_silhouette.add_argument(
+        "--field", required=True, metavar="FIELD",
+        help="Annotation field / category to search in (e.g. animals, objects, action)",
+    )
+    p_index_silhouette.add_argument(
+        "--movie", default=None, metavar="TITLE",
+        help="Restrict search to this movie (title substring or media_id)",
+    )
+    p_index_silhouette.add_argument(
+        "--tmdb", type=int, default=None, metavar="ID",
+        help="Restrict search to the movie with this TMDb ID",
+    )
+    p_index_silhouette.add_argument(
+        "--shot", default=None, metavar="SHOT_ID",
+        help=(
+            "Single-shot diagnostic mode: process exactly this shot_id "
+            "(format: <media_id>@fSTART-fEND)"
+        ),
+    )
+    p_index_silhouette.add_argument(
+        "--all", action="store_true",
+        help="Search across all movies in the corpus",
+    )
+    p_index_silhouette.add_argument(
+        "--media", choices=["movies", "gameplay"], default="movies",
+        help="Media type (default: movies)",
+    )
+    p_index_silhouette.add_argument(
+        "--model", default=None, metavar="NAME",
+        help=(
+            "SAM2 checkpoint filename inside <project>/models/ "
+            "(default: segmentation model role, currently sam2.1_b.pt)"
+        ),
+    )
+    p_index_silhouette.add_argument(
+        "--frame-model", default=None, dest="frame_model", metavar="NAME",
+        help=(
+            "CLIP model name for frame matching "
+            "(default: frame_match model role, currently clip-vit-base-patch32)"
+        ),
+    )
+    p_index_silhouette.add_argument(
+        "--force", action="store_true",
+        help="Overwrite existing cached silhouette",
+    )
+    p_index_silhouette.add_argument(
+        "--dry-run", action="store_true", dest="dry_run",
+        help="List candidate shots without running segmentation or writing any files",
+    )
+    p_index_silhouette.add_argument(
+        "--verbose", action="store_true",
+        help="Print progress detail (model loading, frame selection, mask counts)",
+    )
+
+    # index palette
+    p_index_palette = index_sub.add_parser(
+        "palette",
+        help="Build and retrieve per-shot colour palettes (foreground / background) from best-frame PNGs",
+        epilog=(
+            "Examples:\n"
+            "  crossing index palette create --all\n"
+            "  crossing index palette create --movie 'The Searchers'\n"
+            "  crossing index palette create --tmdb 12345 --force\n"
+            "  crossing index palette get --movie 'The Searchers'\n"
+            "  crossing index palette get --movie 'The Searchers' --shot 4\n"
+            "  crossing index palette get --all"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_index_palette.set_defaults(func=cmd_index)
+    palette_sub = p_index_palette.add_subparsers(dest="palette_action", required=True)
+
+    p_index_palette_create = palette_sub.add_parser(
+        "create",
+        help=(
+            "Extract and cache foreground/background colours for every shot "
+            "that has a best-frame PNG"
+        ),
+    )
+    p_index_palette_create.set_defaults(func=cmd_index)
+    p_index_palette_create.add_argument(
+        "--all", action="store_true",
+        help="Process every movie in the metadata index",
+    )
+    p_index_palette_create.add_argument(
+        "--movie", default=None, metavar="TITLE",
+        help="Title substring to identify a single movie",
+    )
+    p_index_palette_create.add_argument(
+        "--tmdb", type=int, default=None, metavar="ID",
+        help="TMDb ID of the movie (unambiguous alternative to --movie)",
+    )
+    p_index_palette_create.add_argument(
+        "--media", choices=["movies", "gameplay"], default="movies",
+        help="Media type (default: movies)",
+    )
+    p_index_palette_create.add_argument(
+        "--force", action="store_true",
+        help="Overwrite an existing palette cache instead of skipping",
+    )
+    p_index_palette_create.add_argument(
+        "--verbose", action="store_true",
+        help="Print per-shot colour results and progress",
+    )
+
+    p_index_palette_get = palette_sub.add_parser(
+        "get",
+        help="Print the cached colour palette JSON for a movie",
+    )
+    p_index_palette_get.set_defaults(func=cmd_index)
+    p_index_palette_get.add_argument(
+        "--all", action="store_true",
+        help="List palette status for every movie",
+    )
+    p_index_palette_get.add_argument(
+        "--movie", default=None, metavar="TITLE",
+        help="Title substring to identify a single movie",
+    )
+    p_index_palette_get.add_argument(
+        "--tmdb", type=int, default=None, metavar="ID",
+        help="TMDb ID of the movie (unambiguous alternative to --movie)",
+    )
+    p_index_palette_get.add_argument(
+        "--media", choices=["movies", "gameplay"], default="movies",
+        help="Media type (default: movies)",
+    )
+    p_index_palette_get.add_argument(
+        "--shot", type=int, default=None, metavar="INDEX",
+        help="Return palette for only this shot (0-based index)",
+    )
+
     # media command group
     p_media = sub.add_parser(
         "media",
@@ -5541,7 +5978,7 @@ def build_parser():
     # visualizer command group — shortcut to all visualizer GUIs
     p_visualizer = sub.add_parser(
         "visualizer",
-        help="Open a visualizer GUI (project, shotlist, composition, mosaic, cloud)",
+        help="Open a visualizer GUI (project, shotlist, composition, mosaic, cloud, silhouette)",
     )
     p_visualizer.set_defaults(func=cmd_visualizer, visualizer_subcommand="project")
     visualizer_sub = p_visualizer.add_subparsers(dest="visualizer_subcommand", required=False)
@@ -5600,6 +6037,21 @@ def build_parser():
     visualizer_sub.add_parser(
         "metadata",
         help="Open the metadata browser GUI (movies and gameplay cards)",
+    )
+
+    p_vis_silhouette = visualizer_sub.add_parser(
+        "silhouette",
+        help="Browse cached silhouette polygons (from crossing index silhouette)",
+    )
+    p_vis_silhouette.add_argument(
+        "--media", choices=["movies", "gameplay"], default="movies",
+        help="Media type (default: movies)",
+    )
+    p_vis_silhouette.add_argument(
+        "--field",
+        metavar="NAME",
+        default=None,
+        help="Show only silhouettes for this annotation field",
     )
 
     return parser

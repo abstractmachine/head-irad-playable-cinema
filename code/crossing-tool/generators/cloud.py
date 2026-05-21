@@ -108,12 +108,21 @@ PREFS_KEY_STYLE = "cloud_style"
 _STYLES_DIR = Path(__file__).parent.parent / "preferences" / "styles"
 
 
+def _to_rgb(value) -> tuple:
+    """Extract an RGB tuple from a bare ``[R, G, B]`` list or a
+    ``{"label": ..., "rgb": [R, G, B]}`` dict (new labelled format)."""
+    if isinstance(value, dict):
+        return tuple(value["rgb"])
+    return tuple(value)
+
+
 def _load_styles() -> dict[str, dict]:
     """Load style presets from ``preferences/styles/*.json``.
 
     The built-in ``default`` style is always available.  Additional presets
     are discovered by scanning the directory; each JSON file must contain
-    ``background`` (RGB list) and ``palette`` (list of RGB lists).
+    ``background`` and ``palette``.  Both bare ``[R, G, B]`` arrays and the
+    labelled ``{"label": ..., "rgb": [R, G, B]}`` format are accepted.
     """
     built_in: dict[str, dict] = {
         "default": {
@@ -129,8 +138,8 @@ def _load_styles() -> dict[str, dict]:
         try:
             data = json.loads(path.read_text())
             built_in[name] = {
-                "background": tuple(data["background"]),
-                "palette":    [tuple(c) for c in data["palette"]],
+                "background": _to_rgb(data["background"]),
+                "palette":    [_to_rgb(c) for c in data["palette"]],
             }
         except Exception:
             pass  # malformed file — skip silently
@@ -140,6 +149,28 @@ def _load_styles() -> dict[str, dict]:
 
 STYLES     = _load_styles()
 STYLE_NAMES = list(STYLES.keys())
+
+
+def reload_styles() -> None:
+    """Re-read all style presets from ``preferences/styles/*.json``.
+
+    Call this after editing a style JSON file to apply the changes to the
+    current session without restarting the visualizer.
+    """
+    global STYLES, STYLE_NAMES
+    STYLES = _load_styles()
+    STYLE_NAMES = list(STYLES.keys())
+
+
+def get_style_path(name: str) -> "Path | None":
+    """Return the JSON file path for a named style preset.
+
+    Returns ``None`` for built-in styles that have no backing file
+    (e.g. ``"default"``).
+    """
+    p = _STYLES_DIR / f"{name}.json"
+    return p if p.exists() else None
+
 
 # Font-size range for word rendering
 _MAX_FONT_SIZE = 120

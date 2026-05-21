@@ -11,6 +11,7 @@ Layout:
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -25,7 +26,9 @@ from styles.theme import save_window_geometry, restore_window_geometry
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication,
+    QColorDialog,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -33,15 +36,228 @@ from PyQt5.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
-from PyQt5.QtGui import QFont, QImage, QPixmap
+from PyQt5.QtGui import QColor, QFont, QImage, QPixmap
 
 if "QT_QPA_PLATFORM_PLUGIN_PATH" in os.environ:
     del os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"]
+
+
+# ---------------------------------------------------------------------------
+# Style colour editor dialog
+# ---------------------------------------------------------------------------
+
+class StyleEditorDialog(QDialog):
+    """Modal dialog for viewing and editing a file-backed cloud style preset.
+
+    Displays colour swatches for the background and each palette entry.
+    Clicking a swatch opens a colour picker.  *Save & Apply* writes the
+    changes back to the JSON file and reloads the style registry so the
+    next Generate run uses the updated colours.
+    """
+
+    def __init__(self, style_name: str, parent=None):
+        super().__init__(parent)
+        from generators.cloud import get_style_path
+        style_path = get_style_path(style_name)
+        if style_path is None:
+            raise ValueError(f"Style '{style_name}' has no backing JSON file.")
+        self._style_name = style_name
+        self._path       = style_path
+        self._raw: dict  = json.loads(self._path.read_text())
+
+        # Parse current colour values into mutable state
+        bg_raw = self._raw.get("background", [18, 18, 18])
+        self._bg_rgb: list = list(bg_raw["rgb"] if isinstance(bg_raw, dict) else bg_raw)
+
+        self._entries: list[dict] = []
+        for item in self._raw.get("palette", []):
+            if isinstance(item, dict):
+                self._entries.append({"label": item.get("label", ""), "rgb": list(item["rgb"])})
+            else:
+                self._entries.append({"label": "", "rgb": list(item)})
+
+        # ── Layout ───────────────────────────────────────────────────────────
+        self.setWindowTitle(f"Edit style: {style_name}")
+        self.setMinimumWidth(380)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(8)
+
+        hdr_font = theme.font_ui()
+        hdr_font.setCapitalization(QFont.AllUppercase)
+        hdr_font.setLetterSpacing(QFont.AbsoluteSpacing, 1.2)
+
+        def _hdr(text: str) -> QLabel:
+            lbl = QLabel(text)
+            lbl.setFont(hdr_font)
+            lbl.setStyleSheet(f"color: {theme.TEXT}; background: transparent;")
+            return lbl
+
+        # Description (read-only)
+        desc = self._raw.get("description", "")
+        if desc:
+            desc_lbl = QLabel(desc)
+            desc_lbl.setWordWrap(True)
+            desc_lbl.setStyleSheet(
+                f"color: {theme.TEXT_DIM}; font-size: 11px; background: transparent;"
+            )
+            layout.addWidget(desc_lbl)
+            layout.addSpacing(4)
+
+        # ── Background ───────────────────────────────────────────────────────
+        layout.addWidget(_hdr("Background"))
+        self._bg_btn = self._make_swatch(self._bg_rgb)
+        self._bg_btn.clicked.connect(self._pick_bg)
+        self._bg_lbl = QLabel(self._fmt(self._bg_rgb))
+        self._bg_lbl.setStyleSheet(
+            f"color: {theme.TEXT_DIM}; font-size: 11px; background: transparent;"
+        )
+        bg_row = QHBoxLayout()
+        bg_row.setSpacing(8)
+        bg_row.addWidget(self._bg_btn)
+        bg_row.addWidget(self._bg_lbl)
+        bg_row.addStretch()
+        layout.addLayout(bg_row)
+
+        layout.addSpacing(6)
+
+        # ── Palette ──────────────────────────────────────────────────────────
+        layout.addWidget(_hdr("Palette  ·  click a swatch to change  ·  duplicates = higher weight"))
+
+        self._swatch_btns: list[QPushButton] = []
+        self._rgb_labels:  list[QLabel]      = []
+
+        inner = QWidget()
+        grid  = QVBoxLayout(inner)
+        grid.setContentsMargins(0, 2, 0, 2)
+        grid.setSpacing(4)
+
+        for i, entry in enumerate(self._entries):
+            row_w = QWidget()
+            row_l = QHBoxLayout(row_w)
+            row_l.setContentsMargins(0, 0, 0, 0)
+            row_l.setSpacing(8)
+
+            sw = self._make_swatch(entry["rgb"])
+            sw.clicked.connect(lambda _checked, idx=i: self._pick_palette(idx))
+
+            name_lbl = QLabel(entry["label"] or "(no label)")
+            name_lbl.setFixedWidth(130)
+            name_lbl.setStyleSheet(
+                f"color: {theme.TEXT}; font-size: 11px; background: transparent;"
+            )
+            rgb_lbl = QLabel(self._fmt(entry["rgb"]))
+            rgb_lbl.setStyleSheet(
+                f"color: {theme.TEXT_DIM}; font-size: 11px; background: transparent;"
+            )
+
+            row_l.addWidget(sw)
+            row_l.addWidget(name_lbl)
+            row_l.addWidget(rgb_lbl)
+            row_l.addStretch()
+            grid.addWidget(row_w)
+
+            self._swatch_btns.append(sw)
+            self._rgb_labels.append(rgb_lbl)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setWidget(inner)
+        scroll.setMinimumHeight(min(280, len(self._entries) * 34 + 20))
+        layout.addWidget(scroll)
+
+        layout.addSpacing(8)
+
+        # ── Buttons ──────────────────────────────────────────────────────────
+        btn_row = QHBoxLayout()
+        cancel_btn = QPushButton("CANCEL")
+        cancel_btn.clicked.connect(self.reject)
+        save_btn = QPushButton("SAVE & APPLY")
+        save_btn.clicked.connect(self._save)
+        btn_row.addWidget(cancel_btn)
+        btn_row.addStretch()
+        btn_row.addWidget(save_btn)
+        layout.addLayout(btn_row)
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _fmt(rgb: list) -> str:
+        return f"rgb({rgb[0]}, {rgb[1]}, {rgb[2]})"
+
+    @staticmethod
+    def _make_swatch(rgb: list) -> "QPushButton":
+        btn = QPushButton()
+        btn.setStyleSheet(
+            f"background-color: rgb({rgb[0]},{rgb[1]},{rgb[2]});"
+            f" border: 1px solid {theme.UI_BORDER};"
+            f" min-width: 28px; max-width: 28px;"
+            f" min-height: 20px; max-height: 20px;"
+        )
+        return btn
+
+    @staticmethod
+    def _update_swatch(btn: "QPushButton", rgb: list) -> None:
+        btn.setStyleSheet(
+            f"background-color: rgb({rgb[0]},{rgb[1]},{rgb[2]});"
+            f" border: 1px solid {theme.UI_BORDER};"
+            f" min-width: 28px; max-width: 28px;"
+            f" min-height: 20px; max-height: 20px;"
+        )
+
+    def _pick_bg(self) -> None:
+        c = QColorDialog.getColor(QColor(*self._bg_rgb), self, "Background colour")
+        if c.isValid():
+            self._bg_rgb = [c.red(), c.green(), c.blue()]
+            self._update_swatch(self._bg_btn, self._bg_rgb)
+            self._bg_lbl.setText(self._fmt(self._bg_rgb))
+
+    def _pick_palette(self, idx: int) -> None:
+        cur = self._entries[idx]["rgb"]
+        c = QColorDialog.getColor(QColor(*cur), self, f"Palette colour {idx + 1}")
+        if c.isValid():
+            self._entries[idx]["rgb"] = [c.red(), c.green(), c.blue()]
+            self._update_swatch(self._swatch_btns[idx], self._entries[idx]["rgb"])
+            self._rgb_labels[idx].setText(self._fmt(self._entries[idx]["rgb"]))
+
+    def _save(self) -> None:
+        raw = dict(self._raw)  # shallow copy — preserves description, color_model, etc.
+
+        # Write background
+        bg_orig = raw.get("background")
+        if isinstance(bg_orig, dict):
+            updated_bg = dict(bg_orig)
+            updated_bg["rgb"] = self._bg_rgb
+            raw["background"] = updated_bg
+        else:
+            raw["background"] = self._bg_rgb
+
+        # Write palette
+        old_palette = raw.get("palette", [])
+        new_palette = []
+        for i, entry in enumerate(self._entries):
+            orig = old_palette[i] if i < len(old_palette) else {}
+            if isinstance(orig, dict):
+                updated = dict(orig)
+                updated["rgb"] = entry["rgb"]
+                new_palette.append(updated)
+            else:
+                new_palette.append(entry["rgb"])
+        raw["palette"] = new_palette
+
+        self._path.write_text(json.dumps(raw, indent=2))
+
+        from generators.cloud import reload_styles
+        reload_styles()
+        self.accept()
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +448,15 @@ class CloudVisualizer(QMainWindow):
         if idx >= 0:
             self.style_combo.setCurrentIndex(idx)
         self.style_combo.currentIndexChanged.connect(self._on_style_changed)
+        self.style_combo.currentIndexChanged.connect(self._update_edit_btn)
         rp.addWidget(self.style_combo)
+        rp.addSpacing(4)
+
+        # Edit colours button (only enabled for file-backed styles)
+        self.edit_colors_btn = QPushButton("EDIT COLORS")
+        self.edit_colors_btn.clicked.connect(self._on_edit_colors)
+        rp.addWidget(self.edit_colors_btn)
+        self._update_edit_btn()
         rp.addSpacing(18)
 
         # Separator
@@ -322,6 +546,29 @@ class CloudVisualizer(QMainWindow):
         import prefs as _prefs
         from generators.cloud import PREFS_KEY_STYLE
         _prefs.set(PREFS_KEY_STYLE, self.style_combo.currentData())
+
+    def _update_edit_btn(self, _index: int = 0) -> None:
+        """Enable the Edit Colors button only when a file-backed style is active."""
+        from generators.cloud import get_style_path
+        style = self.style_combo.currentData()
+        self.edit_colors_btn.setEnabled(
+            bool(style and get_style_path(style) is not None)
+        )
+
+    def _on_edit_colors(self) -> None:
+        """Open the colour editor for the currently selected style."""
+        style = self.style_combo.currentData()
+        if not style:
+            return
+        try:
+            dlg = StyleEditorDialog(style, parent=self)
+        except Exception as exc:
+            QMessageBox.warning(self, "Cannot open editor", str(exc))
+            return
+        if dlg.exec_() == QDialog.Accepted:
+            self.status_label.setText(
+                f"Style \u2018{style}\u2019 colours updated \u2014 press GENERATE to apply."
+            )
 
     def _populate_movies(self) -> None:
         """Populate movie_combo from project metadata for the selected media type."""

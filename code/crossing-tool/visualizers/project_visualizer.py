@@ -81,6 +81,7 @@ _VISUALIZER_TITLE = {
     "composition": "Composition Visualizer",
     "metadata":    "Metadata Visualizer",
     "cloud":       "Cloud Visualizer",
+    "silhouette":  "Silhouette Visualizer",
 }
 
 
@@ -432,8 +433,9 @@ class ProjectVisualizer(QMainWindow):
                 ("Mosaic",      "mosaic",      True),
                 ("Cloud",       "cloud",       True),
                 ("Composition", "composition", False),
+                ("Silhouette",  "silhouette",  True),
             ],
-            [(0, 0), (0, 1), (1, 0), (1, 1), (2, 0)],
+            [(0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 1)],
         ):
             btn = QPushButton(label)
             btn.setEnabled(enabled)

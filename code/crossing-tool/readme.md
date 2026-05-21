@@ -115,12 +115,14 @@ The `crossing` command is now available globally. No virtual environment activat
 | `annotate` | transformers, huggingface-hub | `crossing annotate` (LLM vision models) |
 | `visualizer` | PyQt5, opencv | `--visualizer` flag on any command |
 | `shot-detection` | TransNetV2, TensorFlow | `crossing shotlist shot detect` |
+| `silhouette` | sam2, opencv | `crossing index silhouette` |
 
 ```bash
 # Install with a specific extra
 uv tool install "crossing[annotate] @ git+https://github.com/abstractmachine/head-irad-playable-cinema.git#subdirectory=code/crossing-tool"
 uv tool install "crossing[visualizer] @ git+https://github.com/abstractmachine/head-irad-playable-cinema.git#subdirectory=code/crossing-tool"
 uv tool install "crossing[shot-detection] @ git+https://github.com/abstractmachine/head-irad-playable-cinema.git#subdirectory=code/crossing-tool"
+uv tool install "crossing[silhouette] @ git+https://github.com/abstractmachine/head-irad-playable-cinema.git#subdirectory=code/crossing-tool"
 ```
 
 To change extras on an already-installed tool, add `--reinstall`:
@@ -171,6 +173,7 @@ Optional features require their extra to be synced into the dev environment. If 
 | `crossing annotate` | `uv sync --extra annotate` |
 | `crossing ... --visualizer` | `uv sync --extra visualizer` |
 | `crossing shotlist shot detect` | `uv sync --extra shot-detection` |
+| `crossing index silhouette` | `uv sync --extra silhouette` |
 
 ```bash
 # Install all extras at once
