@@ -444,7 +444,7 @@ class PaletteVisualizerWindow(QMainWindow):
     def _load_palettes(self) -> None:
         palette_dir = (
             Path(self._project_path)
-            / "data" / "index" / "palette" / self._media_type
+            / "data" / "palettes" / self._media_type
         )
         if not palette_dir.exists():
             self._status_label.setText(

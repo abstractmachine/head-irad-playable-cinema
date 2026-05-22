@@ -83,6 +83,7 @@ _VISUALIZER_TITLE = {
     "cloud":       "Cloud Visualizer",
     "silhouette":  "Silhouette Visualizer",
     "palette":     "Palette Visualizer",
+    "flipbook":    "Flipbook Visualizer",
 }
 
 
@@ -436,8 +437,9 @@ class ProjectVisualizer(QMainWindow):
                 ("Composition", "composition", False),
                 ("Silhouette",  "silhouette",  True),
                 ("Palette",     "palette",     True),
+                ("Flipbook",    "flipbook",    True),
             ],
-            [(0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 1), (3, 0)],
+            [(0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 1), (3, 0), (3, 1)],
         ):
             btn = QPushButton(label)
             btn.setEnabled(enabled)

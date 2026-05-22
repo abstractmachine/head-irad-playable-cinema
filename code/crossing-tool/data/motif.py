@@ -1,0 +1,574 @@
+"""Cinematic motif generation for shot-level annotation.
+
+Generates one motif per shot using an editable prompt system.
+Motifs are stored inside the existing shot annotation JSON.
+
+Storage schema
+--------------
+Each shot entry gains a ``"motif"`` key inside ``entry["shot"]``:
+
+    entry["shot"]["motif"] = {
+        "value":         "crossing",
+        "model":         "Qwen3-VL-8B-Instruct",
+        "system_prompt": "system-2026-05-22-v1.txt",
+        "user_prompt":   "user-2026-05-22-v1.txt",
+        "generated_at":  "2026-05-22T14:30:00+00:00"
+    }
+
+Access the motif string via:  shot["motif"]["value"]
+
+Motif history
+-------------
+The generator receives the FULL ordered history of motifs generated so far
+(shot #1 through the previous shot) with no rolling window.  Repetition is
+meaningful and is preserved.  History resets when a new movie begins.
+
+Prompt loading
+--------------
+Prompts are loaded from:
+
+    <project>/prompts/movies/motifs/
+
+The latest ``system-*.txt`` and ``user-*.txt`` files are selected
+automatically (natural sort, descending), mirroring the shot annotation
+prompt discovery logic.  Explicit overrides can be passed at call time.
+
+Normalization
+-------------
+After generation:
+- Take the first line only
+- Lowercase
+- Trim whitespace
+- Normalize internal whitespace
+- Strip trailing punctuation
+
+Intentionally light: does not stem, split, or rewrite vocabulary choices.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import string
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Optional, Tuple
+
+
+# ---------------------------------------------------------------------------
+# Prompt discovery helpers
+# ---------------------------------------------------------------------------
+
+def _natural_sort_key(p: Path) -> list:
+    """Key for natural (version-aware) sort of prompt filenames."""
+    parts = re.split(r"(\d+)", p.name)
+    return [int(x) if x.isdigit() else x for x in parts]
+
+
+def find_latest_motif_prompt(project_path: str, prefix: str = "") -> Optional[Path]:
+    """Return the most recent motif prompt file for the given prefix.
+
+    Searches ``<project>/prompts/movies/motifs/``.
+    With ``prefix="system"`` matches ``system-*.txt``.
+    With ``prefix="user"``   matches ``user-*.txt``.
+    With ``prefix=""``       matches any ``*.txt``.
+
+    Returns ``None`` when the directory does not exist or no match found.
+    """
+    d = Path(project_path) / "prompts" / "movies" / "motifs"
+    if not d.exists() or not d.is_dir():
+        return None
+    pattern = f"{prefix}-*.txt" if prefix else "*.txt"
+    files = [p for p in d.glob(pattern) if p.is_file()]
+    if not files:
+        return None
+    files.sort(key=_natural_sort_key, reverse=True)
+    return files[0]
+
+
+def load_motif_prompts(
+    project_path: str,
+    system_prompt_file: Optional[str] = None,
+    user_prompt_file: Optional[str] = None,
+) -> Tuple[str, str, Optional[str], Optional[str]]:
+    """Load system and user motif prompts.
+
+    Resolution order for each prompt:
+      1. Explicit file path (absolute or relative to project root)
+      2. Latest ``system-*.txt`` / ``user-*.txt`` under ``prompts/movies/motifs/``
+      3. Minimal built-in fallback
+
+    Returns
+    -------
+    (system_text, user_text, system_filename, user_filename)
+        ``system_filename`` and ``user_filename`` are the bare filenames
+        of the files actually loaded (for provenance recording).
+        Both are ``None`` when the built-in fallback is used.
+    """
+    # --- system prompt ---
+    system_text: Optional[str] = None
+    system_filename: Optional[str] = None
+
+    if system_prompt_file:
+        p = Path(system_prompt_file)
+        if not p.exists():
+            p = Path(project_path) / system_prompt_file
+        if p.exists():
+            system_text = p.read_text(encoding="utf-8")
+            system_filename = p.name
+
+    if system_text is None:
+        latest = find_latest_motif_prompt(project_path, prefix="system")
+        if latest:
+            system_text = latest.read_text(encoding="utf-8")
+            system_filename = latest.name
+
+    if system_text is None:
+        system_text = (
+            "You are a motif generator for cinematic shot analysis. "
+            "Generate exactly one motif word for the shot. "
+            "Output only the motif, nothing else."
+        )
+
+    # --- user prompt ---
+    user_text: Optional[str] = None
+    user_filename: Optional[str] = None
+
+    if user_prompt_file:
+        p = Path(user_prompt_file)
+        if not p.exists():
+            p = Path(project_path) / user_prompt_file
+        if p.exists():
+            user_text = p.read_text(encoding="utf-8")
+            user_filename = p.name
+
+    if user_text is None:
+        latest = find_latest_motif_prompt(project_path, prefix="user")
+        if latest:
+            user_text = latest.read_text(encoding="utf-8")
+            user_filename = latest.name
+
+    if user_text is None:
+        user_text = (
+            "Movie: $title ($year)\n"
+            "Shot: $shot_index\n"
+            "Start: $timecode_start\n"
+            "End: $timecode_stop\n\n"
+            "Description: $description\n"
+            "Setting: $setting\n"
+            "Action: $action\n\n"
+            "Recent motif history:\n$motif_history\n\n"
+            "Generate exactly one motif word for this shot."
+        )
+
+    return system_text, user_text, system_filename, user_filename
+
+
+# ---------------------------------------------------------------------------
+# Variable substitution
+# ---------------------------------------------------------------------------
+
+def _substitute_variables(template: str, variables: dict) -> str:
+    """Replace ``$key`` placeholders with values. Unknown keys become empty strings."""
+    for key, value in variables.items():
+        template = template.replace(f"${key}", value or "")
+    return template
+
+
+def _annotation_field(ann: dict, key: str) -> str:
+    """Extract a field from an annotation dict, flattening lists to joined strings."""
+    val = ann.get(key)
+    if val is None:
+        return ""
+    if isinstance(val, list):
+        return ", ".join(str(v) for v in val if v)
+    return str(val)
+
+
+# ---------------------------------------------------------------------------
+# Motif history
+# ---------------------------------------------------------------------------
+
+def motif_history_text(entries: list) -> str:
+    """Build the full ordered motif history from all processed entries.
+
+    Returns a newline-separated list of motif values (one per line).
+    Entries without a motif value are silently skipped.
+    Repeated motifs are preserved — repetition carries cinematic meaning.
+
+    The history resets when a new movie begins (caller is responsible for
+    passing only entries from the current movie).
+    """
+    lines = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        shot_data = entry.get("shot")
+        if not isinstance(shot_data, dict):
+            continue
+        motif = shot_data.get("motif")
+        if isinstance(motif, dict):
+            value = (motif.get("value") or "").strip()
+        elif isinstance(motif, str):
+            value = motif.strip()
+        else:
+            value = ""
+        if value:
+            lines.append(value)
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Normalization
+# ---------------------------------------------------------------------------
+
+def normalize_motif(text: str) -> str:
+    """Normalize a model-generated motif string.
+
+    Rules (intentionally light):
+    - Take the first non-empty line
+    - Lowercase
+    - Normalize internal whitespace
+    - Strip trailing punctuation and whitespace
+
+    Does NOT stem, split compound words, or rewrite vocabulary choices.
+    Examples:
+      "Crossing"   → "crossing"
+      "the end."   → "the end"
+      "  riders  " → "riders"
+    """
+    if not text:
+        return ""
+    # Take first non-empty line (model sometimes emits think-tags or extra lines)
+    for raw_line in text.strip().splitlines():
+        line = raw_line.strip()
+        # Skip common preamble patterns emitted by thinking models
+        if line.startswith("<") or line.startswith("**") or not line:
+            continue
+        # Lowercase
+        line = line.lower()
+        # Normalize internal whitespace
+        line = " ".join(line.split())
+        # Strip trailing punctuation
+        line = line.rstrip(string.punctuation + " ")
+        if line:
+            return line
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# Single-shot generation
+# ---------------------------------------------------------------------------
+
+def generate_motif(
+    pipeline: Any,
+    system_text: str,
+    user_text: str,
+    variables: dict,
+) -> str:
+    """Generate one motif using the loaded pipeline and filled prompts.
+
+    The cinematic interpretation logic lives entirely in the prompts.
+    This function only substitutes variables and calls the model.
+
+    Returns the raw generated text (before normalization).
+    Images are not used — motif is derived purely from annotation text.
+    """
+    from data.annotate import _call_model
+
+    filled_user = _substitute_variables(user_text, variables)
+    messages = [
+        {"role": "system", "content": system_text},
+        {"role": "user",   "content": filled_user},
+    ]
+
+    # Low token budget: motif is one word, rarely a short phrase.
+    # do_sample=False for near-deterministic output.
+    overrides = {"max_new_tokens": 32, "do_sample": False}
+
+    _full_text, generated, _dev_log = _call_model(
+        pipeline, messages, overrides=overrides, images=None
+    )
+    return generated.strip()
+
+
+# ---------------------------------------------------------------------------
+# Movie-level generation
+# ---------------------------------------------------------------------------
+
+def generate_motifs_for_movie(
+    project_path: str,
+    filename: str,
+    media_type: str = "movies",
+    model_name: str = "Qwen3-VL-8B-Instruct",
+    force: bool = False,
+    verbose: bool = False,
+    system_prompt_file: Optional[str] = None,
+    user_prompt_file: Optional[str] = None,
+) -> dict:
+    """Generate and store motifs for all shots in a single movie.
+
+    Reads the shot annotation JSON in order, generates one motif per shot,
+    accumulates the full motif history as it goes, and writes motif data
+    back into ``entry["shot"]["motif"]`` within the annotation JSON.
+
+    Motifs that already exist are skipped unless ``force=True``.
+
+    Parameters
+    ----------
+    project_path :      Project root directory.
+    filename :          Video filename (e.g. ``"The Searchers (1956).mp4"``).
+    media_type :        ``"movies"`` or ``"gameplay"``.
+    model_name :        Model name / path for generation.
+    force :             Regenerate even if motif already exists.
+    verbose :           Print ``[001] motif`` lines while generating.
+    system_prompt_file: Override system prompt path.
+    user_prompt_file :  Override user prompt path.
+
+    Returns
+    -------
+    dict with keys: ``filename``, ``total``, ``processed``, ``skipped``, ``failed``.
+
+    Raises
+    ------
+    FileNotFoundError: If the annotation JSON does not exist.
+    """
+    from data.annotate import get_annotation_json_path, _load_text_generation_pipeline
+    from data.metadata import get_metadata
+    from data.media_id import compute_media_id, build_shot_id
+    from data.shotlist import read_shotlist
+
+    json_path = get_annotation_json_path(project_path, filename, media_type)
+    if not json_path.exists():
+        raise FileNotFoundError(
+            f"No annotation JSON found: {json_path}\n"
+            f"  Run: crossing annotate shot --movie '{filename}' first."
+        )
+
+    entries: list = json.loads(json_path.read_text(encoding="utf-8"))
+
+    # Movie metadata
+    meta_entries = get_metadata(project_path, media_type=media_type)
+    meta = next((e for e in meta_entries if e.get("filename") == filename), {})
+    title = meta.get("title") or Path(filename).stem
+    year = str(meta.get("year") or "")
+
+    # Build shot_id → shotlist row mapping for timecode lookup (best-effort)
+    shots_by_id: dict[str, dict] = {}
+    try:
+        media_id = compute_media_id(meta, media_type)
+        shotlist = read_shotlist(project_path, filename, media_type)
+        for shot in shotlist:
+            sf = int(shot.get("start_frame") or 0)
+            ef = int(shot.get("end_frame") or 0)
+            sid = build_shot_id(media_id, sf, ef)
+            shots_by_id[sid] = shot
+    except FileNotFoundError:
+        if verbose:
+            print(f"  warn  shotlist not found — timecodes will be empty")
+    except Exception:
+        pass
+
+    # Load prompts
+    system_text, user_text, system_filename, user_filename = load_motif_prompts(
+        project_path, system_prompt_file, user_prompt_file
+    )
+
+    if verbose:
+        print(f"  system prompt: {system_filename or '(built-in)'}")
+        print(f"  user prompt:   {user_filename or '(built-in)'}")
+
+    # Load model once for the whole movie
+    pipeline = _load_text_generation_pipeline(project_path, model_name)
+
+    processed = 0
+    skipped = 0
+    failed = 0
+
+    # Full motif history, accumulated shot by shot — no window limit
+    processed_entries: list = []
+
+    for i, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            processed_entries.append(entry)
+            continue
+
+        shot_data = entry.get("shot")
+        if not isinstance(shot_data, dict):
+            processed_entries.append(entry)
+            continue
+
+        # Skip if motif already exists (unless --force)
+        existing_motif = shot_data.get("motif")
+        if (
+            not force
+            and isinstance(existing_motif, dict)
+            and existing_motif.get("value", "").strip()
+        ):
+            skipped += 1
+            processed_entries.append(entry)
+            if verbose:
+                print(f"[{i+1:03d}] (skip) {existing_motif['value']}")
+            continue
+
+        # Extract annotation fields
+        ann = shot_data.get("annotation")
+        if not isinstance(ann, dict):
+            ann = {}
+
+        # Resolve timecodes from shotlist (preferred) or annotation
+        shot_id_str = str(shot_data.get("shot_id", ""))
+        shot_info = shots_by_id.get(shot_id_str, {})
+        timecode_start = shot_info.get("start_time", "") or _annotation_field(shot_data, "start_time")
+        timecode_stop  = shot_info.get("end_time",   "") or _annotation_field(shot_data, "end_time")
+
+        # Build motif history from all previously processed shots
+        history = motif_history_text(processed_entries)
+
+        variables = {
+            "title":          title,
+            "year":           year,
+            "shot_index":     str(i + 1),
+            "timecode_start": timecode_start,
+            "timecode_stop":  timecode_stop,
+            "description":    _annotation_field(ann, "description"),
+            "type":           _annotation_field(ann, "type"),
+            "setting":        _annotation_field(ann, "setting"),
+            "spatial":        _annotation_field(ann, "spatial"),
+            "time_of_day":    _annotation_field(ann, "time_of_day"),
+            "shot":           _annotation_field(ann, "shot"),
+            "camera":         _annotation_field(ann, "camera"),
+            "humans":         _annotation_field(ann, "humans"),
+            "animals":        _annotation_field(ann, "animals"),
+            "action":         _annotation_field(ann, "action"),
+            "objects":        _annotation_field(ann, "objects"),
+            "wearing":        _annotation_field(ann, "wearing"),
+            "text":           _annotation_field(ann, "text"),
+            "motif_history":  history,
+        }
+
+        try:
+            raw = generate_motif(pipeline, system_text, user_text, variables)
+            value = normalize_motif(raw)
+            if not value:
+                # Fallback: use raw stripped, or a sentinel
+                value = raw.strip().lower()[:30] if raw.strip() else "unknown"
+
+            entry["shot"]["motif"] = {
+                "value":         value,
+                "model":         model_name,
+                "system_prompt": system_filename or "",
+                "user_prompt":   user_filename or "",
+                "generated_at":  datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            }
+            processed += 1
+
+            if verbose:
+                print(f"[{i+1:03d}] {value}")
+
+        except Exception as exc:
+            failed += 1
+            print(f"  fail  shot {i + 1}: {exc}", flush=True)
+
+        # Always append the (possibly updated) entry to history
+        processed_entries.append(entry)
+
+    # Write the entire annotation JSON back (only motif fields were touched)
+    json_path.write_text(
+        json.dumps(entries, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    return {
+        "filename":  filename,
+        "total":     len(entries),
+        "processed": processed,
+        "skipped":   skipped,
+        "failed":    failed,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Corpus-level generation
+# ---------------------------------------------------------------------------
+
+def generate_motifs_for_all_movies(
+    project_path: str,
+    media_type: str = "movies",
+    model_name: str = "Qwen3-VL-8B-Instruct",
+    force: bool = False,
+    verbose: bool = False,
+    system_prompt_file: Optional[str] = None,
+    user_prompt_file: Optional[str] = None,
+) -> dict:
+    """Generate motifs for all movies that have an annotation JSON.
+
+    Iterates the metadata index and skips movies without annotations.
+    Motif history resets between movies.
+
+    Returns a summary dict with aggregate counts across all processed movies.
+    """
+    from data.metadata import get_metadata
+    from data.annotate import get_annotation_json_path
+
+    meta_entries = get_metadata(project_path, media_type=media_type)
+
+    total_files     = 0
+    total_processed = 0
+    total_skipped   = 0
+    total_failed    = 0
+    errors: list    = []
+
+    for meta in meta_entries:
+        filename = meta.get("filename")
+        if not filename:
+            continue
+
+        json_path = get_annotation_json_path(project_path, filename, media_type)
+        if not json_path.exists():
+            continue
+
+        total_files += 1
+        title = meta.get("title") or filename
+
+        if verbose:
+            print(f"\n{title}")
+        else:
+            print(f"  {title}...", end=" ", flush=True)
+
+        try:
+            summary = generate_motifs_for_movie(
+                project_path,
+                filename,
+                media_type,
+                model_name=model_name,
+                force=force,
+                verbose=verbose,
+                system_prompt_file=system_prompt_file,
+                user_prompt_file=user_prompt_file,
+            )
+            total_processed += summary.get("processed", 0)
+            total_skipped   += summary.get("skipped",   0)
+            total_failed    += summary.get("failed",    0)
+            if not verbose:
+                n_gen  = summary.get("processed", 0)
+                n_skip = summary.get("skipped",   0)
+                print(f"ok  ({n_gen} generated, {n_skip} skipped)")
+        except FileNotFoundError as exc:
+            errors.append((filename, str(exc)))
+            total_files -= 1
+            if not verbose:
+                print("skip (no annotations)")
+        except Exception as exc:
+            errors.append((filename, str(exc)))
+            total_failed += 1
+            if not verbose:
+                print(f"error: {exc}")
+
+    return {
+        "total_files":     total_files,
+        "total_processed": total_processed,
+        "total_skipped":   total_skipped,
+        "total_failed":    total_failed,
+        "errors":          errors,
+    }

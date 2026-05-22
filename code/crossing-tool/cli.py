@@ -3142,6 +3142,8 @@ def cmd_generate(args):
         cmd_mosaic(args)
     elif sub == "cloud":
         cmd_cloud(args)
+    elif sub == "flipbook":
+        cmd_flipbook(args)
 
 
 def cmd_composition(args):
@@ -3609,6 +3611,96 @@ def _cloud_visualizer(args):
 
 
 # ---------------------------------------------------------------------------
+# generate flipbook
+# ---------------------------------------------------------------------------
+
+def cmd_flipbook(args):
+    """Generate a cinematic motif flipbook PDF (one page per shot)."""
+    _require_path()
+    project_path = prefs.get("path")
+    media_type   = getattr(args, "media", "movies") or "movies"
+    force        = getattr(args, "force", False)
+    verbose      = getattr(args, "verbose", False)
+    open_result  = not getattr(args, "no_open", False)
+
+    if getattr(args, "visualizer", False):
+        _flipbook_visualizer(args)
+        return
+
+    import subprocess
+    from generators.flipbook import (
+        generate_flipbook_for_movie,
+        generate_flipbook_for_all_movies,
+    )
+    from data.shotlist import resolve_filename
+
+    # Determine scope
+    do_all   = getattr(args, "all", False)
+    movie    = getattr(args, "movie", None)
+    tmdb_id  = getattr(args, "tmdb", None)
+
+    if do_all:
+        print(f"Generating flipbooks for all {media_type}…")
+        summary = generate_flipbook_for_all_movies(
+            project_path, media_type=media_type,
+            force=force, verbose=verbose,
+        )
+        print()
+        print(f"  processed: {summary['total_processed']}")
+        print(f"  skipped:   {summary['total_skipped']}")
+        print(f"  failed:    {summary['total_failed']}")
+        if summary["errors"]:
+            for fn, err in summary["errors"]:
+                print(f"  ✗ {fn}: {err}", file=sys.stderr)
+        return
+
+    # Single movie
+    if not movie and not tmdb_id:
+        print("✗ flipbook: specify --movie, --tmdb, or --all.", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        filename = resolve_filename(project_path, tmdb_id, movie, media_type)
+    except Exception as exc:
+        print(f"✗ Could not resolve movie: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        result = generate_flipbook_for_movie(
+            project_path, filename, media_type,
+            force=force, verbose=verbose,
+        )
+        out = result["output_path"]
+        print(f"✓ Saved: {out}  ({result['pages']} pages)")
+        if open_result:
+            try:
+                subprocess.Popen(["xdg-open", str(out)])
+            except Exception:
+                pass
+    except FileExistsError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    except FileNotFoundError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        print(f"✗ Flipbook failed: {exc}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+def _flipbook_visualizer(args):
+    """flipbook --visualizer — launch the interactive flipbook GUI."""
+    _require_visualizer_deps()
+    from visualizers.flipbook_visualizer import run_visualizer
+    run_visualizer(
+        prefs.get("path"),
+        media_type=getattr(args, "media", "movies") or "movies",
+    )
+
+
+# ---------------------------------------------------------------------------
 # index command family
 # ---------------------------------------------------------------------------
 
@@ -3629,6 +3721,8 @@ def cmd_index(args):
         _index_silhouette(args)
     elif sub == "palette":
         _index_palette(args)
+    elif sub == "motif":
+        _index_motif(args)
     else:
         print("✗ index: specify a subcommand.", file=sys.stderr)
         sys.exit(1)
@@ -4529,6 +4623,98 @@ def _index_palette_get(args):
     print(json.dumps(data, indent=2, ensure_ascii=False))
 
 
+def _index_motif(args):
+    """Dispatch ``crossing index motif <generate>``."""
+    motif_action = getattr(args, "motif_action", None)
+    if motif_action == "generate":
+        _index_motif_generate(args)
+    else:
+        print("✗ index motif: specify a subcommand (generate)", file=sys.stderr)
+        sys.exit(1)
+
+
+def _index_motif_generate(args):
+    """Generate cinematic motifs for all shots in one movie or all movies."""
+    from data.motif import generate_motifs_for_movie, generate_motifs_for_all_movies
+    from data.shotlist import resolve_filename
+
+    project_path = prefs.get("path")
+    media_type   = getattr(args, "media",    "movies")
+    force        = getattr(args, "force",    False)
+    verbose      = getattr(args, "verbose",  False)
+    do_all       = getattr(args, "all",      False)
+    movie_query  = getattr(args, "movie",    None)
+    tmdb         = getattr(args, "tmdb",     None)
+    model_name   = getattr(args, "model",    None) or prefs.get(_MODEL_KEYS["annotate"], _MODEL_DEFAULTS["annotate"])
+
+    if do_all:
+        summary = generate_motifs_for_all_movies(
+            project_path,
+            media_type,
+            model_name=model_name,
+            force=force,
+            verbose=verbose,
+        )
+        print(
+            f"\n✓ Motif generate complete: "
+            f"{summary['total_files']} file(s)  "
+            f"generated={summary['total_processed']}  "
+            f"skipped={summary['total_skipped']}  "
+            f"failed={summary['total_failed']}"
+        )
+        if summary.get("errors"):
+            for fn, msg in summary["errors"]:
+                print(f"  ✗ {fn}: {msg}", file=sys.stderr)
+        if summary.get("total_failed", 0):
+            sys.exit(1)
+        return
+
+    if tmdb is None and movie_query is None:
+        print(
+            "✗ Specify a target: --all, --movie <title>, or --tmdb <id>",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        filename = resolve_filename(project_path, tmdb, movie_query, media_type)
+    except ValueError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if verbose:
+        from data.metadata import get_metadata
+        meta_entries = get_metadata(project_path, media_type=media_type)
+        meta = next((e for e in meta_entries if e.get("filename") == filename), {})
+        title = meta.get("title") or filename
+        print(f"{title}")
+
+    try:
+        summary = generate_motifs_for_movie(
+            project_path,
+            filename,
+            media_type,
+            model_name=model_name,
+            force=force,
+            verbose=verbose,
+        )
+    except FileNotFoundError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"✓ {filename}")
+    print(f"  total:     {summary.get('total', 0)}")
+    print(f"  generated: {summary.get('processed', 0)}")
+    print(f"  skipped:   {summary.get('skipped', 0)}")
+    print(f"  failed:    {summary.get('failed', 0)}")
+
+    if summary.get("failed", 0):
+        sys.exit(1)
+
+
 def cmd_visualizer(args):
     sub = args.visualizer_subcommand
     if sub in (None, "project"):
@@ -4569,6 +4755,9 @@ def cmd_visualizer(args):
     elif sub == "palette":
         _require_path()
         _palette_visualizer(args)
+    elif sub == "flipbook":
+        _require_path()
+        _flipbook_visualizer(args)
 
 
 def _project_visualizer(args):
@@ -5188,6 +5377,45 @@ def build_parser():
         help="Open the interactive cloud visualizer instead of saving",
     )
 
+    # generate flipbook
+    p_flipbook = generate_sub.add_parser(
+        "flipbook",
+        help="Generate a cinematic motif flipbook PDF (one page per shot)",
+    )
+    p_flipbook.set_defaults(func=cmd_flipbook)
+    p_flipbook.add_argument(
+        "--movie", default=None, metavar="TITLE",
+        help="Movie title to generate flipbook for",
+    )
+    p_flipbook.add_argument(
+        "--all", action="store_true", dest="all",
+        help="Generate flipbooks for all movies",
+    )
+    p_flipbook.add_argument(
+        "--tmdb", default=None, metavar="ID",
+        help="TMDB ID to identify the movie",
+    )
+    p_flipbook.add_argument(
+        "--media", choices=["movies", "gameplay"], default="movies",
+        help="Media type (default: movies)",
+    )
+    p_flipbook.add_argument(
+        "--force", action="store_true",
+        help="Overwrite existing flipbook PDF",
+    )
+    p_flipbook.add_argument(
+        "--verbose", action="store_true",
+        help="Print per-page progress",
+    )
+    p_flipbook.add_argument(
+        "--no-open", action="store_true", dest="no_open",
+        help="Do not open the PDF after saving",
+    )
+    p_flipbook.add_argument(
+        "--visualizer", action="store_true",
+        help="Open the interactive flipbook visualizer instead of saving",
+    )
+
     # index command group
     p_index = sub.add_parser(
         "index",
@@ -5524,6 +5752,62 @@ def build_parser():
     p_index_palette_get.add_argument(
         "--shot", type=int, default=None, metavar="INDEX",
         help="Return palette for only this shot (0-based index)",
+    )
+
+    # index motif
+    p_index_motif = index_sub.add_parser(
+        "motif",
+        help="Generate cinematic motifs for shots (one word per shot, progression-aware)",
+        epilog=(
+            "Examples:\n"
+            "  crossing index motif generate --all\n"
+            "  crossing index motif generate --movie 'The Searchers'\n"
+            "  crossing index motif generate --movie 'Django' --force\n"
+            "  crossing index motif generate --all --verbose"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_index_motif.set_defaults(func=cmd_index)
+    motif_sub = p_index_motif.add_subparsers(dest="motif_action", required=True)
+
+    p_index_motif_generate = motif_sub.add_parser(
+        "generate",
+        help=(
+            "Generate one cinematic motif per shot using local LLM and editable prompts"
+        ),
+    )
+    p_index_motif_generate.set_defaults(func=cmd_index)
+    p_index_motif_generate.add_argument(
+        "--all", action="store_true",
+        help="Generate motifs for every movie in the metadata index",
+    )
+    p_index_motif_generate.add_argument(
+        "--movie", default=None, metavar="TITLE",
+        help="Title substring to identify a single movie",
+    )
+    p_index_motif_generate.add_argument(
+        "--tmdb", type=int, default=None, metavar="ID",
+        help="TMDb ID of the movie (unambiguous alternative to --movie)",
+    )
+    p_index_motif_generate.add_argument(
+        "--media", choices=["movies", "gameplay"], default="movies",
+        help="Media type (default: movies)",
+    )
+    p_index_motif_generate.add_argument(
+        "--model", default=None, metavar="NAME",
+        help=(
+            "Model name for motif generation. "
+            "Defaults to the 'annotate' model role "
+            "(crossing tool model set annotate <name>)."
+        ),
+    )
+    p_index_motif_generate.add_argument(
+        "--force", action="store_true",
+        help="Regenerate motifs even if they already exist",
+    )
+    p_index_motif_generate.add_argument(
+        "--verbose", action="store_true",
+        help="Print [001] motif lines while generating",
     )
 
     # media command group
@@ -6067,6 +6351,15 @@ def build_parser():
         help="Browse per-shot foreground/background colour palettes",
     )
     p_vis_palette.add_argument(
+        "--media", choices=["movies", "gameplay"], default="movies",
+        help="Media type (default: movies)",
+    )
+
+    p_vis_flipbook = visualizer_sub.add_parser(
+        "flipbook",
+        help="Browse cinematic motif flipbook pages (bg color + motif word per shot)",
+    )
+    p_vis_flipbook.add_argument(
         "--media", choices=["movies", "gameplay"], default="movies",
         help="Media type (default: movies)",
     )

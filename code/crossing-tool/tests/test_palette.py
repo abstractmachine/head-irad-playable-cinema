@@ -77,7 +77,7 @@ class TestGetPalettePath(unittest.TestCase):
         p = get_palette_path("/project", "My Film (1956).mp4", "movies")
         self.assertEqual(
             p,
-            Path("/project/data/index/palette/movies/My Film (1956).json"),
+            Path("/project/data/palettes/movies/My Film (1956).json"),
         )
 
     def test_stem_strips_extension(self):

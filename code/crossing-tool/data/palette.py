@@ -2,7 +2,7 @@
 
 Cache path
 ----------
-    <project>/data/index/palette/<media_type>/<stem>.json
+    <project>/data/palettes/<media_type>/<stem>.json
 
 For each shot in a film the best-frame PNG (written by ``crossing annotate
 frame``) is loaded and analysed using the figure-ground palette pipeline.
@@ -92,10 +92,10 @@ _FIG_MAX_SAMPLE = 1024  # max pixels sampled for Ward linkage (speed cap)
 def get_palette_path(project_path: str, filename: str, media_type: str) -> Path:
     """Return the canonical cache path for a palette JSON.
 
-    ``<project>/data/index/palette/<media_type>/<stem>.json``
+    ``<project>/data/palettes/<media_type>/<stem>.json``
     """
     stem = Path(filename).stem
-    return Path(project_path) / "data" / "index" / "palette" / media_type / f"{stem}.json"
+    return Path(project_path) / "data" / "palettes" / media_type / f"{stem}.json"
 
 
 def load_palette(project_path: str, filename: str, media_type: str) -> dict | None:
