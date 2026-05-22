@@ -1024,23 +1024,10 @@ def create_palette_for_movie(
                 "cached": True,
             }
         if verbose:
-            print(f"  stale {filename}: shotlist is newer than palette cache — differential update")
+            print(f"  stale {filename}: shotlist is newer than palette cache — regenerating")
 
     # Load annotation entries
     entries = load_annotation_items(project_path, filename, media_type)
-
-    # When not forcing a full rebuild, load existing palette shots keyed by
-    # shot_id so we can reuse them for shots that haven't changed.
-    existing_by_id: dict[str, dict] = {}
-    if cache_path.exists() and not force:
-        try:
-            existing_doc = json.loads(cache_path.read_text(encoding="utf-8"))
-            for ps in existing_doc.get("shots", []):
-                sid = str(ps.get("shot_id", ""))
-                if sid:
-                    existing_by_id[sid] = ps
-        except Exception:
-            pass  # corrupt cache → treat as full rebuild
 
     # Resolve movie metadata
     meta_entries = get_metadata(project_path, media_type=media_type)
@@ -1067,25 +1054,17 @@ def create_palette_for_movie(
         if verbose:
             print(f"  warn  {filename}: shotlist not found; timing fields will be empty")
 
-    # Identify which shots need processing (not present in existing palette).
-    new_indices = [
-        i for i, entry in enumerate(entries)
-        if str((entry.get("shot") or {}).get("shot_id", "")) not in existing_by_id
-    ]
-    needs_model = bool(new_indices)
-
     # Process each shot
     shot_palettes: list[dict] = []
     processed = 0
     skipped = 0
     failed = 0
-    reused = 0
 
-    # Load SAM2 once for the whole movie, but only when there are new shots.
+    # Load SAM2 once for the whole movie (if configured in project prefs).
     sam_mask_generator = None
     import prefs as _prefs
     _sam_name = _prefs.get("model_segmentation")
-    if needs_model and _sam_name:
+    if _sam_name:
         try:
             from services.silhouette import load_sam_model  # type: ignore
             sam_mask_generator, _, _dev = load_sam_model(project_path, _sam_name)
@@ -1094,23 +1073,13 @@ def create_palette_for_movie(
         except (ImportError, FileNotFoundError, RuntimeError) as _sam_exc:
             if verbose:
                 print(f"  warn  SAM2 not available ({_sam_exc}); using spatial fallback")
-    elif needs_model and verbose:
+    elif verbose:
         print("  info  no segmentation model configured; using spatial fallback")
 
     for i, entry in enumerate(entries):
         shot_data = entry.get("shot", {})
         shot_id = str(shot_data.get("shot_id", ""))
         shot_info = shots_by_id.get(shot_id)
-
-        # Reuse existing palette entry when available (unchanged shot).
-        if shot_id in existing_by_id:
-            existing = dict(existing_by_id[shot_id])
-            existing["shot_index"] = i  # update index in case order shifted
-            shot_palettes.append(existing)
-            reused += 1
-            if verbose:
-                print(f"  reuse shot {i:4d}  (unchanged)")
-            continue
 
         result = _process_one_shot(
             project_path, filename, media_type, entry, i, shot_info,
@@ -1142,7 +1111,6 @@ def create_palette_for_movie(
     summary = {
         "shot_count": len(entries),
         "processed": processed,
-        "reused": reused,
         "skipped": skipped,
         "failed": failed,
     }
@@ -1159,8 +1127,6 @@ def create_palette_for_movie(
     save_palette(project_path, filename, media_type, palette_doc, force=force)
 
     if verbose:
-        if reused:
-            print(f"  → {reused} shots reused, {processed} new, {skipped} skipped, {failed} failed")
         print(
             f"  → saved  {cache_path.relative_to(project_path) if project_path else cache_path}"
         )

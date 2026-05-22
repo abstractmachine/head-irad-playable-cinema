@@ -102,12 +102,18 @@ def _load_font(size: int, preferred_path: str) -> ImageFont.FreeTypeFont:
 
 
 def _measure_text(draw: ImageDraw.ImageDraw, text: str, font: Any) -> tuple[int, int]:
-    """Return (width, height) of rendered text."""
+    """Return (width, height) of rendered text using tight ink bounds."""
+    try:
+        # font.getbbox returns the tight ink bounding box without line-height
+        # padding — more accurate for centering and size-fitting than textbbox.
+        bbox = font.getbbox(text)  # type: ignore[union-attr]
+        return bbox[2] - bbox[0], bbox[3] - bbox[1]
+    except AttributeError:
+        pass
     try:
         bbox = draw.textbbox((0, 0), text, font=font)
         return bbox[2] - bbox[0], bbox[3] - bbox[1]
     except AttributeError:
-        # Pillow < 9 fallback
         return draw.textsize(text, font=font)  # type: ignore[attr-defined]
 
 
@@ -358,9 +364,24 @@ def render_flipbook_page(page: dict) -> Image.Image:
     if font is None:
         return img
 
-    # Centered position
-    x = (PAGE_W - tw) // 2
-    y = (PAGE_H - th) // 2
+    # Re-measure using font.getbbox which returns the tight ink bounding box
+    # (no line-height padding).  draw.textbbox includes line metrics that add
+    # extra vertical space, causing words to appear off-center in the PDF.
+    try:
+        bbox = font.getbbox(text)  # type: ignore[union-attr]  # Pillow ≥ 8
+        bx, by = bbox[0], bbox[1]
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    except AttributeError:
+        try:
+            bbox = draw.textbbox((0, 0), text, font=font)
+            bx, by = bbox[0], bbox[1]
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        except AttributeError:
+            bx, by = 0, 0  # tw, th already set from _fit_font
+
+    # Centered position, corrected for ink-bbox origin offset
+    x = (PAGE_W - tw) // 2 - bx
+    y = (PAGE_H - th) // 2 - by
 
     draw.text((x, y), text, font=font, fill=fg)
     return img
