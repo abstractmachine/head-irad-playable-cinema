@@ -1592,23 +1592,9 @@ class ShotlistVisualizer(QMainWindow):
         self.switch_to_movie(index)
 
     def switch_to_movie(self, index: int):
-        """Switch to a different movie in the playlist, prompting to save first if needed."""
+        """Switch to a different movie in the playlist."""
         if index == self.current_movie_index:
             return
-
-        if self.modified:
-            reply = QMessageBox.question(
-                self, "Unsaved Changes",
-                "You have unsaved changes. Save before switching?",
-                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel
-            )
-            if reply == QMessageBox.Cancel:
-                self._updating_combo = True
-                self.movie_combo.setCurrentIndex(self.current_movie_index)
-                self._updating_combo = False
-                return
-            elif reply == QMessageBox.Save:
-                self.save_changes()
 
         if self._annotate_worker is not None:
             self._annotate_worker.requestInterruption()
@@ -1849,8 +1835,7 @@ class ShotlistVisualizer(QMainWindow):
             shot = self.shots[self.current_shot_index]
             shot['Ignore'] = 'No' if shot.get('Ignore', 'No') == 'Yes' else 'Yes'
             self._refresh_shot_row(self.current_shot_index)
-            self.modified = True
-            self.save_button.setEnabled(True)
+            self._mark_dirty()
             self.update_stats()
     
     def merge_with_previous(self):
@@ -1903,8 +1888,7 @@ class ShotlistVisualizer(QMainWindow):
         self.current_shot_index -= 1
         self.jump_to_shot(self.current_shot_index)
         
-        self.modified = True
-        self.save_button.setEnabled(True)
+        self._mark_dirty()
         self.update_stats()
     
     def split_shot_at_current_frame(self):
@@ -1976,8 +1960,7 @@ class ShotlistVisualizer(QMainWindow):
         # Land on the new (second) shot
         self.jump_to_shot(self.current_shot_index + 1)
 
-        self.modified = True
-        self.save_button.setEnabled(True)
+        self._mark_dirty()
         self.update_stats()
 
     def split_scene_at_current_shot(self):
@@ -1990,8 +1973,7 @@ class ShotlistVisualizer(QMainWindow):
         self.rebuild_scene_list()
         self.shot_list.selectRow(self.current_shot_index)
         self.sync_scene_list_selection()
-        self.modified = True
-        self.save_button.setEnabled(True)
+        self._mark_dirty()
         self.update_stats()
 
     def merge_scene_at_current_shot(self):
@@ -2009,8 +1991,7 @@ class ShotlistVisualizer(QMainWindow):
         self.rebuild_scene_list()
         self.shot_list.selectRow(self.current_shot_index)
         self.sync_scene_list_selection()
-        self.modified = True
-        self.save_button.setEnabled(True)
+        self._mark_dirty()
         self.update_stats()
 
     def update_stats(self):
@@ -2031,14 +2012,19 @@ class ShotlistVisualizer(QMainWindow):
         self.merge_button.setEnabled(self.current_shot_index > 0)
     
     def save_changes(self):
-        """Save modified shotlist."""
+        """Save modified shotlist. Shows an error dialog only on failure."""
         try:
             write_shotlist(self.project_path, self.filename, self.media_type, self.shots)
             self.modified = False
             self.save_button.setEnabled(False)
-            QMessageBox.information(self, "Saved", "Shotlist saved successfully.")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save shotlist:\n{e}")
+
+    def _mark_dirty(self):
+        """Mark shotlist as modified and immediately auto-save."""
+        self.modified = True
+        self.save_button.setEnabled(True)
+        self.save_changes()
     
     def eventFilter(self, obj, event):
         """Intercept events from child widgets to handle keyboard shortcuts globally."""
@@ -2169,20 +2155,9 @@ class ShotlistVisualizer(QMainWindow):
             self._ipc_server.wait(1000)
 
         if self.modified:
-            reply = QMessageBox.question(
-                self, "Unsaved Changes",
-                "You have unsaved changes. Save before closing?",
-                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel
-            )
-            if reply == QMessageBox.Save:
-                self.save_changes()
-                event.accept()
-            elif reply == QMessageBox.Discard:
-                event.accept()
-            else:
-                event.ignore()
-        else:
-            event.accept()
+            self.save_changes()
+
+        event.accept()
 
 
     # ------------------------------------------------------------------ #

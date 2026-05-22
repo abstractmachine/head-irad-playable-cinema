@@ -269,13 +269,28 @@ def load_flipbook_data(
     title = meta.get("title") or Path(filename).stem
     year  = str(meta.get("year") or "")
 
-    # Build shot pages
+    # Load ignored shot IDs from shotlist (best-effort — may be absent)
+    ignored_shot_ids: set[str] = set()
+    try:
+        from data.shotlist import read_shotlist
+        for sl_shot in read_shotlist(project_path, filename, media_type):
+            if sl_shot.get("Ignore", "No") == "Yes":
+                sid = str(sl_shot.get("shot_id", ""))
+                if sid:
+                    ignored_shot_ids.add(sid)
+    except Exception:
+        pass
+
+    # Build shot pages (skip ignored shots)
     shot_pages: list[dict] = []
     for i, entry in enumerate(entries):
         if not isinstance(entry, dict):
             continue
         shot_data = entry.get("shot", {}) if isinstance(entry, dict) else {}
         shot_id = str(shot_data.get("shot_id", "")) if isinstance(shot_data, dict) else ""
+
+        if shot_id in ignored_shot_ids:
+            continue
 
         # Join palette by shot_id first, then by index
         palette_shot = palette_by_id.get(shot_id) or palette_by_index.get(i)

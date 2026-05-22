@@ -296,6 +296,30 @@ def generate_motif(
 # Movie-level generation
 # ---------------------------------------------------------------------------
 
+
+def _count_missing_motifs(entries: list, force: bool) -> int:
+    """Return the number of shots in *entries* that need a motif generated.
+
+    A shot is considered complete when it already has a non-empty
+    ``entry["shot"]["motif"]["value"]`` and *force* is False.
+    """
+    count = 0
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        shot_data = entry.get("shot")
+        if not isinstance(shot_data, dict):
+            continue
+        existing = shot_data.get("motif")
+        if (
+            force
+            or not isinstance(existing, dict)
+            or not existing.get("value", "").strip()
+        ):
+            count += 1
+    return count
+
+
 def generate_motifs_for_movie(
     project_path: str,
     filename: str,
@@ -305,6 +329,7 @@ def generate_motifs_for_movie(
     verbose: bool = False,
     system_prompt_file: Optional[str] = None,
     user_prompt_file: Optional[str] = None,
+    pipeline: Any = None,
 ) -> dict:
     """Generate and store motifs for all shots in a single movie.
 
@@ -378,8 +403,25 @@ def generate_motifs_for_movie(
         print(f"  system prompt: {system_filename or '(built-in)'}")
         print(f"  user prompt:   {user_filename or '(built-in)'}")
 
-    # Load model once for the whole movie
-    pipeline = _load_text_generation_pipeline(project_path, model_name)
+    # Load model once for the whole movie (reuse if passed in from the caller).
+    # Only load when there is actually work to do — avoid the slow model-init
+    # path when every shot already has a motif and --force is not set.
+    if pipeline is None:
+        needed = _count_missing_motifs(entries, force)
+        if needed == 0:
+            return {
+                "filename":  filename,
+                "total":     len(entries),
+                "processed": 0,
+                "skipped":   sum(
+                    1 for e in entries
+                    if isinstance(e, dict)
+                    and isinstance(e.get("shot"), dict)
+                ),
+                "failed":    0,
+            }
+        print(f"  Loading model {model_name!r}…", flush=True)
+        pipeline = _load_text_generation_pipeline(project_path, model_name)
 
     processed = 0
     skipped = 0
@@ -509,9 +551,38 @@ def generate_motifs_for_all_movies(
     Returns a summary dict with aggregate counts across all processed movies.
     """
     from data.metadata import get_metadata
-    from data.annotate import get_annotation_json_path
+    from data.annotate import get_annotation_json_path, _load_text_generation_pipeline
 
     meta_entries = get_metadata(project_path, media_type=media_type)
+
+    # --- pre-scan: find which movies have missing motifs -------------------
+    # Do this before loading the model so a fully-generated corpus costs
+    # nothing beyond a quick JSON scan.
+    movies_needing_work: list[tuple[dict, Path]] = []
+    for meta in meta_entries:
+        filename = meta.get("filename")
+        if not filename:
+            continue
+        json_path = get_annotation_json_path(project_path, filename, media_type)
+        if not json_path.exists():
+            continue
+        try:
+            entries: list = json.loads(json_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if _count_missing_motifs(entries, force) > 0:
+            movies_needing_work.append((meta, json_path))
+
+    if not movies_needing_work:
+        print("Nothing to generate — all shots have motifs. Use --force to regenerate.")
+        return {
+            "total_files": 0, "total_processed": 0,
+            "total_skipped": 0, "total_failed": 0, "errors": [],
+        }
+
+    # Load the model once — only now that we know there is work to do.
+    print(f"Loading model {model_name!r}…", flush=True)
+    pipeline = _load_text_generation_pipeline(project_path, model_name)
 
     total_files     = 0
     total_processed = 0
@@ -519,13 +590,9 @@ def generate_motifs_for_all_movies(
     total_failed    = 0
     errors: list    = []
 
-    for meta in meta_entries:
+    for meta, _ in movies_needing_work:
         filename = meta.get("filename")
         if not filename:
-            continue
-
-        json_path = get_annotation_json_path(project_path, filename, media_type)
-        if not json_path.exists():
             continue
 
         total_files += 1
@@ -546,6 +613,7 @@ def generate_motifs_for_all_movies(
                 verbose=verbose,
                 system_prompt_file=system_prompt_file,
                 user_prompt_file=user_prompt_file,
+                pipeline=pipeline,
             )
             total_processed += summary.get("processed", 0)
             total_skipped   += summary.get("skipped",   0)
