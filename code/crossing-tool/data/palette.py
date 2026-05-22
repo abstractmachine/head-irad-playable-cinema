@@ -1,64 +1,49 @@
-"""Palette indexing: dominant foreground/background colour extraction from best frames.
+"""Palette indexing: figure-ground colour extraction from best frames.
 
 Cache path
 ----------
     <project>/data/index/palette/<media_type>/<stem>.json
 
 For each shot in a film the best-frame PNG (written by ``crossing annotate
-frame``) is loaded, resized to 128×128 and split into two non-overlapping
-spatial regions.  The dominant colour in each region is returned as an RGB
-triplet plus perceptual metadata.
+frame``) is loaded and analysed using the figure-ground palette pipeline.
 
-Algorithm — LAB k-means weighted  (default, ``method="lab"``)
--------------------------------------------------------------
-1. Load the PNG with Pillow; convert to RGB; resize to 128×128 (LANCZOS).
-2. Split into two regions:
-   - border : outer 32-px strip  → background
-   - center : inner 64×64 block  → foreground
-3. For each region:
-   a. Convert pixels sRGB → CIELAB (D65, pure-numpy, no extra deps).
-   b. Compute per-pixel chroma  C* = √(a*² + b*²).
-   c. Adaptive dark threshold: if >70 % of pixels have L* < 8 (dark scene),
-      lower the effective threshold to 2.0 so moonlit blues / noir shadows
-      are preserved rather than collapsed to black.
-   d. Per-pixel weight = (lum_ramp + 0.1) × (1 + chroma_factor), where
-      lum_ramp is a smooth 0→1 ramp above the effective L* threshold and
-      chroma_factor = min(C*/30, 2.0).  Saturated highlights therefore
-      outweigh numerically dominant dark walls.
-   e. Run deterministic k-means (k = 5) in LAB space; centres are
-      initialised by stratified sampling along the L* axis — no random seed.
-   f. Rank clusters by total perceptual weight; take the winning cluster's
-      mean RGB.  Return also LAB centroid, luminance, and chroma scores.
-4. background = winning colour from border region
-   foreground = winning colour from center region
+Algorithm — figure
+------------------
+1. Resize to 256×256 (LANCZOS) for texture detail.
+2. Simplify texture via mean-shift filtering (``cv2.pyrMeanShiftFiltering``
+   when OpenCV is available; skipped gracefully if absent).
+3. Split into foreground / background regions:
+   a. SAM2 semantic segmentation when a model is configured via
+      ``crossing tool model set segmentation <name>``; objects that do not
+      touch the frame edge and whose bounding-box centre lies within the
+      inner 60 % of the frame are classified as foreground.
+   b. Spatial border/center split when SAM2 is unavailable.
+4. Cluster each region with agglomerative Ward clustering in CIELAB space
+   (falls back to stratified k-means when scipy is absent).
+5. Rank clusters by perceptual weight; apply a rescue pass when both
+   dominant colours are near-black or insufficiently distinct.
 
-Algorithm — simple / legacy  (``method="simple"``)
----------------------------------------------------
-The original RGB-quantisation method is preserved verbatim as
-``_extract_dominant_colour()``.  Pass ``method="simple"`` to
-``extract_fg_bg()`` for research comparison against the new method.
-
-Tuning constants
-----------------
-``_LAB_MIN_L``          near-black L* threshold            (default 8.0)
-``_LAB_DARK_FRACTION``  dark-scene detection fraction      (default 0.70)
-``_N_CLUSTERS``         k-means cluster count              (default 5)
-``_KMEANS_MAX_ITER``    maximum k-means iterations         (default 20)
-
-Output shape (method="lab")
----------------------------
+Output schema
+-------------
 ::
 
     "foreground": {
         "rgb":       [80, 92, 130],
         "lab":       [42.1, 5.3, -22.0],
         "luminance": 0.421,          # L* / 100
-        "chroma":    0.229           # sqrt(a*²+b*²) / 100
+        "chroma":    0.229,          # sqrt(a*²+b*²) / 100
+        "palette":   [               # top colours in this region
+            {"rgb": [...], "lab": [...], "luminance": ..., "chroma": ...},
+            ...
+        ],
+        "coverage":  0.35            # fraction of frame pixels in this region
     }
 
-No random state, no model, no network — output is fully deterministic.
+Output is fully deterministic when SAM2 is not in use.
 
 Dependencies: Pillow (core dep), numpy (core dep).
+Optional: cv2 (OpenCV) for mean-shift; scipy for Ward clustering;
+          SAM2 for semantic figure-ground segmentation.
 """
 
 from __future__ import annotations
@@ -79,20 +64,25 @@ from data.shotlist import read_shotlist
 # Constants
 # ---------------------------------------------------------------------------
 
-_RESIZE = 128           # target size after resize
-_BORDER = _RESIZE // 4  # 32-pixel outer strip
-
-# Perceptual extraction tuning
+# Perceptual weighting tuning
 _LAB_MIN_L         = 8.0   # L* below this is "near-black" and gets downweighted
 _LAB_DARK_FRACTION = 0.70  # if this fraction of pixels is near-black, lower threshold
-_N_CLUSTERS        = 5     # number of k-means clusters per spatial region
-_KMEANS_MAX_ITER   = 20    # max k-means iterations (converges well before this)
+_N_CLUSTERS        = 5     # k-means cluster count (fallback when scipy absent)
+_KMEANS_MAX_ITER   = 20    # max k-means iterations
 
 # Low-key rescue pass thresholds
 _NEAR_BLACK_L               = 15.0  # L* below this is "near-black"
 _NEAR_BLACK_CHROMA          = 10.0  # C* below this (with low L*) = effectively black
 _RESCUE_TRIGGER_MAX_L       = 20.0  # rescue triggers when both L* values are below this
 _RESCUE_TRIGGER_MIN_DELTA_E = 15.0  # rescue triggers when pair CIE76 ΔE is below this
+
+# Figure-ground pipeline constants
+_FIG_RESIZE     = 256   # image resize for the figure pipeline
+_FIG_MS_SP      = 10    # mean-shift spatial radius (pixels)
+_FIG_MS_SR      = 20    # mean-shift color-range radius
+_FIG_N_CLUSTERS = 8     # agglomerative clusters per region
+_FIG_N_PALETTE  = 4     # palette entries kept per region
+_FIG_MAX_SAMPLE = 1024  # max pixels sampled for Ward linkage (speed cap)
 
 
 # ---------------------------------------------------------------------------
@@ -109,12 +99,21 @@ def get_palette_path(project_path: str, filename: str, media_type: str) -> Path:
 
 
 def load_palette(project_path: str, filename: str, media_type: str) -> dict | None:
-    """Load a cached palette JSON or return ``None`` if absent."""
+    """Load a cached palette JSON or return ``None`` if absent.
+
+    Normalises legacy method names to ``"figure"`` so that caches created
+    before the method rename remain readable without regeneration.
+    """
     path = get_palette_path(project_path, filename, media_type)
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data.get("method") in {
+            "figure_agglomerative", "lab_kmeans_weighted", "border_center_dominant",
+        }:
+            data["method"] = "figure"
+        return data
     except Exception:
         return None
 
@@ -497,63 +496,372 @@ def _kmeans(
 # Colour extraction — two methods
 # ---------------------------------------------------------------------------
 
-def _extract_dominant_colour(pixels: np.ndarray) -> tuple[int, int, int]:
-    """Legacy: dominant colour by RGB-bin frequency.
+# ===========================================================================
+# Figure-ground colour analysis pipeline
+# ===========================================================================
+#
+# Fallback ladder
+# ---------------
+# Level 1 (full):     SAM2 semantic segmentation + mean-shift simplification
+#                     + agglomerative Ward clustering in CIELAB space.
+# Level 2 (spatial):  Spatial border/center split + mean-shift simplification
+#                     + agglomerative Ward clustering.
+#
+# Level 1 is used when a SAM2 mask_generator is supplied; Level 2 is the
+# automatic fallback when SAM2 is not configured or finds no usable masks.
+#
+# Output schema
+# -------------
+# Both foreground and background dicts carry:
+#   "rgb"       : [R, G, B]          – dominant colour
+#   "lab"       : [L*, a*, b*]
+#   "luminance" : float              – L*/100
+#   "chroma"    : float              – C*/100
+#   "palette"   : list[colour_dict]  – up to _FIG_N_PALETTE colours, ranked
+#   "coverage"  : float              – fraction of frame pixels in this region
 
-    Preserved unchanged for research comparison.  Accessible via
-    ``extract_fg_bg(..., method="simple")``.
 
-    Steps:
-    1. Quantise each channel to 8 bins (right-shift 5 bits → 0–7).
-    2. Encode as r*64 + g*8 + b; find the most-common bin.
-    3. Return the mean RGB of pixels in that bin.
+def _mean_shift_simplify(arr: np.ndarray) -> np.ndarray:
+    """Merge fine texture into coherent colour regions via mean-shift filtering.
+
+    Wraps ``cv2.pyrMeanShiftFiltering`` when OpenCV is available; returns the
+    original array unchanged when it is not (graceful degradation).
+
+    Parameters
+    ----------
+    arr : (H, W, 3) uint8 RGB array.
+
+    Returns
+    -------
+    (H, W, 3) uint8 RGB simplified array — same shape as input.
     """
-    if len(pixels) == 0:
-        return (0, 0, 0)
-
-    bins  = (pixels >> 5).astype(np.int32)  # 0–7 per channel
-    codes = bins[:, 0] * 64 + bins[:, 1] * 8 + bins[:, 2]
-
-    unique, counts = np.unique(codes, return_counts=True)
-    best_code = unique[np.argmax(counts)]
-
-    mask = codes == best_code
-    mean = pixels[mask].mean(axis=0)
-    return (int(round(mean[0])), int(round(mean[1])), int(round(mean[2])))
+    try:
+        import cv2  # type: ignore
+    except ImportError:
+        return arr
+    return cv2.pyrMeanShiftFiltering(arr, sp=_FIG_MS_SP, sr=_FIG_MS_SR)
 
 
-def _extract_perceptual_colour(
-    pixels_rgb: np.ndarray,
-) -> "tuple[tuple[int, int, int], dict]":
-    """Dominant colour via LAB k-means with perceptual weighting.
-
-    Returns ``(rgb_tuple, metadata)`` for the top-ranked cluster.
-    Preserved for backward compatibility; internal code uses
-    ``_rank_region_candidates`` directly.
-    """
-    best = _rank_region_candidates(pixels_rgb, _N_CLUSTERS)[0]
-    return best["rgb"], {
-        "lab":       best["lab"],
-        "luminance": best["luminance"],
-        "chroma":    best["chroma"],
+def _null_colour_dict() -> dict:
+    """Zero-value colour dict used as a sentinel for empty regions."""
+    return {
+        "rgb":       (0, 0, 0),
+        "lab":       [0.0, 0.0, 0.0],
+        "luminance": 0.0,
+        "chroma":    0.0,
+        "weight":    0.0,
+        "size":      0,
     }
+
+
+def _agglomerative_palette(
+    pixels_rgb: np.ndarray,
+    n_clusters: int = _FIG_N_CLUSTERS,
+    n_palette: int = _FIG_N_PALETTE,
+) -> "list[dict]":
+    """Agglomerative Ward clustering in LAB space for rich palette extraction.
+
+    More perceptually stable than k-means: bottom-up merging avoids local-
+    minima sensitivity and never requires a random seed.
+
+    Algorithm
+    ---------
+    1. Stride-sample up to ``_FIG_MAX_SAMPLE`` pixels (deterministic).
+    2. Convert to CIELAB; run Ward linkage → *k* clusters.
+    3. Assign ALL pixels to the nearest sample-cluster centroid (Voronoi).
+    4. Rank clusters by total perceptual weight; return top *n_palette*.
+
+    Returns
+    -------
+    list[dict]
+        Same schema as ``_rank_region_candidates``:
+        ``rgb``, ``lab``, ``luminance``, ``chroma``, ``weight``, ``size``.
+        Falls back to ``_rank_region_candidates`` when scipy is unavailable.
+    """
+    if len(pixels_rgb) == 0:
+        return [_null_colour_dict()]
+
+    try:
+        from scipy.cluster.hierarchy import linkage, fcluster  # type: ignore
+    except ImportError:
+        # scipy not available: fall back to existing k-means
+        return _rank_region_candidates(pixels_rgb, n_clusters)[:n_palette]
+
+    # --- Stride-sample for fast Ward linkage ---------------------------------
+    n = len(pixels_rgb)
+    if n > _FIG_MAX_SAMPLE:
+        step = max(1, n // _FIG_MAX_SAMPLE)
+        idx_sample = np.arange(0, n, step)[:_FIG_MAX_SAMPLE]
+    else:
+        idx_sample = np.arange(n)
+
+    sample_rgb = pixels_rgb[idx_sample]
+    sample_lab = _rgb_to_lab(sample_rgb)
+
+    k = min(n_clusters, len(idx_sample))
+    if k < 2:
+        return _rank_region_candidates(pixels_rgb, 1)[:n_palette]
+
+    # --- Ward linkage on sample LAB values -----------------------------------
+    try:
+        Z = linkage(sample_lab.astype(np.float64), method="ward")
+        sample_labels = fcluster(Z, t=k, criterion="maxclust")  # 1-indexed
+    except Exception:
+        return _rank_region_candidates(pixels_rgb, n_clusters)[:n_palette]
+
+    # --- Cluster centroids (mean LAB per sample cluster) ---------------------
+    centroids_lab = np.zeros((k, 3), dtype=np.float64)
+    for cid in range(1, k + 1):
+        cluster_mask = sample_labels == cid
+        if cluster_mask.any():
+            centroids_lab[cid - 1] = sample_lab[cluster_mask].mean(axis=0)
+
+    # --- Assign ALL pixels to nearest centroid (Voronoi) ---------------------
+    all_lab = _rgb_to_lab(pixels_rgb)
+    diffs = all_lab[:, np.newaxis, :] - centroids_lab[np.newaxis, :, :]  # (N, k, 3)
+    dists_sq = (diffs ** 2).sum(axis=2)                                   # (N, k)
+    assigned = np.argmin(dists_sq, axis=1) + 1                            # 1-indexed
+
+    weights = _perceptual_weights(all_lab)
+
+    # --- Cluster statistics --------------------------------------------------
+    candidates: list[dict] = []
+    for cid in range(1, k + 1):
+        cluster_mask = assigned == cid
+        count = int(cluster_mask.sum())
+        if count == 0:
+            continue
+        cluster_weight = float(weights[cluster_mask].sum())
+        mean_rgb = pixels_rgb[cluster_mask].astype(np.float64).mean(axis=0)
+        mean_lab = all_lab[cluster_mask].mean(axis=0)
+        chroma = float(np.sqrt(float(mean_lab[1]) ** 2 + float(mean_lab[2]) ** 2))
+        candidates.append({
+            "rgb":       (
+                int(round(float(mean_rgb[0]))),
+                int(round(float(mean_rgb[1]))),
+                int(round(float(mean_rgb[2]))),
+            ),
+            "lab":       [
+                round(float(mean_lab[0]), 1),
+                round(float(mean_lab[1]), 1),
+                round(float(mean_lab[2]), 1),
+            ],
+            "luminance": round(float(mean_lab[0]) / 100.0, 3),
+            "chroma":    round(chroma / 100.0, 3),
+            "weight":    cluster_weight,
+            "size":      count,
+        })
+
+    if not candidates:
+        return [_null_colour_dict()]
+
+    candidates.sort(key=lambda c: c["weight"], reverse=True)
+    return candidates[:n_palette]
+
+
+def _region_info_from_candidates(
+    candidates: "list[dict]",
+    total_pixels: int,
+) -> dict:
+    """Build the extended region dict from a ranked candidate list.
+
+    The top candidate becomes the dominant colour.  All candidates form the
+    ``"palette"`` list (``weight`` / ``size`` stripped for output).
+    ``"coverage"`` is the region-pixel fraction of the full frame.
+    """
+    if not candidates:
+        c = _null_colour_dict()
+        return {
+            "rgb":       list(c["rgb"]),
+            "lab":       c["lab"],
+            "luminance": c["luminance"],
+            "chroma":    c["chroma"],
+            "palette":   [],
+            "coverage":  0.0,
+        }
+    top = candidates[0]
+    region_size = sum(c.get("size", 0) for c in candidates)
+    coverage = round(region_size / max(1, total_pixels), 4)
+    palette = [
+        {
+            "rgb":       list(c["rgb"]),
+            "lab":       c["lab"],
+            "luminance": c["luminance"],
+            "chroma":    c["chroma"],
+        }
+        for c in candidates
+    ]
+    return {
+        "rgb":       list(top["rgb"]),
+        "lab":       top["lab"],
+        "luminance": top["luminance"],
+        "chroma":    top["chroma"],
+        "palette":   palette,
+        "coverage":  coverage,
+    }
+
+
+def _spatial_masks(height: int, width: int, border: int) -> "tuple[np.ndarray, np.ndarray]":
+    """Return (fg_mask, bg_mask) 2-D bool arrays.
+
+    ``fg_mask`` is the inner rectangle; ``bg_mask`` is the outer border strip.
+    """
+    bg = np.zeros((height, width), dtype=bool)
+    bg[:border, :]             = True
+    bg[height - border:, :]    = True
+    bg[:, :border]             = True
+    bg[:, width - border:]     = True
+    return ~bg, bg
+
+
+def _sam2_fg_bg_masks(
+    arr_rgb: np.ndarray,
+    mask_generator,
+) -> "tuple[np.ndarray, np.ndarray, float]":
+    """Classify pixels as foreground / background using SAM2 automatic masks.
+
+    Foreground = masks that do **not** touch any frame edge AND whose
+    bounding-box centre lies in the inner 60 % of the frame.  Everything
+    else (edge-touching masks, uncovered pixels) is background.
+
+    Returns
+    -------
+    (fg_mask, bg_mask, confidence)
+        fg_mask, bg_mask — (H, W) bool arrays.
+        confidence       — fraction of frame pixels covered by accepted fg masks.
+    """
+    from services.silhouette import check_containment  # type: ignore
+
+    h, w = arr_rgb.shape[:2]
+    fg_mask = np.zeros((h, w), dtype=bool)
+    bg_mask = np.ones((h, w), dtype=bool)
+
+    try:
+        masks = mask_generator.generate(arr_rgb)
+    except Exception:
+        return fg_mask, bg_mask, 0.0
+
+    cy_lo, cy_hi = int(h * 0.20), int(h * 0.80)
+    cx_lo, cx_hi = int(w * 0.20), int(w * 0.80)
+
+    for m in masks:
+        seg = np.asarray(m["segmentation"], dtype=bool)
+        if not check_containment(seg):
+            continue
+        bbox = m.get("bbox", [])
+        if len(bbox) >= 4:
+            bx, by, bw_m, bh_m = bbox
+            cx_centre = bx + bw_m / 2
+            cy_centre = by + bh_m / 2
+            if not (cx_lo <= cx_centre <= cx_hi and cy_lo <= cy_centre <= cy_hi):
+                continue
+        fg_mask |= seg
+        bg_mask &= ~seg
+
+    confidence = round(float(fg_mask.sum()) / float(h * w), 4)
+    return fg_mask, bg_mask, confidence
+
+
+def _extract_fg_bg_figure(
+    arr_rgb: np.ndarray,
+    *,
+    mask_generator=None,
+) -> "tuple[dict, dict, dict]":
+    """Full figure-ground extraction pipeline.
+
+    Parameters
+    ----------
+    arr_rgb         : (H, W, 3) uint8 RGB array (already resized).
+    mask_generator  : Optional SAM2AutomaticMaskGenerator for semantic split.
+
+    Returns
+    -------
+    (foreground_dict, background_dict, diagnostics_dict)
+        foreground / background have the extended schema with ``"palette"``
+        and ``"coverage"`` in addition to the standard keys.
+        diagnostics_dict carries all rescue-pass keys plus
+        ``"method_used"``, ``"segmentation_used"``,
+        ``"segmentation_confidence"``, ``"superpixels_used"``,
+        ``"fg_region_count"``, ``"bg_region_count"``,
+        ``"cluster_count"``, ``"fallback_level"``.
+    """
+    h, w = arr_rgb.shape[:2]
+    total_pixels = h * w
+
+    # Step 1 — mean-shift simplification
+    simplified = _mean_shift_simplify(arr_rgb)
+    superpixels_used = not np.array_equal(simplified, arr_rgb)
+
+    # Step 2 — semantic segmentation or spatial fallback
+    segmentation_confidence = 0.0
+    if mask_generator is not None:
+        fg_mask, bg_mask, segmentation_confidence = _sam2_fg_bg_masks(
+            arr_rgb, mask_generator
+        )
+        if fg_mask.sum() < total_pixels * 0.02:
+            # SAM2 found almost nothing: fall back
+            border = max(1, h // 4)
+            fg_mask, bg_mask = _spatial_masks(h, w, border)
+            fallback_level = 2
+            segmentation_used = "spatial"
+        else:
+            fallback_level = 1
+            segmentation_used = "sam2"
+    else:
+        border = max(1, h // 4)
+        fg_mask, bg_mask = _spatial_masks(h, w, border)
+        fallback_level = 2
+        segmentation_used = "spatial"
+
+    fg_pixels = simplified[fg_mask]
+    bg_pixels = simplified[bg_mask]
+
+    # Step 3 — agglomerative clustering per region
+    fg_candidates = _agglomerative_palette(fg_pixels, _FIG_N_CLUSTERS, _FIG_N_PALETTE)
+    bg_candidates = _agglomerative_palette(bg_pixels, _FIG_N_CLUSTERS, _FIG_N_PALETTE)
+
+    # Step 4 — rescue pass (reuses existing logic)
+    fg_top, bg_top, rescue_diag = _maybe_rescue_pair(fg_candidates, bg_candidates)
+
+    # Build extended output dicts, then override dominant with rescue result
+    fg_out = _region_info_from_candidates(fg_candidates, total_pixels)
+    bg_out = _region_info_from_candidates(bg_candidates, total_pixels)
+
+    for key in ("rgb", "lab", "luminance", "chroma"):
+        if key in fg_top:
+            fg_out[key] = fg_top[key]
+        if key in bg_top:
+            bg_out[key] = bg_top[key]
+
+    # Step 5 — diagnostics
+    diagnostics: "dict[str, Any]" = {
+        **rescue_diag,
+        "method_used":             "figure",
+        "segmentation_used":       segmentation_used,
+        "segmentation_confidence": segmentation_confidence,
+        "superpixels_used":        superpixels_used,
+        "fg_region_count":         int(fg_mask.sum()),
+        "bg_region_count":         int(bg_mask.sum()),
+        "cluster_count":           _FIG_N_CLUSTERS,
+        "fallback_level":          fallback_level,
+    }
+    return fg_out, bg_out, diagnostics
 
 
 def _extract_fg_bg_full(
     image_path: Path,
     *,
-    method: str = "lab",
+    sam_mask_generator=None,
 ) -> "tuple[dict, dict, dict]":
-    """Full extraction returning ``(foreground, background, diagnostics)``.
+    """Full figure-ground extraction returning ``(foreground, background, diagnostics)``.
 
-    ``diagnostics`` is non-empty only for ``method="lab"``; it is always a
-    dict.  See ``_maybe_rescue_pair`` for the diagnostics schema.
+    Parameters
+    ----------
+    image_path        : Path to a PNG or other Pillow-readable image.
+    sam_mask_generator: Optional SAM2AutomaticMaskGenerator for semantic
+                        figure-ground segmentation.  When ``None``, the
+                        pipeline falls back to the spatial border/center split.
     """
-    if method not in {"lab", "simple"}:
-        raise ValueError(
-            f"Unknown extraction method {method!r}; use 'lab' or 'simple'."
-        )
-
     try:
         from PIL import Image
     except ImportError as exc:
@@ -562,70 +870,41 @@ def _extract_fg_bg_full(
             "Install with:  pip install Pillow"
         ) from exc
 
-    img = (
+    arr = np.asarray(
         Image.open(image_path)
         .convert("RGB")
-        .resize((_RESIZE, _RESIZE), Image.LANCZOS)
+        .resize((_FIG_RESIZE, _FIG_RESIZE), Image.LANCZOS)
     )
-    arr = np.asarray(img)  # (128, 128, 3) uint8
-
-    # Spatial masks
-    border_mask = np.zeros((_RESIZE, _RESIZE), dtype=bool)
-    border_mask[:_BORDER, :]             = True
-    border_mask[_RESIZE - _BORDER:, :]  = True
-    border_mask[:, :_BORDER]             = True
-    border_mask[:, _RESIZE - _BORDER:]  = True
-    center_mask = ~border_mask
-
-    border_pixels = arr[border_mask]  # (N, 3)
-    center_pixels = arr[center_mask]  # (M, 3)
-
-    if method == "simple":
-        bg_rgb = _extract_dominant_colour(border_pixels)
-        fg_rgb = _extract_dominant_colour(center_pixels)
-        return {"rgb": list(fg_rgb)}, {"rgb": list(bg_rgb)}, {}
-
-    # LAB method: rank candidates per region then apply rescue pass
-    fg_candidates = _rank_region_candidates(center_pixels)
-    bg_candidates = _rank_region_candidates(border_pixels)
-    foreground, background, diagnostics = _maybe_rescue_pair(fg_candidates, bg_candidates)
-    return foreground, background, diagnostics
+    return _extract_fg_bg_figure(arr, mask_generator=sam_mask_generator)
 
 
 def extract_fg_bg(
     image_path: Path,
     *,
-    method: str = "lab",
+    sam_mask_generator=None,
 ) -> "tuple[dict, dict]":
     """Extract dominant foreground and background colours from a frame image.
 
     Parameters
     ----------
-    image_path : Path
-        Path to a PNG (or any Pillow-readable) image.
-    method : {"lab", "simple"}
-        ``"lab"``    — perceptual LAB k-means with low-key rescue (default).
-        ``"simple"`` — legacy RGB-bin method; kept for research comparison.
+    image_path        : Path to a PNG (or any Pillow-readable) image.
+    sam_mask_generator: Optional SAM2AutomaticMaskGenerator for semantic
+                        figure-ground segmentation.
 
     Returns
     -------
     (foreground_dict, background_dict)
-        Each dict always has an ``"rgb"`` key (``[R, G, B]`` list, 0–255).
-        The ``"lab"`` method also adds ``"lab"``, ``"luminance"``,
-        and ``"chroma"`` keys.
+        Each dict has ``"rgb"``, ``"lab"``, ``"luminance"``, ``"chroma"``,
+        ``"palette"``, and ``"coverage"`` keys.
 
     Raises
     ------
     ImportError  If Pillow is not installed.
     OSError      If the image cannot be opened.
-    ValueError   If *method* is not recognised.
-
-    Note
-    ----
-    Per-shot diagnostics (rescue metadata, pair quality scores) are available
-    via the internal ``_extract_fg_bg_full`` function.
     """
-    fg, bg, _diag = _extract_fg_bg_full(image_path, method=method)
+    fg, bg, _diag = _extract_fg_bg_full(
+        image_path, sam_mask_generator=sam_mask_generator
+    )
     return fg, bg
 
 
@@ -641,7 +920,7 @@ def _process_one_shot(
     shot_index: int,
     shot_info: dict | None,
     *,
-    method: str = "lab",
+    sam_mask_generator=None,
 ) -> dict:
     """Extract palette for one annotation entry.
 
@@ -675,16 +954,17 @@ def _process_one_shot(
         return {**base, "status": "skipped", "reason": f"best_frame PNG not found: {png_path}"}
 
     try:
-        foreground, background, diagnostics = _extract_fg_bg_full(png_path, method=method)
+        foreground, background, diagnostics = _extract_fg_bg_full(
+            png_path, sam_mask_generator=sam_mask_generator
+        )
     except Exception as exc:
         return {**base, "status": "error", "reason": str(exc)}
 
-    method_name = "lab_kmeans_weighted" if method == "lab" else "border_center_dominant"
     result: dict = {
         **base,
         "foreground": foreground,
         "background": background,
-        "method": method_name,
+        "method": "figure",
         "confidence": 1.0,
         "status": "ok",
     }
@@ -704,12 +984,18 @@ def create_palette_for_movie(
     *,
     force: bool = False,
     verbose: bool = False,
-    method: str = "lab",
 ) -> dict:
     """Build and cache a palette for every shot in *filename*.
 
     Reads the annotation JSON and shotlist; for each shot that has a
-    ``best_frame`` PNG, extracts foreground and background colours.
+    ``best_frame`` PNG, extracts foreground and background colours using
+    the figure-ground pipeline.
+
+    The SAM2 segmentation model is loaded automatically from the project's
+    ``model_segmentation`` preference
+    (``crossing tool model set segmentation <name>``).
+    If no model is configured the pipeline falls back to the spatial
+    border/center split.
 
     Returns a summary dict with keys:
         ``filename``, ``shot_count``, ``processed``, ``skipped``, ``failed``
@@ -765,6 +1051,22 @@ def create_palette_for_movie(
     skipped = 0
     failed = 0
 
+    # Load SAM2 once for the whole movie (if configured in project prefs).
+    sam_mask_generator = None
+    import prefs as _prefs
+    _sam_name = _prefs.get("model_segmentation")
+    if _sam_name:
+        try:
+            from services.silhouette import load_sam_model  # type: ignore
+            sam_mask_generator, _, _dev = load_sam_model(project_path, _sam_name)
+            if verbose:
+                print(f"  SAM2 loaded: {_sam_name} ({_dev})")
+        except (ImportError, FileNotFoundError, RuntimeError) as _sam_exc:
+            if verbose:
+                print(f"  warn  SAM2 not available ({_sam_exc}); using spatial fallback")
+    elif verbose:
+        print("  info  no segmentation model configured; using spatial fallback")
+
     for i, entry in enumerate(entries):
         shot_data = entry.get("shot", {})
         shot_id = str(shot_data.get("shot_id", ""))
@@ -772,7 +1074,7 @@ def create_palette_for_movie(
 
         result = _process_one_shot(
             project_path, filename, media_type, entry, i, shot_info,
-            method=method,
+            sam_mask_generator=sam_mask_generator,
         )
 
         status = result.pop("status", "ok")
@@ -804,11 +1106,10 @@ def create_palette_for_movie(
         "failed": failed,
     }
 
-    extraction_method = "lab_kmeans_weighted" if method == "lab" else "border_center_dominant"
     palette_doc: dict[str, Any] = {
         "movie": movie_block,
         "source": "best_frame",
-        "method": extraction_method,
+        "method": "figure",
         "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "shots": shot_palettes,
         "summary": summary,
@@ -830,7 +1131,6 @@ def create_palette_for_all_movies(
     *,
     force: bool = False,
     verbose: bool = False,
-    method: str = "lab",
 ) -> dict:
     """Build palette caches for every movie that has an annotation JSON.
 
@@ -854,7 +1154,6 @@ def create_palette_for_all_movies(
                 media_type,
                 force=force,
                 verbose=verbose,
-                method=method,
             )
         except FileNotFoundError as exc:
             print(f"  skip  {filename}: {exc}", flush=True)

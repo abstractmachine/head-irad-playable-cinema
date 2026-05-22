@@ -5,7 +5,6 @@ Covers:
 - load_palette / save_palette round-trip
 - save_palette raises FileExistsError when cache exists and force=False
 - save_palette overwrites when force=True
-- _extract_dominant_colour basic cases
 - extract_fg_bg on a synthetic image
 - create_palette_for_movie:
     - skips when cache already exists and force=False
@@ -29,7 +28,6 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 
 from data.palette import (
-    _extract_dominant_colour,
     create_palette_for_all_movies,
     create_palette_for_movie,
     extract_fg_bg,
@@ -126,37 +124,6 @@ class TestLoadSavePalette(unittest.TestCase):
         data = {"shots": []}
         save_palette(self.project, "film.mp4", "movies", data)
         self.assertEqual(get_palette(self.project, "film.mp4", "movies"), data)
-
-
-# ---------------------------------------------------------------------------
-# Dominant colour extraction
-# ---------------------------------------------------------------------------
-
-class TestExtractDominantColour(unittest.TestCase):
-    def test_empty_returns_black(self):
-        arr = np.zeros((0, 3), dtype=np.uint8)
-        self.assertEqual(_extract_dominant_colour(arr), (0, 0, 0))
-
-    def test_uniform_array(self):
-        arr = np.full((100, 3), 200, dtype=np.uint8)
-        self.assertEqual(_extract_dominant_colour(arr), (200, 200, 200))
-
-    def test_dominant_colour_wins(self):
-        # 90 red pixels, 10 blue pixels
-        red = np.tile([255, 0, 0], (90, 1)).astype(np.uint8)
-        blue = np.tile([0, 0, 255], (10, 1)).astype(np.uint8)
-        arr = np.vstack([red, blue])
-        r, g, b = _extract_dominant_colour(arr)
-        # Red should dominate
-        self.assertGreater(r, 200)
-        self.assertLess(b, 50)
-
-    def test_deterministic(self):
-        rng = np.random.default_rng(42)
-        arr = rng.integers(0, 256, (500, 3), dtype=np.uint8)
-        first = _extract_dominant_colour(arr)
-        second = _extract_dominant_colour(arr)
-        self.assertEqual(first, second)
 
 
 # ---------------------------------------------------------------------------
@@ -559,10 +526,10 @@ class TestExtractFgBgFull(unittest.TestCase):
     # ------------------------------------------------------------------
     # Diagnostics schema
 
-    def test_diagnostics_keys_always_present_lab(self):
+    def test_diagnostics_keys_always_present(self):
         from data.palette import _extract_fg_bg_full
         arr = self._solid_arr((200, 50, 30), (30, 80, 200))
-        _fg, _bg, diag = _extract_fg_bg_full(self._make_png(arr, "schema.png"), method="lab")
+        _fg, _bg, diag = _extract_fg_bg_full(self._make_png(arr, "schema.png"))
         expected = {
             "fg_bg_delta_e", "fg_bg_luminance_delta", "fg_bg_chroma_delta",
             "rescue_applied", "rescue_reason", "near_black_pair",
@@ -571,19 +538,13 @@ class TestExtractFgBgFull(unittest.TestCase):
         self.assertTrue(expected.issubset(diag.keys()),
                         f"Missing keys: {expected - diag.keys()}")
 
-    def test_diagnostics_empty_for_simple_method(self):
-        from data.palette import _extract_fg_bg_full
-        arr = self._solid_arr((200, 50, 30), (30, 80, 200))
-        _fg, _bg, diag = _extract_fg_bg_full(self._make_png(arr, "simple.png"), method="simple")
-        self.assertEqual(diag, {})
-
     # ------------------------------------------------------------------
     # High-contrast scene — no rescue expected
 
     def test_high_contrast_no_rescue(self):
         from data.palette import _extract_fg_bg_full
         arr = self._solid_arr((220, 30, 30), (30, 30, 220))  # red border, blue center
-        _fg, _bg, diag = _extract_fg_bg_full(self._make_png(arr, "hc.png"), method="lab")
+        _fg, _bg, diag = _extract_fg_bg_full(self._make_png(arr, "hc.png"))
         self.assertFalse(diag["rescue_applied"])
         self.assertFalse(diag["near_black_pair"])
         self.assertGreater(diag["fg_bg_delta_e"], 15.0)
@@ -594,7 +555,7 @@ class TestExtractFgBgFull(unittest.TestCase):
     def test_pure_black_scene_stays_near_black(self):
         from data.palette import _extract_fg_bg_full, _is_near_black
         arr = np.zeros((128, 128, 3), dtype=np.uint8)
-        fg, bg, diag = _extract_fg_bg_full(self._make_png(arr, "black.png"), method="lab")
+        fg, bg, diag = _extract_fg_bg_full(self._make_png(arr, "black.png"))
         # Both colours must remain near-black — no false saturation
         self.assertTrue(_is_near_black(fg["lab"]))
         self.assertTrue(_is_near_black(bg["lab"]))
@@ -616,7 +577,7 @@ class TestExtractFgBgFull(unittest.TestCase):
         ys = rng.integers(32, 96, 600)
         xs = rng.integers(32, 96, 600)
         arr[ys, xs] = (35, 55, 145)
-        fg, bg, diag = _extract_fg_bg_full(self._make_png(arr, "accent.png"), method="lab")
+        fg, bg, diag = _extract_fg_bg_full(self._make_png(arr, "accent.png"))
         # Diagnostics must be populated
         self.assertIn("near_black_pair", diag)
         self.assertIn("rescue_applied", diag)
@@ -635,8 +596,8 @@ class TestExtractFgBgFull(unittest.TestCase):
         arr[32:96, 32:96][rng.integers(0, 64, (400, 2))[:, 0],
                           rng.integers(0, 64, (400, 2))[:, 1]] = (45, 20, 10)
         p = self._make_png(arr, "det.png")
-        fg1, bg1, d1 = _extract_fg_bg_full(p, method="lab")
-        fg2, bg2, d2 = _extract_fg_bg_full(p, method="lab")
+        fg1, bg1, d1 = _extract_fg_bg_full(p)
+        fg2, bg2, d2 = _extract_fg_bg_full(p)
         self.assertEqual(fg1["rgb"], fg2["rgb"])
         self.assertEqual(bg1["rgb"], bg2["rgb"])
         self.assertEqual(d1["rescue_applied"], d2["rescue_applied"])
@@ -644,15 +605,17 @@ class TestExtractFgBgFull(unittest.TestCase):
     # ------------------------------------------------------------------
     # Output schema — colour dict keys
 
-    def test_lab_colour_dict_has_expected_keys(self):
+    def test_colour_dict_has_expected_keys(self):
         from data.palette import _extract_fg_bg_full
         arr = self._solid_arr((180, 40, 20), (20, 40, 180))
-        fg, bg, _diag = _extract_fg_bg_full(self._make_png(arr, "keys.png"), method="lab")
+        fg, bg, _diag = _extract_fg_bg_full(self._make_png(arr, "keys.png"))
         for colour in (fg, bg):
             self.assertIn("rgb", colour)
             self.assertIn("lab", colour)
             self.assertIn("luminance", colour)
             self.assertIn("chroma", colour)
+            self.assertIn("palette", colour)
+            self.assertIn("coverage", colour)
             self.assertNotIn("weight", colour)
             self.assertNotIn("size", colour)
             self.assertEqual(len(colour["rgb"]), 3)
@@ -711,3 +674,332 @@ class TestExtractFgBgFull(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ===========================================================================\n# Figure-ground pipeline tests\n# ===========================================================================
+
+class TestMeanShiftSimplify(unittest.TestCase):
+    """_mean_shift_simplify: should return same shape; deterministic."""
+
+    def test_returns_same_shape(self):
+        from data.palette import _mean_shift_simplify
+        arr = np.zeros((64, 64, 3), dtype=np.uint8)
+        out = _mean_shift_simplify(arr)
+        self.assertEqual(out.shape, arr.shape)
+        self.assertEqual(out.dtype, np.uint8)
+
+    def test_deterministic(self):
+        from data.palette import _mean_shift_simplify
+        rng = np.random.RandomState(42)
+        arr = rng.randint(0, 256, (64, 64, 3), dtype=np.uint8)
+        out1 = _mean_shift_simplify(arr)
+        out2 = _mean_shift_simplify(arr)
+        np.testing.assert_array_equal(out1, out2)
+
+    def test_uniform_image_unchanged(self):
+        from data.palette import _mean_shift_simplify
+        arr = np.full((64, 64, 3), 128, dtype=np.uint8)
+        out = _mean_shift_simplify(arr)
+        np.testing.assert_array_equal(out, arr)
+
+
+class TestAgglomerativePalette(unittest.TestCase):
+    """_agglomerative_palette: schema, sorted by weight, graceful fallbacks."""
+
+    def test_empty_returns_null(self):
+        from data.palette import _agglomerative_palette
+        result = _agglomerative_palette(np.empty((0, 3), dtype=np.uint8))
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["rgb"], (0, 0, 0))
+
+    def test_returns_at_most_n_palette(self):
+        from data.palette import _agglomerative_palette
+        rng = np.random.RandomState(0)
+        pixels = rng.randint(0, 256, (500, 3), dtype=np.uint8)
+        result = _agglomerative_palette(pixels, n_clusters=8, n_palette=4)
+        self.assertLessEqual(len(result), 4)
+
+    def test_schema_keys(self):
+        from data.palette import _agglomerative_palette
+        rng = np.random.RandomState(1)
+        pixels = rng.randint(0, 256, (200, 3), dtype=np.uint8)
+        result = _agglomerative_palette(pixels, n_clusters=4, n_palette=3)
+        for entry in result:
+            self.assertIn("rgb", entry)
+            self.assertIn("lab", entry)
+            self.assertIn("luminance", entry)
+            self.assertIn("chroma", entry)
+            self.assertIn("weight", entry)
+            self.assertIn("size", entry)
+
+    def test_sorted_by_weight_descending(self):
+        from data.palette import _agglomerative_palette
+        rng = np.random.RandomState(2)
+        pixels = rng.randint(0, 256, (400, 3), dtype=np.uint8)
+        result = _agglomerative_palette(pixels, n_clusters=6, n_palette=4)
+        weights = [c["weight"] for c in result]
+        self.assertEqual(weights, sorted(weights, reverse=True))
+
+    def test_deterministic(self):
+        from data.palette import _agglomerative_palette
+        rng = np.random.RandomState(3)
+        pixels = rng.randint(0, 256, (300, 3), dtype=np.uint8)
+        r1 = _agglomerative_palette(pixels, n_clusters=5, n_palette=3)
+        r2 = _agglomerative_palette(pixels, n_clusters=5, n_palette=3)
+        for a, b in zip(r1, r2):
+            self.assertEqual(a["rgb"], b["rgb"])
+
+    def test_single_colour_scene(self):
+        from data.palette import _agglomerative_palette
+        pixels = np.full((100, 3), (100, 150, 200), dtype=np.uint8)
+        result = _agglomerative_palette(pixels, n_clusters=4, n_palette=3)
+        self.assertGreater(len(result), 0)
+        top_rgb = result[0]["rgb"]
+        for v, exp in zip(top_rgb, (100, 150, 200)):
+            self.assertAlmostEqual(v, exp, delta=2)
+
+
+class TestRegionInfoFromCandidates(unittest.TestCase):
+    """_region_info_from_candidates: palette list, coverage, backward compat."""
+
+    def test_empty_candidates(self):
+        from data.palette import _region_info_from_candidates
+        out = _region_info_from_candidates([], 1000)
+        self.assertIn("rgb", out)
+        self.assertEqual(out["palette"], [])
+        self.assertEqual(out["coverage"], 0.0)
+
+    def test_dominant_is_top_candidate(self):
+        from data.palette import _region_info_from_candidates
+        cands = [
+            {"rgb": (200, 0, 0), "lab": [40.0, 0.0, 0.0], "luminance": 0.4, "chroma": 0.0,
+             "weight": 10.0, "size": 100},
+            {"rgb": (0, 200, 0), "lab": [30.0, 0.0, 0.0], "luminance": 0.3, "chroma": 0.0,
+             "weight": 5.0, "size": 50},
+        ]
+        out = _region_info_from_candidates(cands, 1000)
+        self.assertEqual(out["rgb"], [200, 0, 0])
+
+    def test_palette_contains_all_candidates(self):
+        from data.palette import _region_info_from_candidates
+        cands = [
+            {"rgb": (200, 0, 0), "lab": [40.0, 0.0, 0.0], "luminance": 0.4, "chroma": 0.0,
+             "weight": 10.0, "size": 100},
+            {"rgb": (0, 200, 0), "lab": [30.0, 0.0, 0.0], "luminance": 0.3, "chroma": 0.0,
+             "weight": 5.0, "size": 50},
+        ]
+        out = _region_info_from_candidates(cands, 1000)
+        self.assertEqual(len(out["palette"]), 2)
+        # weight / size keys stripped from palette output
+        for p in out["palette"]:
+            self.assertNotIn("weight", p)
+            self.assertNotIn("size", p)
+
+    def test_coverage_fraction(self):
+        from data.palette import _region_info_from_candidates
+        cands = [
+            {"rgb": (100, 100, 100), "lab": [50.0, 0.0, 0.0], "luminance": 0.5, "chroma": 0.0,
+             "weight": 3.0, "size": 300},
+        ]
+        out = _region_info_from_candidates(cands, 1000)
+        self.assertAlmostEqual(out["coverage"], 0.3, places=2)
+
+
+class TestSpatialMasks(unittest.TestCase):
+    """_spatial_masks: fg is inner, bg is outer strip."""
+
+    def test_fg_bg_non_overlapping(self):
+        from data.palette import _spatial_masks
+        fg, bg = _spatial_masks(128, 128, 32)
+        self.assertFalse(np.any(fg & bg))
+
+    def test_fg_bg_cover_all_pixels(self):
+        from data.palette import _spatial_masks
+        fg, bg = _spatial_masks(128, 128, 32)
+        self.assertTrue(np.all(fg | bg))
+
+    def test_border_is_bg(self):
+        from data.palette import _spatial_masks
+        fg, bg = _spatial_masks(128, 128, 32)
+        # Top-left corner should be bg
+        self.assertTrue(bg[0, 0])
+        self.assertFalse(fg[0, 0])
+
+    def test_center_is_fg(self):
+        from data.palette import _spatial_masks
+        fg, bg = _spatial_masks(128, 128, 32)
+        self.assertTrue(fg[64, 64])
+        self.assertFalse(bg[64, 64])
+
+
+class TestExtractFgBgFigure(unittest.TestCase):
+    """_extract_fg_bg_figure: schema, backward compat, diagnostics, rescue."""
+
+    def _make_arr(self, height=256, width=256,
+                  bg_rgb=(50, 50, 100), fg_rgb=(200, 100, 50)):
+        """Synthetic frame: bg_rgb border, fg_rgb center."""
+        arr = np.full((height, width, 3), bg_rgb, dtype=np.uint8)
+        border = height // 4
+        arr[border:height - border, border:width - border] = fg_rgb
+        return arr
+
+    def test_returns_three_items(self):
+        from data.palette import _extract_fg_bg_figure
+        arr = self._make_arr()
+        result = _extract_fg_bg_figure(arr)
+        self.assertEqual(len(result), 3)
+
+    def test_fg_bg_have_rgb_key(self):
+        from data.palette import _extract_fg_bg_figure
+        arr = self._make_arr()
+        fg, bg, _ = _extract_fg_bg_figure(arr)
+        self.assertIn("rgb", fg)
+        self.assertIn("rgb", bg)
+        self.assertEqual(len(fg["rgb"]), 3)
+
+    def test_fg_bg_have_palette_key(self):
+        from data.palette import _extract_fg_bg_figure
+        arr = self._make_arr()
+        fg, bg, _ = _extract_fg_bg_figure(arr)
+        self.assertIn("palette", fg)
+        self.assertIn("palette", bg)
+        self.assertIsInstance(fg["palette"], list)
+
+    def test_fg_bg_have_coverage_key(self):
+        from data.palette import _extract_fg_bg_figure
+        arr = self._make_arr()
+        fg, bg, diag = _extract_fg_bg_figure(arr)
+        self.assertIn("coverage", fg)
+        self.assertIn("coverage", bg)
+        total = fg["coverage"] + bg["coverage"]
+        self.assertAlmostEqual(total, 1.0, delta=0.05)
+
+    def test_diagnostics_schema(self):
+        from data.palette import _extract_fg_bg_figure
+        arr = self._make_arr()
+        _, _, diag = _extract_fg_bg_figure(arr)
+        for key in (
+            "method_used", "segmentation_used", "segmentation_confidence",
+            "superpixels_used", "fallback_level",
+            "fg_bg_delta_e", "rescue_applied", "near_black_pair",
+        ):
+            self.assertIn(key, diag, f"Missing key: {key}")
+
+    def test_method_used_is_figure(self):
+        from data.palette import _extract_fg_bg_figure
+        arr = self._make_arr()
+        _, _, diag = _extract_fg_bg_figure(arr)
+        self.assertEqual(diag["method_used"], "figure")
+
+    def test_spatial_fallback_without_sam2(self):
+        from data.palette import _extract_fg_bg_figure
+        arr = self._make_arr()
+        _, _, diag = _extract_fg_bg_figure(arr, mask_generator=None)
+        self.assertEqual(diag["segmentation_used"], "spatial")
+        self.assertEqual(diag["fallback_level"], 2)
+
+    def test_deterministic(self):
+        from data.palette import _extract_fg_bg_figure
+        rng = np.random.RandomState(99)
+        arr = rng.randint(0, 256, (256, 256, 3), dtype=np.uint8)
+        fg1, bg1, d1 = _extract_fg_bg_figure(arr)
+        fg2, bg2, d2 = _extract_fg_bg_figure(arr)
+        self.assertEqual(fg1["rgb"], fg2["rgb"])
+        self.assertEqual(bg1["rgb"], bg2["rgb"])
+        self.assertEqual(d1["rescue_applied"], d2["rescue_applied"])
+
+
+class TestExtractFgBgFullFigure(unittest.TestCase):
+    """_extract_fg_bg_full integration tests for the figure-ground pipeline."""
+
+    def _make_png(self, tmpdir, bg_rgb=(60, 60, 120), fg_rgb=(200, 80, 30)):
+        from PIL import Image
+        img = Image.new("RGB", (128, 128), bg_rgb)
+        for y in range(32, 96):
+            for x in range(32, 96):
+                img.putpixel((x, y), fg_rgb)
+        p = Path(tmpdir) / "frame.png"
+        img.save(str(p))
+        return p
+
+    def test_returns_extended_schema(self):
+        from data.palette import _extract_fg_bg_full
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = self._make_png(tmpdir)
+            fg, bg, diag = _extract_fg_bg_full(p)
+        self.assertIn("rgb", fg)
+        self.assertIn("palette", fg)
+        self.assertIn("coverage", fg)
+        self.assertIn("method_used", diag)
+        self.assertEqual(diag["method_used"], "figure")
+
+    def test_backward_compat_rgb_key(self):
+        """extract_fg_bg should still return (fg, bg) with rgb key."""
+        from data.palette import extract_fg_bg
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = self._make_png(tmpdir)
+            fg, bg = extract_fg_bg(p)
+        self.assertIn("rgb", fg)
+        self.assertIn("rgb", bg)
+        self.assertEqual(len(fg["rgb"]), 3)
+
+    def test_distinct_colours(self):
+        """For a clearly bi-tonal image the two regions should be distinguishable."""
+        from data.palette import _extract_fg_bg_full
+        from data.palette import _delta_e_cie76, _rgb_to_lab
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = self._make_png(tmpdir, bg_rgb=(10, 10, 60), fg_rgb=(220, 80, 20))
+            fg, bg, _ = _extract_fg_bg_full(p)
+        fg_lab = _rgb_to_lab(np.array([fg["rgb"]], dtype=np.uint8))[0]
+        bg_lab = _rgb_to_lab(np.array([bg["rgb"]], dtype=np.uint8))[0]
+        de = _delta_e_cie76(fg_lab, bg_lab)
+        self.assertGreater(de, 10.0, "figure pipeline should separate a clearly bi-tonal image")
+
+    def test_method_name_in_shot(self):
+        """_process_one_shot should record 'figure' as method name."""
+        from data.palette import create_palette_for_movie, load_palette
+        from unittest.mock import patch
+
+        FILENAME   = "figure_test {tmdb-99}.mp4"
+        MEDIA_TYPE = "movies"
+        shot_id    = "tmdb_99@f0000-f0100"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = str(Path(tmpdir) / "project")
+            Path(project).mkdir()
+
+            from services.frame_match import best_frame_path
+            from PIL import Image
+            p = best_frame_path(project, MEDIA_TYPE, FILENAME, shot_id)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            img = Image.new("RGB", (128, 128), (40, 40, 100))
+            for y in range(32, 96):
+                for x in range(32, 96):
+                    img.putpixel((x, y), (180, 60, 20))
+            img.save(str(p))
+
+            entry = {
+                "movie": {"filename": FILENAME},
+                "shot": {
+                    "shot_id": shot_id,
+                    "best_frame": {"frame": 50, "score": 0.9, "method": "clip"},
+                },
+            }
+
+            with patch("data.palette.get_metadata", return_value=[{
+                        "filename": FILENAME, "title": "Figure Test", "year": 2024,
+                    }]), \
+                 patch("data.palette.compute_media_id", return_value="tmdb_99"), \
+                 patch("data.palette.load_annotation_items", return_value=[entry]), \
+                 patch("data.palette.read_shotlist", side_effect=FileNotFoundError()):
+                create_palette_for_movie(
+                    project, FILENAME, MEDIA_TYPE, force=True
+                )
+
+            cached = load_palette(project, FILENAME, MEDIA_TYPE)
+            shot_entry = cached["shots"][0]
+            self.assertEqual(shot_entry.get("method"), "figure")
+            self.assertIn("diagnostics", shot_entry)
+            diag = shot_entry["diagnostics"]
+            self.assertIn("method_used", diag)
+            self.assertEqual(diag["method_used"], "figure")

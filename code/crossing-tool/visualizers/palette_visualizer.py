@@ -109,6 +109,7 @@ class _ShotCell(QWidget):
         self._media_type   = media_type
         self.setCursor(Qt.PointingHandCursor)
         self._show_warnings: bool = False  # toggled externally; off by default
+        self._show_palette:  bool = False  # toggled externally; off by default
 
         # Warning state derived from diagnostics
         diag = shot.get("diagnostics", {})
@@ -119,6 +120,10 @@ class _ShotCell(QWidget):
             or self._rescue_applied
             or diag.get("fg_bg_delta_e", 100.0) < 15.0
         )
+
+        # Palette data (present with the figure-ground pipeline)
+        self._fg_palette: list = shot.get("foreground", {}).get("palette", [])
+        self._bg_palette: list = shot.get("background", {}).get("palette", [])
 
         # Build a tooltip with colour values and perceptual metadata for debugging
         bg = shot.get("background", {})
@@ -143,11 +148,26 @@ class _ShotCell(QWidget):
                 tip_parts.append("⚠ near-black pair")
             if rescued:
                 tip_parts.append(f"⚠ rescue: {reason}")
+            # Figure-ground diagnostics
+            m_used  = diag.get("method_used")
+            seg     = diag.get("segmentation_used")
+            fl      = diag.get("fallback_level")
+            if m_used:
+                tip_parts.append(f"method: {m_used}")
+            if seg:
+                tip_parts.append(f"segmentation: {seg}")
+            if fl is not None:
+                tip_parts.append(f"fallback_level: {fl}")
         self.setToolTip("\n".join(tip_parts))
 
     def set_warnings_visible(self, visible: bool) -> None:
         if self._show_warnings != visible:
             self._show_warnings = visible
+            self.update()
+
+    def set_palette_visible(self, visible: bool) -> None:
+        if self._show_palette != visible:
+            self._show_palette = visible
             self.update()
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
@@ -196,6 +216,21 @@ class _ShotCell(QWidget):
             painter.setPen(Qt.NoPen)
             painter.drawEllipse(dot_x, dot_y, dot_r * 2, dot_r * 2)
 
+        # Palette strip: fg palette chips in a thin bar at the bottom.
+        # Only drawn when the "Show palette strip" checkbox is active and
+        # palette data is present (figure-ground pipeline).
+        if self._show_palette and self._fg_palette:
+            n = len(self._fg_palette)
+            strip_h = max(4, self.height() // 8)
+            chip_w  = max(1, self.width() // max(1, n))
+            y_strip = self.rect().bottom() - strip_h
+            for ci, col in enumerate(self._fg_palette):
+                rgb = col.get("rgb") if isinstance(col, dict) else None
+                if not rgb:
+                    continue
+                chip_color = QColor(int(rgb[0]), int(rgb[1]), int(rgb[2]))
+                painter.fillRect(ci * chip_w, y_strip, chip_w, strip_h, chip_color)
+
         painter.end()
 
 
@@ -210,6 +245,7 @@ class _GridWidget(QWidget):
         super().__init__(parent)
         self._cells: list[_ShotCell] = []
         self._show_warnings: bool = False
+        self._show_palette:  bool = False
 
     def load_shots(
         self,
@@ -226,6 +262,7 @@ class _GridWidget(QWidget):
         for shot in shots:
             cell = _ShotCell(shot, project_path, filename, media_type, self)
             cell.set_warnings_visible(self._show_warnings)
+            cell.set_palette_visible(self._show_palette)
             cell.show()
             self._cells.append(cell)
 
@@ -287,6 +324,11 @@ class _GridWidget(QWidget):
         self._show_warnings = visible
         for cell in self._cells:
             cell.set_warnings_visible(visible)
+
+    def set_palette_visible(self, visible: bool) -> None:
+        self._show_palette = visible
+        for cell in self._cells:
+            cell.set_palette_visible(visible)
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
@@ -371,6 +413,19 @@ class PaletteVisualizerWindow(QMainWindow):
         )
         self._warn_checkbox.toggled.connect(self._grid_warnings_toggle)
         bar.addWidget(self._warn_checkbox)
+
+        self._palette_checkbox = QCheckBox("Show palette strip")
+        self._palette_checkbox.setChecked(False)
+        self._palette_checkbox.setToolTip(
+            "Show a thin strip of palette colours at the bottom of each swatch.\n"
+            "Only visible for shots indexed with the figure-ground pipeline."
+        )
+        self._palette_checkbox.setStyleSheet(
+            f"color: {theme.TEXT_DIM}; font-family: '{theme.FAMILY_UI}';"
+            f" font-size: {theme.BASE_PT}pt;"
+        )
+        self._palette_checkbox.toggled.connect(self._grid_palette_toggle)
+        bar.addWidget(self._palette_checkbox)
 
         vbox.addLayout(bar)
 
@@ -463,6 +518,9 @@ class PaletteVisualizerWindow(QMainWindow):
 
     def _grid_warnings_toggle(self, checked: bool) -> None:
         self._grid.set_warnings_visible(checked)
+
+    def _grid_palette_toggle(self, checked: bool) -> None:
+        self._grid.set_palette_visible(checked)
 
     # ------------------------------------------------------------------
     # Keyboard navigation
