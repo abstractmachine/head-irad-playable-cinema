@@ -37,6 +37,7 @@ from styles.theme import save_window_geometry, restore_window_geometry
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QHBoxLayout,
     QLabel,
@@ -61,6 +62,31 @@ _MARGIN = 10      # px — grid outer margin
 
 
 # ---------------------------------------------------------------------------
+# Debug helpers
+# ---------------------------------------------------------------------------
+
+def _colour_debug_str(colour: dict) -> str:
+    """One-line summary of a colour dict for tooltip display.
+
+    Works with both the legacy format (``{"rgb": [...]}``)
+    and the richer LAB format that also contains ``"luminance"`` and
+    ``"chroma"``.
+    """
+    rgb = colour.get("rgb")
+    if not rgb:
+        return "—"
+    line = f"rgb({rgb[0]},{rgb[1]},{rgb[2]})"
+    lum   = colour.get("luminance")
+    chrom = colour.get("chroma")
+    lab   = colour.get("lab")
+    if lum is not None and chrom is not None:
+        line += f"  L={lum:.2f} C={chrom:.2f}"
+    if lab:
+        line += f"  lab=[{lab[0]},{lab[1]},{lab[2]}]"
+    return line
+
+
+# ---------------------------------------------------------------------------
 # Shot swatch widget
 # ---------------------------------------------------------------------------
 
@@ -82,16 +108,47 @@ class _ShotCell(QWidget):
         self._filename     = filename
         self._media_type   = media_type
         self.setCursor(Qt.PointingHandCursor)
+        self._show_warnings: bool = False  # toggled externally; off by default
 
-        # Build a tooltip with colour values for debugging
-        bg = shot.get("background", {}).get("rgb")
-        fg = shot.get("foreground", {}).get("rgb")
+        # Warning state derived from diagnostics
+        diag = shot.get("diagnostics", {})
+        self._near_black_pair   = bool(diag.get("near_black_pair", False))
+        self._rescue_applied    = bool(diag.get("rescue_applied",  False))
+        self._warn_low_contrast = (
+            self._near_black_pair
+            or self._rescue_applied
+            or diag.get("fg_bg_delta_e", 100.0) < 15.0
+        )
+
+        # Build a tooltip with colour values and perceptual metadata for debugging
+        bg = shot.get("background", {})
+        fg = shot.get("foreground", {})
         idx = shot.get("shot_index", "?")
         shot_id = shot.get("shot_id", "")
         start_t = shot.get("start_time", "")
-        tt_bg = f"bg: rgb({bg[0]},{bg[1]},{bg[2]})" if bg else "bg: —"
-        tt_fg = f"fg: rgb({fg[0]},{fg[1]},{fg[2]})" if fg else "fg: —"
-        self.setToolTip(f"Shot {idx}\n{shot_id}\n{start_t}\n{tt_bg}  {tt_fg}")
+        method  = shot.get("method", "")
+        tt_bg = "bg: " + _colour_debug_str(bg)
+        tt_fg = "fg: " + _colour_debug_str(fg)
+        tip_parts = [f"Shot {idx}", shot_id, start_t, tt_bg, tt_fg]
+        if method:
+            tip_parts.append(f"[{method}]")
+        if diag:
+            de      = diag.get("fg_bg_delta_e")
+            rescued = diag.get("rescue_applied")
+            reason  = diag.get("rescue_reason")
+            nb      = diag.get("near_black_pair")
+            if de is not None:
+                tip_parts.append(f"\u0394E={de:.1f}")
+            if nb:
+                tip_parts.append("⚠ near-black pair")
+            if rescued:
+                tip_parts.append(f"⚠ rescue: {reason}")
+        self.setToolTip("\n".join(tip_parts))
+
+    def set_warnings_visible(self, visible: bool) -> None:
+        if self._show_warnings != visible:
+            self._show_warnings = visible
+            self.update()
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.LeftButton and self._filename:
@@ -123,6 +180,22 @@ class _ShotCell(QWidget):
         painter.setBrush(fg_color)
         painter.setPen(Qt.NoPen)
         painter.drawEllipse(cx - diameter // 2, cy - diameter // 2, diameter, diameter)
+
+        # Warning badge: small filled dot in the top-right corner.
+        # Orange = rescue was applied; yellow = near-black or low ΔE (unfixed).
+        if self._warn_low_contrast and self._show_warnings:
+            dot_r = max(3, self.height() // 8)
+            dot_x = self.rect().right() - dot_r * 2 - 2
+            dot_y = self.rect().top() + 2
+            badge_color = (
+                QColor(255, 140,  0)   # orange — rescue was applied
+                if self._rescue_applied else
+                QColor(220, 200, 50)   # yellow — near-black or low ΔE
+            )
+            painter.setBrush(badge_color)
+            painter.setPen(Qt.NoPen)
+            painter.drawEllipse(dot_x, dot_y, dot_r * 2, dot_r * 2)
+
         painter.end()
 
 
@@ -136,6 +209,7 @@ class _GridWidget(QWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._cells: list[_ShotCell] = []
+        self._show_warnings: bool = False
 
     def load_shots(
         self,
@@ -151,6 +225,7 @@ class _GridWidget(QWidget):
 
         for shot in shots:
             cell = _ShotCell(shot, project_path, filename, media_type, self)
+            cell.set_warnings_visible(self._show_warnings)
             cell.show()
             self._cells.append(cell)
 
@@ -207,6 +282,11 @@ class _GridWidget(QWidget):
             x = x0 + col * (cell_w + _GAP)
             y = y0 + row * (cell_h + _GAP)
             cell.setGeometry(x, y, cell_w, cell_h)
+
+    def set_warnings_visible(self, visible: bool) -> None:
+        self._show_warnings = visible
+        for cell in self._cells:
+            cell.set_warnings_visible(visible)
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
@@ -278,6 +358,20 @@ class PaletteVisualizerWindow(QMainWindow):
         )
         bar.addWidget(self._status_label)
 
+        self._warn_checkbox = QCheckBox("Dark-scene warnings")
+        self._warn_checkbox.setChecked(False)
+        self._warn_checkbox.setToolTip(
+            "Show a coloured dot on shots where the palette extraction\n"
+            "was difficult (very dark frame or low contrast).\n"
+            "Orange = a rescue pass was applied.  Yellow = still low contrast."
+        )
+        self._warn_checkbox.setStyleSheet(
+            f"color: {theme.TEXT_DIM}; font-family: '{theme.FAMILY_UI}';"
+            f" font-size: {theme.BASE_PT}pt;"
+        )
+        self._warn_checkbox.toggled.connect(self._grid_warnings_toggle)
+        bar.addWidget(self._warn_checkbox)
+
         vbox.addLayout(bar)
 
         self._grid = _GridWidget()
@@ -342,9 +436,10 @@ class PaletteVisualizerWindow(QMainWindow):
         processed = summary.get("processed", 0)
         total     = summary.get("shot_count", len(shots))
         created   = data.get("created_at", "")[:10]
+        method_label = data.get("method", "border_center_dominant")
 
         self._status_label.setText(
-            f"{processed}/{total} shots with palette  ·  {created}"
+            f"{processed}/{total} shots with palette  ·  {method_label}  ·  {created}"
         )
 
         self._grid.load_shots(
@@ -365,6 +460,9 @@ class PaletteVisualizerWindow(QMainWindow):
         if self._updating_combo:
             return
         self._show_movie(idx)
+
+    def _grid_warnings_toggle(self, checked: bool) -> None:
+        self._grid.set_warnings_visible(checked)
 
     # ------------------------------------------------------------------
     # Keyboard navigation
