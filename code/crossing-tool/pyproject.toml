@@ -48,7 +48,7 @@ all = [
 crossing = "cli:main"
 
 [tool.setuptools]
-py-modules = ["cli", "prefs"]
+py-modules = ["cli"]
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -781,7 +781,7 @@ class ShotlistVisualizer(QMainWindow):
         self._has_ann_file: bool            = False
 
         try:
-            import prefs as _prefs
+            from tool import prefs as _prefs
             self._model_name      = _prefs.get("model_annotate", "gemma4-e4b")
             self._frames_per_shot = int(_prefs.get("annotate_frames_per_shot", 3))
         except Exception:
@@ -2678,7 +2678,7 @@ def main():
     visualizer = ShotlistVisualizer(project_path, filenames, 0, args.media, verbose=args.verbose)
 
     # Use saved geometry if available; otherwise open maximised.
-    import prefs as _prefs
+    from tool import prefs as _prefs
     if not isinstance(_prefs.get("window_shotlist"), (list, tuple)):
         screen = QApplication.primaryScreen()
         visualizer.setGeometry(screen.availableGeometry())

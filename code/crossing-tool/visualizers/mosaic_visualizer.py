@@ -1093,7 +1093,7 @@ class MosaicVisualizer(QMainWindow):
                 self.project_path, filename, "movies"
             )
 
-        import prefs as _prefs
+        from tool import prefs as _prefs
         model_name = _prefs.get("model_frame_match", "clip-vit-base-patch32")
 
         self._worker = SearchWorker(

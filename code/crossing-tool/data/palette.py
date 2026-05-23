@@ -1005,6 +1005,7 @@ def create_palette_for_movie(
         FileNotFoundError: If the annotation JSON does not exist.
     """
     cache_path = get_palette_path(project_path, filename, media_type)
+    _overwrite = force  # True if we are authorized to overwrite an existing cache
     if cache_path.exists() and not force:
         # Check whether the shotlist is newer than the palette cache (dirty check).
         shotlist_path = get_shotlist_path(project_path, filename, media_type)
@@ -1023,6 +1024,9 @@ def create_palette_for_movie(
                 "failed": 0,
                 "cached": True,
             }
+        # Stale: the shotlist is newer — regeneration is authorised, so we must
+        # overwrite the existing file even though the caller did not pass --force.
+        _overwrite = True
         if verbose:
             print(f"  stale {filename}: shotlist is newer than palette cache — regenerating")
 
@@ -1062,7 +1066,7 @@ def create_palette_for_movie(
 
     # Load SAM2 once for the whole movie (if configured in project prefs).
     sam_mask_generator = None
-    import prefs as _prefs
+    from tool import prefs as _prefs
     _sam_name = _prefs.get("model_segmentation")
     if _sam_name:
         try:
@@ -1124,7 +1128,7 @@ def create_palette_for_movie(
         "summary": summary,
     }
 
-    save_palette(project_path, filename, media_type, palette_doc, force=force)
+    save_palette(project_path, filename, media_type, palette_doc, force=_overwrite)
 
     if verbose:
         print(
@@ -1140,6 +1144,7 @@ def create_palette_for_all_movies(
     *,
     force: bool = False,
     verbose: bool = False,
+    on_item_done=None,
 ) -> dict:
     """Build palette caches for every movie that has an annotation JSON.
 
@@ -1167,16 +1172,22 @@ def create_palette_for_all_movies(
         except FileNotFoundError as exc:
             print(f"  skip  {filename}: {exc}", flush=True)
             results.append({"filename": filename, "skipped": True, "reason": str(exc)})
+            if on_item_done is not None:
+                on_item_done(filename, None, exc)
             continue
         except FileExistsError as exc:
             # Should not happen because we handle cache-exists inside
             # create_palette_for_movie, but guard here anyway.
             print(f"  skip  {filename}: {exc}", flush=True)
             results.append({"filename": filename, "skipped": True, "reason": str(exc)})
+            if on_item_done is not None:
+                on_item_done(filename, None, exc)
             continue
         except Exception as exc:
             print(f"  fail  {filename}: {exc}", flush=True)
             results.append({"filename": filename, "error": str(exc)})
+            if on_item_done is not None:
+                on_item_done(filename, None, exc)
             continue
 
         if summary.get("cached"):
@@ -1186,6 +1197,8 @@ def create_palette_for_all_movies(
             total_skipped += summary.get("skipped", 0)
             total_failed += summary.get("failed", 0)
         results.append(summary)
+        if on_item_done is not None:
+            on_item_done(filename, summary, None)
 
     return {
         "media_type": media_type,

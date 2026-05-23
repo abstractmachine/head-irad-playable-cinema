@@ -174,7 +174,7 @@ def _model_entry(path: Path) -> dict:
 
 def list_models(project_path: str) -> None:
     """Print a summary table of all models in <project>/models/."""
-    from prefs import get as pget  # imported lazily to avoid circular
+    from tool.prefs import get as pget  # imported lazily to avoid circular
 
     mdir = _models_dir(project_path)
     if not mdir.exists():

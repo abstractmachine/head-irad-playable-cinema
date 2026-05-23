@@ -509,9 +509,7 @@ class JumpScrollBar(QScrollBar):
 
 def save_window_geometry(win, key: str) -> None:
     """Save *win*'s current screen geometry to prefs under *key*."""
-    import sys as _sys
-    _sys.path.insert(0, str(Path(__file__).parent.parent))
-    import prefs as _prefs
+    from tool import prefs as _prefs
     g = win.geometry()
     _prefs.set(key, [g.x(), g.y(), g.width(), g.height()])
 
@@ -521,9 +519,7 @@ def restore_window_geometry(win, key: str) -> None:
 
     Clamps the position so the window is never placed fully off-screen.
     """
-    import sys as _sys
-    _sys.path.insert(0, str(Path(__file__).parent.parent))
-    import prefs as _prefs
+    from tool import prefs as _prefs
     geom = _prefs.get(key)
     if not (isinstance(geom, (list, tuple)) and len(geom) == 4):
         return

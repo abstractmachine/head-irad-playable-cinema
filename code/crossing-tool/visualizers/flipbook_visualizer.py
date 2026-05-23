@@ -70,29 +70,31 @@ _MARGIN = 12          # px — grid outer margin
 
 _FONTS_DIR   = Path(__file__).parent.parent / "styles" / "fonts"
 _LC_DIR      = _FONTS_DIR / "libre_clarendon" / "fonts"
-_FONT_PATH   = str(_LC_DIR / "LibreClarendonNormal-110Medium.otf")
 _FONT_FAMILY = None  # populated by _load_flipbook_font() below
 
 
 def _load_flipbook_font() -> str:
-    """Load Libre Clarendon into QFontDatabase and return the family name.
+    """Load Libre Clarendon variants into QFontDatabase and return the family name.
 
-    Falls back to the system default if the font file is not found.
+    Falls back to the system default if the font files are not found.
     Called once at module import time and cached in _FONT_FAMILY.
     """
     db = QFontDatabase()
+    family = ""
     for path in [
-        str(_LC_DIR / "LibreClarendonNormal-110Medium.otf"),
+        str(_LC_DIR / "LibreClarendonNormal-162Bold.otf"),
         str(_LC_DIR / "LibreClarendonNormal-68Regular.otf"),
+        str(_LC_DIR / "LibreClarendonNormal-110Medium.otf"),
+        str(_LC_DIR / "LibreClarendonNormal-42Light.otf"),
         str(_FONTS_DIR / "Hanken_Grotesk" / "HankenGrotesk-VariableFont_wght.ttf"),
     ]:
         if Path(path).exists():
             font_id = db.addApplicationFont(path)
             if font_id != -1:
                 families = db.applicationFontFamilies(font_id)
-                if families:
-                    return families[0]
-    return ""  # Qt will use the default system font
+                if families and not family:
+                    family = families[0]
+    return family  # Qt will use the default system font if empty
 
 
 # ---------------------------------------------------------------------------
@@ -121,9 +123,17 @@ class _PageCell(QWidget):
         text  = page.get("text", "")
 
         if kind == "cover_front":
-            tip = f"Front cover\n{text}"
+            film_motif = page.get("film_motif") or {}
+            motif_val  = film_motif.get("value", "").strip()
+            if motif_val and motif_val != text:
+                tip = f"Front cover\n{text}\n(film motif: {motif_val})"
+            else:
+                tip = f"Front cover\n{text}"
         elif kind == "cover_back":
-            tip = f"Back cover\n{text}"
+            back_title = page.get("back_title", text)
+            back_year  = page.get("back_year", "")
+            display    = f"{back_title}, {back_year}" if back_year else back_title
+            tip = f"Back cover\n{display}"
         else:
             parts = []
             if idx is not None:
@@ -151,10 +161,13 @@ class _PageCell(QWidget):
         painter.setRenderHint(QPainter.TextAntialiasing)
         painter.fillRect(self.rect(), bg_color)
 
-        if text:
-            cell_w = self.width()
-            cell_h = self.height()
+        kind   = page.get("kind", "shot")
+        cell_w = self.width()
+        cell_h = self.height()
 
+        # Back cover shows only the background color in the thumbnail.
+        # Front cover and shot pages render their text.
+        if text and kind != "cover_back":
             # Start with a pixel size of 40% of cell height, then scale
             # down proportionally if the word is wider than 80% of cell width.
             target_px = max(6, int(cell_h * 0.40))
@@ -178,24 +191,6 @@ class _PageCell(QWidget):
             painter.setFont(font)
             painter.setPen(fg_color)
             painter.drawText(x, y, text)
-
-            # Thin rule at bottom for cover pages
-            kind = page.get("kind", "shot")
-            if kind in ("cover_front", "cover_back"):
-                rule_h = max(1, cell_h // 60)
-                rule_y = cell_h - rule_h - max(2, cell_h // 30)
-                fg_dim = QColor(
-                    int(fg_raw[0] * 0.5),
-                    int(fg_raw[1] * 0.5),
-                    int(fg_raw[2] * 0.5),
-                )
-                painter.fillRect(
-                    int(cell_w * 0.10),
-                    rule_y,
-                    int(cell_w * 0.80),
-                    rule_h,
-                    fg_dim,
-                )
 
         painter.end()
 

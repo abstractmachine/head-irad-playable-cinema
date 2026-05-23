@@ -145,7 +145,7 @@ class _BaseCard(QFrame):
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton and self._filename:
-            import prefs as _prefs
+            from tool import prefs as _prefs
             from visualizers.shot_visualizer import open_at_shot
             open_at_shot(
                 _prefs.get("path") or "",

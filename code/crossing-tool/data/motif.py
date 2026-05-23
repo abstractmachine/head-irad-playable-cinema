@@ -542,6 +542,7 @@ def generate_motifs_for_all_movies(
     verbose: bool = False,
     system_prompt_file: Optional[str] = None,
     user_prompt_file: Optional[str] = None,
+    on_item_done=None,
 ) -> dict:
     """Generate motifs for all movies that have an annotation JSON.
 
@@ -622,6 +623,8 @@ def generate_motifs_for_all_movies(
                 n_gen  = summary.get("processed", 0)
                 n_skip = summary.get("skipped",   0)
                 print(f"ok  ({n_gen} generated, {n_skip} skipped)")
+            if on_item_done is not None:
+                on_item_done(title, summary, None)
         except FileNotFoundError as exc:
             errors.append((filename, str(exc)))
             total_files -= 1
@@ -632,6 +635,8 @@ def generate_motifs_for_all_movies(
             total_failed += 1
             if not verbose:
                 print(f"error: {exc}")
+            if on_item_done is not None:
+                on_item_done(title, None, exc)
 
     return {
         "total_files":     total_files,

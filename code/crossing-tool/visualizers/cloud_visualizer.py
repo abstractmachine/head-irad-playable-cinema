@@ -443,7 +443,8 @@ class CloudVisualizer(QMainWindow):
         from generators.cloud import STYLE_NAMES, PREFS_KEY_STYLE, DEFAULT_STYLE
         for name in STYLE_NAMES:
             self.style_combo.addItem(name, userData=name)
-        saved_style = __import__("prefs").get(PREFS_KEY_STYLE) or DEFAULT_STYLE
+        from tool import prefs as _prefs
+        saved_style = _prefs.get(PREFS_KEY_STYLE) or DEFAULT_STYLE
         idx = self.style_combo.findData(saved_style)
         if idx >= 0:
             self.style_combo.setCurrentIndex(idx)
@@ -543,7 +544,7 @@ class CloudVisualizer(QMainWindow):
 
     def _on_style_changed(self, _index: int) -> None:
         """Persist the selected style as the project default."""
-        import prefs as _prefs
+        from tool import prefs as _prefs
         from generators.cloud import PREFS_KEY_STYLE
         _prefs.set(PREFS_KEY_STYLE, self.style_combo.currentData())
 
@@ -684,6 +685,6 @@ def run_visualizer(project_path: str) -> None:
 
 
 if __name__ == "__main__":
-    import prefs as _prefs
+    from tool import prefs as _prefs
     _pp = _prefs.get("path") or "."
     run_visualizer(_pp)

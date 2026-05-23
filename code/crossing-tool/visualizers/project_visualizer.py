@@ -27,7 +27,7 @@ from PyQt5.QtWidgets import (
     QFileDialog, QMessageBox,
 )
 
-import prefs as _prefs
+from tool import prefs as _prefs
 
 _CLI_PATH = Path(__file__).parent.parent / "cli.py"
 

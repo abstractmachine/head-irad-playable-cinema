@@ -1,5 +1,5 @@
 """
-crossing_mcp.py — MCP server for the crossing CLI tool.
+mcp_server/mcp.py — MCP server for the crossing CLI tool.
 
 HOW TO RUN (on the Ubuntu server)
 ----------------------------------
@@ -12,7 +12,7 @@ HOW TO RUN (on the Ubuntu server)
    You can also override it at runtime with CROSSING_PROJECT=/path if needed.
 
 3. Run the server for testing:
-       uv run python crossing_mcp.py
+       uv run python mcp_server/mcp.py
 
 The server speaks stdio only — it is intended to be launched on-demand by the client.
 
@@ -27,7 +27,7 @@ Edit ~/Library/Application Support/Claude/claude_desktop_config.json
       "command": "ssh",
       "args": [
         "playable-cinema",
-        "bash -lc 'cd /path/to/crossing-tool && uv run python crossing_mcp.py'"
+        "bash -lc 'cd /path/to/crossing-tool && uv run python mcp_server/mcp.py'"
       ]
     }
   }
@@ -48,13 +48,13 @@ from pathlib import Path
 # Ensure the package root is importable when this script is run directly,
 # regardless of the working directory.
 # ---------------------------------------------------------------------------
-_SCRIPT_DIR = Path(__file__).resolve().parent
+_SCRIPT_DIR = Path(__file__).resolve().parent.parent  # crossing-tool root
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
 from mcp.server.fastmcp import FastMCP
 from data.metadata import get_metadata
-import prefs as _prefs
+from tool import prefs as _prefs
 
 # ---------------------------------------------------------------------------
 # Project path resolution

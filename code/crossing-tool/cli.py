@@ -10,7 +10,8 @@ _PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-import prefs
+from tool import prefs
+from tool.helpers import _add_media_arg, _add_tmdb_arg, _add_verbose_arg, _add_dry_run_arg
 
 _MEDIA_FOLDER = {"movie": "movies", "gameplay": "gameplay"}
 _TOOL_VERSION = "2.0.0"  # Updated for new folder structure (videos/thumbnails/subtitles with media_type subdirs)
@@ -3144,6 +3145,8 @@ def cmd_generate(args):
         cmd_cloud(args)
     elif sub == "flipbook":
         cmd_flipbook(args)
+    elif sub == "film-title":
+        cmd_film_title(args)
 
 
 def cmd_composition(args):
@@ -3614,6 +3617,101 @@ def _cloud_visualizer(args):
 # generate flipbook
 # ---------------------------------------------------------------------------
 
+def cmd_film_title(args):
+    """Generate a semantic condensation title for one or all movies."""
+    _require_path()
+    project_path = prefs.get("path")
+    media_type   = getattr(args, "media", "movies") or "movies"
+    force        = getattr(args, "force", False)
+    verbose      = getattr(args, "verbose", False)
+    model_name   = getattr(args, "model", "Qwen3-VL-8B-Instruct") or "Qwen3-VL-8B-Instruct"
+    movie        = getattr(args, "movie", None)
+    do_all       = getattr(args, "all", False)
+    notify_each  = getattr(args, "notify_items", False)
+    notify       = getattr(args, "notify", False) or notify_each
+
+    from data.film_motif import (
+        generate_film_title,
+        generate_film_titles_for_all_movies,
+    )
+    from data.shotlist import resolve_filename
+
+    if do_all:
+        print(f"Generating film titles for all {media_type}…")
+
+        def _title_on_item(title, item_result, exc):
+            if not notify_each:
+                return
+            from services.notify import discord_notify
+            if exc is None:
+                value = item_result.get("value", "?")
+                discord_notify(f"✓ Film title: {title}  → {value!r}", project_path)
+            else:
+                discord_notify(f"✗ Film title failed: {title}  — {exc}", project_path)
+
+        summary = generate_film_titles_for_all_movies(
+            project_path,
+            media_type=media_type,
+            model_name=model_name,
+            force=force,
+            verbose=verbose,
+            on_item_done=_title_on_item if notify_each else None,
+        )
+        print()
+        print(f"  processed: {summary['processed']}")
+        print(f"  skipped:   {summary['skipped']}")
+        print(f"  failed:    {summary['failed']}")
+        if notify:
+            from services.notify import discord_notify
+            discord_notify(
+                f"✓ Film titles complete: "
+                f"processed={summary['processed']}  "
+                f"skipped={summary['skipped']}  "
+                f"failed={summary['failed']}",
+                project_path,
+            )
+        return
+
+    if not movie:
+        print("✗ film-title: specify --movie or --all.", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        filename = resolve_filename(project_path, None, movie, media_type)
+    except Exception as exc:
+        print(f"✗ Could not resolve movie: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        result = generate_film_title(
+            project_path, filename, media_type,
+            model_name=model_name,
+            force=force,
+            verbose=verbose,
+        )
+        print(f"✓ {result['value']}  ({filename})")
+        if notify:
+            from services.notify import discord_notify
+            discord_notify(
+                f"✓ Film title: {filename}  → {result['value']!r}",
+                project_path,
+            )
+    except FileNotFoundError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    except ValueError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        print(f"✗ film-title failed: {exc}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+# generate flipbook
+# ---------------------------------------------------------------------------
+
 def cmd_flipbook(args):
     """Generate a cinematic motif flipbook PDF (one page per shot)."""
     _require_path()
@@ -3622,6 +3720,8 @@ def cmd_flipbook(args):
     force        = getattr(args, "force", False)
     verbose      = getattr(args, "verbose", False)
     open_result  = not getattr(args, "no_open", False)
+    notify_each  = getattr(args, "notify_items", False)
+    notify       = getattr(args, "notify", False) or notify_each
 
     if getattr(args, "visualizer", False):
         _flipbook_visualizer(args)
@@ -3641,9 +3741,21 @@ def cmd_flipbook(args):
 
     if do_all:
         print(f"Generating flipbooks for all {media_type}…")
+
+        def _flipbook_on_item(title, item_summary, exc):
+            if not notify_each:
+                return
+            from services.notify import discord_notify
+            if exc is None:
+                pages = item_summary.get("pages", "?")
+                discord_notify(f"✓ Flipbook: {title}  ({pages} pages)", project_path)
+            else:
+                discord_notify(f"✗ Flipbook failed: {title}  — {exc}", project_path)
+
         summary = generate_flipbook_for_all_movies(
             project_path, media_type=media_type,
             force=force, verbose=verbose,
+            on_item_done=_flipbook_on_item if notify_each else None,
         )
         print()
         print(f"  processed: {summary['total_processed']}")
@@ -3652,6 +3764,15 @@ def cmd_flipbook(args):
         if summary["errors"]:
             for fn, err in summary["errors"]:
                 print(f"  ✗ {fn}: {err}", file=sys.stderr)
+        if notify:
+            from services.notify import discord_notify
+            discord_notify(
+                f"✓ Flipbook batch complete: "
+                f"processed={summary['total_processed']}  "
+                f"skipped={summary['total_skipped']}  "
+                f"failed={summary['total_failed']}",
+                project_path,
+            )
         return
 
     # Single movie
@@ -3677,6 +3798,12 @@ def cmd_flipbook(args):
                 subprocess.Popen(["xdg-open", str(out)])
             except Exception:
                 pass
+        if notify:
+            from services.notify import discord_notify
+            discord_notify(
+                f"✓ Flipbook: {out.name}  ({result['pages']} pages)",
+                project_path,
+            )
     except FileExistsError as exc:
         print(f"✗ {exc}", file=sys.stderr)
         sys.exit(1)
@@ -4366,6 +4493,7 @@ def _index_silhouette(args):
     force         = getattr(args, "force", False)
     verbose       = getattr(args, "verbose", False)
     dry_run       = getattr(args, "dry_run", False)
+    notify        = getattr(args, "notify", False)
 
     sam_model     = (
         getattr(args, "model", None)
@@ -4450,9 +4578,21 @@ def _index_silhouette(args):
             pts     = len(payload.get("polygon") or [])
             print(f"✓ Silhouette saved: {out}")
             print(f"  score={score:.4f}  polygon_pts={pts}")
+        if notify:
+            from services.notify import discord_notify
+            discord_notify(
+                f"✓ Silhouette: {word!r} in {field!r}  — {out}",
+                project_path,
+            )
     else:
         reason = result["reason"]
         print(f"✗ Silhouette not found: {reason}", file=sys.stderr)
+        if notify:
+            from services.notify import discord_notify
+            discord_notify(
+                f"✗ Silhouette not found: {word!r} in {field!r}  — {reason}",
+                project_path,
+            )
         sys.exit(1)
 
 
@@ -4477,17 +4617,33 @@ def _index_palette_create(args):
     media_type = getattr(args, "media", "movies")
     force = getattr(args, "force", False)
     verbose = getattr(args, "verbose", False)
+    notify_each = getattr(args, "notify_items", False)
+    notify = getattr(args, "notify", False) or notify_each
 
     do_all = getattr(args, "all", False)
     movie_query = getattr(args, "movie", None)
     tmdb = getattr(args, "tmdb", None)
 
     if do_all:
+
+        def _palette_on_item(filename, item_summary, exc):
+            if not notify_each:
+                return
+            from services.notify import discord_notify
+            if exc is None:
+                if item_summary.get("processed", 0) == 0 and item_summary.get("failed", 0) == 0:
+                    return  # already cached / nothing changed
+                processed = item_summary.get("processed", 0)
+                discord_notify(f"✓ Palette: {filename}  ({processed} shots)", project_path)
+            else:
+                discord_notify(f"✗ Palette failed: {filename}  — {exc}", project_path)
+
         summary = create_palette_for_all_movies(
             project_path,
             media_type,
             force=force,
             verbose=verbose,
+            on_item_done=_palette_on_item if notify_each else None,
         )
         cached = summary.get("total_cached", 0)
         cached_note = f"  ({cached} already cached)" if cached else ""
@@ -4501,6 +4657,15 @@ def _index_palette_create(args):
         )
         if summary.get("total_failed", 0):
             sys.exit(1)
+        if notify:
+            from services.notify import discord_notify
+            discord_notify(
+                f"✓ Palette batch complete: "
+                f"processed={summary['total_processed']}  "
+                f"skipped={summary['total_skipped']}  "
+                f"failed={summary['total_failed']}",
+                project_path,
+            )
         return
 
     if tmdb is None and movie_query is None:
@@ -4543,6 +4708,14 @@ def _index_palette_create(args):
     print(f"  processed: {summary.get('processed', 0)}")
     print(f"  skipped:   {summary.get('skipped', 0)}")
     print(f"  failed:    {summary.get('failed', 0)}")
+    if notify:
+        from services.notify import discord_notify
+        discord_notify(
+            f"✓ Palette: {filename}  "
+            f"processed={summary.get('processed', 0)}  "
+            f"failed={summary.get('failed', 0)}",
+            project_path,
+        )
 
     if summary.get("failed", 0):
         sys.exit(1)
@@ -4646,14 +4819,30 @@ def _index_motif_generate(args):
     movie_query  = getattr(args, "movie",    None)
     tmdb         = getattr(args, "tmdb",     None)
     model_name   = getattr(args, "model",    None) or prefs.get(_MODEL_KEYS["annotate"], _MODEL_DEFAULTS["annotate"])
+    notify_each  = getattr(args, "notify_items", False)
+    notify       = getattr(args, "notify", False) or notify_each
 
     if do_all:
+
+        def _motif_on_item(title, item_summary, exc):
+            if not notify_each:
+                return
+            from services.notify import discord_notify
+            if exc is None:
+                if item_summary.get("processed", 0) == 0 and item_summary.get("failed", 0) == 0:
+                    return  # all shots already had motifs / nothing changed
+                n_gen = item_summary.get("processed", 0)
+                discord_notify(f"✓ Motifs: {title}  ({n_gen} generated)", project_path)
+            else:
+                discord_notify(f"✗ Motifs failed: {title}  — {exc}", project_path)
+
         summary = generate_motifs_for_all_movies(
             project_path,
             media_type,
             model_name=model_name,
             force=force,
             verbose=verbose,
+            on_item_done=_motif_on_item if notify_each else None,
         )
         print(
             f"\n✓ Motif generate complete: "
@@ -4667,6 +4856,15 @@ def _index_motif_generate(args):
                 print(f"  ✗ {fn}: {msg}", file=sys.stderr)
         if summary.get("total_failed", 0):
             sys.exit(1)
+        if notify:
+            from services.notify import discord_notify
+            discord_notify(
+                f"✓ Motif batch complete: "
+                f"generated={summary['total_processed']}  "
+                f"skipped={summary['total_skipped']}  "
+                f"failed={summary['total_failed']}",
+                project_path,
+            )
         return
 
     if tmdb is None and movie_query is None:
@@ -4710,6 +4908,14 @@ def _index_motif_generate(args):
     print(f"  generated: {summary.get('processed', 0)}")
     print(f"  skipped:   {summary.get('skipped', 0)}")
     print(f"  failed:    {summary.get('failed', 0)}")
+    if notify:
+        from services.notify import discord_notify
+        discord_notify(
+            f"✓ Motifs: {filename}  "
+            f"generated={summary.get('processed', 0)}  "
+            f"failed={summary.get('failed', 0)}",
+            project_path,
+        )
 
     if summary.get("failed", 0):
         sys.exit(1)
@@ -4960,6 +5166,27 @@ class _HelpfulParser(argparse.ArgumentParser):
         self.exit(2)
 
 
+def _add_notify_args(p, *, batch: bool = True) -> None:
+    """Add ``--notify`` and, for batch commands, ``--notify-each`` to a parser.
+
+    All batch commands (those that accept ``--all``) should call this with the
+    default ``batch=True``.  Single-output commands should pass ``batch=False``
+    to omit ``--notify-each``.
+
+    Uses ``dest="notify_items"`` for ``--notify-each`` to match the pattern used
+    throughout this CLI.
+    """
+    p.add_argument(
+        "--notify", action="store_true",
+        help="Send a Discord notification when the run finishes",
+    )
+    if batch:
+        p.add_argument(
+            "--notify-each", action="store_true", dest="notify_items",
+            help="Send a Discord notification after each item in a --all batch",
+        )
+
+
 def build_parser():
     parser = _HelpfulParser(
         prog="crossing",
@@ -4976,8 +5203,8 @@ def build_parser():
     p_annotate_shot.add_argument("filename", nargs="?", default=None, help="Video filename (or use --tmdb)")
     p_annotate_shot.add_argument("index", type=int, nargs="?", default=None, help="Shot index (0-based). Omit to annotate all shots in file.")
     p_annotate_shot.add_argument("caption", nargs="?", default=None, help="Annotation text (manual mode only)")
-    p_annotate_shot.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_annotate_shot.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    _add_tmdb_arg(p_annotate_shot)
+    _add_media_arg(p_annotate_shot)
     p_annotate_shot.add_argument("--manual", dest="manual", metavar="TEXT", default=None, help="Manual caption text; when provided operate in manual mode")
     p_annotate_shot.add_argument("--all", action="store_true", help="Annotate all files in metadata (automatic mode by default)")
     p_annotate_shot.add_argument(
@@ -5012,10 +5239,9 @@ def build_parser():
     p_annotate_shot.add_argument("--no-skip-existing", dest="skip_existing", action="store_false", help="Do not skip shots that already have annotations")
     p_annotate_shot.add_argument("--export-csv", default=None, help="Export annotations CSV path")
     p_annotate_shot.add_argument("--export-md", default=None, help="Export annotations Markdown path")
-    p_annotate_shot.add_argument("--verbose", action="store_true", help="Print per-shot progress to stdout")
+    _add_verbose_arg(p_annotate_shot, help="Print per-shot progress to stdout")
     p_annotate_shot.add_argument("--log", action="store_true", help="Write a debug log file alongside the annotation JSON")
-    p_annotate_shot.add_argument("--notify", action="store_true", help="Send a Discord notification when the run finishes")
-    p_annotate_shot.add_argument("--notify-each", action="store_true", dest="notify_items", help="Send a Discord notification after each movie is annotated in a --all batch")
+    _add_notify_args(p_annotate_shot)
     p_annotate_shot.add_argument(
         "--reload-every", type=int, default=25, dest="reload_every_n_shots", metavar="N",
         help="Reload the model pipeline every N processed shots to prevent output drift (default: 25; set 0 to disable)",
@@ -5039,8 +5265,8 @@ def build_parser():
     p_annotate_scene.add_argument("filename", nargs="?", default=None, help="Video filename (or use --tmdb)")
     p_annotate_scene.add_argument("scene_number", type=int, help="Scene number")
     p_annotate_scene.add_argument("caption", nargs="?", default=None, help="Annotation text (manual mode only)")
-    p_annotate_scene.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_annotate_scene.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    _add_tmdb_arg(p_annotate_scene)
+    _add_media_arg(p_annotate_scene)
     p_annotate_scene.add_argument("--manual", dest="manual", metavar="TEXT", default=None, help="Manual caption text; when provided operate in manual mode")
     p_annotate_scene.add_argument(
         "--model",
@@ -5074,9 +5300,9 @@ def build_parser():
     p_annotate_scene.add_argument("--no-skip-existing", dest="skip_existing", action="store_false", help="Do not skip shots that already have annotations")
     p_annotate_scene.add_argument("--export-csv", default=None, help="Export annotations CSV path")
     p_annotate_scene.add_argument("--export-md", default=None, help="Export annotations Markdown path")
-    p_annotate_scene.add_argument("--verbose", action="store_true", help="Print per-shot progress to stdout")
+    _add_verbose_arg(p_annotate_scene, help="Print per-shot progress to stdout")
     p_annotate_scene.add_argument("--log", action="store_true", help="Write a debug log file alongside the annotation JSON")
-    p_annotate_scene.add_argument("--notify", action="store_true", help="Send a Discord notification when the run finishes")
+    _add_notify_args(p_annotate_scene, batch=False)
     p_annotate_scene.add_argument(
         "--reload-every", type=int, default=25, dest="reload_every_n_shots", metavar="N",
         help="Reload the model pipeline every N processed shots to prevent output drift (default: 25; set 0 to disable)",
@@ -5091,10 +5317,8 @@ def build_parser():
         "filename", nargs="?", default=None,
         help="Film title keyword or filename (or use --tmdb)",
     )
-    p_annotate_frame.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_annotate_frame.add_argument(
-        "--media", choices=["movies", "gameplay"], default="movies",
-    )
+    _add_tmdb_arg(p_annotate_frame)
+    _add_media_arg(p_annotate_frame)
     p_annotate_frame.add_argument(
         "--model",
         default=prefs.get(_MODEL_KEYS["frame_match"], _MODEL_DEFAULTS["frame_match"]),
@@ -5108,22 +5332,12 @@ def build_parser():
         "--force", action="store_true",
         help="Re-process shots even when best_frame already exists and the description hasn't changed",
     )
-    p_annotate_frame.add_argument(
-        "--verbose", action="store_true",
-        help="Print per-shot progress to stdout",
-    )
+    _add_verbose_arg(p_annotate_frame, help="Print per-shot progress to stdout")
     p_annotate_frame.add_argument(
         "--all", action="store_true",
         help="Run frame matching for all registered movies (ignores positional filename / --tmdb)",
     )
-    p_annotate_frame.add_argument(
-        "--notify", action="store_true",
-        help="Send a Discord notification when the batch finishes (--all mode)",
-    )
-    p_annotate_frame.add_argument(
-        "--notify-each", action="store_true", dest="notify_items",
-        help="Send a Discord notification after each movie is processed in --all mode",
-    )
+    _add_notify_args(p_annotate_frame)
 
     p_annotate_best = annotate_sub.add_parser(
         "best",
@@ -5136,21 +5350,18 @@ def build_parser():
         "migrate",
         help="Backfill 'source' and 'fallback_reason' fields on existing best_frame entries",
     )
-    p_annotate_best_migrate.add_argument(
-        "--media", choices=["movies", "gameplay"], default="movies",
-        help="Media type to migrate (default: movies)",
-    )
+    _add_media_arg(p_annotate_best_migrate)
 
     p_annotate_remove = annotate_sub.add_parser("remove", help="Remove shot annotations for a film")
     p_annotate_remove.set_defaults(func=_annotate_remove)
     p_annotate_remove.add_argument("filename", nargs="?", default=None, help="Video filename (or use --tmdb / --all)")
-    p_annotate_remove.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_annotate_remove.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    _add_tmdb_arg(p_annotate_remove)
+    _add_media_arg(p_annotate_remove)
     p_annotate_remove.add_argument("--all", action="store_true", help="Remove annotations for all films in metadata")
 
     p_annotate_audit = annotate_sub.add_parser("audit", help="Report annotation status per film (complete, incomplete, missing)")
     p_annotate_audit.set_defaults(func=_shotlist_annotate)
-    p_annotate_audit.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    _add_media_arg(p_annotate_audit)
 
     p_annotate_validate = annotate_sub.add_parser(
         "validate",
@@ -5161,18 +5372,13 @@ def build_parser():
         "filename", nargs="?", default=None,
         help="Fuzzy keyword to match a movie or game title (or use --tmdb / --all)",
     )
-    p_annotate_validate.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_annotate_validate.add_argument(
-        "--media", choices=["movies", "gameplay"], default="movies",
-    )
+    _add_tmdb_arg(p_annotate_validate)
+    _add_media_arg(p_annotate_validate)
     p_annotate_validate.add_argument(
         "--all", action="store_true",
         help="Validate annotations for all films/games in metadata",
     )
-    p_annotate_validate.add_argument(
-        "--dry-run", dest="dry_run", action="store_true",
-        help="Report issues without writing any changes",
-    )
+    _add_dry_run_arg(p_annotate_validate, help="Report issues without writing any changes")
 
     p_annotate_migrate = annotate_sub.add_parser(
         "migrate",
@@ -5183,10 +5389,8 @@ def build_parser():
         "filename", nargs="?", default=None,
         help="Fuzzy keyword to match a movie or game title (or use --tmdb / --all)",
     )
-    p_annotate_migrate.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_annotate_migrate.add_argument(
-        "--media", choices=["movies", "gameplay"], default="movies",
-    )
+    _add_tmdb_arg(p_annotate_migrate)
+    _add_media_arg(p_annotate_migrate)
     p_annotate_migrate.add_argument(
         "--all", action="store_true",
         help="Migrate all annotation files in the project",
@@ -5212,7 +5416,7 @@ def build_parser():
     )
     p_composition.add_argument("--output", default=None, metavar="PATH", help="Override output file path")
     p_composition.add_argument("--no-open", action="store_true", dest="no_open", help="Do not open result in desktop viewer")
-    p_composition.add_argument("--notify", action="store_true", help="Send a Discord notification when done")
+    _add_notify_args(p_composition, batch=False)
     p_composition.add_argument("--visualizer", action="store_true", help="Open the interactive composition visualizer instead of saving")
 
     # generate mosaic
@@ -5228,10 +5432,7 @@ def build_parser():
         "thumbnails",
         help="Mosaic of thumbnails for a media type (e.g. all movies)",
     )
-    p_mosaic_thumbnails.add_argument(
-        "--media", choices=["movies", "gameplay"], default="movies",
-        help="Media type whose thumbnails to collect (default: movies)",
-    )
+    _add_media_arg(p_mosaic_thumbnails)
     p_mosaic_thumbnails.add_argument(
         "--all", action="store_true", dest="all",
         help="Include all entries (the only supported mode for now)",
@@ -5248,10 +5449,7 @@ def build_parser():
         "--caption", choices=["none", "short"], default="short",
         help="Caption style: short (title + year) or none (default: short)",
     )
-    p_mosaic_thumbnails.add_argument(
-        "--notify", action="store_true",
-        help="Send a Discord notification when the run finishes",
-    )
+    _add_notify_args(p_mosaic_thumbnails, batch=False)
 
     p_mosaic_search = mosaic_sub.add_parser(
         "search",
@@ -5263,7 +5461,7 @@ def build_parser():
     p_mosaic_search.add_argument("--field", default=None, help="Restrict search to one annotation field")
     p_mosaic_search.add_argument("--limit", type=int, default=None, help="Max search results / mosaic tiles")
     p_mosaic_search.add_argument("--all", action="store_true", help="Search all movies (overrides positional scopes)")
-    p_mosaic_search.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    _add_media_arg(p_mosaic_search)
     p_mosaic_search.add_argument(
         "--layout", choices=["portrait", "landscape"], default="landscape",
         help="Grid orientation (default: landscape)",
@@ -5274,7 +5472,7 @@ def build_parser():
     )
     p_mosaic_search.add_argument("--output", default=None, metavar="PATH", help="Override output file path")
     p_mosaic_search.add_argument("--no-open", action="store_true", dest="no_open", help="Do not open result")
-    p_mosaic_search.add_argument("--notify", action="store_true", help="Send a Discord notification when done")
+    _add_notify_args(p_mosaic_search, batch=False)
 
     # generate mosaic export
     p_mosaic_export = mosaic_sub.add_parser(
@@ -5287,13 +5485,13 @@ def build_parser():
     p_mosaic_export.add_argument("--field", default=None, help="Restrict search to one annotation field")
     p_mosaic_export.add_argument("--limit", type=int, default=None, help="Max results to export")
     p_mosaic_export.add_argument("--all", action="store_true", help="Search all movies (overrides positional scopes)")
-    p_mosaic_export.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    _add_media_arg(p_mosaic_export)
     p_mosaic_export.add_argument(
         "--frame_pct", type=float, default=0.5, metavar="PCT",
         help="Frame position within each shot: 0.0=start  0.5=middle (default)  1.0=end",
     )
     p_mosaic_export.add_argument("--no-open", action="store_true", dest="no_open", help="Do not open result folder")
-    p_mosaic_export.add_argument("--notify", action="store_true", help="Send a Discord notification when done")
+    _add_notify_args(p_mosaic_export, batch=False)
 
     # generate mosaic video
     p_mosaic_video = mosaic_sub.add_parser(
@@ -5337,10 +5535,7 @@ def build_parser():
             "omit to aggregate all text fields"
         ),
     )
-    p_cloud.add_argument(
-        "--media", choices=["movies", "gameplay"], default="movies",
-        help="Media type (default: movies)",
-    )
+    _add_media_arg(p_cloud)
     p_cloud.add_argument(
         "--max-words", type=int, default=150, dest="max_words", metavar="N",
         help="Maximum number of words to include (default: 150)",
@@ -5357,10 +5552,7 @@ def build_parser():
         "--no-open", action="store_true", dest="no_open",
         help="Do not open the PDF after saving",
     )
-    p_cloud.add_argument(
-        "--notify", action="store_true",
-        help="Send a Discord notification when done",
-    )
+    _add_notify_args(p_cloud, batch=False)
     p_cloud.add_argument(
         "--style", default=None, metavar="STYLE",
         help=(
@@ -5391,22 +5583,13 @@ def build_parser():
         "--all", action="store_true", dest="all",
         help="Generate flipbooks for all movies",
     )
-    p_flipbook.add_argument(
-        "--tmdb", default=None, metavar="ID",
-        help="TMDB ID to identify the movie",
-    )
-    p_flipbook.add_argument(
-        "--media", choices=["movies", "gameplay"], default="movies",
-        help="Media type (default: movies)",
-    )
+    _add_tmdb_arg(p_flipbook, help="TMDB ID to identify the movie")
+    _add_media_arg(p_flipbook)
     p_flipbook.add_argument(
         "--force", action="store_true",
         help="Overwrite existing flipbook PDF",
     )
-    p_flipbook.add_argument(
-        "--verbose", action="store_true",
-        help="Print per-page progress",
-    )
+    _add_verbose_arg(p_flipbook, help="Print per-page progress")
     p_flipbook.add_argument(
         "--no-open", action="store_true", dest="no_open",
         help="Do not open the PDF after saving",
@@ -5415,6 +5598,33 @@ def build_parser():
         "--visualizer", action="store_true",
         help="Open the interactive flipbook visualizer instead of saving",
     )
+    _add_notify_args(p_flipbook)
+
+    # generate film-title
+    p_film_title = generate_sub.add_parser(
+        "film-title",
+        help="Generate a semantic condensation title for a film (from its motif progression)",
+    )
+    p_film_title.set_defaults(func=cmd_film_title)
+    p_film_title.add_argument(
+        "--movie", default=None, metavar="TITLE",
+        help="Movie title to generate a film title for",
+    )
+    p_film_title.add_argument(
+        "--all", action="store_true", dest="all",
+        help="Generate film titles for all movies",
+    )
+    _add_media_arg(p_film_title)
+    p_film_title.add_argument(
+        "--model", default="Qwen3-VL-8B-Instruct", metavar="MODEL",
+        help="Model name or path (default: Qwen3-VL-8B-Instruct)",
+    )
+    p_film_title.add_argument(
+        "--force", action="store_true",
+        help="Regenerate even if a cached title already exists",
+    )
+    _add_verbose_arg(p_film_title, help="Print per-movie progress")
+    _add_notify_args(p_film_title)
 
     # index command group
     p_index = sub.add_parser(
@@ -5437,14 +5647,8 @@ def build_parser():
         nargs="*",
         help="Title keywords to identify the film (e.g. 7th Cavalry)",
     )
-    p_index_serialize.add_argument(
-        "--tmdb", type=int, default=None,
-        help="TMDb ID of the film (unambiguous alternative to title keywords)",
-    )
-    p_index_serialize.add_argument(
-        "--media", choices=["movies", "gameplay"], default="movies",
-        help="Media type (default: movies)",
-    )
+    _add_tmdb_arg(p_index_serialize, help="TMDb ID of the film (unambiguous alternative to title keywords)")
+    _add_media_arg(p_index_serialize)
     p_index_serialize.add_argument(
         "--shot", type=int, default=None, metavar="INDEX",
         help=(
@@ -5468,10 +5672,7 @@ def build_parser():
         "--force", action="store_true",
         help="Overwrite an existing .txt file (only relevant with --save)",
     )
-    p_index_serialize.add_argument(
-        "--verbose", action="store_true",
-        help="Print each serialized line as it is produced (during --save runs)",
-    )
+    _add_verbose_arg(p_index_serialize, help="Print each serialized line as it is produced (during --save runs)")
 
     p_index_embed = index_sub.add_parser(
         "embed",
@@ -5485,14 +5686,8 @@ def build_parser():
         nargs="*",
         help="Title keywords to identify the film (e.g. 7th Cavalry)",
     )
-    p_index_embed.add_argument(
-        "--tmdb", type=int, default=None,
-        help="TMDb ID of the film (unambiguous alternative to title keywords)",
-    )
-    p_index_embed.add_argument(
-        "--media", choices=["movies", "gameplay"], default="movies",
-        help="Media type (default: movies)",
-    )
+    _add_tmdb_arg(p_index_embed, help="TMDb ID of the film (unambiguous alternative to title keywords)")
+    _add_media_arg(p_index_embed)
     p_index_embed.add_argument(
         "--model", default=None, metavar="NAME",
         help=(
@@ -5505,10 +5700,7 @@ def build_parser():
         "--force", action="store_true",
         help="Overwrite an existing .npy embeddings file",
     )
-    p_index_embed.add_argument(
-        "--verbose", action="store_true",
-        help="Print model, input path, output shape, and save confirmation",
-    )
+    _add_verbose_arg(p_index_embed, help="Print model, input path, output shape, and save confirmation")
 
     p_index_update = index_sub.add_parser(
         "update",
@@ -5523,14 +5715,8 @@ def build_parser():
         nargs="*",
         help="Title keywords to identify the film (e.g. 7th Cavalry)",
     )
-    p_index_update.add_argument(
-        "--tmdb", type=int, default=None,
-        help="TMDb ID of the film (unambiguous alternative to title keywords)",
-    )
-    p_index_update.add_argument(
-        "--media", choices=["movies", "gameplay"], default="movies",
-        help="Media type (default: movies)",
-    )
+    _add_tmdb_arg(p_index_update, help="TMDb ID of the film (unambiguous alternative to title keywords)")
+    _add_media_arg(p_index_update)
     p_index_update.add_argument(
         "--model", default=None, metavar="NAME",
         help=(
@@ -5546,20 +5732,14 @@ def build_parser():
         "--force", action="store_true",
         help="Force a full rebuild even if files appear current",
     )
-    p_index_update.add_argument(
-        "--verbose", action="store_true",
-        help="Print per-file actions (txt written, npy written, unchanged)",
-    )
+    _add_verbose_arg(p_index_update, help="Print per-file actions (txt written, npy written, unchanged)")
 
     p_index_vocabulary = index_sub.add_parser(
         "vocabulary",
         help="Build a vocabulary index (per-field token counts) from annotation JSON",
     )
     p_index_vocabulary.set_defaults(func=cmd_index)
-    p_index_vocabulary.add_argument(
-        "--media", choices=["movies", "gameplay"], default="movies",
-        help="Media type to index (default: movies)",
-    )
+    _add_media_arg(p_index_vocabulary)
     p_index_vocabulary.add_argument(
         "--all", action="store_true",
         help="Build index for both movies and gameplay",
@@ -5579,14 +5759,8 @@ def build_parser():
         nargs="*",
         help="Title keywords to identify the film (e.g. 7th Cavalry)",
     )
-    p_index_audit.add_argument(
-        "--tmdb", type=int, default=None,
-        help="TMDb ID of the film (unambiguous alternative to title keywords)",
-    )
-    p_index_audit.add_argument(
-        "--media", choices=["movies", "gameplay"], default="movies",
-        help="Media type (default: movies)",
-    )
+    _add_tmdb_arg(p_index_audit, help="TMDb ID of the film (unambiguous alternative to title keywords)")
+    _add_media_arg(p_index_audit)
     p_index_audit.add_argument(
         "--model", default=None, metavar="NAME",
         help=(
@@ -5598,10 +5772,7 @@ def build_parser():
         "--all", action="store_true",
         help="Audit all films that have an annotation JSON",
     )
-    p_index_audit.add_argument(
-        "--verbose", action="store_true",
-        help="Show per-field detail (json, mapping, txt, npy, manifest) for each film",
-    )
+    _add_verbose_arg(p_index_audit, help="Show per-field detail (json, mapping, txt, npy, manifest) for each film")
 
     p_index_silhouette = index_sub.add_parser(
         "silhouette",
@@ -5631,10 +5802,7 @@ def build_parser():
         "--movie", default=None, metavar="TITLE",
         help="Restrict search to this movie (title substring or media_id)",
     )
-    p_index_silhouette.add_argument(
-        "--tmdb", type=int, default=None, metavar="ID",
-        help="Restrict search to the movie with this TMDb ID",
-    )
+    _add_tmdb_arg(p_index_silhouette, help="Restrict search to the movie with this TMDb ID")
     p_index_silhouette.add_argument(
         "--shot", default=None, metavar="SHOT_ID",
         help=(
@@ -5646,10 +5814,7 @@ def build_parser():
         "--all", action="store_true",
         help="Search across all movies in the corpus",
     )
-    p_index_silhouette.add_argument(
-        "--media", choices=["movies", "gameplay"], default="movies",
-        help="Media type (default: movies)",
-    )
+    _add_media_arg(p_index_silhouette)
     p_index_silhouette.add_argument(
         "--model", default=None, metavar="NAME",
         help=(
@@ -5668,14 +5833,9 @@ def build_parser():
         "--force", action="store_true",
         help="Overwrite existing cached silhouette",
     )
-    p_index_silhouette.add_argument(
-        "--dry-run", action="store_true", dest="dry_run",
-        help="List candidate shots without running segmentation or writing any files",
-    )
-    p_index_silhouette.add_argument(
-        "--verbose", action="store_true",
-        help="Print progress detail (model loading, frame selection, mask counts)",
-    )
+    _add_dry_run_arg(p_index_silhouette, help="List candidate shots without running segmentation or writing any files")
+    _add_verbose_arg(p_index_silhouette, help="Print progress detail (model loading, frame selection, mask counts)")
+    _add_notify_args(p_index_silhouette, batch=False)
 
     # index palette
     p_index_palette = index_sub.add_parser(
@@ -5711,22 +5871,14 @@ def build_parser():
         "--movie", default=None, metavar="TITLE",
         help="Title substring to identify a single movie",
     )
-    p_index_palette_create.add_argument(
-        "--tmdb", type=int, default=None, metavar="ID",
-        help="TMDb ID of the movie (unambiguous alternative to --movie)",
-    )
-    p_index_palette_create.add_argument(
-        "--media", choices=["movies", "gameplay"], default="movies",
-        help="Media type (default: movies)",
-    )
+    _add_tmdb_arg(p_index_palette_create, help="TMDb ID of the movie (unambiguous alternative to --movie)")
+    _add_media_arg(p_index_palette_create)
     p_index_palette_create.add_argument(
         "--force", action="store_true",
         help="Overwrite an existing palette cache instead of skipping",
     )
-    p_index_palette_create.add_argument(
-        "--verbose", action="store_true",
-        help="Print per-shot colour results and progress",
-    )
+    _add_verbose_arg(p_index_palette_create, help="Print per-shot colour results and progress")
+    _add_notify_args(p_index_palette_create)
 
     p_index_palette_get = palette_sub.add_parser(
         "get",
@@ -5741,14 +5893,8 @@ def build_parser():
         "--movie", default=None, metavar="TITLE",
         help="Title substring to identify a single movie",
     )
-    p_index_palette_get.add_argument(
-        "--tmdb", type=int, default=None, metavar="ID",
-        help="TMDb ID of the movie (unambiguous alternative to --movie)",
-    )
-    p_index_palette_get.add_argument(
-        "--media", choices=["movies", "gameplay"], default="movies",
-        help="Media type (default: movies)",
-    )
+    _add_tmdb_arg(p_index_palette_get, help="TMDb ID of the movie (unambiguous alternative to --movie)")
+    _add_media_arg(p_index_palette_get)
     p_index_palette_get.add_argument(
         "--shot", type=int, default=None, metavar="INDEX",
         help="Return palette for only this shot (0-based index)",
@@ -5785,14 +5931,8 @@ def build_parser():
         "--movie", default=None, metavar="TITLE",
         help="Title substring to identify a single movie",
     )
-    p_index_motif_generate.add_argument(
-        "--tmdb", type=int, default=None, metavar="ID",
-        help="TMDb ID of the movie (unambiguous alternative to --movie)",
-    )
-    p_index_motif_generate.add_argument(
-        "--media", choices=["movies", "gameplay"], default="movies",
-        help="Media type (default: movies)",
-    )
+    _add_tmdb_arg(p_index_motif_generate, help="TMDb ID of the movie (unambiguous alternative to --movie)")
+    _add_media_arg(p_index_motif_generate)
     p_index_motif_generate.add_argument(
         "--model", default=None, metavar="NAME",
         help=(
@@ -5805,10 +5945,8 @@ def build_parser():
         "--force", action="store_true",
         help="Regenerate motifs even if they already exist",
     )
-    p_index_motif_generate.add_argument(
-        "--verbose", action="store_true",
-        help="Print [001] motif lines while generating",
-    )
+    _add_verbose_arg(p_index_motif_generate, help="Print [001] motif lines while generating")
+    _add_notify_args(p_index_motif_generate)
 
     # media command group
     p_media = sub.add_parser(
@@ -5837,7 +5975,7 @@ def build_parser():
     p_import.add_argument("--skip-metadata", action="store_true", help="Skip automatic metadata fetch (movie only)")
     p_import.add_argument("--title", default=None, help="Display title (gameplay only; default: derived from filename)")
     p_import.add_argument("--game", default=None, help="Game slug for media_id prefix (gameplay only, required; e.g. rdr2)")
-    p_import.add_argument("--verbose", action="store_true", help="Print a message as each file import begins")
+    _add_verbose_arg(p_import, help="Print a message as each file import begins")
     p_import.set_defaults(func=cmd_import, _parser=p_import)
 
     # metadata command group
@@ -5848,8 +5986,8 @@ def build_parser():
     p_meta_get = meta_sub.add_parser("get", help="Get metadata (all, by index, or by filename)")
     p_meta_get.add_argument("query", nargs="?", default=None,
                             help="index (int) or title/filename substring")
-    p_meta_get.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_meta_get.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    _add_tmdb_arg(p_meta_get)
+    _add_media_arg(p_meta_get)
     p_meta_get.add_argument("--markdown", action="store_true", help="Save output as Markdown to <project>/data/markdown/")
     p_meta_get.add_argument("--open", action="store_true", help="Open the saved Markdown file after writing (implies --markdown)")
 
@@ -5858,11 +5996,11 @@ def build_parser():
 
     p_meta_update = meta_sub.add_parser("update", help="Fetch and save metadata for entries missing key fields")
     p_meta_update.add_argument("--file", default=None, help="Update a single file by filename")
-    p_meta_update.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    _add_media_arg(p_meta_update)
     p_meta_update.add_argument("--force", action="store_true", help="Force re-fetch metadata for all entries (including duration)")
 
     p_meta_count = meta_sub.add_parser("count", help="Print the number of metadata entries")
-    p_meta_count.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    _add_media_arg(p_meta_count)
 
     p_meta_list = meta_sub.add_parser("list", help="List entries, optionally filtered by year or director")
     p_meta_list.add_argument("--year", default=None, help="Filter by exact year (e.g. 1956)")
@@ -5870,27 +6008,27 @@ def build_parser():
     p_meta_list.add_argument("--fields", default=None, help="Comma-separated fields to include (e.g. title,year,director)")
     p_meta_list.add_argument("--sort", default=None, help="Field to sort by (e.g. year, director, title)")
     p_meta_list.add_argument("--reverse", action="store_true", help="Reverse the sort order (descending)")
-    p_meta_list.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    _add_media_arg(p_meta_list)
 
     p_meta_prune = meta_sub.add_parser("prune", help="Remove metadata entries with no matching file on disk")
-    p_meta_prune.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    _add_media_arg(p_meta_prune)
     p_meta_prune.add_argument("--confirm", action="store_true",
                               help="Actually remove the entries (default is a dry run)")
 
     p_meta_audit = meta_sub.add_parser("audit", help="Report missing metadata, shotlists, and subtitles")
-    p_meta_audit.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    _add_media_arg(p_meta_audit)
 
 
 
     # media audit (alias for metadata audit)
     p_media_audit = media_sub.add_parser("audit", help="Report missing metadata, thumbnails, shotlists, and subtitles")
-    p_media_audit.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    _add_media_arg(p_media_audit)
     p_media_audit.set_defaults(func=cmd_media)
 
     # media update (alias for metadata update)
     p_media_update = media_sub.add_parser("update", help="Fetch and save metadata/thumbnails for entries missing key fields")
     p_media_update.add_argument("--file", default=None, help="Update a single file by filename")
-    p_media_update.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    _add_media_arg(p_media_update)
     p_media_update.add_argument("--force", action="store_true", help="Force re-fetch metadata for all entries")
     p_media_update.set_defaults(func=cmd_media)
 
@@ -5920,22 +6058,8 @@ def build_parser():
         action="store_true",
         help="Overwrite existing audio_gain_db values instead of skipping already-normalized assets",
     )
-    p_media_normalize.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Print per-asset loudness and gain details during normalization",
-    )
-    p_media_normalize.add_argument(
-        "--notify",
-        action="store_true",
-        help="Send a Discord notification when normalization finishes",
-    )
-    p_media_normalize.add_argument(
-        "--notify-each",
-        action="store_true",
-        dest="notify_items",
-        help="Send a Discord notification after each processed asset",
-    )
+    _add_verbose_arg(p_media_normalize, help="Print per-asset loudness and gain details during normalization")
+    _add_notify_args(p_media_normalize)
     p_media_normalize.set_defaults(func=cmd_media)
 
     # media channels
@@ -5975,31 +6099,16 @@ def build_parser():
         action="store_true",
         help="Overwrite existing audio_channels values instead of skipping already-scanned assets",
     )
-    p_media_channels.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Print per-asset channel details during scanning",
-    )
-    p_media_channels.add_argument(
-        "--notify",
-        action="store_true",
-        help="Send a Discord notification when channel scanning finishes",
-    )
-    p_media_channels.add_argument(
-        "--notify-each",
-        action="store_true",
-        dest="notify_items",
-        help="Send a Discord notification after each processed asset",
-    )
+    _add_verbose_arg(p_media_channels, help="Print per-asset channel details during scanning")
+    _add_notify_args(p_media_channels)
     p_media_channels.set_defaults(func=cmd_media)
 
     # media remove
     p_remove = media_sub.add_parser("remove", help="Remove a film and all its associated files")
     p_remove.set_defaults(func=cmd_remove)
     p_remove.add_argument("query", nargs="*", help="Filename or title words to match")
-    p_remove.add_argument("--tmdb", type=int, default=None, help="TMDb ID (unambiguous)")
-    p_remove.add_argument("--media", choices=["movies", "gameplay"], default=None, required=True,
-                          help="Media type to remove from")
+    _add_tmdb_arg(p_remove, help="TMDb ID (unambiguous)")
+    _add_media_arg(p_remove, required=True)
     p_remove.add_argument("--confirm", action="store_true", help="Actually delete (default is a dry run)")
 
     # search command
@@ -6038,24 +6147,24 @@ def build_parser():
     p_search.add_argument("--top", type=int, default=None, metavar="N", help="(vocabulary mode) show only the top N results")
     p_search.add_argument("--markdown", action="store_true", help="Save output as Markdown to <project>/data/markdown/")
     p_search.add_argument("--open", action="store_true", help="Open the saved Markdown file after writing (implies --markdown)")
-    p_search.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    _add_media_arg(p_search)
     p_search.set_defaults(func=cmd_search)
 
     # shotlist command group
     p_shotlist = sub.add_parser("shotlist", help="Manage shot and scene cuts and annotations")
     p_shotlist.set_defaults(func=cmd_shotlist)
     p_shotlist.add_argument("--visualizer", action="store_true", help="Open the shot visualizer GUI (all films)")
-    p_shotlist.add_argument("--media", choices=["movies", "gameplay"], default="movies", help="Media type for --visualizer (default: movies)")
+    _add_media_arg(p_shotlist)
     shotlist_sub = p_shotlist.add_subparsers(dest="shotlist_subcommand", required=False)
 
     p_shotlist_list = shotlist_sub.add_parser("list", help="List all available shotlists")
-    p_shotlist_list.add_argument("--media", choices=["movies", "gameplay"], default=None, help="Filter by media type")
+    _add_media_arg(p_shotlist_list, default=None)
     p_shotlist_list.add_argument("--json", action="store_true", help="Output as JSON")
 
     p_shotlist_get = shotlist_sub.add_parser("get", help="Get shotlist data for a file")
     p_shotlist_get.add_argument("filename", nargs="?", default=None, help="Video filename (or use --tmdb)")
-    p_shotlist_get.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_shotlist_get.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    _add_tmdb_arg(p_shotlist_get)
+    _add_media_arg(p_shotlist_get)
     p_shotlist_get.add_argument("--scene", type=int, default=None, help="Filter by scene number")
     
     p_shotlist_show = shotlist_sub.add_parser("show", help="Show shot or scene data")
@@ -6064,16 +6173,16 @@ def build_parser():
     p_show_shot = show_sub.add_parser("shot", help="Show a specific shot")
     p_show_shot.add_argument("filename", nargs="?", default=None, help="Video filename (or use --tmdb)")
     p_show_shot.add_argument("index", type=int, help="Shot index (0-based)")
-    p_show_shot.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_show_shot.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    _add_tmdb_arg(p_show_shot)
+    _add_media_arg(p_show_shot)
     p_show_shot.add_argument("--field", nargs="+", default=None, help="Extract specific fields from caption JSON (e.g. protagonists place actions)")
     p_show_shot.add_argument("--json", action="store_true", help="Output as JSON (raw or filtered by --field)")
     
     p_show_scene = show_sub.add_parser("scene", help="Show all shots in a scene")
     p_show_scene.add_argument("filename", nargs="?", default=None, help="Video filename (or use --tmdb)")
     p_show_scene.add_argument("scene_number", type=int, help="Scene number")
-    p_show_scene.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_show_scene.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    _add_tmdb_arg(p_show_scene)
+    _add_media_arg(p_show_scene)
     p_show_scene.add_argument("--field", nargs="+", default=None, help="Extract specific fields from caption JSON (e.g. protagonists place actions)")
     p_show_scene.add_argument("--json", action="store_true", help="Output as JSON (raw or filtered by --field)")
 
@@ -6082,25 +6191,18 @@ def build_parser():
 
     p_sl_shot_detect = sl_shot_sub.add_parser("detect", help="Detect shot boundaries using TransNetV2")
     p_sl_shot_detect.add_argument("query", nargs="?", default=None, help="Filename substring to match")
-    p_sl_shot_detect.add_argument("--tmdb", type=int, default=None, help="TMDb ID")
-    p_sl_shot_detect.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    _add_tmdb_arg(p_sl_shot_detect)
+    _add_media_arg(p_sl_shot_detect)
     p_sl_shot_detect.add_argument("--force", action="store_true", help="Overwrite existing shotlist if it exists")
     p_sl_shot_detect.add_argument("--all", action="store_true", help="Process all metadata entries without a shotlist")
-    p_sl_shot_detect.add_argument("--notify", action="store_true", help="Send a Discord notification when the process finishes")
-    p_sl_shot_detect.add_argument("--notify-each", action="store_true", dest="notify_items", help="Send a Discord notification after each item in a batch")
+    _add_notify_args(p_sl_shot_detect)
 
     p_sl_migrate = shotlist_sub.add_parser(
         "migrate",
         help="Rewrite shotlist CSVs with legacy column names to the canonical naming scheme",
     )
-    p_sl_migrate.add_argument(
-        "--media", choices=["movies", "gameplay"], default=None,
-        help="Limit to one media type (default: both movies and gameplay)",
-    )
-    p_sl_migrate.add_argument(
-        "--dry-run", dest="dry_run", action="store_true",
-        help="Report what would change without writing any files",
-    )
+    _add_media_arg(p_sl_migrate, default=None)
+    _add_dry_run_arg(p_sl_migrate, help="Report what would change without writing any files")
     # media subtitle
     p_subtitle = media_sub.add_parser("subtitle", help="Download and list subtitles")
     p_subtitle.set_defaults(func=cmd_subtitle)
@@ -6108,13 +6210,13 @@ def build_parser():
 
     p_sub_fetch = subtitle_sub.add_parser("fetch", help="Download missing subtitles from OpenSubtitles")
     p_sub_fetch.add_argument("query", nargs="*", default=None, help="Filename or title words (e.g. pals saddle)")
-    p_sub_fetch.add_argument("--tmdb", type=int, default=None, help="TMDb ID (unambiguous)")
+    _add_tmdb_arg(p_sub_fetch, help="TMDb ID (unambiguous)")
     p_sub_fetch.add_argument("--all", action="store_true", help="Fetch for all entries without a subtitle")
     p_sub_fetch.add_argument("--force", action="store_true", help="Re-download even if a subtitle already exists")
-    p_sub_fetch.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    _add_media_arg(p_sub_fetch)
 
     p_sub_list = subtitle_sub.add_parser("list", help="Show subtitle status for all entries")
-    p_sub_list.add_argument("--media", choices=["movies", "gameplay"], default="movies")
+    _add_media_arg(p_sub_list)
 
     # tool command group (version, path, name, api_key)
     p_tool = sub.add_parser("tool", help="Tool settings: version, path, name, models, API keys")
@@ -6236,10 +6338,7 @@ def build_parser():
         help="Sync project folder contents into backup folder (uses rsync when available)",
     )
     p_backup_update.set_defaults(func=cmd_backup)
-    p_backup_update.add_argument(
-        "--dry-run", dest="dry_run", action="store_true",
-        help="Show what would be transferred without copying any files",
-    )
+    _add_dry_run_arg(p_backup_update, help="Show what would be transferred without copying any files")
     p_backup_update.add_argument(
         "--mirror", dest="mirror", action="store_true",
         help="(reserved — not yet implemented)",
@@ -6278,10 +6377,7 @@ def build_parser():
         "shotlist",
         help="Open the shotlist visualizer GUI (all films)",
     )
-    p_vis_shot.add_argument(
-        "--media", choices=["movies", "gameplay"], default="movies",
-        help="Media type (default: movies)",
-    )
+    _add_media_arg(p_vis_shot)
     p_vis_shot.add_argument(
         "--filename",
         help="Open (or jump to) a specific film by filename",
@@ -6292,11 +6388,7 @@ def build_parser():
         default="",
         help="Jump to a specific shot_id on open",
     )
-    p_vis_shot.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Enable verbose logging in the shotlist visualizer",
-    )
+    _add_verbose_arg(p_vis_shot, help="Enable verbose logging in the shotlist visualizer")
 
     p_vis_composition = visualizer_sub.add_parser(
         "composition",
@@ -6306,20 +6398,14 @@ def build_parser():
         "query", nargs="?", default="",
         help="Optional initial search query",
     )
-    p_vis_composition.add_argument(
-        "--media", choices=["movies", "gameplay"], default="movies",
-        help="Media type (default: movies)",
-    )
+    _add_media_arg(p_vis_composition)
     p_vis_composition.set_defaults(visualizer=True, no_open=False, orientation="portrait", output=None, notify=False)
 
     p_vis_mosaic = visualizer_sub.add_parser(
         "mosaic",
         help="Open the interactive mosaic explorer GUI",
     )
-    p_vis_mosaic.add_argument(
-        "--media", choices=["movies", "gameplay"], default="movies",
-        help="Media type (default: movies)",
-    )
+    _add_media_arg(p_vis_mosaic)
 
     visualizer_sub.add_parser(
         "cloud",
@@ -6335,10 +6421,7 @@ def build_parser():
         "silhouette",
         help="Browse cached silhouette polygons (from crossing index silhouette)",
     )
-    p_vis_silhouette.add_argument(
-        "--media", choices=["movies", "gameplay"], default="movies",
-        help="Media type (default: movies)",
-    )
+    _add_media_arg(p_vis_silhouette)
     p_vis_silhouette.add_argument(
         "--field",
         metavar="NAME",
@@ -6350,19 +6433,13 @@ def build_parser():
         "palette",
         help="Browse per-shot foreground/background colour palettes",
     )
-    p_vis_palette.add_argument(
-        "--media", choices=["movies", "gameplay"], default="movies",
-        help="Media type (default: movies)",
-    )
+    _add_media_arg(p_vis_palette)
 
     p_vis_flipbook = visualizer_sub.add_parser(
         "flipbook",
         help="Browse cinematic motif flipbook pages (bg color + motif word per shot)",
     )
-    p_vis_flipbook.add_argument(
-        "--media", choices=["movies", "gameplay"], default="movies",
-        help="Media type (default: movies)",
-    )
+    _add_media_arg(p_vis_flipbook)
 
     return parser
 

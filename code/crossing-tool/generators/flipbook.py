@@ -30,13 +30,20 @@ PDF: ``<project>/output/flipbooks/<stem>-flipbook.pdf``
 Page schema (internal, used by visualizer and renderer):
   {
     "kind":        "shot" | "cover_front" | "cover_back",
-    "text":        str,          # motif word, title, or year
+    "text":        str,          # motif word / semantic title / "Title, YYYY"
     "bg_rgb":      [R, G, B],
-    "fg_rgb":      [R, G, B],
+    "fg_rgb":      [R, G, B],    # always black for covers
     "shot_id":     str | None,
     "shot_index":  int | None,
     "start_time":  str,
     "motif":       str,          # copy of text for shot pages
+
+    # cover_front only:
+    "film_motif":  dict | {},    # full film_motif metadata
+
+    # cover_back only:
+    "back_title":  str,          # original movie title (Bold)
+    "back_year":   str,          # year string (Light suffix)
   }
 """
 
@@ -69,8 +76,14 @@ _COVER_FG_DIM = (140, 130, 120)   # muted — cover title is secondary to the fi
 _FONTS_DIR = Path(__file__).parent.parent / "styles" / "fonts"
 _LC_DIR    = _FONTS_DIR / "libre_clarendon" / "fonts"
 
-_FONT_FLIPBOOK = str(_LC_DIR / "LibreClarendonNormal-110Medium.otf")
-_FONT_COVER    = str(_LC_DIR / "LibreClarendonNormal-68Regular.otf")
+# Primary typography hierarchy
+_FONT_BOLD    = str(_LC_DIR / "LibreClarendonNormal-162Bold.otf")   # front/back cover titles
+_FONT_LIGHT   = str(_LC_DIR / "LibreClarendonNormal-42Light.otf")   # back cover year suffix
+_FONT_REGULAR = str(_LC_DIR / "LibreClarendonNormal-68Regular.otf") # interior shot pages
+
+# Legacy aliases (kept for any external callers)
+_FONT_FLIPBOOK = _FONT_REGULAR
+_FONT_COVER    = _FONT_BOLD
 
 _FONT_FALLBACKS = [
     str(_FONTS_DIR / "Hanken_Grotesk" / "HankenGrotesk-VariableFont_wght.ttf"),
@@ -218,6 +231,152 @@ def _make_cover_page(kind: str, text: str, bg_rgb: list, fg_rgb: list) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Per-kind rendering helpers
+# ---------------------------------------------------------------------------
+
+def _getbbox_safe(font: Any, text: str, draw: ImageDraw.ImageDraw) -> tuple:
+    """Return (bx, by, tw, th) tight ink bounds for *text* at *font*.
+
+    Falls back gracefully across Pillow versions.
+    """
+    try:
+        bb = font.getbbox(text)  # Pillow ≥ 8
+        return bb[0], bb[1], bb[2] - bb[0], bb[3] - bb[1]
+    except AttributeError:
+        pass
+    try:
+        bb = draw.textbbox((0, 0), text, font=font)
+        return bb[0], bb[1], bb[2] - bb[0], bb[3] - bb[1]
+    except AttributeError:
+        w, h = draw.textsize(text, font=font)  # type: ignore[attr-defined]
+        return 0, 0, w, h
+
+
+def _render_shot_text(
+    img: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    page: dict,
+) -> None:
+    """Render the motif word centered on a shot page (68 Regular, fg color)."""
+    text   = str(page.get("text") or "")
+    fg_raw = page.get("fg_rgb") or list(_FALLBACK_FG)
+    fg     = tuple(int(v) for v in fg_raw)
+
+    if not text:
+        return
+
+    margin_x = int(PAGE_W * _MARGIN_FRAC)
+    margin_y = int(PAGE_H * 0.15)
+    avail_w  = PAGE_W - 2 * margin_x
+    avail_h  = PAGE_H - 2 * margin_y
+
+    probe = Image.new("RGB", (1, 1))
+    font, _, _ = _fit_font(text, avail_w, avail_h, _FONT_REGULAR, probe)
+    if font is None:
+        return
+
+    bx, by, tw, th = _getbbox_safe(font, text, draw)
+    x = (PAGE_W - tw) // 2 - bx
+    y = (PAGE_H - th) // 2 - by
+    draw.text((x, y), text, font=font, fill=fg)
+
+
+def _render_cover_front(
+    img: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    page: dict,
+) -> None:
+    """Render the front cover: semantic title in 162 Bold, black, slightly low.
+
+    Text ink center is placed at 58 % of page height (not geometric center).
+    This gives the title visual weight without feeling bottom-heavy.
+    """
+    text = str(page.get("text") or "")
+    if not text:
+        return
+
+    fg = (0, 0, 0)  # always black
+
+    margin_x = int(PAGE_W * _MARGIN_FRAC)
+    margin_y = int(PAGE_H * 0.15)
+    avail_w  = PAGE_W - 2 * margin_x
+    avail_h  = PAGE_H - 2 * margin_y
+
+    probe = Image.new("RGB", (1, 1))
+    font, _, _ = _fit_font(text, avail_w, avail_h, _FONT_BOLD, probe)
+    if font is None:
+        return
+
+    bx, by, tw, th = _getbbox_safe(font, text, draw)
+
+    # Ink center at 58 % of page height
+    ink_center_y = int(PAGE_H * 0.58)
+    x = (PAGE_W - tw) // 2 - bx
+    y = ink_center_y - th // 2 - by
+    draw.text((x, y), text, font=font, fill=fg)
+
+
+def _render_cover_back(
+    img: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    page: dict,
+) -> None:
+    """Render the back cover: title in 162 Bold + ", YYYY" in 42 Light.
+
+    Both parts share the same draw y (baseline-aligned in Pillow's coordinate
+    system).  The combined ink block is centered horizontally and vertically.
+    Text color is very dark grey (20, 20, 20).
+    """
+    back_title = str(page.get("back_title") or page.get("text") or "")
+    back_year  = str(page.get("back_year")  or "")
+    suffix     = f", {back_year}" if back_year else ""
+
+    if not back_title:
+        return
+
+    fg = (20, 20, 20)  # very dark grey for back cover
+
+    margin_x = int(PAGE_W * _MARGIN_FRAC)
+    avail_w  = PAGE_W - 2 * margin_x
+    avail_h  = int(PAGE_H * 0.70)
+
+    probe = Image.new("RGB", (1, 1))
+
+    # Fit the combined text using Bold as proxy (Bold is wider → conservative
+    # size; the Light suffix will definitely fit at the resulting pt size).
+    combined_proxy = back_title + suffix
+    font_bold, _, _ = _fit_font(combined_proxy, avail_w, avail_h, _FONT_BOLD, probe)
+    if font_bold is None:
+        return
+
+    pt_size   = font_bold.size
+    font_light = _load_font(pt_size, _FONT_LIGHT)
+
+    # Measure each part
+    bx1, by1, tw1, th1 = _getbbox_safe(font_bold,  back_title, draw)
+    if suffix:
+        bx2, by2, tw2, th2 = _getbbox_safe(font_light, suffix, draw)
+    else:
+        bx2, by2, tw2, th2 = 0, 0, 0, 0
+
+    # Combined ink extents (both parts at the same draw y)
+    total_ink_w = tw1 + tw2
+    top_rel     = min(by1, by2) if suffix else by1
+    bottom_rel  = max(by1 + th1, by2 + th2) if suffix else (by1 + th1)
+
+    # draw_y such that the union ink block is vertically centered
+    draw_y = (PAGE_H - top_rel - bottom_rel) // 2
+
+    # draw_x such that combined ink is horizontally centered
+    draw_x = (PAGE_W - total_ink_w) // 2 - bx1
+
+    draw.text((draw_x, draw_y), back_title, font=font_bold,  fill=fg)
+    if suffix:
+        draw_x2 = draw_x + bx1 + tw1 - bx2
+        draw.text((draw_x2, draw_y), suffix, font=font_light, fill=fg)
+
+
+# ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
 
@@ -304,26 +463,71 @@ def load_flipbook_data(
         page = _make_shot_page(entry, palette_shot, i)
         shot_pages.append(page)
 
-    # Cover colors: use the first shot's colors for the front cover,
-    # and the last shot's colors for the back cover.
-    first_shot = shot_pages[0] if shot_pages else None
-    last_shot  = shot_pages[-1] if shot_pages else None
+    # Cover colors: use the first title-card shot for the front cover
+    # (motif == "title" among the first TITLE_CARD_LOOKAHEAD non-ignored shots),
+    # and the "the end" shot for the back cover, falling back to first/last.
+    _TITLE_CARD_LOOKAHEAD = 10
 
-    front_bg = first_shot["bg_rgb"] if first_shot else list(_COVER_BG)
-    front_fg = first_shot["fg_rgb"] if first_shot else list(_COVER_FG_DIM)
-    back_bg  = last_shot["bg_rgb"]  if last_shot  else list(_COVER_BG)
-    back_fg  = last_shot["fg_rgb"]  if last_shot  else list(_COVER_FG_DIM)
+    front_shot: Optional[dict] = None
+    for p in shot_pages[:_TITLE_CARD_LOOKAHEAD]:
+        if p.get("motif", "").strip().lower() == "title":
+            front_shot = p
+            break
+    if front_shot is None:
+        front_shot = shot_pages[0] if shot_pages else None
 
-    front_cover = _make_cover_page("cover_front", title, front_bg, front_fg)
-    back_cover  = _make_cover_page("cover_back",  year,  back_bg,  back_fg)
+    back_shot: Optional[dict] = None
+    for p in shot_pages:
+        if p.get("motif", "").strip().lower() == "the end":
+            back_shot = p
+            break
+    if back_shot is None:
+        back_shot = shot_pages[-1] if shot_pages else None
+
+    front_bg = front_shot["bg_rgb"] if front_shot else list(_COVER_BG)
+    back_bg  = back_shot["bg_rgb"]  if back_shot  else list(_COVER_BG)
+
+    # Load film motif from cache (best-effort — may be absent until generated)
+    from data.film_motif import load_film_motif
+    film_motif = load_film_motif(project_path, filename, media_type) or {}
+
+    # Front cover: semantic condensation title (or original title as fallback)
+    front_text = film_motif.get("value", "").strip() or title
+    front_cover: dict = {
+        "kind":       "cover_front",
+        "text":       front_text,
+        "motif":      front_text,
+        "bg_rgb":     front_bg,
+        "fg_rgb":     [0, 0, 0],   # always black
+        "shot_id":    None,
+        "shot_index": None,
+        "start_time": "",
+        "film_motif": film_motif,
+    }
+
+    # Back cover: archival identity — original title + year, stratified
+    back_text = f"{title}, {year}" if year else title
+    back_cover: dict = {
+        "kind":       "cover_back",
+        "text":       back_text,
+        "motif":      back_text,
+        "back_title": title,
+        "back_year":  year,
+        "bg_rgb":     back_bg,
+        "fg_rgb":     [20, 20, 20],   # very dark grey
+        "shot_id":    None,
+        "shot_index": None,
+        "start_time": "",
+    }
 
     pages = [front_cover] + shot_pages + [back_cover]
 
     return {
-        "pages":    pages,
-        "title":    title,
-        "year":     year,
-        "filename": filename,
+        "pages":      pages,
+        "title":      title,
+        "year":       year,
+        "filename":   filename,
+        "film_motif": film_motif,
     }
 
 
@@ -334,56 +538,23 @@ def load_flipbook_data(
 def render_flipbook_page(page: dict) -> Image.Image:
     """Render one flipbook page as a PIL Image (RGB, PAGE_W × PAGE_H).
 
-    The background is filled with ``page["bg_rgb"]``.
-    The text (motif word, title, or year) is drawn large and centered
-    in ``page["fg_rgb"]`` using Libre Clarendon Normal Medium.
+    Dispatches to per-kind helpers:
+      ``cover_front`` — semantic title in 162 Bold, black, slightly low
+      ``cover_back``  — archival identity: title (162 Bold) + ", YYYY" (42 Light)
+      ``shot``        — motif word in 68 Regular, palette foreground color, centered
     """
-    bg = tuple(int(v) for v in page["bg_rgb"])
-    fg = tuple(int(v) for v in page["fg_rgb"])
-    text = str(page.get("text") or "")
-
-    img  = Image.new("RGB", (PAGE_W, PAGE_H), color=bg)
+    bg  = tuple(int(v) for v in page["bg_rgb"])
+    img = Image.new("RGB", (PAGE_W, PAGE_H), color=bg)
     draw = ImageDraw.Draw(img)
-
-    if not text:
-        return img
-
     kind = page.get("kind", "shot")
-    font_path = _FONT_COVER if kind in ("cover_front", "cover_back") else _FONT_FLIPBOOK
 
-    # Available area with horizontal margins
-    margin_x = int(PAGE_W * _MARGIN_FRAC)
-    margin_y = int(PAGE_H * 0.15)
-    avail_w  = PAGE_W - 2 * margin_x
-    avail_h  = PAGE_H - 2 * margin_y
+    if kind == "cover_front":
+        _render_cover_front(img, draw, page)
+    elif kind == "cover_back":
+        _render_cover_back(img, draw, page)
+    else:
+        _render_shot_text(img, draw, page)
 
-    # Probe image for font measurement
-    probe = Image.new("RGB", (1, 1))
-
-    font, tw, th = _fit_font(text, avail_w, avail_h, font_path, probe)
-    if font is None:
-        return img
-
-    # Re-measure using font.getbbox which returns the tight ink bounding box
-    # (no line-height padding).  draw.textbbox includes line metrics that add
-    # extra vertical space, causing words to appear off-center in the PDF.
-    try:
-        bbox = font.getbbox(text)  # type: ignore[union-attr]  # Pillow ≥ 8
-        bx, by = bbox[0], bbox[1]
-        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    except AttributeError:
-        try:
-            bbox = draw.textbbox((0, 0), text, font=font)
-            bx, by = bbox[0], bbox[1]
-            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        except AttributeError:
-            bx, by = 0, 0  # tw, th already set from _fit_font
-
-    # Centered position, corrected for ink-bbox origin offset
-    x = (PAGE_W - tw) // 2 - bx
-    y = (PAGE_H - th) // 2 - by
-
-    draw.text((x, y), text, font=font, fill=fg)
     return img
 
 
@@ -527,6 +698,7 @@ def generate_flipbook_for_all_movies(
     *,
     force: bool = False,
     verbose: bool = False,
+    on_item_done=None,
 ) -> dict:
     """Generate flipbooks for all movies that have an annotation JSON.
 
@@ -568,6 +740,8 @@ def generate_flipbook_for_all_movies(
             total_processed += 1
             if not verbose:
                 print(f"ok  ({summary['pages']} pages)")
+            if on_item_done is not None:
+                on_item_done(title, summary, None)
         except FileExistsError as exc:
             total_skipped += 1
             if not verbose:
@@ -581,6 +755,8 @@ def generate_flipbook_for_all_movies(
             total_failed += 1
             if not verbose:
                 print(f"error: {exc}")
+            if on_item_done is not None:
+                on_item_done(title, None, exc)
 
     return {
         "total_files":     total_files,
