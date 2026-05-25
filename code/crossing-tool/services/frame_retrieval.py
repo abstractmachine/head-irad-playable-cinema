@@ -71,10 +71,30 @@ def _pil_to_jpeg_bytes(img, quality: int = _DEFAULT_QUALITY) -> bytes:
     return buf.getvalue()
 
 
+_VIDEO_EXTS = frozenset({
+    ".mp4", ".mkv", ".avi", ".mov", ".m4v",
+    ".webm", ".flv", ".wmv", ".mpg", ".mpeg", ".ts",
+})
+
+
+def _normalise_film_query(film: str) -> str:
+    """Strip a video extension from *film* so get_metadata substring-matching works.
+
+    Stored filenames look like ``"Django (1966) {tmdb-4638}.mp4"``.
+    A query of ``"Django (1966).mp4"`` fails to match because ``.mp4`` terminates
+    before the ``{tmdb-...}`` suffix in the stored name.
+    Stripping the extension gives ``"Django (1966)"`` which IS a substring match.
+    """
+    suffix = Path(film).suffix.lower()
+    if suffix in _VIDEO_EXTS:
+        return Path(film).stem
+    return film
+
+
 def _fetch_frame(
     project_path: str,
     media_type: str,
-    movie_id: str,
+    filename: str,
     shot_id: str,
     start_frame,
     end_frame,
@@ -91,16 +111,16 @@ def _fetch_frame(
 
     Parameters
     ----------
-    movie_id :
-        The stem-style movie identifier (e.g. "The Wild Bunch (1969) {tmdb-11232}").
-        Used both as the directory stem for best_frame_path and to locate the video.
-        Passing movie_id without an extension is fine because Path(movie_id).stem == movie_id.
+    filename :
+        Video filename (with or without extension, with or without ``{tmdb-...}`` suffix).
+        ``best_frame_path`` strips the extension internally; ``_find_video_path``
+        receives ``Path(filename).stem`` to match the on-disk video file.
     """
     from PIL import Image as PILImage
 
     # --- Priority 1: pre-computed best-frame PNG cache ---
     from services.frame_match import best_frame_path as _bf_path
-    bf_png = _bf_path(project_path, media_type, movie_id, shot_id)
+    bf_png = _bf_path(project_path, media_type, filename, shot_id)
     if bf_png.exists():
         try:
             img = PILImage.open(bf_png).convert("RGB")
@@ -114,7 +134,7 @@ def _fetch_frame(
 
     from generators.mosaic import _find_video_path, extract_frame_pil, frame_from_pct
 
-    video_path = _find_video_path(project_path, movie_id)
+    video_path = _find_video_path(project_path, Path(filename).stem)
     if video_path is None:
         return None
 
@@ -178,6 +198,7 @@ def retrieve_single_frame(
     from data.metadata import get_metadata as _get_metadata
     from data.shotlist import read_shotlist
 
+    film = _normalise_film_query(film)
     entries = _get_metadata(project_path, query=film, media_type=media_type)
     if not entries:
         raise ValueError(f"No film found matching {film!r}.")
@@ -187,7 +208,6 @@ def retrieve_single_frame(
 
     entry    = entries[0]
     filename = entry["filename"]
-    movie_id = entry.get("media_id") or Path(filename).stem
     title    = entry.get("title", Path(filename).stem)
 
     shots     = read_shotlist(project_path, filename, media_type)
@@ -196,7 +216,7 @@ def retrieve_single_frame(
         raise ValueError(f"Shot {shot_id!r} not found in shotlist for {filename!r}.")
 
     image_data = _fetch_frame(
-        project_path, media_type, movie_id, shot_id,
+        project_path, media_type, filename, shot_id,
         shot_data.get("start_frame"), shot_data.get("end_frame"),
         width=width, quality=quality,
     )
@@ -247,12 +267,12 @@ def retrieve_frames_for_query(
     cumulative = 0
 
     for r in res.get("results", []):
-        movie_id   = r.get("movie_id", "")
+        filename   = r.get("filename") or r.get("movie_id", "")
         shot_id    = r.get("shot_id", "")
-        film_title = r.get("movie_title", movie_id)
+        film_title = r.get("movie_title", Path(filename).stem)
 
         image_data = _fetch_frame(
-            project_path, media_type, movie_id, shot_id,
+            project_path, media_type, filename, shot_id,
             r.get("start_frame"), r.get("end_frame"),
             r.get("best_frame"),
             width=width, quality=quality,
@@ -265,7 +285,7 @@ def retrieve_frames_for_query(
             break
 
         results.append(_make_result(
-            film_title, movie_id, shot_id, image_data,
+            film_title, filename, shot_id, image_data,
             start_time=r.get("start_time", ""),
             end_time=r.get("end_time", ""),
             metadata={
@@ -309,12 +329,7 @@ def retrieve_palette_frames(
     from services.analysis import search_palette
     from data.metadata import get_metadata as _get_metadata
 
-    # Build filename → media_id lookup once to avoid repeated metadata reads.
     all_entries = _get_metadata(project_path, media_type=media_type)
-    media_id_by_filename: dict[str, str] = {
-        e.get("filename", ""): (e.get("media_id") or Path(e.get("filename", "")).stem)
-        for e in all_entries
-    }
 
     # Request extra results to account for deduplication across fg/bg regions.
     palette_res = search_palette(
@@ -339,11 +354,10 @@ def retrieve_palette_frames(
             continue  # deduplicate shots appearing for both fg and bg
         seen_shots.add(key)
 
-        movie_id   = media_id_by_filename.get(filename) or Path(filename).stem
-        film_title = r.get("film", movie_id)
+        film_title = r.get("film", Path(filename).stem)
 
         image_data = _fetch_frame(
-            project_path, media_type, movie_id, shot_id,
+            project_path, media_type, filename, shot_id,
             r.get("start_frame"), r.get("end_frame"),
             width=width, quality=quality,
         )
@@ -422,8 +436,7 @@ def retrieve_motif_frames(
         if not get_motif_path(project_path, filename, media_type).exists():
             continue
 
-        movie_id   = entry.get("media_id") or Path(filename).stem
-        film_title = entry.get("title", movie_id)
+        film_title = entry.get("title", Path(filename).stem)
 
         doc = load_motif_doc(project_path, filename, media_type)
 
@@ -448,7 +461,7 @@ def retrieve_motif_frames(
             timing  = timing_by_id.get(shot_id, {})
 
             image_data = _fetch_frame(
-                project_path, media_type, movie_id, shot_id,
+                project_path, media_type, filename, shot_id,
                 timing.get("start_frame"), timing.get("end_frame"),
                 width=width, quality=quality,
             )
@@ -495,17 +508,17 @@ def retrieve_context_frames(
     from services.analysis import get_shot_context
     from data.metadata import get_metadata as _get_metadata
 
+    film = _normalise_film_query(film)
     ctx = get_shot_context(
         project_path, film, shot_id,
         media_type=media_type, window=window,
     )
 
-    # Resolve the entry so we have media_id for video lookup.
+    # Resolve the entry to get the full filename for frame extraction.
     entries = _get_metadata(project_path, query=film, media_type=media_type)
     entry      = entries[0] if entries else {}
     filename   = ctx.get("filename", entry.get("filename", ""))
-    movie_id   = entry.get("media_id") or Path(filename).stem
-    film_title = ctx.get("film", entry.get("title", movie_id))
+    film_title = ctx.get("film", entry.get("title", Path(filename).stem))
     center_id  = ctx.get("shot_id", shot_id)
 
     results: list[dict] = []
@@ -516,7 +529,7 @@ def retrieve_context_frames(
         is_center = sid == center_id
 
         image_data = _fetch_frame(
-            project_path, media_type, movie_id, sid,
+            project_path, media_type, filename, sid,
             shot.get("start_frame"), shot.get("end_frame"),
             width=width, quality=quality,
         )

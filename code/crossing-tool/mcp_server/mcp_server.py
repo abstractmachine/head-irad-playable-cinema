@@ -759,6 +759,197 @@ def _frames_to_mcp(frames: list[dict]) -> list:
 
 
 @mcp.tool()
+def test_image_return() -> list:
+    """Minimal smoke-test: verify Claude Desktop renders an inline image from MCP.
+
+    Creates a synthetic 40×30 gradient JPEG using only PIL — no Crossing data
+    required.  Returns [metadata_str, Image] using the identical structure as
+    all Crossing image retrieval tools.
+
+    If the coloured rectangle appears below this text, the MCP image pipeline
+    works and the issue lies in the Crossing frame-retrieval path.
+    If only text appears, the issue is in Claude Desktop's rendering of
+    image/jpeg tool results.
+
+    Read-only. No project path required.
+    """
+    import io as _io
+    from PIL import Image as _PIL
+
+    # Build a 40×30 gradient so it's visually obvious if it renders.
+    img = _PIL.new("RGB", (40, 30))
+    px = img.load()
+    for x in range(40):
+        for y in range(30):
+            px[x, y] = (int(x * 6.3), int(y * 8.5), 120)
+
+    buf = _io.BytesIO()
+    img.save(buf, format="JPEG", quality=85)
+    jpeg_bytes = buf.getvalue()
+
+    return [
+        json.dumps({
+            "ok":          True,
+            "test":        "test_image_return",
+            "description": "40×30 synthetic gradient JPEG — should render inline below",
+            "bytes":       len(jpeg_bytes),
+            "mime_type":   "image/jpeg",
+        }),
+        _MCPImage(data=jpeg_bytes, format="jpeg"),
+    ]
+
+
+@mcp.tool()
+def test_image_png() -> list:
+    """Variant of test_image_return using PNG instead of JPEG.
+
+    If test_image_return (JPEG) fails but this (PNG) works, Claude Desktop
+    has a JPEG rendering issue and all Crossing tools need to switch to PNG.
+
+    Read-only. No project path required.
+    """
+    import io as _io
+    from PIL import Image as _PIL
+
+    img = _PIL.new("RGB", (40, 30))
+    px = img.load()
+    for x in range(40):
+        for y in range(30):
+            px[x, y] = (int(x * 6.3), int(y * 8.5), 180)
+
+    buf = _io.BytesIO()
+    img.save(buf, format="PNG")
+    png_bytes = buf.getvalue()
+
+    return [
+        json.dumps({
+            "ok":          True,
+            "test":        "test_image_png",
+            "description": "40×30 synthetic gradient PNG — should render inline below",
+            "bytes":       len(png_bytes),
+            "mime_type":   "image/png",
+        }),
+        _MCPImage(data=png_bytes, format="png"),
+    ]
+
+
+@mcp.tool()
+def debug_frame_bytes(
+    film: str,
+    shot_id: str,
+    media_type: str = "movies",
+    width: int = 400,
+) -> str:
+    """Diagnostic: fetch a frame and report byte-level details WITHOUT returning the image.
+
+    Use this to confirm the retrieval path is working before testing image rendering.
+    Returns: source (cache or video), byte count, first/last 8 bytes as hex,
+    PIL image size, and whether PIL can re-open the encoded JPEG without error.
+
+    Read-only. Reads: media/frames/best/ and/or media/videos/
+    """
+    result = _ctx()
+    if isinstance(result, str):
+        return result
+    project_path, _ = result
+
+    try:
+        import io as _io
+        from PIL import Image as _PIL
+        from data.metadata import get_metadata as _get_metadata
+        from data.shotlist import read_shotlist
+        from services.frame_match import best_frame_path as _bf_path
+        from generators.mosaic import _find_video_path, extract_frame_pil, frame_from_pct
+
+        entries = _get_metadata(project_path, query=film, media_type=media_type)
+        if not entries:
+            return _err(f"No film found matching {film!r}.")
+        if len(entries) > 1:
+            titles = [e.get("title", e.get("filename", "")) for e in entries]
+            return _err(f"Ambiguous: {len(entries)} films match. Matches: {titles}")
+
+        entry    = entries[0]
+        filename = entry["filename"]
+
+        shots     = read_shotlist(project_path, filename, media_type)
+        shot_data = next((s for s in shots if s.get("shot_id") == shot_id), None)
+        if shot_data is None:
+            return _err(f"Shot {shot_id!r} not found in shotlist for {filename!r}.")
+
+        source    = "unknown"
+        raw_bytes = None
+
+        # --- Priority 1: best-frame PNG cache ---
+        bf_png = _bf_path(project_path, media_type, filename, shot_id)
+        if bf_png.exists():
+            try:
+                img_pil = _PIL.open(bf_png).convert("RGB")
+                pil_size = img_pil.size
+
+                # Resize + JPEG-encode (same as production)
+                from services.frame_retrieval import _resize_pil, _pil_to_jpeg_bytes
+                img_resized = _resize_pil(img_pil, width)
+                raw_bytes   = _pil_to_jpeg_bytes(img_resized)
+                source      = f"best_frame_cache:{bf_png.name}"
+                resized_size = img_resized.size
+            except Exception as exc:
+                source = f"best_frame_cache:ERROR:{exc}"
+
+        # --- Priority 2: video extraction ---
+        if raw_bytes is None:
+            sf = shot_data.get("start_frame")
+            if sf is not None:
+                vpath = _find_video_path(project_path, Path(filename).stem)
+                if vpath:
+                    ef = shot_data.get("end_frame")
+                    fidx = frame_from_pct(int(sf), int(ef) if ef else int(sf), 0.5)
+                    img_pil = extract_frame_pil(vpath, fidx)
+                    if img_pil:
+                        pil_size = img_pil.size
+                        from services.frame_retrieval import _resize_pil, _pil_to_jpeg_bytes
+                        img_resized = _resize_pil(img_pil, width)
+                        raw_bytes   = _pil_to_jpeg_bytes(img_resized)
+                        source      = f"video:{vpath.name}@frame{fidx}"
+                        resized_size = img_resized.size
+
+        if raw_bytes is None:
+            return _err("Could not retrieve any frame bytes.", "Check that best-frame cache or video exists.")
+
+        # Verify the JPEG is re-openable by PIL
+        reopen_ok = False
+        reopen_size = None
+        try:
+            check_buf = _io.BytesIO(raw_bytes)
+            check_img = _PIL.open(check_buf)
+            check_img.verify()
+            reopen_ok   = True
+            reopen_size = check_img.size if hasattr(check_img, 'size') else "unknown"
+        except Exception as exc:
+            reopen_ok = False
+            reopen_size = str(exc)
+
+        return _ok(
+            source          = source,
+            film            = entry.get("title", filename),
+            shot_id         = shot_id,
+            pil_size_before = pil_size if 'pil_size' in dir() else "n/a",
+            pil_size_after  = resized_size if 'resized_size' in dir() else "n/a",
+            jpeg_bytes      = len(raw_bytes),
+            first_8_hex     = raw_bytes[:8].hex(),
+            last_8_hex      = raw_bytes[-8:].hex(),
+            jpeg_reopen_ok  = reopen_ok,
+            jpeg_reopen_size = str(reopen_size),
+            notes = (
+                "If jpeg_reopen_ok=true and jpeg_bytes > 100, bytes are valid. "
+                "JPEG magic bytes should start with 'ffd8ffe0' or 'ffd8ffe1'."
+            ),
+        )
+
+    except Exception as exc:
+        return _err(str(exc), traceback.format_exc())
+
+
+@mcp.tool()
 def get_best_frame(
     film: str,
     shot_id: str,
