@@ -1010,6 +1010,337 @@ def generate_catalog(
 
 
 # ===========================================================================
+# Tier 3 — Analysis tools (read-only archive analysis)
+# ===========================================================================
+
+@mcp.tool()
+def compare_motifs(
+    films: list[str] | None = None,
+    mode: str = "overlap",
+    limit: int | None = None,
+    media_type: str = "movies",
+) -> str:
+    """Compare motif usage across films.
+
+    Reads cached motif JSON files — no re-inference.
+
+    Args:
+        films:      Film title substrings to compare. Omit for all films.
+        mode:       "overlap"   — words shared across ≥ 2 films (default)
+                    "frequency" — per-film word-count dicts
+                    "sequence"  — ordered motif word list per film
+                    "rare"      — words appearing in exactly 1 film
+        limit:      Cap on returned entries.
+        media_type: "movies" (default) or "gameplay".
+
+    Read-only. Reads: data/motifs/, data/metadata/
+    """
+    result = _ctx()
+    if isinstance(result, str):
+        return result
+    project_path, _ = result
+
+    try:
+        from services.analysis import compare_motifs as _compare_motifs
+        data = _compare_motifs(
+            project_path=project_path,
+            media_type=media_type,
+            films=films,
+            mode=mode,
+            limit=limit,
+        )
+        return _ok(**data)
+    except Exception as exc:
+        return _err(str(exc), traceback.format_exc())
+
+
+@mcp.tool()
+def get_all_motifs(
+    films: list[str] | None = None,
+    sort: str = "frequency",
+    limit: int | None = None,
+    media_type: str = "movies",
+) -> str:
+    """Return a global motif frequency index across the archive.
+
+    Aggregates motif words across all (or selected) films and returns
+    a ranked vocabulary list.
+
+    Args:
+        films:      Restrict to these film titles (None → all).
+        sort:       "frequency" (most common first, default),
+                    "alphabetical", or "rarity" (least common first).
+        limit:      Cap on returned vocabulary entries.
+        media_type: "movies" (default) or "gameplay".
+
+    Read-only. Reads: data/motifs/, data/metadata/
+    """
+    result = _ctx()
+    if isinstance(result, str):
+        return result
+    project_path, _ = result
+
+    try:
+        from services.analysis import get_all_motifs as _get_all_motifs
+        data = _get_all_motifs(
+            project_path=project_path,
+            media_type=media_type,
+            films=films,
+            sort=sort,
+            limit=limit,
+        )
+        return _ok(**data)
+    except Exception as exc:
+        return _err(str(exc), traceback.format_exc())
+
+
+@mcp.tool()
+def search_palette(
+    warm: bool = False,
+    cold: bool = False,
+    dark: bool = False,
+    bright: bool = False,
+    low_chroma: bool = False,
+    high_chroma: bool = False,
+    foreground_only: bool = False,
+    background_only: bool = False,
+    luminance_min: float | None = None,
+    luminance_max: float | None = None,
+    chroma_min: float | None = None,
+    chroma_max: float | None = None,
+    films: list[str] | None = None,
+    limit: int | None = None,
+    media_type: str = "movies",
+) -> str:
+    """Filter shots by colour-space characteristics from the palette cache.
+
+    All filtering is deterministic (no ML inference). Provide at least one
+    filter flag or numeric threshold.
+
+    Colour heuristics (CIE LAB space):
+      warm       a* > 5 (reddish) OR b* > 10 (yellowish)
+      cold       b* < −10 (bluish) OR (a* < −5 and b* < 5)
+      dark       luminance < 0.30
+      bright     luminance > 0.70
+      low_chroma chroma < 0.15
+      high_chroma chroma > 0.30
+
+    Args:
+        warm / cold / dark / bright / low_chroma / high_chroma:
+                        Colour-space preset flags.
+        foreground_only: Apply filters only to foreground region.
+        background_only: Apply filters only to background region.
+        luminance_min/max: Fine-grained luminance bounds (0–1).
+        chroma_min/max:    Fine-grained chroma bounds (0–1).
+        films:          Restrict to these film titles (None → all).
+        limit:          Cap on returned results.
+        media_type:     "movies" (default) or "gameplay".
+
+    Read-only. Reads: data/palettes/, data/shotlists/, data/metadata/
+    """
+    result = _ctx()
+    if isinstance(result, str):
+        return result
+    project_path, _ = result
+
+    try:
+        from services.analysis import search_palette as _search_palette
+        data = _search_palette(
+            project_path=project_path,
+            media_type=media_type,
+            films=films,
+            warm=warm,
+            cold=cold,
+            dark=dark,
+            bright=bright,
+            low_chroma=low_chroma,
+            high_chroma=high_chroma,
+            foreground_only=foreground_only,
+            background_only=background_only,
+            luminance_min=luminance_min,
+            luminance_max=luminance_max,
+            chroma_min=chroma_min,
+            chroma_max=chroma_max,
+            limit=limit,
+        )
+        return _ok(**data)
+    except ValueError as exc:
+        return _err(str(exc))
+    except Exception as exc:
+        return _err(str(exc), traceback.format_exc())
+
+
+@mcp.tool()
+def search_cooccurrence(
+    terms: list[str],
+    operator: str = "AND",
+    fields: list[str] | None = None,
+    films: list[str] | None = None,
+    limit: int | None = None,
+    media_type: str = "movies",
+) -> str:
+    """Find shots containing multiple annotation terms simultaneously.
+
+    Runs a search for each term using the existing annotation index, then
+    intersects (AND) or unions (OR) the result sets.
+
+    Args:
+        terms:      Two or more annotation terms (required).
+        operator:   "AND" — shots matching ALL terms (default).
+                    "OR"  — shots matching ANY term.
+        fields:     Restrict each term search to these annotation fields.
+                    None → search all fields.
+        films:      Restrict to these film titles (None → all).
+        limit:      Cap on returned results.
+        media_type: "movies" (default) or "gameplay".
+
+    Read-only. Reads: data/annotations/ (via services/search.py index)
+    """
+    result = _ctx()
+    if isinstance(result, str):
+        return result
+    project_path, _ = result
+
+    try:
+        from services.analysis import search_cooccurrence as _search_cooccurrence
+        data = _search_cooccurrence(
+            project_path=project_path,
+            terms=terms,
+            media_type=media_type,
+            films=films,
+            fields=fields,
+            operator=operator,
+            limit=limit,
+        )
+        return _ok(**data)
+    except ValueError as exc:
+        return _err(str(exc))
+    except Exception as exc:
+        return _err(str(exc), traceback.format_exc())
+
+
+@mcp.tool()
+def get_shot_context(
+    film: str,
+    shot_id: str,
+    window: int = 3,
+    include_subtitles: bool = False,
+    include_motif: bool = False,
+    include_palette: bool = False,
+    media_type: str = "movies",
+) -> str:
+    """Return neighboring shots around a given shot_id with optional enrichment.
+
+    Useful for understanding narrative context — what comes before and after
+    a shot of interest. Optionally enriches each neighbor with subtitle text,
+    motif word, and dominant colour.
+
+    Args:
+        film:               Film title substring, filename, or TMDb ID.
+        shot_id:            Canonical shot identifier, or integer index.
+        window:             Shots on each side of the center (default: 3).
+        include_subtitles:  Attach overlapping subtitle cues.
+        include_motif:      Attach the motif word annotation.
+        include_palette:    Attach fg/bg dominant colour.
+        media_type:         "movies" (default) or "gameplay".
+
+    Read-only. Reads: data/shotlists/, data/annotations/, data/subtitles/,
+                      data/motifs/, data/palettes/
+    """
+    result = _ctx()
+    if isinstance(result, str):
+        return result
+    project_path, _ = result
+
+    try:
+        from services.analysis import get_shot_context as _get_shot_context
+        data = _get_shot_context(
+            project_path=project_path,
+            film=film,
+            shot_id=shot_id,
+            media_type=media_type,
+            window=window,
+            include_subtitles=include_subtitles,
+            include_motif=include_motif,
+            include_palette=include_palette,
+        )
+        return _ok(**data)
+    except ValueError as exc:
+        return _err(str(exc))
+    except Exception as exc:
+        return _err(str(exc), traceback.format_exc())
+
+
+@mcp.tool()
+def align_subtitles_to_shots(
+    film: str,
+    scene: int | None = None,
+    media_type: str = "movies",
+) -> str:
+    """Align subtitle cues to shotlist entries by time overlap.
+
+    For each shot, finds all subtitle cues whose time range overlaps the
+    shot's start_time … end_time. Returns a shot-by-shot list with attached
+    dialogue text. Useful for dialogue-driven analysis.
+
+    Args:
+        film:       Film title substring, filename, or TMDb ID.
+        scene:      Restrict to one scene number. Omit for all scenes.
+        media_type: "movies" (default) or "gameplay".
+
+    Read-only. Reads: data/shotlists/, media/subtitles/
+    """
+    result = _ctx()
+    if isinstance(result, str):
+        return result
+    project_path, _ = result
+
+    try:
+        from services.analysis import align_subtitles_to_shots as _align
+        data = _align(
+            project_path=project_path,
+            film=film,
+            media_type=media_type,
+            scene=scene,
+        )
+        return _ok(**data)
+    except ValueError as exc:
+        return _err(str(exc))
+    except Exception as exc:
+        return _err(str(exc), traceback.format_exc())
+
+
+@mcp.tool()
+def get_archive_stats(
+    media_type: str = "movies",
+) -> str:
+    """Return archive-level coverage statistics.
+
+    Scans data directories to count films, shots, annotations, motifs,
+    palettes, subtitles, and silhouette entries. No file contents are fully
+    loaded — counts are derived from file presence and header scanning only.
+
+    Args:
+        media_type: "movies" (default) or "gameplay".
+
+    Read-only. Reads: data/metadata/, data/shotlists/, data/annotations/,
+                      data/motifs/, data/palettes/, media/subtitles/,
+                      data/silhouettes/, data/index/
+    """
+    result = _ctx()
+    if isinstance(result, str):
+        return result
+    project_path, _ = result
+
+    try:
+        from services.analysis import get_archive_stats as _get_archive_stats
+        data = _get_archive_stats(project_path=project_path, media_type=media_type)
+        return _ok(**data)
+    except Exception as exc:
+        return _err(str(exc), traceback.format_exc())
+
+
+# ===========================================================================
 # Entry point
 # ===========================================================================
 

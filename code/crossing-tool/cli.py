@@ -1073,6 +1073,21 @@ def cmd_search(args):
         print(json.dumps(search_result, indent=2))
         return
 
+    # Dispatch: `crossing search motifs compare|list [options]`
+    if args.query == "motifs":
+        _search_motifs(args)
+        return
+
+    # Dispatch: `crossing search palette [options]`
+    if args.query == "palette":
+        _search_palette_cmd(args)
+        return
+
+    # Dispatch: `crossing search cooccurrence --terms A B [options]`
+    if args.query == "cooccurrence":
+        _search_cooccurrence_cmd(args)
+        return
+
     from services.search import search_shots
 
     scopes = (args.scope or []) + (getattr(args, "movie", None) or [])
@@ -1117,6 +1132,8 @@ def cmd_metadata(args):
         _meta_prune(args)
     elif sub == "audit":
         _meta_audit(args)
+    elif sub == "stats":
+        _meta_stats(args)
 
 
 def _meta_get(args):
@@ -1567,6 +1584,8 @@ def cmd_shotlist(args):
             _shot_detect(args)
     elif sub == "migrate":
         _shotlist_migrate(args)
+    elif sub == "context":
+        _shotlist_context(args)
 
 
 def _shotlist_migrate(args):
@@ -5205,6 +5224,220 @@ def _add_notify_args(p, *, batch: bool = True) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# Analysis handler functions (new — wired to services/analysis.py)
+# ---------------------------------------------------------------------------
+
+def _search_motifs(args):
+    """Handle: crossing search motifs compare|list [options]."""
+    from services.analysis import compare_motifs, get_all_motifs
+    project_path = prefs.get("path")
+    media_type = getattr(args, "media", "movies")
+    remaining = args.scope or []
+    sub_cmd = remaining[0] if remaining else "list"
+    films = (remaining[1:] or []) + (getattr(args, "movie", None) or []) or None
+    limit = getattr(args, "limit", None)
+
+    if sub_cmd == "compare":
+        mode = getattr(args, "mode", None) or "overlap"
+        result = compare_motifs(
+            project_path=project_path,
+            media_type=media_type,
+            films=films,
+            mode=mode,
+            limit=limit,
+        )
+    else:  # "list" or no sub_cmd
+        sort = getattr(args, "sort", None) or "frequency"
+        result = get_all_motifs(
+            project_path=project_path,
+            media_type=media_type,
+            films=films,
+            sort=sort,
+            limit=limit,
+        )
+    print(json.dumps(result, indent=2))
+
+
+def _search_palette_cmd(args):
+    """Handle: crossing search palette [filter flags]."""
+    from services.analysis import search_palette
+    project_path = prefs.get("path")
+    media_type = getattr(args, "media", "movies")
+    remaining = args.scope or []
+    films = list(remaining) + (getattr(args, "movie", None) or []) or None
+
+    result = search_palette(
+        project_path=project_path,
+        media_type=media_type,
+        films=films,
+        warm=getattr(args, "warm", False),
+        cold=getattr(args, "cold", False),
+        dark=getattr(args, "dark", False),
+        bright=getattr(args, "bright", False),
+        low_chroma=getattr(args, "low_chroma", False),
+        high_chroma=getattr(args, "high_chroma", False),
+        foreground_only=getattr(args, "foreground_only", False),
+        background_only=getattr(args, "background_only", False),
+        luminance_min=getattr(args, "luminance_min", None),
+        luminance_max=getattr(args, "luminance_max", None),
+        chroma_min=getattr(args, "chroma_min", None),
+        chroma_max=getattr(args, "chroma_max", None),
+        limit=getattr(args, "limit", None),
+    )
+    print(json.dumps(result, indent=2))
+
+
+def _search_cooccurrence_cmd(args):
+    """Handle: crossing search cooccurrence --terms A B [options]."""
+    from services.analysis import search_cooccurrence
+    project_path = prefs.get("path")
+    media_type = getattr(args, "media", "movies")
+    terms = getattr(args, "terms", None) or []
+    if not terms:
+        print("error: 'search cooccurrence' requires --terms TERM [TERM ...]", file=sys.stderr)
+        sys.exit(1)
+    films = (getattr(args, "scope", None) or []) + (getattr(args, "movie", None) or []) or None
+    result = search_cooccurrence(
+        project_path=project_path,
+        terms=terms,
+        media_type=media_type,
+        films=films,
+        fields=getattr(args, "cooccurrence_fields", None),
+        operator=getattr(args, "operator", "AND"),
+        limit=getattr(args, "limit", None),
+    )
+    print(json.dumps(result, indent=2))
+
+
+def _shotlist_context(args):
+    """Handle: crossing shotlist context <film> <shot_id> [options]."""
+    from services.analysis import get_shot_context
+    project_path = prefs.get("path")
+    media_type = getattr(args, "media", "movies")
+    film = getattr(args, "film", None) or getattr(args, "filename", None)
+    shot_id = getattr(args, "shot_id", None)
+    if not film or not shot_id:
+        print("error: shotlist context requires film and shot_id", file=sys.stderr)
+        sys.exit(1)
+    try:
+        result = get_shot_context(
+            project_path=project_path,
+            film=film,
+            shot_id=shot_id,
+            media_type=media_type,
+            window=getattr(args, "window", 3),
+            include_subtitles=getattr(args, "include_subtitles", False),
+            include_motif=getattr(args, "include_motif", False),
+            include_palette=getattr(args, "include_palette", False),
+        )
+    except ValueError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    if getattr(args, "json", False):
+        print(json.dumps(result, indent=2))
+    else:
+        film_label = result["film"]
+        print(f"Film: {film_label}  |  Center shot: {result['shot_id']} (index {result['center_index']})")
+        print(f"Window ±{result['window']}  |  Total shots: {result['total_shots']}\n")
+        for shot in result["shots"]:
+            marker = "→" if shot.get("is_center") else " "
+            st = shot.get("start_time", "")
+            et = shot.get("end_time", "")
+            sid = shot.get("shot_id", f"index {shot['index']}")
+            line = f"{marker} [{shot['index']:4d}] {sid}  {st} → {et}"
+            if "motif" in shot and shot["motif"]:
+                line += f"  [motif: {shot['motif']}]"
+            if "palette" in shot:
+                pal = shot["palette"]
+                fg_rgb = pal.get("fg_rgb", "")
+                line += f"  [fg: {fg_rgb}]"
+            print(line)
+            if "subtitles" in shot and shot["subtitles"]:
+                for cue in shot["subtitles"]:
+                    print(f"        \" {cue}\"")
+
+
+def _meta_stats(args):
+    """Handle: crossing metadata stats."""
+    from services.analysis import get_archive_stats
+    project_path = prefs.get("path")
+    media_type = getattr(args, "media", "movies")
+    result = get_archive_stats(project_path=project_path, media_type=media_type)
+    if getattr(args, "json", False):
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"Archive statistics ({result['media_type']})")
+        print(f"  Films:               {result['film_count']}")
+        print(f"    with shotlists:    {result['films_with_shotlist']}")
+        print(f"    with annotations:  {result['films_with_annotations']}")
+        print(f"    with motifs:       {result['films_with_motifs']}")
+        print(f"    with palettes:     {result['films_with_palettes']}")
+        print(f"    with subtitles:    {result['films_with_subtitles']}")
+        print(f"  Total shots:         {result['total_shots']}")
+        print(f"  Annotated shots:     {result['annotated_shots']}")
+        print(f"  Silhouette entries:  {result['silhouette_entries']}")
+        vocab = result.get("vocabulary", {})
+        if vocab:
+            print(f"  Vocabulary built:    {vocab.get('built_at', 'n/a')}")
+            print(f"  Vocabulary tokens:   {vocab.get('total_tokens', 'n/a')}")
+            fields = vocab.get("vocabulary_fields", [])
+            if fields:
+                print(f"  Vocabulary fields:   {', '.join(fields)}")
+
+
+def cmd_subtitles(args):
+    """Handle: crossing subtitles align <film> [options]."""
+    _require_path()
+    sub = args.subtitles_subcommand
+    if sub == "align":
+        _subtitles_align(args)
+    else:
+        print("✗ subtitles: unknown subcommand.", file=sys.stderr)
+        sys.exit(1)
+
+
+def _subtitles_align(args):
+    from services.analysis import align_subtitles_to_shots
+    project_path = prefs.get("path")
+    media_type = getattr(args, "media", "movies")
+    film = getattr(args, "film", None) or getattr(args, "filename", None)
+    if not film:
+        print("error: subtitles align requires a film argument", file=sys.stderr)
+        sys.exit(1)
+    scene = getattr(args, "scene", None)
+    try:
+        result = align_subtitles_to_shots(
+            project_path=project_path,
+            film=film,
+            media_type=media_type,
+            scene=scene,
+        )
+    except ValueError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    if getattr(args, "json", False):
+        print(json.dumps(result, indent=2))
+    else:
+        title = result["film"]
+        has_subs = result.get("has_subtitles", False)
+        if not has_subs:
+            print(f"✗ No subtitle file found for {title!r}.")
+            return
+        scene_label = f" (scene {scene})" if scene is not None else ""
+        print(f"{title}{scene_label}  —  {result['total_shots']} shots\n")
+        for shot in result["aligned_shots"]:
+            sid = shot.get("shot_id", "")
+            st = shot.get("start_time", "")
+            et = shot.get("end_time", "")
+            cues = shot.get("subtitle_cues", [])
+            if cues:
+                cue_texts = " / ".join(c["text"] for c in cues)
+                print(f"  {sid}  {st}→{et}  \"{cue_texts}\"")
+            else:
+                print(f"  {sid}  {st}→{et}  [silent]")
+
+
 def build_parser():
     parser = _HelpfulParser(
         prog="crossing",
@@ -6040,6 +6273,9 @@ def build_parser():
     p_meta_audit = meta_sub.add_parser("audit", help="Report missing metadata, shotlists, and subtitles")
     _add_media_arg(p_meta_audit)
 
+    p_meta_stats = meta_sub.add_parser("stats", help="Archive-level coverage statistics")
+    _add_media_arg(p_meta_stats)
+    p_meta_stats.add_argument("--json", action="store_true", help="Output as JSON")
 
 
     # media audit (alias for metadata audit)
@@ -6162,13 +6398,42 @@ def build_parser():
     p_search.add_argument("--limit-per-item", dest="limit_per_item", type=int, default=None, help="Max results per movie")
     p_search.add_argument("--all", action="store_true", help="Search all movies (overrides positional scopes)")
     p_search.add_argument("--show_count", action="store_true", help="(vocabulary mode) include occurrence counts in output")
-    p_search.add_argument("--sort", choices=["alphabetical", "count"], default="alphabetical", help="(vocabulary mode) sort order: alphabetical (default) or count")
+    p_search.add_argument("--sort", choices=["alphabetical", "count", "frequency", "rarity"], default="alphabetical", help="(vocabulary mode) sort order; (motifs mode) frequency, alphabetical, or rarity")
     p_search.add_argument("--all-fields", dest="all_fields", action="store_true", help="(vocabulary mode) emit vocabulary for every annotation field as a single JSON object")
     p_search.add_argument("--exclude", nargs="+", default=None, metavar="FIELD", help="(vocabulary mode) exclude one or more fields from output (e.g. --exclude description humans)")
     p_search.add_argument("--format", dest="output_format", choices=["json", "table", "list", "markdown", "bar", "auto"], default="auto", metavar="FORMAT", help="(vocabulary mode) output format: auto (default), json, table, list, markdown, bar")
     p_search.add_argument("--top", type=int, default=None, metavar="N", help="(vocabulary mode) show only the top N results")
     p_search.add_argument("--markdown", action="store_true", help="Save output as Markdown to <project>/data/markdown/")
     p_search.add_argument("--open", action="store_true", help="Open the saved Markdown file after writing (implies --markdown)")
+    # Analysis-mode args (motifs, palette, cooccurrence)
+    p_search.add_argument("--mode", default=None, metavar="MODE",
+                          help="(motifs compare) overlap, frequency, sequence, rare")
+    p_search.add_argument("--terms", nargs="+", default=None, metavar="TERM",
+                          help="(cooccurrence) two or more annotation terms to intersect/union")
+    p_search.add_argument("--cooccurrence-fields", dest="cooccurrence_fields", nargs="+", default=None,
+                          metavar="FIELD", help="(cooccurrence) restrict search to these annotation fields")
+    p_search.add_argument("--operator", choices=["AND", "OR"], default="AND",
+                          help="(cooccurrence) AND = shots matching all terms; OR = any term")
+    p_search.add_argument("--warm", action="store_true", help="(palette) shots with warm fg/bg colour (a*>5 or b*>10)")
+    p_search.add_argument("--cold", action="store_true", help="(palette) shots with cold fg/bg colour (blue/cyan)")
+    p_search.add_argument("--dark", action="store_true", help="(palette) shots with low luminance (< 0.30)")
+    p_search.add_argument("--bright", action="store_true", help="(palette) shots with high luminance (> 0.70)")
+    p_search.add_argument("--low-chroma", dest="low_chroma", action="store_true",
+                          help="(palette) shots with low colour saturation (chroma < 0.15)")
+    p_search.add_argument("--high-chroma", dest="high_chroma", action="store_true",
+                          help="(palette) shots with high colour saturation (chroma > 0.30)")
+    p_search.add_argument("--foreground-only", dest="foreground_only", action="store_true",
+                          help="(palette) apply colour filters to foreground region only")
+    p_search.add_argument("--background-only", dest="background_only", action="store_true",
+                          help="(palette) apply colour filters to background region only")
+    p_search.add_argument("--luminance-min", dest="luminance_min", type=float, default=None,
+                          help="(palette) minimum luminance threshold (0–1)")
+    p_search.add_argument("--luminance-max", dest="luminance_max", type=float, default=None,
+                          help="(palette) maximum luminance threshold (0–1)")
+    p_search.add_argument("--chroma-min", dest="chroma_min", type=float, default=None,
+                          help="(palette) minimum chroma threshold (0–1)")
+    p_search.add_argument("--chroma-max", dest="chroma_max", type=float, default=None,
+                          help="(palette) maximum chroma threshold (0–1)")
     _add_media_arg(p_search)
     p_search.set_defaults(func=cmd_search)
 
@@ -6225,6 +6490,20 @@ def build_parser():
     )
     _add_media_arg(p_sl_migrate, default=None)
     _add_dry_run_arg(p_sl_migrate, help="Report what would change without writing any files")
+
+    p_sl_context = shotlist_sub.add_parser("context", help="Show neighboring shots around a given shot_id")
+    p_sl_context.add_argument("film", help="Film title substring, filename, or TMDb ID")
+    p_sl_context.add_argument("shot_id", help="Canonical shot identifier (or integer index)")
+    p_sl_context.add_argument("--window", type=int, default=3, help="Shots to show on each side (default: 3)")
+    p_sl_context.add_argument("--include-subtitles", dest="include_subtitles", action="store_true",
+                              help="Attach overlapping subtitle cues to each shot")
+    p_sl_context.add_argument("--include-motif", dest="include_motif", action="store_true",
+                              help="Attach the motif word to each shot")
+    p_sl_context.add_argument("--include-palette", dest="include_palette", action="store_true",
+                              help="Attach dominant fg/bg colour to each shot")
+    p_sl_context.add_argument("--json", action="store_true", help="Output raw JSON")
+    _add_media_arg(p_sl_context)
+
     # media subtitle
     p_subtitle = media_sub.add_parser("subtitle", help="Download and list subtitles")
     p_subtitle.set_defaults(func=cmd_subtitle)
@@ -6239,6 +6518,20 @@ def build_parser():
 
     p_sub_list = subtitle_sub.add_parser("list", help="Show subtitle status for all entries")
     _add_media_arg(p_sub_list)
+
+    # subtitles command group (analysis: align to shots)
+    p_subtitles = sub.add_parser("subtitles", help="Subtitle analysis tools")
+    p_subtitles.set_defaults(func=cmd_subtitles)
+    subtitles_sub = p_subtitles.add_subparsers(dest="subtitles_subcommand", required=True)
+
+    p_subtitles_align = subtitles_sub.add_parser(
+        "align", help="Align subtitle cues to shotlist entries by time overlap"
+    )
+    p_subtitles_align.add_argument("film", help="Film title substring, filename, or TMDb ID")
+    p_subtitles_align.add_argument("--scene", type=int, default=None,
+                                   help="Restrict to one scene number")
+    p_subtitles_align.add_argument("--json", action="store_true", help="Output raw JSON")
+    _add_media_arg(p_subtitles_align)
 
     # tool command group (version, path, name, api_key)
     p_tool = sub.add_parser("tool", help="Tool settings: version, path, name, models, API keys")
