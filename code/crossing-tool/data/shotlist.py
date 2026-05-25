@@ -171,19 +171,30 @@ def read_shotlist(project_path: str, filename: str, media_type: str = "movies") 
 def write_shotlist(project_path: str, filename: str, media_type: str, shots: list[dict[str, Any]]) -> None:
     """Write shotlist data back to CSV."""
     shotlist_path = get_shotlist_path(project_path, filename, media_type)
-    
+
+    has_frames = shots and any("start_frame" in shot for shot in shots)
+
+    # Attach shot IDs if frame data is present but shot_id is missing from all rows.
+    if has_frames and not any(shot.get("shot_id") for shot in shots):
+        from data.metadata import get_metadata as _get_metadata
+        meta_entries = _get_metadata(project_path, media_type=media_type)
+        meta = next((e for e in meta_entries if e.get("filename") == filename), {})
+        media_id = str(meta.get("media_id") or "")
+        if media_id:
+            attach_shot_ids(shots, media_id)
+
     # Base fieldnames — canonical temporal naming
-    fieldnames = ['Ignore', 'Scene', 'start_time', 'end_time']
+    fieldnames = ["Ignore", "Scene", "start_time", "end_time"]
 
-    # Add frame columns if present
-    if shots and any('start_frame' in shot for shot in shots):
-        fieldnames.extend(['start_frame', 'end_frame'])
-    
+    # Add frame + shot_id columns if present
+    if has_frames:
+        fieldnames.extend(["start_frame", "end_frame", "shot_id"])
+
     # Add captions
-    fieldnames.extend(['Shot_Caption', 'Scene_Caption'])
+    fieldnames.extend(["Shot_Caption", "Scene_Caption"])
 
-    with open(shotlist_path, 'w', encoding='utf-8', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
+    with open(shotlist_path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(shots)
 
@@ -227,21 +238,23 @@ def get_shot(project_path: str, filename: str, shot_index: int, media_type: str 
 
 
 def migrate_shotlist_fields(project_path: str, media_type: str | None = None, dry_run: bool = False) -> list[dict]:
-    """Migrate all shotlist CSVs from legacy temporal field names to canonical names.
+    """Migrate all shotlist CSVs to the current canonical schema.
 
     For each CSV under data/shotlists/{media_type}/:
-    - Checks its raw column headers.
-    - If any legacy names are found (Start, End, Start_Frame, End_Frame), reads the
-      file (which normalizes field names in memory), then writes it back using the
-      canonical names and column order.
-    - Files already using canonical names are left untouched.
+    - Renames legacy temporal column names (Start→start_time, etc.).
+    - Drops obsolete columns (Shot_Source, Shot_Confidence).
+    - Adds the ``shot_id`` column if absent, deriving IDs from
+      ``build_shot_id(media_id, start_frame, end_frame)``.
+    - Files already fully current are left untouched.
 
     Returns a list of result dicts, one per CSV:
         {
             "path": str,
-            "status": "migrated" | "already_current" | "skipped",
-            "old_headers": list[str],    # only for "migrated"
-            "shot_count": int,           # only for "migrated"
+            "status": "migrated" | "would_migrate" | "already_current",
+            "old_headers": list[str],     # legacy names found
+            "dropped_columns": list[str], # obsolete columns removed
+            "added_shot_id": bool,        # True if shot_id column was added
+            "shot_count": int,            # only for migrated/would_migrate
         }
 
     Args:
@@ -258,6 +271,15 @@ def migrate_shotlist_fields(project_path: str, media_type: str | None = None, dr
         if not shotlist_dir.is_dir():
             continue
 
+        # Build stem -> media_id lookup once per media type
+        from data.metadata import get_metadata as _get_metadata
+        meta_entries = _get_metadata(project_path, media_type=mtype)
+        media_id_by_stem: dict[str, str] = {
+            Path(e["filename"]).stem: str(e.get("media_id") or "")
+            for e in meta_entries
+            if e.get("filename")
+        }
+
         for csv_path in sorted(shotlist_dir.glob("*.csv")):
             # Read raw headers without normalizing
             with open(csv_path, "r", encoding="utf-8") as f:
@@ -266,8 +288,9 @@ def migrate_shotlist_fields(project_path: str, media_type: str | None = None, dr
 
             legacy_found = [h for h in raw_headers if h in _LEGACY_TEMPORAL]
             has_dropped = any(h in ("Shot_Source", "Shot_Confidence") for h in raw_headers)
+            missing_shot_id = "shot_id" not in raw_headers
 
-            if not legacy_found and not has_dropped:
+            if not legacy_found and not has_dropped and not missing_shot_id:
                 results.append({"path": str(csv_path), "status": "already_current"})
                 continue
 
@@ -277,10 +300,16 @@ def migrate_shotlist_fields(project_path: str, media_type: str | None = None, dr
                 shots = [normalize_shot_fields(row) for row in reader]
 
             if not dry_run:
-                # Determine fieldnames for the rewritten file
+                # Attach shot IDs when adding the column
+                if missing_shot_id:
+                    media_id = media_id_by_stem.get(csv_path.stem, "")
+                    if media_id:
+                        attach_shot_ids(shots, media_id)
+
+                has_frames = any("start_frame" in shot for shot in shots)
                 fieldnames = ["Ignore", "Scene", "start_time", "end_time"]
-                if any("start_frame" in shot for shot in shots):
-                    fieldnames.extend(["start_frame", "end_frame"])
+                if has_frames:
+                    fieldnames.extend(["start_frame", "end_frame", "shot_id"])
                 fieldnames.extend(["Shot_Caption", "Scene_Caption"])
 
                 with open(csv_path, "w", encoding="utf-8", newline="") as f:
@@ -292,8 +321,9 @@ def migrate_shotlist_fields(project_path: str, media_type: str | None = None, dr
                 "path": str(csv_path),
                 "status": "migrated" if not dry_run else "would_migrate",
                 "old_headers": legacy_found,
-                "shot_count": len(shots),
                 "dropped_columns": [h for h in raw_headers if h in ("Shot_Source", "Shot_Confidence")],
+                "added_shot_id": missing_shot_id,
+                "shot_count": len(shots),
             })
 
     return results

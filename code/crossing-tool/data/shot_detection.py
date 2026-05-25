@@ -197,7 +197,14 @@ def write_shotlist_csv(
     
     # Create directory if needed
     csv_path.parent.mkdir(parents=True, exist_ok=True)
-    
+
+    # Look up media_id for stable, canonical shot IDs
+    from data.media_id import build_shot_id as _build_shot_id
+    from data.metadata import get_metadata as _get_metadata
+    meta_entries = _get_metadata(project_path, media_type=media_type)
+    meta = next((e for e in meta_entries if e.get("filename") == filename), {})
+    media_id = str(meta.get("media_id") or "")
+
     # Write CSV
     fieldnames = [
         "Ignore",
@@ -206,6 +213,7 @@ def write_shotlist_csv(
         "end_time",
         "start_frame",
         "end_frame",
+        "shot_id",
         "Shot_Caption",
         "Scene_Caption",
     ]
@@ -215,13 +223,16 @@ def write_shotlist_csv(
         writer.writeheader()
         
         for shot in shots:
+            sf = shot["start_frame"]
+            ef = shot["end_frame"]
             writer.writerow({
                 "Ignore": "No",
                 "Scene": "0",
                 "start_time": format_timecode(shot["start"]),
                 "end_time": format_timecode(shot["end"]),
-                "start_frame": shot["start_frame"],
-                "end_frame": shot["end_frame"],
+                "start_frame": sf,
+                "end_frame": ef,
+                "shot_id": _build_shot_id(media_id, sf, ef) if media_id else "",
                 "Shot_Caption": "",
                 "Scene_Caption": "",
             })

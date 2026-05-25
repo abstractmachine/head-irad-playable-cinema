@@ -6,11 +6,11 @@ generation (``data/motif.py``) — one title per film, not one motif per shot.
 
 Storage schema
 --------------
-The title is cached as a standalone JSON file:
+The title is stored in the shared per-movie motif file:
 
-    <project>/data/film_motifs/<media_type>/<stem>.json
+    <project>/data/motifs/<media_type>/<stem>.json
 
-Schema::
+Under the ``"title"`` key (schema of that sub-object)::
 
     {
         "value":         "carrying",
@@ -19,6 +19,9 @@ Schema::
         "user_prompt":   "title-user-2026-05-22-v1.txt",
         "generated_at":  "2026-05-22T14:30:00+00:00"
     }
+
+The file also contains per-shot motifs under ``"shots"`` (managed by
+``data.motif``) and will eventually hold per-scene motifs under ``"scenes"``.
 
 Prompt discovery
 ----------------
@@ -32,10 +35,18 @@ selecting the most recent version by natural sort (same convention as
 
 Prompt variables
 ----------------
-``$title``         — original movie title (from metadata)
-``$year``          — movie year
-``$motif_history`` — complete ordered motif progression, one per line,
-                     derived from the shot annotation JSON
+``$title``            — original movie title (from metadata)
+``$year``             — movie year
+``$director``         — director name
+``$overview``         — plot overview / synopsis
+``$tagline``          — marketing tagline (may be empty)
+``$duration``         — runtime in minutes
+``$imdb``             — IMDb ID (e.g. tt0049475)
+``$tmdb``             — TMDB numeric ID
+``$title_candidates`` — newline-separated list of candidate fragments
+                        extracted deterministically from the movie title
+``$motif_history``    — complete ordered motif progression, one per line,
+                        derived from the per-movie motif file (``data/motifs/``)
 
 Normalization
 -------------
@@ -54,6 +65,176 @@ import string
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional, Tuple
+
+
+# ---------------------------------------------------------------------------
+# Candidate extraction
+# ---------------------------------------------------------------------------
+
+_ARTICLES: frozenset = frozenset({"a", "an", "the"})
+
+_FILLERS: frozenset = frozenset({
+    # conjunctions
+    "and", "or", "but", "nor", "yet", "so",
+    # common prepositions
+    "in", "on", "at", "to", "by", "of", "for", "with", "from",
+    "into", "onto", "upon", "under", "over", "through",
+    "between", "against", "about", "above", "below",
+    "behind", "before", "after", "during", "among", "around",
+    # forms of "to be"
+    "is", "are", "was", "were", "be", "been", "being", "am",
+    # versus / other connectors
+    "vs", "versus", "aka",
+})
+
+_NUMBER_WORDS: dict = {
+    1: "one", 2: "two", 3: "three", 4: "four", 5: "five",
+    6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten",
+    11: "eleven", 12: "twelve", 13: "thirteen", 14: "fourteen",
+    15: "fifteen", 16: "sixteen", 17: "seventeen", 18: "eighteen",
+    19: "nineteen", 20: "twenty",
+}
+
+_TOK_SPLIT = re.compile(r"[\s\-\u2013\u2014/:;!?\"'()\[\]]+")
+
+
+def _normalize_token(raw: str) -> str:
+    """Strip leading/trailing special chars and lowercase a single token."""
+    t = raw.strip(string.punctuation + "$\xa3\u20ac# \t")
+    t = t.replace(",", "").replace(".", "")
+    return t.lower()
+
+
+def _token_to_candidate(tok: str) -> str:
+    """Convert a normalised token to its canonical candidate form.
+
+    Small integers 1–20 are converted to English word form
+    (``3`` → ``"three"``).  Larger integers are kept as digit strings.
+    """
+    try:
+        n = int(tok)
+        return _NUMBER_WORDS.get(n, tok)
+    except ValueError:
+        return tok
+
+
+def extract_title_candidates(title: str) -> list:
+    """Extract deterministic fragment candidates from an original movie title.
+
+    Steps
+    -----
+    1. Tokenise on whitespace and common punctuation separators.
+    2. Normalise each token (strip special chars, lowercase).
+    3. Convert small integer tokens (1–20) to English word forms.
+    4. Discard articles and filler words.
+    5. Find consecutive runs of kept tokens in the original sequence;
+       runs of length \u22652 become additional compound candidates.
+    6. Return deduplicated, order-preserving list (singles first, then compounds).
+
+    Examples::
+
+        "A Bullet Is Waiting"          \u2192 ["bullet", "waiting"]
+        "3 Godfathers"                 \u2192 ["three", "godfathers", "three godfathers"]
+        "$10,000 for a Massacre"       \u2192 ["10000", "massacre"]
+        "Bad Day at Black Rock"        \u2192 ["bad", "day", "black", "rock", "bad day", "black rock"]
+        "Billy the Kid Versus Dracula" \u2192 ["billy", "kid", "dracula"]
+        "Fort Massacre"                \u2192 ["fort", "massacre", "fort massacre"]
+    """
+    raw_tokens = [t for t in _TOK_SPLIT.split(title) if t]
+
+    normalized = []
+    for raw in raw_tokens:
+        n = _normalize_token(raw)
+        if n:
+            normalized.append(_token_to_candidate(n))
+
+    kept_mask = [
+        t not in _ARTICLES and t not in _FILLERS and len(t) >= 1
+        for t in normalized
+    ]
+    kept_tokens = [t for t, keep in zip(normalized, kept_mask) if keep]
+
+    # Compound candidates: consecutive runs of kept tokens
+    compounds: list = []
+    run: list = []
+    for tok, keep in zip(normalized, kept_mask):
+        if keep:
+            run.append(tok)
+        else:
+            if len(run) >= 2:
+                compounds.append(" ".join(run))
+            run = []
+    if len(run) >= 2:
+        compounds.append(" ".join(run))
+
+    seen: set = set()
+    result: list = []
+    for t in kept_tokens + compounds:
+        if t and t not in seen:
+            seen.add(t)
+            result.append(t)
+    return result
+
+
+def validate_generated_title(
+    candidates: list,
+    value: str,
+) -> tuple:
+    """Validate a model-generated title against the extracted candidate list.
+
+    Returns ``(final_value, used_fallback)``.
+
+    Acceptance rules (checked in order)
+    ------------------------------------
+    1. Exact match with any candidate \u2192 accept.
+    2. Value is a single word that appears inside a compound candidate \u2192 accept.
+    3. A single-word candidate appears in the value\u2019s word-set
+       (model wrapped it in articles/prepositions) \u2192 collapse to that candidate.
+    4. Fallback: choose the highest-scoring candidate.
+
+    Scoring heuristic
+    -----------------
+    Non-numeric words score their character length.
+    Numeric strings score 0 (prefer word residues over bare numbers).
+    """
+    if not candidates:
+        return value or "\u2014", False
+
+    if not value:
+        return _best_candidate(candidates), True
+
+    # 1. Exact match
+    if value in candidates:
+        return value, False
+
+    # 2. Value is a word inside a compound candidate
+    for c in candidates:
+        if " " in c and value in c.split():
+            return value, False
+
+    # 3. Single-word candidate found in value’s words
+    value_words = set(value.split())
+    for c in candidates:
+        if " " not in c and c in value_words:
+            return c, True
+
+    # 4. Fallback
+    return _best_candidate(candidates), True
+
+
+def _best_candidate(candidates: list) -> str:
+    """Return the highest-scoring candidate from the list.
+
+    Prefers longer non-numeric words; numeric strings score 0.
+    """
+    def _score(c: str) -> int:
+        try:
+            int(c)
+            return 0
+        except ValueError:
+            return len(c)
+
+    return max(candidates, key=_score) if candidates else "\u2014"
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +260,8 @@ def find_latest_title_prompt(project_path: str, prefix: str) -> Optional[Path]:
     if not d.exists() or not d.is_dir():
         return None
     pattern = f"title-{prefix}-*.txt"
-    files = [p for p in d.glob(pattern) if p.is_file()]
+    # Skip zero-byte files (often in-progress drafts that haven't been written yet)
+    files = [p for p in d.glob(pattern) if p.is_file() and p.stat().st_size > 0]
     if not files:
         return None
     files.sort(key=_natural_sort_key, reverse=True)
@@ -201,31 +383,56 @@ def normalize_film_title(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Cache path helpers
+# Path helpers
 # ---------------------------------------------------------------------------
-
-def get_film_motif_path(project_path: str, filename: str, media_type: str) -> Path:
-    """Return the canonical cache path for a film motif JSON.
-
-    ``<project>/data/film_motifs/<media_type>/<stem>.json``
-    """
-    stem = Path(filename).stem
-    return Path(project_path) / "data" / "film_motifs" / media_type / f"{stem}.json"
-
 
 def load_film_motif(
     project_path: str,
     filename: str,
     media_type: str,
 ) -> Optional[dict]:
-    """Load a cached film motif dict, or ``None`` if not yet generated."""
-    path = get_film_motif_path(project_path, filename, media_type)
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
+    """Load the cached film-level title motif dict, or ``None`` if not yet generated.
+
+    Reads from the shared motif file at
+    ``<project>/data/motifs/<media_type>/<stem>.json``
+    and returns the ``"title"`` sub-object.
+    """
+    from data.motif import load_motif_doc
+    doc = load_motif_doc(project_path, filename, media_type)
+    title = doc.get("title")
+    return title if isinstance(title, dict) and title.get("value", "").strip() else None
+
+
+def set_film_title(
+    project_path: str,
+    filename: str,
+    media_type: str,
+    value: str,
+) -> dict:
+    """Manually set the film title motif value, bypassing AI generation.
+
+    Saves the value directly into the motif doc as a manual override and
+    returns the new title motif dict.
+    """
+    import datetime
+    from data.motif import load_motif_doc, save_motif_doc
+
+    value = value.strip()
+    if not value:
+        raise ValueError("Title value must not be empty")
+
+    motif_doc = load_motif_doc(project_path, filename, media_type)
+    title_motif = {
+        "value": value,
+        "model": "manual",
+        "provenance": {
+            "method": "manual_override",
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        },
+    }
+    motif_doc["title"] = title_motif
+    save_motif_doc(project_path, filename, media_type, motif_doc)
+    return title_motif
 
 
 # ---------------------------------------------------------------------------
@@ -271,59 +478,67 @@ def generate_film_title(
     FileNotFoundError: If the annotation JSON does not exist.
     ValueError:        If no motifs are found in the annotation JSON.
     """
-    from data.annotate import get_annotation_json_path, _load_text_generation_pipeline
+    from data.annotate import _load_text_generation_pipeline
     from data.metadata import get_metadata
-    from data.motif import motif_history_text
+    from data.motif import load_motif_doc, save_motif_doc, motif_history_from_doc
 
-    # Short-circuit if already cached and not forcing
-    cache_path = get_film_motif_path(project_path, filename, media_type)
-    if cache_path.exists() and not force:
-        try:
-            existing = json.loads(cache_path.read_text(encoding="utf-8"))
-            if existing.get("value", "").strip():
-                if verbose:
-                    print(
-                        f"  skip  {Path(filename).stem}: "
-                        f"film title already exists ({existing['value']})"
-                    )
-                return existing
-        except Exception:
-            pass  # fall through to regenerate
+    # Load the shared motif doc
+    motif_doc = load_motif_doc(project_path, filename, media_type)
 
-    # Load annotation entries
-    json_path = get_annotation_json_path(project_path, filename, media_type)
-    if not json_path.exists():
-        raise FileNotFoundError(
-            f"No annotation JSON found: {json_path}\n"
-            f"  Run: crossing annotate shot --movie '{filename}' first."
-        )
-    entries: list = json.loads(json_path.read_text(encoding="utf-8"))
+    # Short-circuit if title already generated and not forcing
+    existing_title = motif_doc.get("title")
+    if not force and isinstance(existing_title, dict) and existing_title.get("value", "").strip():
+        if verbose:
+            print(
+                f"  skip  {Path(filename).stem}: "
+                f"film title already exists ({existing_title['value']})"
+            )
+        return existing_title
 
-    # Build motif history from annotations
-    motif_history = motif_history_text(entries)
+    # Build motif history from per-shot motifs in the motif doc
+    motif_history = motif_history_from_doc(motif_doc)
     if not motif_history.strip():
         raise ValueError(
-            f"No motifs found in annotation JSON for '{filename}'.\n"
+            f"No shot motifs found for '{filename}'.\n"
             f"  Run: crossing generate motif --movie '{filename}' first."
         )
 
     # Movie metadata
     meta_entries = get_metadata(project_path, media_type=media_type)
     meta = next((e for e in meta_entries if e.get("filename") == filename), {})
-    title = meta.get("title") or Path(filename).stem
-    year  = str(meta.get("year") or "")
+    title    = meta.get("title")    or Path(filename).stem
+    year     = str(meta.get("year")      or "")
+    director = str(meta.get("director")  or "")
+    overview = str(meta.get("overview")  or "")
+    tagline  = str(meta.get("tagline")   or "")
+    duration = str(meta.get("duration")  or "")
+    imdb     = str(meta.get("imdb")      or "")
+    tmdb     = str(meta.get("tmdb")      or "")
+
+    # Extract deterministic title fragment candidates
+    candidates      = extract_title_candidates(title)
+    candidates_text = "\n".join(candidates)
 
     # Load prompts
     system_text, user_text, system_filename, user_filename = load_title_prompts(
         project_path, system_prompt_file, user_prompt_file
     )
 
-    # Substitute variables
-    filled_user = _substitute_variables(user_text, {
-        "title":         title,
-        "year":          year,
-        "motif_history": motif_history,
-    })
+    # Substitute variables — all metadata + candidates available in both prompts
+    _vars = {
+        "title":            title,
+        "year":             year,
+        "director":         director,
+        "overview":         overview,
+        "tagline":          tagline,
+        "duration":         duration,
+        "imdb":             imdb,
+        "tmdb":             tmdb,
+        "title_candidates": candidates_text,
+        "motif_history":    motif_history,
+    }
+    filled_system = _substitute_variables(system_text, _vars)
+    filled_user   = _substitute_variables(user_text,   _vars)
 
     # Load pipeline if not provided
     if pipeline is None:
@@ -334,7 +549,7 @@ def generate_film_title(
     # Generate
     from data.annotate import _call_model
     messages = [
-        {"role": "system", "content": system_text},
+        {"role": "system", "content": filled_system},
         {"role": "user",   "content": filled_user},
     ]
     overrides = {"max_new_tokens": 32, "do_sample": False}
@@ -342,9 +557,8 @@ def generate_film_title(
         pipeline, messages, overrides=overrides, images=None
     )
 
-    value = normalize_film_title(raw)
-    if not value:
-        value = normalize_film_title(_full)
+    raw_value = normalize_film_title(raw) or normalize_film_title(_full) or ""
+    value, used_fallback = validate_generated_title(candidates, raw_value)
     if not value:
         value = "—"
 
@@ -358,14 +572,14 @@ def generate_film_title(
             .replace(microsecond=0)
             .isoformat()
         ),
+        "candidates":    candidates,
+        "raw_output":    raw_value,
+        "fallback":      used_fallback,
     }
 
-    # Write cache
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_text(
-        json.dumps(film_motif, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    # Write title into the shared motif doc
+    motif_doc["title"] = film_motif
+    save_motif_doc(project_path, filename, media_type, motif_doc)
 
     if verbose:
         print(f"  → {title}: {value}")
@@ -398,7 +612,8 @@ def generate_film_titles_for_all_movies(
     dict with ``processed``, ``skipped``, ``failed``.
     """
     from data.metadata import get_metadata
-    from data.annotate import get_annotation_json_path, _load_text_generation_pipeline
+    from data.annotate import _load_text_generation_pipeline
+    from data.motif import load_motif_doc, motif_history_from_doc
 
     meta_entries = get_metadata(project_path, media_type=media_type)
 
@@ -409,19 +624,15 @@ def generate_film_titles_for_all_movies(
         fn = meta.get("filename")
         if not fn:
             continue
-        jp = get_annotation_json_path(project_path, fn, media_type)
-        if not jp.exists():
+        # Skip if no shot motifs have been generated yet (nothing to summarise)
+        motif_doc = load_motif_doc(project_path, fn, media_type)
+        if not motif_history_from_doc(motif_doc):
             continue
         if not force:
-            cache = get_film_motif_path(project_path, fn, media_type)
-            if cache.exists():
-                try:
-                    existing = json.loads(cache.read_text(encoding="utf-8"))
-                    if existing.get("value", "").strip():
-                        skippable.append(fn)
-                        continue
-                except Exception:
-                    pass
+            existing_title = motif_doc.get("title")
+            if isinstance(existing_title, dict) and existing_title.get("value", "").strip():
+                skippable.append(fn)
+                continue
         needs_work.append(fn)
 
     if not needs_work:

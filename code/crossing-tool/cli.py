@@ -1597,6 +1597,8 @@ def _shotlist_migrate(args):
             print(f"    Renamed:  {old}")
         if dropped:
             print(f"    Dropped:  {dropped}")
+        if r.get("added_shot_id"):
+            print(f"    Added:    shot_id")
         print(f"    Shots: {r['shot_count']}")
 
     for r in current:
@@ -3633,8 +3635,24 @@ def cmd_film_title(args):
     from data.film_motif import (
         generate_film_title,
         generate_film_titles_for_all_movies,
+        set_film_title,
     )
     from data.shotlist import resolve_filename
+
+    # Manual override: --set VALUE --movie <title>
+    set_value = getattr(args, "set", None)
+    if set_value is not None:
+        if not movie:
+            print("✗ film-title --set: specify --movie", file=sys.stderr)
+            sys.exit(1)
+        try:
+            filename = resolve_filename(project_path, None, movie, media_type)
+        except Exception as exc:
+            print(f"✗ Could not resolve movie: {exc}", file=sys.stderr)
+            sys.exit(1)
+        result = set_film_title(project_path, filename, media_type, set_value)
+        print(f"✓ {result['value']}  ({filename})")
+        return
 
     if do_all:
         print(f"Generating film titles for all {media_type}…")
@@ -5622,6 +5640,10 @@ def build_parser():
     p_film_title.add_argument(
         "--force", action="store_true",
         help="Regenerate even if a cached title already exists",
+    )
+    p_film_title.add_argument(
+        "--set", default=None, metavar="VALUE",
+        help="Manually set the film title motif to VALUE (skips AI generation; requires --movie)",
     )
     _add_verbose_arg(p_film_title, help="Print per-movie progress")
     _add_notify_args(p_film_title)

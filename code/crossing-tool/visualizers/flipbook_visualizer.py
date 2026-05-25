@@ -36,12 +36,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from styles import theme
 from styles.theme import save_window_geometry, restore_window_geometry
 
-from PyQt5.QtCore import Qt, QSize
+from PyQt5.QtCore import Qt, QEvent, QSize
 from PyQt5.QtWidgets import (
     QApplication,
     QComboBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -165,9 +166,7 @@ class _PageCell(QWidget):
         cell_w = self.width()
         cell_h = self.height()
 
-        # Back cover shows only the background color in the thumbnail.
-        # Front cover and shot pages render their text.
-        if text and kind != "cover_back":
+        if text:
             # Start with a pixel size of 40% of cell height, then scale
             # down proportionally if the word is wider than 80% of cell width.
             target_px = max(6, int(cell_h * 0.40))
@@ -330,6 +329,25 @@ class FlipbookVisualizerWindow(QMainWindow):
         self._combo.currentIndexChanged.connect(self._on_combo_changed)
         bar.addWidget(self._combo, 1)
 
+        title_lbl = QLabel("Title:")
+        title_lbl.setStyleSheet(
+            f"color: {theme.TEXT}; font-family: '{theme.FAMILY_UI}';"
+            f" font-size: {theme.BASE_PT}pt;"
+        )
+        bar.addWidget(title_lbl)
+
+        self._title_edit = QLineEdit()
+        self._title_edit.setPlaceholderText("Film title motif — press Enter to save")
+        self._title_edit.setStyleSheet(
+            f"color: {theme.TEXT}; font-family: '{theme.FAMILY_UI}';"
+            f" font-size: {theme.BASE_PT}pt;"
+            f" background: {theme.CANVAS_BG}; border: 1px solid {theme.TEXT_DIM};"
+            f" padding: 2px 6px;"
+        )
+        self._title_edit.returnPressed.connect(self._on_title_edited)
+        self._title_edit.installEventFilter(self)
+        bar.addWidget(self._title_edit, 2)
+
         self._status_label = QLabel("")
         self._status_label.setStyleSheet(
             f"color: {theme.TEXT_DIM}; font-family: '{theme.FAMILY_UI}';"
@@ -445,9 +463,42 @@ class FlipbookVisualizerWindow(QMainWindow):
         )
         self._grid.load_pages(pages)
 
+        # Populate the title edit with the current film title motif value
+        film_motif = data.get("film_motif") or {}
+        current_title = film_motif.get("value", "").strip() or data.get("title", "")
+        self._title_edit.blockSignals(True)
+        self._title_edit.setText(current_title)
+        self._title_edit.setPlaceholderText(data.get("title", "") or "Film title motif")
+        self._title_edit.blockSignals(False)
+
         self._updating_combo = True
         self._combo.setCurrentIndex(idx)
         self._updating_combo = False
+
+    # ------------------------------------------------------------------
+    # Title edit
+
+    def _on_title_edited(self) -> None:
+        """Save the edited film title motif and reload the current movie."""
+        value = self._title_edit.text().strip()
+        if not value or not self._books:
+            return
+        idx = self._current_idx
+        label, data = self._books[idx]
+        filename = data.get("filename", "")
+        if not filename:
+            return
+        try:
+            from data.film_motif import set_film_title
+            set_film_title(self._project_path, filename, self._media_type, value)
+            # Force reload so the front cover reflects the new value
+            data["loaded"] = False
+            self._books[idx] = (label, data)
+            self._show_movie(idx)
+        except Exception as exc:
+            self._status_label.setText(f"Error saving title: {exc}")
+        finally:
+            self.setFocus()
 
     # ------------------------------------------------------------------
     # PDF export
@@ -495,6 +546,14 @@ class FlipbookVisualizerWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Signal handlers
 
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        """Intercept Tab/Backtab on the title edit to save and return focus."""
+        if obj is self._title_edit and event.type() == QEvent.KeyPress:
+            if event.key() in (Qt.Key_Tab, Qt.Key_Backtab):
+                self._on_title_edited()
+                return True
+        return super().eventFilter(obj, event)
+
     def _on_combo_changed(self, idx: int) -> None:
         if self._updating_combo:
             return
@@ -517,10 +576,15 @@ class FlipbookVisualizerWindow(QMainWindow):
             self._on_export_pdf()
             return
 
-        if key == Qt.Key_Home:
+        if key == Qt.Key_Tab:
+            self._title_edit.setFocus()
+            self._title_edit.selectAll()
+            return
+
+        if key in (Qt.Key_Home, Qt.Key_PageUp):
             if self._current_idx > 0:
                 self._show_movie(self._current_idx - 1)
-        elif key == Qt.Key_End:
+        elif key in (Qt.Key_End, Qt.Key_PageDown):
             if self._current_idx < len(self._books) - 1:
                 self._show_movie(self._current_idx + 1)
         else:
