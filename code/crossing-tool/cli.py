@@ -1088,6 +1088,21 @@ def cmd_search(args):
         _search_cooccurrence_cmd(args)
         return
 
+    # Dispatch: `crossing search frames <query>` — retrieve frame thumbnails
+    if args.query == "frames":
+        _search_frames_cmd(args)
+        return
+
+    # Dispatch: `crossing search palette-frames` — palette-filtered thumbnails
+    if args.query == "palette-frames":
+        _search_palette_frames_cmd(args)
+        return
+
+    # Dispatch: `crossing search motif-frames <motif>` — motif-matched thumbnails
+    if args.query == "motif-frames":
+        _search_motif_frames_cmd(args)
+        return
+
     from services.search import search_shots
 
     scopes = (args.scope or []) + (getattr(args, "movie", None) or [])
@@ -1586,6 +1601,8 @@ def cmd_shotlist(args):
         _shotlist_migrate(args)
     elif sub == "context":
         _shotlist_context(args)
+    elif sub == "context-frames":
+        _shotlist_context_frames(args)
 
 
 def _shotlist_migrate(args):
@@ -5288,6 +5305,215 @@ def _search_palette_cmd(args):
     print(json.dumps(result, indent=2))
 
 
+def _save_frames_to_dir(frames: list, save_dir: str, label: str = "frame") -> list[str]:
+    """Save frame dicts to *save_dir* as JPEG files.  Returns list of written paths."""
+    import os
+    os.makedirs(save_dir, exist_ok=True)
+    paths = []
+    for i, f in enumerate(frames):
+        stem = f.get("shot_id", f"{label}-{i:04d}").replace("/", "_").replace(":", "_")
+        out = Path(save_dir) / f"{stem}.jpg"
+        out.write_bytes(f["image_data"])
+        paths.append(str(out))
+    return paths
+
+
+def _search_frames_cmd(args):
+    """Handle: crossing search frames <query> [options]."""
+    from services.frame_retrieval import retrieve_frames_for_query
+    project_path = prefs.get("path")
+    media_type = getattr(args, "media", "movies")
+    remaining = args.scope or []
+    # First token after 'frames' is the query; remaining are film filters.
+    if not remaining:
+        print("error: 'search frames' requires a query string", file=sys.stderr)
+        print("  crossing search frames <query> [--movie FILM] [--limit 4] [--width 400] [--save-dir DIR]", file=sys.stderr)
+        sys.exit(1)
+    query = remaining[0]
+    films = remaining[1:] + (getattr(args, "movie", None) or []) or None
+    limit = getattr(args, "limit", None) or 4
+    width = getattr(args, "width", 400) or 400
+    save_dir = getattr(args, "save_dir", None)
+
+    frames = retrieve_frames_for_query(
+        project_path, query,
+        films=films,
+        field=getattr(args, "field", None),
+        limit=limit,
+        media_type=media_type,
+        width=width,
+    )
+    if not frames:
+        print(f"No frames found for query {query!r}.", file=sys.stderr)
+        sys.exit(1)
+
+    if save_dir:
+        paths = _save_frames_to_dir(frames, save_dir, label="frame")
+        summaries = [
+            {**{k: v for k, v in f.items() if k != "image_data"}, "saved_path": p}
+            for f, p in zip(frames, paths)
+        ]
+    else:
+        summaries = [{k: v for k, v in f.items() if k != "image_data"} for f in frames]
+
+    if getattr(args, "json", False):
+        print(json.dumps(summaries, indent=2, default=str))
+    else:
+        for s in summaries:
+            path_label = f"  → {s.get('saved_path')}" if save_dir else ""
+            print(f"  {s['film_title']}  {s['shot_id']}  {s['start_time']} → {s['end_time']}{path_label}")
+        if not save_dir:
+            print(f"\n({len(frames)} frame(s) retrieved — use --save-dir DIR to write JPEG files)")
+
+
+def _search_palette_frames_cmd(args):
+    """Handle: crossing search palette-frames [filter flags]."""
+    from services.frame_retrieval import retrieve_palette_frames
+    project_path = prefs.get("path")
+    media_type = getattr(args, "media", "movies")
+    remaining = args.scope or []
+    films = list(remaining) + (getattr(args, "movie", None) or []) or None
+    limit = getattr(args, "limit", None) or 4
+    width = getattr(args, "width", 400) or 400
+    save_dir = getattr(args, "save_dir", None)
+
+    lum_min = getattr(args, "luminance_min", None)
+    lum_max = getattr(args, "luminance_max", None)
+    chr_min = getattr(args, "chroma_min", None)
+    chr_max = getattr(args, "chroma_max", None)
+
+    frames = retrieve_palette_frames(
+        project_path,
+        films=films, media_type=media_type, limit=limit, width=width,
+        warm=getattr(args, "warm", False),
+        cold=getattr(args, "cold", False),
+        dark=getattr(args, "dark", False),
+        bright=getattr(args, "bright", False),
+        low_chroma=getattr(args, "low_chroma", False),
+        high_chroma=getattr(args, "high_chroma", False),
+        foreground_only=getattr(args, "foreground_only", False),
+        background_only=getattr(args, "background_only", False),
+        luminance_min=lum_min,
+        luminance_max=lum_max,
+        chroma_min=chr_min,
+        chroma_max=chr_max,
+    )
+    if not frames:
+        print("No frames found matching palette filters.", file=sys.stderr)
+        sys.exit(1)
+
+    if save_dir:
+        paths = _save_frames_to_dir(frames, save_dir, label="palette-frame")
+        summaries = [
+            {**{k: v for k, v in f.items() if k != "image_data"}, "saved_path": p}
+            for f, p in zip(frames, paths)
+        ]
+    else:
+        summaries = [{k: v for k, v in f.items() if k != "image_data"} for f in frames]
+
+    if getattr(args, "json", False):
+        print(json.dumps(summaries, indent=2, default=str))
+    else:
+        for s in summaries:
+            meta = s.get("metadata", {})
+            path_label = f"  → {s.get('saved_path')}" if save_dir else ""
+            print(f"  {s['film_title']}  {s['shot_id']}  lum={meta.get('luminance', '?')}  chroma={meta.get('chroma', '?')}{path_label}")
+        if not save_dir:
+            print(f"\n({len(frames)} frame(s) retrieved — use --save-dir DIR to write JPEG files)")
+
+
+def _search_motif_frames_cmd(args):
+    """Handle: crossing search motif-frames <motif> [options]."""
+    from services.frame_retrieval import retrieve_motif_frames
+    project_path = prefs.get("path")
+    media_type = getattr(args, "media", "movies")
+    remaining = args.scope or []
+    if not remaining:
+        print("error: 'search motif-frames' requires a motif word", file=sys.stderr)
+        print("  crossing search motif-frames <motif> [--movie FILM] [--limit 4] [--save-dir DIR]", file=sys.stderr)
+        sys.exit(1)
+    motif = remaining[0]
+    films = remaining[1:] + (getattr(args, "movie", None) or []) or None
+    limit = getattr(args, "limit", None) or 4
+    width = getattr(args, "width", 400) or 400
+    save_dir = getattr(args, "save_dir", None)
+
+    frames = retrieve_motif_frames(
+        project_path, motif,
+        films=films, media_type=media_type, limit=limit, width=width,
+    )
+    if not frames:
+        print(f"No frames found for motif {motif!r}.", file=sys.stderr)
+        sys.exit(1)
+
+    if save_dir:
+        paths = _save_frames_to_dir(frames, save_dir, label="motif-frame")
+        summaries = [
+            {**{k: v for k, v in f.items() if k != "image_data"}, "saved_path": p}
+            for f, p in zip(frames, paths)
+        ]
+    else:
+        summaries = [{k: v for k, v in f.items() if k != "image_data"} for f in frames]
+
+    if getattr(args, "json", False):
+        print(json.dumps(summaries, indent=2, default=str))
+    else:
+        for s in summaries:
+            meta = s.get("metadata", {})
+            path_label = f"  → {s.get('saved_path')}" if save_dir else ""
+            print(f"  {s['film_title']}  {s['shot_id']}  motif={meta.get('motif', '?')}{path_label}")
+        if not save_dir:
+            print(f"\n({len(frames)} frame(s) retrieved — use --save-dir DIR to write JPEG files)")
+
+
+def _shotlist_context_frames(args):
+    """Handle: crossing shotlist context-frames <film> <shot_id> [options]."""
+    from services.frame_retrieval import retrieve_context_frames
+    project_path = prefs.get("path")
+    media_type = getattr(args, "media", "movies")
+    film = getattr(args, "film", None) or getattr(args, "filename", None)
+    shot_id = getattr(args, "shot_id", None)
+    if not film or not shot_id:
+        print("error: shotlist context-frames requires film and shot_id", file=sys.stderr)
+        sys.exit(1)
+    window = getattr(args, "window", 3)
+    width = getattr(args, "width", 400) or 400
+    save_dir = getattr(args, "save_dir", None)
+
+    try:
+        frames = retrieve_context_frames(
+            project_path, film, shot_id,
+            window=window, media_type=media_type, width=width,
+        )
+    except ValueError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if not frames:
+        print("No frames could be retrieved for this context window.", file=sys.stderr)
+        sys.exit(1)
+
+    if save_dir:
+        paths = _save_frames_to_dir(frames, save_dir, label="context-frame")
+        summaries = [
+            {**{k: v for k, v in f.items() if k != "image_data"}, "saved_path": p}
+            for f, p in zip(frames, paths)
+        ]
+    else:
+        summaries = [{k: v for k, v in f.items() if k != "image_data"} for f in frames]
+
+    if getattr(args, "json", False):
+        print(json.dumps(summaries, indent=2, default=str))
+    else:
+        for s in summaries:
+            meta = s.get("metadata", {})
+            center_marker = "→" if meta.get("is_center") else " "
+            path_label = f"  → {s.get('saved_path')}" if save_dir else ""
+            print(f"{center_marker} {s['shot_id']}  {s['start_time']} → {s['end_time']}{path_label}")
+        if not save_dir:
+            print(f"\n({len(frames)} frame(s) retrieved — use --save-dir DIR to write JPEG files)")
+
+
 def _search_cooccurrence_cmd(args):
     """Handle: crossing search cooccurrence --terms A B [options]."""
     from services.analysis import search_cooccurrence
@@ -6434,6 +6660,12 @@ def build_parser():
                           help="(palette) minimum chroma threshold (0–1)")
     p_search.add_argument("--chroma-max", dest="chroma_max", type=float, default=None,
                           help="(palette) maximum chroma threshold (0–1)")
+    p_search.add_argument("--width", type=int, default=400, metavar="PX",
+                          help="(frames mode) thumbnail width in pixels (default: 400)")
+    p_search.add_argument("--save-dir", dest="save_dir", default=None, metavar="DIR",
+                          help="(frames mode) directory to save retrieved JPEG thumbnails")
+    p_search.add_argument("--json", action="store_true",
+                          help="(frames mode) output metadata as JSON instead of human-readable text")
     _add_media_arg(p_search)
     p_search.set_defaults(func=cmd_search)
 
@@ -6503,6 +6735,15 @@ def build_parser():
                               help="Attach dominant fg/bg colour to each shot")
     p_sl_context.add_argument("--json", action="store_true", help="Output raw JSON")
     _add_media_arg(p_sl_context)
+
+    p_sl_context_frames = shotlist_sub.add_parser("context-frames", help="Retrieve frame thumbnails for a shot and its neighbors")
+    p_sl_context_frames.add_argument("film", help="Film title substring, filename, or TMDb ID")
+    p_sl_context_frames.add_argument("shot_id", help="Canonical shot identifier (or integer index)")
+    p_sl_context_frames.add_argument("--window", type=int, default=3, help="Shots to show on each side (default: 3)")
+    p_sl_context_frames.add_argument("--width", type=int, default=400, help="Thumbnail width in pixels (default: 400)")
+    p_sl_context_frames.add_argument("--save-dir", dest="save_dir", default=None, metavar="DIR", help="Directory to save JPEG thumbnails")
+    p_sl_context_frames.add_argument("--json", action="store_true", help="Output metadata as JSON")
+    _add_media_arg(p_sl_context_frames)
 
     # media subtitle
     p_subtitle = media_sub.add_parser("subtitle", help="Download and list subtitles")

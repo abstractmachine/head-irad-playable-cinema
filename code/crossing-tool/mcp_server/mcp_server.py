@@ -38,6 +38,10 @@ Tier 1 — Read access (9 tools):
   list_motifs, list_palettes, list_silhouettes,
   search_shots, search_vocabulary
 
+Tier 1 — Image retrieval (5 tools, return JPEG thumbnails directly):
+  get_best_frame, get_best_frames, get_palette_frames,
+  get_motif_frames, get_context_frames
+
 Tier 2 — Generation, writes to output/ only (5 tools):
   generate_flipbook, generate_mosaic, generate_cloud,
   generate_composition, generate_catalog
@@ -63,6 +67,15 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+# ---------------------------------------------------------------------------
+# Silence model-loading noise that would corrupt the JSON-RPC stdio transport.
+# Must be set before any third-party library is imported.
+# ---------------------------------------------------------------------------
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+os.environ.setdefault("HF_HUB_VERBOSITY", "error")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 
 # ---------------------------------------------------------------------------
 # Ensure the package root is importable when run directly.
@@ -149,14 +162,24 @@ mcp = FastMCP("crossing")
 # ===========================================================================
 
 @mcp.tool()
-def list_movies(media_type: str = "movies") -> str:
+def list_movies(
+    media_type: str = "movies",
+    compact: bool = False,
+    limit: int = 0,
+    offset: int = 0,
+) -> str:
     """List all films in the archive with their metadata.
 
-    Returns a summary list of every film: title, year, tmdb id, filename,
-    media_id, runtime, director, and annotation/shotlist availability flags.
+    Returns a summary list of every film. By default includes title, year,
+    tmdb id, filename, media_id, runtime, director, and availability flags.
+    Use compact=True for a minimal listing (title, year, filename, media_id
+    only). Use limit/offset for pagination.
 
     Args:
         media_type: "movies" (default) or "gameplay".
+        compact:    Return minimal fields only (default False).
+        limit:      Max films to return (0 = no limit).
+        offset:     Skip this many films before returning (0 = no skip).
 
     Read-only. Reads: data/metadata/<media_type>.json
     """
@@ -193,7 +216,22 @@ def list_movies(media_type: str = "movies") -> str:
                 "has_motifs":  get_motif_path(project_path, filename, media_type).exists() if filename else False,
             })
 
-        return _ok(media_type=media_type, count=len(summary), movies=summary)
+        total = len(summary)
+        if compact:
+            summary = [
+                {
+                    "title":    e["title"],
+                    "year":     e["year"],
+                    "filename": e["filename"],
+                    "media_id": e["media_id"],
+                }
+                for e in summary
+            ]
+        if offset:
+            summary = summary[offset:]
+        if limit:
+            summary = summary[:limit]
+        return _ok(media_type=media_type, total=total, count=len(summary), movies=summary)
 
     except Exception as exc:
         return _err(str(exc), traceback.format_exc())
@@ -235,16 +273,24 @@ def get_shotlist(
     film: str,
     media_type: str = "movies",
     scene: str = "",
+    compact: bool = False,
+    limit: int = 0,
+    offset: int = 0,
 ) -> str:
     """Get the shot list for one film.
 
-    Returns all shots with timecodes, frame numbers, shot_id, and captions.
-    Optionally filter to a single scene number.
+    Returns shots with timecodes, frame numbers, shot_id, and captions.
+    Optionally filter to a single scene number, paginate with limit/offset,
+    or request compact mode (shot_id + times + Scene only).
 
     Args:
         film:       Title substring, exact filename, or numeric TMDb ID.
         media_type: "movies" (default) or "gameplay".
         scene:      Scene number to filter to (e.g. "3"). Empty = all scenes.
+        compact:    Return minimal fields only: shot_id, start_time, end_time,
+                    Scene (default False).
+        limit:      Max shots to return (0 = no limit).
+        offset:     Skip this many shots before returning (0 = no skip).
 
     Read-only. Reads: data/shotlists/<media_type>/<stem>.csv
     """
@@ -270,12 +316,30 @@ def get_shotlist(
         if scene:
             shots = [s for s in shots if str(s.get("Scene", "")) == scene]
 
+        total_shots = len(shots)
+        if compact:
+            shots = [
+                {
+                    "shot_id":    s.get("shot_id", ""),
+                    "start_time": s.get("start_time", ""),
+                    "end_time":   s.get("end_time", ""),
+                    "Scene":      s.get("Scene", ""),
+                }
+                for s in shots
+            ]
+        if offset:
+            shots = shots[offset:]
+        if limit:
+            shots = shots[:limit]
+
         return _ok(
             title=entry.get("title", ""),
             filename=filename,
             media_type=media_type,
-            total_shots=len(shots),
+            total_shots=total_shots,
+            returned=len(shots),
             scene_filter=scene or None,
+            compact=compact,
             shots=shots,
         )
 
@@ -291,6 +355,8 @@ def get_subtitles(
     media_type: str = "movies",
     start_secs: float = 0.0,
     end_secs: float = 0.0,
+    limit: int = 0,
+    offset: int = 0,
 ) -> str:
     """Get subtitle cues for one film, optionally within a time window.
 
@@ -299,6 +365,8 @@ def get_subtitles(
         media_type: "movies" (default) or "gameplay".
         start_secs: Window start in seconds (0 = from beginning).
         end_secs:   Window end in seconds (0 = to end of film).
+        limit:      Max cues to return (0 = no limit).
+        offset:     Skip this many cues before returning (0 = no skip).
 
     Read-only. Reads: media/subtitles/<media_type>/<stem>.srt
     """
@@ -334,11 +402,17 @@ def get_subtitles(
             {"start_secs": c.start_secs, "end_secs": c.end_secs, "text": c.text}
             for c in cues
         ]
+        total_cues = len(cue_list)
+        if offset:
+            cue_list = cue_list[offset:]
+        if limit:
+            cue_list = cue_list[:limit]
         return _ok(
             title=entry.get("title", ""),
             filename=filename,
             subtitle_path=str(srt_path),
-            cue_count=len(cue_list),
+            total_cues=total_cues,
+            returned=len(cue_list),
             window={"start_secs": start_secs, "end_secs": end_secs} if (start_secs or end_secs) else None,
             cues=cue_list,
         )
@@ -351,15 +425,19 @@ def get_subtitles(
 def list_motifs(
     film: str,
     media_type: str = "movies",
+    include_full_shots: bool = False,
 ) -> str:
     """Get the motif word sequence for one film.
 
-    Returns the per-shot motif progression plus the film-level semantic title
-    if one has been generated.
+    Returns the ordered per-shot motif word list and the film-level semantic
+    title. By default only the word list is returned (compact). Pass
+    include_full_shots=True for the complete per-shot motif objects (includes
+    model scores, timing, etc.).
 
     Args:
-        film:       Title substring, exact filename, or numeric TMDb ID.
-        media_type: "movies" (default) or "gameplay".
+        film:               Title substring, exact filename, or numeric TMDb ID.
+        media_type:         "movies" (default) or "gameplay".
+        include_full_shots: Include full per-shot motif objects (default False).
 
     Read-only. Reads: data/motifs/<media_type>/<stem>.json
     """
@@ -390,7 +468,7 @@ def list_motifs(
             film_title=doc.get("title"),
             shot_count=len(shots),
             motifs=[s.get("value", "") for s in shots],
-            shots=shots,
+            **( {"shots": shots} if include_full_shots else {} ),
         )
 
     except Exception as exc:
@@ -401,16 +479,21 @@ def list_motifs(
 def list_palettes(
     film: str,
     media_type: str = "movies",
+    include_full: bool = False,
 ) -> str:
     """Get the colour palette data for one film's shots.
 
     Each shot entry contains foreground and background dominant colours in
-    RGB, LAB, luminance, and chroma. Returns summary swatches for quick
-    inspection plus the full palette if needed.
+    RGB, LAB, luminance, and chroma. Returns a compact summary (shot_id +
+    fg/bg RGB + luminance) by default. Pass include_full=True to receive the
+    complete palette document (large — one entry per shot with all colour
+    channels).
 
     Args:
-        film:       Title substring, exact filename, or numeric TMDb ID.
-        media_type: "movies" (default) or "gameplay".
+        film:         Title substring, exact filename, or numeric TMDb ID.
+        media_type:   "movies" (default) or "gameplay".
+        include_full: Include the full per-shot palette data (default False).
+                      Warning: can be very large for feature-length films.
 
     Read-only. Reads: data/palettes/<media_type>/<stem>.json
     """
@@ -457,7 +540,7 @@ def list_palettes(
             filename=filename,
             shot_count=len(shots),
             summary=summary,
-            full=palette_doc,
+            **( {"full": palette_doc} if include_full else {} ),
         )
 
     except Exception as exc:
@@ -641,6 +724,296 @@ def search_vocabulary(
 
 
 # ===========================================================================
+# TIER 1 — IMAGE RETRIEVAL TOOLS (read-only, return actual frame pixels)
+# ===========================================================================
+#
+# These tools return a mixed list of [str, Image, Image, …]:
+#   • The first element is a JSON string with shot metadata summaries.
+#   • Subsequent elements are FastMCP Image objects (JPEG thumbnails).
+# Claude Desktop renders Image objects inline in the chat window, enabling
+# direct visual inspection of frames without any filesystem access.
+#
+# Payload budget: default width=400 px → ~40-80 KB per JPEG.
+#   limit=4 → ~200 KB total; well under the 1 MB MCP transport cap.
+# The service layer enforces a 900 KB hard ceiling across the batch.
+
+from mcp.server.fastmcp import Image as _MCPImage
+
+
+def _frames_to_mcp(frames: list[dict]) -> list:
+    """Convert a list of frame_retrieval result dicts to [metadata_str, Image, …]."""
+    summaries = [
+        {
+            "film":       f["film_title"],
+            "shot_id":    f["shot_id"],
+            "start_time": f["start_time"],
+            "end_time":   f["end_time"],
+            "metadata":   f["metadata"],
+        }
+        for f in frames
+    ]
+    out: list = [json.dumps({"ok": True, "count": len(frames), "shots": summaries}, indent=2)]
+    for f in frames:
+        out.append(_MCPImage(data=f["image_data"], format="jpeg"))
+    return out
+
+
+@mcp.tool()
+def get_best_frame(
+    film: str,
+    shot_id: str,
+    media_type: str = "movies",
+    width: int = 400,
+) -> list:
+    """Retrieve a single frame thumbnail for a specific shot.
+
+    Returns the actual image content so Claude can see the frame directly.
+    Uses the pre-computed best-frame PNG cache when available (fastest path),
+    with a fallback to extracting the midpoint frame from the video file.
+
+    Args:
+        film:       Title substring, filename, or TMDb ID of the film.
+        shot_id:    Canonical shot identifier (e.g. "tmdb_4638@f001234-f001456").
+        media_type: "movies" (default) or "gameplay".
+        width:      Thumbnail width in pixels (default 400; max recommended 800).
+
+    Read-only. Reads: media/frames/best/ and/or media/videos/
+    """
+    result = _ctx()
+    if isinstance(result, str):
+        return [result]
+    project_path, _ = result
+
+    try:
+        from services.frame_retrieval import retrieve_single_frame
+        frame = retrieve_single_frame(
+            project_path, film, shot_id, media_type,
+            width=width,
+        )
+        return _frames_to_mcp([frame])
+
+    except ValueError as exc:
+        return [_err(str(exc))]
+    except Exception as exc:
+        return [_err(str(exc), traceback.format_exc())]
+
+
+@mcp.tool()
+def get_best_frames(
+    query: str,
+    limit: int = 4,
+    films: list[str] | None = None,
+    field: str = "",
+    width: int = 400,
+    media_type: str = "movies",
+) -> list:
+    """Search shots by keyword and return frame thumbnails for the top results.
+
+    Runs the same annotation search as search_shots, then fetches one
+    representative frame per result.  Returns actual image content so Claude
+    can see the frames directly.
+
+    Args:
+        query:      Search string (case-insensitive keyword or phrase).
+        limit:      Max frames to return (default 4; max recommended 8).
+        films:      Optional list of film titles to restrict search.
+        field:      Annotation field to restrict search (empty = all fields).
+        width:      Thumbnail width in pixels (default 400).
+        media_type: "movies" (default) or "gameplay".
+
+    Read-only. Reads: data/annotations/, media/frames/best/, media/videos/
+    """
+    result = _ctx()
+    if isinstance(result, str):
+        return [result]
+    project_path, _ = result
+
+    try:
+        from services.frame_retrieval import retrieve_frames_for_query
+        frames = retrieve_frames_for_query(
+            project_path, query,
+            films=films, field=field or None,
+            limit=max(1, min(limit, 12)),
+            media_type=media_type,
+            width=width,
+        )
+        if not frames:
+            return [_err(f"No frames found for query {query!r}.", "Try a different query or broaden the film filter.")]
+        return _frames_to_mcp(frames)
+
+    except Exception as exc:
+        return [_err(str(exc), traceback.format_exc())]
+
+
+@mcp.tool()
+def get_palette_frames(
+    warm: bool = False,
+    cold: bool = False,
+    dark: bool = False,
+    bright: bool = False,
+    low_chroma: bool = False,
+    high_chroma: bool = False,
+    foreground_only: bool = False,
+    background_only: bool = False,
+    luminance_min: float = 0.0,
+    luminance_max: float = 1.0,
+    chroma_min: float = 0.0,
+    chroma_max: float = 1.0,
+    films: list[str] | None = None,
+    limit: int = 4,
+    width: int = 400,
+    media_type: str = "movies",
+) -> list:
+    """Retrieve frame thumbnails for shots matching colour-palette filters.
+
+    Filters the pre-computed palette cache by colour-space characteristics —
+    no re-analysis is performed.  At least one filter flag must be True or a
+    luminance/chroma range must be non-default.  Returns actual image content.
+
+    Args:
+        warm:            Shots with warm hues (positive a*/b* in LAB space).
+        cold:            Shots with cool/blue hues.
+        dark:            Shots with luminance < 0.3.
+        bright:          Shots with luminance > 0.7.
+        low_chroma:      Shots with chroma < 0.15 (desaturated/grey).
+        high_chroma:     Shots with chroma > 0.30 (vivid colours).
+        foreground_only: Only check foreground region of each shot.
+        background_only: Only check background region of each shot.
+        luminance_min:   Minimum luminance [0.0–1.0] (default 0.0 = off).
+        luminance_max:   Maximum luminance [0.0–1.0] (default 1.0 = off).
+        chroma_min:      Minimum chroma [0.0–1.0] (default 0.0 = off).
+        chroma_max:      Maximum chroma [0.0–1.0] (default 1.0 = off).
+        films:           Optional list of film titles to restrict search.
+        limit:           Max frames to return (default 4; max recommended 8).
+        width:           Thumbnail width in pixels (default 400).
+        media_type:      "movies" (default) or "gameplay".
+
+    Read-only. Reads: data/palettes/, media/frames/best/, media/videos/
+    """
+    result = _ctx()
+    if isinstance(result, str):
+        return [result]
+    project_path, _ = result
+
+    # Pass through only non-default range values.
+    lum_min = luminance_min if luminance_min > 0.0 else None
+    lum_max = luminance_max if luminance_max < 1.0 else None
+    chr_min = chroma_min if chroma_min > 0.0 else None
+    chr_max = chroma_max if chroma_max < 1.0 else None
+
+    try:
+        from services.frame_retrieval import retrieve_palette_frames
+        frames = retrieve_palette_frames(
+            project_path,
+            films=films, media_type=media_type,
+            limit=max(1, min(limit, 12)),
+            width=width,
+            warm=warm, cold=cold, dark=dark, bright=bright,
+            low_chroma=low_chroma, high_chroma=high_chroma,
+            foreground_only=foreground_only, background_only=background_only,
+            luminance_min=lum_min, luminance_max=lum_max,
+            chroma_min=chr_min, chroma_max=chr_max,
+        )
+        if not frames:
+            return [_err("No frames found matching palette filters.", "Check that palette data exists: crossing palette list")]
+        return _frames_to_mcp(frames)
+
+    except ValueError as exc:
+        return [_err(str(exc))]
+    except Exception as exc:
+        return [_err(str(exc), traceback.format_exc())]
+
+
+@mcp.tool()
+def get_motif_frames(
+    motif: str,
+    films: list[str] | None = None,
+    limit: int = 4,
+    width: int = 400,
+    media_type: str = "movies",
+) -> list:
+    """Retrieve frame thumbnails for shots whose motif word matches *motif*.
+
+    Exact match is tried first; falls back to substring match if needed.
+    Returns actual image content so Claude can see the frames directly.
+
+    Args:
+        motif:      Motif word to search for (e.g. "riding", "carrying").
+        films:      Optional list of film titles to restrict search.
+        limit:      Max frames to return (default 4; max recommended 8).
+        width:      Thumbnail width in pixels (default 400).
+        media_type: "movies" (default) or "gameplay".
+
+    Read-only. Reads: data/motifs/, media/frames/best/, media/videos/
+    """
+    result = _ctx()
+    if isinstance(result, str):
+        return [result]
+    project_path, _ = result
+
+    try:
+        from services.frame_retrieval import retrieve_motif_frames
+        frames = retrieve_motif_frames(
+            project_path, motif,
+            films=films, media_type=media_type,
+            limit=max(1, min(limit, 12)),
+            width=width,
+        )
+        if not frames:
+            return [_err(f"No frames found for motif {motif!r}.", "Check available motifs: crossing search motifs list")]
+        return _frames_to_mcp(frames)
+
+    except Exception as exc:
+        return [_err(str(exc), traceback.format_exc())]
+
+
+@mcp.tool()
+def get_context_frames(
+    film: str,
+    shot_id: str,
+    window: int = 3,
+    width: int = 400,
+    media_type: str = "movies",
+) -> list:
+    """Retrieve frame thumbnails for a shot and its neighboring shots.
+
+    Shows up to *window* shots before and *window* shots after the central
+    shot, providing visual context for a sequence.  The central shot is
+    flagged as ``is_center: true`` in the metadata summary.
+
+    Args:
+        film:       Title substring, filename, or TMDb ID of the film.
+        shot_id:    Central shot identifier.
+        window:     Shots to show on each side (default 3; max 6).
+        width:      Thumbnail width in pixels (default 400).
+        media_type: "movies" (default) or "gameplay".
+
+    Read-only. Reads: data/shotlists/, media/frames/best/, media/videos/
+    """
+    result = _ctx()
+    if isinstance(result, str):
+        return [result]
+    project_path, _ = result
+
+    try:
+        from services.frame_retrieval import retrieve_context_frames
+        frames = retrieve_context_frames(
+            project_path, film, shot_id,
+            window=max(1, min(window, 6)),
+            media_type=media_type,
+            width=width,
+        )
+        if not frames:
+            return [_err(f"No frames retrieved for context around {shot_id!r}.", "Ensure video or best-frame cache exists for this film.")]
+        return _frames_to_mcp(frames)
+
+    except ValueError as exc:
+        return [_err(str(exc))]
+    except Exception as exc:
+        return [_err(str(exc), traceback.format_exc())]
+
+
+# ===========================================================================
 # TIER 2 — GENERATION TOOLS (write to output/ only)
 # ===========================================================================
 
@@ -749,7 +1122,7 @@ def generate_mosaic(
             return _err(f"No shots matched {query!r}. Cannot build mosaic.")
 
         out_path = mosaic_from_search_results(
-            results, project_path, layout=layout, show_captions=True
+            results, project_path, layout=layout, show_captions=True, verbose=False
         )
         return _ok(
             query=query,
@@ -904,12 +1277,17 @@ def generate_catalog(
     media_type: str = "movies",
     include_annotations: bool = False,
     include_motifs: bool = False,
+    inline: bool = False,
 ) -> str:
     """Generate a JSON catalog of films with metadata and data availability.
 
     Produces a structured JSON file in output/catalogs/ that Claude can
     reference in subsequent work. The catalog lists every film with its
     metadata, shot counts, and optionally its annotation fields and motifs.
+
+    By default only the output path is returned (the catalog is written to
+    disk). Pass inline=True to also receive the full catalog object in the
+    response (only advisable for small selections of films).
 
     Output: output/catalogs/catalog-<media_type>-<timestamp>.json
 
@@ -919,6 +1297,8 @@ def generate_catalog(
         media_type:          "movies" (default) or "gameplay".
         include_annotations: Include per-shot annotation summaries (large output).
         include_motifs:      Include motif word sequences for each film.
+        inline:              Return the full catalog object in the response
+                             (default False — return only output_path).
 
     Output-writing. Reads: data/metadata/, data/motifs/, data/shotlists/,
                             data/annotations/
@@ -1002,7 +1382,7 @@ def generate_catalog(
             media_type=media_type,
             film_count=len(catalog_entries),
             output_path=str(out_path),
-            catalog=catalog,
+            **( {"catalog": catalog} if inline else {} ),
         )
 
     except Exception as exc:

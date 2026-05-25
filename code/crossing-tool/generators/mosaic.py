@@ -214,6 +214,7 @@ def render_mosaic(
     layout: str = "landscape",
     tile_max_dim: int = _TILE_MAX_DIM,
     show_captions: bool = True,
+    verbose: bool = True,
 ) -> Path:
     """Render a list of MosaicItems into a single grid image.
 
@@ -244,7 +245,8 @@ def render_mosaic(
     tile_w: int | None = None
     tile_h: int | None = None
 
-    print(f"  Loading {len(items)} image(s)…", flush=True)
+    if verbose:
+        print(f"  Loading {len(items)} image(s)…", file=sys.stderr, flush=True)
     for item in items:
         img = _load_item_image(item)
         if img is not None and tile_w is None:
@@ -341,6 +343,7 @@ def mosaic_from_search_results(
     layout: str = "landscape",
     show_captions: bool = True,
     frame_pct: float = 0.5,
+    verbose: bool = True,
 ) -> Path:
     """Build a mosaic grid from ``search_shots()`` results.
 
@@ -381,7 +384,7 @@ def mosaic_from_search_results(
         movie_id = r.get("movie_id", "")
         video_path = _find_video_path(project_path, movie_id)
         if video_path is None:
-            print(f"  ⚠ video not found for movie_id={movie_id!r} — skipping", flush=True)
+            print(f"  ⚠ video not found for movie_id={movie_id!r} — skipping", file=sys.stderr, flush=True)
             continue
 
         sf = r.get("start_frame")
@@ -417,7 +420,7 @@ def mosaic_from_search_results(
             / f"search-mosaic-{stamp}.png"
         )
 
-    return render_mosaic(items, dest, layout=layout, show_captions=show_captions)
+    return render_mosaic(items, dest, layout=layout, show_captions=show_captions, verbose=verbose)
 
 
 # ---------------------------------------------------------------------------
@@ -470,6 +473,7 @@ def mosaic_video_from_search_results(
     duration: int = 2,
     limit: int = 50,
     query: "str | None" = None,
+    verbose: bool = True,
 ) -> Path:
     """Render a looping video mosaic from ``search_shots()`` results.
 
@@ -541,7 +545,7 @@ def mosaic_video_from_search_results(
         if video_path is not None:
             pil_frames = _extract_frames_for_tile(video_path, frame_indices)
         else:
-            print(f"  ⚠ video not found for movie_id={movie_id!r} — skipping tile", flush=True)
+            print(f"  ⚠ video not found for movie_id={movie_id!r} — skipping tile", file=sys.stderr, flush=True)
             pil_frames = [None] * num_frames
 
         # Convert PIL → numpy (RGB); determine tile size from first valid frame
@@ -644,6 +648,7 @@ def export_frames_from_search_results(
     field: "str | None" = None,
     frame_pct: float = 0.5,
     jpeg_quality: int = 92,
+    verbose: bool = True,
 ) -> Path:
     """Export each search result as an individual JPEG with an info overlay.
 
@@ -705,7 +710,7 @@ def export_frames_from_search_results(
         movie_id   = r.get("movie_id", "")
         video_path = _find_video_path(project_path, movie_id)
         if video_path is None:
-            print(f"  ⚠ [{idx+1}/{total}] video not found for {movie_id!r} — skipping", flush=True)
+            print(f"  ⚠ [{idx+1}/{total}] video not found for {movie_id!r} — skipping", file=sys.stderr, flush=True)
             skipped += 1
             continue
 
@@ -720,7 +725,7 @@ def export_frames_from_search_results(
 
         img = extract_frame_pil(video_path, frame_index)
         if img is None:
-            print(f"  ⚠ [{idx+1}/{total}] frame extraction failed — skipping", flush=True)
+            print(f"  ⚠ [{idx+1}/{total}] frame extraction failed — skipping", file=sys.stderr, flush=True)
             skipped += 1
             continue
 
@@ -766,6 +771,7 @@ def export_frames_from_search_results(
             "check that video files exist for the matched movies."
         )
 
-    print(f"  ✓ Exported {exported} frame(s) ({skipped} skipped) → {export_dir}", flush=True)
+    if verbose:
+        print(f"  ✓ Exported {exported} frame(s) ({skipped} skipped) → {export_dir}", file=sys.stderr, flush=True)
     return export_dir
 

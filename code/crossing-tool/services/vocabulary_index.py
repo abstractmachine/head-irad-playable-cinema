@@ -66,6 +66,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List
@@ -316,7 +317,7 @@ def build_vocabulary_index(
         try:
             data = json.loads(json_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as exc:
-            print(f"  ⚠  skipping {json_path.name}: {exc}")
+            print(f"  ⚠  skipping {json_path.name}: {exc}", file=sys.stderr)
             continue
 
         if not isinstance(data, list):
