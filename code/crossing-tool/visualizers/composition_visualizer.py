@@ -32,12 +32,13 @@ from PyQt5.QtWidgets import (
     QComboBox,
     QMainWindow,
     QPushButton,
+    QShortcut,
     QSizePolicy,
     QStatusBar,
     QVBoxLayout,
     QWidget,
 )
-from PyQt5.QtGui import QFont, QImage, QPixmap
+from PyQt5.QtGui import QFont, QImage, QKeySequence, QPixmap
 
 if "QT_QPA_PLATFORM_PLUGIN_PATH" in os.environ:
     del os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"]
@@ -217,6 +218,10 @@ class ComposeVisualizer(QMainWindow):
         self.status = QStatusBar()
         self.setStatusBar(self.status)
         self.status.showMessage("Enter a background keyword and press Compose.")
+
+        # Ensure Ctrl+Q/W quit even when a QLineEdit has keyboard focus.
+        for seq in ("Ctrl+Q", "Ctrl+W"):
+            QShortcut(QKeySequence(seq), self, self.close)
 
         # Seed initial query into background field
         if initial_query:

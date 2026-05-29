@@ -47,6 +47,7 @@ from PyQt5.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QShortcut,
     QSizePolicy,
     QSpinBox,
     QSplitter,  # noqa: F401 (unused after refactor, kept for import compatibility)
@@ -54,7 +55,7 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PyQt5.QtGui import QImage, QPixmap, QWheelEvent
+from PyQt5.QtGui import QImage, QKeySequence, QPixmap, QWheelEvent
 
 import cv2
 import numpy as np
@@ -817,6 +818,10 @@ class MosaicVisualizer(QMainWindow):
 
         self.canvas.tile_clicked.connect(self._on_tile_clicked)
         self._populate_movies()
+
+        # Ensure Ctrl+Q/W quit even when a QLineEdit or QListWidget has keyboard focus.
+        for seq in ("Ctrl+Q", "Ctrl+W"):
+            QShortcut(QKeySequence(seq), self, self.close)
 
     # ------------------------------------------------------------------
     # Control panel

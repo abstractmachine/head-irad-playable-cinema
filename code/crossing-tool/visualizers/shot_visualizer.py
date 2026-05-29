@@ -2044,8 +2044,14 @@ class ShotlistVisualizer(QMainWindow):
                         if self._ann_dirty:
                             self._discard_ann_edit()
                         return True
+                    if key in (Qt.Key_Q, Qt.Key_W) and mods & Qt.ControlModifier:
+                        self.close()
+                        return True
                 elif obj == self.shot_list:
                     # Redirect keyboard events to main window
+                    if key in (Qt.Key_Q, Qt.Key_W) and mods & Qt.ControlModifier:
+                        self.close()
+                        return True
                     if key in (Qt.Key_Space, Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down,
                                Qt.Key_PageUp, Qt.Key_PageDown, Qt.Key_Home, Qt.Key_End,
                                Qt.Key_B, Qt.Key_C, Qt.Key_E, Qt.Key_F, Qt.Key_I, Qt.Key_M, Qt.Key_N, Qt.Key_G, Qt.Key_S):

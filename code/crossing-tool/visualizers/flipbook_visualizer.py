@@ -552,6 +552,9 @@ class FlipbookVisualizerWindow(QMainWindow):
             if event.key() in (Qt.Key_Tab, Qt.Key_Backtab):
                 self._on_title_edited()
                 return True
+            if event.key() in (Qt.Key_Q, Qt.Key_W) and event.modifiers() & Qt.ControlModifier:
+                self.close()
+                return True
         return super().eventFilter(obj, event)
 
     def _on_combo_changed(self, idx: int) -> None:
