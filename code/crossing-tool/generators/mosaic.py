@@ -30,7 +30,7 @@ from PIL import Image, ImageDraw, ImageFont
 class MosaicItem:
     """A single cell in the mosaic grid.
 
-    Either image_path or (video_path + frame_index) must be set.
+    Either image_path, (video_path + frame_index), or pil_image must be set.
     caption is shown below the tile if show_captions=True.
 
     Optional crop:
@@ -42,6 +42,7 @@ class MosaicItem:
     image_path: Path | None = None
     video_path: Path | None = None
     frame_index: int | None = None
+    pil_image: "Image.Image | None" = None  # pre-rendered PIL image (takes priority)
     caption: str | None = None
     metadata: dict[str, Any] | None = None
     crop_bbox: list[int] | None = None   # [x1, y1, x2, y2]
@@ -100,6 +101,8 @@ def _compute_grid(n: int, layout: str = "landscape") -> tuple[int, int]:
 
 def _load_item_image(item: MosaicItem) -> "Image.Image | None":
     """Resolve a MosaicItem to a PIL Image (RGB), optionally cropped."""
+    if item.pil_image is not None:
+        return item.pil_image.convert("RGB")
     if item.image_path is not None:
         try:
             img: Image.Image | None = Image.open(item.image_path).convert("RGB")
@@ -191,6 +194,11 @@ _FONT_CANDIDATES = [
     "/usr/share/fonts/TTF/DejaVuSans.ttf",
 ]
 
+# Clarendon OTF files — same paths used by the live scene-card renderer
+_CLARENDON_DIR   = _FONTS_DIR / "libre_clarendon" / "fonts"
+_CLARENDON_BOLD  = _CLARENDON_DIR / "LibreClarendonNormal-162Bold.otf"
+_CLARENDON_LIGHT = _CLARENDON_DIR / "LibreClarendonNormal-42Light.otf"
+
 
 def _load_font(size: int) -> Any:
     for path in _FONT_CANDIDATES:
@@ -204,9 +212,75 @@ def _load_font(size: int) -> Any:
         return None
 
 
-# ---------------------------------------------------------------------------
-# Renderer
-# ---------------------------------------------------------------------------
+def _load_clarendon(bold: bool, size: int) -> Any:
+    """Load Clarendon Bold or Light at *size* px, falling back to _load_font."""
+    path = _CLARENDON_BOLD if bold else _CLARENDON_LIGHT
+    try:
+        return ImageFont.truetype(str(path), size)
+    except (IOError, OSError):
+        return _load_font(size)
+
+
+def make_intertitle_item(
+    text: str,
+    width: int = 320,
+    height: int = 180,
+    caption: str | None = None,
+    *,
+    is_title: bool = False,
+    movie_year: str = "",
+) -> MosaicItem:
+    """Return a MosaicItem containing a grey intertitle image with centred white text.
+
+    Replicates the live scene-card renderer:
+    - Title card (is_title=True): bold title + light year, vertically centred.
+    - Scene card (is_title=False): large light scene number, centred.
+
+    Used for movie-title and scene-number cards when exporting to PDF.
+    """
+    img  = Image.new("RGB", (width, height), color=(120, 120, 120))
+    draw = ImageDraw.Draw(img)
+    WHITE = (255, 255, 255)
+
+    def _text_size(fnt, s):
+        """Return (w, h) for string *s* with font *fnt*."""
+        try:
+            bb = draw.textbbox((0, 0), s, font=fnt)
+            return bb[2] - bb[0], bb[3] - bb[1]
+        except Exception:
+            return 0, 0
+
+    def _draw_centred_x(fnt, s, y):
+        tw, _ = _text_size(fnt, s)
+        x = max(0, (width - tw) // 2)
+        draw.text((x, y), s, font=fnt, fill=WHITE)
+
+    if is_title:
+        # Two-line block: title (Bold) + year (Light), vertically centred
+        pt_title = max(1, round(height * 44 / 360))
+        pt_year  = max(1, round(height * 28 / 360))
+        gap      = max(2, round(height * 6  / 360))
+        f_title  = _load_clarendon(bold=True,  size=pt_title)
+        f_year   = _load_clarendon(bold=False, size=pt_year)
+        _, lh_title = _text_size(f_title, text)
+        _, lh_year  = _text_size(f_year,  movie_year) if movie_year else (0, 0)
+        block_h = lh_title + (gap + lh_year if movie_year else 0)
+        y0 = max(0, (height - block_h) // 2)
+        _draw_centred_x(f_title, text, y0)
+        if movie_year:
+            _draw_centred_x(f_year, movie_year, y0 + lh_title + gap)
+    else:
+        # Scene-index card — large scene label in Light, centred
+        pt_scene = max(1, round(height * 80 / 360))
+        f_scene  = _load_clarendon(bold=False, size=pt_scene)
+        tw, th   = _text_size(f_scene, text)
+        x = max(0, (width  - tw) // 2)
+        y = max(0, (height - th) // 2)
+        draw.text((x, y), text, font=f_scene, fill=WHITE)
+
+    return MosaicItem(pil_image=img, caption=caption or text)
+
+
 
 def render_mosaic(
     items: list[MosaicItem],
@@ -215,6 +289,7 @@ def render_mosaic(
     tile_max_dim: int = _TILE_MAX_DIM,
     show_captions: bool = True,
     verbose: bool = True,
+    progress_cb=None,
 ) -> Path:
     """Render a list of MosaicItems into a single grid image.
 
@@ -224,6 +299,8 @@ def render_mosaic(
         layout:        "landscape" (wider grid) or "portrait" (taller grid).
         tile_max_dim:  Maximum pixel dimension (longest side) for one tile.
         show_captions: Draw caption text below each tile.
+        progress_cb:   Optional callable(current: int, total: int) called after
+                       each image is loaded during Pass 1.
 
     Returns:
         output_path after saving.
@@ -255,6 +332,8 @@ def render_mosaic(
             tile_w = max(1, int(w * scale))
             tile_h = max(1, int(h * scale))
         loaded.append(img)
+        if progress_cb is not None:
+            progress_cb(len(loaded), len(items))
 
     if tile_w is None:
         raise ValueError("Could not load any images from the provided items.")

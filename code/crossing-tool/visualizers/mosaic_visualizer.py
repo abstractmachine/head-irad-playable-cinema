@@ -104,6 +104,19 @@ class _StatusLabel(QLabel):
         self._timer.stop()
         self.clear()
 
+    def set_busy_style(self, busy: bool) -> None:  # noqa: N802
+        """Toggle a fuchsia background to indicate an in-progress export."""
+        if busy:
+            self.setStyleSheet(
+                f"QLabel {{ color: {theme.TEXT}; background-color: {theme.ACCENT}; "
+                f"padding: 4px 4px 2px 4px; font-size: {theme.BASE_PT - 1}pt; }}"
+            )
+        else:
+            self.setStyleSheet(
+                f"QLabel {{ color: {theme.TEXT_DIM}; padding: 4px 0 2px 0; "
+                f"font-size: {theme.BASE_PT - 1}pt; }}"
+            )
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -1329,17 +1342,21 @@ class PdfExportWorker(QThread):
     Signals
     -------
     finished_signal(output_path_str)
+    progress(current, total)
     error(message)
     """
 
     finished_signal = pyqtSignal(str)
+    progress        = pyqtSignal(int, int)
     error           = pyqtSignal(str)
 
-    def __init__(self, results: list, project_path: str, query: str, parent=None):
+    def __init__(self, results: list, project_path: str, query: str,
+                 filename: str = "", parent=None):
         super().__init__(parent)
         self.results      = results
         self.project_path = project_path
         self.query        = query
+        self.filename     = filename
 
     def run(self) -> None:
         try:
@@ -1349,10 +1366,29 @@ class PdfExportWorker(QThread):
             # tries to call Image.SAVE["JPEG"] — it is loaded lazily and may
             # not be present if no JPEG has been opened/saved in this process yet.
             import PIL.JpegImagePlugin  # noqa: F401
-            from generators.mosaic import MosaicItem, render_mosaic
+            from generators.mosaic import MosaicItem, render_mosaic, make_intertitle_item
+
+            # Reference dimensions for intertitle tiles (from first label result)
+            ref_vid_w, ref_vid_h = 320, 180
+            for r in self.results:
+                if r.get("is_label"):
+                    ref_vid_w = int(r.get("vid_w") or 320)
+                    ref_vid_h = int(r.get("vid_h") or 180)
+                    break
 
             items: list[MosaicItem] = []
             for r in self.results:
+                if r.get("is_label"):
+                    # Title or scene card → grey intertitle tile
+                    label = r.get("label_text", "")
+                    items.append(make_intertitle_item(
+                        label, ref_vid_w, ref_vid_h,
+                        caption=label,
+                        is_title=bool(r.get("is_title")),
+                        movie_year=str(r.get("movie_year") or ""),
+                    ))
+                    continue
+
                 movie_id   = r.get("movie_id", "")
                 video_path = _find_video_path(self.project_path, movie_id)
                 if video_path is None:
@@ -1380,13 +1416,20 @@ class PdfExportWorker(QThread):
                 self.error.emit("No frames available to export.")
                 return
 
-            stamp    = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-            safe_q   = _re.sub(r"[^\w\-]", "_", self.query)[:40].strip("_") if self.query else "mosaic"
+            stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+            if self.filename:
+                import re as _re2
+                base = _re2.sub(r'[/\\:*?"<>|]', '_', Path(self.filename).stem)
+            elif self.query:
+                base = _re.sub(r"[^\w\-\s]", "_", self.query)[:60].strip()
+            else:
+                base = "mosaic"
             out_path = (
                 Path(self.project_path) / "output" / "mosaics"
-                / f"{safe_q}-{stamp}.pdf"
+                / f"{base} [{stamp}].pdf"
             )
-            render_mosaic(items, out_path, layout="landscape")
+            render_mosaic(items, out_path, layout="landscape",
+                          progress_cb=lambda c, t: self.progress.emit(c, t))
             self.finished_signal.emit(str(out_path))
 
         except Exception as exc:
@@ -2019,6 +2062,7 @@ class MosaicVisualizer(QMainWindow):
         limit_per_movie = self.limit_per_movie_cb.isChecked()
 
         self.search_btn.setEnabled(False)
+        self.status.set_busy_style(True)
         self.status.showMessage(f"Searching for '{query}'…")
         self._progress.setRange(0, 0)  # indeterminate while searching
         self._progress.setValue(0)
@@ -2074,6 +2118,7 @@ class MosaicVisualizer(QMainWindow):
         self._progress.setRange(0, 1)
         self._progress.setValue(0)
         self.search_btn.setEnabled(True)
+        self.status.set_busy_style(False)
         self.pdf_btn.setEnabled(count > 0)
         self.video_btn.setEnabled(count > 0)
         if count == 0:
@@ -2087,6 +2132,7 @@ class MosaicVisualizer(QMainWindow):
         self._progress.setRange(0, 1)
         self._progress.setValue(0)
         self.search_btn.setEnabled(True)
+        self.status.set_busy_style(False)
         preview = message.splitlines()[0][:120]
         self.status.showMessage(f"Error: {preview}")
 
@@ -2112,6 +2158,7 @@ class MosaicVisualizer(QMainWindow):
         self._progress.setValue(0)
         self.search_btn.setEnabled(False)
         self.best_btn.setEnabled(False)
+        self.status.set_busy_style(True)
         self.status.showMessage("Loading best frames…")
 
         self.canvas.clear()
@@ -2155,6 +2202,7 @@ class MosaicVisualizer(QMainWindow):
         self._progress.setValue(0)
         self.search_btn.setEnabled(True)
         self.best_btn.setEnabled(True)
+        self.status.set_busy_style(False)
         self.pdf_btn.setEnabled(count > 0)
         self.video_btn.setEnabled(count > 0)
         if count == 0:
@@ -2183,6 +2231,7 @@ class MosaicVisualizer(QMainWindow):
         self._progress.setRange(0, 0)
         self._progress.setValue(0)
         self.search_btn.setEnabled(False)
+        self.status.set_busy_style(True)
         self.status.showMessage("Loading all shot frames…")
 
         self.canvas.clear()
@@ -2205,6 +2254,7 @@ class MosaicVisualizer(QMainWindow):
         self._progress.setRange(0, 1)
         self._progress.setValue(0)
         self.search_btn.setEnabled(True)
+        self.status.set_busy_style(False)
         self.pdf_btn.setEnabled(count > 0)
         self.video_btn.setEnabled(count > 0)
         if count == 0:
@@ -2218,6 +2268,7 @@ class MosaicVisualizer(QMainWindow):
         self._progress.setRange(0, 1)
         self._progress.setValue(0)
         self.search_btn.setEnabled(True)
+        self.status.set_busy_style(False)
         preview = message.splitlines()[0][:120]
         self.status.showMessage(f"Error: {preview}")
 
@@ -2276,6 +2327,7 @@ class MosaicVisualizer(QMainWindow):
         self._progress.setRange(0, 0)
         self._progress.setValue(0)
         self.search_btn.setEnabled(False)
+        self.status.set_busy_style(True)
         self.status.showMessage("Updating scene…" if partial else "Loading scenes…")
 
         best_lookup: dict = {}
@@ -2376,6 +2428,7 @@ class MosaicVisualizer(QMainWindow):
         self._progress.setRange(0, 1)
         self._progress.setValue(0)
         self.search_btn.setEnabled(True)
+        self.status.set_busy_style(False)
         self.pdf_btn.setEnabled(count > 0)
         self.video_btn.setEnabled(count > 0)
         if count == 0:
@@ -2389,6 +2442,7 @@ class MosaicVisualizer(QMainWindow):
         self._progress.setRange(0, 1)
         self._progress.setValue(0)
         self.search_btn.setEnabled(True)
+        self.status.set_busy_style(False)
         preview = message.splitlines()[0][:120]
         self.status.showMessage(f"Scenes error: {preview}")
 
@@ -2396,34 +2450,53 @@ class MosaicVisualizer(QMainWindow):
     # PDF export
 
     def _on_export_pdf(self) -> None:
-        if not self._current_results:
-            self.status.showMessage("No results to export — run a search first.")
-            return
         if self._pdf_worker and self._pdf_worker.isRunning():
             return
 
-        query = self.query_input.text().strip()
+        # Build export list from exactly what is visible on the canvas.
+        # • Title cards and scene cards → included as intertitle tiles.
+        # • Frame tiles with Ignore=True → skipped.
+        export_items: list[dict] = []
+        for tile in self.canvas._tiles:
+            r = tile.result
+            if r.get("is_label"):
+                export_items.append(r)
+            else:
+                if str(r.get("Ignore", "")).strip().lower() in ("true", "1", "yes"):
+                    continue
+                export_items.append(r)
+
+        frame_count = sum(1 for r in export_items if not r.get("is_label"))
+        if frame_count == 0:
+            self.status.showMessage("No non-ignored frames to export.")
+            return
+
+        query    = self.query_input.text().strip()
+        filename = self.movie_combo.currentData() or ""
         self.pdf_btn.setEnabled(False)
         self.search_btn.setEnabled(False)
-        self.status.showMessage(
-            f"Exporting PDF for {len(self._current_results)} frame(s)…"
-        )
+        self.status.showMessage(f"Exporting PDF for {frame_count} frame(s)…")
+        self.status.set_busy_style(True)
 
-        self._pdf_worker = PdfExportWorker(
-            list(self._current_results), self.project_path, query
-        )
+        self._pdf_worker = PdfExportWorker(export_items, self.project_path, query, filename)
         self._pdf_worker.finished_signal.connect(self._on_pdf_export_done)
+        self._pdf_worker.progress.connect(self._on_pdf_export_progress)
         self._pdf_worker.error.connect(self._on_pdf_export_error)
         self._pdf_worker.start()
 
+    def _on_pdf_export_progress(self, current: int, total: int) -> None:
+        self.status.showMessage(f"Exporting PDF… loading frame {current} / {total}")
+
     def _on_pdf_export_done(self, out_path: str) -> None:
         import subprocess
+        self.status.set_busy_style(False)
         self.pdf_btn.setEnabled(True)
         self.search_btn.setEnabled(True)
         self.status.showMessage(f"PDF saved → {out_path}")
         subprocess.Popen(["xdg-open", str(Path(out_path).parent)])
 
     def _on_pdf_export_error(self, message: str) -> None:
+        self.status.set_busy_style(False)
         self.pdf_btn.setEnabled(True)
         self.search_btn.setEnabled(True)
         preview = message.splitlines()[0][:120]
