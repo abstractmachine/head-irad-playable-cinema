@@ -30,7 +30,7 @@ from styles.theme import JumpScrollBar, save_window_geometry, restore_window_geo
 from services.frame_match import best_frame_path
 
 # Fix Qt plugin conflict with OpenCV — import PyQt5 before cv2
-from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
+from PyQt5.QtCore import Qt, QRect, QThread, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -54,7 +54,7 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PyQt5.QtGui import QImage, QKeySequence, QPixmap, QWheelEvent
+from PyQt5.QtGui import QColor, QFont, QFontDatabase, QImage, QKeySequence, QPainter, QPixmap, QWheelEvent
 
 import cv2
 import numpy as np
@@ -118,6 +118,54 @@ DEFAULT_TILE_SIZE = 200
 MIN_TILE_SIZE = 80
 MAX_TILE_SIZE = 480
 ZOOM_STEP = 24
+
+# ---------------------------------------------------------------------------
+# Scene label frames (title card + scene-number cards in the Scenes view)
+# ---------------------------------------------------------------------------
+
+_LABEL_W  = 640
+_LABEL_H  = 360
+_LABEL_BG = (128, 128, 128)   # 50 % grey
+_LABEL_FG = (255, 255, 255)   # white
+_FONT_DIR = (
+    Path(__file__).parent.parent
+    / "styles" / "fonts" / "libre_clarendon" / "fonts"
+)
+
+
+def _make_label_pixmap(
+    text: str,
+    font_filename: str,
+    font_size: int,
+    *,
+    width: int = _LABEL_W,
+    height: int = _LABEL_H,
+) -> Optional[QPixmap]:
+    """Render centred white *text* on a 50 % grey canvas and return a QPixmap.
+
+    Returns ``None`` if PIL or the requested font is unavailable.
+    """
+    try:
+        from PIL import Image as _PILImage, ImageDraw as _IDraw, ImageFont as _IFont
+        img  = _PILImage.new("RGB", (width, height), _LABEL_BG)
+        draw = _IDraw.Draw(img)
+        font = _IFont.truetype(str(_FONT_DIR / font_filename), font_size)
+        # Truncate text that is wider than the canvas (leaves 20 px margin each side)
+        while len(text) > 1:
+            bbox = draw.textbbox((0, 0), text, font=font)
+            if (bbox[2] - bbox[0]) <= (width - 40):
+                break
+            text = text[:-1].rstrip() + "…"
+        bbox = draw.textbbox((0, 0), text, font=font)
+        tx   = (width  - (bbox[2] - bbox[0])) // 2 - bbox[0]
+        ty   = (height - (bbox[3] - bbox[1])) // 2 - bbox[1]
+        draw.text((tx, ty), text, font=font, fill=_LABEL_FG)
+        arr = np.array(img)
+        h, w, ch = arr.shape
+        qimg = QImage(arr.data, w, h, ch * w, QImage.Format_RGB888)
+        return QPixmap.fromImage(qimg)
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -525,7 +573,8 @@ class TileWidget(QFrame):
 
         self.setFrameShape(QFrame.NoFrame)
         self.setStyleSheet(f"TileWidget {{ border: none; background: {theme.CANVAS_BG}; }}")
-        self.setCursor(Qt.PointingHandCursor)
+        if not result.get("is_label"):
+            self.setCursor(Qt.PointingHandCursor)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -611,7 +660,7 @@ class TileWidget(QFrame):
         self._render(tile_size)
 
     def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.LeftButton and not self.result.get("is_label"):
             self.clicked.emit(self.result)
         super().mousePressEvent(event)
 
@@ -912,10 +961,58 @@ class ScenesWorker(QThread):
     def run(self) -> None:
         try:
             from data.shotlist import read_shotlist
+            from data.metadata import get_metadata
 
             shots      = read_shotlist(self.project_path, self.filename, "movies")
             movie_id   = Path(self.filename).stem
             video_path = _find_video_path(self.project_path, movie_id)
+
+            # Read actual video dimensions so label tiles share the movie's ratio
+            vid_w, vid_h = 320, 180  # fallback 16:9
+            if video_path is not None:
+                _cap = cv2.VideoCapture(str(video_path))
+                if _cap.isOpened():
+                    _fw = int(_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    _fh = int(_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    if _fw > 0 and _fh > 0:
+                        vid_w, vid_h = _fw, _fh
+                _cap.release()
+
+            # Clean title + year from stored metadata; fall back to filename parsing
+            meta_list = get_metadata(self.project_path, self.filename, "movies")
+            if meta_list:
+                _meta = meta_list[0]
+            else:
+                import re as _re
+                _stem  = Path(self.filename).stem
+                _clean = _re.sub(r'\s*\{tmdb-\d+\}|\s*\(\d{4}\)', '', _stem).strip().rstrip('-').strip()
+                _meta  = {
+                    "title": _clean.replace('-', ' ').replace('_', ' ').strip().title(),
+                    "year":  None,
+                }
+                _yr = _re.search(r'\((\d{4})\)', _stem)
+                if _yr:
+                    _meta["year"] = int(_yr.group(1))
+
+            display_title = str(_meta.get("title") or movie_id.replace("-", " ").replace("_", " "))
+            movie_year    = str(_meta.get("year") or "")
+
+            # Title card — GUI thread renders text; worker just carries the data
+            title_result = {
+                "filename":       self.filename,
+                "movie_id":       movie_id,
+                "is_label":       True,
+                "is_title":       True,
+                "label_text":     display_title,
+                "movie_year":     movie_year,
+                "vid_w":          vid_w,
+                "vid_h":          vid_h,
+                "caption":        "",
+                "matched_fields": [],
+                "matched_text":   "",
+                "score":          0.0,
+            }
+            self.tile_ready.emit(title_result, None)
 
             current_scene: str | None = None
             count = 0
@@ -934,9 +1031,23 @@ class ScenesWorker(QThread):
                 except (TypeError, ValueError):
                     frame_index = 0
 
-                is_scene_break = (scene != current_scene) and (current_scene is not None)
+                # Scene-number card — emitted whenever the scene changes
                 if scene != current_scene:
                     current_scene = scene
+                    scene_result = {
+                        "filename":       self.filename,
+                        "movie_id":       movie_id,
+                        "scene":          scene,
+                        "is_label":       True,
+                        "label_text":     scene or "?",
+                        "vid_w":          vid_w,
+                        "vid_h":          vid_h,
+                        "caption":        "",
+                        "matched_fields": [],
+                        "matched_text":   "",
+                        "score":          0.0,
+                    }
+                    self.tile_ready.emit(scene_result, None)
 
                 # Prefer precomputed best-frame PNG when available
                 pixmap: Optional[QPixmap] = None
@@ -949,9 +1060,6 @@ class ScenesWorker(QThread):
                 if pixmap is None and video_path is not None:
                     pixmap = _extract_frame_pixmap(video_path, frame_index)
 
-                scene_label = f"Scene {scene}" if scene else "Scene ?"
-                caption     = f"{scene_label} — f{frame_index:06d}"
-
                 result = {
                     "filename":       self.filename,
                     "movie_title":    self.filename,
@@ -961,8 +1069,8 @@ class ScenesWorker(QThread):
                     "end_frame":      end_frame,
                     "frame":          frame_index,
                     "scene":          scene,
-                    "caption":        caption,
-                    "scene_break":    is_scene_break,
+                    "caption":        f"f{frame_index:06d}",
+                    "is_label":       False,
                     "matched_fields": [],
                     "matched_text":   "",
                     "score":          0.0,
@@ -974,6 +1082,7 @@ class ScenesWorker(QThread):
 
         except Exception as exc:
             import traceback
+            traceback.print_exc()  # full traceback visible in the terminal
             self.error.emit(f"{exc}\n{traceback.format_exc()}")
 
 
@@ -1655,10 +1764,78 @@ class MosaicVisualizer(QMainWindow):
         self._scenes_worker.start()
 
     def _on_scenes_tile_ready(self, result: dict, pixmap) -> None:
-        # Insert a row break whenever the scene changes (except for tile 0)
-        if result.get("scene_break") and self.canvas.tile_count > 0:
-            self.canvas.add_row_break()
-        self._current_results.append(result)
+        if result.get("is_label"):
+            vid_w  = result.get("vid_w", 320)
+            vid_h  = result.get("vid_h", 180)
+            base_h = 180
+            base_w = round(base_h * vid_w / vid_h) if vid_h > 0 else 320
+
+            grey = QPixmap(base_w, base_h)
+            grey.fill(QColor(128, 128, 128))
+
+            # Load both Clarendon weights (Qt caches on repeated calls)
+            _bold_id   = QFontDatabase.addApplicationFont(str(_FONT_DIR / "LibreClarendonNormal-162Bold.otf"))
+            _light_id  = QFontDatabase.addApplicationFont(str(_FONT_DIR / "LibreClarendonNormal-42Light.otf"))
+            _bold_fam  = QFontDatabase.applicationFontFamilies(_bold_id)
+            _light_fam = QFontDatabase.applicationFontFamilies(_light_id)
+
+            # Resolve the exact registered style names so Qt uses the right weight
+            _db = QFontDatabase()
+            def _pick_font(fam, keyword, pt):
+                if not fam:
+                    return QFont()
+                styles = _db.styles(fam[0])
+                style  = next((s for s in styles if keyword in s.lower()), styles[0] if styles else "")
+                return _db.font(fam[0], style, pt)
+
+            _painter = QPainter(grey)
+            _painter.setPen(QColor(255, 255, 255))
+
+            if result.get("is_title") and _bold_fam and _light_fam:
+                # Two-line block: title (Bold) + year (Light), vertically centred
+                _pt_title = max(1, round(base_h * 44 / 360))  # ~22pt
+                _pt_year  = max(1, round(base_h * 28 / 360))  # ~14pt
+                _gap      = max(2, round(base_h * 6  / 360))  # ~3px
+                _f_title  = _pick_font(_bold_fam,  "bold",  _pt_title)
+                _f_year   = _pick_font(_light_fam, "light", _pt_year)
+
+                _painter.setFont(_f_title)
+                _lh_title = _painter.fontMetrics().height()
+                _painter.setFont(_f_year)
+                _lh_year  = _painter.fontMetrics().height()
+
+                _year_text = str(result.get("movie_year", ""))
+                _block_h   = _lh_title + (_gap + _lh_year if _year_text else 0)
+                _y0        = (base_h - _block_h) // 2
+
+                _painter.setFont(_f_title)
+                _painter.drawText(
+                    QRect(0, _y0, base_w, _lh_title + 4),
+                    Qt.AlignHCenter | Qt.AlignTop | Qt.TextWordWrap,
+                    result.get("label_text", ""),
+                )
+                if _year_text:
+                    _painter.setFont(_f_year)
+                    _painter.drawText(
+                        QRect(0, _y0 + _lh_title + _gap, base_w, _lh_year + 4),
+                        Qt.AlignHCenter | Qt.AlignTop,
+                        _year_text,
+                    )
+
+            elif _light_fam:
+                # Scene-index card — large scene label in Light, centred
+                _pt_scene = max(1, round(base_h * 80 / 360))  # ~40pt
+                _painter.setFont(_pick_font(_light_fam, "light", _pt_scene))
+                _painter.drawText(
+                    grey.rect(),
+                    Qt.AlignCenter,
+                    result.get("label_text", ""),
+                )
+
+            _painter.end()
+            pixmap = grey
+        else:
+            self._current_results.append(result)
         self.canvas.add_tile(result, pixmap)
         self.status.showMessage(f"Loading… {self.canvas.tile_count} tile(s)")
 
