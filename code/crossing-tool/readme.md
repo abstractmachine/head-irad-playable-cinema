@@ -25,6 +25,8 @@ A CLI + GUI tool for relating moving images across media — connecting gameplay
 | `crossing generate mosaic` | Generate contact-sheet grids from thumbnails or search results |
 | `crossing generate mosaic search` | Mosaic of frames matching a shot annotation search query |
 | `crossing generate mosaic export` | Export individual JPEG frames for each search result |
+| `crossing generate mosaic shots` | PDF contact sheet of every shot in a movie (one frame per shot) |
+| `crossing generate mosaic scenes` | PDF contact sheet of shots grouped by scene, with title and scene-number intertitles |
 | `crossing generate composition` | Build a single tableau image from a semantic search result |
 | `crossing generate cloud` | Generate a word-cloud PDF from annotation text |
 | `crossing visualizer` | Open the project launcher — configure path, models, and open any visualizer |
@@ -304,8 +306,14 @@ crossing-tool/
 |---|---|
 | `mosaic_from_search_results(results, project_path, output_path, ...)` | Builds a mosaic grid PNG from `search_shots()` results |
 | `export_frames_from_search_results(results, project_path, query, ...)` | Exports each search result as a numbered JPEG with a metadata info bar |
-| `render_mosaic(items, output_path, layout, ...)` | Renders a list of `MosaicItem` objects into a single contact-sheet PNG |
+| `render_mosaic(items, output_path, layout, ...)` | Renders a list of `MosaicItem` objects into a single contact-sheet PDF or PNG |
 | `extract_frame_pil(video_path, frame_index)` | Extracts a single video frame by index as an RGB PIL Image |
+| `build_shots_results(project_path, filename, *, best_mode)` | Returns tile result dicts for every shot in a film — mirrors `AllShotsWorker` / `BestOnlyWorker` |
+| `build_scenes_results(project_path, filename, *, best_mode)` | Returns tile result dicts grouped by scene, including title and scene-number intertitle entries |
+| `results_to_mosaic_items(results, project_path)` | Converts a result dict list to `MosaicItem` objects: label tiles → `make_intertitle_item`, ignored frames skipped |
+| `mosaic_pdf_from_shots(project_path, filename, *, best_mode, output_path, verbose, progress_cb)` | CLI entry point: builds a shots PDF via `build_shots_results` → `results_to_mosaic_items` → `render_mosaic` |
+| `mosaic_pdf_from_scenes(project_path, filename, *, best_mode, output_path, verbose, progress_cb)` | CLI entry point: builds a scenes PDF via `build_scenes_results` → `results_to_mosaic_items` → `render_mosaic` |
+| `make_intertitle_item(text, width, height, caption, *, is_title, movie_year)` | Renders a grey intertitle tile using Libre Clarendon fonts (title card or scene-number card) |
 
 #### `generators/cloud.py`
 
@@ -885,6 +893,28 @@ crossing generate mosaic export "close-up gun" --all
 
 # Open the interactive mosaic explorer GUI
 crossing generate mosaic --visualizer
+
+# PDF contact sheet of every shot in a movie (one frame per shot)
+crossing generate mosaic shots --movie "Film Title"
+crossing generate mosaic shots --all               # one PDF per movie
+  --best                            # use precomputed CLIP best-frame PNGs
+  --media {movies,gameplay}         # media type (default: movies)
+  --output <path>                   # override output path (single movie only)
+  --no-open                         # do not open result in desktop viewer
+  --verbose                         # print per-frame progress
+  --notify                          # Discord notification when batch finishes
+  --notify-each                     # Discord notification after each movie (--all)
+
+# PDF contact sheet grouped by scene, with title card + scene-number intertitles
+crossing generate mosaic scenes --movie "Film Title"
+crossing generate mosaic scenes --all              # one PDF per movie
+  --best                            # use precomputed CLIP best-frame PNGs
+  --media {movies,gameplay}         # media type (default: movies)
+  --output <path>                   # override output path (single movie only)
+  --no-open                         # do not open result in desktop viewer
+  --verbose                         # print per-frame progress
+  --notify                          # Discord notification when batch finishes
+  --notify-each                     # Discord notification after each movie (--all)
 ```
 
 **Flags (thumbnails):**
@@ -912,7 +942,21 @@ crossing generate mosaic --visualizer
 | `--no-open` | — | Do not open the result in the desktop viewer |
 | `--notify` | — | Discord notification when finished |
 
-Output is saved to `<project>/output/mosaics/`.
+Output is saved to `<project>/output/mosaics/` (`searches/` sub-folder for search results, `shots/` for shot PDFs, `scenes/` for scene PDFs).
+
+#### Mosaic flags (shots / scenes):
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--movie` | — | Fuzzy movie title (required unless `--all` is used) |
+| `--all` | — | Generate a PDF for every movie in the project |
+| `--best` | — | Use precomputed CLIP best-frame PNGs instead of raw first frames |
+| `--media` | `movies` | `movies` or `gameplay` |
+| `--output` | auto | Full save path override (single-movie only) |
+| `--no-open` | — | Skip opening the result in the desktop viewer |
+| `--verbose` | — | Print per-frame loading progress |
+| `--notify` | — | Discord notification when the batch finishes |
+| `--notify-each` | — | Discord notification after each movie (batch only) |
 
 #### Composition
 
@@ -1135,7 +1179,12 @@ Python 3.11+ and all Python packages are managed automatically by `uv` — no ma
 │   │       ├── movies/             # best-frame PNGs per shot (from `crossing annotate frame`)
 │   │       └── gameplay/
 ├── output/
-│   ├── mosaics/                    # output from `crossing generate mosaic`
+│   ├── mosaics/
+│   │   ├── scenes/                 # output from `crossing generate mosaic scenes`
+│   │   ├── shots/                  # output from `crossing generate mosaic shots`
+│   │   ├── searches/               # output from `crossing generate mosaic search`
+│   │   ├── images/                 # output from `crossing generate mosaic export`
+│   │   └── videos/                 # output from `crossing generate mosaic video`
 │   ├── clouds/                     # output from `crossing generate cloud`
 │   └── compositions/               # output from `crossing generate composition`
 ├── models/
