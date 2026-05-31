@@ -1041,7 +1041,7 @@ class PdfExportWorker(QThread):
             stamp    = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
             safe_q   = _re.sub(r"[^\w\-]", "_", self.query)[:40].strip("_") if self.query else "mosaic"
             out_path = (
-                Path(self.project_path) / "output" / "exports"
+                Path(self.project_path) / "output" / "mosaics"
                 / f"{safe_q}-{stamp}.pdf"
             )
             render_mosaic(items, out_path, layout="landscape")
