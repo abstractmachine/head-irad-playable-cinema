@@ -45,6 +45,13 @@ from PyQt5.QtWidgets import (
 from styles.theme import GripSplitter, JumpScrollBar, save_window_geometry, restore_window_geometry
 from PyQt5.QtGui import QFont, QPixmap, QImage, QColor, QMouseEvent, QPalette, QBrush
 from PyQt5.QtCore import pyqtSignal as _pyqtSignal, QThread as _QThread
+from tool.shortcuts import (
+    KEY_PREV_MOVIE, KEY_NEXT_MOVIE,
+    KEY_PREV_SCENE, KEY_NEXT_SCENE,
+    KEY_PREV_SHOT, KEY_NEXT_SHOT,
+    KEY_PREV_FRAME, KEY_NEXT_FRAME,
+    KEY_PLAY_PAUSE,
+)
 
 from data.shotlist import read_shotlist, write_shotlist, get_shotlist_path, attach_shot_ids
 from data.metadata import get_metadata
@@ -2052,8 +2059,10 @@ class ShotlistVisualizer(QMainWindow):
                     if key in (Qt.Key_Q, Qt.Key_W) and mods & Qt.ControlModifier:
                         self.close()
                         return True
-                    if key in (Qt.Key_Space, Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down,
-                               Qt.Key_PageUp, Qt.Key_PageDown, Qt.Key_Home, Qt.Key_End,
+                    if key in (KEY_PLAY_PAUSE, KEY_PREV_FRAME, KEY_NEXT_FRAME,
+                               KEY_PREV_SHOT, KEY_NEXT_SHOT,
+                               KEY_PREV_SCENE, KEY_NEXT_SCENE,
+                               KEY_PREV_MOVIE, KEY_NEXT_MOVIE,
                                Qt.Key_B, Qt.Key_C, Qt.Key_E, Qt.Key_F, Qt.Key_I, Qt.Key_M, Qt.Key_N, Qt.Key_G, Qt.Key_S):
                         self.keyPressEvent(event)
                         return True
@@ -2081,13 +2090,13 @@ class ShotlistVisualizer(QMainWindow):
                 self.step_seconds(1)
             else:
                 self.next_frame()
-        elif key == Qt.Key_Up:
+        elif key == KEY_PREV_SHOT:
             self.prev_shot()
-        elif key == Qt.Key_Down:
+        elif key == KEY_NEXT_SHOT:
             self.next_shot()
-        elif key == Qt.Key_PageUp:
+        elif key == KEY_PREV_SCENE:
             self.prev_scene()
-        elif key == Qt.Key_PageDown:
+        elif key == KEY_NEXT_SCENE:
             self.next_scene()
         elif key == Qt.Key_E:
             self.show_end_frame()
@@ -2133,10 +2142,10 @@ class ShotlistVisualizer(QMainWindow):
                         frame_num = bf.get("frame")
                         if frame_num is not None:
                             self._seek_to_frame(int(frame_num))
-        elif key == Qt.Key_Home:
+        elif key == KEY_PREV_MOVIE:
             if self.current_movie_index > 0:
                 self.switch_to_movie(self.current_movie_index - 1)
-        elif key == Qt.Key_End:
+        elif key == KEY_NEXT_MOVIE:
             if self.current_movie_index < len(self.filenames) - 1:
                 self.switch_to_movie(self.current_movie_index + 1)
         else:

@@ -1597,12 +1597,168 @@ def cmd_shotlist(args):
         sub2 = args.shot_subcommand
         if sub2 == "detect":
             _shot_detect(args)
+    elif sub == "scene":
+        sub2 = args.scene_subcommand
+        if sub2 == "detect":
+            _scene_detect(args)
     elif sub == "migrate":
         _shotlist_migrate(args)
     elif sub == "context":
         _shotlist_context(args)
     elif sub == "context-frames":
         _shotlist_context_frames(args)
+
+
+def _print_dry_run_result(result: dict) -> None:
+    """Print proposed scene boundaries for a single movie (dry-run mode)."""
+    title = Path(result["filename"]).stem
+    scenes = result.get("scenes", 0)
+    assignments = result.get("scene_assignments", [])
+
+    print(f"{title}")
+    print(f"  Proposed scenes: {scenes}")
+    print()
+
+    if assignments:
+        # Group consecutive shots into (scene_num, first_shot, last_shot)
+        scene_groups: dict[int, tuple[int, int]] = {}
+        for i, sn in enumerate(assignments):
+            if sn not in scene_groups:
+                scene_groups[sn] = (i, i)
+            else:
+                start, _ = scene_groups[sn]
+                scene_groups[sn] = (start, i)
+        for sn in sorted(scene_groups):
+            start, end = scene_groups[sn]
+            print(f"  Scene {sn}: shots {start}–{end}")
+    print()
+
+
+def _scene_detect(args):
+    """Detect scene boundaries using shot embeddings."""
+    from services.scene_detection import detect_scenes_for_movie, detect_scenes_for_all_movies
+    from data.shotlist import read_shotlist, write_shotlist, resolve_filename
+
+    project_path = prefs.get("path")
+    media_type = getattr(args, "media", "movies")
+    force = getattr(args, "force", False)
+    dry_run = getattr(args, "dry_run", False)
+    verbose = getattr(args, "verbose", False)
+
+    try:
+        if getattr(args, "all", False):
+            summary = detect_scenes_for_all_movies(
+                project_path,
+                media_type,
+                force=force,
+            )
+
+            for result in summary["results"]:
+                fn = result["filename"]
+                if result.get("error"):
+                    print(f"\n{Path(fn).stem}")
+                    print(f"  ERROR: {result['error']}")
+                elif result.get("skipped"):
+                    reason = result.get("reason", "skipped")
+                    print(f"\n{Path(fn).stem}")
+                    print(f"  skipped ({reason})")
+                else:
+                    if dry_run:
+                        _print_dry_run_result(result)
+                    else:
+                        print(f"\n{Path(fn).stem}")
+                        print(f"  shots: {result['shots']}")
+                        print(f"  scenes: {result['scenes']}")
+                        print(f"  boundaries: {result['boundaries']}")
+                        if verbose:
+                            for pos in result.get("boundary_positions", []):
+                                print(f"    scene boundary at shot {pos}")
+
+            print()
+            if dry_run:
+                print(f"Dry run — {summary['processed']} movies")
+            else:
+                # Write scene numbers for non-skipped results
+                for result in summary["results"]:
+                    if not result.get("skipped") and not result.get("error"):
+                        fn = result["filename"]
+                        shots = read_shotlist(project_path, fn, media_type)
+                        assignments = result["scene_assignments"]
+                        for i, shot in enumerate(shots):
+                            if i < len(assignments):
+                                shot["Scene"] = str(assignments[i])
+                        write_shotlist(project_path, fn, media_type, shots)
+
+                print(f"Processed: {summary['processed']} movies")
+                print(f"Updated:   {summary['updated']}")
+                print(f"Skipped:   {summary['skipped']}")
+                print(f"Failed:    {summary['failed']}")
+
+            if summary["failed"]:
+                sys.exit(1)
+            return
+
+        # Single movie
+        tmdb = getattr(args, "tmdb", None)
+        query_parts = getattr(args, "query", None)
+        if isinstance(query_parts, list):
+            query = " ".join(query_parts).strip() if query_parts else None
+        else:
+            query = query_parts
+
+        if not tmdb and not query:
+            print("✗ Provide a film title or --tmdb (or use --all)", file=sys.stderr)
+            sys.exit(1)
+
+        try:
+            filename = resolve_filename(project_path, tmdb, query, media_type)
+        except ValueError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        title = Path(filename).stem
+
+        result = detect_scenes_for_movie(
+            project_path,
+            filename,
+            media_type,
+            force=force,
+        )
+
+        if result.get("skipped"):
+            reason = result.get("reason", "skipped")
+            print(f"{title}")
+            print(f"  skipped ({reason})")
+            return
+
+        if dry_run:
+            _print_dry_run_result(result)
+            return
+
+        # Write scene numbers back to the shotlist
+        shots = read_shotlist(project_path, filename, media_type)
+        assignments = result["scene_assignments"]
+        for i, shot in enumerate(shots):
+            if i < len(assignments):
+                shot["Scene"] = str(assignments[i])
+        write_shotlist(project_path, filename, media_type, shots)
+
+        print(f"{title}")
+        print(f"  shots: {result['shots']}")
+        print(f"  scenes: {result['scenes']}")
+        print(f"  boundaries: {result['boundaries']}")
+        if verbose:
+            for pos in result.get("boundary_positions", []):
+                print(f"    scene boundary at shot {pos}")
+
+    except FileNotFoundError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
 
 def _shotlist_migrate(args):
@@ -6715,6 +6871,34 @@ def build_parser():
     p_sl_shot_detect.add_argument("--force", action="store_true", help="Overwrite existing shotlist if it exists")
     p_sl_shot_detect.add_argument("--all", action="store_true", help="Process all metadata entries without a shotlist")
     _add_notify_args(p_sl_shot_detect)
+
+    p_sl_scene = shotlist_sub.add_parser("scene", help="Scene-level operations")
+    scene_sub = p_sl_scene.add_subparsers(dest="scene_subcommand", required=True)
+
+    p_sl_scene_detect = scene_sub.add_parser(
+        "detect",
+        help="Detect scene boundaries from shot embeddings",
+    )
+    p_sl_scene_detect.add_argument(
+        "query",
+        nargs="?",
+        default=None,
+        help="Film title substring to match (or use --tmdb / --all)",
+    )
+    _add_tmdb_arg(p_sl_scene_detect)
+    _add_media_arg(p_sl_scene_detect)
+    p_sl_scene_detect.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing Scene values",
+    )
+    _add_dry_run_arg(p_sl_scene_detect, help="Show proposed scene boundaries without writing")
+    _add_verbose_arg(p_sl_scene_detect, help="Print boundary positions (shot indices) for each film")
+    p_sl_scene_detect.add_argument(
+        "--all",
+        action="store_true",
+        help="Process all available shotlists",
+    )
 
     p_sl_migrate = shotlist_sub.add_parser(
         "migrate",

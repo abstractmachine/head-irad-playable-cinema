@@ -16,7 +16,7 @@ A CLI + GUI tool for relating moving images across media — connecting gameplay
 | `crossing media normalize` | Measure loudness and save one playback gain (`audio_gain_db`) per asset |
 | `crossing media subtitle` | Fetch and list subtitles via OpenSubtitles |
 | `crossing metadata` | List, get, update, and audit metadata |
-| `crossing shotlist` | Manage shot/scene CSV files and run shot detection |
+| `crossing shotlist` | Manage shot/scene CSV files and run shot/scene detection |
 | `crossing annotate` | Run LLM annotation on shots and scenes |
 | `crossing annotate frame` | Find the best matching frame per shot using CLIP (requires prior `annotate shot` pass) |
 | `crossing search` | Search shot annotations by query, field, or vocabulary |
@@ -211,12 +211,17 @@ crossing-tool/
 │   ├── models.py                   # HuggingFace model download and management
 │   ├── normalize.py                # Filename normalisation (dash-separated → Title Case)
 │   ├── notify.py                   # Discord webhook notifications
+│   ├── scene_detection.py          # Embedding-based scene boundary detection
 │   ├── search.py                   # Semantic and keyword annotation search
 │   └── transcode.py                # ffmpeg transcoding and thumbnail extraction
 ├── styles/
 │   ├── theme.py                    # Qt stylesheet and colour constants
 │   ├── fonts/                      # Bundled variable fonts (Hanken Grotesk, Roboto family)
 │   └── icons/                      # UI icons
+├── tool/
+│   ├── helpers.py                  # Shared argparse helpers (_add_verbose_arg, etc.)
+│   ├── prefs.py                    # JSON preferences store
+│   └── shortcuts.py                # Central keyboard shortcut key constants (all visualizers)
 ├── tests/
 │   ├── test_audio_channels.py
 │   └── test_audio_normalize.py
@@ -580,25 +585,62 @@ crossing shotlist migrate
   --media {movies,gameplay}         # limit to one media type (default: both)
   --dry-run                         # report changes without writing files
 
-# Keyboard shortcuts in shotlist visualizer (OpenCV-based frame-precise):
-# Space      - Play/Pause
-# ↑/↓        - Previous/Next shot (resumes playback if was playing)
-# ←/→        - Step one frame backward/forward
-# Shift+←/→  - Step one second backward/forward
-# PgUp/PgDn  - Previous/Next scene
-# Home       - Switch to previous movie in list
-# End        - Switch to next movie in list
-# E          - Jump to end frame of current shot
-# F          - Toggle Ignore flag on current shot
-# M          - Merge current shot with previous
-# N          - Split current shot at current frame (creates new shot boundary)
-# Ctrl+S     - Save changes
-# Continue button - toggle playback past shot boundaries (ON/OFF)
+# Detect scene boundaries automatically from shot embeddings
+crossing shotlist scene detect <filename_substring>
+crossing shotlist scene detect --tmdb 391
+  --media {movies,gameplay}         # media type (default: movies)
+  --force                           # overwrite existing Scene values
+  --dry-run                         # show proposed boundaries without writing
+  --verbose                         # print boundary positions (shot indices)
+  --all                             # process all available shotlists
+
+# Examples:
+crossing shotlist scene detect Django
+crossing shotlist scene detect --tmdb 10772
+crossing shotlist scene detect "Fistful" --dry-run --verbose
+crossing shotlist scene detect --all
+crossing shotlist scene detect --all --force
 ```
+
+### Keyboard Shortcuts
+
+All navigation keys are defined centrally in `tool/shortcuts.py`.
+
+#### Shotlist Visualizer
+
+| Key | Action |
+|-----|--------|
+| `Space` | Play / Pause |
+| `↑` / `↓` | Previous / Next shot |
+| `←` / `→` | Step one frame back / forward |
+| `Shift+←` / `Shift+→` | Step one second back / forward |
+| `PgUp` / `PgDn` | Previous / Next scene |
+| `Home` / `End` | Previous / Next movie in list |
+| `E` | Jump to end frame of current shot |
+| `B` | Jump to best frame of current shot |
+| `Shift+B` | Set current frame as best frame |
+| `Ctrl+B` | Clear best frame |
+| `I` | Toggle Ignore flag on current shot |
+| `C` | Toggle Continue (play past shot boundaries) |
+| `G` | Toggle gremlins overlay |
+| `M` | Merge scene at current shot |
+| `Shift+M` | Merge with previous scene |
+| `N` | Split scene at current shot |
+| `Shift+N` | Split shot at current frame |
+| `Ctrl+S` | Save changes |
+| `Ctrl+Q` / `Ctrl+W` | Close window |
+
+#### Other Visualizers (shared)
+
+| Key | Flipbook | Palette | All others |
+|-----|----------|---------|------------|
+| `Home` / `End` | Previous / Next movie | Previous / Next movie | — |
+| `PgUp` / `PgDn` | — | — | — |
+| `Ctrl+Q` / `Ctrl+W` | Close | Close | Close |
 
 ### Visualizers
 
-All visualizer GUIs share the same theme and support **Ctrl+Q** / **Ctrl+W** to close.
+All visualizer GUIs share the same theme and keyboard navigation keys, which are defined centrally in `tool/shortcuts.py`. They all support **Ctrl+Q** / **Ctrl+W** to close. See [Keyboard Shortcuts](#keyboard-shortcuts) for the full reference.
 
 ```bash
 # Open the project launcher (default — no subcommand needed)

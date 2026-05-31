@@ -35,6 +35,7 @@ from styles import theme
 from styles.theme import save_window_geometry, restore_window_geometry
 
 from PyQt5.QtCore import Qt
+from tool.shortcuts import KEY_PREV_MOVIE, KEY_NEXT_MOVIE
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -535,10 +536,10 @@ class PaletteVisualizerWindow(QMainWindow):
             self.close()
             return
 
-        if key == Qt.Key_Home:
+        if key == KEY_PREV_MOVIE:
             if self._current_idx > 0:
                 self._show_movie(self._current_idx - 1)
-        elif key == Qt.Key_End:
+        elif key == KEY_NEXT_MOVIE:
             if self._current_idx < len(self._palettes) - 1:
                 self._show_movie(self._current_idx + 1)
         else:

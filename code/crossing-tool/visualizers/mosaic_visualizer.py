@@ -30,7 +30,7 @@ from styles.theme import JumpScrollBar, save_window_geometry, restore_window_geo
 from services.frame_match import best_frame_path
 
 # Fix Qt plugin conflict with OpenCV — import PyQt5 before cv2
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -51,7 +51,6 @@ from PyQt5.QtWidgets import (
     QSizePolicy,
     QSpinBox,
     QSplitter,  # noqa: F401 (unused after refactor, kept for import compatibility)
-    QStatusBar,
     QVBoxLayout,
     QWidget,
 )
@@ -64,6 +63,39 @@ if "QT_QPA_PLATFORM_PLUGIN_PATH" in os.environ:
     del os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"]
 
 from typing import Optional
+
+
+# ---------------------------------------------------------------------------
+# Status label (replaces QStatusBar — lives inside the right control panel)
+# ---------------------------------------------------------------------------
+
+class _StatusLabel(QLabel):
+    """A QLabel that exposes a QStatusBar-compatible showMessage() interface.
+
+    ``showMessage(text, timeout=0)`` sets the label text and, when *timeout*
+    is non-zero, clears it automatically after that many milliseconds.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWordWrap(True)
+        self.setStyleSheet(
+            f"QLabel {{ color: {theme.TEXT_DIM}; padding: 4px 0 2px 0; "
+            f"font-size: {theme.BASE_PT - 1}pt; }}"
+        )
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self.clear)
+
+    def showMessage(self, text: str, timeout: int = 0) -> None:  # noqa: N802
+        self._timer.stop()
+        self.setText(text)
+        if timeout > 0:
+            self._timer.start(timeout)
+
+    def clearMessage(self) -> None:  # noqa: N802
+        self._timer.stop()
+        self.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -504,11 +536,13 @@ class TileWidget(QFrame):
         self._img_label.setStyleSheet(f"background: {self._PLACEHOLDER_BG}; border: none;")
         layout.addWidget(self._img_label)
 
-        frame = result.get("frame")
-        if frame is not None:
-            caption_text = f"f{int(frame):06d}"
-        else:
-            caption_text = _short_title(result.get("movie_title", "") or result.get("movie_id", ""))
+        caption_text = result.get("caption")
+        if caption_text is None:
+            frame = result.get("frame")
+            if frame is not None:
+                caption_text = f"f{int(frame):06d}"
+            else:
+                caption_text = _short_title(result.get("movie_title", "") or result.get("movie_id", ""))
         self._cap_label = QLabel(caption_text)
         self._cap_label.setAlignment(Qt.AlignCenter)
         self._cap_label.setStyleSheet(
@@ -605,6 +639,7 @@ class MosaicCanvas(QScrollArea):
 
         self._tile_size: int = DEFAULT_TILE_SIZE
         self._tiles: list[TileWidget] = []
+        self._row_breaks: set[int] = set()
 
         self._container = QWidget()
         self._container.setStyleSheet(f"background: {theme.CANVAS_BG};")
@@ -624,7 +659,12 @@ class MosaicCanvas(QScrollArea):
         for tile in self._tiles:
             tile.deleteLater()
         self._tiles.clear()
+        self._row_breaks.clear()
         self._container.setFixedSize(max(self.viewport().width(), 1), 1)
+
+    def add_row_break(self) -> None:
+        """Force the next tile to start on a new row regardless of available width."""
+        self._row_breaks.add(len(self._tiles))
 
     def add_tile(self, result: dict, pixmap) -> None:
         tile = TileWidget(result, pixmap, self._tile_size, parent=self._container)
@@ -651,12 +691,17 @@ class MosaicCanvas(QScrollArea):
         y     = margin
         row_h = 0
 
-        for tile in self._tiles:
+        for i, tile in enumerate(self._tiles):
             tw = tile.width()
             th = tile.height()
 
-            # If this tile's right edge would exceed the usable width, wrap.
-            if x > margin and x + tw > vp_w - margin:
+            if i in self._row_breaks and i > 0:
+                # Explicit row break (scene boundary)
+                x      = margin
+                y     += row_h + spacing
+                row_h  = 0
+            elif x > margin and x + tw > vp_w - margin:
+                # Normal flow wrap
                 x      = margin
                 y     += row_h + spacing
                 row_h  = 0
@@ -745,6 +790,270 @@ class BestOnlyWorker(QThread):
 
 
 # ---------------------------------------------------------------------------
+# Background worker: all-shots browse (no query)
+# ---------------------------------------------------------------------------
+
+class AllShotsWorker(QThread):
+    """Loads the first frame of every shot in one film in a background thread.
+
+    Used when the user presses Search with an empty query and a single movie
+    selected.  Emits a pixmap directly (same pattern as SearchWorker) so the
+    main thread can add each tile as it arrives.
+
+    Signals
+    -------
+    tile_ready(result_dict, pixmap_or_None)
+        Emitted for every shot with the extracted QPixmap (or None on failure).
+    finished_signal(total_count)
+        Emitted when all shots have been processed.
+    error(message)
+        Emitted on unexpected errors.
+    """
+
+    tile_ready      = pyqtSignal(dict, object)
+    finished_signal = pyqtSignal(int)
+    error           = pyqtSignal(str)
+
+    def __init__(self, filename: str, project_path: str, parent=None):
+        super().__init__(parent)
+        self.filename     = filename
+        self.project_path = project_path
+        self._cancelled   = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def run(self) -> None:
+        try:
+            from data.shotlist import read_shotlist
+
+            shots = read_shotlist(self.project_path, self.filename, "movies")
+            movie_id   = Path(self.filename).stem
+            video_path = _find_video_path(self.project_path, movie_id)
+
+            count = 0
+            for shot in shots:
+                if self._cancelled:
+                    break
+
+                shot_id     = shot.get("shot_id", "")
+                start_frame = shot.get("start_frame")
+                end_frame   = shot.get("end_frame")
+
+                try:
+                    frame_index = int(start_frame) if start_frame is not None else 0
+                except (TypeError, ValueError):
+                    frame_index = 0
+
+                pixmap = None
+                if video_path is not None:
+                    pixmap = _extract_frame_pixmap(video_path, frame_index)
+
+                result = {
+                    "filename":    self.filename,
+                    "movie_title": self.filename,
+                    "movie_id":    movie_id,
+                    "shot_id":     shot_id,
+                    "start_frame": frame_index,
+                    "end_frame":   end_frame,
+                    "frame":       frame_index,
+                    "matched_fields": [],
+                    "matched_text":   "",
+                    "score":          0.0,
+                }
+                self.tile_ready.emit(result, pixmap)
+                count += 1
+
+            self.finished_signal.emit(count)
+
+        except Exception as exc:
+            import traceback
+            self.error.emit(f"{exc}\n{traceback.format_exc()}")
+
+
+# ---------------------------------------------------------------------------
+# Background worker: scene-grouped browse
+# ---------------------------------------------------------------------------
+
+class ScenesWorker(QThread):
+    """Loads shots for one film grouped by scene, in a background thread.
+
+    Emits each shot as a tile with scene metadata so the main thread can
+    insert row breaks at scene boundaries.  When *best_lookup* is provided
+    the precomputed best-frame PNG is used instead of the first raw frame.
+
+    Signals
+    -------
+    tile_ready(result_dict, pixmap_or_None)
+    finished_signal(total_count)
+    error(message)
+    """
+
+    tile_ready      = pyqtSignal(dict, object)
+    finished_signal = pyqtSignal(int)
+    error           = pyqtSignal(str)
+
+    def __init__(
+        self,
+        filename: str,
+        project_path: str,
+        best_lookup: "dict | None" = None,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.filename     = filename
+        self.project_path = project_path
+        self.best_lookup  = best_lookup or {}
+        self._cancelled   = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def run(self) -> None:
+        try:
+            from data.shotlist import read_shotlist
+
+            shots      = read_shotlist(self.project_path, self.filename, "movies")
+            movie_id   = Path(self.filename).stem
+            video_path = _find_video_path(self.project_path, movie_id)
+
+            current_scene: str | None = None
+            count = 0
+
+            for shot in shots:
+                if self._cancelled:
+                    break
+
+                scene   = str(shot.get("Scene") or "").strip()
+                shot_id = shot.get("shot_id", "")
+
+                start_frame = shot.get("start_frame")
+                end_frame   = shot.get("end_frame")
+                try:
+                    frame_index = int(start_frame) if start_frame is not None else 0
+                except (TypeError, ValueError):
+                    frame_index = 0
+
+                is_scene_break = (scene != current_scene) and (current_scene is not None)
+                if scene != current_scene:
+                    current_scene = scene
+
+                # Prefer precomputed best-frame PNG when available
+                pixmap: Optional[QPixmap] = None
+                if self.best_lookup and shot_id in self.best_lookup:
+                    img_path = best_frame_path(
+                        self.project_path, "movies", self.filename, shot_id
+                    )
+                    if img_path.exists():
+                        pixmap = QPixmap(str(img_path))
+                if pixmap is None and video_path is not None:
+                    pixmap = _extract_frame_pixmap(video_path, frame_index)
+
+                scene_label = f"Scene {scene}" if scene else "Scene ?"
+                caption     = f"{scene_label} — f{frame_index:06d}"
+
+                result = {
+                    "filename":       self.filename,
+                    "movie_title":    self.filename,
+                    "movie_id":       movie_id,
+                    "shot_id":        shot_id,
+                    "start_frame":    frame_index,
+                    "end_frame":      end_frame,
+                    "frame":          frame_index,
+                    "scene":          scene,
+                    "caption":        caption,
+                    "scene_break":    is_scene_break,
+                    "matched_fields": [],
+                    "matched_text":   "",
+                    "score":          0.0,
+                }
+                self.tile_ready.emit(result, pixmap)
+                count += 1
+
+            self.finished_signal.emit(count)
+
+        except Exception as exc:
+            import traceback
+            self.error.emit(f"{exc}\n{traceback.format_exc()}")
+
+
+# ---------------------------------------------------------------------------
+# Background worker: PDF contact-sheet export
+# ---------------------------------------------------------------------------
+
+class PdfExportWorker(QThread):
+    """Renders current results as a mosaic contact sheet and saves as PDF.
+
+    Signals
+    -------
+    finished_signal(output_path_str)
+    error(message)
+    """
+
+    finished_signal = pyqtSignal(str)
+    error           = pyqtSignal(str)
+
+    def __init__(self, results: list, project_path: str, query: str, parent=None):
+        super().__init__(parent)
+        self.results      = results
+        self.project_path = project_path
+        self.query        = query
+
+    def run(self) -> None:
+        try:
+            import datetime
+            import re as _re
+            # Ensure the JPEG encoder is registered before Pillow's PDF plugin
+            # tries to call Image.SAVE["JPEG"] — it is loaded lazily and may
+            # not be present if no JPEG has been opened/saved in this process yet.
+            import PIL.JpegImagePlugin  # noqa: F401
+            from generators.mosaic import MosaicItem, render_mosaic
+
+            items: list[MosaicItem] = []
+            for r in self.results:
+                movie_id   = r.get("movie_id", "")
+                video_path = _find_video_path(self.project_path, movie_id)
+                if video_path is None:
+                    continue
+                frame = r.get("frame")
+                if frame is None:
+                    sf = r.get("start_frame")
+                    ef = r.get("end_frame")
+                    if sf is not None and ef is not None:
+                        frame = int(sf + (ef - sf) * 0.5)
+                    elif sf is not None:
+                        frame = int(sf)
+                    else:
+                        frame = 0
+                caption = r.get("caption") or r.get("movie_title", "") or movie_id
+                items.append(
+                    MosaicItem(
+                        video_path  = video_path,
+                        frame_index = int(frame),
+                        caption     = caption,
+                    )
+                )
+
+            if not items:
+                self.error.emit("No frames available to export.")
+                return
+
+            stamp    = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+            safe_q   = _re.sub(r"[^\w\-]", "_", self.query)[:40].strip("_") if self.query else "mosaic"
+            out_path = (
+                Path(self.project_path) / "output" / "exports"
+                / f"{safe_q}-{stamp}.pdf"
+            )
+            render_mosaic(items, out_path, layout="landscape")
+            self.finished_signal.emit(str(out_path))
+
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()  # full traceback visible in the terminal
+            self.error.emit(f"{exc}\n{traceback.format_exc()}")
+
+
+# ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
 
@@ -759,6 +1068,9 @@ class MosaicVisualizer(QMainWindow):
         self.project_path = project_path
         self._worker: Optional[SearchWorker] = None
         self._best_worker: Optional[BestOnlyWorker] = None
+        self._all_shots_worker: Optional[AllShotsWorker] = None
+        self._scenes_worker: Optional[ScenesWorker] = None
+        self._pdf_worker: Optional[PdfExportWorker] = None
         self._vocab_worker: Optional[VocabularyWorker] = None
         self._export_worker: Optional[ExportWorker] = None
         self._video_worker: Optional[VideoMosaicWorker] = None
@@ -809,12 +1121,14 @@ class MosaicVisualizer(QMainWindow):
         divider.setStyleSheet(f"background: {theme.UI_BORDER};")
         root.addWidget(divider)
 
+        # Status label lives at the bottom of the control panel; create it
+        # before calling _build_control_panel so the builder can place it.
+        self.status = _StatusLabel()
+
         ctrl = self._build_control_panel()
         root.addWidget(ctrl)
 
-        self.status = QStatusBar()
-        self.setStatusBar(self.status)
-        self.status.showMessage("Ready — enter a query and press Search.")
+        self.status.showMessage("Ready — enter a query and press Search, or choose Shots / Scenes.")
 
         self.canvas.tile_clicked.connect(self._on_tile_clicked)
         self._populate_movies()
@@ -894,40 +1208,55 @@ class MosaicVisualizer(QMainWindow):
         self.query_input.textChanged.connect(self._update_search_button)
         query_layout.addWidget(self.query_input)
 
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(4)
+        btn_grid = QGridLayout()
+        btn_grid.setSpacing(4)
+        btn_grid.setContentsMargins(4, 4, 4, 4)
+
         self.search_btn = QPushButton("Search")
         self.search_btn.setEnabled(False)
+        self.search_btn.setToolTip("Search shot annotations for the query term")
         self.search_btn.clicked.connect(self._on_search)
-        btn_row.addWidget(self.search_btn)
+        btn_grid.addWidget(self.search_btn, 0, 0)
+
         self.best_btn = QPushButton("Best")
         self.best_btn.setCheckable(True)
         self.best_btn.setEnabled(False)
+        self.best_btn.setToolTip("Show CLIP-scored best frame for each matched shot")
         self.best_btn.clicked.connect(self._on_best_toggle)
-        btn_row.addWidget(self.best_btn)
-        self.export_btn = QPushButton("Export")
-        self.export_btn.setEnabled(False)
-        self.export_btn.setToolTip(
-            "Export each result as an individual JPEG with search info overlay\n"
-            "into output/exports/<query>-<timestamp>/"
-        )
-        self.export_btn.clicked.connect(self._on_export)
-        btn_row.addWidget(self.export_btn)
-        self._export_btn_image_tip = (
-            "Export each result as an individual JPEG with search info overlay\n"
-            "into output/exports/<query>-<timestamp>/"
-        )
-        self._export_btn_video_tip = (
+        btn_grid.addWidget(self.best_btn, 0, 1)
+
+        self.shots_btn = QPushButton("Shots")
+        self.shots_btn.setEnabled(False)
+        self.shots_btn.setToolTip("Browse all shots of the selected movie (uses Best frame if active)")
+        self.shots_btn.clicked.connect(self._on_shots_clicked)
+        btn_grid.addWidget(self.shots_btn, 1, 0)
+
+        self.scenes_btn = QPushButton("Scenes")
+        self.scenes_btn.setEnabled(False)
+        self.scenes_btn.setToolTip("Browse shots grouped by scene, one row per scene (uses Best frame if active)")
+        self.scenes_btn.clicked.connect(self._on_scenes_clicked)
+        btn_grid.addWidget(self.scenes_btn, 1, 1)
+
+        self.pdf_btn = QPushButton("PDF")
+        self.pdf_btn.setEnabled(False)
+        self.pdf_btn.setToolTip("Export a PDF contact sheet of the current results")
+        self.pdf_btn.clicked.connect(self._on_export_pdf)
+        btn_grid.addWidget(self.pdf_btn, 2, 0)
+
+        self.video_btn = QPushButton("Video")
+        self.video_btn.setEnabled(False)
+        self.video_btn.setToolTip(
             "Generate a looping video mosaic (.mp4) from the current results\n"
             "saved to output/mosaics/video/search/"
         )
+        self.video_btn.clicked.connect(self._on_save_video)
+        btn_grid.addWidget(self.video_btn, 2, 1)
 
         btn_container = QFrame()
         btn_container.setStyleSheet(
             f"QFrame {{ background: {theme.INPUT_BG}; border-radius: 3px; }}"
         )
-        btn_container.setLayout(btn_row)
-        btn_row.setContentsMargins(4, 4, 4, 4)
+        btn_container.setLayout(btn_grid)
         query_layout.addWidget(btn_container)
         layout.addWidget(query_group)
 
@@ -950,45 +1279,25 @@ class MosaicVisualizer(QMainWindow):
         self.limit_per_movie_cb = QCheckBox("Limit per movie")
         opt_layout.addWidget(self.limit_per_movie_cb)
 
-        # Output mode
-        mode_row = QHBoxLayout()
-        mode_label = QLabel("Mode:")
-        mode_label.setFixedWidth(54)
-        self.mode_combo = QComboBox()
-        self.mode_combo.addItem("image")
-        self.mode_combo.addItem("video")
-        self.mode_combo.currentTextChanged.connect(self._on_mode_changed)
-        mode_row.addWidget(mode_label)
-        mode_row.addWidget(self.mode_combo)
-        opt_layout.addLayout(mode_row)
-
-        # FPS row — shown only in video mode
-        self._fps_row = QWidget()
-        fps_row_layout = QHBoxLayout(self._fps_row)
-        fps_row_layout.setContentsMargins(0, 0, 0, 0)
+        fps_row = QHBoxLayout()
         fps_label = QLabel("FPS:")
-        fps_label.setFixedWidth(54)
+        fps_label.setFixedWidth(46)
         self.fps_spin = QSpinBox()
         self.fps_spin.setRange(1, 30)
         self.fps_spin.setValue(8)
-        fps_row_layout.addWidget(fps_label)
-        fps_row_layout.addWidget(self.fps_spin)
-        opt_layout.addWidget(self._fps_row)
-        self._fps_row.setVisible(False)
+        fps_row.addWidget(fps_label)
+        fps_row.addWidget(self.fps_spin)
+        opt_layout.addLayout(fps_row)
 
-        # Duration row — shown only in video mode
-        self._dur_row = QWidget()
-        dur_row_layout = QHBoxLayout(self._dur_row)
-        dur_row_layout.setContentsMargins(0, 0, 0, 0)
+        dur_row = QHBoxLayout()
         dur_label = QLabel("Dur (s):")
-        dur_label.setFixedWidth(54)
+        dur_label.setFixedWidth(46)
         self.dur_spin = QSpinBox()
         self.dur_spin.setRange(1, 10)
         self.dur_spin.setValue(2)
-        dur_row_layout.addWidget(dur_label)
-        dur_row_layout.addWidget(self.dur_spin)
-        opt_layout.addWidget(self._dur_row)
-        self._dur_row.setVisible(False)
+        dur_row.addWidget(dur_label)
+        dur_row.addWidget(self.dur_spin)
+        opt_layout.addLayout(dur_row)
 
         layout.addWidget(opt_group)
 
@@ -1016,6 +1325,7 @@ class MosaicVisualizer(QMainWindow):
         self.vocab_list.setVerticalScrollBar(JumpScrollBar())
         vocab_layout.addWidget(self.vocab_list)
         layout.addWidget(vocab_group, 1)  # stretch=1 fills remaining space
+        layout.addWidget(self.status)
         return panel
 
     def _populate_movies(self) -> None:
@@ -1037,17 +1347,17 @@ class MosaicVisualizer(QMainWindow):
 
     def _update_best_button(self) -> None:
         has_single_movie = self.movie_combo.currentData() is not None
-        is_video_mode    = self.mode_combo.currentText() == "video"
-        can_use_best     = has_single_movie and not is_video_mode
-        self.best_btn.setEnabled(can_use_best)
-        if not can_use_best:
+        self.best_btn.setEnabled(has_single_movie)
+        self.shots_btn.setEnabled(has_single_movie)
+        self.scenes_btn.setEnabled(has_single_movie)
+        if not has_single_movie:
             self.best_btn.setChecked(False)
             self.best_mode = False
         self._update_search_button()
 
     def _update_search_button(self) -> None:
         has_query = bool(self.query_input.text().strip())
-        self.search_btn.setEnabled(has_query or self.best_mode)
+        self.search_btn.setEnabled(has_query)
 
     def _on_best_toggle(self) -> None:
         self.best_mode = self.best_btn.isChecked()
@@ -1057,32 +1367,33 @@ class MosaicVisualizer(QMainWindow):
     # Search flow
 
     def _on_search(self) -> None:
-        query    = self.query_input.text().strip()
-        filename = self.movie_combo.currentData()
-
-        if self.best_mode and not query and filename:
-            self._render_best_only(filename)
-            return
-
+        query = self.query_input.text().strip()
         if not query:
             self.status.showMessage("Enter a search query first.")
             return
 
-        # Stop any in-flight worker
+        # Stop any in-flight workers
         if self._worker and self._worker.isRunning():
             self._worker.cancel()
             self._worker.wait(3000)
+        if self._all_shots_worker and self._all_shots_worker.isRunning():
+            self._all_shots_worker.cancel()
+            self._all_shots_worker.wait(3000)
+        if self._scenes_worker and self._scenes_worker.isRunning():
+            self._scenes_worker.cancel()
+            self._scenes_worker.wait(3000)
 
         self.canvas.clear()
         self._current_results = []
-        self.export_btn.setEnabled(False)
+        self.pdf_btn.setEnabled(False)
+        self.video_btn.setEnabled(False)
 
-        scope_data      = filename  # already resolved above
-        scope           = scope_data if scope_data else None
-        field_text      = self.field_combo.currentText()
-        field           = None if field_text == "--all" else field_text
-        limit_text      = self.limit_combo.currentText()
-        limit           = None if limit_text == "all" else int(limit_text)
+        scope_data = self.movie_combo.currentData()
+        scope      = scope_data if scope_data else None
+        field_text = self.field_combo.currentText()
+        field      = None if field_text == "--all" else field_text
+        limit_text = self.limit_combo.currentText()
+        limit      = None if limit_text == "all" else int(limit_text)
         limit_per_movie = self.limit_per_movie_cb.isChecked()
 
         self.search_btn.setEnabled(False)
@@ -1092,10 +1403,10 @@ class MosaicVisualizer(QMainWindow):
 
         self._best_lookup = {}
         self._query_best_active = self.best_mode and bool(query)
-        if self.best_mode and filename and not self._query_best_active:
+        if self.best_mode and scope and not self._query_best_active:
             from services.frame_match import load_best_frame_lookup
             self._best_lookup = load_best_frame_lookup(
-                self.project_path, filename, "movies"
+                self.project_path, scope, "movies"
             )
 
         from tool import prefs as _prefs
@@ -1141,17 +1452,14 @@ class MosaicVisualizer(QMainWindow):
         self._progress.setRange(0, 1)
         self._progress.setValue(0)
         self.search_btn.setEnabled(True)
-        self.export_btn.setEnabled(count > 0)
+        self.pdf_btn.setEnabled(count > 0)
+        self.video_btn.setEnabled(count > 0)
         if count == 0:
             self.status.showMessage("No results found.")
         else:
             self.status.showMessage(
                 f"{count} result(s)  —  Ctrl + scroll to zoom,  scroll to pan"
             )
-            # In video mode, automatically start video generation once results
-            # are loaded — the user doesn't need to click "Save Video" separately.
-            if self.mode_combo.currentText() == "video":
-                self._on_save_video()
 
     def _on_search_error(self, message: str) -> None:
         self._progress.setRange(0, 1)
@@ -1166,10 +1474,16 @@ class MosaicVisualizer(QMainWindow):
     def _render_best_only(self, filename: str) -> None:
         from services.frame_match import load_best_frame_lookup
 
-        # Stop any in-flight best worker
+        # Stop any in-flight workers
         if self._best_worker and self._best_worker.isRunning():
             self._best_worker.cancel()
             self._best_worker.wait(3000)
+        if self._all_shots_worker and self._all_shots_worker.isRunning():
+            self._all_shots_worker.cancel()
+            self._all_shots_worker.wait(3000)
+        if self._scenes_worker and self._scenes_worker.isRunning():
+            self._scenes_worker.cancel()
+            self._scenes_worker.wait(3000)
 
         # Show immediate feedback — indeterminate bar while JSON loads
         self._progress.setRange(0, 0)
@@ -1180,7 +1494,8 @@ class MosaicVisualizer(QMainWindow):
 
         self.canvas.clear()
         self._current_results = []
-        self.export_btn.setEnabled(False)
+        self.pdf_btn.setEnabled(False)
+        self.video_btn.setEnabled(False)
 
         lookup = load_best_frame_lookup(self.project_path, filename, "movies")
         if not lookup:
@@ -1218,7 +1533,8 @@ class MosaicVisualizer(QMainWindow):
         self._progress.setValue(0)
         self.search_btn.setEnabled(True)
         self.best_btn.setEnabled(True)
-        self.export_btn.setEnabled(count > 0)
+        self.pdf_btn.setEnabled(count > 0)
+        self.video_btn.setEnabled(count > 0)
         if count == 0:
             self.status.showMessage("No best frames found.")
         else:
@@ -1227,73 +1543,181 @@ class MosaicVisualizer(QMainWindow):
             )
 
     # ------------------------------------------------------------------
-    # Mode switching
+    # All-shots browse (no query)
 
-    def _on_mode_changed(self, mode: str) -> None:
-        is_video = (mode == "video")
-        self._fps_row.setVisible(is_video)
-        self._dur_row.setVisible(is_video)
-        if is_video:
-            self.export_btn.setText("Save Video")
-            self.export_btn.setToolTip(self._export_btn_video_tip)
-            # Best mode is incompatible with video mosaic
-            self.best_btn.setChecked(False)
-            self.best_btn.setEnabled(False)
-            self.best_mode = False
+    def _render_all_shots(self, filename: str) -> None:
+        """Show the first frame of every shot for *filename* (no query needed)."""
+        # Stop any in-flight workers
+        if self._all_shots_worker and self._all_shots_worker.isRunning():
+            self._all_shots_worker.cancel()
+            self._all_shots_worker.wait(3000)
+        if self._best_worker and self._best_worker.isRunning():
+            self._best_worker.cancel()
+            self._best_worker.wait(3000)
+        if self._scenes_worker and self._scenes_worker.isRunning():
+            self._scenes_worker.cancel()
+            self._scenes_worker.wait(3000)
+
+        self._progress.setRange(0, 0)
+        self._progress.setValue(0)
+        self.search_btn.setEnabled(False)
+        self.status.showMessage("Loading all shot frames…")
+
+        self.canvas.clear()
+        self._current_results = []
+        self.pdf_btn.setEnabled(False)
+        self.video_btn.setEnabled(False)
+
+        self._all_shots_worker = AllShotsWorker(filename, self.project_path)
+        self._all_shots_worker.tile_ready.connect(self._on_all_shots_tile_ready)
+        self._all_shots_worker.finished_signal.connect(self._on_all_shots_done)
+        self._all_shots_worker.error.connect(self._on_all_shots_error)
+        self._all_shots_worker.start()
+
+    def _on_all_shots_tile_ready(self, result: dict, pixmap) -> None:
+        self._current_results.append(result)
+        self.canvas.add_tile(result, pixmap)
+        self.status.showMessage(f"Loading… {self.canvas.tile_count} tile(s)")
+
+    def _on_all_shots_done(self, count: int) -> None:
+        self._progress.setRange(0, 1)
+        self._progress.setValue(0)
+        self.search_btn.setEnabled(True)
+        self.pdf_btn.setEnabled(count > 0)
+        self.video_btn.setEnabled(count > 0)
+        if count == 0:
+            self.status.showMessage("No shots found.")
         else:
-            self.export_btn.setText("Export")
-            self.export_btn.setToolTip(self._export_btn_image_tip)
-            # Re-evaluate whether Best can be enabled
-            self._update_best_button()
+            self.status.showMessage(
+                f"{count} shot(s)  —  Ctrl + scroll to zoom,  scroll to pan"
+            )
+
+    def _on_all_shots_error(self, message: str) -> None:
+        self._progress.setRange(0, 1)
+        self._progress.setValue(0)
+        self.search_btn.setEnabled(True)
+        preview = message.splitlines()[0][:120]
+        self.status.showMessage(f"Error: {preview}")
 
     # ------------------------------------------------------------------
-    # Export
+    # Shots button (dedicated browse)
 
-    def _on_export(self) -> None:
-        if self.mode_combo.currentText() == "video":
-            self._on_save_video()
+    def _on_shots_clicked(self) -> None:
+        """Browse all shots of the selected movie (respects Best mode)."""
+        filename = self.movie_combo.currentData()
+        if not filename:
+            return
+        if self.best_mode:
+            self._render_best_only(filename)
+        else:
+            self._render_all_shots(filename)
+
+    # ------------------------------------------------------------------
+    # Scenes button
+
+    def _on_scenes_clicked(self) -> None:
+        """Browse shots grouped by scene, inserting row breaks at scene changes."""
+        filename = self.movie_combo.currentData()
+        if not filename:
             return
 
+        # Cancel any running workers
+        for w in (
+            self._worker,
+            self._best_worker,
+            self._all_shots_worker,
+            self._scenes_worker,
+        ):
+            if w and w.isRunning():
+                w.cancel()
+                w.wait(3000)
+
+        self.canvas.clear()
+        self._current_results = []
+        self.pdf_btn.setEnabled(False)
+        self.video_btn.setEnabled(False)
+        self._progress.setRange(0, 0)
+        self._progress.setValue(0)
+        self.search_btn.setEnabled(False)
+        self.status.showMessage("Loading scenes…")
+
+        best_lookup: dict = {}
+        if self.best_mode:
+            from services.frame_match import load_best_frame_lookup
+            best_lookup = load_best_frame_lookup(self.project_path, filename, "movies")
+
+        self._scenes_worker = ScenesWorker(
+            filename, self.project_path, best_lookup
+        )
+        self._scenes_worker.tile_ready.connect(self._on_scenes_tile_ready)
+        self._scenes_worker.finished_signal.connect(self._on_scenes_done)
+        self._scenes_worker.error.connect(self._on_scenes_error)
+        self._scenes_worker.start()
+
+    def _on_scenes_tile_ready(self, result: dict, pixmap) -> None:
+        # Insert a row break whenever the scene changes (except for tile 0)
+        if result.get("scene_break") and self.canvas.tile_count > 0:
+            self.canvas.add_row_break()
+        self._current_results.append(result)
+        self.canvas.add_tile(result, pixmap)
+        self.status.showMessage(f"Loading… {self.canvas.tile_count} tile(s)")
+
+    def _on_scenes_done(self, count: int) -> None:
+        self._progress.setRange(0, 1)
+        self._progress.setValue(0)
+        self.search_btn.setEnabled(True)
+        self.pdf_btn.setEnabled(count > 0)
+        self.video_btn.setEnabled(count > 0)
+        if count == 0:
+            self.status.showMessage("No shots/scenes found.")
+        else:
+            self.status.showMessage(
+                f"{count} shot(s)  —  Ctrl + scroll to zoom,  scroll to pan"
+            )
+
+    def _on_scenes_error(self, message: str) -> None:
+        self._progress.setRange(0, 1)
+        self._progress.setValue(0)
+        self.search_btn.setEnabled(True)
+        preview = message.splitlines()[0][:120]
+        self.status.showMessage(f"Scenes error: {preview}")
+
+    # ------------------------------------------------------------------
+    # PDF export
+
+    def _on_export_pdf(self) -> None:
         if not self._current_results:
             self.status.showMessage("No results to export — run a search first.")
             return
-
-        # Prevent double-click while export is in flight
-        if self._export_worker and self._export_worker.isRunning():
+        if self._pdf_worker and self._pdf_worker.isRunning():
             return
 
-        query      = self.query_input.text().strip()
-        field_text = self.field_combo.currentText()
-        field      = None if field_text == "--all" else field_text
-
-        self.export_btn.setEnabled(False)
+        query = self.query_input.text().strip()
+        self.pdf_btn.setEnabled(False)
         self.search_btn.setEnabled(False)
         self.status.showMessage(
-            f"Exporting {len(self._current_results)} frame(s) for '{query}'…"
+            f"Exporting PDF for {len(self._current_results)} frame(s)…"
         )
 
-        self._export_worker = ExportWorker(
-            results      = list(self._current_results),
-            project_path = self.project_path,
-            query        = query,
-            field        = field,
+        self._pdf_worker = PdfExportWorker(
+            list(self._current_results), self.project_path, query
         )
-        self._export_worker.finished_signal.connect(self._on_export_done)
-        self._export_worker.error.connect(self._on_export_error)
-        self._export_worker.start()
+        self._pdf_worker.finished_signal.connect(self._on_pdf_export_done)
+        self._pdf_worker.error.connect(self._on_pdf_export_error)
+        self._pdf_worker.start()
 
-    def _on_export_done(self, out_dir: str) -> None:
+    def _on_pdf_export_done(self, out_path: str) -> None:
         import subprocess
-        self.export_btn.setEnabled(True)
+        self.pdf_btn.setEnabled(True)
         self.search_btn.setEnabled(True)
-        self.status.showMessage(f"Exported → {out_dir}")
-        subprocess.Popen(["xdg-open", out_dir])
+        self.status.showMessage(f"PDF saved → {out_path}")
+        subprocess.Popen(["xdg-open", str(Path(out_path).parent)])
 
-    def _on_export_error(self, message: str) -> None:
-        self.export_btn.setEnabled(True)
+    def _on_pdf_export_error(self, message: str) -> None:
+        self.pdf_btn.setEnabled(True)
         self.search_btn.setEnabled(True)
         preview = message.splitlines()[0][:120]
-        self.status.showMessage(f"Export error: {preview}")
+        self.status.showMessage(f"PDF export error: {preview}")
 
     def _on_save_video(self) -> None:
         """Generate a looping video mosaic (.mp4) from the current results."""
@@ -1304,13 +1728,13 @@ class MosaicVisualizer(QMainWindow):
         if self._video_worker and self._video_worker.isRunning():
             return
 
-        query = self.query_input.text().strip()
+        query      = self.query_input.text().strip()
         limit_text = self.limit_combo.currentText()
-        limit = 50 if limit_text == "all" else int(limit_text)
-        fps      = self.fps_spin.value()
-        duration = self.dur_spin.value()
+        limit      = 50 if limit_text == "all" else int(limit_text)
+        fps        = self.fps_spin.value()
+        duration   = self.dur_spin.value()
 
-        self.export_btn.setEnabled(False)
+        self.video_btn.setEnabled(False)
         self.search_btn.setEnabled(False)
         self.status.showMessage(
             f"Generating video mosaic: {len(self._current_results)} tile(s) …"
@@ -1333,7 +1757,7 @@ class MosaicVisualizer(QMainWindow):
     def _on_video_done(self, out_path: str) -> None:
         self._progress.setRange(0, 1)
         self._progress.setValue(0)
-        self.export_btn.setEnabled(True)
+        self.video_btn.setEnabled(True)
         self.search_btn.setEnabled(True)
         self.status.showMessage(f"✓ Saved: {out_path}  — opening in looping player…")
         _open_video_looping(out_path)
@@ -1341,7 +1765,7 @@ class MosaicVisualizer(QMainWindow):
     def _on_video_error(self, message: str) -> None:
         self._progress.setRange(0, 1)
         self._progress.setValue(0)
-        self.export_btn.setEnabled(True)
+        self.video_btn.setEnabled(True)
         self.search_btn.setEnabled(True)
         preview = message.splitlines()[0][:120]
         self.status.showMessage(f"Video error: {preview}")

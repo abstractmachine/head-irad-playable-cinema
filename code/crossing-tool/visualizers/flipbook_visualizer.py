@@ -37,6 +37,7 @@ from styles import theme
 from styles.theme import save_window_geometry, restore_window_geometry
 
 from PyQt5.QtCore import Qt, QEvent, QSize
+from tool.shortcuts import KEY_PREV_MOVIE, KEY_NEXT_MOVIE
 from PyQt5.QtWidgets import (
     QApplication,
     QComboBox,
@@ -584,10 +585,10 @@ class FlipbookVisualizerWindow(QMainWindow):
             self._title_edit.selectAll()
             return
 
-        if key in (Qt.Key_Home, Qt.Key_PageUp):
+        if key == KEY_PREV_MOVIE:
             if self._current_idx > 0:
                 self._show_movie(self._current_idx - 1)
-        elif key in (Qt.Key_End, Qt.Key_PageDown):
+        elif key == KEY_NEXT_MOVIE:
             if self._current_idx < len(self._books) - 1:
                 self._show_movie(self._current_idx + 1)
         else:
