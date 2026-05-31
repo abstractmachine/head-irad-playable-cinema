@@ -632,11 +632,11 @@ All navigation keys are defined centrally in `tool/shortcuts.py`.
 
 #### Other Visualizers (shared)
 
-| Key | Flipbook | Palette | All others |
-|-----|----------|---------|------------|
-| `Home` / `End` | Previous / Next movie | Previous / Next movie | — |
-| `PgUp` / `PgDn` | — | — | — |
-| `Ctrl+Q` / `Ctrl+W` | Close | Close | Close |
+| Key | Flipbook | Palette | Mosaic | Cloud | All others |
+|-----|----------|---------|--------|-------|------------|
+| `Home` / `End` | Previous / Next movie | Previous / Next movie | Previous / Next movie | Previous / Next movie | — |
+| `PgUp` / `PgDn` | — | — | — (ignored) | — (ignored) | — |
+| `Ctrl+Q` / `Ctrl+W` | Close | Close | Close | Close | Close |
 
 ### Visualizers
 

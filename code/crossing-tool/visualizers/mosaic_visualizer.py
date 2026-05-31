@@ -10,6 +10,12 @@ The window has:
 
 Zoom: Ctrl + scroll wheel
 Pan:  scroll wheel / scrollbars
+
+Keyboard:
+  Home          — previous movie in list
+  End           — next movie in list
+  PgUp / PgDn   — (ignored; no scene navigation in mosaic view)
+  Escape / Ctrl+Q / Ctrl+W — close
 """
 
 from __future__ import annotations
@@ -2524,10 +2530,22 @@ class MosaicVisualizer(QMainWindow):
             self.query_input.setText(value)
 
     def keyPressEvent(self, event) -> None:
-        if event.key() in (Qt.Key_Q, Qt.Key_W) and event.modifiers() & Qt.ControlModifier:
+        key = event.key()
+        if key in (Qt.Key_Q, Qt.Key_W) and event.modifiers() & Qt.ControlModifier:
             self.close()
             return
-        super().keyPressEvent(event)
+        if key == Qt.Key_Home:
+            idx = self.movie_combo.currentIndex()
+            if idx > 0:
+                self.movie_combo.setCurrentIndex(idx - 1)
+        elif key == Qt.Key_End:
+            idx = self.movie_combo.currentIndex()
+            if idx < self.movie_combo.count() - 1:
+                self.movie_combo.setCurrentIndex(idx + 1)
+        elif key in (Qt.Key_PageUp, Qt.Key_PageDown):
+            pass  # No scene navigation in the mosaic view — ignore
+        else:
+            super().keyPressEvent(event)
 
 
 # ---------------------------------------------------------------------------

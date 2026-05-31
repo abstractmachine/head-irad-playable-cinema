@@ -7,6 +7,11 @@ Launched via:
 Layout:
   LEFT  — cloud canvas (rendered PDF page displayed as an image)
   RIGHT — control panel: scope, field, options, Generate and Save PDF buttons
+
+Keyboard:
+  Home          — previous movie in list
+  End           — next movie in list
+  Escape / Ctrl+Q / Ctrl+W — close
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from styles import theme
 from styles.theme import save_window_geometry, restore_window_geometry
+from tool.shortcuts import KEY_PREV_MOVIE, KEY_NEXT_MOVIE
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (
@@ -662,13 +668,20 @@ class CloudVisualizer(QMainWindow):
         super().closeEvent(event)
 
     def keyPressEvent(self, event) -> None:
-        if (
-            event.key() in (Qt.Key_Q, Qt.Key_W)
-            and event.modifiers() & Qt.ControlModifier
-        ):
+        key = event.key()
+        if key in (Qt.Key_Q, Qt.Key_W) and event.modifiers() & Qt.ControlModifier:
             self.close()
             return
-        super().keyPressEvent(event)
+        if key == KEY_PREV_MOVIE:
+            idx = self.movie_combo.currentIndex()
+            if idx > 0:
+                self.movie_combo.setCurrentIndex(idx - 1)
+        elif key == KEY_NEXT_MOVIE:
+            idx = self.movie_combo.currentIndex()
+            if idx < self.movie_combo.count() - 1:
+                self.movie_combo.setCurrentIndex(idx + 1)
+        else:
+            super().keyPressEvent(event)
 
 
 # ---------------------------------------------------------------------------
