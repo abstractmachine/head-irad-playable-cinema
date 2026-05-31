@@ -871,6 +871,14 @@ class MosaicCanvas(QScrollArea):
         self._row_breaks.clear()
         self._container.setFixedSize(max(self.viewport().width(), 1), 1)
 
+    def truncate_from_index(self, idx: int) -> None:
+        """Delete all tiles from *idx* onwards (inclusive) and re-flow layout."""
+        for tile in self._tiles[idx:]:
+            tile.deleteLater()
+        self._tiles = self._tiles[:idx]
+        self._row_breaks = {rb for rb in self._row_breaks if rb < idx}
+        self._do_flow_layout()
+
     def add_row_break(self) -> None:
         """Force the next tile to start on a new row regardless of available width."""
         self._row_breaks.add(len(self._tiles))
@@ -1117,13 +1125,17 @@ class ScenesWorker(QThread):
         filename: str,
         project_path: str,
         best_lookup: "dict | None" = None,
+        resume_from_shot_id: "str | None" = None,
+        initial_scene: "str | None" = None,
         parent=None,
     ):
         super().__init__(parent)
-        self.filename     = filename
-        self.project_path = project_path
-        self.best_lookup  = best_lookup or {}
-        self._cancelled   = False
+        self.filename            = filename
+        self.project_path        = project_path
+        self.best_lookup         = best_lookup or {}
+        self.resume_from_shot_id = resume_from_shot_id
+        self.initial_scene       = initial_scene
+        self._cancelled          = False
 
     def cancel(self) -> None:
         self._cancelled = True
@@ -1182,12 +1194,21 @@ class ScenesWorker(QThread):
                 "matched_text":   "",
                 "score":          0.0,
             }
-            self.tile_ready.emit(title_result, None)
+            if self.resume_from_shot_id is None:
+                self.tile_ready.emit(title_result, None)
 
-            current_scene:     str | None = None
-            count              = 0
-            scene_card_count   = 0   # how many scene-change cards have been emitted
-            first_shot_emitted = False
+            if self.resume_from_shot_id is not None:
+                # Partial refresh: warm-start the scene tracker at the resume point
+                current_scene      = self.initial_scene
+                scene_card_count   = 1   # all new cards are non-first
+                first_shot_emitted = True
+                _skipping          = True
+            else:
+                current_scene      = None
+                scene_card_count   = 0
+                first_shot_emitted = False
+                _skipping          = False
+            count = 0
 
             for shot in shots:
                 if self._cancelled:
@@ -1195,6 +1216,14 @@ class ScenesWorker(QThread):
 
                 scene   = str(shot.get("Scene") or "").strip()
                 shot_id = shot.get("shot_id", "")
+
+                # When resuming from a mid-movie point, skip shots until the
+                # resume target is reached
+                if _skipping:
+                    if shot_id == self.resume_from_shot_id:
+                        _skipping = False
+                    else:
+                        continue
 
                 start_frame = shot.get("start_frame")
                 end_frame   = shot.get("end_frame")
@@ -1495,7 +1524,17 @@ class MosaicVisualizer(QMainWindow):
                     break
             _renumber_scenes(shots)
             write_shotlist(self.project_path, filename, "movies", shots)
-            self._restart_scenes_view(filename)
+            # Partial refresh — only reload tiles from this shot onwards
+            tile_idx, initial_scene = self._find_shot_resume_point(shot_id)
+            if tile_idx is not None:
+                self.canvas.truncate_from_index(tile_idx)
+                self._current_results = [
+                    t.result for t in self.canvas._tiles
+                    if not t.result.get("is_label")
+                ]
+                self._start_scenes_worker(filename, shot_id, initial_scene)
+            else:
+                self._restart_scenes_view(filename)
             self.status.showMessage("New scene boundary added.", 3000)
         except Exception as exc:
             import traceback; traceback.print_exc()
@@ -1522,18 +1561,74 @@ class MosaicVisualizer(QMainWindow):
                     shot["Scene"] = prev_scene
             _renumber_scenes(shots)
             write_shotlist(self.project_path, filename, "movies", shots)
-            self._restart_scenes_view(filename)
+            # Partial refresh — remove the scene card + everything after it,
+            # then resume from the first shot of the old scene (now merged)
+            sc_idx, resume_shot_id, initial_scene = \
+                self._find_scene_remove_resume_point(target_scene)
+            if sc_idx is not None and resume_shot_id is not None:
+                self.canvas.truncate_from_index(sc_idx)
+                self._current_results = [
+                    t.result for t in self.canvas._tiles
+                    if not t.result.get("is_label")
+                ]
+                self._start_scenes_worker(filename, resume_shot_id, initial_scene)
+            else:
+                self._restart_scenes_view(filename)
             self.status.showMessage("Scene boundary removed.", 3000)
         except Exception as exc:
             import traceback; traceback.print_exc()
             self.status.showMessage(f"Error removing scene: {exc}", 5000)
 
     def _restart_scenes_view(self, filename: str) -> None:
-        """Re-run the Scenes view for *filename* after a shotlist edit."""
+        """Full scenes reload for *filename* (fallback for non-incremental changes)."""
         idx = self.movie_combo.findData(filename)
         if idx >= 0:
             self.movie_combo.setCurrentIndex(idx)
-        self._on_scenes_clicked()
+        self._start_scenes_worker(filename)
+
+    def _find_shot_resume_point(
+        self, shot_id: str
+    ) -> "tuple[int | None, str | None]":
+        """Return (tile_idx, initial_scene) for a partial refresh starting at *shot_id*.
+
+        tile_idx      — index of the TileWidget for *shot_id* in canvas._tiles.
+        initial_scene — Scene value of the tile immediately before that index;
+                        the worker uses this to avoid emitting a spurious scene
+                        card for what is still the same scene as the kept tiles.
+        """
+        tiles = self.canvas._tiles
+        for i, tile in enumerate(tiles):
+            if tile.result.get("shot_id") == shot_id:
+                initial_scene = tiles[i - 1].result.get("scene", "") if i > 0 else None
+                return i, initial_scene
+        return None, None
+
+    def _find_scene_remove_resume_point(
+        self, target_scene: str
+    ) -> "tuple[int | None, str | None, str | None]":
+        """Return (scene_card_idx, resume_shot_id, initial_scene) for remove_scene.
+
+        scene_card_idx — index of the scene-card TileWidget for *target_scene*.
+        resume_shot_id — shot_id of the first frame tile after that card.
+        initial_scene  — Scene value of the tile immediately before the card;
+                         the worker uses this so the merged shots produce no
+                         spurious scene card.
+        """
+        tiles = self.canvas._tiles
+        for i, tile in enumerate(tiles):
+            if (
+                tile.result.get("is_label")
+                and not tile.result.get("is_title")
+                and tile.result.get("scene") == target_scene
+            ):
+                initial_scene  = tiles[i - 1].result.get("scene", "") if i > 0 else None
+                resume_shot_id = next(
+                    (t.result.get("shot_id") for t in tiles[i + 1:]
+                     if not t.result.get("is_label")),
+                    None,
+                )
+                return i, resume_shot_id, initial_scene
+        return None, None, None
 
     # ------------------------------------------------------------------
     # Control panel
@@ -2001,8 +2096,21 @@ class MosaicVisualizer(QMainWindow):
         filename = self.movie_combo.currentData()
         if not filename:
             return
+        self._start_scenes_worker(filename)
 
-        # Cancel any running workers
+    def _start_scenes_worker(
+        self,
+        filename: str,
+        resume_from_shot_id: "str | None" = None,
+        initial_scene: "str | None" = None,
+    ) -> None:
+        """Cancel any in-flight workers and (re)start the ScenesWorker.
+
+        When *resume_from_shot_id* is given the canvas is NOT cleared; the
+        caller must have already truncated it to the correct index.  The
+        worker will skip all shots before *resume_from_shot_id* and append
+        tiles from there.
+        """
         for w in (
             self._worker,
             self._best_worker,
@@ -2013,14 +2121,16 @@ class MosaicVisualizer(QMainWindow):
                 w.cancel()
                 w.wait(3000)
 
-        self.canvas.clear()
-        self._current_results = []
-        self.pdf_btn.setEnabled(False)
-        self.video_btn.setEnabled(False)
+        partial = resume_from_shot_id is not None
+        if not partial:
+            self.canvas.clear()
+            self._current_results = []
+            self.pdf_btn.setEnabled(False)
+            self.video_btn.setEnabled(False)
         self._progress.setRange(0, 0)
         self._progress.setValue(0)
         self.search_btn.setEnabled(False)
-        self.status.showMessage("Loading scenes…")
+        self.status.showMessage("Updating scene…" if partial else "Loading scenes…")
 
         best_lookup: dict = {}
         if self.best_mode:
@@ -2028,7 +2138,9 @@ class MosaicVisualizer(QMainWindow):
             best_lookup = load_best_frame_lookup(self.project_path, filename, "movies")
 
         self._scenes_worker = ScenesWorker(
-            filename, self.project_path, best_lookup
+            filename, self.project_path, best_lookup,
+            resume_from_shot_id=resume_from_shot_id,
+            initial_scene=initial_scene,
         )
         self._scenes_worker.tile_ready.connect(self._on_scenes_tile_ready)
         self._scenes_worker.finished_signal.connect(self._on_scenes_done)
