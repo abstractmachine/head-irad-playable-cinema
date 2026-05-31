@@ -30,12 +30,13 @@ from styles.theme import JumpScrollBar, save_window_geometry, restore_window_geo
 from services.frame_match import best_frame_path
 
 # Fix Qt plugin conflict with OpenCV — import PyQt5 before cv2
-from PyQt5.QtCore import Qt, QRect, QThread, QTimer, pyqtSignal
+from PyQt5.QtCore import Qt, QEvent, QRect, QThread, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
     QFrame,
+    QGraphicsOpacityEffect,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -260,6 +261,26 @@ def _short_title(raw_title: str) -> str:
     if len(s) > 32:
         s = re.sub(r"\s*\(\d{4}\)$", "", s).strip()
     return s if s else raw_title
+
+
+def _renumber_scenes(shots: list) -> None:
+    """Re-assign sequential integer Scene labels (1, 2, 3…) in-place.
+
+    Walks the shot list in order and increments the counter each time the
+    raw Scene value changes, so the final values are always 1, 2, 3… even
+    after merge / split operations that leave gaps or placeholders.
+    """
+    if not shots:
+        return
+    counter  = 1
+    prev_raw = shots[0].get("Scene", "")
+    shots[0]["Scene"] = str(counter)
+    for shot in shots[1:]:
+        raw = shot.get("Scene", "")
+        if raw != prev_raw:
+            counter  += 1
+            prev_raw  = raw
+        shot["Scene"] = str(counter)
 
 
 # ---------------------------------------------------------------------------
@@ -553,12 +574,57 @@ class VideoMosaicWorker(QThread):
 # Individual tile widget
 # ---------------------------------------------------------------------------
 
+_BTN_DIAM = 34   # diameter of each circular hover-overlay button
+
+
+class _HoverButton(QPushButton):
+    """Small circular dark button used in TileWidget hover overlays."""
+
+    def __init__(self, symbol: str, parent=None):
+        super().__init__(symbol, parent)
+        r = _BTN_DIAM // 2
+        self.setFixedSize(_BTN_DIAM, _BTN_DIAM)
+        self.setStyleSheet(
+            f"QPushButton {{"
+            f"  background-color: rgba(30,30,30,190);"
+            f"  color: white;"
+            f"  border: none;"
+            f"  border-radius: {r}px;"
+            f"  font-size: 15px;"
+            f"}}"
+            f"QPushButton:hover {{"
+            f"  background-color: rgba(70,70,70,220);"
+            f"}}"
+            f"QPushButton:pressed {{"
+            f"  background-color: rgba(100,100,100,220);"
+            f"}}"
+            f"QPushButton:disabled {{"
+            f"  color: rgba(128,128,128,90);"
+            f"  background-color: rgba(30,30,30,80);"
+            f"}}"
+        )
+
+
 class TileWidget(QFrame):
-    """A single mosaic tile: scaled video frame + short caption + hover tooltip."""
+    """A single mosaic tile: scaled video frame + short caption + hover tooltip.
+
+    Overlay buttons appear on mouse-hover (WA_Hover keeps them visible while
+    the cursor moves between the widget and a child button):
+
+        Frame tiles  →  ⊕ add scene  ▶ open shotlist visualiser  🛈 toggle ignore
+        Scene cards  →  ⓧ remove scene boundary  (only on non-first cards)
+    """
 
     _PLACEHOLDER_BG = theme.CANVAS_BG
 
-    clicked = pyqtSignal(dict)   # emitted with the result dict on left-click
+    # Retained for any existing listeners; no longer emitted internally.
+    clicked = pyqtSignal(dict)
+
+    # Per-button action signals forwarded through MosaicCanvas to MosaicWindow
+    btn_open_visualizer = pyqtSignal(dict)
+    btn_toggle_ignore   = pyqtSignal(dict)
+    btn_add_scene       = pyqtSignal(dict)
+    btn_remove_scene    = pyqtSignal(dict)
 
     def __init__(
         self,
@@ -575,6 +641,10 @@ class TileWidget(QFrame):
         self.setStyleSheet(f"TileWidget {{ border: none; background: {theme.CANVAS_BG}; }}")
         if not result.get("is_label"):
             self.setCursor(Qt.PointingHandCursor)
+
+        # WA_Hover fires HoverEnter/HoverLeave for the whole widget subtree,
+        # so the overlay stays visible while the cursor is over a child button.
+        self.setAttribute(Qt.WA_Hover, True)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -615,7 +685,84 @@ class TileWidget(QFrame):
             f"Score: {score:.4f}"
         )
 
+        # Transparent overlay parented to the image label; sized in _render()
+        self._overlay = QWidget(self._img_label)
+        self._overlay.setAttribute(Qt.WA_TranslucentBackground)
+        self._overlay.hide()
+        self._overlay_btns: list[QPushButton] = []
+        self._create_overlay_buttons()
+
+        # Opacity effect for ignored shots (applied to image only)
+        self._opacity_effect: Optional[QGraphicsOpacityEffect] = None
+        if not result.get("is_label"):
+            if str(result.get("Ignore", "")).strip().lower() in ("true", "1", "yes"):
+                self._apply_ignored(True)
+
         self._render(tile_size)
+
+    # ------------------------------------------------------------------
+
+    def _create_overlay_buttons(self) -> None:
+        """Populate self._overlay_btns based on tile type."""
+        r = self.result
+        is_label       = r.get("is_label", False)
+        is_title       = r.get("is_title", False)
+        is_scene_card  = is_label and not is_title
+        is_frame       = not is_label
+        is_first_scene = r.get("is_first_scene", True)
+        is_first_shot  = r.get("is_first_shot", False)
+
+        if is_frame:
+            btn_add = _HoverButton("\u2295", self._overlay)   # ⊕  add scene here
+            btn_add.setEnabled(not is_first_shot)
+            btn_add.clicked.connect(lambda: self.btn_add_scene.emit(self.result))
+
+            btn_vis = _HoverButton("\u25b6", self._overlay)   # ▶  open visualiser
+            btn_vis.clicked.connect(lambda: self.btn_open_visualizer.emit(self.result))
+
+            btn_ign = _HoverButton("\U0001f6c8", self._overlay)  # 🛈  toggle ignore
+            btn_ign.clicked.connect(lambda: self.btn_toggle_ignore.emit(self.result))
+
+            self._overlay_btns = [btn_add, btn_vis, btn_ign]
+
+        elif is_scene_card and not is_first_scene:
+            btn_rem = _HoverButton("\u24e7", self._overlay)   # ⓧ  remove boundary
+            btn_rem.clicked.connect(lambda: self.btn_remove_scene.emit(self.result))
+            self._overlay_btns = [btn_rem]
+
+    def _render_overlay(self, img_w: int, img_h: int) -> None:
+        """Resize the transparent overlay to fill the image and place buttons."""
+        self._overlay.setGeometry(0, 0, img_w, img_h)
+        if not self._overlay_btns:
+            return
+        d       = _BTN_DIAM
+        margin  = 6
+        spacing = 8
+        if len(self._overlay_btns) == 3:
+            total_w = 3 * d + 2 * spacing
+            x = (img_w - total_w) // 2
+            y = img_h - d - margin
+            for btn in self._overlay_btns:
+                btn.move(x, y)
+                x += d + spacing
+        elif len(self._overlay_btns) == 1:
+            self._overlay_btns[0].move(
+                (img_w - d) // 2, img_h - d - margin
+            )
+
+    def _apply_ignored(self, ignored: bool) -> None:
+        """Apply or remove the 50 % opacity effect on the image label."""
+        if ignored:
+            if self._opacity_effect is None:
+                self._opacity_effect = QGraphicsOpacityEffect(self._img_label)
+                self._img_label.setGraphicsEffect(self._opacity_effect)
+            self._opacity_effect.setOpacity(0.5)
+        elif self._opacity_effect is not None:
+            self._opacity_effect.setOpacity(1.0)
+
+    def set_ignored(self, ignored: bool) -> None:
+        """Externally update the ignored visual state (called after shotlist save)."""
+        self._apply_ignored(ignored)
 
     # ------------------------------------------------------------------
 
@@ -655,13 +802,22 @@ class TileWidget(QFrame):
                 f"background: {self._PLACEHOLDER_BG}; color: {theme.TEXT_DIM}; font-size: 24px; border: none;"
             )
 
+        self._render_overlay(img_w, img_h)
+
     def resize_tile(self, tile_size: int) -> None:
         """Re-render at a new tile_size (called when user zooms)."""
         self._render(tile_size)
 
+    def event(self, ev: QEvent) -> bool:
+        if ev.type() == QEvent.HoverEnter:
+            self._overlay.show()
+            self._overlay.raise_()
+        elif ev.type() == QEvent.HoverLeave:
+            self._overlay.hide()
+        return super().event(ev)
+
     def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton and not self.result.get("is_label"):
-            self.clicked.emit(self.result)
+        # Click-to-open replaced by the ▶ overlay button.
         super().mousePressEvent(event)
 
 
@@ -676,7 +832,11 @@ class MosaicCanvas(QScrollArea):
     Plain scroll wheel   → vertical scroll (default)
     """
 
-    tile_clicked = pyqtSignal(dict)   # forwarded from individual TileWidget clicks
+    tile_clicked        = pyqtSignal(dict)   # retained for compatibility
+    btn_open_visualizer = pyqtSignal(dict)
+    btn_toggle_ignore   = pyqtSignal(dict)
+    btn_add_scene       = pyqtSignal(dict)
+    btn_remove_scene    = pyqtSignal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -717,10 +877,20 @@ class MosaicCanvas(QScrollArea):
 
     def add_tile(self, result: dict, pixmap) -> None:
         tile = TileWidget(result, pixmap, self._tile_size, parent=self._container)
-        tile.clicked.connect(self.tile_clicked)
+        tile.btn_open_visualizer.connect(self.btn_open_visualizer)
+        tile.btn_toggle_ignore.connect(self.btn_toggle_ignore)
+        tile.btn_add_scene.connect(self.btn_add_scene)
+        tile.btn_remove_scene.connect(self.btn_remove_scene)
         tile.show()
         self._tiles.append(tile)
         self._do_flow_layout()
+
+    def tile_for_shot(self, shot_id: str) -> "TileWidget | None":
+        """Return the TileWidget for *shot_id*, or None if not found."""
+        for tile in self._tiles:
+            if tile.result.get("shot_id") == shot_id:
+                return tile
+        return None
 
     # ------------------------------------------------------------------
     # Flow layout
@@ -1014,8 +1184,10 @@ class ScenesWorker(QThread):
             }
             self.tile_ready.emit(title_result, None)
 
-            current_scene: str | None = None
-            count = 0
+            current_scene:     str | None = None
+            count              = 0
+            scene_card_count   = 0   # how many scene-change cards have been emitted
+            first_shot_emitted = False
 
             for shot in shots:
                 if self._cancelled:
@@ -1039,6 +1211,7 @@ class ScenesWorker(QThread):
                         "movie_id":       movie_id,
                         "scene":          scene,
                         "is_label":       True,
+                        "is_first_scene": scene_card_count == 0,
                         "label_text":     scene or "?",
                         "vid_w":          vid_w,
                         "vid_h":          vid_h,
@@ -1048,6 +1221,7 @@ class ScenesWorker(QThread):
                         "score":          0.0,
                     }
                     self.tile_ready.emit(scene_result, None)
+                    scene_card_count += 1
 
                 # Prefer precomputed best-frame PNG when available
                 pixmap: Optional[QPixmap] = None
@@ -1069,14 +1243,17 @@ class ScenesWorker(QThread):
                     "end_frame":      end_frame,
                     "frame":          frame_index,
                     "scene":          scene,
+                    "Ignore":         shot.get("Ignore", ""),
                     "caption":        f"f{frame_index:06d}",
                     "is_label":       False,
+                    "is_first_shot":  not first_shot_emitted,
                     "matched_fields": [],
                     "matched_text":   "",
                     "score":          0.0,
                 }
                 self.tile_ready.emit(result, pixmap)
                 count += 1
+                first_shot_emitted = True
 
             self.finished_signal.emit(count)
 
@@ -1239,7 +1416,10 @@ class MosaicVisualizer(QMainWindow):
 
         self.status.showMessage("Ready — enter a query and press Search, or choose Shots / Scenes.")
 
-        self.canvas.tile_clicked.connect(self._on_tile_clicked)
+        self.canvas.btn_open_visualizer.connect(self._on_btn_open_visualizer)
+        self.canvas.btn_toggle_ignore.connect(self._on_btn_toggle_ignore)
+        self.canvas.btn_add_scene.connect(self._on_btn_add_scene)
+        self.canvas.btn_remove_scene.connect(self._on_btn_remove_scene)
         self._populate_movies()
 
         # Ensure Ctrl+Q/W quit even when a QLineEdit or QListWidget has keyboard focus.
@@ -1249,8 +1429,8 @@ class MosaicVisualizer(QMainWindow):
     # ------------------------------------------------------------------
     # Control panel
 
-    def _on_tile_clicked(self, result: dict) -> None:
-        """Open the clicked shot in the Shotlist Visualizer."""
+    def _on_btn_open_visualizer(self, result: dict) -> None:
+        """▶  Open the shot in the Shotlist Visualiser."""
         filename = result.get("filename") or result.get("movie_title", "")
         shot_id  = str(result.get("shot_id", ""))
         if not filename:
@@ -1262,6 +1442,98 @@ class MosaicVisualizer(QMainWindow):
         self.status.showMessage(
             f"Opening Shotlist Visualizer → {filename}  shot {shot_id}", 4000
         )
+
+    def _on_btn_toggle_ignore(self, result: dict) -> None:
+        """🛈  Toggle the Ignore flag for this shot and save the shotlist."""
+        from data.shotlist import read_shotlist, write_shotlist
+        filename = result.get("filename", "")
+        shot_id  = result.get("shot_id", "")
+        if not filename or not shot_id:
+            return
+        try:
+            shots = read_shotlist(self.project_path, filename, "movies")
+            new_ignored = False
+            for shot in shots:
+                if shot.get("shot_id") == shot_id:
+                    current     = str(shot.get("Ignore", "")).strip().lower()
+                    new_ignored = current not in ("true", "1", "yes")
+                    shot["Ignore"] = "True" if new_ignored else "False"
+                    break
+            write_shotlist(self.project_path, filename, "movies", shots)
+            result["Ignore"] = "True" if new_ignored else "False"
+            tile = self.canvas.tile_for_shot(shot_id)
+            if tile:
+                tile.set_ignored(new_ignored)
+            self.status.showMessage(
+                f"Shot {shot_id}: Ignore = {'True' if new_ignored else 'False'}", 3000
+            )
+        except Exception as exc:
+            import traceback; traceback.print_exc()
+            self.status.showMessage(f"Error toggling ignore: {exc}", 5000)
+
+    def _on_btn_add_scene(self, result: dict) -> None:
+        """⊕  Insert a new scene boundary starting at this shot and save."""
+        from data.shotlist import read_shotlist, write_shotlist
+        filename = result.get("filename", "")
+        shot_id  = result.get("shot_id", "")
+        if not filename or not shot_id:
+            return
+        try:
+            shots = read_shotlist(self.project_path, filename, "movies")
+            shot_idx = next(
+                (i for i, s in enumerate(shots) if s.get("shot_id") == shot_id), None
+            )
+            if shot_idx is None or shot_idx == 0:
+                self.status.showMessage("Cannot add scene boundary at first shot.", 3000)
+                return
+            current_scene = shots[shot_idx].get("Scene", "")
+            _SPLIT = "__NEW_SCENE__"
+            for i in range(shot_idx, len(shots)):
+                if shots[i].get("Scene") == current_scene:
+                    shots[i]["Scene"] = _SPLIT
+                else:
+                    break
+            _renumber_scenes(shots)
+            write_shotlist(self.project_path, filename, "movies", shots)
+            self._restart_scenes_view(filename)
+            self.status.showMessage("New scene boundary added.", 3000)
+        except Exception as exc:
+            import traceback; traceback.print_exc()
+            self.status.showMessage(f"Error adding scene: {exc}", 5000)
+
+    def _on_btn_remove_scene(self, result: dict) -> None:
+        """ⓧ  Remove a scene boundary card and merge into the previous scene."""
+        from data.shotlist import read_shotlist, write_shotlist
+        filename     = result.get("filename", "")
+        target_scene = result.get("scene", "")
+        if not filename or not target_scene:
+            return
+        try:
+            shots = read_shotlist(self.project_path, filename, "movies")
+            first_idx = next(
+                (i for i, s in enumerate(shots) if s.get("Scene") == target_scene), None
+            )
+            if first_idx is None or first_idx == 0:
+                self.status.showMessage("Cannot remove first scene boundary.", 3000)
+                return
+            prev_scene = shots[first_idx - 1].get("Scene", "")
+            for shot in shots:
+                if shot.get("Scene") == target_scene:
+                    shot["Scene"] = prev_scene
+            _renumber_scenes(shots)
+            write_shotlist(self.project_path, filename, "movies", shots)
+            self._restart_scenes_view(filename)
+            self.status.showMessage("Scene boundary removed.", 3000)
+        except Exception as exc:
+            import traceback; traceback.print_exc()
+            self.status.showMessage(f"Error removing scene: {exc}", 5000)
+
+    def _restart_scenes_view(self, filename: str) -> None:
+        """Re-run the Scenes view for *filename* after a shotlist edit."""
+        idx = self.movie_combo.findData(filename)
+        if idx >= 0:
+            self.movie_combo.setCurrentIndex(idx)
+        self._on_scenes_clicked()
 
     # ------------------------------------------------------------------
     # Control panel
