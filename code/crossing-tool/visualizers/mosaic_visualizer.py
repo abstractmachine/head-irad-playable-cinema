@@ -879,6 +879,27 @@ class MosaicCanvas(QScrollArea):
         self._row_breaks = {rb for rb in self._row_breaks if rb < idx}
         self._do_flow_layout()
 
+    def insert_tile(self, idx: int, tile: "TileWidget") -> None:
+        """Insert *tile* at position *idx* (no forced row-break), then re-flow."""
+        tile.btn_open_visualizer.connect(self.btn_open_visualizer)
+        tile.btn_toggle_ignore.connect(self.btn_toggle_ignore)
+        tile.btn_add_scene.connect(self.btn_add_scene)
+        tile.btn_remove_scene.connect(self.btn_remove_scene)
+        tile.show()
+        self._tiles.insert(idx, tile)
+        # Shift any existing explicit row breaks that sit at or after the insertion
+        self._row_breaks = {rb + 1 if rb >= idx else rb for rb in self._row_breaks}
+        self._do_flow_layout()
+
+    def remove_tile(self, idx: int) -> None:
+        """Remove the tile at *idx*, delete its widget, then re-flow."""
+        tile = self._tiles.pop(idx)
+        tile.deleteLater()
+        self._row_breaks.discard(idx)
+        # Shift row breaks above idx down by one
+        self._row_breaks = {rb - 1 if rb > idx else rb for rb in self._row_breaks}
+        self._do_flow_layout()
+
     def add_row_break(self) -> None:
         """Force the next tile to start on a new row regardless of available width."""
         self._row_breaks.add(len(self._tiles))
@@ -1516,6 +1537,14 @@ class MosaicVisualizer(QMainWindow):
                 self.status.showMessage("Cannot add scene boundary at first shot.", 3000)
                 return
             current_scene = shots[shot_idx].get("Scene", "")
+            # Guard: if shot_S is already the first shot of its scene, there is
+            # nothing to split off — the split would create an empty preceding scene.
+            prev_scene = str(shots[shot_idx - 1].get("Scene", "")).strip()
+            if prev_scene != str(current_scene).strip():
+                self.status.showMessage(
+                    "This shot is already the first of its scene — nothing to split.", 3000
+                )
+                return
             _SPLIT = "__NEW_SCENE__"
             for i in range(shot_idx, len(shots)):
                 if shots[i].get("Scene") == current_scene:
@@ -1524,17 +1553,69 @@ class MosaicVisualizer(QMainWindow):
                     break
             _renumber_scenes(shots)
             write_shotlist(self.project_path, filename, "movies", shots)
-            # Partial refresh — only reload tiles from this shot onwards
-            tile_idx, initial_scene = self._find_shot_resume_point(shot_id)
-            if tile_idx is not None:
-                self.canvas.truncate_from_index(tile_idx)
-                self._current_results = [
-                    t.result for t in self.canvas._tiles
-                    if not t.result.get("is_label")
-                ]
-                self._start_scenes_worker(filename, shot_id, initial_scene)
-            else:
+
+            # Build shot_id → new scene map from the modified shots list
+            shot_scene_map = {
+                str(s.get("shot_id", "")): str(s.get("Scene", ""))
+                for s in shots
+            }
+
+            # Find the frame tile for this shot
+            tile_idx = next(
+                (i for i, t in enumerate(self.canvas._tiles)
+                 if t.result.get("shot_id") == shot_id),
+                None,
+            )
+            if tile_idx is None:
                 self._restart_scenes_view(filename)
+                self.status.showMessage("New scene boundary added.", 3000)
+                return
+
+            # Save scroll so the clicked tile stays at the same viewport position
+            frame_tile = self.canvas._tiles[tile_idx]
+            old_tile_y = frame_tile.y()
+            old_scroll = self.canvas.verticalScrollBar().value()
+
+            # Get vid dimensions from the nearest preceding scene-card tile
+            vid_w, vid_h = 320, 180
+            for t in reversed(self.canvas._tiles[:tile_idx]):
+                if t.result.get("is_label") and not t.result.get("is_title"):
+                    vid_w = t.result.get("vid_w", 320) or 320
+                    vid_h = t.result.get("vid_h", 180) or 180
+                    break
+
+            # Create the new scene card for the freshly split scene
+            new_scene_str = shot_scene_map.get(shot_id, "?")
+            scene_card_result = {
+                "filename":       filename,
+                "movie_id":       frame_tile.result.get("movie_id", ""),
+                "scene":          new_scene_str,
+                "is_label":       True,
+                "is_first_scene": False,
+                "label_text":     new_scene_str,
+                "vid_w":          vid_w,
+                "vid_h":          vid_h,
+                "caption":        "",
+                "matched_fields": [],
+                "matched_text":   "",
+                "score":          0.0,
+            }
+            scene_card_pixmap = self._make_scene_card_pixmap(scene_card_result)
+            new_tile = TileWidget(
+                scene_card_result, scene_card_pixmap,
+                self.canvas._tile_size, parent=self.canvas._container,
+            )
+
+            # Insert the scene card before the frame tile, then update labels
+            self.canvas.insert_tile(tile_idx, new_tile)
+            self._update_tile_scenes_from(tile_idx + 1, shot_scene_map)
+
+            # Restore scroll: frame tile moved down by the scene card height
+            new_tile_y = self.canvas._tiles[tile_idx + 1].y()
+            self.canvas.verticalScrollBar().setValue(
+                old_scroll + (new_tile_y - old_tile_y)
+            )
+
             self.status.showMessage("New scene boundary added.", 3000)
         except Exception as exc:
             import traceback; traceback.print_exc()
@@ -1561,19 +1642,51 @@ class MosaicVisualizer(QMainWindow):
                     shot["Scene"] = prev_scene
             _renumber_scenes(shots)
             write_shotlist(self.project_path, filename, "movies", shots)
-            # Partial refresh — remove the scene card + everything after it,
-            # then resume from the first shot of the old scene (now merged)
-            sc_idx, resume_shot_id, initial_scene = \
-                self._find_scene_remove_resume_point(target_scene)
-            if sc_idx is not None and resume_shot_id is not None:
-                self.canvas.truncate_from_index(sc_idx)
-                self._current_results = [
-                    t.result for t in self.canvas._tiles
-                    if not t.result.get("is_label")
-                ]
-                self._start_scenes_worker(filename, resume_shot_id, initial_scene)
-            else:
+
+            # Build shot_id → new scene map from the modified shots list
+            shot_scene_map = {
+                str(s.get("shot_id", "")): str(s.get("Scene", ""))
+                for s in shots
+            }
+
+            # Find the scene card tile for target_scene
+            sc_idx = next(
+                (i for i, t in enumerate(self.canvas._tiles)
+                 if t.result.get("is_label")
+                 and not t.result.get("is_title")
+                 and t.result.get("scene") == target_scene),
+                None,
+            )
+            if sc_idx is None:
                 self._restart_scenes_view(filename)
+                self.status.showMessage("Scene boundary removed.", 3000)
+                return
+
+            # Save scroll relative to the first frame tile after the card
+            first_frame_idx = next(
+                (i for i in range(sc_idx + 1, len(self.canvas._tiles))
+                 if not self.canvas._tiles[i].result.get("is_label")),
+                None,
+            )
+            if first_frame_idx is not None:
+                old_frame_y = self.canvas._tiles[first_frame_idx].y()
+            old_scroll = self.canvas.verticalScrollBar().value()
+
+            # Surgically remove the scene card tile
+            self.canvas.remove_tile(sc_idx)
+
+            # Update scene labels on everything from the removal point onwards
+            self._update_tile_scenes_from(sc_idx, shot_scene_map)
+
+            # Restore scroll: frame tile moved up by the scene card height
+            if first_frame_idx is not None:
+                new_frame_idx = first_frame_idx - 1  # shifted by the removal
+                if new_frame_idx < len(self.canvas._tiles):
+                    new_frame_y = self.canvas._tiles[new_frame_idx].y()
+                    self.canvas.verticalScrollBar().setValue(
+                        max(0, old_scroll + (new_frame_y - old_frame_y))
+                    )
+
             self.status.showMessage("Scene boundary removed.", 3000)
         except Exception as exc:
             import traceback; traceback.print_exc()
@@ -1629,6 +1742,33 @@ class MosaicVisualizer(QMainWindow):
                 )
                 return i, resume_shot_id, initial_scene
         return None, None, None
+
+    def _update_tile_scenes_from(self, start_idx: int, shot_scene_map: dict) -> None:
+        """Update scene values on tiles from *start_idx* onwards without reloading.
+
+        For frame tiles:  updates result["scene"] from shot_scene_map.
+        For scene-card tiles:  waits for the next frame tile to determine the
+        new label, then updates result["scene"], result["label_text"], and
+        re-renders the card pixmap.
+        """
+        tiles = self.canvas._tiles
+        pending_card: "TileWidget | None" = None
+        for i in range(start_idx, len(tiles)):
+            tile = tiles[i]
+            if tile.result.get("is_label") and not tile.result.get("is_title"):
+                pending_card = tile
+            elif not tile.result.get("is_label"):
+                shot_id   = tile.result.get("shot_id", "")
+                new_scene = shot_scene_map.get(shot_id, tile.result.get("scene", ""))
+                tile.result["scene"] = new_scene
+                if pending_card is not None:
+                    if pending_card.result.get("label_text") != new_scene:
+                        pending_card.result["scene"]      = new_scene
+                        pending_card.result["label_text"] = new_scene
+                        new_px = self._make_scene_card_pixmap(pending_card.result)
+                        pending_card.original_pixmap = new_px
+                        pending_card._render(self.canvas._tile_size)
+                    pending_card = None
 
     # ------------------------------------------------------------------
     # Control panel
@@ -2147,77 +2287,80 @@ class MosaicVisualizer(QMainWindow):
         self._scenes_worker.error.connect(self._on_scenes_error)
         self._scenes_worker.start()
 
+    def _make_scene_card_pixmap(self, result: dict) -> "QPixmap":
+        """Render and return a grey scene-label card QPixmap from *result*."""
+        vid_w  = result.get("vid_w", 320) or 320
+        vid_h  = result.get("vid_h", 180) or 180
+        base_h = 180
+        base_w = round(base_h * vid_w / vid_h) if vid_h > 0 else 320
+
+        grey = QPixmap(base_w, base_h)
+        grey.fill(QColor(128, 128, 128))
+
+        # Load both Clarendon weights (Qt caches on repeated calls)
+        _bold_id   = QFontDatabase.addApplicationFont(str(_FONT_DIR / "LibreClarendonNormal-162Bold.otf"))
+        _light_id  = QFontDatabase.addApplicationFont(str(_FONT_DIR / "LibreClarendonNormal-42Light.otf"))
+        _bold_fam  = QFontDatabase.applicationFontFamilies(_bold_id)
+        _light_fam = QFontDatabase.applicationFontFamilies(_light_id)
+
+        _db = QFontDatabase()
+        def _pick_font(fam, keyword, pt):
+            if not fam:
+                return QFont()
+            styles = _db.styles(fam[0])
+            style  = next((s for s in styles if keyword in s.lower()), styles[0] if styles else "")
+            return _db.font(fam[0], style, pt)
+
+        _painter = QPainter(grey)
+        _painter.setPen(QColor(255, 255, 255))
+
+        if result.get("is_title") and _bold_fam and _light_fam:
+            # Two-line block: title (Bold) + year (Light), vertically centred
+            _pt_title = max(1, round(base_h * 44 / 360))  # ~22pt
+            _pt_year  = max(1, round(base_h * 28 / 360))  # ~14pt
+            _gap      = max(2, round(base_h * 6  / 360))  # ~3px
+            _f_title  = _pick_font(_bold_fam,  "bold",  _pt_title)
+            _f_year   = _pick_font(_light_fam, "light", _pt_year)
+
+            _painter.setFont(_f_title)
+            _lh_title = _painter.fontMetrics().height()
+            _painter.setFont(_f_year)
+            _lh_year  = _painter.fontMetrics().height()
+
+            _year_text = str(result.get("movie_year", ""))
+            _block_h   = _lh_title + (_gap + _lh_year if _year_text else 0)
+            _y0        = (base_h - _block_h) // 2
+
+            _painter.setFont(_f_title)
+            _painter.drawText(
+                QRect(0, _y0, base_w, _lh_title + 4),
+                Qt.AlignHCenter | Qt.AlignTop | Qt.TextWordWrap,
+                result.get("label_text", ""),
+            )
+            if _year_text:
+                _painter.setFont(_f_year)
+                _painter.drawText(
+                    QRect(0, _y0 + _lh_title + _gap, base_w, _lh_year + 4),
+                    Qt.AlignHCenter | Qt.AlignTop,
+                    _year_text,
+                )
+
+        elif _light_fam:
+            # Scene-index card — large scene label in Light, centred
+            _pt_scene = max(1, round(base_h * 80 / 360))  # ~40pt
+            _painter.setFont(_pick_font(_light_fam, "light", _pt_scene))
+            _painter.drawText(
+                grey.rect(),
+                Qt.AlignCenter,
+                result.get("label_text", ""),
+            )
+
+        _painter.end()
+        return grey
+
     def _on_scenes_tile_ready(self, result: dict, pixmap) -> None:
         if result.get("is_label"):
-            vid_w  = result.get("vid_w", 320)
-            vid_h  = result.get("vid_h", 180)
-            base_h = 180
-            base_w = round(base_h * vid_w / vid_h) if vid_h > 0 else 320
-
-            grey = QPixmap(base_w, base_h)
-            grey.fill(QColor(128, 128, 128))
-
-            # Load both Clarendon weights (Qt caches on repeated calls)
-            _bold_id   = QFontDatabase.addApplicationFont(str(_FONT_DIR / "LibreClarendonNormal-162Bold.otf"))
-            _light_id  = QFontDatabase.addApplicationFont(str(_FONT_DIR / "LibreClarendonNormal-42Light.otf"))
-            _bold_fam  = QFontDatabase.applicationFontFamilies(_bold_id)
-            _light_fam = QFontDatabase.applicationFontFamilies(_light_id)
-
-            # Resolve the exact registered style names so Qt uses the right weight
-            _db = QFontDatabase()
-            def _pick_font(fam, keyword, pt):
-                if not fam:
-                    return QFont()
-                styles = _db.styles(fam[0])
-                style  = next((s for s in styles if keyword in s.lower()), styles[0] if styles else "")
-                return _db.font(fam[0], style, pt)
-
-            _painter = QPainter(grey)
-            _painter.setPen(QColor(255, 255, 255))
-
-            if result.get("is_title") and _bold_fam and _light_fam:
-                # Two-line block: title (Bold) + year (Light), vertically centred
-                _pt_title = max(1, round(base_h * 44 / 360))  # ~22pt
-                _pt_year  = max(1, round(base_h * 28 / 360))  # ~14pt
-                _gap      = max(2, round(base_h * 6  / 360))  # ~3px
-                _f_title  = _pick_font(_bold_fam,  "bold",  _pt_title)
-                _f_year   = _pick_font(_light_fam, "light", _pt_year)
-
-                _painter.setFont(_f_title)
-                _lh_title = _painter.fontMetrics().height()
-                _painter.setFont(_f_year)
-                _lh_year  = _painter.fontMetrics().height()
-
-                _year_text = str(result.get("movie_year", ""))
-                _block_h   = _lh_title + (_gap + _lh_year if _year_text else 0)
-                _y0        = (base_h - _block_h) // 2
-
-                _painter.setFont(_f_title)
-                _painter.drawText(
-                    QRect(0, _y0, base_w, _lh_title + 4),
-                    Qt.AlignHCenter | Qt.AlignTop | Qt.TextWordWrap,
-                    result.get("label_text", ""),
-                )
-                if _year_text:
-                    _painter.setFont(_f_year)
-                    _painter.drawText(
-                        QRect(0, _y0 + _lh_title + _gap, base_w, _lh_year + 4),
-                        Qt.AlignHCenter | Qt.AlignTop,
-                        _year_text,
-                    )
-
-            elif _light_fam:
-                # Scene-index card — large scene label in Light, centred
-                _pt_scene = max(1, round(base_h * 80 / 360))  # ~40pt
-                _painter.setFont(_pick_font(_light_fam, "light", _pt_scene))
-                _painter.drawText(
-                    grey.rect(),
-                    Qt.AlignCenter,
-                    result.get("label_text", ""),
-                )
-
-            _painter.end()
-            pixmap = grey
+            pixmap = self._make_scene_card_pixmap(result)
         else:
             self._current_results.append(result)
         self.canvas.add_tile(result, pixmap)
