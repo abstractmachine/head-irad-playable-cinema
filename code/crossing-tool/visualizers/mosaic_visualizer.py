@@ -1366,51 +1366,9 @@ class PdfExportWorker(QThread):
             # tries to call Image.SAVE["JPEG"] — it is loaded lazily and may
             # not be present if no JPEG has been opened/saved in this process yet.
             import PIL.JpegImagePlugin  # noqa: F401
-            from generators.mosaic import MosaicItem, render_mosaic, make_intertitle_item
+            from generators.mosaic import results_to_mosaic_items, render_mosaic
 
-            # Reference dimensions for intertitle tiles (from first label result)
-            ref_vid_w, ref_vid_h = 320, 180
-            for r in self.results:
-                if r.get("is_label"):
-                    ref_vid_w = int(r.get("vid_w") or 320)
-                    ref_vid_h = int(r.get("vid_h") or 180)
-                    break
-
-            items: list[MosaicItem] = []
-            for r in self.results:
-                if r.get("is_label"):
-                    # Title or scene card → grey intertitle tile
-                    label = r.get("label_text", "")
-                    items.append(make_intertitle_item(
-                        label, ref_vid_w, ref_vid_h,
-                        caption=label,
-                        is_title=bool(r.get("is_title")),
-                        movie_year=str(r.get("movie_year") or ""),
-                    ))
-                    continue
-
-                movie_id   = r.get("movie_id", "")
-                video_path = _find_video_path(self.project_path, movie_id)
-                if video_path is None:
-                    continue
-                frame = r.get("frame")
-                if frame is None:
-                    sf = r.get("start_frame")
-                    ef = r.get("end_frame")
-                    if sf is not None and ef is not None:
-                        frame = int(sf + (ef - sf) * 0.5)
-                    elif sf is not None:
-                        frame = int(sf)
-                    else:
-                        frame = 0
-                caption = r.get("caption") or r.get("movie_title", "") or movie_id
-                items.append(
-                    MosaicItem(
-                        video_path  = video_path,
-                        frame_index = int(frame),
-                        caption     = caption,
-                    )
-                )
+            items = results_to_mosaic_items(self.results, self.project_path)
 
             if not items:
                 self.error.emit("No frames available to export.")
@@ -1418,8 +1376,7 @@ class PdfExportWorker(QThread):
 
             stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
             if self.filename:
-                import re as _re2
-                base = _re2.sub(r'[/\\:*?"<>|]', '_', Path(self.filename).stem)
+                base = _re.sub(r'[/\\:*?"<>|]', '_', Path(self.filename).stem)
             elif self.query:
                 base = _re.sub(r"[^\w\-\s]", "_", self.query)[:60].strip()
             else:

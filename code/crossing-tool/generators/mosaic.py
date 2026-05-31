@@ -308,6 +308,10 @@ def render_mosaic(
     Raises:
         ValueError: If items is empty or no images could be loaded.
     """
+    # Ensure the JPEG codec is registered — it is loaded lazily by Pillow and
+    # may be absent when saving a PDF if no JPEG has been opened in this process.
+    import PIL.JpegImagePlugin  # noqa: F401
+
     if not items:
         raise ValueError("No items to render — list is empty.")
 
@@ -500,6 +504,369 @@ def mosaic_from_search_results(
         )
 
     return render_mosaic(items, dest, layout=layout, show_captions=show_captions, verbose=verbose)
+
+
+# ---------------------------------------------------------------------------
+# Shots / scenes data builders  (no Qt dependency — usable from CLI and GUI)
+# ---------------------------------------------------------------------------
+
+def build_shots_results(
+    project_path: str,
+    filename: str,
+    *,
+    best_mode: bool = False,
+) -> "list[dict]":
+    """Return tile result dicts for every shot in *filename*.
+
+    Mirrors ``AllShotsWorker`` (best_mode=False) or ``BestOnlyWorker``
+    (best_mode=True) without any Qt overhead, so the same data is available
+    to both the CLI and the visualiser's PDF exporter.
+
+    Each dict has at minimum: ``filename``, ``movie_id``, ``shot_id``,
+    ``frame``, ``start_frame``, ``end_frame``, ``Ignore``, ``is_label=False``.
+    """
+    from data.shotlist import read_shotlist
+
+    movie_id = Path(filename).stem
+    shots    = read_shotlist(project_path, filename, "movies")
+
+    if best_mode:
+        from services.frame_match import load_best_frame_lookup
+        lookup = load_best_frame_lookup(project_path, filename, "movies")
+        return [
+            {
+                "filename":       filename,
+                "movie_title":    filename,
+                "movie_id":       movie_id,
+                "shot_id":        shot_id,
+                "frame":          bf.get("frame"),
+                "start_frame":    bf.get("frame"),
+                "end_frame":      None,
+                "Ignore":         "",
+                "is_label":       False,
+                "matched_fields": [],
+                "matched_text":   "",
+                "score":          0.0,
+            }
+            for shot_id, bf in lookup.items()
+        ]
+
+    results: list[dict] = []
+    for shot in shots:
+        shot_id = shot.get("shot_id", "")
+        sf      = shot.get("start_frame")
+        try:
+            frame_index = int(sf) if sf is not None else 0
+        except (TypeError, ValueError):
+            frame_index = 0
+        results.append({
+            "filename":       filename,
+            "movie_title":    filename,
+            "movie_id":       movie_id,
+            "shot_id":        shot_id,
+            "frame":          frame_index,
+            "start_frame":    frame_index,
+            "end_frame":      shot.get("end_frame"),
+            "Ignore":         shot.get("Ignore", ""),
+            "caption":        f"f{frame_index:06d}",
+            "is_label":       False,
+            "matched_fields": [],
+            "matched_text":   "",
+            "score":          0.0,
+        })
+    return results
+
+
+def build_scenes_results(
+    project_path: str,
+    filename: str,
+    *,
+    best_mode: bool = False,
+) -> "list[dict]":
+    """Return tile result dicts for shots in *filename* grouped by scene.
+
+    Mirrors ``ScenesWorker``: the list begins with a title card
+    (``is_label=True, is_title=True``), then alternates scene-number cards
+    (``is_label=True, is_title=False``) and frame tiles (``is_label=False``)
+    whenever the ``Scene`` value changes.
+    """
+    import re as _re
+    from data.shotlist import read_shotlist
+    from data.metadata import get_metadata
+
+    movie_id   = Path(filename).stem
+    shots      = read_shotlist(project_path, filename, "movies")
+    video_path = _find_video_path(project_path, movie_id)
+
+    # Video dimensions for correctly-proportioned intertitle tiles
+    vid_w, vid_h = 320, 180
+    if video_path is not None:
+        try:
+            import cv2
+            cap = cv2.VideoCapture(str(video_path))
+            if cap.isOpened():
+                _fw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                _fh = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                if _fw > 0 and _fh > 0:
+                    vid_w, vid_h = _fw, _fh
+            cap.release()
+        except Exception:
+            pass
+
+    # Title and year from stored metadata, falling back to filename parsing
+    meta_list = get_metadata(project_path, filename, "movies")
+    if meta_list:
+        _meta = meta_list[0]
+    else:
+        _stem  = Path(filename).stem
+        _clean = _re.sub(r'\s*\{tmdb-\d+\}|\s*\(\d{4}\)', '', _stem).strip().rstrip('-').strip()
+        _meta  = {
+            "title": _clean.replace('-', ' ').replace('_', ' ').strip().title(),
+            "year":  None,
+        }
+        _yr = _re.search(r'\((\d{4})\)', _stem)
+        if _yr:
+            _meta["year"] = int(_yr.group(1))
+
+    display_title = str(_meta.get("title") or movie_id.replace("-", " ").replace("_", " "))
+    movie_year    = str(_meta.get("year") or "")
+
+    # Best-frame lookup (empty dict when best_mode=False)
+    best_lookup: dict = {}
+    if best_mode:
+        from services.frame_match import load_best_frame_lookup
+        best_lookup = load_best_frame_lookup(project_path, filename, "movies")
+
+    results: list[dict] = []
+
+    # Title card
+    results.append({
+        "filename":       filename,
+        "movie_id":       movie_id,
+        "is_label":       True,
+        "is_title":       True,
+        "label_text":     display_title,
+        "movie_year":     movie_year,
+        "vid_w":          vid_w,
+        "vid_h":          vid_h,
+        "caption":        "",
+        "matched_fields": [],
+        "matched_text":   "",
+        "score":          0.0,
+    })
+
+    current_scene    = None
+    scene_card_count = 0
+
+    for shot in shots:
+        scene   = str(shot.get("Scene") or "").strip()
+        shot_id = shot.get("shot_id", "")
+        sf      = shot.get("start_frame")
+        try:
+            frame_index = int(sf) if sf is not None else 0
+        except (TypeError, ValueError):
+            frame_index = 0
+
+        # Scene-number card whenever the scene label changes
+        if scene != current_scene:
+            current_scene = scene
+            results.append({
+                "filename":       filename,
+                "movie_id":       movie_id,
+                "scene":          scene,
+                "is_label":       True,
+                "is_title":       False,
+                "is_first_scene": scene_card_count == 0,
+                "label_text":     scene or "?",
+                "vid_w":          vid_w,
+                "vid_h":          vid_h,
+                "caption":        "",
+                "matched_fields": [],
+                "matched_text":   "",
+                "score":          0.0,
+            })
+            scene_card_count += 1
+
+        # Prefer precomputed best frame when available
+        if best_lookup and shot_id in best_lookup:
+            bf          = best_lookup[shot_id]
+            frame_index = bf.get("frame", frame_index)
+
+        results.append({
+            "filename":       filename,
+            "movie_title":    filename,
+            "movie_id":       movie_id,
+            "shot_id":        shot_id,
+            "start_frame":    frame_index,
+            "end_frame":      shot.get("end_frame"),
+            "frame":          frame_index,
+            "scene":          scene,
+            "Ignore":         shot.get("Ignore", ""),
+            "caption":        f"f{frame_index:06d}",
+            "is_label":       False,
+            "matched_fields": [],
+            "matched_text":   "",
+            "score":          0.0,
+        })
+
+    return results
+
+
+def results_to_mosaic_items(
+    results: "list[dict]",
+    project_path: str,
+) -> "list[MosaicItem]":
+    """Convert tile result dicts to a ``MosaicItem`` list for ``render_mosaic``.
+
+    Rules:
+    - ``is_label=True``        → grey intertitle tile (via ``make_intertitle_item``)
+    - ``is_label=False`` with ``Ignore`` truthy → skipped
+    - ``is_label=False``       → video frame tile
+
+    This is the single shared conversion used by both the CLI batch functions
+    and ``PdfExportWorker`` in the visualiser, so the PDF output is identical
+    regardless of how it was triggered.
+    """
+    # Reference dimensions for intertitle tiles — from the first label entry
+    ref_vid_w, ref_vid_h = 320, 180
+    for r in results:
+        if r.get("is_label"):
+            ref_vid_w = int(r.get("vid_w") or 320)
+            ref_vid_h = int(r.get("vid_h") or 180)
+            break
+
+    items: list[MosaicItem] = []
+    for r in results:
+        if r.get("is_label"):
+            label = r.get("label_text", "")
+            items.append(make_intertitle_item(
+                label, ref_vid_w, ref_vid_h,
+                caption=label,
+                is_title=bool(r.get("is_title")),
+                movie_year=str(r.get("movie_year") or ""),
+            ))
+            continue
+
+        # Skip ignored frame tiles
+        if str(r.get("Ignore", "")).strip().lower() in ("true", "1", "yes"):
+            continue
+
+        movie_id   = r.get("movie_id", "")
+        video_path = _find_video_path(project_path, movie_id)
+        if video_path is None:
+            continue
+
+        frame = r.get("frame")
+        if frame is None:
+            sf = r.get("start_frame")
+            ef = r.get("end_frame")
+            if sf is not None and ef is not None:
+                frame = int(sf + (ef - sf) * 0.5)
+            elif sf is not None:
+                frame = int(sf)
+            else:
+                frame = 0
+
+        caption = r.get("caption") or r.get("movie_title", "") or movie_id
+        items.append(MosaicItem(
+            video_path=video_path,
+            frame_index=int(frame),
+            caption=caption,
+        ))
+
+    return items
+
+
+def mosaic_pdf_from_shots(
+    project_path: str,
+    filename: str,
+    *,
+    best_mode: bool = False,
+    output_path: "str | Path | None" = None,
+    verbose: bool = True,
+    progress_cb=None,
+) -> Path:
+    """Render a PDF contact sheet of all shots in *filename*.
+
+    Equivalent to opening the Mosaic Visualiser, selecting a movie, pressing
+    *Shots* (and optionally *Best*), then pressing *PDF*.
+
+    Args:
+        project_path: Project root directory.
+        filename:     Movie filename (e.g. ``"3 10 To Yuma (1957) {tmdb-14168}.mkv"``).
+        best_mode:    Use precomputed CLIP best-frame PNGs instead of the raw
+                      first frame of each shot.
+        output_path:  Override destination path (default: auto-named PDF under
+                      ``output/mosaics/``).
+        verbose:      Print progress to stderr.
+        progress_cb:  Optional ``callable(current, total)`` called after each
+                      image is loaded (for live progress reporting).
+
+    Returns:
+        Path to the saved PDF.
+    """
+    import datetime
+    import re as _re
+
+    results = build_shots_results(project_path, filename, best_mode=best_mode)
+    items   = results_to_mosaic_items(results, project_path)
+    if not items:
+        raise ValueError(f"mosaic_pdf_from_shots: no usable frames for {filename!r}")
+
+    if output_path:
+        dest = Path(output_path)
+    else:
+        stem  = _re.sub(r'[/\\:*?"<>|]', '_', Path(filename).stem)
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        dest  = Path(project_path) / "output" / "mosaics" / "shots" / f"{stem} [{stamp}].pdf"
+
+    return render_mosaic(items, dest, layout="landscape",
+                         verbose=verbose, progress_cb=progress_cb)
+
+
+def mosaic_pdf_from_scenes(
+    project_path: str,
+    filename: str,
+    *,
+    best_mode: bool = False,
+    output_path: "str | Path | None" = None,
+    verbose: bool = True,
+    progress_cb=None,
+) -> Path:
+    """Render a PDF contact sheet of shots in *filename* grouped by scene.
+
+    Equivalent to opening the Mosaic Visualiser, selecting a movie, pressing
+    *Scenes* (and optionally *Best*), then pressing *PDF*.  Title cards and
+    scene-number intertitles are included, and ignored shots are skipped.
+
+    Args:
+        project_path: Project root directory.
+        filename:     Movie filename.
+        best_mode:    Use precomputed CLIP best-frame PNGs.
+        output_path:  Override destination path.
+        verbose:      Print progress to stderr.
+        progress_cb:  Optional ``callable(current, total)``.
+
+    Returns:
+        Path to the saved PDF.
+    """
+    import datetime
+    import re as _re
+
+    results = build_scenes_results(project_path, filename, best_mode=best_mode)
+    items   = results_to_mosaic_items(results, project_path)
+    if not items:
+        raise ValueError(f"mosaic_pdf_from_scenes: no usable frames for {filename!r}")
+
+    if output_path:
+        dest = Path(output_path)
+    else:
+        stem  = _re.sub(r'[/\\:*?"<>|]', '_', Path(filename).stem)
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        dest  = Path(project_path) / "output" / "mosaics" / "scenes" / f"{stem} [{stamp}].pdf"
+
+    return render_mosaic(items, dest, layout="landscape",
+                         verbose=verbose, progress_cb=progress_cb)
 
 
 # ---------------------------------------------------------------------------

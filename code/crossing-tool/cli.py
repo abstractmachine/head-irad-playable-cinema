@@ -3446,6 +3446,10 @@ def cmd_mosaic(args):
         _mosaic_export(args)
     elif sub == "video":
         _mosaic_video(args)
+    elif sub == "shots":
+        _mosaic_shots(args)
+    elif sub == "scenes":
+        _mosaic_scenes(args)
 
 
 def _mosaic_thumbnails(args):
@@ -3534,6 +3538,164 @@ def _mosaic_thumbnails(args):
         import traceback
         traceback.print_exc()
         sys.exit(1)
+
+
+def _mosaic_shots(args):
+    """mosaic shots [--movie TITLE | --all] — PDF contact sheet of every shot."""
+    import subprocess
+    from data.metadata import get_metadata
+    from generators.mosaic import mosaic_pdf_from_shots
+
+    project_path  = prefs.get("path")
+    media_type    = getattr(args, "media", "movies")
+    best_mode     = getattr(args, "best", False)
+    output_path   = getattr(args, "output", None)
+    open_result   = not getattr(args, "no_open", False)
+    verbose       = getattr(args, "verbose", False)
+    notify        = getattr(args, "notify", False)
+    notify_items  = getattr(args, "notify_items", False)
+    movie_query   = getattr(args, "movie", None)
+    use_all       = getattr(args, "all", False)
+
+    # Resolve target filenames
+    if use_all:
+        rows = get_metadata(project_path, media_type=media_type)
+        filenames = [r["filename"] for r in rows if r.get("filename")]
+        if not filenames:
+            print(f"✗ No {media_type} metadata found.", file=sys.stderr)
+            sys.exit(1)
+    elif movie_query:
+        rows = get_metadata(project_path, movie_query, media_type=media_type)
+        if not rows:
+            print(f"✗ No match for {movie_query!r}.", file=sys.stderr)
+            sys.exit(1)
+        filenames = [rows[0]["filename"]]
+    else:
+        print("✗ mosaic shots: specify --movie TITLE or --all.", file=sys.stderr)
+        sys.exit(1)
+
+    mode_label = " (best)" if best_mode else ""
+    print(f"Building shots PDF{mode_label} for {len(filenames)} movie(s)…")
+
+    for filename in filenames:
+        stem = Path(filename).stem
+        print(f"  {stem}…")
+        try:
+            out = mosaic_pdf_from_shots(
+                project_path, filename,
+                best_mode=best_mode,
+                output_path=output_path if len(filenames) == 1 else None,
+                verbose=verbose,
+            )
+            print(f"  ✓ Saved: {out}")
+            if open_result and len(filenames) == 1:
+                subprocess.Popen(["xdg-open", str(out)])
+            if notify_items:
+                from services.notify import discord_notify
+                stem_label = Path(filename).stem
+                discord_notify(f"✓ Mosaic shots: {stem_label}\nSaved: {out.name}", project_path)
+        except ValueError as exc:
+            print(f"  ✗ {exc}", file=sys.stderr)
+            if notify_items:
+                from services.notify import discord_notify
+                discord_notify(f"✗ Mosaic shots failed: {Path(filename).stem}\n{exc}", project_path)
+        except Exception as exc:
+            import traceback
+            print(f"  ✗ Render failed: {exc}", file=sys.stderr)
+            traceback.print_exc()
+            if notify_items:
+                from services.notify import discord_notify
+                discord_notify(f"✗ Mosaic shots failed: {Path(filename).stem}\n{exc}", project_path)
+
+    if open_result and len(filenames) > 1:
+        subprocess.Popen(["xdg-open", str(Path(project_path) / "output" / "mosaics")])
+
+    if notify:
+        from services.notify import discord_notify
+        mode_label = " (best)" if best_mode else ""
+        discord_notify(
+            f"✓ Mosaic shots{mode_label} complete — {len(filenames)} movie(s)",
+            project_path,
+        )
+
+
+def _mosaic_scenes(args):
+    """mosaic scenes [--movie TITLE | --all] — PDF with scene intertitles."""
+    import subprocess
+    from data.metadata import get_metadata
+    from generators.mosaic import mosaic_pdf_from_scenes
+
+    project_path  = prefs.get("path")
+    media_type    = getattr(args, "media", "movies")
+    best_mode     = getattr(args, "best", False)
+    output_path   = getattr(args, "output", None)
+    open_result   = not getattr(args, "no_open", False)
+    verbose       = getattr(args, "verbose", False)
+    notify        = getattr(args, "notify", False)
+    notify_items  = getattr(args, "notify_items", False)
+    movie_query   = getattr(args, "movie", None)
+    use_all       = getattr(args, "all", False)
+
+    # Resolve target filenames
+    if use_all:
+        rows = get_metadata(project_path, media_type=media_type)
+        filenames = [r["filename"] for r in rows if r.get("filename")]
+        if not filenames:
+            print(f"✗ No {media_type} metadata found.", file=sys.stderr)
+            sys.exit(1)
+    elif movie_query:
+        rows = get_metadata(project_path, movie_query, media_type=media_type)
+        if not rows:
+            print(f"✗ No match for {movie_query!r}.", file=sys.stderr)
+            sys.exit(1)
+        filenames = [rows[0]["filename"]]
+    else:
+        print("✗ mosaic scenes: specify --movie TITLE or --all.", file=sys.stderr)
+        sys.exit(1)
+
+    mode_label = " (best)" if best_mode else ""
+    print(f"Building scenes PDF{mode_label} for {len(filenames)} movie(s)…")
+
+    for filename in filenames:
+        stem = Path(filename).stem
+        print(f"  {stem}…")
+        try:
+            out = mosaic_pdf_from_scenes(
+                project_path, filename,
+                best_mode=best_mode,
+                output_path=output_path if len(filenames) == 1 else None,
+                verbose=verbose,
+            )
+            print(f"  ✓ Saved: {out}")
+            if open_result and len(filenames) == 1:
+                subprocess.Popen(["xdg-open", str(out)])
+            if notify_items:
+                from services.notify import discord_notify
+                stem_label = Path(filename).stem
+                discord_notify(f"✓ Mosaic scenes: {stem_label}\nSaved: {out.name}", project_path)
+        except ValueError as exc:
+            print(f"  ✗ {exc}", file=sys.stderr)
+            if notify_items:
+                from services.notify import discord_notify
+                discord_notify(f"✗ Mosaic scenes failed: {Path(filename).stem}\n{exc}", project_path)
+        except Exception as exc:
+            import traceback
+            print(f"  ✗ Render failed: {exc}", file=sys.stderr)
+            traceback.print_exc()
+            if notify_items:
+                from services.notify import discord_notify
+                discord_notify(f"✗ Mosaic scenes failed: {Path(filename).stem}\n{exc}", project_path)
+
+    if open_result and len(filenames) > 1:
+        subprocess.Popen(["xdg-open", str(Path(project_path) / "output" / "mosaics")])
+
+    if notify:
+        from services.notify import discord_notify
+        mode_label = " (best)" if best_mode else ""
+        discord_notify(
+            f"✓ Mosaic scenes{mode_label} complete — {len(filenames)} movie(s)",
+            project_path,
+        )
 
 
 def _mosaic_search(args):
@@ -6149,6 +6311,52 @@ def build_parser():
         help="Grid orientation (default: landscape)",
     )
     p_mosaic_video.add_argument("--no-open", action="store_true", dest="no_open", help="Do not open result in desktop viewer")
+
+    # generate mosaic shots
+    p_mosaic_shots = mosaic_sub.add_parser(
+        "shots",
+        help="PDF contact sheet of every shot in a movie (first or best frame per shot)",
+    )
+    p_mosaic_shots.add_argument(
+        "--movie", default=None, metavar="TITLE",
+        help="Fuzzy movie title (required unless --all is used)",
+    )
+    p_mosaic_shots.add_argument(
+        "--all", action="store_true",
+        help="Generate a PDF for every movie in the project",
+    )
+    p_mosaic_shots.add_argument(
+        "--best", action="store_true",
+        help="Use precomputed CLIP best-frame PNGs instead of raw first frames",
+    )
+    _add_media_arg(p_mosaic_shots)
+    p_mosaic_shots.add_argument("--output", default=None, metavar="PATH", help="Override output file path (single-movie only)")
+    p_mosaic_shots.add_argument("--no-open", action="store_true", dest="no_open", help="Do not open result in desktop viewer")
+    p_mosaic_shots.add_argument("--verbose", action="store_true", help="Print progress details while building the PDF")
+    _add_notify_args(p_mosaic_shots, batch=True)
+
+    # generate mosaic scenes
+    p_mosaic_scenes = mosaic_sub.add_parser(
+        "scenes",
+        help="PDF contact sheet of shots grouped by scene, with title and scene-number intertitles",
+    )
+    p_mosaic_scenes.add_argument(
+        "--movie", default=None, metavar="TITLE",
+        help="Fuzzy movie title (required unless --all is used)",
+    )
+    p_mosaic_scenes.add_argument(
+        "--all", action="store_true",
+        help="Generate a PDF for every movie in the project",
+    )
+    p_mosaic_scenes.add_argument(
+        "--best", action="store_true",
+        help="Use precomputed CLIP best-frame PNGs instead of raw first frames",
+    )
+    _add_media_arg(p_mosaic_scenes)
+    p_mosaic_scenes.add_argument("--output", default=None, metavar="PATH", help="Override output file path (single-movie only)")
+    p_mosaic_scenes.add_argument("--no-open", action="store_true", dest="no_open", help="Do not open result in desktop viewer")
+    p_mosaic_scenes.add_argument("--verbose", action="store_true", help="Print progress details while building the PDF")
+    _add_notify_args(p_mosaic_scenes, batch=True)
 
     # generate cloud
     p_cloud = generate_sub.add_parser(
