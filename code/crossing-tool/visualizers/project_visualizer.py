@@ -440,7 +440,7 @@ class ProjectVisualizer(QMainWindow):
                 ("Shotlist",    "shotlist",    True),
                 ("Mosaic",      "mosaic",      True),
                 ("Cloud",       "cloud",       True),
-                ("Composition", "composition", False),
+                ("Book",        "book",        True),
                 ("Silhouette",  "silhouette",  True),
                 ("Palette",     "palette",     True),
                 ("Flipbook",    "flipbook",    True),

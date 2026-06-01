@@ -5293,6 +5293,151 @@ def _index_motif_generate(args):
         sys.exit(1)
 
 
+# ---------------------------------------------------------------------------
+# book command family
+# ---------------------------------------------------------------------------
+
+def cmd_book(args):
+    sub = args.book_subcommand
+    if sub == "new":
+        _book_new(args)
+    elif sub == "delete":
+        _book_delete(args)
+    elif sub == "list":
+        _book_list(args)
+    elif sub == "use":
+        _book_use(args)
+    elif sub == "current":
+        _book_current(args)
+    elif sub == "import":
+        _book_import(args)
+    else:
+        print("✗ book: specify a subcommand.", file=sys.stderr)
+        sys.exit(1)
+
+
+def _book_new(args):
+    _require_path()
+    project_path = prefs.get("path")
+    slug = args.slug
+    from data.book import create_book
+    try:
+        create_book(project_path, slug)
+    except FileExistsError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    prefs.set("current_book", slug)
+    print(f"✓ Created book: {slug}")
+    print(f"  Path: {project_path}/output/books/{slug}")
+    print(f"  Set as current book.")
+
+
+def _book_delete(args):
+    _require_path()
+    project_path = prefs.get("path")
+    slug = args.slug
+    force = getattr(args, "force", False)
+
+    from data.book import book_dir, delete_book
+    folder = book_dir(project_path, slug)
+    if not folder.exists():
+        print(f"✗ Book not found: {slug}", file=sys.stderr)
+        sys.exit(1)
+
+    if not force:
+        answer = input(f"Delete book '{slug}' and all its contents? [y/N] ").strip().lower()
+        if answer not in ("y", "yes"):
+            print("Aborted.")
+            return
+
+    try:
+        delete_book(project_path, slug)
+    except FileNotFoundError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    # Clear current book preference if it was this book
+    if prefs.get("current_book") == slug:
+        prefs.set("current_book", None)
+
+    print(f"✓ Deleted book: {slug}")
+
+
+def _book_list(args):
+    _require_path()
+    project_path = prefs.get("path")
+    from data.book import list_books
+    books = list_books(project_path)
+    current = prefs.get("current_book")
+    if not books:
+        print("No books found.")
+        return
+    for book in books:
+        slug = book.get("slug", "")
+        marker = "* " if slug == current else "  "
+        page_info = f"  ({book.get('page_count', 0)} pages)" if book.get("pdf") else ""
+        print(f"{marker}{slug}{page_info}")
+
+
+def _book_use(args):
+    _require_path()
+    project_path = prefs.get("path")
+    slug = args.slug
+    from data.book import book_dir
+    if not book_dir(project_path, slug).exists():
+        print(f"✗ Book not found: {slug}", file=sys.stderr)
+        sys.exit(1)
+    prefs.set("current_book", slug)
+    print(f"✓ Current book set to: {slug}")
+
+
+def _book_current(args):
+    _require_path()
+    project_path = prefs.get("path")
+    slug = prefs.get("current_book")
+    if not slug:
+        print("No current book set. Use: crossing book use <slug>")
+        return
+    from data.book import book_dir
+    folder = book_dir(project_path, slug)
+    print(f"Current book: {slug}")
+    print(f"Path: {folder}")
+
+
+def _book_import(args):
+    _require_path()
+    project_path = prefs.get("path")
+    slug = prefs.get("current_book")
+    if not slug:
+        print("✗ No current book set. Use: crossing book use <slug>", file=sys.stderr)
+        sys.exit(1)
+    force = getattr(args, "force", False)
+    from data.book import import_pdf
+    try:
+        data = import_pdf(project_path, slug, args.pdf, force=force)
+    except FileNotFoundError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    except FileExistsError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    except ImportError:
+        print(
+            "✗ PyMuPDF (fitz) is required to import PDFs.\n"
+            "  Install it: pip install pymupdf",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    print(f"✓ Imported PDF into book '{slug}': {data['page_count']} pages")
+
+
+def _book_visualizer(args):
+    """book visualizer — launch the interactive book GUI."""
+    _require_visualizer_deps()
+    from visualizers.book_visualizer import run_visualizer
+    run_visualizer(prefs.get("path"))
+
+
 def cmd_visualizer(args):
     sub = args.visualizer_subcommand
     if sub in (None, "project"):
@@ -5336,6 +5481,9 @@ def cmd_visualizer(args):
     elif sub == "flipbook":
         _require_path()
         _flipbook_visualizer(args)
+    elif sub == "book":
+        _require_path()
+        _book_visualizer(args)
 
 
 def _project_visualizer(args):
@@ -7388,6 +7536,40 @@ def build_parser():
         help="Browse cinematic motif flipbook pages (bg color + motif word per shot)",
     )
     _add_media_arg(p_vis_flipbook)
+
+    visualizer_sub.add_parser(
+        "book",
+        help="Browse imported books as page spreads",
+    )
+
+    # ── book command ─────────────────────────────────────────────────────────
+    p_book = sub.add_parser("book", help="Manage books (create, delete, list, import PDF)")
+    p_book.set_defaults(func=cmd_book, book_subcommand=None)
+    book_sub = p_book.add_subparsers(dest="book_subcommand", required=False)
+
+    p_book_new = book_sub.add_parser("new", help="Create a new book")
+    p_book_new.add_argument("slug", help="Book slug (e.g. cowboy-metaphysics)")
+    p_book_new.set_defaults(func=cmd_book)
+
+    p_book_delete = book_sub.add_parser("delete", help="Delete a book and all its contents")
+    p_book_delete.add_argument("slug", help="Book slug to delete")
+    p_book_delete.add_argument("--force", action="store_true", help="Skip confirmation prompt")
+    p_book_delete.set_defaults(func=cmd_book)
+
+    p_book_list = book_sub.add_parser("list", help="List all books in the project")
+    p_book_list.set_defaults(func=cmd_book)
+
+    p_book_use = book_sub.add_parser("use", help="Set the current book")
+    p_book_use.add_argument("slug", help="Book slug to activate")
+    p_book_use.set_defaults(func=cmd_book)
+
+    p_book_current = book_sub.add_parser("current", help="Show the current book")
+    p_book_current.set_defaults(func=cmd_book)
+
+    p_book_import = book_sub.add_parser("import", help="Import a PDF into the current book")
+    p_book_import.add_argument("pdf", help="Path to the PDF file to import")
+    p_book_import.add_argument("--force", action="store_true", help="Overwrite existing PDF")
+    p_book_import.set_defaults(func=cmd_book)
 
     return parser
 

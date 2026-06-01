@@ -38,6 +38,8 @@ from PyQt5.QtWidgets import (
     QDialog,
     QFileDialog,
     QFrame,
+    QGridLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -378,6 +380,7 @@ class CloudVisualizer(QMainWindow):
         panel.setFixedWidth(_PANEL_W)
         panel.setStyleSheet(
             f"QWidget {{ background: {theme.PANEL_BG}; }}"
+            f" QComboBox {{ background-color: {theme.INPUT_BG}; }}"
             f" QPushButton {{ background-color: {theme.BTN_BG}; border: none;"
             f" padding: 0 10px; border-radius: 3px;"
             f" min-height: {theme.BTN_H}px; max-height: {theme.BTN_H}px; }}"
@@ -387,30 +390,29 @@ class CloudVisualizer(QMainWindow):
             f" background-color: {theme.BTN_BG}; }}"
         )
         rp = QVBoxLayout(panel)
-        rp.setContentsMargins(14, 18, 14, 14)
-        rp.setSpacing(0)
+        rp.setContentsMargins(14, 14, 14, 14)
+        rp.setSpacing(14)
         root.addWidget(panel)
 
-        label_font = theme.font_ui()
-        label_font.setCapitalization(QFont.AllUppercase)
-        label_font.setLetterSpacing(QFont.AbsoluteSpacing, 1.2)
-
-        def _section(text: str) -> QLabel:
-            lbl = QLabel(text)
-            lbl.setFont(label_font)
-            lbl.setStyleSheet(f"color: {theme.TEXT}; padding-bottom: 4px;")
-            return lbl
-
-        # Scope (movie dropdown)
-        rp.addWidget(_section("Scope"))
+        # ── Scope group ───────────────────────────────────────────────
+        scope_group = QGroupBox("Scope")
+        scope_layout = QVBoxLayout(scope_group)
+        scope_layout.setContentsMargins(8, 12, 8, 8)
+        scope_layout.setSpacing(6)
         self.movie_combo = QComboBox()
         self.movie_combo.addItem("--all", userData=None)
         self.movie_combo.installEventFilter(self)
-        rp.addWidget(self.movie_combo)
-        rp.addSpacing(12)
+        scope_layout.addWidget(self.movie_combo)
+        self.media_combo = QComboBox()
+        self.media_combo.addItems(["movies", "gameplay"])
+        self.media_combo.currentIndexChanged.connect(self._populate_movies)
+        scope_layout.addWidget(self.media_combo)
+        rp.addWidget(scope_group)
 
-        # Annotation field
-        rp.addWidget(_section("Field"))
+        # ── Field group ───────────────────────────────────────────────
+        field_group = QGroupBox("Field")
+        field_layout = QVBoxLayout(field_group)
+        field_layout.setContentsMargins(8, 12, 8, 8)
         self.field_combo = QComboBox()
         self.field_combo.addItem("all fields", userData=None)
         for f in (
@@ -419,35 +421,34 @@ class CloudVisualizer(QMainWindow):
         ):
             self.field_combo.addItem(f, userData=f)
         self.field_combo.installEventFilter(self)
-        rp.addWidget(self.field_combo)
-        rp.addSpacing(12)
+        field_layout.addWidget(self.field_combo)
+        rp.addWidget(field_group)
 
-        # Media type
-        rp.addWidget(_section("Media type"))
-        self.media_combo = QComboBox()
-        self.media_combo.addItems(["movies", "gameplay"])
-        rp.addWidget(self.media_combo)
-        rp.addSpacing(12)
-        self.media_combo.currentIndexChanged.connect(self._populate_movies)
+        # ── Options group ─────────────────────────────────────────────
+        opt_group = QGroupBox("Options")
+        opt_layout = QVBoxLayout(opt_group)
+        opt_layout.setContentsMargins(8, 12, 8, 8)
+        opt_layout.setSpacing(6)
 
-        # Max words
-        rp.addWidget(_section("Max words"))
+        max_lbl = QLabel("Max words")
+        max_lbl.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt;")
+        opt_layout.addWidget(max_lbl)
         self.max_words_spin = QSpinBox()
         self.max_words_spin.setRange(10, 500)
         self.max_words_spin.setValue(150)
-        rp.addWidget(self.max_words_spin)
-        rp.addSpacing(12)
+        opt_layout.addWidget(self.max_words_spin)
 
-        # Min count
-        rp.addWidget(_section("Min occurrences"))
+        min_lbl = QLabel("Min occurrences")
+        min_lbl.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt;")
+        opt_layout.addWidget(min_lbl)
         self.min_count_spin = QSpinBox()
         self.min_count_spin.setRange(1, 100)
         self.min_count_spin.setValue(2)
-        rp.addWidget(self.min_count_spin)
-        rp.addSpacing(12)
+        opt_layout.addWidget(self.min_count_spin)
 
-        # Style preset
-        rp.addWidget(_section("Style"))
+        style_lbl = QLabel("Style")
+        style_lbl.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt;")
+        opt_layout.addWidget(style_lbl)
         self.style_combo = QComboBox()
         from generators.cloud import STYLE_NAMES, PREFS_KEY_STYLE, DEFAULT_STYLE
         for name in STYLE_NAMES:
@@ -459,46 +460,49 @@ class CloudVisualizer(QMainWindow):
             self.style_combo.setCurrentIndex(idx)
         self.style_combo.currentIndexChanged.connect(self._on_style_changed)
         self.style_combo.currentIndexChanged.connect(self._update_edit_btn)
-        rp.addWidget(self.style_combo)
-        rp.addSpacing(4)
+        opt_layout.addWidget(self.style_combo)
 
-        # Edit colours button (only enabled for file-backed styles)
-        self.edit_colors_btn = QPushButton("EDIT COLORS")
+        self.edit_colors_btn = QPushButton("Edit Colors")
         self.edit_colors_btn.clicked.connect(self._on_edit_colors)
-        rp.addWidget(self.edit_colors_btn)
+        opt_layout.addWidget(self.edit_colors_btn)
         self._update_edit_btn()
-        rp.addSpacing(18)
+        rp.addWidget(opt_group)
 
-        # Separator
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setFrameShadow(QFrame.Plain)
-        sep.setStyleSheet(f"background: {theme.UI_BORDER};")
-        rp.addWidget(sep)
-        rp.addSpacing(14)
+        # ── Actions group ─────────────────────────────────────────────
+        actions_group = QGroupBox("Actions")
+        actions_layout = QVBoxLayout(actions_group)
+        actions_layout.setContentsMargins(8, 12, 8, 8)
+        actions_layout.setSpacing(6)
 
-        rp.addStretch(1)
+        btn_grid = QGridLayout()
+        btn_grid.setSpacing(4)
+        btn_grid.setContentsMargins(4, 4, 4, 4)
 
-        # Generate button
-        self.generate_btn = QPushButton("GENERATE")
+        self.generate_btn = QPushButton("Generate")
         self.generate_btn.clicked.connect(self._on_generate)
-        rp.addWidget(self.generate_btn)
-        rp.addSpacing(6)
+        btn_grid.addWidget(self.generate_btn, 0, 0)
 
-        # Save PDF button (enabled after a successful generation)
-        self.save_btn = QPushButton("SAVE PDF")
+        self.save_btn = QPushButton("Save PDF")
         self.save_btn.setEnabled(False)
         self.save_btn.clicked.connect(self._on_save_pdf)
-        rp.addWidget(self.save_btn)
-        rp.addSpacing(10)
+        btn_grid.addWidget(self.save_btn, 0, 1)
 
-        # Status label
-        self.status_label = QLabel("Choose options and press GENERATE.")
+        btn_container = QFrame()
+        btn_container.setStyleSheet(
+            f"QFrame {{ background: {theme.INPUT_BG}; border-radius: 3px; }}"
+        )
+        btn_container.setLayout(btn_grid)
+        actions_layout.addWidget(btn_container)
+
+        self.status_label = QLabel("Choose options and press Generate.")
         self.status_label.setWordWrap(True)
         self.status_label.setStyleSheet(
-            f"color: {theme.TEXT_DIM}; font-size: 11px; background: transparent;"
+            f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT - 1}pt; background: transparent;"
         )
-        rp.addWidget(self.status_label)
+        actions_layout.addWidget(self.status_label)
+        rp.addWidget(actions_group)
+
+        rp.addStretch(1)
 
         self._populate_movies()
 

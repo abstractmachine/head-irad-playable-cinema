@@ -38,6 +38,7 @@ from PyQt5.QtWidgets import (
     QApplication,
     QComboBox,
     QFrame,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -240,44 +241,59 @@ class SilhouetteVisualizer(QMainWindow):
         # Right: control panel
         panel = QWidget()
         panel.setFixedWidth(_PANEL_W)
+        panel.setStyleSheet(
+            f"QWidget {{ background: {theme.PANEL_BG}; }}"
+            f" QComboBox {{ background-color: {theme.INPUT_BG}; }}"
+            f" QListWidget {{ background-color: {theme.INPUT_BG}; }}"
+            f" QLabel {{ color: {theme.TEXT}; font-family: '{theme.FAMILY_UI}';"
+            f" font-size: {theme.BASE_PT}pt; }}"
+        )
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(10, 12, 10, 12)
-        layout.setSpacing(6)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(14)
 
-        # Media label
+        # ── Scope group ───────────────────────────────────────────────
+        scope_group = QGroupBox("Scope")
+        scope_layout = QVBoxLayout(scope_group)
+        scope_layout.setContentsMargins(8, 12, 8, 8)
+        scope_layout.setSpacing(6)
+
         media_lbl = QLabel(f"Media: {self._media_type}")
-        media_lbl.setStyleSheet("color: #888; font-size: 11px;")
-        layout.addWidget(media_lbl)
+        media_lbl.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt;")
+        scope_layout.addWidget(media_lbl)
 
-        # Field filter
         field_hdr = QLabel("Field")
-        field_hdr.setStyleSheet("font-weight: bold;")
-        layout.addWidget(field_hdr)
+        field_hdr.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt;")
+        scope_layout.addWidget(field_hdr)
 
         self._field_combo = QComboBox()
         self._field_combo.currentIndexChanged.connect(self._on_field_changed)
-        layout.addWidget(self._field_combo)
+        scope_layout.addWidget(self._field_combo)
+        layout.addWidget(scope_group)
 
-        # Record list header
-        self._list_hdr = QLabel("Records: 0")
-        self._list_hdr.setStyleSheet("font-weight: bold; margin-top: 4px;")
-        layout.addWidget(self._list_hdr)
+        # ── Records group ─────────────────────────────────────────────
+        records_group = QGroupBox("Records")
+        records_layout = QVBoxLayout(records_group)
+        records_layout.setContentsMargins(8, 12, 8, 8)
+        records_layout.setSpacing(6)
 
-        # Record list — one row per JSON file
+        self._list_hdr = QLabel("0 records")
+        self._list_hdr.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt;")
+        records_layout.addWidget(self._list_hdr)
+
         self._record_list = QListWidget()
-        self._record_list.setStyleSheet("font-size: 11px;")
         self._record_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._record_list.currentRowChanged.connect(self._on_list_row_changed)
-        layout.addWidget(self._record_list, 1)   # stretch to fill space
+        records_layout.addWidget(self._record_list, 1)
+        layout.addWidget(records_group, 1)
 
-        # Status block
+        # ── Info group ────────────────────────────────────────────────
+        info_group = QGroupBox("Info")
+        info_layout = QVBoxLayout(info_group)
+        info_layout.setContentsMargins(8, 12, 8, 8)
         self._status_widget = _StatusBlock()
-        layout.addWidget(self._status_widget)
-
-        # Keyboard hint
-        hint = QLabel("↑ ↓ record  ← → word\nEsc / Ctrl+Q close")
-        hint.setStyleSheet("color: #555; font-size: 10px;")
-        layout.addWidget(hint)
+        info_layout.addWidget(self._status_widget)
+        layout.addWidget(info_group)
 
         row.addWidget(panel)
 
@@ -348,7 +364,7 @@ class SilhouetteVisualizer(QMainWindow):
             item.setData(Qt.UserRole, self._records.index(rec))
             self._record_list.addItem(item)
 
-        self._list_hdr.setText(f"Records: {len(visible)}")
+        self._list_hdr.setText(f"{len(visible)} records")
         self._record_list.blockSignals(False)
         self._updating = False
 
@@ -560,7 +576,10 @@ class _StatusBlock(QWidget):
         self._labels: list[QLabel] = []
         for _ in self._KEYS:
             lbl = QLabel("")
-            lbl.setStyleSheet("color: #aaa; font-size: 10px;")
+            lbl.setStyleSheet(
+                f"color: {theme.TEXT_DIM}; font-family: '{theme.FAMILY_UI}';"
+                f" font-size: {theme.BASE_PT}pt;"
+            )
             lbl.setWordWrap(True)
             layout.addWidget(lbl)
             self._labels.append(lbl)

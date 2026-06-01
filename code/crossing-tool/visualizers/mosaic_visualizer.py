@@ -1801,6 +1801,7 @@ class MosaicVisualizer(QMainWindow):
         panel.setFixedWidth(_CTRL_PANEL_WIDTH)
         panel.setStyleSheet(
             f"QWidget {{ background: {theme.PANEL_BG}; }}"
+            f" QComboBox {{ background-color: {theme.INPUT_BG}; }}"
             f" QPushButton {{ background-color: {theme.BTN_BG}; border: none;"
             f" padding: 0 10px; border-radius: 3px;"
             f" min-height: {theme.BTN_H}px; max-height: {theme.BTN_H}px; }}"
