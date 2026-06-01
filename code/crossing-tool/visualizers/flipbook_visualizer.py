@@ -17,8 +17,8 @@ Each page thumbnail is:
 Covers (front and back) are included as the first and last pages.
 
 Keyboard:
-  Home          — previous movie
-  End           — next movie
+  Home          — previous title
+  End           — next title
   Escape / Ctrl+Q / Ctrl+W — close
   Ctrl+P        — export PDF for current movie
 """
@@ -37,7 +37,7 @@ from styles import theme
 from styles.theme import save_window_geometry, restore_window_geometry
 
 from PyQt5.QtCore import Qt, QEvent, QSize
-from tool.shortcuts import KEY_PREV_MOVIE, KEY_NEXT_MOVIE
+from tool.shortcuts import KEY_PREV_TITLE, KEY_NEXT_TITLE
 from PyQt5.QtWidgets import (
     QApplication,
     QComboBox,
@@ -328,6 +328,7 @@ class FlipbookVisualizerWindow(QMainWindow):
         self._combo = QComboBox()
         self._combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._combo.currentIndexChanged.connect(self._on_combo_changed)
+        self._combo.installEventFilter(self)
         bar.addWidget(self._combo, 1)
 
         title_lbl = QLabel("Title:")
@@ -548,14 +549,28 @@ class FlipbookVisualizerWindow(QMainWindow):
     # Signal handlers
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
-        """Intercept Tab/Backtab on the title edit to save and return focus."""
-        if obj is self._title_edit and event.type() == QEvent.KeyPress:
-            if event.key() in (Qt.Key_Tab, Qt.Key_Backtab):
-                self._on_title_edited()
-                return True
-            if event.key() in (Qt.Key_Q, Qt.Key_W) and event.modifiers() & Qt.ControlModifier:
-                self.close()
-                return True
+        """Intercept Home/End/PgUp/PgDn on the movie combo, and
+        Tab/Backtab on the title edit."""
+        if event.type() == QEvent.KeyPress:
+            if obj is self._combo:
+                key = event.key()
+                if key == Qt.Key_Home:
+                    if self._current_idx > 0:
+                        self._show_movie(self._current_idx - 1)
+                    return True
+                if key == Qt.Key_End:
+                    if self._current_idx < len(self._books) - 1:
+                        self._show_movie(self._current_idx + 1)
+                    return True
+                if key in (Qt.Key_PageUp, Qt.Key_PageDown):
+                    return True  # PgUp/PgDn are not used in this visualizer
+            if obj is self._title_edit:
+                if event.key() in (Qt.Key_Tab, Qt.Key_Backtab):
+                    self._on_title_edited()
+                    return True
+                if event.key() in (Qt.Key_Q, Qt.Key_W) and event.modifiers() & Qt.ControlModifier:
+                    self.close()
+                    return True
         return super().eventFilter(obj, event)
 
     def _on_combo_changed(self, idx: int) -> None:
@@ -585,10 +600,10 @@ class FlipbookVisualizerWindow(QMainWindow):
             self._title_edit.selectAll()
             return
 
-        if key == KEY_PREV_MOVIE:
+        if key == KEY_PREV_TITLE:
             if self._current_idx > 0:
                 self._show_movie(self._current_idx - 1)
-        elif key == KEY_NEXT_MOVIE:
+        elif key == KEY_NEXT_TITLE:
             if self._current_idx < len(self._books) - 1:
                 self._show_movie(self._current_idx + 1)
         else:

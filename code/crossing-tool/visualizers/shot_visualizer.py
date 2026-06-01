@@ -46,8 +46,8 @@ from styles.theme import GripSplitter, JumpScrollBar, save_window_geometry, rest
 from PyQt5.QtGui import QFont, QPixmap, QImage, QColor, QMouseEvent, QPalette, QBrush
 from PyQt5.QtCore import pyqtSignal as _pyqtSignal, QThread as _QThread
 from tool.shortcuts import (
-    KEY_PREV_MOVIE, KEY_NEXT_MOVIE,
-    KEY_PREV_SCENE, KEY_NEXT_SCENE,
+    KEY_PREV_TITLE, KEY_NEXT_TITLE,
+    KEY_PREV_ITEM, KEY_NEXT_ITEM,
     KEY_PREV_SHOT, KEY_NEXT_SHOT,
     KEY_PREV_FRAME, KEY_NEXT_FRAME,
     KEY_PLAY_PAUSE,
@@ -2061,8 +2061,8 @@ class ShotlistVisualizer(QMainWindow):
                         return True
                     if key in (KEY_PLAY_PAUSE, KEY_PREV_FRAME, KEY_NEXT_FRAME,
                                KEY_PREV_SHOT, KEY_NEXT_SHOT,
-                               KEY_PREV_SCENE, KEY_NEXT_SCENE,
-                               KEY_PREV_MOVIE, KEY_NEXT_MOVIE,
+                               KEY_PREV_ITEM, KEY_NEXT_ITEM,
+                               KEY_PREV_TITLE, KEY_NEXT_TITLE,
                                Qt.Key_B, Qt.Key_C, Qt.Key_E, Qt.Key_F, Qt.Key_I, Qt.Key_M, Qt.Key_N, Qt.Key_G, Qt.Key_S):
                         self.keyPressEvent(event)
                         return True
@@ -2094,9 +2094,9 @@ class ShotlistVisualizer(QMainWindow):
             self.prev_shot()
         elif key == KEY_NEXT_SHOT:
             self.next_shot()
-        elif key == KEY_PREV_SCENE:
+        elif key == KEY_PREV_ITEM:
             self.prev_scene()
-        elif key == KEY_NEXT_SCENE:
+        elif key == KEY_NEXT_ITEM:
             self.next_scene()
         elif key == Qt.Key_E:
             self.show_end_frame()
@@ -2142,10 +2142,10 @@ class ShotlistVisualizer(QMainWindow):
                         frame_num = bf.get("frame")
                         if frame_num is not None:
                             self._seek_to_frame(int(frame_num))
-        elif key == KEY_PREV_MOVIE:
+        elif key == KEY_PREV_TITLE:
             if self.current_movie_index > 0:
                 self.switch_to_movie(self.current_movie_index - 1)
-        elif key == KEY_NEXT_MOVIE:
+        elif key == KEY_NEXT_TITLE:
             if self.current_movie_index < len(self.filenames) - 1:
                 self.switch_to_movie(self.current_movie_index + 1)
         else:

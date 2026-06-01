@@ -12,9 +12,9 @@ Zoom: Ctrl + scroll wheel
 Pan:  scroll wheel / scrollbars
 
 Keyboard:
-  Home          — previous movie in list
-  End           — next movie in list
-  PgUp / PgDn   — (ignored; no scene navigation in mosaic view)
+  Home          — previous title in list
+  End           — next title in list
+  PgUp / PgDn   — previous / next annotation field
   Escape / Ctrl+Q / Ctrl+W — close
 """
 
@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from styles import theme
 from styles.theme import JumpScrollBar, save_window_geometry, restore_window_geometry
 from services.frame_match import best_frame_path
+from tool.shortcuts import KEY_PREV_TITLE, KEY_NEXT_TITLE, KEY_PREV_ITEM, KEY_NEXT_ITEM
 
 # Fix Qt plugin conflict with OpenCV — import PyQt5 before cv2
 from PyQt5.QtCore import Qt, QEvent, QRect, QThread, QTimer, pyqtSignal
@@ -1433,6 +1434,8 @@ class MosaicVisualizer(QMainWindow):
         root.setSpacing(0)
 
         self.canvas = MosaicCanvas()
+        self.canvas.installEventFilter(self)
+        self.canvas.viewport().installEventFilter(self)
 
         # 1px fuchsia progress bar sits between canvas and the rest of the layout
         self._progress = QProgressBar()
@@ -1806,6 +1809,7 @@ class MosaicVisualizer(QMainWindow):
         self.movie_combo.addItem("--all")
         self.movie_combo.currentIndexChanged.connect(self._on_field_changed)
         self.movie_combo.currentIndexChanged.connect(self._update_best_button)
+        self.movie_combo.installEventFilter(self)
         scope_layout.addWidget(self.movie_combo)
         layout.addWidget(scope_group)
 
@@ -1817,6 +1821,7 @@ class MosaicVisualizer(QMainWindow):
         for f in ANNOTATION_FIELDS:
             self.field_combo.addItem(f)
         self.field_combo.currentIndexChanged.connect(self._on_field_changed)
+        self.field_combo.installEventFilter(self)
         field_layout.addWidget(self.field_combo)
         layout.addWidget(field_group)
 
@@ -2559,21 +2564,54 @@ class MosaicVisualizer(QMainWindow):
         if value:
             self.query_input.setText(value)
 
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        """Intercept Home/End/PgUp/PgDn on combo boxes to override native
+        QComboBox behaviour: Home/End step one title; PgUp/PgDn cycle field."""
+        if event.type() == QEvent.KeyPress:
+            key = event.key()
+            if key in (Qt.Key_Home, Qt.Key_End):
+                # Always navigate titles, regardless of which combo has focus
+                idx = self.movie_combo.currentIndex()
+                if key == Qt.Key_Home:
+                    if idx > 0:
+                        self.movie_combo.setCurrentIndex(idx - 1)
+                else:
+                    if idx < self.movie_combo.count() - 1:
+                        self.movie_combo.setCurrentIndex(idx + 1)
+                return True
+            if key in (Qt.Key_PageUp, Qt.Key_PageDown):
+                if obj in (self.movie_combo, self.field_combo, self.canvas, self.canvas.viewport()):
+                    idx = self.field_combo.currentIndex()
+                    if key == Qt.Key_PageUp:
+                        if idx > 0:
+                            self.field_combo.setCurrentIndex(idx - 1)
+                    else:
+                        if idx < self.field_combo.count() - 1:
+                            self.field_combo.setCurrentIndex(idx + 1)
+                    return True
+        return super().eventFilter(obj, event)
+
     def keyPressEvent(self, event) -> None:
         key = event.key()
         if key in (Qt.Key_Q, Qt.Key_W) and event.modifiers() & Qt.ControlModifier:
             self.close()
             return
-        if key == Qt.Key_Home:
+        if key == KEY_PREV_TITLE:
             idx = self.movie_combo.currentIndex()
             if idx > 0:
                 self.movie_combo.setCurrentIndex(idx - 1)
-        elif key == Qt.Key_End:
+        elif key == KEY_NEXT_TITLE:
             idx = self.movie_combo.currentIndex()
             if idx < self.movie_combo.count() - 1:
                 self.movie_combo.setCurrentIndex(idx + 1)
-        elif key in (Qt.Key_PageUp, Qt.Key_PageDown):
-            pass  # No scene navigation in the mosaic view — ignore
+        elif key == KEY_PREV_ITEM:
+            idx = self.field_combo.currentIndex()
+            if idx > 0:
+                self.field_combo.setCurrentIndex(idx - 1)
+        elif key == KEY_NEXT_ITEM:
+            idx = self.field_combo.currentIndex()
+            if idx < self.field_combo.count() - 1:
+                self.field_combo.setCurrentIndex(idx + 1)
         else:
             super().keyPressEvent(event)
 

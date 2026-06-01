@@ -15,8 +15,8 @@ sized at the default 16 × 9 aspect ratio and reflow automatically when the
 window is resized.
 
 Keyboard:
-  Home          — previous movie
-  End           — next movie
+  Home          — previous title
+  End           — next title
   Escape / Ctrl+Q / Ctrl+W — close
 """
 
@@ -34,8 +34,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from styles import theme
 from styles.theme import save_window_geometry, restore_window_geometry
 
-from PyQt5.QtCore import Qt
-from tool.shortcuts import KEY_PREV_MOVIE, KEY_NEXT_MOVIE
+from PyQt5.QtCore import Qt, QEvent
+from tool.shortcuts import KEY_PREV_TITLE, KEY_NEXT_TITLE
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -392,6 +392,7 @@ class PaletteVisualizerWindow(QMainWindow):
         self._combo = QComboBox()
         self._combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._combo.currentIndexChanged.connect(self._on_combo_changed)
+        self._combo.installEventFilter(self)
         bar.addWidget(self._combo, 1)
 
         self._status_label = QLabel("")
@@ -517,6 +518,23 @@ class PaletteVisualizerWindow(QMainWindow):
             return
         self._show_movie(idx)
 
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        """Intercept Home/End/PgUp/PgDn on the movie combo to override
+        native QComboBox jump-to-first/last and cycling behaviour."""
+        if obj is self._combo and event.type() == QEvent.KeyPress:
+            key = event.key()
+            if key == Qt.Key_Home:
+                if self._current_idx > 0:
+                    self._show_movie(self._current_idx - 1)
+                return True
+            if key == Qt.Key_End:
+                if self._current_idx < len(self._palettes) - 1:
+                    self._show_movie(self._current_idx + 1)
+                return True
+            if key in (Qt.Key_PageUp, Qt.Key_PageDown):
+                return True  # PgUp/PgDn are not used in this visualizer
+        return super().eventFilter(obj, event)
+
     def _grid_warnings_toggle(self, checked: bool) -> None:
         self._grid.set_warnings_visible(checked)
 
@@ -536,10 +554,10 @@ class PaletteVisualizerWindow(QMainWindow):
             self.close()
             return
 
-        if key == KEY_PREV_MOVIE:
+        if key == KEY_PREV_TITLE:
             if self._current_idx > 0:
                 self._show_movie(self._current_idx - 1)
-        elif key == KEY_NEXT_MOVIE:
+        elif key == KEY_NEXT_TITLE:
             if self._current_idx < len(self._palettes) - 1:
                 self._show_movie(self._current_idx + 1)
         else:

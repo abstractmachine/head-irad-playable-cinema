@@ -9,8 +9,9 @@ Layout:
   RIGHT — control panel: scope, field, options, Generate and Save PDF buttons
 
 Keyboard:
-  Home          — previous movie in list
-  End           — next movie in list
+  Home          — previous title in list
+  End           — next title in list
+  PgUp / PgDn   — previous / next annotation field
   Escape / Ctrl+Q / Ctrl+W — close
 """
 
@@ -27,9 +28,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from styles import theme
 from styles.theme import save_window_geometry, restore_window_geometry
-from tool.shortcuts import KEY_PREV_MOVIE, KEY_NEXT_MOVIE
+from tool.shortcuts import KEY_PREV_TITLE, KEY_NEXT_TITLE, KEY_PREV_ITEM, KEY_NEXT_ITEM
 
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, QEvent, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication,
     QColorDialog,
@@ -404,6 +405,7 @@ class CloudVisualizer(QMainWindow):
         rp.addWidget(_section("Scope"))
         self.movie_combo = QComboBox()
         self.movie_combo.addItem("--all", userData=None)
+        self.movie_combo.installEventFilter(self)
         rp.addWidget(self.movie_combo)
         rp.addSpacing(12)
 
@@ -416,6 +418,7 @@ class CloudVisualizer(QMainWindow):
             "humans", "wearing", "animals", "text",
         ):
             self.field_combo.addItem(f, userData=f)
+        self.field_combo.installEventFilter(self)
         rp.addWidget(self.field_combo)
         rp.addSpacing(12)
 
@@ -667,19 +670,53 @@ class CloudVisualizer(QMainWindow):
         save_window_geometry(self, "window_cloud")
         super().closeEvent(event)
 
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        """Intercept Home/End/PgUp/PgDn on combo boxes to override native
+        QComboBox behaviour: Home/End step one title; PgUp/PgDn cycle field."""
+        if event.type() == QEvent.KeyPress:
+            key = event.key()
+            if key in (Qt.Key_Home, Qt.Key_End):
+                # Always navigate titles, regardless of which combo has focus
+                idx = self.movie_combo.currentIndex()
+                if key == Qt.Key_Home:
+                    if idx > 0:
+                        self.movie_combo.setCurrentIndex(idx - 1)
+                else:
+                    if idx < self.movie_combo.count() - 1:
+                        self.movie_combo.setCurrentIndex(idx + 1)
+                return True
+            if obj is self.movie_combo and key in (Qt.Key_PageUp, Qt.Key_PageDown):
+                idx = self.field_combo.currentIndex()
+                if key == Qt.Key_PageUp:
+                    if idx > 0:
+                        self.field_combo.setCurrentIndex(idx - 1)
+                else:
+                    if idx < self.field_combo.count() - 1:
+                        self.field_combo.setCurrentIndex(idx + 1)
+                return True
+        return super().eventFilter(obj, event)
+
     def keyPressEvent(self, event) -> None:
         key = event.key()
         if key in (Qt.Key_Q, Qt.Key_W) and event.modifiers() & Qt.ControlModifier:
             self.close()
             return
-        if key == KEY_PREV_MOVIE:
+        if key == KEY_PREV_TITLE:
             idx = self.movie_combo.currentIndex()
             if idx > 0:
                 self.movie_combo.setCurrentIndex(idx - 1)
-        elif key == KEY_NEXT_MOVIE:
+        elif key == KEY_NEXT_TITLE:
             idx = self.movie_combo.currentIndex()
             if idx < self.movie_combo.count() - 1:
                 self.movie_combo.setCurrentIndex(idx + 1)
+        elif key == KEY_PREV_ITEM:
+            idx = self.field_combo.currentIndex()
+            if idx > 0:
+                self.field_combo.setCurrentIndex(idx - 1)
+        elif key == KEY_NEXT_ITEM:
+            idx = self.field_combo.currentIndex()
+            if idx < self.field_combo.count() - 1:
+                self.field_combo.setCurrentIndex(idx + 1)
         else:
             super().keyPressEvent(event)
 
