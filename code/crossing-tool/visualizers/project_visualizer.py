@@ -97,6 +97,7 @@ class ProjectVisualizer(QMainWindow):
         self._backup_poll_timer: QTimer | None = None
         self._backup_master_fd: int = -1
         self._backup_stdout_buf: bytes = b""
+        self._backup_anim_frame: int = 0
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -243,32 +244,36 @@ class ProjectVisualizer(QMainWindow):
             return
 
         self._backup_stdout_buf = b""
+        self._backup_anim_frame = 0
         self.backup_btn.setEnabled(False)
-        self.backup_btn.setText("Backing Up…")
+        self.backup_btn.setStyleSheet(
+            "QPushButton { background-color: #CC00CC; color: white; font-weight: bold; }"
+        )
+        self.backup_btn.setText("Backing Up")
 
         self._backup_poll_timer = QTimer(self)
         self._backup_poll_timer.setInterval(500)
         self._backup_poll_timer.timeout.connect(self._poll_backup_proc)
         self._backup_poll_timer.start()
 
+    _BACKUP_SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
     def _poll_backup_proc(self) -> None:
-        import re
-        # Read any available bytes from the pty master fd
+        # Read any available bytes from the pty master fd (keep buffer trimmed)
         if self._backup_master_fd >= 0:
             try:
                 chunk = os.read(self._backup_master_fd, 4096)
                 if chunk:
                     self._backup_stdout_buf += chunk
-                    # rsync --info=progress2 lines contain "  42%" followed by speed/eta
-                    matches = re.findall(rb'(\d{1,3})%', self._backup_stdout_buf)
-                    if matches:
-                        pct = matches[-1].decode()
-                        self.backup_btn.setText(f"Backing Up… {pct}%")
-                    # Trim to avoid unbounded growth
                     if len(self._backup_stdout_buf) > 8192:
                         self._backup_stdout_buf = self._backup_stdout_buf[-4096:]
             except (BlockingIOError, OSError):
                 pass
+
+        # Advance spinner regardless of whether new bytes arrived
+        frame = self._BACKUP_SPINNER[self._backup_anim_frame % len(self._BACKUP_SPINNER)]
+        self._backup_anim_frame += 1
+        self.backup_btn.setText(f"{frame}  Backing Up")
 
         if self._backup_proc is None or self._backup_proc.poll() is not None:
             if self._backup_master_fd >= 0:
@@ -281,6 +286,7 @@ class ProjectVisualizer(QMainWindow):
                 self._backup_poll_timer.stop()
                 self._backup_poll_timer = None
             self._backup_proc = None
+            self.backup_btn.setStyleSheet("")
             self.backup_btn.setText("Backup")
             self._refresh_backup_button()
 
