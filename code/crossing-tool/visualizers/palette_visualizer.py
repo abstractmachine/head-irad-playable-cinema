@@ -34,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from styles import theme
 from styles.theme import save_window_geometry, restore_window_geometry
 
-from PyQt5.QtCore import Qt, QEvent
+from PyQt5.QtCore import Qt, QEvent, QThread, pyqtSignal
 from tool.shortcuts import KEY_PREV_TITLE, KEY_NEXT_TITLE
 from PyQt5.QtWidgets import (
     QApplication,
@@ -43,6 +43,7 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QProgressBar,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -51,6 +52,50 @@ from PyQt5.QtGui import QColor, QPainter
 
 if "QT_QPA_PLATFORM_PLUGIN_PATH" in os.environ:
     del os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"]
+
+
+# ---------------------------------------------------------------------------
+# Background worker: palette JSON loader
+# ---------------------------------------------------------------------------
+
+class PaletteLoaderWorker(QThread):
+    """Loads palette JSON files one-by-one from disk in a background thread.
+
+    Signals
+    -------
+    palette_ready(label, data)
+        Emitted for each successfully loaded palette JSON, in sorted order.
+    finished_signal(total_count)
+        Emitted when every file has been processed.
+    """
+
+    palette_ready   = pyqtSignal(str, dict)  # (display_label, data_dict)
+    finished_signal = pyqtSignal(int)        # total count
+
+    def __init__(self, palette_dir: Path, parent=None) -> None:
+        super().__init__(parent)
+        self._palette_dir = palette_dir
+        self._cancelled   = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def run(self) -> None:
+        count = 0
+        for json_path in sorted(self._palette_dir.glob("*.json")):
+            if self._cancelled:
+                break
+            try:
+                data = json.loads(json_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            movie = data.get("movie", {})
+            title = movie.get("title") or json_path.stem
+            year  = movie.get("year")
+            label = f"{title} ({year})" if year else title
+            self.palette_ready.emit(label, data)
+            count += 1
+        self.finished_signal.emit(count)
 
 
 # ---------------------------------------------------------------------------
@@ -357,12 +402,16 @@ class PaletteVisualizerWindow(QMainWindow):
         self._palettes: list[tuple[str, dict]] = []
         self._current_idx: int = 0
         self._updating_combo: bool = False
+        self._loader: Optional[PaletteLoaderWorker] = None
 
         self._build_ui()
-        self._load_palettes()
+        self._start_loading()
         restore_window_geometry(self, "window_palette")
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        if self._loader is not None and self._loader.isRunning():
+            self._loader.cancel()
+            self._loader.wait()
         save_window_geometry(self, "window_palette")
         super().closeEvent(event)
 
@@ -431,6 +480,20 @@ class PaletteVisualizerWindow(QMainWindow):
 
         vbox.addLayout(bar)
 
+        # 1px fuchsia progress bar sits between the toolbar and the grid
+        self._progress = QProgressBar()
+        self._progress.setFixedHeight(1)
+        self._progress.setTextVisible(False)
+        self._progress.setRange(0, 1)
+        self._progress.setValue(0)
+        self._progress.setStyleSheet(
+            f"QProgressBar {{ background-color: {theme.UI_BORDER}; border: none; "
+            f"border-radius: 0px; max-height: 1px; }}"
+            f"QProgressBar::chunk {{ background-color: {theme.ACCENT}; "
+            f"border-radius: 0px; }}"
+        )
+        vbox.addWidget(self._progress)
+
         self._grid = _GridWidget()
         self._grid.setStyleSheet(f"background: {theme.CANVAS_BG};")
         self._grid.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -443,7 +506,7 @@ class PaletteVisualizerWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Data loading
 
-    def _load_palettes(self) -> None:
+    def _start_loading(self) -> None:
         palette_dir = (
             Path(self._project_path)
             / "data" / "palettes" / self._media_type
@@ -454,29 +517,31 @@ class PaletteVisualizerWindow(QMainWindow):
             )
             return
 
-        palettes: list[tuple[str, dict]] = []
-        for json_path in sorted(palette_dir.glob("*.json")):
-            try:
-                data = json.loads(json_path.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            movie = data.get("movie", {})
-            title = movie.get("title") or json_path.stem
-            year  = movie.get("year")
-            label = f"{title} ({year})" if year else title
-            palettes.append((label, data))
+        self._progress.setRange(0, 0)  # indeterminate while scanning
+        self._progress.setValue(0)
+        self._status_label.setText("Loading palettes…")
 
-        self._palettes = palettes
+        self._loader = PaletteLoaderWorker(palette_dir, parent=self)
+        self._loader.palette_ready.connect(self._on_palette_ready)
+        self._loader.finished_signal.connect(self._on_load_done)
+        self._loader.start()
 
+    def _on_palette_ready(self, label: str, data: dict) -> None:
+        """Slot: one palette JSON has been loaded by the worker."""
+        self._palettes.append((label, data))
         self._updating_combo = True
-        self._combo.clear()
-        for label, _ in palettes:
-            self._combo.addItem(label)
+        self._combo.addItem(label)
         self._updating_combo = False
 
-        if palettes:
+        # Show the very first palette as soon as it arrives
+        if len(self._palettes) == 1:
             self._show_movie(0)
-        else:
+
+    def _on_load_done(self, count: int) -> None:
+        """Slot: all palette JSONs have been loaded."""
+        self._progress.setRange(0, 1)
+        self._progress.setValue(0)
+        if count == 0:
             self._status_label.setText("No palette files found.")
 
     # ------------------------------------------------------------------
