@@ -16,6 +16,7 @@ from __future__ import annotations
 import math
 import sys
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,32 @@ class MosaicItem:
 # Frame extraction
 # ---------------------------------------------------------------------------
 
+@lru_cache(maxsize=128)
+def _get_sar(video_path: str) -> tuple:
+    """Return (sar_num, sar_den) for video_path via ffprobe. Falls back to (1, 1)."""
+    try:
+        import json
+        import subprocess
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=sample_aspect_ratio",
+                "-of", "json",
+                video_path,
+            ],
+            capture_output=True, text=True, timeout=5,
+        )
+        data = json.loads(result.stdout)
+        sar_str = data["streams"][0].get("sample_aspect_ratio", "1:1")
+        if sar_str in ("", "0:1", "1:1"):
+            return (1, 1)
+        parts = sar_str.replace("/", ":").split(":")
+        return (int(parts[0]), int(parts[1]))
+    except Exception:
+        return (1, 1)
+
+
 def extract_frame_pil(video_path: Path, frame_index: int) -> "Image.Image | None":
     """Extract a single video frame as a PIL Image.
 
@@ -73,6 +100,10 @@ def extract_frame_pil(video_path: Path, frame_index: int) -> "Image.Image | None
         if not ret:
             return None
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        sar = _get_sar(str(video_path))
+        if sar != (1, 1):
+            display_w = int(round(rgb.shape[1] * sar[0] / sar[1]))
+            rgb = cv2.resize(rgb, (display_w, rgb.shape[0]), interpolation=cv2.INTER_LINEAR)
         return Image.fromarray(rgb)
     except Exception:
         return None
@@ -608,7 +639,9 @@ def build_scenes_results(
                 _fw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                 _fh = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
                 if _fw > 0 and _fh > 0:
-                    vid_w, vid_h = _fw, _fh
+                    sar = _get_sar(str(video_path))
+                    vid_w = int(round(_fw * sar[0] / sar[1]))
+                    vid_h = _fh
             cap.release()
         except Exception:
             pass
@@ -891,12 +924,16 @@ def _extract_frames_for_tile(
         if not cap.isOpened():
             return [None] * len(frame_indices)
 
+        sar = _get_sar(str(video_path))
         out: list[Image.Image | None] = []
         for fi in frame_indices:
             cap.set(cv2.CAP_PROP_POS_FRAMES, fi)
             ret, bgr = cap.read()
             if ret:
                 rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+                if sar != (1, 1):
+                    display_w = int(round(rgb.shape[1] * sar[0] / sar[1]))
+                    rgb = cv2.resize(rgb, (display_w, rgb.shape[0]), interpolation=cv2.INTER_LINEAR)
                 out.append(Image.fromarray(rgb))
             else:
                 out.append(None)

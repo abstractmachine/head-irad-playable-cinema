@@ -1198,7 +1198,9 @@ class ScenesWorker(QThread):
                     _fw = int(_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                     _fh = int(_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
                     if _fw > 0 and _fh > 0:
-                        vid_w, vid_h = _fw, _fh
+                        sar = _get_sar(str(video_path))
+                        vid_w = int(round(_fw * sar[0] / sar[1]))
+                        vid_h = _fh
                 _cap.release()
 
             # Clean title + year from stored metadata; fall back to filename parsing
@@ -1301,6 +1303,16 @@ class ScenesWorker(QThread):
                     )
                     if img_path.exists():
                         pixmap = QPixmap(str(img_path))
+                        # Apply SAR correction — best-frame PNGs are stored at
+                        # coded (raw pixel) resolution, not display resolution.
+                        if video_path is not None and pixmap is not None and not pixmap.isNull():
+                            sar = _get_sar(str(video_path))
+                            if sar != (1, 1):
+                                new_w = int(round(pixmap.width() * sar[0] / sar[1]))
+                                pixmap = pixmap.scaled(
+                                    new_w, pixmap.height(),
+                                    Qt.IgnoreAspectRatio, Qt.SmoothTransformation,
+                                )
                 if pixmap is None and video_path is not None:
                     pixmap = _extract_frame_pixmap(video_path, frame_index)
 
@@ -2146,7 +2158,20 @@ class MosaicVisualizer(QMainWindow):
         self._best_worker.start()
 
     def _on_best_tile_ready(self, result: dict, path_str) -> None:
-        pixmap = QPixmap(path_str) if path_str else None
+        pixmap = None
+        if path_str:
+            pixmap = QPixmap(path_str)
+            # Apply SAR correction so stored best-frame PNGs display correctly
+            movie_id   = result.get("movie_id", "")
+            video_path = _find_video_path(self.project_path, movie_id)
+            if video_path is not None and pixmap is not None and not pixmap.isNull():
+                sar = _get_sar(str(video_path))
+                if sar != (1, 1):
+                    new_w = int(round(pixmap.width() * sar[0] / sar[1]))
+                    pixmap = pixmap.scaled(
+                        new_w, pixmap.height(),
+                        Qt.IgnoreAspectRatio, Qt.SmoothTransformation,
+                    )
         self._current_results.append(result)
         self.canvas.add_tile(result, pixmap)
         n = self.canvas.tile_count
