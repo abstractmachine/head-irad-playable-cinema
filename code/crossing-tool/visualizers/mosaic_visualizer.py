@@ -1364,12 +1364,13 @@ class PdfExportWorker(QThread):
     error           = pyqtSignal(str)
 
     def __init__(self, results: list, project_path: str, query: str,
-                 filename: str = "", parent=None):
+                 filename: str = "", subfolder: str = "", parent=None):
         super().__init__(parent)
         self.results      = results
         self.project_path = project_path
         self.query        = query
         self.filename     = filename
+        self.subfolder    = subfolder
 
     def run(self) -> None:
         try:
@@ -1396,6 +1397,7 @@ class PdfExportWorker(QThread):
                 base = "mosaic"
             out_path = (
                 Path(self.project_path) / "output" / "mosaics"
+                / (self.subfolder or "searches")
                 / f"{base} [{stamp}].pdf"
             )
             render_mosaic(items, out_path, layout="landscape",
@@ -2460,12 +2462,23 @@ class MosaicVisualizer(QMainWindow):
 
         query    = self.query_input.text().strip()
         filename = self.movie_combo.currentData() or ""
+
+        # Route to the correct subfolder based on the active view:
+        # scenes have label tiles; shots have no query; searches have a query.
+        has_labels = any(r.get("is_label") for r in export_items)
+        if has_labels:
+            subfolder = "scenes"
+        elif query:
+            subfolder = "searches"
+        else:
+            subfolder = "shots"
+
         self.pdf_btn.setEnabled(False)
         self.search_btn.setEnabled(False)
         self.status.showMessage(f"Exporting PDF for {frame_count} frame(s)…")
         self.status.set_busy_style(True)
 
-        self._pdf_worker = PdfExportWorker(export_items, self.project_path, query, filename)
+        self._pdf_worker = PdfExportWorker(export_items, self.project_path, query, filename, subfolder)
         self._pdf_worker.finished_signal.connect(self._on_pdf_export_done)
         self._pdf_worker.progress.connect(self._on_pdf_export_progress)
         self._pdf_worker.error.connect(self._on_pdf_export_error)
