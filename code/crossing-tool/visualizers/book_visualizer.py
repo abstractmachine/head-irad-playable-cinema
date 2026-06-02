@@ -23,6 +23,7 @@ Navigation:
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 import uuid
@@ -34,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from styles import theme
 from styles.theme import GripSplitter, save_window_geometry, restore_window_geometry
 
-from PyQt5.QtCore import Qt, QEvent, pyqtSignal, QRect, QRectF, QSize, QTimer, QPointF
+from PyQt5.QtCore import Qt, QByteArray, QEvent, pyqtSignal, QMimeData, QPoint, QRect, QRectF, QSize, QTimer, QPointF
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -62,6 +63,7 @@ from PyQt5.QtGui import (
     QBrush,
     QColor,
     QCursor,
+    QDrag,
     QIcon,
     QImage,
     QPainter,
@@ -98,6 +100,12 @@ _TOOL_ERASE = "erase"
 _HANDLE_R   = 4      # half-size of point handle square (px)
 _CLOSE_DIST = 12     # px distance from first point to snap-close polygon
 _HIT_DIST   = 8      # px distance for point / segment hit-testing
+
+# Image layer visual constants
+_IMG_CORNER_R   = 5     # half-size of corner resize handle (px)
+_IMG_ROT_R      = 5     # radius of rotation handle circle (px)
+_IMG_ROT_OFFSET = 22    # px above top-right corner for rotation handle
+_IMG_DEFAULT_W  = 0.25  # default normalised width when dropped
 
 _PANEL_STYLESHEET = (
     f"QWidget {{ background: {theme.PANEL_BG}; }}"
@@ -584,8 +592,23 @@ class _CutOverlay(QWidget):
         self._mouse_pos: Optional[QPointF] = None  # for live WIP preview
         self._show_outlines: bool = True            # toggle via checkbox
 
+        # image layer interaction state
+        self._img_drag_id:       Optional[str]    = None
+        self._img_drag_start:    Optional[QPointF] = None
+        self._img_drag_origin:   Optional[tuple]  = None   # (x, y, w, h, rot)
+        self._img_resize_id:     Optional[str]    = None
+        self._img_resize_corner: Optional[int]    = None   # 0=TL 1=TR 2=BR 3=BL
+        self._img_resize_origin: Optional[tuple]  = None   # (x, y, w, h, rot, page_idx)
+        self._img_rotate_id:     Optional[str]    = None
+        self._img_rotate_center: Optional[tuple]  = None   # (cx_s, cy_s) screen center
+        self._img_rotate_origin: Optional[float]  = None   # rotation angle at drag start
+        self._img_rotate_start_pos: Optional[QPointF] = None
+        self._book_dir:          Optional[Path]   = None
+        self._pixmap_cache:      dict             = {}      # source_rel → QPixmap
+
         self.setAttribute(Qt.WA_NoSystemBackground)
         self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAcceptDrops(True)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.NoFocus)
         self.raise_()
@@ -619,6 +642,16 @@ class _CutOverlay(QWidget):
         self._drag_start = None
         self._wip_points = []
         self._wip_page = None
+        self._img_drag_id = None
+        self._img_drag_start = None
+        self._img_drag_origin = None
+        self._img_resize_id = None
+        self._img_resize_corner = None
+        self._img_resize_origin = None
+        self._img_rotate_id = None
+        self._img_rotate_center = None
+        self._img_rotate_origin = None
+        self._img_rotate_start_pos = None
         self.update()
 
     def current_layers(self) -> list:
@@ -721,6 +754,11 @@ class _CutOverlay(QWidget):
         layer = self._layer_by_id(lid)
         if layer:
             layer["name"] = name
+            mirror_id = layer.get("mirror_id")
+            if mirror_id:
+                mirror = self._layer_by_id(mirror_id)
+                if mirror:
+                    mirror["name"] = name
             self.update()
 
     def reorder_layers(self, new_ids: list) -> None:
@@ -790,6 +828,249 @@ class _CutOverlay(QWidget):
         return mirror_layer
 
     # ------------------------------------------------------------------
+    # Book directory (for image asset resolution)
+
+    def set_book_dir(self, book_dir: Optional[Path]) -> None:
+        """Set the base directory for resolving image sources."""
+        self._book_dir = book_dir
+        self._pixmap_cache.clear()
+        self.update()
+
+    def _resolve_img_path(self, source_rel: str) -> Optional[Path]:
+        if self._book_dir is None or not source_rel:
+            return None
+        p = self._book_dir / source_rel
+        return p if p.exists() else None
+
+    def _get_pixmap(self, source_rel: str) -> Optional[QPixmap]:
+        """Load and cache a QPixmap by source_rel path."""
+        if not source_rel:
+            return None
+        if source_rel in self._pixmap_cache:
+            return self._pixmap_cache[source_rel]
+        path = self._resolve_img_path(source_rel)
+        pix = QPixmap(str(path)) if path else QPixmap()
+        result = None if pix.isNull() else pix
+        if len(self._pixmap_cache) > 60:
+            evict = list(self._pixmap_cache)[:30]
+            for k in evict:
+                del self._pixmap_cache[k]
+        self._pixmap_cache[source_rel] = result
+        return result
+
+    # ------------------------------------------------------------------
+    # Image layer geometry helpers
+
+    def _img_transform(self, layer: dict, r: QRect) -> tuple:
+        """Return (cx_s, cy_s, sw_s, sh_s, rot_deg) in screen coordinates."""
+        cx  = r.x() + layer["x"]      * r.width()
+        cy  = r.y() + layer["y"]      * r.height()
+        sw  = layer["width"]           * r.width()
+        sh  = layer["height"]          * r.height()
+        rot = layer.get("rotation", 0.0)
+        return cx, cy, sw, sh, rot
+
+    @staticmethod
+    def _rot_pt(cx: float, cy: float, dx: float, dy: float, deg: float) -> QPointF:
+        """Rotate offset (dx, dy) by *deg* degrees and translate by (cx, cy)."""
+        rad   = math.radians(deg)
+        cos_a = math.cos(rad)
+        sin_a = math.sin(rad)
+        return QPointF(cx + dx * cos_a - dy * sin_a,
+                       cy + dx * sin_a + dy * cos_a)
+
+    def _img_corners_screen(self, layer: dict, r: QRect) -> list:
+        """Return [TL, TR, BR, BL] corner positions as QPointF in screen coords."""
+        cx, cy, sw, sh, rot = self._img_transform(layer, r)
+        hw, hh = sw / 2, sh / 2
+        return [self._rot_pt(cx, cy, dx, dy, rot)
+                for dx, dy in [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)]]
+
+    def _img_rot_handle_screen(self, layer: dict, r: QRect) -> QPointF:
+        """Return screen position of the rotation handle (above TR corner)."""
+        cx, cy, sw, sh, rot = self._img_transform(layer, r)
+        return self._rot_pt(cx, cy, sw / 2, -sh / 2 - _IMG_ROT_OFFSET, rot)
+
+    def _hit_test_image(self, pos: QPointF, layer: dict) -> bool:
+        """True if *pos* is inside the (possibly rotated) image bounding box."""
+        rects = self._visible_page_rects()
+        r = rects.get(layer.get("page"))
+        if r is None:
+            return False
+        cx, cy, sw, sh, rot = self._img_transform(layer, r)
+        dx = pos.x() - cx
+        dy = pos.y() - cy
+        rad     = math.radians(-rot)
+        local_x = dx * math.cos(rad) - dy * math.sin(rad)
+        local_y = dx * math.sin(rad) + dy * math.cos(rad)
+        return abs(local_x) <= sw / 2 + 2 and abs(local_y) <= sh / 2 + 2
+
+    def _hit_image_body(self, pos: QPointF) -> Optional[str]:
+        """Return id of topmost image layer whose body contains *pos*."""
+        for layer in reversed(self._layers):
+            if layer.get("type") != "Image":
+                continue
+            if self._hit_test_image(pos, layer):
+                return layer["id"]
+        return None
+
+    def _hit_image_corner(self, pos: QPointF, lid: str) -> Optional[int]:
+        """Return corner index (0=TL,1=TR,2=BR,3=BL) if pos is near a corner handle."""
+        layer = self._layer_by_id(lid)
+        if layer is None or layer.get("type") != "Image":
+            return None
+        rects = self._visible_page_rects()
+        r = rects.get(layer.get("page"))
+        if r is None:
+            return None
+        for i, c in enumerate(self._img_corners_screen(layer, r)):
+            if (pos - c).manhattanLength() <= (_IMG_CORNER_R + 4) * 2:
+                return i
+        return None
+
+    def _hit_image_rot_handle(self, pos: QPointF, lid: str) -> bool:
+        """True if *pos* is near the rotation handle of image layer *lid*."""
+        layer = self._layer_by_id(lid)
+        if layer is None or layer.get("type") != "Image":
+            return False
+        rects = self._visible_page_rects()
+        r = rects.get(layer.get("page"))
+        if r is None:
+            return False
+        rh = self._img_rot_handle_screen(layer, r)
+        return (pos - rh).manhattanLength() <= (_IMG_ROT_R + 4) * 2
+
+    # ------------------------------------------------------------------
+    # Image layer drag / resize / rotate
+
+    def _img_drag_move(self, pos: QPointF) -> None:
+        """Translate the selected image to follow cursor."""
+        if self._img_drag_id is None or self._img_drag_start is None:
+            return
+        layer = self._layer_by_id(self._img_drag_id)
+        if layer is None:
+            return
+        rects = self._visible_page_rects()
+        r = rects.get(layer.get("page"))
+        if r is None or r.width() <= 0 or r.height() <= 0:
+            return
+        ox, oy, _ow, _oh, _orot = self._img_drag_origin
+        dx = (pos.x() - self._img_drag_start.x()) / r.width()
+        dy = (pos.y() - self._img_drag_start.y()) / r.height()
+        layer["x"] = ox + dx
+        layer["y"] = oy + dy
+
+    def _img_resize_move(self, pos: QPointF) -> None:
+        """Proportionally resize the image as the user drags a corner handle."""
+        if self._img_resize_id is None or self._img_resize_origin is None:
+            return
+        layer = self._layer_by_id(self._img_resize_id)
+        if layer is None:
+            return
+        ox, oy, ow, oh, orot, page_idx = self._img_resize_origin
+        rects = self._visible_page_rects()
+        r = rects.get(page_idx)
+        if r is None:
+            return
+        cx = r.x() + ox * r.width()
+        cy = r.y() + oy * r.height()
+        dx = pos.x() - cx
+        dy = pos.y() - cy
+        rad     = math.radians(-orot)
+        local_x = dx * math.cos(rad) - dy * math.sin(rad)
+        local_y = dx * math.sin(rad) + dy * math.cos(rad)
+        orig_hw  = ow * r.width()  / 2
+        orig_hh  = oh * r.height() / 2
+        orig_dist = math.hypot(orig_hw, orig_hh)
+        if orig_dist == 0:
+            return
+        new_dist = math.hypot(abs(local_x), abs(local_y))
+        scale = max(0.02, new_dist / orig_dist)
+        layer["width"]  = ow * scale
+        layer["height"] = oh * scale
+
+    def _img_rotate_move(self, pos: QPointF) -> None:
+        """Rotate the image as the user drags the rotation handle."""
+        if self._img_rotate_id is None or self._img_rotate_center is None:
+            return
+        layer = self._layer_by_id(self._img_rotate_id)
+        if layer is None:
+            return
+        cx, cy = self._img_rotate_center
+        start_angle = math.degrees(math.atan2(
+            self._img_rotate_start_pos.y() - cy,
+            self._img_rotate_start_pos.x() - cx,
+        ))
+        cur_angle = math.degrees(math.atan2(pos.y() - cy, pos.x() - cx))
+        delta = cur_angle - start_angle
+        rotation = (self._img_rotate_origin + delta) % 360
+        if QApplication.keyboardModifiers() & Qt.ShiftModifier:
+            rotation = round(rotation / 30) * 30 % 360
+        layer["rotation"] = rotation
+
+    # ------------------------------------------------------------------
+    # Drop-from-illustrations handler
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802
+        if event.mimeData().hasFormat("application/x-crossing-illus-source"):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:  # noqa: N802
+        if event.mimeData().hasFormat("application/x-crossing-illus-source"):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event) -> None:  # noqa: N802
+        mime = event.mimeData()
+        if not mime.hasFormat("application/x-crossing-illus-source"):
+            event.ignore()
+            return
+        source_rel = bytes(mime.data("application/x-crossing-illus-source")).decode("utf-8")
+        pos = QPointF(event.pos())
+        hit = self._which_page(pos.x(), pos.y())
+        if hit is None:
+            event.ignore()
+            return
+        page_idx, nx, ny = hit
+        # Determine height that preserves pixel aspect ratio
+        default_w = _IMG_DEFAULT_W
+        default_h = default_w
+        full_path = self._resolve_img_path(source_rel)
+        if full_path:
+            pix = QPixmap(str(full_path))
+            if not pix.isNull() and pix.height() > 0:
+                rects = self._visible_page_rects()
+                r = rects.get(page_idx)
+                if r and r.width() > 0 and r.height() > 0:
+                    pix_aspect = pix.width() / pix.height()
+                    sw = default_w * r.width()
+                    sh = sw / pix_aspect
+                    default_h = sh / r.height()
+        layer = {
+            "id":       f"img_{uuid.uuid4().hex[:8]}",
+            "type":     "Image",
+            "name":     Path(source_rel).stem,
+            "source":   source_rel,
+            "page":     page_idx,
+            "spread":   self._view._spread_idx,
+            "x":        nx,
+            "y":        ny,
+            "width":    default_w,
+            "height":   default_h,
+            "rotation": 0.0,
+            "z_index":  len(self._layers),
+        }
+        self._layers.append(layer)
+        self._sel_id = layer["id"]
+        self._sel_pt = None
+        self.update()
+        self.layer_committed.emit(layer)
+        event.acceptProposedAction()
+
+    # ------------------------------------------------------------------
     # Coordinate helpers
 
     def _visible_page_rects(self) -> dict:
@@ -827,6 +1108,8 @@ class _CutOverlay(QWidget):
         return None
 
     def _layer_screen_pts(self, layer: dict) -> list:
+        if "geometry" not in layer:
+            return []
         page_idx = layer.get("page")
         rects = self._visible_page_rects()
         r = rects.get(page_idx)
@@ -840,6 +1123,8 @@ class _CutOverlay(QWidget):
     def _hit_point(self, pos: QPointF) -> Optional[tuple]:
         """Return (layer_id, pt_idx) if pos is near a handle."""
         for layer in reversed(self._layers):
+            if layer.get("type") == "Image":
+                continue
             pts = self._layer_screen_pts(layer)
             for i, pt in enumerate(pts):
                 if abs(pos.x() - pt.x()) <= _HIT_DIST and abs(pos.y() - pt.y()) <= _HIT_DIST:
@@ -849,6 +1134,8 @@ class _CutOverlay(QWidget):
     def _hit_segment(self, pos: QPointF) -> Optional[tuple]:
         """Return (layer_id, seg_idx, insertion_point) if pos is near a segment."""
         for layer in reversed(self._layers):
+            if layer.get("type") == "Image":
+                continue
             pts = self._layer_screen_pts(layer)
             if len(pts) < 2:
                 continue
@@ -869,6 +1156,8 @@ class _CutOverlay(QWidget):
         """Return layer_id if pos is inside any visible polygon."""
         px, py = pos.x(), pos.y()
         for layer in reversed(self._layers):
+            if layer.get("type") == "Image":
+                continue
             if not layer.get("closed"):
                 continue
             pts = self._layer_screen_pts(layer)
@@ -935,7 +1224,13 @@ class _CutOverlay(QWidget):
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
         self._mouse_pos = QPointF(event.pos())
-        if self._pt_drag_id is not None:
+        if self._img_rotate_id is not None:
+            self._img_rotate_move(self._mouse_pos)
+        elif self._img_resize_id is not None:
+            self._img_resize_move(self._mouse_pos)
+        elif self._img_drag_id is not None:
+            self._img_drag_move(self._mouse_pos)
+        elif self._pt_drag_id is not None:
             self._pt_drag_move(self._mouse_pos)
         elif self._drag_id is not None:
             self._drag_move(self._mouse_pos)
@@ -945,7 +1240,23 @@ class _CutOverlay(QWidget):
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.LeftButton:
-            if self._pt_drag_id is not None:
+            if self._img_rotate_id is not None:
+                self._img_rotate_id = None
+                self._img_rotate_center = None
+                self._img_rotate_origin = None
+                self._img_rotate_start_pos = None
+                self.layer_committed.emit({})
+            elif self._img_resize_id is not None:
+                self._img_resize_id = None
+                self._img_resize_corner = None
+                self._img_resize_origin = None
+                self.layer_committed.emit({})
+            elif self._img_drag_id is not None:
+                self._img_drag_id = None
+                self._img_drag_start = None
+                self._img_drag_origin = None
+                self.layer_committed.emit({})
+            elif self._pt_drag_id is not None:
                 dragged_id = self._pt_drag_id
                 self._pt_drag_id = None
                 self._pt_drag_idx = None
@@ -1053,7 +1364,7 @@ class _CutOverlay(QWidget):
             self._sel_id, self._sel_pt = hit_pt
             self.delete_selected_point()
             return
-        # Then polygon
+        # Then cut polygon
         lid = self._hit_polygon(pos)
         if lid:
             layer = self._layer_by_id(lid)
@@ -1070,12 +1381,80 @@ class _CutOverlay(QWidget):
                         self.layer_removed.emit(mirror_id)
                 self.update()
                 self.layer_removed.emit(lid)
+            return
+        # Then image layer
+        img_lid = self._hit_image_body(pos)
+        if img_lid:
+            layer = self._layer_by_id(img_lid)
+            if layer:
+                self._layers.remove(layer)
+                if self._sel_id == img_lid:
+                    self._sel_id = None
+                    self._sel_pt = None
+                self.update()
+                self.layer_removed.emit(img_lid)
 
     # ------------------------------------------------------------------
     # SELECT / DRAG tool (tool == _TOOL_NONE)
 
     def _select_press(self, pos: QPointF, event) -> None:
-        # Point handle? → behaviour depends on current selection state
+        # ── Selected image: rotation/resize/body handles take priority ─
+        if self._sel_id:
+            sel_layer = self._layer_by_id(self._sel_id)
+            if sel_layer and sel_layer.get("type") == "Image":
+                rects = self._visible_page_rects()
+                r = rects.get(sel_layer.get("page"))
+                if r:
+                    if self._hit_image_rot_handle(pos, self._sel_id):
+                        cx, cy, sw, sh, rot = self._img_transform(sel_layer, r)
+                        self._img_rotate_id = self._sel_id
+                        self._img_rotate_center = (cx, cy)
+                        self._img_rotate_origin = rot
+                        self._img_rotate_start_pos = pos
+                        self.update()
+                        return
+                    corner = self._hit_image_corner(pos, self._sel_id)
+                    if corner is not None:
+                        self._img_resize_id = self._sel_id
+                        self._img_resize_corner = corner
+                        self._img_resize_origin = (
+                            sel_layer["x"], sel_layer["y"],
+                            sel_layer["width"], sel_layer["height"],
+                            sel_layer.get("rotation", 0.0),
+                            sel_layer.get("page"),
+                        )
+                        self.update()
+                        return
+                    if self._hit_test_image(pos, sel_layer):
+                        self._img_drag_id = self._sel_id
+                        self._img_drag_start = pos
+                        self._img_drag_origin = (
+                            sel_layer["x"], sel_layer["y"],
+                            sel_layer["width"], sel_layer["height"],
+                            sel_layer.get("rotation", 0.0),
+                        )
+                        self.update()
+                        return
+
+        # ── Any image body ─────────────────────────────────────────────
+        img_lid = self._hit_image_body(pos)
+        if img_lid:
+            self._sel_id = img_lid
+            self._sel_pt = None
+            img_layer = self._layer_by_id(img_lid)
+            self.selection_changed.emit(img_lid)
+            if img_layer:
+                self._img_drag_id = img_lid
+                self._img_drag_start = pos
+                self._img_drag_origin = (
+                    img_layer["x"], img_layer["y"],
+                    img_layer["width"], img_layer["height"],
+                    img_layer.get("rotation", 0.0),
+                )
+            self.update()
+            return
+
+        # ── Cut point handle? ──────────────────────────────────────────
         hit_pt = self._hit_point(pos)
         if hit_pt:
             lid, pi = hit_pt
@@ -1200,8 +1579,10 @@ class _CutOverlay(QWidget):
         SEL_FILL   = QColor(255, 0, 255, 40)
         hr = _HANDLE_R - 1                       # slightly smaller handles
 
-        # ── committed layers ─────────────────────────────────────────
+        # ── committed cut layers ───────────────────────────────────────
         for layer in self._layers:
+            if layer.get("type") == "Image":
+                continue                          # drawn below after cut outlines
             page_idx = layer.get("page")
             if page_idx not in rects:
                 continue
@@ -1241,6 +1622,30 @@ class _CutOverlay(QWidget):
                         p.setPen(QPen(hcolor, 1.5))
                     p.drawRect(int(pt.x()) - hr, int(pt.y()) - hr, hr * 2, hr * 2)
 
+        # ── image layer bitmaps ───────────────────────────────────────
+        for layer in self._layers:
+            if layer.get("type") != "Image":
+                continue
+            page_idx = layer.get("page")
+            r = rects.get(page_idx)
+            if r is None:
+                continue
+            cx, cy, sw, sh, rot = self._img_transform(layer, r)
+            if sw < 1 or sh < 1:
+                continue
+            pix = self._get_pixmap(layer.get("source", ""))
+            p.save()
+            p.translate(cx, cy)
+            p.rotate(rot)
+            if pix and not pix.isNull():
+                p.drawImage(QRectF(-sw / 2, -sh / 2, sw, sh), pix.toImage())
+            else:
+                # placeholder when image file is missing
+                p.setPen(QPen(QColor("#888888"), 1, Qt.DashLine))
+                p.setBrush(QColor(80, 80, 80, 60))
+                p.drawRect(QRectF(-sw / 2, -sh / 2, sw, sh))
+            p.restore()
+
         # ── segment-insertion hover dot ───────────────────────────────
         if self._hover_seg:
             _, _, insert_pt = self._hover_seg
@@ -1267,6 +1672,40 @@ class _CutOverlay(QWidget):
             p.setBrush(Qt.NoBrush)
             for pt in pts_s:
                 p.drawRect(int(pt.x()) - hr, int(pt.y()) - hr, hr * 2, hr * 2)
+
+        # ── image selection handles ───────────────────────────────────
+        if self._sel_id:
+            sel_layer = self._layer_by_id(self._sel_id)
+            if sel_layer and sel_layer.get("type") == "Image":
+                r = rects.get(sel_layer.get("page"))
+                if r:
+                    cx, cy, sw, sh, rot = self._img_transform(sel_layer, r)
+                    corners = self._img_corners_screen(sel_layer, r)
+                    rot_h   = self._img_rot_handle_screen(sel_layer, r)
+                    # Bounding box (drawn in image-local space so it aligns with rotation)
+                    p.save()
+                    p.translate(cx, cy)
+                    p.rotate(rot)
+                    p.setPen(QPen(SEL_COLOR, 1.5))
+                    p.setBrush(Qt.NoBrush)
+                    p.drawRect(QRectF(-sw / 2, -sh / 2, sw, sh))
+                    p.restore()
+                    # Corner resize handles
+                    p.setPen(QPen(SEL_COLOR, 1.5))
+                    p.setBrush(SEL_COLOR)
+                    for c in corners:
+                        p.drawRect(
+                            int(c.x()) - _IMG_CORNER_R, int(c.y()) - _IMG_CORNER_R,
+                            _IMG_CORNER_R * 2, _IMG_CORNER_R * 2,
+                        )
+                    # Line from TR corner to rotation handle
+                    tr = corners[1]
+                    p.setPen(QPen(SEL_COLOR, 1.0))
+                    p.drawLine(tr, rot_h)
+                    # Rotation handle circle
+                    p.setPen(QPen(SEL_COLOR, 1.5))
+                    p.setBrush(Qt.NoBrush)
+                    p.drawEllipse(rot_h, float(_IMG_ROT_R), float(_IMG_ROT_R))
 
         p.end()
 
@@ -1343,7 +1782,7 @@ class _LayerRow(QWidget):
         lay.setSpacing(4)
 
         # -- type icon --
-        _LAYER_ICONS = {"Cut": "cut"}
+        _LAYER_ICONS = {"Cut": "cut", "Image": "journal-page"}
         icon_name = _LAYER_ICONS.get(self._layer_type)
         if icon_name:
             self._type_icon = QLabel()
@@ -1548,6 +1987,427 @@ class _LayerPanel(QWidget):
                 new_order.append(item.data(Qt.UserRole))
         self._order = new_order
         self.layers_reordered.emit(new_order)
+
+
+# ---------------------------------------------------------------------------
+# _IllustrationsDrawer — collapsible asset browser for per-book illustrations
+# ---------------------------------------------------------------------------
+
+import shutil as _shutil
+
+
+def _illustrations_dir(project_path: Path, slug: str) -> Path:
+    """Return (and create if needed) the illustrations folder for *slug*."""
+    from data.book import book_dir
+    d = book_dir(project_path, slug) / "illustrations"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _scan_illustrations(illus_dir: Path) -> dict:
+    """Return {category: [Path, …]} by scanning one level of subfolders.
+
+    Files at the root level go under the empty-string category "".
+    """
+    if not illus_dir.exists():
+        return {}
+    result: dict = {}
+    for entry in sorted(illus_dir.iterdir()):
+        if entry.is_dir():
+            pngs = sorted(p for p in entry.iterdir() if p.suffix.lower() == ".png")
+            result[entry.name] = pngs
+        elif entry.is_file() and entry.suffix.lower() == ".png":
+            result.setdefault("", []).append(entry)
+    return result
+
+
+class _ThumbnailTile(QWidget):
+    """Single illustration thumbnail: image + filename label."""
+
+    _TILE_W = 96
+    _TILE_H = 96
+    _LABEL_H = 16
+
+    def __init__(self, png_path: Path, source_rel: str = "", parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._path = png_path
+        self._source_rel = source_rel   # e.g. "illustrations/animals/deer.png"
+        self.setFixedSize(self._TILE_W, self._TILE_H + self._LABEL_H + 4)
+        self.setToolTip(str(png_path))
+        self.setAttribute(Qt.WA_StyledBackground, True)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(1)
+
+        self._img_lbl = QLabel()
+        self._img_lbl.setAlignment(Qt.AlignCenter)
+        self._img_lbl.setFixedSize(self._TILE_W - 4, self._TILE_H - 4)
+        self._img_lbl.setStyleSheet("background: transparent;")
+        layout.addWidget(self._img_lbl)
+
+        self._name_lbl = QLabel(png_path.stem)
+        self._name_lbl.setAlignment(Qt.AlignCenter)
+        self._name_lbl.setStyleSheet(
+            f"color: {theme.TEXT_DIM}; font-size: {max(7, theme.BASE_PT - 2)}pt;"
+            f" background: transparent;"
+        )
+        self._name_lbl.setFixedHeight(self._LABEL_H)
+        layout.addWidget(self._name_lbl)
+
+        self._load_pixmap()
+
+    def _load_pixmap(self) -> None:
+        pix = QPixmap(str(self._path))
+        if not pix.isNull():
+            w = self._TILE_W - 8
+            h = self._TILE_H - 8
+            pix = pix.scaled(w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self._img_lbl.setPixmap(pix)
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if event.buttons() & Qt.LeftButton and self._source_rel:
+            drag = QDrag(self)
+            mime = QMimeData()
+            mime.setData(
+                "application/x-crossing-illus-source",
+                QByteArray(self._source_rel.encode("utf-8")),
+            )
+            drag.setMimeData(mime)
+            pix = self._img_lbl.pixmap()
+            if pix and not pix.isNull():
+                scaled = pix.scaled(48, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                drag.setPixmap(scaled)
+                drag.setHotSpot(QPoint(scaled.width() // 2, scaled.height() // 2))
+            drag.exec_(Qt.CopyAction)
+
+
+class _CategorySection(QWidget):
+    """Category header + 2-column grid of thumbnail tiles.  Accepts PNG drops."""
+
+    file_dropped = pyqtSignal(str, str)   # (category, src_path)
+
+    def __init__(self, category: str, paths: list, base_source_rel: str = "", parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._category = category
+        self._base_source_rel = base_source_rel  # e.g. "illustrations/animals/"
+        self.setAcceptDrops(True)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 4)
+        self._layout.setSpacing(2)
+
+        if category:
+            hdr = QLabel(category)
+            hdr.setStyleSheet(
+                f"color: {theme.TEXT}; font-size: {theme.BASE_PT}pt;"
+                f" font-weight: bold; background: transparent; padding: 2px 0;"
+            )
+            self._layout.addWidget(hdr)
+
+        self._grid_widget = QWidget()
+        self._grid_widget.setStyleSheet("background: transparent;")
+        self._grid = QGridLayout(self._grid_widget)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setSpacing(4)
+        self._layout.addWidget(self._grid_widget)
+
+        self._populate(paths)
+
+    def _populate(self, paths: list) -> None:
+        # Clear existing tiles
+        while self._grid.count():
+            item = self._grid.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        for i, p in enumerate(paths):
+            src_rel = self._base_source_rel + p.name if self._base_source_rel else f"illustrations/{p.name}"
+            tile = _ThumbnailTile(p, source_rel=src_rel)
+            self._grid.addWidget(tile, i // 2, i % 2)
+
+    def refresh(self, paths: list) -> None:
+        self._populate(paths)
+
+    # -- drag and drop acceptance ------------------------------------------
+    def dragEnterEvent(self, event) -> None:  # noqa: N802
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            if any(u.toLocalFile().lower().endswith(".png") for u in urls):
+                event.acceptProposedAction()
+                return
+        event.ignore()
+
+    def dragMoveEvent(self, event) -> None:  # noqa: N802
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event) -> None:  # noqa: N802
+        for url in event.mimeData().urls():
+            src = url.toLocalFile()
+            if src.lower().endswith(".png"):
+                self.file_dropped.emit(self._category, src)
+        event.acceptProposedAction()
+
+
+class _IllustrationsDrawer(QWidget):
+    """Collapsible illustrations browser for the current book.
+
+    Scans ``output/books/<slug>/illustrations/`` and shows PNG thumbnails
+    grouped by subfolder.  Auto-refreshes via polling every 2 s.
+    """
+
+    _POLL_MS = 2000
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._project_path: Optional[Path] = None
+        self._slug: Optional[str] = None
+        self._last_state: dict = {}    # category → [str(path), …] — for change detection
+        self._expanded: bool = True
+        self._sections: dict = {}      # category → _CategorySection widget
+
+        self.setAcceptDrops(True)
+        self._build_ui()
+
+        self._poll_timer = QTimer(self)
+        self._poll_timer.setInterval(self._POLL_MS)
+        self._poll_timer.timeout.connect(self._poll)
+        self._poll_timer.start()
+
+    # ------------------------------------------------------------------
+    # UI construction
+
+    def _build_ui(self) -> None:
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # ── header row: toggle + title + add-folder button ──────────
+        hdr = QWidget()
+        hdr.setStyleSheet(f"background: {theme.BTN_BG}; border-radius: 3px;")
+        hdr.setFixedHeight(26)
+        hdr_lay = QHBoxLayout(hdr)
+        hdr_lay.setContentsMargins(6, 0, 4, 0)
+        hdr_lay.setSpacing(4)
+
+        self._toggle_btn = QPushButton("▼  Illustrations")
+        self._toggle_btn.setStyleSheet(
+            f"QPushButton {{ background: transparent; border: none; color: {theme.TEXT};"
+            f" font-size: {theme.BASE_PT}pt; font-weight: bold; text-align: left; }}"
+        )
+        self._toggle_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._toggle_btn.setFocusPolicy(Qt.NoFocus)
+        self._toggle_btn.clicked.connect(self._toggle)
+        hdr_lay.addWidget(self._toggle_btn)
+
+        self._add_folder_btn = QPushButton("+")
+        self._add_folder_btn.setToolTip("Add a new category folder")
+        self._add_folder_btn.setFixedSize(22, 22)
+        self._add_folder_btn.setStyleSheet(
+            f"QPushButton {{ background: {theme.BTN_BG}; border: none; color: {theme.TEXT};"
+            f" font-size: {theme.BASE_PT + 2}pt; border-radius: 3px; }}"
+            f"QPushButton:hover {{ background: {theme.BTN_HOVER}; }}"
+        )
+        self._add_folder_btn.setFocusPolicy(Qt.NoFocus)
+        self._add_folder_btn.clicked.connect(self._on_add_folder)
+        hdr_lay.addWidget(self._add_folder_btn)
+
+        outer.addWidget(hdr)
+
+        # ── body: scrollable category grid ────────────────────────────
+        self._body = QWidget()
+        self._body.setStyleSheet(f"background: {theme.PANEL_BG};")
+        body_outer = QVBoxLayout(self._body)
+        body_outer.setContentsMargins(0, 4, 0, 0)
+        body_outer.setSpacing(0)
+
+        self._scroll = QScrollArea()
+        self._scroll.setFocusPolicy(Qt.NoFocus)
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._scroll.setMinimumHeight(120)
+        self._scroll.setMaximumHeight(400)
+        self._scroll.setStyleSheet(
+            f"QScrollArea {{ background: {theme.PANEL_BG}; border: none; }}"
+        )
+
+        self._content = QWidget()
+        self._content.setStyleSheet(f"background: {theme.PANEL_BG};")
+        self._content_layout = QVBoxLayout(self._content)
+        self._content_layout.setContentsMargins(4, 4, 4, 4)
+        self._content_layout.setSpacing(8)
+
+        self._empty_label = QLabel("No illustrations yet.\nDrop PNGs here.")
+        self._empty_label.setAlignment(Qt.AlignCenter)
+        self._empty_label.setStyleSheet(
+            f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt; background: transparent;"
+        )
+        self._empty_label.setWordWrap(True)
+        self._content_layout.addWidget(self._empty_label)
+        self._content_layout.addStretch()
+
+        self._scroll.setWidget(self._content)
+        body_outer.addWidget(self._scroll)
+        outer.addWidget(self._body)
+
+        self.setAcceptDrops(True)
+
+    # ------------------------------------------------------------------
+    # Public API
+
+    def set_book(self, project_path: Optional[Path], slug: Optional[str]) -> None:
+        self._project_path = project_path
+        self._slug = slug
+        self._last_state = {}
+        self._rebuild()
+
+    # ------------------------------------------------------------------
+    # Toggle
+
+    def _toggle(self) -> None:
+        self._expanded = not self._expanded
+        self._body.setVisible(self._expanded)
+        arrow = "▼" if self._expanded else "▶"
+        self._toggle_btn.setText(f"{arrow}  Illustrations")
+
+    # ------------------------------------------------------------------
+    # Folder creation
+
+    def _on_add_folder(self) -> None:
+        if not self._project_path or not self._slug:
+            return
+        name, ok = QInputDialog.getText(self, "New Category", "Category name:")
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        illus_dir = _illustrations_dir(self._project_path, self._slug)
+        new_dir = illus_dir / name
+        try:
+            new_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            QMessageBox.warning(self, "Error", f"Could not create folder:\n{e}")
+            return
+        self._rebuild()
+
+    # ------------------------------------------------------------------
+    # Polling
+
+    def _poll(self) -> None:
+        if not self._project_path or not self._slug:
+            return
+        illus_dir = _illustrations_dir(self._project_path, self._slug)
+        current = _scan_illustrations(illus_dir)
+        serialised = {cat: [str(p) for p in paths] for cat, paths in current.items()}
+        if serialised != self._last_state:
+            self._last_state = serialised
+            self._rebuild_from(current)
+
+    def _rebuild(self) -> None:
+        if not self._project_path or not self._slug:
+            self._rebuild_from({})
+            return
+        illus_dir = _illustrations_dir(self._project_path, self._slug)
+        data = _scan_illustrations(illus_dir)
+        self._last_state = {cat: [str(p) for p in paths] for cat, paths in data.items()}
+        self._rebuild_from(data)
+
+    def _rebuild_from(self, data: dict) -> None:
+        # Remove old section widgets
+        for sec in self._sections.values():
+            self._content_layout.removeWidget(sec)
+            sec.deleteLater()
+        self._sections = {}
+
+        # Remove trailing stretch
+        while self._content_layout.count():
+            item = self._content_layout.takeAt(self._content_layout.count() - 1)
+            if item.widget():
+                item.widget().deleteLater()
+
+        if not data:
+            self._empty_label = QLabel("No illustrations yet.\nDrop PNGs here.")
+            self._empty_label.setAlignment(Qt.AlignCenter)
+            self._empty_label.setStyleSheet(
+                f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt;"
+                f" background: transparent;"
+            )
+            self._empty_label.setWordWrap(True)
+            self._content_layout.addWidget(self._empty_label)
+        else:
+            for cat, paths in sorted(data.items()):
+                base = f"illustrations/{cat}/" if cat else "illustrations/"
+                sec = _CategorySection(cat, paths, base_source_rel=base)
+                sec.file_dropped.connect(self._on_file_dropped)
+                self._sections[cat] = sec
+                self._content_layout.addWidget(sec)
+
+        self._content_layout.addStretch()
+
+    # ------------------------------------------------------------------
+    # Drop handling (on the drawer itself — root level)
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802
+        if event.mimeData().hasUrls():
+            if any(u.toLocalFile().lower().endswith(".png")
+                   for u in event.mimeData().urls()):
+                event.acceptProposedAction()
+                return
+        event.ignore()
+
+    def dragMoveEvent(self, event) -> None:  # noqa: N802
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event) -> None:  # noqa: N802
+        pngs = [u.toLocalFile() for u in event.mimeData().urls()
+                if u.toLocalFile().lower().endswith(".png")]
+        if not pngs:
+            event.ignore()
+            return
+        self._receive_drops(pngs)
+        event.acceptProposedAction()
+
+    def _receive_drops(self, png_paths: list, category: str = "") -> None:
+        """Copy *png_paths* into the given category (or prompt if no categories)."""
+        if not self._project_path or not self._slug:
+            return
+        illus_dir = _illustrations_dir(self._project_path, self._slug)
+
+        # Resolve target category folder
+        if not category:
+            # Use first existing category or root
+            existing = sorted(
+                d.name for d in illus_dir.iterdir() if d.is_dir()
+            ) if illus_dir.exists() else []
+            if existing:
+                cat_name, ok = QInputDialog.getItem(
+                    self, "Choose Category",
+                    "Copy into category:", existing, 0, False
+                )
+                if not ok:
+                    return
+                dest_dir = illus_dir / cat_name
+            else:
+                dest_dir = illus_dir
+        else:
+            dest_dir = illus_dir / category
+
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        for src in png_paths:
+            src_path = Path(src)
+            dest = dest_dir / src_path.name
+            if dest != src_path:
+                _shutil.copy2(str(src_path), str(dest))
+        self._rebuild()
+
+    def _on_file_dropped(self, category: str, src: str) -> None:
+        self._receive_drops([src], category)
 
 
 # ---------------------------------------------------------------------------
@@ -1803,10 +2663,35 @@ class BookVisualizerWindow(QMainWindow):
         layout.addWidget(tools_group)
 
         # ── Layers group ──────────────────────────────────────────────
-        layers_group = QGroupBox("Layers")
-        layers_layout = QVBoxLayout(layers_group)
-        layers_layout.setContentsMargins(8, 12, 8, 8)
-        layers_layout.setSpacing(4)
+        layers_container = QWidget()
+        layers_container.setStyleSheet("")
+        layers_container_layout = QVBoxLayout(layers_container)
+        layers_container_layout.setContentsMargins(0, 0, 0, 0)
+        layers_container_layout.setSpacing(0)
+
+        # Header row — same pattern as _IllustrationsDrawer
+        layers_hdr = QWidget()
+        layers_hdr.setStyleSheet(f"background: {theme.BTN_BG}; border-radius: 3px;")
+        layers_hdr.setFixedHeight(26)
+        layers_hdr_lay = QHBoxLayout(layers_hdr)
+        layers_hdr_lay.setContentsMargins(6, 0, 4, 0)
+        layers_hdr_lay.setSpacing(0)
+
+        self._layers_toggle_btn = QPushButton("▼  Layers")
+        self._layers_toggle_btn.setStyleSheet(
+            f"QPushButton {{ background: transparent; border: none; color: {theme.TEXT};"
+            f" font-size: {theme.BASE_PT}pt; font-weight: bold; text-align: left; }}"
+        )
+        self._layers_toggle_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._layers_toggle_btn.setFocusPolicy(Qt.NoFocus)
+        self._layers_toggle_btn.clicked.connect(self._toggle_layers)
+        layers_hdr_lay.addWidget(self._layers_toggle_btn)
+        layers_container_layout.addWidget(layers_hdr)
+
+        self._layers_body = QWidget()
+        layers_body_layout = QVBoxLayout(self._layers_body)
+        layers_body_layout.setContentsMargins(0, 4, 0, 0)
+        layers_body_layout.setSpacing(4)
 
         self._layer_panel = _LayerPanel()
         self._layer_panel.setMinimumHeight(100)
@@ -1814,9 +2699,16 @@ class BookVisualizerWindow(QMainWindow):
         self._layer_panel.layer_deleted.connect(self._on_panel_layer_deleted)
         self._layer_panel.layer_renamed.connect(self._on_panel_layer_renamed)
         self._layer_panel.layers_reordered.connect(self._on_panel_layers_reordered)
-        layers_layout.addWidget(self._layer_panel)
+        layers_body_layout.addWidget(self._layer_panel)
 
-        layout.addWidget(layers_group)
+        layers_container_layout.addWidget(self._layers_body)
+
+        layout.addWidget(layers_container)
+
+        # ── Illustrations drawer ──────────────────────────────────────
+        self._illus_drawer = _IllustrationsDrawer()
+        layout.addWidget(self._illus_drawer)
+
         layout.addStretch()
 
         return outer
@@ -1885,6 +2777,8 @@ class BookVisualizerWindow(QMainWindow):
             self._import_btn.setText("Import")
             self._import_btn.setToolTip("Import a PDF into this book")
             self._persist_current(slug)
+            self._illus_drawer.set_book(self._project_path, slug)
+            self._overlay.set_book_dir(None)
             return
 
         from data.book import book_dir
@@ -1895,6 +2789,8 @@ class BookVisualizerWindow(QMainWindow):
             self._import_btn.setText("Import")
             self._import_btn.setToolTip("Import a PDF into this book")
             self._persist_current(slug)
+            self._illus_drawer.set_book(self._project_path, slug)
+            self._overlay.set_book_dir(book_dir(self._project_path, slug))
             return
 
         import fitz
@@ -1921,6 +2817,10 @@ class BookVisualizerWindow(QMainWindow):
         self._show_spread()
         # Load layers for this book
         self._load_book_layers(slug)
+        # Set book dir for image layer resolution
+        self._overlay.set_book_dir(book_dir(self._project_path, slug))
+        # Refresh illustrations drawer
+        self._illus_drawer.set_book(self._project_path, slug)
 
     def _go_spread(self, idx: int) -> None:
         """Jump to spread *idx*."""
@@ -2026,6 +2926,12 @@ class BookVisualizerWindow(QMainWindow):
         if tool != _TOOL_CUT:
             self._overlay.cancel_wip()
 
+    def _toggle_layers(self) -> None:
+        visible = self._layers_body.isVisible()
+        self._layers_body.setVisible(not visible)
+        arrow = "▶" if visible else "▼"
+        self._layers_toggle_btn.setText(f"{arrow}  Layers")
+
     # ------------------------------------------------------------------
     # Layer persistence
 
@@ -2104,6 +3010,12 @@ class BookVisualizerWindow(QMainWindow):
 
     def _on_panel_layer_renamed(self, lid: str, name: str) -> None:
         self._overlay.rename_layer(lid, name)
+        # Sync panel row for the mirror if it's visible
+        layer = self._overlay._layer_by_id(lid)
+        if layer:
+            mirror_id = layer.get("mirror_id")
+            if mirror_id:
+                self._layer_panel.update_layer_name(mirror_id, name)
         self._save_current_layers()
 
     def _on_panel_layers_reordered(self, new_order: list) -> None:
@@ -2288,7 +3200,9 @@ class BookVisualizerWindow(QMainWindow):
                     if self._clipboard_layer and self._doc:
                         import copy as _copy
                         new_layer = _copy.deepcopy(self._clipboard_layer)
-                        new_layer["id"] = f"cut_{uuid.uuid4().hex[:8]}"
+                        layer_type = new_layer.get("type", "Cut")
+                        prefix = "img" if layer_type == "Image" else "cut"
+                        new_layer["id"] = f"{prefix}_{uuid.uuid4().hex[:8]}"
                         new_layer["spread"] = self._spread_idx
                         new_layer["z_index"] = len(self._overlay.current_layers())
                         new_layer.pop("mirror_id", None)  # will be assigned fresh below
@@ -2305,14 +3219,23 @@ class BookVisualizerWindow(QMainWindow):
                             if new_page is None:
                                 new_page = cur_left if cur_left is not None else cur_right
                             new_layer["page"] = new_page
-                        self._overlay._layers.append(new_layer)
-                        mirror = self._overlay._create_mirror_for(new_layer)
-                        self._overlay._sel_id = new_layer["id"]
-                        self._overlay._sel_pt = None
-                        self._overlay.update()
-                        self._on_layer_committed(new_layer)
-                        if mirror is not None:
-                            self._on_layer_committed(mirror)
+                        if layer_type == "Image":
+                            new_layer["x"] = min(0.95, new_layer.get("x", 0.5) + 0.03)
+                            new_layer["y"] = min(0.95, new_layer.get("y", 0.5) + 0.03)
+                            self._overlay._layers.append(new_layer)
+                            self._overlay._sel_id = new_layer["id"]
+                            self._overlay._sel_pt = None
+                            self._overlay.update()
+                            self._on_layer_committed(new_layer)
+                        else:
+                            self._overlay._layers.append(new_layer)
+                            mirror = self._overlay._create_mirror_for(new_layer)
+                            self._overlay._sel_id = new_layer["id"]
+                            self._overlay._sel_pt = None
+                            self._overlay.update()
+                            self._on_layer_committed(new_layer)
+                            if mirror is not None:
+                                self._on_layer_committed(mirror)
                     return True
         return super().eventFilter(obj, event)
 
