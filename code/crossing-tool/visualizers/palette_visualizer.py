@@ -613,9 +613,7 @@ class PaletteVisualizerWindow(QMainWindow):
         key = event.key()
         mod = event.modifiers()
 
-        if key == Qt.Key_Escape or (
-            key in (Qt.Key_Q, Qt.Key_W) and mod & Qt.ControlModifier
-        ):
+        if key in (Qt.Key_Q, Qt.Key_W) and mod & Qt.ControlModifier:
             self.close()
             return
 
