@@ -275,6 +275,7 @@ class _SpreadView(QWidget):
         self._layers_ver: int = 0     # bumped on every set_layers() call
         self._reveal_cache: dict = {} # keyed by (slug, page_idx, cw, ch, ver, depth)
         self._REVEAL_MAX_DEPTH: int = 4
+        self._book_dir: Optional[Path] = None   # for image layer compositing
 
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
@@ -322,6 +323,14 @@ class _SpreadView(QWidget):
         """
         self._all_layers = list(layers)
         self._layers_ver += 1
+        self._cache.clear()
+        self._reveal_cache.clear()
+        if self._doc is not None:
+            self._do_render()
+
+    def set_book_dir(self, book_dir: Optional[Path]) -> None:
+        """Set the base directory used to resolve image layer sources."""
+        self._book_dir = book_dir
         self._cache.clear()
         self._reveal_cache.clear()
         if self._doc is not None:
@@ -386,6 +395,57 @@ class _SpreadView(QWidget):
             pix.samples, pix.width, pix.height, pix.stride, QImage.Format_RGB888
         ).copy()
 
+    def _render_page_content(
+        self,
+        page_idx: int,
+        cell_w: int,
+        cell_h: int,
+        layers_by_page: dict,
+    ) -> Optional[QImage]:
+        """Render PDF page and composite image layers on top.
+
+        This is the single source of truth for what a page *looks like* before
+        cut-reveal compositing.  The recursive reveal system calls this instead
+        of _render_page so that illustrations on hidden pages show through cuts.
+        """
+        img = self._render_page(page_idx, cell_w, cell_h)
+        if img is None:
+            return None
+
+        img_layers = [
+            l for l in layers_by_page.get(page_idx, [])
+            if l.get("type") == "Image" and l.get("source")
+        ]
+        if not img_layers or self._book_dir is None:
+            return img
+
+        iw, ih = img.width(), img.height()
+        result = img.copy()
+        painter = QPainter(result)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        for layer in img_layers:
+            src_path = self._book_dir / layer["source"]
+            if not src_path.exists():
+                continue
+            pix = QPixmap(str(src_path))
+            if pix.isNull():
+                continue
+            cx  = layer["x"]      * iw
+            cy  = layer["y"]      * ih
+            sw  = layer["width"]  * iw
+            sh  = layer["height"] * ih
+            rot = layer.get("rotation", 0.0)
+            painter.save()
+            painter.translate(cx, cy)
+            painter.rotate(rot)
+            painter.drawImage(QRectF(-sw / 2, -sh / 2, sw, sh), pix.toImage())
+            painter.restore()
+
+        painter.end()
+        return result
+
     def _render_page_with_reveals(
         self,
         page_idx: int,
@@ -407,7 +467,7 @@ class _SpreadView(QWidget):
             return self._reveal_cache[rev_key]
 
         # --- base render ---------------------------------------------------
-        img = self._render_page(page_idx, cell_w, cell_h)
+        img = self._render_page_content(page_idx, cell_w, cell_h, layers_by_page)
         if img is None:
             return None
 
@@ -426,7 +486,7 @@ class _SpreadView(QWidget):
 
         # --- get the page behind -------------------------------------------
         behind_idx = _page_behind(page_idx)
-        if behind_idx >= self._doc.page_count:
+        if behind_idx < 0 or behind_idx >= self._doc.page_count:
             self._reveal_cache[rev_key] = img
             return img
 
@@ -959,6 +1019,24 @@ class _CutOverlay(QWidget):
         dy = (pos.y() - self._img_drag_start.y()) / r.height()
         layer["x"] = ox + dx
         layer["y"] = oy + dy
+
+        # If the image centre has crossed onto the other visible page, remap
+        # layer["page"] and re-express the coordinates in that page's space.
+        cx_s = r.x() + layer["x"] * r.width()
+        cy_s = r.y() + layer["y"] * r.height()
+        for other_idx, other_r in rects.items():
+            if other_idx == layer["page"]:
+                continue
+            if other_r.width() > 0 and other_r.height() > 0 and \
+                    other_r.contains(int(cx_s), int(cy_s)):
+                layer["x"] = (cx_s - other_r.x()) / other_r.width()
+                layer["y"] = (cy_s - other_r.y()) / other_r.height()
+                layer["page"] = other_idx
+                layer["spread"] = _spread_for_page(other_idx)
+                # Reset reference so subsequent delta uses the new page's space
+                self._img_drag_start = pos
+                self._img_drag_origin = (layer["x"], layer["y"], _ow, _oh, _orot)
+                break
 
     def _img_resize_move(self, pos: QPointF) -> None:
         """Proportionally resize the image as the user drags a corner handle."""
@@ -2779,6 +2857,7 @@ class BookVisualizerWindow(QMainWindow):
             self._persist_current(slug)
             self._illus_drawer.set_book(self._project_path, slug)
             self._overlay.set_book_dir(None)
+            self._spread_view.set_book_dir(None)
             return
 
         from data.book import book_dir
@@ -2791,6 +2870,7 @@ class BookVisualizerWindow(QMainWindow):
             self._persist_current(slug)
             self._illus_drawer.set_book(self._project_path, slug)
             self._overlay.set_book_dir(book_dir(self._project_path, slug))
+            self._spread_view.set_book_dir(book_dir(self._project_path, slug))
             return
 
         import fitz
@@ -2819,6 +2899,7 @@ class BookVisualizerWindow(QMainWindow):
         self._load_book_layers(slug)
         # Set book dir for image layer resolution
         self._overlay.set_book_dir(book_dir(self._project_path, slug))
+        self._spread_view.set_book_dir(book_dir(self._project_path, slug))
         # Refresh illustrations drawer
         self._illus_drawer.set_book(self._project_path, slug)
 
