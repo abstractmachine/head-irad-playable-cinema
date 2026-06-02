@@ -430,6 +430,15 @@ class _SpreadView(QWidget):
             return img
 
         # --- composite: paint behind through each cut polygon --------------
+        # Also collect sub-cuts on the behind page to draw as faint outlines
+        behind_cuts = [
+            l for l in layers_by_page.get(behind_idx, [])
+            if l.get("closed")
+            and len(l.get("geometry", {}).get("points", [])) >= 3
+        ]
+        outline_alpha = max(18, 90 - depth * 28)   # fainter at greater depth (reserved)
+        outline_color = QColor(230, 230, 230, 255)
+
         result = img.copy()
         painter = QPainter(result)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -443,6 +452,14 @@ class _SpreadView(QWidget):
             painter.setClipPath(path)
             # Scale behind_img to fill iw×ih so coordinates always align
             painter.drawImage(QRect(0, 0, iw, ih), behind_img)
+            # Draw sub-cut outlines clipped to this reveal window
+            if behind_cuts:
+                painter.setPen(QPen(outline_color, 1.0))
+                painter.setBrush(Qt.NoBrush)
+                for bcut in behind_cuts:
+                    bpts = bcut["geometry"]["points"]
+                    bpoly = QPolygonF([QPointF(nx * iw, ny * ih) for nx, ny in bpts])
+                    painter.drawPolygon(bpoly)
 
         painter.setClipping(False)
         painter.end()
@@ -1173,44 +1190,15 @@ class _CutOverlay(QWidget):
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         rects = self._visible_page_rects()
-        # When outlines hidden only draw WIP (so drawing still works)
-        if not self._show_outlines:
-            if not self._wip_points:
-                return
-            p = QPainter(self)
-            p.setRenderHint(QPainter.Antialiasing)
-            SEL_COLOR = QColor(theme.ACCENT)
-            if self._wip_page in rects:
-                r = rects[self._wip_page]
-                pts_s = [
-                    QPointF(r.x() + nx * r.width(), r.y() + ny * r.height())
-                    for nx, ny in self._wip_points
-                ]
-                pen = QPen(SEL_COLOR, 1.5, Qt.DashLine)
-                p.setPen(pen)
-                p.setBrush(Qt.NoBrush)
-                for i in range(len(pts_s) - 1):
-                    p.drawLine(pts_s[i], pts_s[i + 1])
-                if self._mouse_pos is not None:
-                    p.drawLine(pts_s[-1], self._mouse_pos)
-                hr = _HANDLE_R
-                p.setPen(QPen(SEL_COLOR, 1.5))
-                p.setBrush(Qt.NoBrush)
-                for pt in pts_s:
-                    p.drawRect(int(pt.x()) - hr, int(pt.y()) - hr, hr * 2, hr * 2)
-            p.end()
-            return
-
-        if not rects and not self._wip_points:
-            return
 
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
 
-        CUT_COLOR   = QColor("#00ddff")
-        SEL_COLOR   = QColor(theme.ACCENT)
-        FILL_ALPHA  = QColor(0, 221, 255, 30)
-        SEL_FILL    = QColor(255, 0, 255, 40)
+        CUT_COLOR  = QColor("#e6e6e6")           # 90% grey for unselected
+        SEL_COLOR  = QColor(theme.ACCENT)        # fuchsia for selected
+        FILL_ALPHA = QColor(230, 230, 230, 12)   # very subtle light fill
+        SEL_FILL   = QColor(255, 0, 255, 40)
+        hr = _HANDLE_R - 1                       # slightly smaller handles
 
         # ── committed layers ─────────────────────────────────────────
         for layer in self._layers:
@@ -1224,10 +1212,10 @@ class _CutOverlay(QWidget):
             is_sel     = layer["id"] == self._sel_id
             has_sel_pt = is_sel and self._sel_pt is not None
             closed     = layer.get("closed", False)
-            color      = SEL_COLOR if (is_sel and not has_sel_pt) else CUT_COLOR
-            fill       = SEL_FILL  if (is_sel and not has_sel_pt) else FILL_ALPHA
+            line_color = SEL_COLOR if is_sel else CUT_COLOR
+            fill       = SEL_FILL  if is_sel else FILL_ALPHA
 
-            pen = QPen(color, 1.5)
+            pen = QPen(line_color, 1.5)
             p.setPen(pen)
 
             if closed and len(pts) >= 3:
@@ -1240,26 +1228,25 @@ class _CutOverlay(QWidget):
                 for i in range(len(pts) - 1):
                     p.drawLine(pts[i], pts[i + 1])
 
-            # point handles
-            hr = _HANDLE_R
-            for i, pt in enumerate(pts):
-                is_sel_pt = has_sel_pt and i == self._sel_pt
-                hcolor = SEL_COLOR if is_sel_pt else color
-                if closed:
-                    p.setBrush(hcolor)
-                    p.setPen(QPen(QColor("#000000"), 0.8))
-                else:
-                    p.setBrush(Qt.NoBrush)
-                    p.setPen(QPen(hcolor, 1.5))
-                p.drawRect(int(pt.x()) - hr, int(pt.y()) - hr, hr * 2, hr * 2)
+            # point handles — always shown for selected; only when handles ON for others
+            if self._show_outlines or is_sel:
+                for i, pt in enumerate(pts):
+                    # all handles fuchsia when layer selected; grey otherwise
+                    hcolor = SEL_COLOR if is_sel else CUT_COLOR
+                    if closed:
+                        p.setBrush(hcolor)
+                        p.setPen(QPen(QColor("#000000"), 0.8))
+                    else:
+                        p.setBrush(Qt.NoBrush)
+                        p.setPen(QPen(hcolor, 1.5))
+                    p.drawRect(int(pt.x()) - hr, int(pt.y()) - hr, hr * 2, hr * 2)
 
         # ── segment-insertion hover dot ───────────────────────────────
         if self._hover_seg:
             _, _, insert_pt = self._hover_seg
             p.setPen(QPen(SEL_COLOR, 1.5))
             p.setBrush(SEL_COLOR)
-            hr = _HANDLE_R - 1
-            p.drawEllipse(insert_pt, hr, hr)
+            p.drawEllipse(insert_pt, hr - 1, hr - 1)
 
         # ── work-in-progress polygon ──────────────────────────────────
         if self._wip_points and self._wip_page in rects:
@@ -1276,7 +1263,6 @@ class _CutOverlay(QWidget):
             if self._mouse_pos is not None:
                 p.drawLine(pts_s[-1], self._mouse_pos)
             # open handles
-            hr = _HANDLE_R
             p.setPen(QPen(SEL_COLOR, 1.5))
             p.setBrush(Qt.NoBrush)
             for pt in pts_s:
@@ -1349,11 +1335,24 @@ class _LayerRow(QWidget):
         super().__init__(parent)
         self._lid  = layer["id"]
         self._name = layer.get("name", "Cut")
+        self._layer_type = layer.get("type", "Cut")
         self._editing = False
 
         lay = QHBoxLayout(self)
         lay.setContentsMargins(4, 2, 4, 2)
         lay.setSpacing(4)
+
+        # -- type icon --
+        _LAYER_ICONS = {"Cut": "cut"}
+        icon_name = _LAYER_ICONS.get(self._layer_type)
+        if icon_name:
+            self._type_icon = QLabel()
+            self._type_icon.setPixmap(_svg_icon(icon_name, 12, theme.TEXT_DIM).pixmap(12, 12))
+            self._type_icon.setFixedSize(14, 14)
+            self._type_icon.setAlignment(Qt.AlignCenter)
+            self._type_icon.setStyleSheet("background: transparent;")
+            lay.addWidget(self._type_icon)
+            lay.addSpacing(2)
 
         # -- name label (normal state) --
         self._name_label = QLabel(self._name)
@@ -1793,6 +1792,14 @@ class BookVisualizerWindow(QMainWindow):
 
         tool_row.addStretch()
         tools_layout.addLayout(tool_row)
+
+        self._show_outlines_chk = QCheckBox("Show Cut Handles")
+        self._show_outlines_chk.setChecked(True)
+        self._show_outlines_chk.setFocusPolicy(Qt.NoFocus)
+        self._show_outlines_chk.toggled.connect(
+            lambda checked: self._overlay.set_show_outlines(checked)
+        )
+        tools_layout.addWidget(self._show_outlines_chk)
         layout.addWidget(tools_group)
 
         # ── Layers group ──────────────────────────────────────────────
@@ -1800,14 +1807,6 @@ class BookVisualizerWindow(QMainWindow):
         layers_layout = QVBoxLayout(layers_group)
         layers_layout.setContentsMargins(8, 12, 8, 8)
         layers_layout.setSpacing(4)
-
-        self._show_outlines_chk = QCheckBox("Show outlines")
-        self._show_outlines_chk.setChecked(True)
-        self._show_outlines_chk.setFocusPolicy(Qt.NoFocus)
-        self._show_outlines_chk.toggled.connect(
-            lambda checked: self._overlay.set_show_outlines(checked)
-        )
-        layers_layout.addWidget(self._show_outlines_chk)
 
         self._layer_panel = _LayerPanel()
         self._layer_panel.setMinimumHeight(100)
