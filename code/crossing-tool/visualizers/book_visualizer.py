@@ -37,6 +37,7 @@ from styles.theme import GripSplitter, save_window_geometry, restore_window_geom
 from PyQt5.QtCore import Qt, QEvent, pyqtSignal, QRect, QRectF, QSize, QTimer, QPointF
 from PyQt5.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -64,6 +65,7 @@ from PyQt5.QtGui import (
     QIcon,
     QImage,
     QPainter,
+    QPainterPath,
     QPen,
     QPixmap,
     QPolygonF,
@@ -202,6 +204,35 @@ def _pages_for_spread(spread_idx: int, page_count: int):
 
 
 # ---------------------------------------------------------------------------
+# Reveal-through-cuts helpers
+# ---------------------------------------------------------------------------
+
+def _page_behind(page_idx: int) -> int:
+    """Return the index of the page physically behind *page_idx* in the book stack.
+
+    Even page index = right/recto page → the page behind is +2 (deeper into the book).
+    Odd page index  = left/verso page  → the page behind is -2 (further back in the book).
+    """
+    return page_idx + 2 if page_idx % 2 == 0 else page_idx - 2
+
+
+def _mirror_points(points: list) -> list:
+    """Return horizontally mirrored copy of normalised polygon points.
+
+    Flips x: x' = 1 - x.  y is unchanged.  Used to create the reverse-side
+    ghost cut on the back of the same physical leaf.
+    """
+    return [[1.0 - x, y] for x, y in points]
+
+
+def _spread_for_page(page_idx: int) -> int:
+    """Return the spread index that contains *page_idx*."""
+    if page_idx == 0:
+        return 0
+    return (page_idx + 1) // 2
+
+
+# ---------------------------------------------------------------------------
 # _SpreadView — single-spread display widget
 # ---------------------------------------------------------------------------
 
@@ -230,6 +261,13 @@ class _SpreadView(QWidget):
         self._debounce.setInterval(self._DEBOUNCE_MS)
         self._debounce.timeout.connect(self._do_render)
         self._overlay: Optional[QWidget] = None  # _CutOverlay attached externally
+
+        # Reveal-through-cuts state
+        self._all_layers: list = []   # all layers for current book (every page)
+        self._layers_ver: int = 0     # bumped on every set_layers() call
+        self._reveal_cache: dict = {} # keyed by (slug, page_idx, cw, ch, ver, depth)
+        self._REVEAL_MAX_DEPTH: int = 4
+
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     # ------------------------------------------------------------------
@@ -267,6 +305,19 @@ class _SpreadView(QWidget):
             for k in list(self._cache):
                 if k[0] == slug:
                     del self._cache[k]
+
+    def set_layers(self, layers: list) -> None:
+        """Update the full layer list used by the reveal compositor.
+
+        Clears both the spread cache and the per-page reveal cache so the next
+        render picks up the new cuts, then triggers an immediate re-render.
+        """
+        self._all_layers = list(layers)
+        self._layers_ver += 1
+        self._cache.clear()
+        self._reveal_cache.clear()
+        if self._doc is not None:
+            self._do_render()
 
     # ------------------------------------------------------------------
 
@@ -327,6 +378,84 @@ class _SpreadView(QWidget):
             pix.samples, pix.width, pix.height, pix.stride, QImage.Format_RGB888
         ).copy()
 
+    def _render_page_with_reveals(
+        self,
+        page_idx: int,
+        cell_w: int,
+        cell_h: int,
+        layers_by_page: dict,
+        depth: int,
+    ) -> Optional[QImage]:
+        """Render *page_idx* and recursively composite pages visible through cuts.
+
+        *layers_by_page* maps page_idx → list of cut layer dicts (all pages).
+        Results are memoized in ``_reveal_cache`` for the lifetime of the current
+        layer version so repeated calls within the same render are free.
+        Recursion stops when ``depth`` reaches ``_REVEAL_MAX_DEPTH`` or when no
+        further pages exist.
+        """
+        rev_key = (self._slug, page_idx, cell_w, cell_h, self._layers_ver, depth)
+        if rev_key in self._reveal_cache:
+            return self._reveal_cache[rev_key]
+
+        # --- base render ---------------------------------------------------
+        img = self._render_page(page_idx, cell_w, cell_h)
+        if img is None:
+            return None
+
+        iw, ih = img.width(), img.height()
+
+        # --- find closed cut polygons on this page -------------------------
+        cuts = [
+            l for l in layers_by_page.get(page_idx, [])
+            if l.get("closed")
+            and len(l.get("geometry", {}).get("points", [])) >= 3
+        ]
+
+        if not cuts or depth >= self._REVEAL_MAX_DEPTH:
+            self._reveal_cache[rev_key] = img
+            return img
+
+        # --- get the page behind -------------------------------------------
+        behind_idx = _page_behind(page_idx)
+        if behind_idx >= self._doc.page_count:
+            self._reveal_cache[rev_key] = img
+            return img
+
+        behind_img = self._render_page_with_reveals(
+            behind_idx, cell_w, cell_h, layers_by_page, depth + 1
+        )
+        if behind_img is None:
+            self._reveal_cache[rev_key] = img
+            return img
+
+        # --- composite: paint behind through each cut polygon --------------
+        result = img.copy()
+        painter = QPainter(result)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        for cut in cuts:
+            pts = cut["geometry"]["points"]
+            poly = QPolygonF([QPointF(nx * iw, ny * ih) for nx, ny in pts])
+            path = QPainterPath()
+            path.addPolygon(poly)
+            path.closeSubpath()
+            painter.setClipPath(path)
+            # Scale behind_img to fill iw×ih so coordinates always align
+            painter.drawImage(QRect(0, 0, iw, ih), behind_img)
+
+        painter.setClipping(False)
+        painter.end()
+
+        self._reveal_cache[rev_key] = result
+        # Bound reveal cache to avoid unbounded growth during rapid resizing
+        if len(self._reveal_cache) > 120:
+            # Drop oldest half
+            keys = list(self._reveal_cache)
+            for k in keys[: len(keys) // 2]:
+                del self._reveal_cache[k]
+        return result
+
     def _do_render(self) -> None:
         """Render current spread into cache then repaint."""
         if self._doc is None:
@@ -338,8 +467,14 @@ class _SpreadView(QWidget):
         key = (self._slug, self._left_i, self._right_i, w, h)
         if key not in self._cache:
             cell_w, cell_h = self._cell_size()
-            left_img  = self._render_page(self._left_i,  cell_w, cell_h) if self._left_i  is not None else None
-            right_img = self._render_page(self._right_i, cell_w, cell_h) if self._right_i is not None else None
+            # Build page → layers lookup for reveal compositor
+            layers_by_page: dict = {}
+            for layer in self._all_layers:
+                pi = layer.get("page")
+                if pi is not None:
+                    layers_by_page.setdefault(pi, []).append(layer)
+            left_img  = self._render_page_with_reveals(self._left_i,  cell_w, cell_h, layers_by_page, 0) if self._left_i  is not None else None
+            right_img = self._render_page_with_reveals(self._right_i, cell_w, cell_h, layers_by_page, 0) if self._right_i is not None else None
             self._cache[key] = (left_img, right_img)
             # Keep cache bounded
             while len(self._cache) > 10:
@@ -430,6 +565,7 @@ class _CutOverlay(QWidget):
         self._pt_drag_idx: Optional[int] = None
 
         self._mouse_pos: Optional[QPointF] = None  # for live WIP preview
+        self._show_outlines: bool = True            # toggle via checkbox
 
         self.setAttribute(Qt.WA_NoSystemBackground)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -439,6 +575,10 @@ class _CutOverlay(QWidget):
 
     # ------------------------------------------------------------------
     # Public API
+
+    def set_show_outlines(self, visible: bool) -> None:
+        self._show_outlines = visible
+        self.update()
 
     def set_tool(self, tool: str) -> None:
         self._tool = tool
@@ -489,11 +629,18 @@ class _CutOverlay(QWidget):
         self._sel_pt = None
         if len(pts) < 3:
             lid = layer["id"]
+            mirror_id = layer.get("mirror_id")
             self._layers.remove(layer)
             self._sel_id = None
+            if mirror_id:
+                mirror = self._layer_by_id(mirror_id)
+                if mirror is not None:
+                    self._layers.remove(mirror)
+                    self.layer_removed.emit(mirror_id)
             self.update()
             self.layer_removed.emit(lid)
             return lid
+        self._sync_mirror_for(layer["id"])
         self.update()
         return None
 
@@ -505,24 +652,43 @@ class _CutOverlay(QWidget):
         if layer is None:
             return None
         lid = layer["id"]
+        mirror_id = layer.get("mirror_id")
         self._layers.remove(layer)
         self._sel_id = None
         self._sel_pt = None
+        if mirror_id:
+            mirror = self._layer_by_id(mirror_id)
+            if mirror is not None:
+                self._layers.remove(mirror)
+                self.layer_removed.emit(mirror_id)
         self.update()
         self.layer_removed.emit(lid)
         return lid
 
     def delete_layers_on_spread(self, spread_idx: int) -> list:
-        """Remove all layers on *spread_idx*; return their ids."""
+        """Remove all layers on *spread_idx* and their mirrors; return all deleted ids."""
         to_del = [l for l in self._layers if l.get("spread") == spread_idx]
         ids = [l["id"] for l in to_del]
+        # Collect mirror layers that live on other spreads
+        mirror_ids = []
+        for l in to_del:
+            mid = l.get("mirror_id")
+            if mid and mid not in ids:
+                ml = self._layer_by_id(mid)
+                if ml is not None:
+                    mirror_ids.append(mid)
         for l in to_del:
             self._layers.remove(l)
-        if self._sel_id in ids:
+        for mid in mirror_ids:
+            ml = self._layer_by_id(mid)
+            if ml is not None:
+                self._layers.remove(ml)
+        all_ids = ids + mirror_ids
+        if self._sel_id in all_ids:
             self._sel_id = None
             self._sel_pt = None
         self.update()
-        return ids
+        return all_ids
 
     def add_layer(self, layer: dict) -> None:
         """Add a layer externally (e.g. from loaded file)."""
@@ -547,6 +713,64 @@ class _CutOverlay(QWidget):
         for z, l in enumerate(self._layers):
             l["z_index"] = z
         self.update()
+
+    # ------------------------------------------------------------------
+    # Mirror helpers
+
+    def _reverse_page(self, page_idx: int) -> int:
+        """Return the page index on the reverse side of the same physical leaf.
+
+        Even pages are right-side (recto), odd pages are left-side (verso).
+        The back of page N is N+1 if N is even, or N-1 if N is odd.
+        """
+        return page_idx + 1 if page_idx % 2 == 0 else page_idx - 1
+
+    def _sync_mirror_for(self, layer_id: str) -> None:
+        """Update the mirror layer's points to match *layer_id*'s current points."""
+        layer = self._layer_by_id(layer_id)
+        if layer is None:
+            return
+        mirror_id = layer.get("mirror_id")
+        if not mirror_id:
+            return
+        mirror = self._layer_by_id(mirror_id)
+        if mirror is None:
+            return
+        mirror["geometry"]["points"] = _mirror_points(layer["geometry"]["points"])
+
+    def _create_mirror_for(self, layer: dict) -> Optional[dict]:
+        """Create and append a horizontally-mirrored ghost layer on the reverse page.
+
+        Returns the mirror layer dict, or None if the reverse page is out of range.
+        Sets ``mirror_id`` on both the original and the mirror.
+        """
+        page_idx = layer.get("page")
+        if page_idx is None:
+            return None
+        doc = self._view._doc
+        if doc is None:
+            return None
+        rev_page = self._reverse_page(page_idx)
+        if rev_page < 0 or rev_page >= doc.page_count:
+            return None
+        mirror_id = f"cut_{uuid.uuid4().hex[:8]}"
+        layer["mirror_id"] = mirror_id
+        mirror_layer = {
+            "id":       mirror_id,
+            "type":     "Cut",
+            "name":     layer.get("name", "Cut"),
+            "page":     rev_page,
+            "spread":   _spread_for_page(rev_page),
+            "z_index":  len(self._layers),
+            "closed":   layer.get("closed", True),
+            "mirror_id": layer["id"],
+            "geometry": {
+                "type":   "polygon",
+                "points": _mirror_points(layer["geometry"]["points"]),
+            },
+        }
+        self._layers.append(mirror_layer)
+        return mirror_layer
 
     # ------------------------------------------------------------------
     # Coordinate helpers
@@ -705,13 +929,17 @@ class _CutOverlay(QWidget):
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.LeftButton:
             if self._pt_drag_id is not None:
+                dragged_id = self._pt_drag_id
                 self._pt_drag_id = None
                 self._pt_drag_idx = None
+                self._sync_mirror_for(dragged_id)
                 self.layer_committed.emit({})
             elif self._drag_id is not None:
+                dragged_id = self._drag_id
                 self._drag_id = None
                 self._drag_origin = None
                 self._drag_start = None
+                self._sync_mirror_for(dragged_id)
                 self.layer_committed.emit({})   # signal layers changed (empty = update only)
 
     # ------------------------------------------------------------------
@@ -746,6 +974,7 @@ class _CutOverlay(QWidget):
                             pts.insert(si + 1, [nx2, ny2])
                             self._sel_pt = si + 1
                             self._hover_seg = None
+                            self._sync_mirror_for(lid)
                             self.update()
                             self.layer_committed.emit({})
                             return
@@ -791,8 +1020,11 @@ class _CutOverlay(QWidget):
         self._wip_points = []
         self._wip_page = None
         self._layers.append(layer)
+        mirror = self._create_mirror_for(layer)
         self.update()
         self.layer_committed.emit(layer)
+        if mirror is not None:
+            self.layer_committed.emit(mirror)
 
     # ------------------------------------------------------------------
     # ERASE tool
@@ -809,10 +1041,16 @@ class _CutOverlay(QWidget):
         if lid:
             layer = self._layer_by_id(lid)
             if layer:
+                mirror_id = layer.get("mirror_id")
                 self._layers.remove(layer)
                 if self._sel_id == lid:
                     self._sel_id = None
                     self._sel_pt = None
+                if mirror_id:
+                    mirror = self._layer_by_id(mirror_id)
+                    if mirror is not None:
+                        self._layers.remove(mirror)
+                        self.layer_removed.emit(mirror_id)
                 self.update()
                 self.layer_removed.emit(lid)
 
@@ -856,6 +1094,7 @@ class _CutOverlay(QWidget):
                     ny = (insert_pt.y() - r.y()) / r.height()
                     pts.insert(si + 1, [nx, ny])
                     self._sel_pt = si + 1
+                    self._sync_mirror_for(lid)
                     self.update()
                     self.layer_committed.emit({})
                     return
@@ -934,6 +1173,34 @@ class _CutOverlay(QWidget):
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         rects = self._visible_page_rects()
+        # When outlines hidden only draw WIP (so drawing still works)
+        if not self._show_outlines:
+            if not self._wip_points:
+                return
+            p = QPainter(self)
+            p.setRenderHint(QPainter.Antialiasing)
+            SEL_COLOR = QColor(theme.ACCENT)
+            if self._wip_page in rects:
+                r = rects[self._wip_page]
+                pts_s = [
+                    QPointF(r.x() + nx * r.width(), r.y() + ny * r.height())
+                    for nx, ny in self._wip_points
+                ]
+                pen = QPen(SEL_COLOR, 1.5, Qt.DashLine)
+                p.setPen(pen)
+                p.setBrush(Qt.NoBrush)
+                for i in range(len(pts_s) - 1):
+                    p.drawLine(pts_s[i], pts_s[i + 1])
+                if self._mouse_pos is not None:
+                    p.drawLine(pts_s[-1], self._mouse_pos)
+                hr = _HANDLE_R
+                p.setPen(QPen(SEL_COLOR, 1.5))
+                p.setBrush(Qt.NoBrush)
+                for pt in pts_s:
+                    p.drawRect(int(pt.x()) - hr, int(pt.y()) - hr, hr * 2, hr * 2)
+            p.end()
+            return
+
         if not rects and not self._wip_points:
             return
 
@@ -1534,6 +1801,14 @@ class BookVisualizerWindow(QMainWindow):
         layers_layout.setContentsMargins(8, 12, 8, 8)
         layers_layout.setSpacing(4)
 
+        self._show_outlines_chk = QCheckBox("Show outlines")
+        self._show_outlines_chk.setChecked(True)
+        self._show_outlines_chk.setFocusPolicy(Qt.NoFocus)
+        self._show_outlines_chk.toggled.connect(
+            lambda checked: self._overlay.set_show_outlines(checked)
+        )
+        layers_layout.addWidget(self._show_outlines_chk)
+
         self._layer_panel = _LayerPanel()
         self._layer_panel.setMinimumHeight(100)
         self._layer_panel.layer_selected.connect(self._on_panel_layer_selected)
@@ -1769,15 +2044,18 @@ class BookVisualizerWindow(QMainWindow):
     def _load_book_layers(self, slug: str) -> None:
         layers = _load_layers(self._project_path, slug)
         self._overlay.set_layers(layers)
+        self._spread_view.set_layers(layers)
         self._refresh_layer_panel()
 
     def _save_current_layers(self) -> None:
         if not self._slug:
             return
+        layers = self._overlay.current_layers()
         try:
-            _save_layers(self._project_path, self._slug, self._overlay.current_layers())
+            _save_layers(self._project_path, self._slug, layers)
         except Exception:
             pass
+        self._spread_view.set_layers(layers)
 
     # ------------------------------------------------------------------
     # Overlay callbacks
@@ -1785,7 +2063,14 @@ class BookVisualizerWindow(QMainWindow):
     def _on_layer_committed(self, layer: dict) -> None:
         """Called when overlay commits a new polygon (or signals layers changed)."""
         if layer:   # non-empty → actual new layer
-            self._layer_panel.add_layer(layer)
+            # Only add to panel if the layer is visible on the current spread
+            if self._doc is not None:
+                left_i, right_i = _pages_for_spread(self._spread_idx, self._doc.page_count)
+                visible_pages = {p for p in (left_i, right_i) if p is not None}
+                if layer.get("page") in visible_pages:
+                    self._layer_panel.add_layer(layer)
+            else:
+                self._layer_panel.add_layer(layer)
         self._save_current_layers()
 
     def _on_layer_removed(self, lid: str) -> None:
@@ -1804,10 +2089,16 @@ class BookVisualizerWindow(QMainWindow):
     def _on_panel_layer_deleted(self, lid: str) -> None:
         layer = self._overlay._layer_by_id(lid)
         if layer is not None:
+            mirror_id = layer.get("mirror_id")
             self._overlay._layers.remove(layer)
             if self._overlay._sel_id == lid:
                 self._overlay._sel_id = None
                 self._overlay._sel_pt = None
+            if mirror_id:
+                mirror = self._overlay._layer_by_id(mirror_id)
+                if mirror is not None:
+                    self._overlay._layers.remove(mirror)
+                    self._layer_panel.remove_layer(mirror_id)
             self._overlay.update()
         self._layer_panel.remove_layer(lid)
         self._save_current_layers()
@@ -2001,6 +2292,7 @@ class BookVisualizerWindow(QMainWindow):
                         new_layer["id"] = f"cut_{uuid.uuid4().hex[:8]}"
                         new_layer["spread"] = self._spread_idx
                         new_layer["z_index"] = len(self._overlay.current_layers())
+                        new_layer.pop("mirror_id", None)  # will be assigned fresh below
                         orig_page = self._clipboard_layer.get("page")
                         if orig_page is not None:
                             pc = self._doc.page_count
@@ -2015,10 +2307,13 @@ class BookVisualizerWindow(QMainWindow):
                                 new_page = cur_left if cur_left is not None else cur_right
                             new_layer["page"] = new_page
                         self._overlay._layers.append(new_layer)
+                        mirror = self._overlay._create_mirror_for(new_layer)
                         self._overlay._sel_id = new_layer["id"]
                         self._overlay._sel_pt = None
                         self._overlay.update()
                         self._on_layer_committed(new_layer)
+                        if mirror is not None:
+                            self._on_layer_committed(mirror)
                     return True
         return super().eventFilter(obj, event)
 
