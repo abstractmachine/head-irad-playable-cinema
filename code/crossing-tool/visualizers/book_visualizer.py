@@ -108,8 +108,8 @@ _IMG_ROT_R      = 5     # radius of rotation handle circle (px)
 _IMG_ROT_OFFSET = 22    # px above top-right corner for rotation handle
 _IMG_DEFAULT_W  = 0.25  # default normalised width when dropped
 
-# 15-color highlight palette (cycled for successive text selections)
-_HIGHLIGHT_COLORS = [
+# 15-color selection palette (cycled for successive text selections)
+_SELECTION_COLORS = [
     "#ff00ff",  # fuchsia
     "#ffff00",  # yellow
     "#00ccff",  # sky blue
@@ -202,7 +202,7 @@ def _save_layers(project_path: str, slug: str, layers: list) -> None:
 
 def _text_sel_path(project_path: str, slug: str) -> Path:
     from data.book import book_dir
-    return book_dir(project_path, slug) / "text-selections.json"
+    return book_dir(project_path, slug) / "selections.json"
 
 
 def _load_text_sels(project_path: str, slug: str) -> list:
@@ -730,7 +730,7 @@ class _CutOverlay(QWidget):
         # text selection state
         self._text_sels: list          = []               # committed text selection dicts
         self._text_sels_visible: bool  = True
-        self._text_color_idx: int      = 0               # cycles through _HIGHLIGHT_COLORS
+        self._text_color_idx: int      = 0               # cycles through _SELECTION_COLORS
         self._text_drag_page: Optional[int]   = None     # page being selected
         self._text_drag_start_n: Optional[tuple] = None  # (nx, ny) drag origin (normalised)
         self._text_drag_end_n:   Optional[tuple] = None  # (nx, ny) drag current end
@@ -760,7 +760,7 @@ class _CutOverlay(QWidget):
         elif tool == _TOOL_ERASE:
             self.setCursor(Qt.ForbiddenCursor)
         elif tool == _TOOL_TEXT:
-            self.setCursor(Qt.IBeamCursor)
+            self.setCursor(Qt.CrossCursor)
         else:
             self.setCursor(Qt.ArrowCursor)
         self.update()
@@ -1631,19 +1631,55 @@ class _CutOverlay(QWidget):
         ph = page.rect.height
         import fitz
         sel_rect = fitz.Rect(x0n * pw, y0n * ph, x1n * pw, y1n * ph)
-        words = page.get_text("words")
+        # Character-level hit testing: collect individual char bboxes that
+        # physically intersect the drag rect, then group them by span.
+        raw = page.get_text("rawdict", flags=fitz.TEXT_PRESERVE_WHITESPACE)
         hit_rects = []
         hit_text_parts = []
-        for w in words:
-            wx0, wy0, wx1, wy1, word_text = w[0], w[1], w[2], w[3], w[4]
-            word_rect = fitz.Rect(wx0, wy0, wx1, wy1)
-            if sel_rect.intersects(word_rect):
-                hit_rects.append([wx0 / pw, wy0 / ph, wx1 / pw, wy1 / ph])
-                hit_text_parts.append(word_text)
+        for block in raw.get("blocks", []):
+            if block.get("type") != 0:  # 0 = text block
+                continue
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    all_chars = span.get("chars", [])
+                    hit_indices = [
+                        i for i, ch in enumerate(all_chars)
+                        if sel_rect.intersects(fitz.Rect(ch["bbox"]))
+                    ]
+                    if not hit_indices:
+                        continue
+                    # Expand selection to absorb adjacent space characters
+                    first_i = hit_indices[0]
+                    last_i  = hit_indices[-1]
+                    while first_i > 0 and all_chars[first_i - 1]["c"] == " ":
+                        first_i -= 1
+                    while last_i < len(all_chars) - 1 and all_chars[last_i + 1]["c"] == " ":
+                        last_i += 1
+                    span_chars = all_chars[first_i:last_i + 1]
+                    bx0 = min(c["bbox"][0] for c in span_chars)
+                    by0 = min(c["bbox"][1] for c in span_chars)
+                    bx1 = max(c["bbox"][2] for c in span_chars)
+                    by1 = max(c["bbox"][3] for c in span_chars)
+                    hit_rects.append([bx0 / pw, by0 / ph, bx1 / pw, by1 / ph])
+                    hit_text_parts.append("".join(c["c"] for c in span_chars))
         if not hit_rects:
             return
+        # Merge per-word rects into per-line spanning rects so inter-word gaps
+        # are filled in.  Group by (y0, y1) bucket then span x0→x1.
+        line_map: dict = {}
+        for (rx0, ry0, rx1, ry1) in hit_rects:
+            key = (round(ry0, 4), round(ry1, 4))
+            if key in line_map:
+                line_map[key][0] = min(line_map[key][0], rx0)
+                line_map[key][1] = max(line_map[key][1], rx1)
+            else:
+                line_map[key] = [rx0, rx1]
+        hit_rects = [
+            [v[0], k[0], v[1], k[1]]
+            for k, v in sorted(line_map.items())
+        ]
         spread_idx = getattr(self._view, "_spread_idx", 0)
-        color = _HIGHLIGHT_COLORS[self._text_color_idx % len(_HIGHLIGHT_COLORS)]
+        color = _SELECTION_COLORS[self._text_color_idx % len(_SELECTION_COLORS)]
         self._text_color_idx += 1
         sel = {
             "id":     f"text_{uuid.uuid4().hex[:8]}",
@@ -1876,7 +1912,7 @@ class _CutOverlay(QWidget):
         SEL_FILL   = QColor(255, 0, 255, 40)
         hr = _HANDLE_R - 1                       # slightly smaller handles
 
-        # ── text selection highlights ──────────────────────────────────
+        # ── text selections ───────────────────────────────────────────────
         if self._text_sels_visible:
             p.setPen(Qt.NoPen)
             for sel in self._text_sels:
@@ -3009,7 +3045,7 @@ class BookVisualizerWindow(QMainWindow):
         )
         tools_layout.addWidget(self._show_outlines_chk)
 
-        self._text_vis_chk = QCheckBox("Highlights")
+        self._text_vis_chk = QCheckBox("Selections")
         self._text_vis_chk.setChecked(True)
         self._text_vis_chk.setFocusPolicy(Qt.NoFocus)
         self._text_vis_chk.toggled.connect(
