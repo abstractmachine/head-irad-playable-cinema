@@ -95,6 +95,7 @@ _PANEL_WIDTH  = 240   # px — right panel preferred width
 _TOOL_NONE  = "none"
 _TOOL_CUT   = "cut"
 _TOOL_ERASE = "erase"
+_TOOL_TEXT  = "text"
 
 # Cut overlay visual constants
 _HANDLE_R   = 4      # half-size of point handle square (px)
@@ -106,6 +107,25 @@ _IMG_CORNER_R   = 5     # half-size of corner resize handle (px)
 _IMG_ROT_R      = 5     # radius of rotation handle circle (px)
 _IMG_ROT_OFFSET = 22    # px above top-right corner for rotation handle
 _IMG_DEFAULT_W  = 0.25  # default normalised width when dropped
+
+# 15-color highlight palette (cycled for successive text selections)
+_HIGHLIGHT_COLORS = [
+    "#ff00ff",  # fuchsia
+    "#ffff00",  # yellow
+    "#00ccff",  # sky blue
+    "#00ff88",  # spring green
+    "#ff6600",  # orange
+    "#cc00ff",  # violet
+    "#ff0066",  # rose
+    "#00ffff",  # cyan
+    "#ff3333",  # red
+    "#33ff33",  # lime
+    "#ff99cc",  # pink
+    "#99ccff",  # periwinkle
+    "#ffcc00",  # amber
+    "#00ff44",  # mint
+    "#aa88ff",  # lavender
+]
 
 _PANEL_STYLESHEET = (
     f"QWidget {{ background: {theme.PANEL_BG}; }}"
@@ -174,6 +194,34 @@ def _save_layers(project_path: str, slug: str, layers: list) -> None:
         to_save.append(entry)
     with open(p, "w", encoding="utf-8") as f:
         json.dump(to_save, f, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Text selection persistence helpers
+# ---------------------------------------------------------------------------
+
+def _text_sel_path(project_path: str, slug: str) -> Path:
+    from data.book import book_dir
+    return book_dir(project_path, slug) / "text-selections.json"
+
+
+def _load_text_sels(project_path: str, slug: str) -> list:
+    p = _text_sel_path(project_path, slug)
+    if not p.exists():
+        return []
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _save_text_sels(project_path: str, slug: str, sels: list) -> None:
+    p = _text_sel_path(project_path, slug)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(sels, f, ensure_ascii=False, indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -631,6 +679,8 @@ class _CutOverlay(QWidget):
     layer_committed  = pyqtSignal(dict)   # emitted when a polygon is closed
     layer_removed    = pyqtSignal(str)    # emitted with layer id on deletion
     selection_changed = pyqtSignal(str)   # emitted with layer id (or "")
+    text_sel_committed = pyqtSignal(dict) # emitted when a text selection is created
+    text_sel_removed   = pyqtSignal(str)  # emitted with text sel id on deletion
 
     def __init__(self, parent_view: "_SpreadView") -> None:
         super().__init__(parent_view)
@@ -677,6 +727,14 @@ class _CutOverlay(QWidget):
         self._book_dir:          Optional[Path]   = None
         self._pixmap_cache:      dict             = {}      # source_rel → QPixmap
 
+        # text selection state
+        self._text_sels: list          = []               # committed text selection dicts
+        self._text_sels_visible: bool  = True
+        self._text_color_idx: int      = 0               # cycles through _HIGHLIGHT_COLORS
+        self._text_drag_page: Optional[int]   = None     # page being selected
+        self._text_drag_start_n: Optional[tuple] = None  # (nx, ny) drag origin (normalised)
+        self._text_drag_end_n:   Optional[tuple] = None  # (nx, ny) drag current end
+
         self.setAttribute(Qt.WA_NoSystemBackground)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAcceptDrops(True)
@@ -701,6 +759,8 @@ class _CutOverlay(QWidget):
             self.setCursor(Qt.CrossCursor)
         elif tool == _TOOL_ERASE:
             self.setCursor(Qt.ForbiddenCursor)
+        elif tool == _TOOL_TEXT:
+            self.setCursor(Qt.IBeamCursor)
         else:
             self.setCursor(Qt.ArrowCursor)
         self.update()
@@ -731,6 +791,22 @@ class _CutOverlay(QWidget):
 
     def current_layers(self) -> list:
         return list(self._layers)
+
+    def set_text_selections(self, sels: list) -> None:
+        """Replace text selections (e.g. on book switch)."""
+        self._text_sels = list(sels)
+        self._text_color_idx = len(sels)
+        self._text_drag_page = None
+        self._text_drag_start_n = None
+        self._text_drag_end_n = None
+        self.update()
+
+    def set_text_sels_visible(self, visible: bool) -> None:
+        self._text_sels_visible = visible
+        self.update()
+
+    def current_text_sels(self) -> list:
+        return list(self._text_sels)
 
     def cancel_wip(self) -> None:
         self._wip_points = []
@@ -1281,6 +1357,8 @@ class _CutOverlay(QWidget):
             self._cut_press(pos)
         elif self._tool == _TOOL_ERASE:
             self._erase_press(pos)
+        elif self._tool == _TOOL_TEXT:
+            self._text_press(pos)
         else:
             self._select_press(pos, event)
 
@@ -1327,13 +1405,17 @@ class _CutOverlay(QWidget):
             self._pt_drag_move(self._mouse_pos)
         elif self._drag_id is not None:
             self._drag_move(self._mouse_pos)
+        elif self._text_drag_page is not None:
+            self._text_drag_move(self._mouse_pos)
         else:
             self._update_hover(self._mouse_pos)
         self.update()
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.LeftButton:
-            if self._img_rotate_id is not None:
+            if self._text_drag_page is not None:
+                self._text_release()
+            elif self._img_rotate_id is not None:
                 self._img_rotate_id = None
                 self._img_rotate_center = None
                 self._img_rotate_origin = None
@@ -1486,6 +1568,122 @@ class _CutOverlay(QWidget):
                     self._sel_pt = None
                 self.update()
                 self.layer_removed.emit(img_lid)
+            return
+        # Then text selection
+        tid = self._hit_text_sel(pos)
+        if tid:
+            sel = self._text_sel_by_id(tid)
+            if sel:
+                self._text_sels.remove(sel)
+                self.update()
+                self.text_sel_removed.emit(tid)
+
+    # ------------------------------------------------------------------
+    # TEXT selection tool
+
+    def _text_press(self, pos: QPointF) -> None:
+        hit = self._which_page(pos.x(), pos.y())
+        if hit is None:
+            return
+        page_idx, nx, ny = hit
+        self._text_drag_page = page_idx
+        self._text_drag_start_n = (nx, ny)
+        self._text_drag_end_n = (nx, ny)
+
+    def _text_drag_move(self, pos: QPointF) -> None:
+        if self._text_drag_page is None:
+            return
+        r = self._visible_page_rects().get(self._text_drag_page)
+        if r is None or r.width() <= 0 or r.height() <= 0:
+            return
+        nx = max(0.0, min(1.0, (pos.x() - r.x()) / r.width()))
+        ny = max(0.0, min(1.0, (pos.y() - r.y()) / r.height()))
+        self._text_drag_end_n = (nx, ny)
+
+    def _text_release(self) -> None:
+        if (self._text_drag_page is None
+                or self._text_drag_start_n is None
+                or self._text_drag_end_n is None):
+            self._text_drag_page = None
+            self._text_drag_start_n = None
+            self._text_drag_end_n = None
+            return
+        page_idx = self._text_drag_page
+        x0n = min(self._text_drag_start_n[0], self._text_drag_end_n[0])
+        y0n = min(self._text_drag_start_n[1], self._text_drag_end_n[1])
+        x1n = max(self._text_drag_start_n[0], self._text_drag_end_n[0])
+        y1n = max(self._text_drag_start_n[1], self._text_drag_end_n[1])
+        self._text_drag_page = None
+        self._text_drag_start_n = None
+        self._text_drag_end_n = None
+        self.update()
+        # Skip tiny / accidental drags
+        if (x1n - x0n) < 0.002 and (y1n - y0n) < 0.002:
+            return
+        doc = self._view._doc
+        if doc is None:
+            return
+        try:
+            page = doc[page_idx]
+        except Exception:
+            return
+        pw = page.rect.width
+        ph = page.rect.height
+        import fitz
+        sel_rect = fitz.Rect(x0n * pw, y0n * ph, x1n * pw, y1n * ph)
+        words = page.get_text("words")
+        hit_rects = []
+        hit_text_parts = []
+        for w in words:
+            wx0, wy0, wx1, wy1, word_text = w[0], w[1], w[2], w[3], w[4]
+            word_rect = fitz.Rect(wx0, wy0, wx1, wy1)
+            if sel_rect.intersects(word_rect):
+                hit_rects.append([wx0 / pw, wy0 / ph, wx1 / pw, wy1 / ph])
+                hit_text_parts.append(word_text)
+        if not hit_rects:
+            return
+        spread_idx = getattr(self._view, "_spread_idx", 0)
+        color = _HIGHLIGHT_COLORS[self._text_color_idx % len(_HIGHLIGHT_COLORS)]
+        self._text_color_idx += 1
+        sel = {
+            "id":     f"text_{uuid.uuid4().hex[:8]}",
+            "type":   "TextSelection",
+            "name":   "Text",
+            "page":   page_idx,
+            "spread": spread_idx,
+            "text":   " ".join(hit_text_parts),
+            "rects":  hit_rects,
+            "color":  color,
+            "visible": True,
+        }
+        self._text_sels.append(sel)
+        self.update()
+        self.text_sel_committed.emit(sel)
+
+    def _hit_text_sel(self, pos: QPointF) -> Optional[str]:
+        """Return id of topmost text selection that contains pos, or None."""
+        rects = self._visible_page_rects()
+        for sel in reversed(self._text_sels):
+            if not sel.get("visible", True):
+                continue
+            page_idx = sel.get("page")
+            r = rects.get(page_idx)
+            if r is None:
+                continue
+            for nr in sel.get("rects", []):
+                x0 = r.x() + nr[0] * r.width()
+                y0 = r.y() + nr[1] * r.height()
+                x1 = r.x() + nr[2] * r.width()
+                y1 = r.y() + nr[3] * r.height()
+                if x0 <= pos.x() <= x1 and y0 <= pos.y() <= y1:
+                    return sel["id"]
+        return None
+
+    def _text_sel_by_id(self, sid: str) -> Optional[dict]:
+        for s in self._text_sels:
+            if s["id"] == sid:
+                return s
+        return None
 
     # ------------------------------------------------------------------
     # SELECT / DRAG tool (tool == _TOOL_NONE)
@@ -1661,7 +1859,10 @@ class _CutOverlay(QWidget):
     # Paint
 
     def paintEvent(self, _event) -> None:  # noqa: N802
-        if not self._layers_visible:
+        has_text = self._text_sels_visible and (
+            bool(self._text_sels) or self._text_drag_page is not None
+        )
+        if not self._layers_visible and not has_text:
             return
 
         rects = self._visible_page_rects()
@@ -1674,6 +1875,45 @@ class _CutOverlay(QWidget):
         FILL_ALPHA = QColor(230, 230, 230, 12)   # very subtle light fill
         SEL_FILL   = QColor(255, 0, 255, 40)
         hr = _HANDLE_R - 1                       # slightly smaller handles
+
+        # ── text selection highlights ──────────────────────────────────
+        if self._text_sels_visible:
+            p.setPen(Qt.NoPen)
+            for sel in self._text_sels:
+                if not sel.get("visible", True):
+                    continue
+                page_idx = sel.get("page")
+                r = rects.get(page_idx)
+                if r is None:
+                    continue
+                base = QColor(sel.get("color", "#ff00ff"))
+                base.setAlpha(55)
+                p.setBrush(base)
+                for nr in sel.get("rects", []):
+                    x0 = r.x() + nr[0] * r.width()
+                    y0 = r.y() + nr[1] * r.height()
+                    x1 = r.x() + nr[2] * r.width()
+                    y1 = r.y() + nr[3] * r.height()
+                    p.drawRect(QRectF(x0, y0, x1 - x0, y1 - y0))
+
+        # ── text selection drag preview ────────────────────────────────
+        if (self._text_drag_page is not None
+                and self._text_drag_start_n is not None
+                and self._text_drag_end_n is not None):
+            r = rects.get(self._text_drag_page)
+            if r is not None:
+                x0 = r.x() + self._text_drag_start_n[0] * r.width()
+                y0 = r.y() + self._text_drag_start_n[1] * r.height()
+                x1 = r.x() + self._text_drag_end_n[0] * r.width()
+                y1 = r.y() + self._text_drag_end_n[1] * r.height()
+                drag_rect = QRectF(min(x0, x1), min(y0, y1), abs(x1 - x0), abs(y1 - y0))
+                p.setPen(QPen(QColor(255, 0, 255, 160), 1.0, Qt.DashLine))
+                p.setBrush(QColor(255, 0, 255, 20))
+                p.drawRect(drag_rect)
+
+        if not self._layers_visible:
+            p.end()
+            return
 
         # ── committed cut layers ───────────────────────────────────────
         for layer in self._layers:
@@ -2574,6 +2814,8 @@ class BookVisualizerWindow(QMainWindow):
         self._overlay.layer_committed.connect(self._on_layer_committed)
         self._overlay.layer_removed.connect(self._on_layer_removed)
         self._overlay.selection_changed.connect(self._on_overlay_selection)
+        self._overlay.text_sel_committed.connect(self._on_text_sel_committed)
+        self._overlay.text_sel_removed.connect(self._on_text_sel_removed)
 
         self._page_bar = _PageBar()
         self._page_bar.jumped.connect(self._go_spread)
@@ -2721,6 +2963,15 @@ class BookVisualizerWindow(QMainWindow):
         ICON_SIZE = 18
         BTN_SIZE  = 32
 
+        self._text_btn = QPushButton()
+        self._text_btn.setIcon(_svg_icon("text", ICON_SIZE))
+        self._text_btn.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
+        self._text_btn.setCheckable(True)
+        self._text_btn.setFixedSize(BTN_SIZE, BTN_SIZE)
+        self._text_btn.setToolTip("Text tool — drag to select PDF text")
+        self._text_btn.clicked.connect(lambda checked: self._set_tool(_TOOL_TEXT if checked else _TOOL_NONE))
+        tool_row.addWidget(self._text_btn)
+
         self._cut_btn = QPushButton()
         self._cut_btn.setIcon(_svg_icon("cut", ICON_SIZE))
         self._cut_btn.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
@@ -2757,6 +3008,14 @@ class BookVisualizerWindow(QMainWindow):
             lambda checked: self._overlay.set_show_outlines(checked)
         )
         tools_layout.addWidget(self._show_outlines_chk)
+
+        self._text_vis_chk = QCheckBox("Highlights")
+        self._text_vis_chk.setChecked(True)
+        self._text_vis_chk.setFocusPolicy(Qt.NoFocus)
+        self._text_vis_chk.toggled.connect(
+            lambda checked: self._overlay.set_text_sels_visible(checked)
+        )
+        tools_layout.addWidget(self._text_vis_chk)
         layout.addWidget(tools_group)
 
         # ── Layers group ──────────────────────────────────────────────
@@ -2929,6 +3188,8 @@ class BookVisualizerWindow(QMainWindow):
         self._show_spread()
         # Load layers for this book
         self._load_book_layers(slug)
+        # Load text selections for this book
+        self._load_book_text_sels(slug)
         # Set book dir for image layer resolution
         self._overlay.set_book_dir(book_dir(self._project_path, slug))
         self._spread_view.set_book_dir(book_dir(self._project_path, slug))
@@ -2982,7 +3243,9 @@ class BookVisualizerWindow(QMainWindow):
     def _close_doc(self) -> None:
         """Close the open fitz document and reset the spread view."""
         self._save_current_layers()
+        self._save_current_text_sels()
         self._overlay.set_layers([])
+        self._overlay.set_text_selections([])
         self._layer_panel.remove_all()
         self._spread_view.clear()
         if self._doc is not None:
@@ -3033,6 +3296,7 @@ class BookVisualizerWindow(QMainWindow):
         self._tool = tool
         self._overlay.set_tool(tool)
         # Sync button check states
+        self._text_btn.setChecked(tool == _TOOL_TEXT)
         self._cut_btn.setChecked(tool == _TOOL_CUT)
         self._erase_btn.setChecked(tool == _TOOL_ERASE)
         # Cancel in-progress WIP when switching away from CUT
@@ -3081,6 +3345,25 @@ class BookVisualizerWindow(QMainWindow):
         except Exception:
             pass
         self._spread_view.set_layers(layers)
+
+    def _load_book_text_sels(self, slug: str) -> None:
+        sels = _load_text_sels(self._project_path, slug)
+        self._overlay.set_text_selections(sels)
+
+    def _save_current_text_sels(self) -> None:
+        if not self._slug:
+            return
+        sels = self._overlay.current_text_sels()
+        try:
+            _save_text_sels(self._project_path, self._slug, sels)
+        except Exception:
+            pass
+
+    def _on_text_sel_committed(self, sel: dict) -> None:
+        self._save_current_text_sels()
+
+    def _on_text_sel_removed(self, sid: str) -> None:  # noqa: ARG002
+        self._save_current_text_sels()
 
     # ------------------------------------------------------------------
     # Overlay callbacks
