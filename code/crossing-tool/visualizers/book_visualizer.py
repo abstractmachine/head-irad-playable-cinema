@@ -276,6 +276,7 @@ class _SpreadView(QWidget):
         self._reveal_cache: dict = {} # keyed by (slug, page_idx, cw, ch, ver, depth)
         self._REVEAL_MAX_DEPTH: int = 4
         self._book_dir: Optional[Path] = None   # for image layer compositing
+        self._layers_visible: bool = True       # toggled by "Visible" checkbox
 
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
@@ -323,6 +324,14 @@ class _SpreadView(QWidget):
         """
         self._all_layers = list(layers)
         self._layers_ver += 1
+        self._cache.clear()
+        self._reveal_cache.clear()
+        if self._doc is not None:
+            self._do_render()
+
+    def set_layers_visible(self, visible: bool) -> None:
+        """Show or hide all layer rendering (cuts + images) without losing data."""
+        self._layers_visible = visible
         self._cache.clear()
         self._reveal_cache.clear()
         if self._doc is not None:
@@ -554,10 +563,11 @@ class _SpreadView(QWidget):
             cell_w, cell_h = self._cell_size()
             # Build page → layers lookup for reveal compositor
             layers_by_page: dict = {}
-            for layer in self._all_layers:
-                pi = layer.get("page")
-                if pi is not None:
-                    layers_by_page.setdefault(pi, []).append(layer)
+            if self._layers_visible:
+                for layer in self._all_layers:
+                    pi = layer.get("page")
+                    if pi is not None:
+                        layers_by_page.setdefault(pi, []).append(layer)
             left_img  = self._render_page_with_reveals(self._left_i,  cell_w, cell_h, layers_by_page, 0) if self._left_i  is not None else None
             right_img = self._render_page_with_reveals(self._right_i, cell_w, cell_h, layers_by_page, 0) if self._right_i is not None else None
             self._cache[key] = (left_img, right_img)
@@ -651,6 +661,7 @@ class _CutOverlay(QWidget):
 
         self._mouse_pos: Optional[QPointF] = None  # for live WIP preview
         self._show_outlines: bool = True            # toggle via checkbox
+        self._layers_visible: bool = True           # toggled by "Visible" checkbox
 
         # image layer interaction state
         self._img_drag_id:       Optional[str]    = None
@@ -678,6 +689,10 @@ class _CutOverlay(QWidget):
 
     def set_show_outlines(self, visible: bool) -> None:
         self._show_outlines = visible
+        self.update()
+
+    def set_layers_visible(self, visible: bool) -> None:
+        self._layers_visible = visible
         self.update()
 
     def set_tool(self, tool: str) -> None:
@@ -1646,6 +1661,9 @@ class _CutOverlay(QWidget):
     # Paint
 
     def paintEvent(self, _event) -> None:  # noqa: N802
+        if not self._layers_visible:
+            return
+
         rects = self._visible_page_rects()
 
         p = QPainter(self)
@@ -1867,7 +1885,6 @@ class _LayerRow(QWidget):
             self._type_icon.setPixmap(_svg_icon(icon_name, 12, theme.TEXT_DIM).pixmap(12, 12))
             self._type_icon.setFixedSize(14, 14)
             self._type_icon.setAlignment(Qt.AlignCenter)
-            self._type_icon.setStyleSheet("background: transparent;")
             lay.addWidget(self._type_icon)
             lay.addSpacing(2)
 
@@ -1944,6 +1961,8 @@ class _LayerRow(QWidget):
         self.setStyleSheet(
             f"_LayerRow {{ background: {bg}; border-radius: 3px; }}"
         )
+        if hasattr(self, "_type_icon"):
+            self._type_icon.setStyleSheet(f"background: {bg};")
 
     def update_name(self, name: str) -> None:
         self._name = name
@@ -2731,7 +2750,7 @@ class BookVisualizerWindow(QMainWindow):
         tool_row.addStretch()
         tools_layout.addLayout(tool_row)
 
-        self._show_outlines_chk = QCheckBox("Show Cut Handles")
+        self._show_outlines_chk = QCheckBox("Handles")
         self._show_outlines_chk.setChecked(True)
         self._show_outlines_chk.setFocusPolicy(Qt.NoFocus)
         self._show_outlines_chk.toggled.connect(
@@ -2764,6 +2783,19 @@ class BookVisualizerWindow(QMainWindow):
         self._layers_toggle_btn.setFocusPolicy(Qt.NoFocus)
         self._layers_toggle_btn.clicked.connect(self._toggle_layers)
         layers_hdr_lay.addWidget(self._layers_toggle_btn)
+
+        self._layers_visible_btn = QPushButton()
+        self._layers_visible_btn.setCheckable(True)
+        self._layers_visible_btn.setChecked(True)
+        self._layers_visible_btn.setFixedSize(20, 20)
+        self._layers_visible_btn.setFocusPolicy(Qt.NoFocus)
+        self._layers_visible_btn.setStyleSheet(
+            "QPushButton { background: transparent; border: none; }"
+        )
+        self._layers_visible_btn.setIcon(_svg_icon("eye-solid", 14, theme.ACCENT))
+        self._layers_visible_btn.setIconSize(QSize(14, 14))
+        self._layers_visible_btn.toggled.connect(self._on_layers_visible_toggled)
+        layers_hdr_lay.addWidget(self._layers_visible_btn)
         layers_container_layout.addWidget(layers_hdr)
 
         self._layers_body = QWidget()
@@ -3012,6 +3044,13 @@ class BookVisualizerWindow(QMainWindow):
         self._layers_body.setVisible(not visible)
         arrow = "▶" if visible else "▼"
         self._layers_toggle_btn.setText(f"{arrow}  Layers")
+
+    def _on_layers_visible_toggled(self, checked: bool) -> None:
+        icon_name = "eye-solid" if checked else "eye-closed"
+        color = theme.ACCENT if checked else theme.TEXT_DIM
+        self._layers_visible_btn.setIcon(_svg_icon(icon_name, 14, color))
+        self._overlay.set_layers_visible(checked)
+        self._spread_view.set_layers_visible(checked)
 
     # ------------------------------------------------------------------
     # Layer persistence
