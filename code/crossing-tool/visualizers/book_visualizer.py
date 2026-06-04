@@ -225,6 +225,37 @@ def _save_text_sels(project_path: str, slug: str, sels: list) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Mask persistence helpers
+# ---------------------------------------------------------------------------
+
+def _mask_path(project_path: str, slug: str) -> Path:
+    from data.book import book_dir
+    return book_dir(project_path, slug) / "mask.json"
+
+
+def _load_mask(project_path: str, slug: str) -> set:
+    """Return the set of page indices where the text mask is enabled."""
+    p = _mask_path(project_path, slug)
+    if not p.exists():
+        return set()
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return set(int(x) for x in data)
+    except Exception:
+        pass
+    return set()
+
+
+def _save_mask(project_path: str, slug: str, masked_pages: set) -> None:
+    p = _mask_path(project_path, slug)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(sorted(masked_pages), f, indent=2)
+
+
+# ---------------------------------------------------------------------------
 # Spread index helpers
 # ---------------------------------------------------------------------------
 
@@ -326,6 +357,10 @@ class _SpreadView(QWidget):
         self._book_dir: Optional[Path] = None   # for image layer compositing
         self._layers_visible: bool = True       # toggled by "Visible" checkbox
 
+        # Text-mask state  (set of page indices where mask is ON)
+        self._masked_pages: set = set()
+        self._text_sels_for_mask: list = []     # mirrors overlay text selections
+
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     # ------------------------------------------------------------------
@@ -392,6 +427,34 @@ class _SpreadView(QWidget):
         self._reveal_cache.clear()
         if self._doc is not None:
             self._do_render()
+
+    def set_page_masked(self, page_idx: int, enabled: bool) -> None:
+        """Enable or disable the text mask for a single page."""
+        if enabled:
+            self._masked_pages.add(page_idx)
+        else:
+            self._masked_pages.discard(page_idx)
+        self._cache.clear()
+        self._reveal_cache.clear()
+        if self._doc is not None:
+            self._do_render()
+
+    def set_masked_pages(self, pages: set) -> None:
+        """Replace the full masked-pages set (used when loading a book)."""
+        self._masked_pages = set(pages)
+        self._cache.clear()
+        self._reveal_cache.clear()
+        if self._doc is not None:
+            self._do_render()
+
+    def set_text_sels_for_mask(self, sels: list) -> None:
+        """Update the text-selection list used by the mask compositor."""
+        self._text_sels_for_mask = list(sels)
+        if self._masked_pages:
+            self._cache.clear()
+            self._reveal_cache.clear()
+            if self._doc is not None:
+                self._do_render()
 
     # ------------------------------------------------------------------
 
@@ -473,6 +536,11 @@ class _SpreadView(QWidget):
             l for l in layers_by_page.get(page_idx, [])
             if l.get("type") == "Image" and l.get("source")
         ]
+        # Apply text mask to the bare PDF layer before compositing illustrations,
+        # so that illustrations always remain visible even on a masked page.
+        if page_idx in self._masked_pages:
+            img = self._apply_text_mask(img, page_idx)
+
         if not img_layers or self._book_dir is None:
             return img
 
@@ -500,6 +568,51 @@ class _SpreadView(QWidget):
             painter.drawImage(QRectF(-sw / 2, -sh / 2, sw, sh), pix.toImage())
             painter.restore()
 
+        painter.end()
+        return result
+
+    # ------------------------------------------------------------------
+    # Text-mask helpers
+
+    def _sample_bg_color(self, img: QImage) -> QColor:
+        """Sample background color from the four corners of a page image."""
+        w, h = img.width(), img.height()
+        if w < 4 or h < 4:
+            return QColor(255, 255, 255)
+        rs, gs, bs = [], [], []
+        for x, y in ((2, 2), (w - 3, 2), (2, h - 3), (w - 3, h - 3)):
+            c = img.pixelColor(x, y)
+            rs.append(c.red()); gs.append(c.green()); bs.append(c.blue())
+        return QColor(sum(rs) // 4, sum(gs) // 4, sum(bs) // 4)
+
+    def _apply_text_mask(self, img: QImage, page_idx: int) -> QImage:
+        """Return a copy of *img* with only text-selection regions visible.
+
+        Everything outside the union of selection rects is filled with the
+        sampled page background color.  A 2-px padding prevents edge clipping.
+        """
+        iw, ih = img.width(), img.height()
+        bg = self._sample_bg_color(img)
+        result = QImage(iw, ih, img.format())
+        result.fill(bg)
+
+        sels = [
+            s for s in self._text_sels_for_mask
+            if s.get("page") == page_idx and s.get("visible", True)
+        ]
+        if not sels:
+            return result   # whole page blanked when no selections exist
+
+        _PAD = 2
+        painter = QPainter(result)
+        for sel in sels:
+            for nr in sel.get("rects", []):
+                x0 = max(0.0, nr[0] * iw - _PAD)
+                y0 = max(0.0, nr[1] * ih - _PAD)
+                x1 = min(float(iw), nr[2] * iw + _PAD)
+                y1 = min(float(ih), nr[3] * ih + _PAD)
+                src = QRectF(x0, y0, x1 - x0, y1 - y0)
+                painter.drawImage(src, img, src)
         painter.end()
         return result
 
@@ -1648,14 +1761,7 @@ class _CutOverlay(QWidget):
                     ]
                     if not hit_indices:
                         continue
-                    # Expand selection to absorb adjacent space characters
-                    first_i = hit_indices[0]
-                    last_i  = hit_indices[-1]
-                    while first_i > 0 and all_chars[first_i - 1]["c"] == " ":
-                        first_i -= 1
-                    while last_i < len(all_chars) - 1 and all_chars[last_i + 1]["c"] == " ":
-                        last_i += 1
-                    span_chars = all_chars[first_i:last_i + 1]
+                    span_chars = all_chars[hit_indices[0]:hit_indices[-1] + 1]
                     bx0 = min(c["bbox"][0] for c in span_chars)
                     by0 = min(c["bbox"][1] for c in span_chars)
                     bx1 = max(c["bbox"][2] for c in span_chars)
@@ -3008,6 +3114,50 @@ class BookVisualizerWindow(QMainWindow):
         self._text_btn.clicked.connect(lambda checked: self._set_tool(_TOOL_TEXT if checked else _TOOL_NONE))
         tool_row.addWidget(self._text_btn)
 
+        _mask_pair = QWidget()
+        _mask_pair.setFixedSize(BTN_SIZE * 2, BTN_SIZE)
+        _mask_pair_lay = QHBoxLayout(_mask_pair)
+        _mask_pair_lay.setContentsMargins(0, 0, 0, 0)
+        _mask_pair_lay.setSpacing(0)
+
+        _mask_btn_style = (
+            f"QPushButton {{ background-color: {theme.BTN_BG}; border: none;"
+            f" padding: 0px; }}"
+            f" QPushButton:hover    {{ background-color: {theme.BTN_HOVER}; }}"
+            f" QPushButton:pressed  {{ background-color: {theme.BTN_PRESSED}; }}"
+            f" QPushButton:checked  {{ background-color: {theme.ACCENT}; }}"
+            f" QPushButton:disabled {{ color: {theme.TEXT_DIM};"
+            f" background-color: {theme.BTN_BG}; }}"
+        )
+
+        self._mask_left_btn = QPushButton()
+        self._mask_left_btn.setIcon(_svg_icon("mask-square", ICON_SIZE))
+        self._mask_left_btn.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
+        self._mask_left_btn.setCheckable(True)
+        self._mask_left_btn.setFixedSize(BTN_SIZE, BTN_SIZE)
+        self._mask_left_btn.setToolTip("Mask left page — show only selected text")
+        self._mask_left_btn.setStyleSheet(
+            _mask_btn_style + f" QPushButton {{ border-radius: 0px;"
+            f" border-top-left-radius: 3px; border-bottom-left-radius: 3px; }}"
+        )
+        self._mask_left_btn.clicked.connect(self._toggle_mask_left)
+        _mask_pair_lay.addWidget(self._mask_left_btn)
+
+        self._mask_right_btn = QPushButton()
+        self._mask_right_btn.setIcon(_svg_icon("mask-square", ICON_SIZE))
+        self._mask_right_btn.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
+        self._mask_right_btn.setCheckable(True)
+        self._mask_right_btn.setFixedSize(BTN_SIZE, BTN_SIZE)
+        self._mask_right_btn.setToolTip("Mask right page — show only selected text")
+        self._mask_right_btn.setStyleSheet(
+            _mask_btn_style + f" QPushButton {{ border-radius: 0px;"
+            f" border-top-right-radius: 3px; border-bottom-right-radius: 3px; }}"
+        )
+        self._mask_right_btn.clicked.connect(self._toggle_mask_right)
+        _mask_pair_lay.addWidget(self._mask_right_btn)
+
+        tool_row.addWidget(_mask_pair)
+
         self._cut_btn = QPushButton()
         self._cut_btn.setIcon(_svg_icon("cut", ICON_SIZE))
         self._cut_btn.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
@@ -3226,6 +3376,8 @@ class BookVisualizerWindow(QMainWindow):
         self._load_book_layers(slug)
         # Load text selections for this book
         self._load_book_text_sels(slug)
+        # Load mask state for this book
+        self._load_book_mask(slug)
         # Set book dir for image layer resolution
         self._overlay.set_book_dir(book_dir(self._project_path, slug))
         self._spread_view.set_book_dir(book_dir(self._project_path, slug))
@@ -3275,6 +3427,7 @@ class BookVisualizerWindow(QMainWindow):
         self._spread_suffix.setText(f" of {page_count}")
         self._persist_spread()
         self._refresh_layer_panel()
+        self._sync_mask_buttons()
 
     def _close_doc(self) -> None:
         """Close the open fitz document and reset the spread view."""
@@ -3283,6 +3436,10 @@ class BookVisualizerWindow(QMainWindow):
         self._overlay.set_layers([])
         self._overlay.set_text_selections([])
         self._layer_panel.remove_all()
+        self._spread_view.set_text_sels_for_mask([])
+        self._spread_view.set_masked_pages(set())
+        self._mask_left_btn.setChecked(False)
+        self._mask_right_btn.setChecked(False)
         self._spread_view.clear()
         if self._doc is not None:
             try:
@@ -3339,6 +3496,32 @@ class BookVisualizerWindow(QMainWindow):
         if tool != _TOOL_CUT:
             self._overlay.cancel_wip()
 
+    def _toggle_mask_left(self, checked: bool) -> None:
+        left_i = self._spread_view._left_i
+        if left_i is None:
+            self._mask_left_btn.setChecked(False)
+            return
+        self._spread_view.set_page_masked(left_i, checked)
+        self._save_current_mask()
+
+    def _toggle_mask_right(self, checked: bool) -> None:
+        right_i = self._spread_view._right_i
+        if right_i is None:
+            self._mask_right_btn.setChecked(False)
+            return
+        self._spread_view.set_page_masked(right_i, checked)
+        self._save_current_mask()
+
+    def _sync_mask_buttons(self) -> None:
+        """Update mask button checked states to match current spread pages."""
+        left_i  = self._spread_view._left_i
+        right_i = self._spread_view._right_i
+        masked  = self._spread_view._masked_pages
+        self._mask_left_btn.setEnabled(left_i is not None)
+        self._mask_right_btn.setEnabled(right_i is not None)
+        self._mask_left_btn.setChecked(left_i is not None and left_i in masked)
+        self._mask_right_btn.setChecked(right_i is not None and right_i in masked)
+
     def _toggle_layers(self) -> None:
         visible = self._layers_body.isVisible()
         self._layers_body.setVisible(not visible)
@@ -3385,6 +3568,7 @@ class BookVisualizerWindow(QMainWindow):
     def _load_book_text_sels(self, slug: str) -> None:
         sels = _load_text_sels(self._project_path, slug)
         self._overlay.set_text_selections(sels)
+        self._spread_view.set_text_sels_for_mask(sels)
 
     def _save_current_text_sels(self) -> None:
         if not self._slug:
@@ -3395,11 +3579,26 @@ class BookVisualizerWindow(QMainWindow):
         except Exception:
             pass
 
+    def _load_book_mask(self, slug: str) -> None:
+        masked = _load_mask(self._project_path, slug)
+        self._spread_view.set_masked_pages(masked)
+        self._sync_mask_buttons()
+
+    def _save_current_mask(self) -> None:
+        if not self._slug:
+            return
+        try:
+            _save_mask(self._project_path, self._slug, self._spread_view._masked_pages)
+        except Exception:
+            pass
+
     def _on_text_sel_committed(self, sel: dict) -> None:
         self._save_current_text_sels()
+        self._spread_view.set_text_sels_for_mask(self._overlay.current_text_sels())
 
     def _on_text_sel_removed(self, sid: str) -> None:  # noqa: ARG002
         self._save_current_text_sels()
+        self._spread_view.set_text_sels_for_mask(self._overlay.current_text_sels())
 
     # ------------------------------------------------------------------
     # Overlay callbacks
