@@ -4951,6 +4951,8 @@ def _silhouette_catalog_extract(args):
                     print(f"  ── {fld}/{lbl}  (dry-run)")
                 continue
 
+            fld_totals = {"files": 0, "shots": 0, "saved": 0, "skipped": 0, "failed": 0}
+
             for lbl in labels:
                 print(f"  ── {fld}/{lbl}")
                 try:
@@ -4977,10 +4979,10 @@ def _silhouette_catalog_extract(args):
                             force=force,
                             verbose=verbose,
                         )
-                        grand["shots"]   += s.get("total_shots",   0)
-                        grand["saved"]   += s.get("total_saved",   0)
-                        grand["skipped"] += s.get("total_skipped", 0)
-                        grand["failed"]  += s.get("failed",        0)
+                        fld_totals["shots"]   += s.get("total_shots",   0)
+                        fld_totals["saved"]   += s.get("total_saved",   0)
+                        fld_totals["skipped"] += s.get("total_skipped", 0)
+                        fld_totals["failed"]  += s.get("failed",        0)
                     else:
                         # All-movies scope
                         s = extract_catalog_for_all(
@@ -4993,11 +4995,11 @@ def _silhouette_catalog_extract(args):
                             force=force,
                             verbose=verbose,
                         )
-                        grand["files"]   += s.get("total_files",   0)
-                        grand["shots"]   += s.get("total_shots",   0)
-                        grand["saved"]   += s.get("total_saved",   0)
-                        grand["skipped"] += s.get("total_skipped", 0)
-                        grand["failed"]  += s.get("total_failed",  0)
+                        fld_totals["files"]   += s.get("total_files",   0)
+                        fld_totals["shots"]   += s.get("total_shots",   0)
+                        fld_totals["saved"]   += s.get("total_saved",   0)
+                        fld_totals["skipped"] += s.get("total_skipped", 0)
+                        fld_totals["failed"]  += s.get("total_failed",  0)
                     print(
                         f"     saved={s.get('total_saved', s.get('saved', 0))}  "
                         f"skipped={s.get('total_skipped', s.get('skipped', 0))}  "
@@ -5006,7 +5008,24 @@ def _silhouette_catalog_extract(args):
                 except RuntimeError as exc:
                     msg = f"{fld}/{lbl}: {exc}"
                     errors.append(msg)
+                    fld_totals["failed"] += 1
                     print(f"     ✗ {exc}", file=sys.stderr)
+
+            # Accumulate into grand totals
+            for k in grand:
+                grand[k] += fld_totals[k]
+
+            # Per-field notification
+            if notify:
+                from services.notify import discord_notify
+                discord_notify(
+                    f"✓ Silhouette field '{fld}' complete: "
+                    f"{len(labels)} label(s)  "
+                    f"saved={fld_totals['saved']}  "
+                    f"skipped={fld_totals['skipped']}  "
+                    f"failed={fld_totals['failed']}",
+                    project_path,
+                )
 
         fields_str = ", ".join(fields_multi)
         print(
@@ -5019,13 +5038,6 @@ def _silhouette_catalog_extract(args):
             print(f"  {len(errors)} error(s):", file=sys.stderr)
             for e in errors:
                 print(f"    ✗ {e}", file=sys.stderr)
-        if notify:
-            from services.notify import discord_notify
-            discord_notify(
-                f"✓ Silhouette multi-field extract ({fields_str}): "
-                f"saved={grand['saved']}  failed={grand['failed']}",
-                project_path,
-            )
         if grand["failed"] or errors:
             sys.exit(1)
         return
