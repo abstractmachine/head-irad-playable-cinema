@@ -795,6 +795,24 @@ class _CutOverlay(QWidget):
     text_sel_committed = pyqtSignal(dict) # emitted when a text selection is created
     text_sel_removed   = pyqtSignal(str)  # emitted with text sel id on deletion
 
+    @staticmethod
+    def _make_cross_cursor(color: str, size: int = 21) -> QCursor:
+        """Return a QCursor with a thin cross drawn in *color*."""
+        pix = QPixmap(size, size)
+        pix.fill(Qt.transparent)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.Antialiasing)
+        pen = QPen(QColor(color), 1.5)
+        p.setPen(pen)
+        mid = size // 2
+        gap = 3  # blank pixels around the centre point
+        p.drawLine(0,   mid, mid - gap, mid)         # left arm
+        p.drawLine(mid + gap, mid, size - 1, mid)    # right arm
+        p.drawLine(mid, 0,   mid, mid - gap)         # top arm
+        p.drawLine(mid, mid + gap, mid, size - 1)    # bottom arm
+        p.end()
+        return QCursor(pix, mid, mid)
+
     def __init__(self, parent_view: "_SpreadView") -> None:
         super().__init__(parent_view)
         self._view = parent_view
@@ -871,9 +889,9 @@ class _CutOverlay(QWidget):
         if tool == _TOOL_CUT:
             self.setCursor(Qt.CrossCursor)
         elif tool == _TOOL_ERASE:
-            self.setCursor(Qt.ForbiddenCursor)
+            self.setCursor(self._make_cross_cursor("#ff00ff"))   # fuchsia
         elif tool == _TOOL_TEXT:
-            self.setCursor(Qt.CrossCursor)
+            self.setCursor(self._make_cross_cursor("#00ffff"))   # cyan
         else:
             self.setCursor(Qt.ArrowCursor)
         self.update()
@@ -3815,6 +3833,37 @@ class BookVisualizerWindow(QMainWindow):
                 if key in (Qt.Key_Down, Qt.Key_End):
                     self._show_book(min(len(self._books) - 1, self._current_book_idx + 1))
                     return True
+                if key == Qt.Key_T:
+                    new_tool = _TOOL_NONE if self._tool == _TOOL_TEXT else _TOOL_TEXT
+                    self._set_tool(new_tool)
+                    return True
+                if key == Qt.Key_C:
+                    new_tool = _TOOL_NONE if self._tool == _TOOL_CUT else _TOOL_CUT
+                    self._set_tool(new_tool)
+                    return True
+                if key == Qt.Key_E:
+                    new_tool = _TOOL_NONE if self._tool == _TOOL_ERASE else _TOOL_ERASE
+                    self._set_tool(new_tool)
+                    return True
+                if key in (Qt.Key_BracketLeft, Qt.Key_BraceLeft):
+                    new_state = not self._mask_left_btn.isChecked()
+                    self._mask_left_btn.setChecked(new_state)
+                    self._toggle_mask_left(new_state)
+                    return True
+                if key in (Qt.Key_BracketRight, Qt.Key_BraceRight):
+                    new_state = not self._mask_right_btn.isChecked()
+                    self._mask_right_btn.setChecked(new_state)
+                    self._toggle_mask_right(new_state)
+                    return True
+                if key == Qt.Key_H:
+                    self._show_outlines_chk.setChecked(not self._show_outlines_chk.isChecked())
+                    return True
+                if key == Qt.Key_S:
+                    self._text_vis_chk.setChecked(not self._text_vis_chk.isChecked())
+                    return True
+                if key == Qt.Key_L:
+                    self._layers_visible_btn.setChecked(not self._layers_visible_btn.isChecked())
+                    return True
             if not in_text and ctrl:
                 if key == Qt.Key_C:
                     sel_id = self._overlay._sel_id
@@ -3901,6 +3950,34 @@ class BookVisualizerWindow(QMainWindow):
                 self._overlay.delete_selected_layer()
             self._save_current_layers()
             return
+
+        if mods == Qt.NoModifier:
+            if key == Qt.Key_T:
+                new_tool = _TOOL_NONE if self._tool == _TOOL_TEXT else _TOOL_TEXT
+                self._set_tool(new_tool)
+                return
+            if key == Qt.Key_C:
+                new_tool = _TOOL_NONE if self._tool == _TOOL_CUT else _TOOL_CUT
+                self._set_tool(new_tool)
+                return
+            if key == Qt.Key_E:
+                new_tool = _TOOL_NONE if self._tool == _TOOL_ERASE else _TOOL_ERASE
+                self._set_tool(new_tool)
+                return
+            if key in (Qt.Key_BracketLeft, Qt.Key_BraceLeft):
+                self._mask_left_btn.setChecked(not self._mask_left_btn.isChecked())
+                self._toggle_mask_left(self._mask_left_btn.isChecked())
+                return
+            if key in (Qt.Key_BracketRight, Qt.Key_BraceRight):
+                self._mask_right_btn.setChecked(not self._mask_right_btn.isChecked())
+                self._toggle_mask_right(self._mask_right_btn.isChecked())
+                return
+            if key == Qt.Key_H:
+                self._show_outlines_chk.setChecked(not self._show_outlines_chk.isChecked())
+                return
+            if key == Qt.Key_S:
+                self._text_vis_chk.setChecked(not self._text_vis_chk.isChecked())
+                return
 
         super().keyPressEvent(event)
 

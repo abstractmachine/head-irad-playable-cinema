@@ -4855,46 +4855,56 @@ def _index_vocabulary(args):
 
 
 def _index_silhouette(args):
-    """Build and cache a best silhouette polygon for a vocabulary word in a field."""
-    from services.silhouette import build_silhouette
+    """Dispatch ``crossing index silhouette <extract|audit|clear>``."""
+    silhouette_action = getattr(args, "silhouette_action", None)
+    if silhouette_action == "extract":
+        _silhouette_catalog_extract(args)
+    elif silhouette_action == "audit":
+        _silhouette_catalog_audit(args)
+    elif silhouette_action == "clear":
+        _silhouette_catalog_clear(args)
+    else:
+        print("✗ index silhouette: specify a subcommand (extract, audit, clear)", file=sys.stderr)
+        sys.exit(1)
+
+
+def _silhouette_catalog_extract(args):
+    """Extract transparent PNG objects for a label and save to the catalog."""
+    from data.metadata import get_metadata
+    from data.media_id import compute_media_id
+    from data.shotlist import resolve_filename
+    from services.silhouette_catalog import (
+        extract_objects_for_shot,
+        extract_catalog_for_movie,
+        extract_catalog_for_all,
+        _find_shot_candidates,
+    )
 
     project_path = prefs.get("path")
-    word          = args.word
-    field         = args.field
-    media_type    = getattr(args, "media", "movies")
-    force         = getattr(args, "force", False)
-    verbose       = getattr(args, "verbose", False)
-    dry_run       = getattr(args, "dry_run", False)
-    notify        = getattr(args, "notify", False)
+    label        = args.label
+    field        = getattr(args, "field", None)  # None → search across all annotation fields
+    media_type   = getattr(args, "media", "movies")
+    force        = getattr(args, "force", False)
+    verbose      = getattr(args, "verbose", False)
+    dry_run      = getattr(args, "dry_run", False)
+    notify       = getattr(args, "notify", False)
 
-    sam_model     = (
+    sam_model   = (
         getattr(args, "model", None)
         or prefs.get(_MODEL_KEYS["segmentation"], _MODEL_DEFAULTS["segmentation"])
     )
-    frame_model   = (
+    frame_model = (
         getattr(args, "frame_model", None)
         or prefs.get(_MODEL_KEYS["frame_match"], _MODEL_DEFAULTS["frame_match"])
     )
 
     # Resolve scope
-    shot_id = getattr(args, "shot", None)
-    movie   = getattr(args, "movie", None)
-    tmdb    = getattr(args, "tmdb", None)
-    do_all  = getattr(args, "all", False)
+    shot_id  = getattr(args, "shot",  None)
+    movie    = getattr(args, "movie", None)
+    tmdb     = getattr(args, "tmdb",  None)
+    do_all   = getattr(args, "all",   False)
 
-    if shot_id:
-        scope_type  = "shot"
-        scope_value = shot_id
-    elif tmdb is not None:
-        scope_type  = "movie"
-        scope_value = f"tmdb_{tmdb}"
-    elif movie:
-        scope_type  = "movie"
-        scope_value = movie
-    elif do_all:
-        scope_type  = "all"
-        scope_value = None
-    else:
+    if not shot_id and not movie and tmdb is None and not do_all:
         print(
             "✗ Specify a scope: --shot <shot_id>, --movie <title>, --tmdb <id>, or --all",
             file=sys.stderr,
@@ -4902,32 +4912,38 @@ def _index_silhouette(args):
         sys.exit(1)
 
     if verbose or dry_run:
-        scope_desc = scope_value or "all movies"
+        scope_str = (
+            f"shot:{shot_id}" if shot_id
+            else f"tmdb:{tmdb}" if tmdb is not None
+            else f"movie:{movie}" if movie
+            else "all"
+        )
         print(
-            f"Silhouette: word='{word}'  field='{field}'  "
-            f"scope={scope_type}:{scope_desc}  media={media_type}"
+            f"Silhouette catalog extract: label='{label}'  field='{field}'  "
+            f"scope={scope_str}  media={media_type}"
         )
         if dry_run:
-            print("  (dry-run — no segmentation or writes)")
+            print("  (dry-run — listing candidates only)")
 
-    result = build_silhouette(
-        project_path=project_path,
-        word=word,
-        field=field,
-        scope_type=scope_type,
-        scope_value=scope_value,
-        media_type=media_type,
-        sam_model_name=sam_model,
-        frame_model_name=frame_model,
-        force=force,
-        verbose=verbose,
-        dry_run=dry_run,
-    )
-
+    # ── dry-run: list candidates and exit ──────────────────────────────────
     if dry_run:
-        candidates = result.get("candidates", [])
+        scope_type  = "shot" if shot_id else ("movie" if (movie or tmdb is not None) else "all")
+        scope_value = shot_id or (str(tmdb) if tmdb is not None else movie)
+
+        if scope_type == "shot":
+            print(f"  Single shot: {shot_id}")
+            return
+
+        candidates = _find_shot_candidates(
+            project_path=project_path,
+            label=label,
+            field=field,
+            media_type=media_type,
+            scope_type=scope_type,
+            scope_value=scope_value,
+        )
         if not candidates:
-            print(f"  No candidates found for '{word}' in '{field}'.")
+            print(f"  No candidates found for '{label}' in field '{field}'.")
         else:
             print(f"  {len(candidates)} candidate shot(s):")
             for c in candidates[:20]:
@@ -4939,33 +4955,251 @@ def _index_silhouette(args):
                 print(f"    … and {len(candidates) - 20} more")
         return
 
-    if result["accepted"]:
-        reason = result["reason"]
-        out    = result["output_path"] or ""
-        if reason == "cached":
-            print(f"✓ (cached) {out}")
+    # ── single-shot mode ───────────────────────────────────────────────────
+    if shot_id:
+        from data.media_id import parse_shot_id
+        from services.silhouette import _resolve_shot_details
+
+        filename, media_id = _resolve_shot_details(project_path, shot_id, media_type)
+        if not filename or not media_id:
+            print(f"✗ Could not resolve filename/media_id for shot '{shot_id}'.", file=sys.stderr)
+            sys.exit(1)
+
+        result = extract_objects_for_shot(
+            project_path=project_path,
+            label=label,
+            field=field,
+            shot_id=shot_id,
+            filename=filename,
+            media_id=media_id,
+            media_type=media_type,
+            sam_model_name=sam_model,
+            frame_model_name=frame_model,
+            force=force,
+            verbose=verbose,
+        )
+        saved = result.get("saved", [])
+        reason = result.get("reason", "?")
+        if saved:
+            print(f"✓ {len(saved)} object(s) extracted from shot {shot_id}")
+            for p in saved:
+                print(f"  {p}")
+        elif reason == "cached":
+            print(f"  (cached) objects for {shot_id} already in catalog")
         else:
-            payload = result.get("payload") or {}
-            score   = payload.get("score", 0)
-            pts     = len(payload.get("polygon") or [])
-            print(f"✓ Silhouette saved: {out}")
-            print(f"  score={score:.4f}  polygon_pts={pts}")
+            print(f"✗ No objects extracted: {reason}", file=sys.stderr)
+            sys.exit(1)
+        return
+
+    # ── single-movie mode ──────────────────────────────────────────────────
+    if movie or tmdb is not None:
+        query_str = movie
+        try:
+            filename = resolve_filename(project_path, tmdb, query_str, media_type)
+        except ValueError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        media_id = None
+        for entry in get_metadata(project_path, media_type=media_type):
+            if entry.get("filename") == filename:
+                media_id = compute_media_id(entry, media_type)
+                break
+        if not media_id:
+            print(f"✗ Could not resolve media_id for '{filename}'.", file=sys.stderr)
+            sys.exit(1)
+
+        summary = extract_catalog_for_movie(
+            project_path=project_path,
+            filename=filename,
+            media_id=media_id,
+            label=label,
+            field=field,
+            media_type=media_type,
+            sam_model_name=sam_model,
+            frame_model_name=frame_model,
+            force=force,
+            verbose=verbose,
+        )
+        _print_silhouette_extract_summary(summary, label, filename)
         if notify:
             from services.notify import discord_notify
             discord_notify(
-                f"✓ Silhouette: {word!r} in {field!r}  — {out}",
+                f"✓ Silhouette extract: '{label}' in {filename}  "
+                f"saved={summary.get('total_saved', 0)}  "
+                f"failed={summary.get('failed', 0)}",
                 project_path,
             )
-    else:
-        reason = result["reason"]
-        print(f"✗ Silhouette not found: {reason}", file=sys.stderr)
-        if notify:
-            from services.notify import discord_notify
+        if summary.get("failed", 0):
+            sys.exit(1)
+        return
+
+    # ── all-movies mode ────────────────────────────────────────────────────
+    def _on_item(fn, item_summary, exc):
+        if not notify:
+            return
+        from services.notify import discord_notify
+        if exc is None:
+            n = item_summary.get("total_saved", 0)
+            if n == 0:
+                return  # nothing new, skip notification
             discord_notify(
-                f"✗ Silhouette not found: {word!r} in {field!r}  — {reason}",
-                project_path,
+                f"✓ Silhouette extract '{label}': {fn}  saved={n}", project_path
             )
+        else:
+            discord_notify(
+                f"✗ Silhouette extract '{label}': {fn}  — {exc}", project_path
+            )
+
+    try:
+        summary = extract_catalog_for_all(
+            project_path=project_path,
+            label=label,
+            field=field,
+            media_type=media_type,
+            sam_model_name=sam_model,
+            frame_model_name=frame_model,
+            force=force,
+            verbose=verbose,
+            on_item_done=_on_item if notify else None,
+        )
+    except RuntimeError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
         sys.exit(1)
+
+    print(
+        f"✓ Silhouette catalog extract complete for '{label}':\n"
+        f"  files={summary['total_files']}  "
+        f"shots={summary['total_shots']}  "
+        f"saved={summary['total_saved']}  "
+        f"skipped={summary['total_skipped']}  "
+        f"failed={summary['total_failed']}"
+    )
+    if notify:
+        from services.notify import discord_notify
+        discord_notify(
+            f"✓ Silhouette extract batch '{label}': "
+            f"files={summary['total_files']}  "
+            f"saved={summary['total_saved']}  "
+            f"failed={summary['total_failed']}",
+            project_path,
+        )
+    if summary.get("total_failed", 0):
+        sys.exit(1)
+
+
+def _print_silhouette_extract_summary(summary: dict, label: str, filename: str) -> None:
+    saved   = summary.get("total_saved", 0)
+    skipped = summary.get("total_skipped", 0)
+    failed  = summary.get("failed", 0)
+    shots   = summary.get("total_shots", 0)
+    if saved == 0 and failed == 0:
+        print(f"  (nothing new) '{label}' in {filename}  shots={shots}  skipped={skipped}")
+    else:
+        print(f"✓ '{label}' in {filename}")
+        print(f"  shots={shots}  saved={saved}  skipped={skipped}  failed={failed}")
+
+
+def _silhouette_catalog_audit(args):
+    """Print a summary of the silhouette catalog."""
+    from services.silhouette_catalog import audit_catalog, catalog_base_dir
+
+    project_path   = prefs.get("path")
+    media_type     = getattr(args, "media", "movies")
+    label          = getattr(args, "label", None)
+    movie          = getattr(args, "movie", None)
+    tmdb           = getattr(args, "tmdb",  None)
+    do_all         = getattr(args, "all",   False)
+    output_json    = getattr(args, "json",  False)
+
+    filename_stem = None
+    if movie or tmdb is not None:
+        from data.shotlist import resolve_filename
+        from pathlib import Path as _Path
+        try:
+            filename = resolve_filename(project_path, tmdb, movie, media_type)
+            filename_stem = _Path(filename).stem
+        except ValueError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            sys.exit(1)
+
+    report = audit_catalog(
+        project_path=project_path,
+        media_type=media_type,
+        label=label,
+        filename_stem=filename_stem,
+    )
+
+    if output_json:
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+        return
+
+    total   = report["total_objects"]
+    errors  = report["errors"]
+    by_lbl  = report["by_label"]
+    items   = report["media_items"]
+
+    base = catalog_base_dir(project_path, media_type)
+    print(f"Silhouette catalog  ({media_type})  — {base}")
+    print(f"  Total objects : {total}")
+    print(f"  Media items   : {len(items)}")
+    print(f"  Labels        : {len(by_lbl)}")
+    if errors:
+        print(f"  Errors        : {errors}")
+
+    if by_lbl:
+        print()
+        print("  By label:")
+        for lbl, count in by_lbl[:30]:
+            bar = "█" * min(count, 40)
+            print(f"    {lbl:<25s} {count:>5d}  {bar}")
+        if len(by_lbl) > 30:
+            print(f"    … and {len(by_lbl) - 30} more labels")
+
+
+def _silhouette_catalog_clear(args):
+    """Delete silhouette catalog entries matching the given filters."""
+    from services.silhouette_catalog import clear_catalog
+
+    project_path = prefs.get("path")
+    media_type   = getattr(args, "media", "movies")
+    label        = getattr(args, "label", None)
+    movie        = getattr(args, "movie", None)
+    tmdb         = getattr(args, "tmdb",  None)
+    do_all       = getattr(args, "all",   False)
+    dry_run      = getattr(args, "dry_run", False)
+
+    filename_stem = None
+    if movie or tmdb is not None:
+        from data.shotlist import resolve_filename
+        from pathlib import Path as _Path
+        try:
+            filename = resolve_filename(project_path, tmdb, movie, media_type)
+            filename_stem = _Path(filename).stem
+        except ValueError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            sys.exit(1)
+
+    if not do_all and label is None and filename_stem is None:
+        print(
+            "✗ Specify --all, --label <label>, --movie <title>, or --tmdb <id>.\n"
+            "  Use --all to clear the entire catalog (irreversible without --dry-run).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    result = clear_catalog(
+        project_path=project_path,
+        media_type=media_type,
+        label=label,
+        filename_stem=filename_stem,
+        dry_run=dry_run,
+    )
+
+    n_files = result["deleted_files"]
+    n_dirs  = result["deleted_dirs"]
+    prefix  = "(dry-run) would delete" if dry_run else "Deleted"
+    print(f"✓ {prefix} {n_files} file(s) in {n_dirs} director{'y' if n_dirs == 1 else 'ies'}.")
 
 
 def _index_palette(args):
@@ -6769,66 +7003,152 @@ def build_parser():
 
     p_index_silhouette = index_sub.add_parser(
         "silhouette",
-        help=(
-            "Build and cache the best silhouette polygon for a vocabulary word "
-            "in an annotation field"
-        ),
+        help="Extract, audit, and manage the silhouette object catalog (transparent PNGs)",
         epilog=(
+            "Subcommands:\n"
+            "  extract   Extract transparent PNG objects for a label\n"
+            "  audit     Show catalog statistics\n"
+            "  clear     Delete catalog entries\n\n"
             "Examples:\n"
-            "  crossing index silhouette horse --field animals --all\n"
-            "  crossing index silhouette saddle --field objects --movie Django\n"
-            "  crossing index silhouette running --field action --tmdb 11969\n"
-            "  crossing index silhouette horse --field animals --shot tmdb_281957@f001240-f001310"
+            "  crossing index silhouette extract horse --field animals --all\n"
+            "  crossing index silhouette extract horse --field animals --movie Django\n"
+            "  crossing index silhouette extract saddle --field objects --tmdb 11969\n"
+            "  crossing index silhouette extract cowboy --field characters --shot tmdb_281957@f001240-f001310\n"
+            "  crossing index silhouette audit\n"
+            "  crossing index silhouette audit --label horse\n"
+            "  crossing index silhouette clear --label horse --dry-run"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_index_silhouette.set_defaults(func=cmd_index)
-    p_index_silhouette.add_argument(
-        "word",
-        help="Vocabulary word to segment (e.g. horse, saddle, running)",
+    silhouette_sub = p_index_silhouette.add_subparsers(dest="silhouette_action", required=True)
+
+    # ── extract ────────────────────────────────────────────────────────────
+    p_sil_extract = silhouette_sub.add_parser(
+        "extract",
+        help=(
+            "Run CLIP + SAM2 segmentation and save all valid objects as transparent PNGs "
+            "in the silhouette catalog"
+        ),
+        epilog=(
+            "Examples:\n"
+            "  crossing index silhouette extract horse --field animals --all\n"
+            "  crossing index silhouette extract horse --field animals --movie Django\n"
+            "  crossing index silhouette extract saddle --field objects --tmdb 11969\n"
+            "  crossing index silhouette extract cowboy --field characters --shot tmdb_281957@f001240-f001310"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p_index_silhouette.add_argument(
-        "--field", required=True, metavar="FIELD",
-        help="Annotation field / category to search in (e.g. animals, objects, action)",
+    p_sil_extract.set_defaults(func=cmd_index)
+    p_sil_extract.add_argument(
+        "label",
+        help="Object label / vocabulary word to segment (e.g. horse, saddle, cowboy)",
     )
-    p_index_silhouette.add_argument(
+    p_sil_extract.add_argument(
+        "--field", default=None, metavar="FIELD",
+        help=(
+            "Annotation field / category to search in (e.g. animals, objects, characters). "
+            "Omit to search across all annotation fields (recommended)."
+        ),
+    )
+    p_sil_extract.add_argument(
         "--movie", default=None, metavar="TITLE",
-        help="Restrict search to this movie (title substring or media_id)",
+        help="Restrict extraction to this movie (title substring)",
     )
-    _add_tmdb_arg(p_index_silhouette, help="Restrict search to the movie with this TMDb ID")
-    p_index_silhouette.add_argument(
+    _add_tmdb_arg(p_sil_extract, help="Restrict extraction to the movie with this TMDb ID")
+    p_sil_extract.add_argument(
         "--shot", default=None, metavar="SHOT_ID",
         help=(
-            "Single-shot diagnostic mode: process exactly this shot_id "
+            "Single-shot mode: process exactly this shot_id "
             "(format: <media_id>@fSTART-fEND)"
         ),
     )
-    p_index_silhouette.add_argument(
+    p_sil_extract.add_argument(
         "--all", action="store_true",
-        help="Search across all movies in the corpus",
+        help="Run extraction across the entire corpus",
     )
-    _add_media_arg(p_index_silhouette)
-    p_index_silhouette.add_argument(
+    _add_media_arg(p_sil_extract)
+    p_sil_extract.add_argument(
         "--model", default=None, metavar="NAME",
         help=(
             "SAM2 checkpoint filename inside <project>/models/ "
-            "(default: segmentation model role, currently sam2.1_b.pt)"
+            "(default: segmentation model role)"
         ),
     )
-    p_index_silhouette.add_argument(
+    p_sil_extract.add_argument(
         "--frame-model", default=None, dest="frame_model", metavar="NAME",
-        help=(
-            "CLIP model name for frame matching "
-            "(default: frame_match model role, currently clip-vit-base-patch32)"
-        ),
+        help="CLIP model name for best-frame selection (default: frame_match model role)",
     )
-    p_index_silhouette.add_argument(
+    p_sil_extract.add_argument(
         "--force", action="store_true",
-        help="Overwrite existing cached silhouette",
+        help="Re-extract even if catalog entries for this shot already exist",
     )
-    _add_dry_run_arg(p_index_silhouette, help="List candidate shots without running segmentation or writing any files")
-    _add_verbose_arg(p_index_silhouette, help="Print progress detail (model loading, frame selection, mask counts)")
-    _add_notify_args(p_index_silhouette, batch=False)
+    _add_dry_run_arg(p_sil_extract, help="List candidate shots without running segmentation or writing files")
+    _add_verbose_arg(p_sil_extract, help="Print progress (model loading, frame selection, mask counts, saved paths)")
+    _add_notify_args(p_sil_extract)
+
+    # ── audit ──────────────────────────────────────────────────────────────
+    p_sil_audit = silhouette_sub.add_parser(
+        "audit",
+        help="Print a summary of the silhouette object catalog",
+        epilog=(
+            "Examples:\n"
+            "  crossing index silhouette audit\n"
+            "  crossing index silhouette audit --label horse\n"
+            "  crossing index silhouette audit --movie Django\n"
+            "  crossing index silhouette audit --json"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_sil_audit.set_defaults(func=cmd_index)
+    p_sil_audit.add_argument(
+        "--label", default=None, metavar="LABEL",
+        help="Filter report to a single label",
+    )
+    p_sil_audit.add_argument(
+        "--movie", default=None, metavar="TITLE",
+        help="Filter report to a single movie (title substring)",
+    )
+    _add_tmdb_arg(p_sil_audit, help="Filter report to the movie with this TMDb ID")
+    p_sil_audit.add_argument(
+        "--all", action="store_true",
+        help="Report across all media types (movies + gameplay)",
+    )
+    _add_media_arg(p_sil_audit)
+    p_sil_audit.add_argument(
+        "--json", action="store_true", dest="json",
+        help="Output raw JSON instead of formatted text",
+    )
+
+    # ── clear ──────────────────────────────────────────────────────────────
+    p_sil_clear = silhouette_sub.add_parser(
+        "clear",
+        help="Delete silhouette catalog entries (use --dry-run first!)",
+        epilog=(
+            "Examples:\n"
+            "  crossing index silhouette clear --label horse --dry-run\n"
+            "  crossing index silhouette clear --label horse\n"
+            "  crossing index silhouette clear --movie Django\n"
+            "  crossing index silhouette clear --all"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_sil_clear.set_defaults(func=cmd_index)
+    p_sil_clear.add_argument(
+        "--label", default=None, metavar="LABEL",
+        help="Delete only objects with this label",
+    )
+    p_sil_clear.add_argument(
+        "--movie", default=None, metavar="TITLE",
+        help="Delete only objects from this movie (title substring)",
+    )
+    _add_tmdb_arg(p_sil_clear, help="Delete only objects from the movie with this TMDb ID")
+    p_sil_clear.add_argument(
+        "--all", action="store_true",
+        help="Delete the entire catalog for the selected media type",
+    )
+    _add_media_arg(p_sil_clear)
+    _add_dry_run_arg(p_sil_clear, help="Show what would be deleted without removing any files")
 
     # index palette
     p_index_palette = index_sub.add_parser(
