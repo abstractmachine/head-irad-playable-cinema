@@ -43,7 +43,7 @@ from styles.theme import GripSplitter, JumpScrollBar, save_window_geometry, rest
 if "QT_QPA_PLATFORM_PLUGIN_PATH" in os.environ:
     del os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"]
 
-from PyQt5.QtCore import Qt, QPoint, QSize, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QEvent, QPoint, QSize, QThread, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication,
     QComboBox,
@@ -1193,14 +1193,22 @@ class CatalogBrowser(QWidget):
     """Browse the silhouette catalog — mosaic-style layout.
 
     LEFT  — full-bleed scrollable thumbnail grid (content area)
-    RIGHT — fixed panel: label selector, film filter, object metadata
+    RIGHT — fixed panel: movie scope, field, label, object metadata
     """
+
+    # Standard annotation field order (same as Cloud/Mosaic visualizers)
+    _FIELD_ORDER = [
+        "--all", "setting", "description", "objects",
+        "action", "humans", "wearing", "animals", "text",
+    ]
 
     def __init__(self, project_path: str, media_type: str = "movies", parent=None) -> None:
         super().__init__(parent)
         self._project_path = project_path
         self._media_type = media_type
-        self._label_map: dict[str, list[dict]] = {}
+        # _field_map[field][label] = [records]
+        # field "--all" covers every record regardless of field
+        self._field_map: dict[str, dict[str, list[dict]]] = {}
         self._film_list: list[str] = []
         self._current_records: list[dict] = []  # after label + film filter
         self._page_records: list[dict] = []     # slice shown in grid
@@ -1210,6 +1218,8 @@ class CatalogBrowser(QWidget):
         self._loader: Optional[_ThumbLoader] = None
         self._build_ui()
         self._load_catalog()
+        # Reflow grid once Qt has finalised the window/splitter geometry
+        QTimer.singleShot(0, self._reflow_grid)
 
     # ------------------------------------------------------------------
     # UI construction
@@ -1237,6 +1247,10 @@ class CatalogBrowser(QWidget):
         self._grid_layout.setSpacing(_THUMB_GAP)
         self._grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         self._scroll.setWidget(self._grid_widget)
+        self._scroll.setFocusPolicy(Qt.NoFocus)
+        self._scroll.viewport().setFocusPolicy(Qt.NoFocus)
+        self._scroll.installEventFilter(self)
+        self._scroll.viewport().installEventFilter(self)
         splitter.addWidget(self._scroll)
 
         # ── RIGHT: control panel (same pattern as mosaic_visualizer) ─────
@@ -1258,31 +1272,38 @@ class CatalogBrowser(QWidget):
         pv.setContentsMargins(14, 14, 14, 14)
         pv.setSpacing(14)
 
-        # Label selector
+        # Movie Scope (top)
+        movie_group = QGroupBox("Movie Scope")
+        mg = QVBoxLayout(movie_group)
+        mg.setContentsMargins(8, 12, 8, 8)
+        self._film_combo = QComboBox()
+        self._film_combo.setFocusPolicy(Qt.NoFocus)
+        self._film_combo.currentIndexChanged.connect(self._on_film_changed)
+        self._film_combo.installEventFilter(self)
+        mg.addWidget(self._film_combo)
+        pv.addWidget(movie_group)
+
+        # Field (second)
+        field_group = QGroupBox("Field")
+        fieldg = QVBoxLayout(field_group)
+        fieldg.setContentsMargins(8, 12, 8, 8)
+        self._field_combo = QComboBox()
+        self._field_combo.setFocusPolicy(Qt.NoFocus)
+        self._field_combo.currentIndexChanged.connect(self._on_field_changed)
+        self._field_combo.installEventFilter(self)
+        fieldg.addWidget(self._field_combo)
+        pv.addWidget(field_group)
+
+        # Label (third)
         label_group = QGroupBox("Label")
         lg = QVBoxLayout(label_group)
         lg.setContentsMargins(8, 12, 8, 8)
         self._label_combo = QComboBox()
         self._label_combo.setFocusPolicy(Qt.NoFocus)
         self._label_combo.currentIndexChanged.connect(self._on_label_changed)
+        self._label_combo.installEventFilter(self)
         lg.addWidget(self._label_combo)
         pv.addWidget(label_group)
-
-        # Film filter
-        film_group = QGroupBox("Film")
-        fg = QVBoxLayout(film_group)
-        fg.setContentsMargins(8, 12, 8, 8)
-        self._film_combo = QComboBox()
-        self._film_combo.setFocusPolicy(Qt.NoFocus)
-        self._film_combo.currentIndexChanged.connect(self._on_film_changed)
-        fg.addWidget(self._film_combo)
-        pv.addWidget(film_group)
-
-        # Reload + status + load-more
-        self._reload_btn = QPushButton("↺  Reload catalog")
-        self._reload_btn.setFocusPolicy(Qt.NoFocus)
-        self._reload_btn.clicked.connect(self._load_catalog)
-        pv.addWidget(self._reload_btn)
 
         self._status_lbl = QLabel("—")
         self._status_lbl.setWordWrap(True)
@@ -1330,7 +1351,7 @@ class CatalogBrowser(QWidget):
         pv.addWidget(obj_group)
         pv.addStretch()
 
-        hint = QLabel("Home/End  film    PgUp/PgDn  label\n↑ ↓  object    ← →  page")
+        hint = QLabel("Home/End  movie    PgUp/PgDn  field\n↑ ↓  label    ← →  page")
         hint.setAlignment(Qt.AlignCenter)
         hint.setStyleSheet(
             f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT - 1}pt;"
@@ -1345,6 +1366,7 @@ class CatalogBrowser(QWidget):
         splitter.addWidget(panel)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 0)
+        splitter.setSizes([10000, _PANEL_W])
         root.addWidget(splitter)
 
     # ------------------------------------------------------------------
@@ -1356,28 +1378,29 @@ class CatalogBrowser(QWidget):
 
         all_records = scan_catalog(self._project_path, media_type=self._media_type)
 
-        label_map: dict[str, list[dict]] = {}
+        # Build field_map[field][label] = [records]
+        # Also maintain an "--all" key that aggregates across all fields
+        field_map: dict[str, dict[str, list[dict]]] = {"--all": {}}
         film_set: set[str] = set()
         for rec in all_records:
             if "error" in rec:
                 continue
             label = rec.get("label") or ""
+            field = rec.get("field") or "--all"
             if not label:
                 continue
-            label_map.setdefault(label, []).append(rec)
+            # per-field bucket
+            field_map.setdefault(field, {}).setdefault(label, []).append(rec)
+            # --all bucket
+            field_map["--all"].setdefault(label, []).append(rec)
             stem = rec.get("filename_stem") or rec.get("filename") or ""
             if stem:
                 film_set.add(stem)
 
-        self._label_map = label_map
+        self._field_map = field_map
         self._film_list = sorted(film_set)
 
-        self._label_combo.blockSignals(True)
-        self._label_combo.clear()
-        for label in sorted(label_map.keys()):
-            self._label_combo.addItem(f"{label}  ({len(label_map[label])})", userData=label)
-        self._label_combo.blockSignals(False)
-
+        # Populate film combo
         self._film_combo.blockSignals(True)
         self._film_combo.clear()
         self._film_combo.addItem("All films", userData=None)
@@ -1385,23 +1408,49 @@ class CatalogBrowser(QWidget):
             self._film_combo.addItem(stem, userData=stem)
         self._film_combo.blockSignals(False)
 
-        if not label_map:
+        # Populate field combo (standard order, only fields with data)
+        present_fields = set(field_map.keys())
+        self._field_combo.blockSignals(True)
+        self._field_combo.clear()
+        for f in self._FIELD_ORDER:
+            if f in present_fields:
+                self._field_combo.addItem(f, userData=f)
+        # Any fields not in the standard order go at the end
+        for f in sorted(present_fields - set(self._FIELD_ORDER)):
+            self._field_combo.addItem(f, userData=f)
+        self._field_combo.blockSignals(False)
+
+        if not field_map.get("--all"):
             self._status_lbl.setText(
                 "Catalog empty.\n\ncrossing index silhouette\nextract <label>"
             )
+            self._label_combo.clear()
             self._clear_grid()
             return
 
-        self._label_combo.setCurrentIndex(0)
-        self._on_label_changed(0)
+        # Trigger field→label cascade from the first field entry
+        self._field_combo.setCurrentIndex(0)
+        self._on_field_changed(0)
 
     # ------------------------------------------------------------------
     # Filtering
 
+    def _on_field_changed(self, _idx: int) -> None:
+        """Rebuild the label combo for the newly selected field."""
+        field = self._field_combo.currentData() or "--all"
+        label_counts = self._field_map.get(field, {})
+        self._label_combo.blockSignals(True)
+        self._label_combo.clear()
+        for label in sorted(label_counts.keys()):
+            count = len(label_counts[label])
+            self._label_combo.addItem(f"{label}  ({count})", userData=label)
+        self._label_combo.blockSignals(False)
+        self._page_offset = 0
+        if self._label_combo.count() > 0:
+            self._label_combo.setCurrentIndex(0)
+        self._apply_filters()
+
     def _on_label_changed(self, _idx: int) -> None:
-        label = self._label_combo.currentData()
-        if not label:
-            return
         self._page_offset = 0
         self._apply_filters()
 
@@ -1410,9 +1459,10 @@ class CatalogBrowser(QWidget):
         self._apply_filters()
 
     def _apply_filters(self) -> None:
+        field = self._field_combo.currentData() or "--all"
         label = self._label_combo.currentData()
-        film = self._film_combo.currentData()
-        records = self._label_map.get(label, [])
+        film  = self._film_combo.currentData()
+        records = self._field_map.get(field, {}).get(label, []) if label else []
         if film:
             records = [
                 r for r in records
@@ -1483,6 +1533,17 @@ class CatalogBrowser(QWidget):
         cols = self._cols()
         for i, cell in enumerate(self._cells):
             self._grid_layout.addWidget(cell, i // cols, i % cols)
+
+    def _reflow_grid(self) -> None:
+        """Reflow after Qt has committed the first layout pass."""
+        if self._cells:
+            self.resizeEvent(None)
+        else:
+            # No cells yet means the loader hasn't fired — rebuild from scratch
+            # so column count is correct for the actual viewport width.
+            if self._page_records:
+                self._rebuild_grid()
+                self._start_loader()
 
     # ------------------------------------------------------------------
     # Background loader
@@ -1563,49 +1624,66 @@ class CatalogBrowser(QWidget):
         self._meta_rows["model"].setText(rec.get("sam_model", "—"))
 
     # ------------------------------------------------------------------
-    # Keyboard navigation
+    # Keyboard handling — event filter intercepts keys stolen by child widgets
+
+    def eventFilter(self, obj, event) -> bool:
+        if event.type() == QEvent.KeyPress:
+            key = event.key()
+            mod = event.modifiers()
+            if key in (Qt.Key_Home, Qt.Key_End,
+                       Qt.Key_PageUp, Qt.Key_PageDown,
+                       Qt.Key_Up, Qt.Key_Down,
+                       Qt.Key_Left, Qt.Key_Right):
+                self._handle_nav_key(key, mod)
+                return True
+            if key == Qt.Key_Escape:
+                # bubble up to the window
+                return False
+        return super().eventFilter(obj, event)
 
     def keyPressEvent(self, event) -> None:
         key = event.key()
+        mod = event.modifiers()
+        if key in (Qt.Key_Home, Qt.Key_End,
+                   Qt.Key_PageUp, Qt.Key_PageDown,
+                   Qt.Key_Up, Qt.Key_Down,
+                   Qt.Key_Left, Qt.Key_Right):
+            self._handle_nav_key(key, mod)
+        else:
+            super().keyPressEvent(event)
+
+    def _handle_nav_key(self, key: int, mod) -> None:
         if key == Qt.Key_Home:
-            # Previous film
             idx = self._film_combo.currentIndex()
             if idx > 0:
                 self._film_combo.setCurrentIndex(idx - 1)
         elif key == Qt.Key_End:
-            # Next film
             idx = self._film_combo.currentIndex()
             if idx < self._film_combo.count() - 1:
                 self._film_combo.setCurrentIndex(idx + 1)
         elif key == Qt.Key_PageUp:
-            # Previous label
+            idx = self._field_combo.currentIndex()
+            if idx > 0:
+                self._field_combo.setCurrentIndex(idx - 1)
+        elif key == Qt.Key_PageDown:
+            idx = self._field_combo.currentIndex()
+            if idx < self._field_combo.count() - 1:
+                self._field_combo.setCurrentIndex(idx + 1)
+        elif key == Qt.Key_Up:
             idx = self._label_combo.currentIndex()
             if idx > 0:
                 self._label_combo.setCurrentIndex(idx - 1)
-        elif key == Qt.Key_PageDown:
-            # Next label
+        elif key == Qt.Key_Down:
             idx = self._label_combo.currentIndex()
             if idx < self._label_combo.count() - 1:
                 self._label_combo.setCurrentIndex(idx + 1)
-        elif key == Qt.Key_Up:
-            # Previous object in current page
-            if self._selected_idx > 0:
-                self._on_cell_clicked(self._selected_idx - 1)
-        elif key == Qt.Key_Down:
-            # Next object in current page
-            if self._selected_idx < len(self._cells) - 1:
-                self._on_cell_clicked(self._selected_idx + 1)
         elif key == Qt.Key_Left:
-            # Previous page
             if self._page_offset > 0:
                 self._show_page(max(0, self._page_offset - _PAGE_SIZE))
         elif key == Qt.Key_Right:
-            # Next page
             next_off = self._page_offset + _PAGE_SIZE
             if next_off < len(self._current_records):
                 self._show_page(next_off)
-        else:
-            super().keyPressEvent(event)
 
     def _open_sam_explorer(self) -> None:
         from tool import prefs as _prefs
@@ -1649,6 +1727,11 @@ class SilhouetteWindow(QMainWindow):
             self.close()
         elif key in (Qt.Key_Q, Qt.Key_W) and mod & Qt.ControlModifier:
             self.close()
+        elif key in (Qt.Key_Home, Qt.Key_End,
+                     Qt.Key_PageUp, Qt.Key_PageDown,
+                     Qt.Key_Up, Qt.Key_Down,
+                     Qt.Key_Left, Qt.Key_Right):
+            self._catalog._handle_nav_key(key, mod)
         else:
             super().keyPressEvent(event)
 
