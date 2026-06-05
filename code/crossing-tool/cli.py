@@ -4888,7 +4888,8 @@ def _silhouette_catalog_extract(args):
     force        = getattr(args, "force", False)
     verbose      = getattr(args, "verbose", False)
     dry_run      = getattr(args, "dry_run", False)
-    notify       = getattr(args, "notify", False)
+    notify_items = getattr(args, "notify_items", False)  # --notify-each
+    notify       = getattr(args, "notify", False) or notify_items  # --notify-each implies --notify
 
     sam_model   = (
         getattr(args, "model", None)
@@ -5015,8 +5016,8 @@ def _silhouette_catalog_extract(args):
             for k in grand:
                 grand[k] += fld_totals[k]
 
-            # Per-field notification
-            if notify:
+            # Per-field notification (--notify-each)
+            if notify_items:
                 from services.notify import discord_notify
                 discord_notify(
                     f"✓ Silhouette field '{fld}' complete: "
@@ -5038,6 +5039,13 @@ def _silhouette_catalog_extract(args):
             print(f"  {len(errors)} error(s):", file=sys.stderr)
             for e in errors:
                 print(f"    ✗ {e}", file=sys.stderr)
+        if notify:
+            from services.notify import discord_notify
+            discord_notify(
+                f"✓ Silhouette multi-field extract ({fields_str}): "
+                f"saved={grand['saved']}  failed={grand['failed']}",
+                project_path,
+            )
         if grand["failed"] or errors:
             sys.exit(1)
         return
