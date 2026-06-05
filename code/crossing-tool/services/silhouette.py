@@ -1,6 +1,6 @@
 """Silhouette extraction and caching for Crossing vocabulary words.
 
-This module implements a CLIP + SAM pipeline that finds the best silhouette
+This module implements a CLIP + SAM3 pipeline that finds the best silhouette
 polygon for a single vocabulary word in a single annotation field/category.
 
 Pipeline
@@ -9,7 +9,7 @@ Pipeline
 2. Rank candidates by relevance score (highest first).
 3. For each candidate:
    a. Extract the best frame for the *word* query using CLIP.
-   b. Run SAM automatic mask generation to get candidate regions.
+   b. Run SAM3 concept segmentation to get candidate regions for the word.
    c. Score each mask crop against the word using CLIP.
    d. Check containment: reject masks that touch any frame edge.
    e. Convert the accepted mask to a polygon and simplify it.
@@ -227,53 +227,136 @@ def scan_records_flat(
 
 
 # ---------------------------------------------------------------------------
-# SAM model loading
+# SAM3 model loading and adapter
 # ---------------------------------------------------------------------------
 
-def _infer_sam_config(model_name: str) -> str:
-    """Infer the SAM2 Hydra config string from the model filename.
+class _SAM3Adapter:
+    """Adapter that wraps SAM3 (transformers Sam3Model + Sam3Processor).
 
-    Falls back to the SAM2.1 base-plus config when the name is ambiguous.
+    SAM3 is Meta's Segment Anything Model 3 — an open-vocabulary text-prompted
+    instance segmentation model.  Weights are loaded from a local bundle
+    directory containing ``sam3.safetensors``.  The processor is constructed
+    directly from defaults + the project's local CLIP tokenizer so that no
+    internet access or gated-repo credentials are required.
+
+    The rest of the silhouette pipeline calls only
+    ``segment_concept(image_pil, concept)`` and never touches SAM3 internals.
     """
-    name = Path(model_name).stem.lower()
-    # SAM 2.1 family
-    if "2.1" in name or "2_1" in name:
-        if "_l" in name:
-            return "configs/sam2.1/sam2.1_hiera_l.yaml"
-        if "_b+" in name or "_b_plus" in name:
-            return "configs/sam2.1/sam2.1_hiera_b+.yaml"
-        if "_s" in name:
-            return "configs/sam2.1/sam2.1_hiera_s.yaml"
-        if "_t" in name:
-            return "configs/sam2.1/sam2.1_hiera_t.yaml"
-        # e.g. "sam2.1_b" without an explicit size suffix → b+
-        return "configs/sam2.1/sam2.1_hiera_b+.yaml"
-    # SAM 2.0 family
-    if "_l" in name:
-        return "configs/sam2/sam2_hiera_l.yaml"
-    if "_b+" in name or "_b_plus" in name:
-        return "configs/sam2/sam2_hiera_b+.yaml"
-    if "_s" in name:
-        return "configs/sam2/sam2_hiera_s.yaml"
-    if "_t" in name:
-        return "configs/sam2/sam2_hiera_t.yaml"
-    # Fallback
-    return "configs/sam2.1/sam2.1_hiera_b+.yaml"
+
+    def __init__(self, model, processor, device: str, model_name: str) -> None:
+        self._model = model
+        self._processor = processor
+        self._device = device
+        self._model_name = model_name
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
+
+    def segment_concept(self, image_pil, concept: str) -> list[dict]:
+        """Run SAM3 text-prompted segmentation and return pipeline-compatible mask dicts.
+
+        Parameters
+        ----------
+        image_pil:  Full-frame PIL RGB image.
+        concept:    Open-vocabulary text prompt (e.g. ``"horse"``).
+
+        Returns
+        -------
+        List of mask dicts, each with ``"segmentation"`` (bool ndarray H×W),
+        ``"bbox"`` ([x, y, w, h] ints), ``"area"`` (int),
+        ``"predicted_iou"`` (float), and ``"stability_score"`` (float).
+        Returns an empty list when SAM3 finds no instances above threshold.
+        """
+        import numpy as np
+        import torch
+
+        h, w = image_pil.height, image_pil.width
+
+        inputs = self._processor(
+            images=image_pil,
+            text=concept,
+            return_tensors="pt",
+        )
+        inputs = {k: v.to(self._device) if hasattr(v, "to") else v for k, v in inputs.items()}
+
+        with torch.no_grad():
+            outputs = self._model(**inputs)
+
+        results = self._processor.post_process_instance_segmentation(
+            outputs,
+            threshold=0.3,
+            mask_threshold=0.5,
+            target_sizes=[(h, w)],
+        )
+
+        masks_out: list[dict] = []
+        if not results:
+            return masks_out
+
+        result = results[0]
+        masks_tensor = result.get("masks")   # (N, H, W) bool tensor
+        scores = result.get("scores")        # (N,) float tensor
+        boxes = result.get("boxes")          # (N, 4) x1y1x2y2 tensor
+
+        if masks_tensor is None or len(masks_tensor) == 0:
+            return masks_out
+
+        masks_np = masks_tensor.cpu().numpy().astype(bool)
+        scores_np = scores.cpu().numpy() if scores is not None else None
+        boxes_np = boxes.cpu().numpy() if boxes is not None else None
+
+        for i, seg in enumerate(masks_np):
+            rows = np.any(seg, axis=1)
+            cols = np.any(seg, axis=0)
+            row_idx = np.where(rows)[0]
+            col_idx = np.where(cols)[0]
+            if len(row_idx) == 0 or len(col_idx) == 0:
+                continue
+
+            if boxes_np is not None and i < len(boxes_np):
+                x1, y1, x2, y2 = (int(v) for v in boxes_np[i])
+                bx, by, bw, bh = x1, y1, x2 - x1, y2 - y1
+            else:
+                bx = int(col_idx[0])
+                by = int(row_idx[0])
+                bw = int(col_idx[-1]) - bx + 1
+                bh = int(row_idx[-1]) - by + 1
+
+            area = int(seg.sum())
+            conf = float(scores_np[i]) if scores_np is not None and i < len(scores_np) else 1.0
+
+            masks_out.append({
+                "segmentation": seg,
+                "bbox": [bx, by, bw, bh],
+                "area": area,
+                "predicted_iou": conf,
+                "stability_score": conf,
+            })
+
+        return masks_out
 
 
 def load_sam_model(project_path: str, model_name: str):
-    """Load a SAM2 automatic mask generator from the project's model directory.
+    """Load a SAM3 segmenter from the project's model directory.
 
-    Returns ``(mask_generator, effective_model_name, device)``.
+    *model_name* must be the name of a directory inside ``<project>/models/``
+    containing ``sam3.safetensors``.  The weights are automatically remapped
+    from the bundle's storage format into the ``transformers.Sam3Model``
+    parameter namespace.  The processor is constructed from defaults and the
+    locally cached CLIP tokenizer — no internet access required.
+
+    Returns ``(segmenter, effective_model_name, device)`` where *segmenter*
+    is a :class:`_SAM3Adapter` exposing ``segment_concept(image_pil, concept)``.
 
     Raises
     ------
     ImportError
-        When the ``sam2`` package is not installed.
+        When ``torch``, ``transformers``, or ``safetensors`` is not installed.
     FileNotFoundError
-        When the model checkpoint is not found under ``<project>/models/``.
+        When the model directory or ``sam3.safetensors`` is not found.
     RuntimeError
-        When the model fails to load.
+        When the model fails to load or the weights cannot be remapped.
     """
     try:
         import torch
@@ -284,42 +367,88 @@ def load_sam_model(project_path: str, model_name: str):
         ) from exc
 
     try:
-        from sam2.build_sam import build_sam2
-        from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
+        from transformers import (
+            Sam3Config, Sam3Model, Sam3Processor,
+            Sam3ImageProcessor, CLIPTokenizerFast,
+        )
     except ImportError as exc:
         raise ImportError(
-            "sam2 is required for silhouette generation.\n"
-            "Install it with:  pip install sam2\n"
-            "Or from source:   pip install git+https://github.com/facebookresearch/sam2.git"
+            "transformers with SAM3 support is required.\n"
+            "Install it with:  pip install transformers"
+        ) from exc
+
+    try:
+        from safetensors.torch import load_file as _st_load
+    except ImportError as exc:
+        raise ImportError(
+            "safetensors is required to load SAM3 weights.\n"
+            "Install it with:  pip install safetensors"
         ) from exc
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    checkpoint = Path(project_path) / "models" / model_name
-    if not checkpoint.exists():
+    model_dir = Path(project_path) / "models" / model_name
+    if not model_dir.exists():
         raise FileNotFoundError(
-            f"SAM model checkpoint not found: {checkpoint}\n"
-            f"Download with: crossing tool model download <hf-repo>"
+            f"SAM3 model directory not found: {model_dir}\n"
+            f"Expected a directory containing sam3.safetensors."
+        )
+    if not model_dir.is_dir():
+        raise FileNotFoundError(
+            f"SAM3 model path is not a directory: {model_dir}\n"
+            f"The silhouette pipeline requires a SAM3 bundle directory, "
+            f"not a legacy .pt checkpoint."
         )
 
-    config = _infer_sam_config(model_name)
+    weights_file = model_dir / "sam3.safetensors"
+    if not weights_file.exists():
+        raise FileNotFoundError(
+            f"SAM3 weights not found: {weights_file}\n"
+            f"The model directory must contain sam3.safetensors."
+        )
+
+    # Resolve the CLIP tokenizer for the processor from the local model store.
+    # The CLIP model directory is used first; fall back to cached HF files.
+    clip_dir = Path(project_path) / "models" / "clip-vit-base-patch32"
+    tokenizer_source = str(clip_dir) if clip_dir.is_dir() else "openai/clip-vit-base-patch32"
 
     try:
-        sam2_model = build_sam2(config, str(checkpoint), device=device)
+        image_processor = Sam3ImageProcessor()
+        tokenizer = CLIPTokenizerFast.from_pretrained(tokenizer_source, local_files_only=clip_dir.is_dir())
+        processor = Sam3Processor(image_processor=image_processor, tokenizer=tokenizer)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to build SAM3 processor: {exc}") from exc
+
+    try:
+        # Build model with default config (architecture matches the weights).
+        model = Sam3Model(Sam3Config())
+
+        # The safetensors bundle stores weights under a 'detector_model.' prefix
+        # (a wrapper naming convention from the original export).  Strip it.
+        raw_state = _st_load(str(weights_file))
+        remapped = {}
+        for k, v in raw_state.items():
+            new_key = k[len("detector_model."):] if k.startswith("detector_model.") else k
+            remapped[new_key] = v
+
+        missing, unexpected = model.load_state_dict(remapped, strict=False)
+        if missing:
+            raise RuntimeError(
+                f"SAM3 weight load: {len(missing)} missing key(s) after remapping. "
+                f"First: {missing[0]}"
+            )
+
+        model.to(device)
+        model.eval()
+    except RuntimeError:
+        raise
     except Exception as exc:
         raise RuntimeError(
-            f"Failed to build SAM2 model from '{checkpoint}' "
-            f"with config '{config}': {exc}"
+            f"Failed to load SAM3 model from '{model_dir}': {exc}"
         ) from exc
 
-    mask_generator = SAM2AutomaticMaskGenerator(
-        model=sam2_model,
-        points_per_side=16,
-        pred_iou_thresh=0.80,
-        stability_score_thresh=0.85,
-        min_mask_region_area=500,
-    )
-    return mask_generator, model_name, device
+    return _SAM3Adapter(model, processor, device, model_name), model_name, device
+
 
 
 # ---------------------------------------------------------------------------
@@ -727,31 +856,31 @@ def process_shot_silhouette(
 
     frame_w, frame_h = image_pil.size
 
-    # --- load SAM model (if not pre-loaded) ---
+    # --- load SAM3 model (if not pre-loaded) ---
     effective_sam_name = sam_model_name
     if mask_generator is None:
         if verbose:
-            print(f"  Loading SAM model '{sam_model_name}'…")
+            print(f"  Loading SAM3 model '{sam_model_name}'…")
         try:
             mask_generator, effective_sam_name, _ = load_sam_model(
                 project_path, sam_model_name
             )
         except (ImportError, FileNotFoundError, RuntimeError) as exc:
-            return _build_rejection(f"SAM model load failed: {exc}")
+            return _build_rejection(f"SAM3 model load failed: {exc}")
 
-    # --- run SAM ---
+    # --- run SAM3 concept segmentation ---
     if verbose:
-        print(f"  Running SAM segmentation…")
+        print(f"  Running SAM3 concept segmentation for '{word}'…")
     try:
-        masks = mask_generator.generate(np.array(image_pil))
+        masks = mask_generator.segment_concept(image_pil, word)
     except Exception as exc:
-        return _build_rejection(f"SAM segmentation failed: {exc}")
+        return _build_rejection(f"SAM3 segmentation failed: {exc}")
 
     if not masks:
-        return _build_rejection("SAM produced no masks for this frame")
+        return _build_rejection("SAM3 produced no masks for this frame")
 
     if verbose:
-        print(f"  SAM produced {len(masks)} mask(s). Running broad CLIP ranking…")
+        print(f"  SAM3 produced {len(masks)} mask(s). Running broad CLIP ranking…")
 
     # --- Stage 1: broad CLIP ranking (padded bbox crops) ---
     ranked = rank_masks_by_clip(
@@ -1042,7 +1171,7 @@ def build_silhouette(
     scope_type: str,
     scope_value: str | None,
     media_type: str = "movies",
-    sam_model_name: str = "sam2.1_b.pt",
+    sam_model_name: str = "sam3.pt",
     frame_model_name: str = "clip-vit-base-patch32",
     force: bool = False,
     verbose: bool = False,
@@ -1058,7 +1187,7 @@ def build_silhouette(
     scope_type:         ``"all"``, ``"movie"``, or ``"shot"``.
     scope_value:        Movie title / media_id, or shot_id.  None for "all".
     media_type:         ``"movies"`` or ``"gameplay"``.
-    sam_model_name:     SAM2 checkpoint filename inside ``<project>/models/``.
+    sam_model_name:     SAM3 checkpoint filename inside ``<project>/models/``.
     frame_model_name:   CLIP model name/path for frame matching.
     force:              Overwrite existing cached result.
     verbose:            Print progress information.
@@ -1167,13 +1296,13 @@ def build_silhouette(
         }
 
     if verbose:
-        print(f"  Loading SAM model '{sam_model_name}'…")
+        print(f"  Loading SAM3 model '{sam_model_name}'…")
     try:
         _mask_generator, _, _ = load_sam_model(project_path, sam_model_name)
     except (ImportError, FileNotFoundError, RuntimeError) as exc:
         return {
             "accepted": False,
-            "reason": f"SAM model load failed: {exc}",
+            "reason": f"SAM3 model load failed: {exc}",
             "payload": None,
             "output_path": None,
             "candidates": candidates,

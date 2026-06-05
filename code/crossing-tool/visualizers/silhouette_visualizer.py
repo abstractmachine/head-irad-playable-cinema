@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
-"""SAM-2 Explorer — interactive shot inspection with SAM-2 segmentation.
+"""Silhouette Visualizer — catalog browser + SAM-3 shot explorer.
 
-Replaces the former read-only cached-silhouette browser with a shot-driven
-inspection tool that:
-  1. Browses movies → scenes → shots via dropdowns + keyboard shortcuts.
-  2. Jumps automatically to each shot's CLIP-selected best frame.
-  3. Runs an all-blob SAM-2 pass with a single button click.
-  4. Overlays all returned masks as coloured polygon outlines on the canvas.
-  5. Shows per-blob info (area, bbox, IoU, stability) on hover.
+Two tabs in one window:
 
-Layout:
-  LEFT   — full-bleed canvas: best frame + SAM-2 blob polygon overlay
-  RIGHT  — movie / scene / shot dropdowns, Run SAM button, info block
+  **Catalog** (default)
+    Browse extracted silhouette objects by vocabulary label.
+    Shows all transparent PNG objects already in the catalog.
+    Left panel: label list → film/shot tree.
+    Right panel: thumbnail grid of all objects for the selected entry.
+    Clicking a thumbnail shows the full object and its metadata.
 
-Keyboard shortcuts (matching project conventions):
-  Left / Right       — previous / next shot
-  Up / Down          — previous / next scene
-  Home / End         — previous / next movie
-  Space              — run SAM-2 on current frame (same as button)
+  **SAM-3 Explorer**
+    Interactive shot inspection.  Browse movies → scenes → shots,
+    enter a concept, click Run SAM-3 to see masks on the best frame.
+
+Keyboard shortcuts (Catalog tab):
+  Up / Down    — previous / next label
+  Left / Right — previous / next object thumbnail (when grid focused)
   Escape / Ctrl+Q / Ctrl+W — close
 
 Launched via:
@@ -38,23 +37,27 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from styles import theme
-from styles.theme import save_window_geometry, restore_window_geometry
+from styles.theme import GripSplitter, JumpScrollBar, save_window_geometry, restore_window_geometry
 
 # Fix Qt plugin conflict with OpenCV — del env var before first PyQt5 import
 if "QT_QPA_PLATFORM_PLUGIN_PATH" in os.environ:
     del os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"]
 
-from PyQt5.QtCore import Qt, QPoint, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QPoint, QSize, QThread, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication,
     QComboBox,
     QFrame,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
+    QSplitter,
     QVBoxLayout,
     QWidget,
 )
@@ -75,7 +78,7 @@ from PyQt5.QtGui import (
 # ---------------------------------------------------------------------------
 
 _PANEL_W = 310
-_DEFAULT_MODEL = "sam2.1_b.pt"
+_DEFAULT_MODEL = "sam3.pt"
 
 # 24 visually distinct blob overlay colours (R, G, B)
 _BLOB_COLORS: list[tuple[int, int, int]] = [
@@ -190,7 +193,7 @@ def _load_best_frame(
 # ---------------------------------------------------------------------------
 
 class _CanvasWidget(QLabel):
-    """Image canvas that overlays SAM-2 blob polygons and tracks hover state."""
+    """Image canvas that overlays SAM-3 concept segmentation polygons and tracks hover state."""
 
     hover_changed = pyqtSignal(int)  # emits blob index, or -1 when leaving
 
@@ -380,7 +383,7 @@ class _CanvasWidget(QLabel):
 # ---------------------------------------------------------------------------
 
 class _SAMWorker(QThread):
-    """Run SAM-2 mask generation in a background thread."""
+    """Run SAM-3 concept segmentation in a background thread."""
 
     masks_ready = pyqtSignal(list, str)   # (raw_masks, effective_model_name)
     error = pyqtSignal(str)
@@ -391,24 +394,28 @@ class _SAMWorker(QThread):
         project_path: str,
         model_name: str,
         bgr: np.ndarray,
+        concept: str,
     ) -> None:
         super().__init__()
         self._project_path = project_path
         self._model_name = model_name
         self._bgr = bgr.copy()
+        self._concept = concept
 
     def run(self) -> None:
         try:
+            from PIL import Image
             from services.silhouette import load_sam_model
 
             self.progress.emit(f"Loading model '{self._model_name}'…")
-            mask_gen, effective_name, device = load_sam_model(
+            segmenter, effective_name, device = load_sam_model(
                 self._project_path, self._model_name
             )
-            self.progress.emit("Running SAM-2…")
+            self.progress.emit(f"Running SAM-3 segmentation for '{self._concept}'…")
             rgb = cv2.cvtColor(self._bgr, cv2.COLOR_BGR2RGB)
-            masks = mask_gen.generate(np.asarray(rgb))
-            # Sort by stability_score desc, then predicted_iou desc
+            image_pil = Image.fromarray(rgb)
+            masks = segmenter.segment_concept(image_pil, self._concept)
+            # Sort by predicted_iou desc then stability_score desc
             masks.sort(
                 key=lambda m: (
                     -m.get("stability_score", 0.0),
@@ -476,10 +483,10 @@ class _InfoBlock(QWidget):
 # ---------------------------------------------------------------------------
 
 class SAMExplorer(QMainWindow):
-    """SAM-2 shot exploration visualizer.
+    """SAM-3 shot exploration visualizer.
 
-    Browse movies → scenes → shots, see each shot's best frame, run SAM-2 on it,
-    and inspect every blob mask returned.
+    Browse movies → scenes → shots, see each shot's best frame, run SAM-3
+    concept segmentation on it, and inspect every mask returned.
     """
 
     def __init__(
@@ -489,7 +496,7 @@ class SAMExplorer(QMainWindow):
         model_name: str = _DEFAULT_MODEL,
     ) -> None:
         super().__init__()
-        self.setWindowTitle("Crossing — SAM-2 Explorer")
+        self.setWindowTitle("Crossing — SAM-3 Explorer")
 
         self._project_path = project_path
         self._media_type = media_type
@@ -514,12 +521,15 @@ class SAMExplorer(QMainWindow):
         self._effective_model: str = ""
         self._sam_worker: Optional[_SAMWorker] = None
 
+        # Concept input for SAM-3
+        self._concept: str = ""
+
         # Guard against recursive combo signal handling
         self._updating: bool = False
 
         self._build_ui()
-        self._load_films()
         restore_window_geometry(self, "window_sam_explorer")
+        self._load_films()
 
     def closeEvent(self, event) -> None:
         if self._sam_worker and self._sam_worker.isRunning():
@@ -594,8 +604,23 @@ class SAMExplorer(QMainWindow):
 
         panel_layout.addWidget(nav_group)
 
+        # Concept input for SAM-3
+        concept_lbl = QLabel("Concept")
+        concept_lbl.setStyleSheet(
+            f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt;"
+        )
+        panel_layout.addWidget(concept_lbl)
+        self._concept_edit = QLineEdit()
+        self._concept_edit.setPlaceholderText("e.g. horse, revolver, hat…")
+        self._concept_edit.setStyleSheet(
+            f"background: {theme.INPUT_BG}; color: {theme.TEXT};"
+            f" font-family: '{theme.FAMILY_MONO}'; font-size: {theme.BASE_PT}pt;"
+        )
+        self._concept_edit.textChanged.connect(self._on_concept_changed)
+        panel_layout.addWidget(self._concept_edit)
+
         # SAM run button
-        self._sam_btn = QPushButton("▶  Run SAM-2")
+        self._sam_btn = QPushButton("▶  Run SAM-3")
         self._sam_btn.setFixedHeight(32)
         self._sam_btn.setStyleSheet(
             f"QPushButton {{"
@@ -644,7 +669,7 @@ class SAMExplorer(QMainWindow):
         # Keyboard hint
         hint = QLabel(
             "↑ ↓ shot   PgUp / PgDn scene\n"
-            "Home / End movie   s = SAM"
+            "Home / End movie   s = SAM-3"
         )
         hint.setStyleSheet(
             f"color: {theme.TEXT_DIM};"
@@ -900,23 +925,29 @@ class SAMExplorer(QMainWindow):
         self._frame_info.set("blobs", blob_lbl)
 
     # ------------------------------------------------------------------
-    # SAM-2 execution
+    # SAM-3 execution
+
+    def _on_concept_changed(self, text: str) -> None:
+        self._concept = text.strip()
 
     def _run_sam(self) -> None:
         if self._bgr is None:
             self._status_lbl.setText("No frame loaded — select a shot first.")
             return
+        if not self._concept:
+            self._status_lbl.setText("Enter a concept before running SAM-3.")
+            return
         if self._sam_worker and self._sam_worker.isRunning():
             return
 
         self._sam_btn.setEnabled(False)
-        self._status_lbl.setText("Starting SAM-2…")
+        self._status_lbl.setText(f"Starting SAM-3 for '{self._concept}'…")
         self._masks = []
         self._blobs = []
         self._canvas.clear_blobs()
 
         self._sam_worker = _SAMWorker(
-            self._project_path, self._model_name, self._bgr
+            self._project_path, self._model_name, self._bgr, self._concept
         )
         self._sam_worker.progress.connect(self._status_lbl.setText)
         self._sam_worker.masks_ready.connect(self._on_masks_ready)
@@ -1058,15 +1089,577 @@ class SAMExplorer(QMainWindow):
 
 
 # ---------------------------------------------------------------------------
-# Public launcher (preserves CLI signature)
+# Catalog browser
 # ---------------------------------------------------------------------------
+
+_THUMB_SIZE  = 120   # px per thumbnail cell
+_THUMB_GAP   = 8    # px gap between cells
+_PAGE_SIZE   = 100  # max thumbnails shown at once
+_LOAD_BATCH  = 20   # loader yields UI thread every N images
+
+
+# ---------------------------------------------------------------------------
+# Lazy thumbnail loader
+# ---------------------------------------------------------------------------
+
+class _ThumbLoader(QThread):
+    """Background thread: loads PNG thumbnails and emits QImages to the UI thread.
+
+    QImage is safe to construct off-thread; QPixmap conversion happens in the
+    receiving slot (GUI thread).
+    """
+
+    thumb_ready = pyqtSignal(int, QImage)   # (page index, image)
+    load_finished = pyqtSignal(int)          # total loaded count
+
+    def __init__(self, records: list[dict], size: int, parent=None) -> None:
+        super().__init__(parent)
+        self._records = records
+        self._size = size
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def run(self) -> None:
+        from PIL import Image as _PIL
+
+        loaded = 0
+        for i, rec in enumerate(self._records):
+            if self._cancelled:
+                break
+            json_path = rec.get("path")
+            if not json_path:
+                continue
+            png_path = Path(str(json_path)).with_suffix(".png")
+            try:
+                img = _PIL.open(str(png_path)).convert("RGBA")
+                img.thumbnail((self._size, self._size), _PIL.LANCZOS)
+                w, h = img.size
+                data = img.tobytes("raw", "RGBA")
+                qimg = QImage(data, w, h, 4 * w, QImage.Format_RGBA8888)
+                self.thumb_ready.emit(i, qimg.copy())
+                loaded += 1
+            except Exception:
+                pass
+            if (i + 1) % _LOAD_BATCH == 0:
+                self.msleep(2)   # yield so UI stays responsive
+        self.load_finished.emit(loaded)
+
+
+# ---------------------------------------------------------------------------
+
+class _ThumbnailCell(QLabel):
+    """Single grid cell — shows a grey placeholder until the loader fills it."""
+
+    clicked = pyqtSignal(int)
+
+    def __init__(self, index: int, tooltip: str = "", parent=None) -> None:
+        super().__init__(parent)
+        self._index = index
+        self._selected = False
+        self.setFixedSize(_THUMB_SIZE, _THUMB_SIZE)
+        self.setAlignment(Qt.AlignCenter)
+        self.setCursor(Qt.PointingHandCursor)
+        if tooltip:
+            self.setToolTip(tooltip)
+        self._apply_style()
+        self.setText("·")   # placeholder until image loads
+
+    def set_image(self, qimg: QImage) -> None:
+        """Called from the GUI thread when the loader delivers a QImage."""
+        self.setPixmap(QPixmap.fromImage(qimg))
+        self.setText("")
+
+    def set_selected(self, selected: bool) -> None:
+        self._selected = selected
+        self._apply_style()
+
+    def _apply_style(self) -> None:
+        border = f"2px solid {theme.ACCENT}" if self._selected else "none"
+        self.setStyleSheet(
+            f"background: {theme.CANVAS_BG}; border: {border};"
+            f" color: {theme.TEXT_DIM};"
+            f" font-family: '{theme.FAMILY_MONO}'; font-size: {theme.BASE_PT}pt;"
+        )
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(self._index)
+        super().mousePressEvent(event)
+
+
+class CatalogBrowser(QWidget):
+    """Browse the silhouette catalog — mosaic-style layout.
+
+    LEFT  — full-bleed scrollable thumbnail grid (content area)
+    RIGHT — fixed panel: label selector, film filter, object metadata
+    """
+
+    def __init__(self, project_path: str, media_type: str = "movies", parent=None) -> None:
+        super().__init__(parent)
+        self._project_path = project_path
+        self._media_type = media_type
+        self._label_map: dict[str, list[dict]] = {}
+        self._film_list: list[str] = []
+        self._current_records: list[dict] = []  # after label + film filter
+        self._page_records: list[dict] = []     # slice shown in grid
+        self._page_offset: int = 0
+        self._cells: list[_ThumbnailCell] = []
+        self._selected_idx: int = -1
+        self._loader: Optional[_ThumbLoader] = None
+        self._build_ui()
+        self._load_catalog()
+
+    # ------------------------------------------------------------------
+    # UI construction
+
+    def _build_ui(self) -> None:
+        root = QHBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        splitter = GripSplitter(Qt.Horizontal)
+
+        # ── LEFT: thumbnail scroll area (content / canvas area) ───────────
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._scroll.setVerticalScrollBar(JumpScrollBar())
+        self._scroll.setStyleSheet(
+            f"QScrollArea {{ background: {theme.CANVAS_BG}; border: none; }}"
+        )
+
+        self._grid_widget = QWidget()
+        self._grid_widget.setStyleSheet(f"background: {theme.CANVAS_BG};")
+        self._grid_layout = QGridLayout(self._grid_widget)
+        self._grid_layout.setContentsMargins(_THUMB_GAP, _THUMB_GAP, _THUMB_GAP, _THUMB_GAP)
+        self._grid_layout.setSpacing(_THUMB_GAP)
+        self._grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self._scroll.setWidget(self._grid_widget)
+        splitter.addWidget(self._scroll)
+
+        # ── RIGHT: control panel (same pattern as mosaic_visualizer) ─────
+        panel = QWidget()
+        panel.setFixedWidth(_PANEL_W)
+        panel.setStyleSheet(
+            f"QWidget {{ background: {theme.PANEL_BG}; }}"
+            f" QComboBox {{ background-color: {theme.INPUT_BG}; }}"
+            f" QPushButton {{ background-color: {theme.BTN_BG}; border: none;"
+            f" padding: 0 10px; border-radius: 3px;"
+            f" min-height: {theme.BTN_H}px; max-height: {theme.BTN_H}px; }}"
+            f" QPushButton:hover    {{ background-color: {theme.BTN_HOVER}; }}"
+            f" QPushButton:pressed  {{ background-color: {theme.BTN_PRESSED}; }}"
+            f" QPushButton:checked  {{ background-color: {theme.ACCENT}; color: {theme.TEXT}; }}"
+            f" QPushButton:disabled {{ color: {theme.TEXT_DIM};"
+            f" background-color: {theme.BTN_BG}; }}"
+        )
+        pv = QVBoxLayout(panel)
+        pv.setContentsMargins(14, 14, 14, 14)
+        pv.setSpacing(14)
+
+        # Label selector
+        label_group = QGroupBox("Label")
+        lg = QVBoxLayout(label_group)
+        lg.setContentsMargins(8, 12, 8, 8)
+        self._label_combo = QComboBox()
+        self._label_combo.setFocusPolicy(Qt.NoFocus)
+        self._label_combo.currentIndexChanged.connect(self._on_label_changed)
+        lg.addWidget(self._label_combo)
+        pv.addWidget(label_group)
+
+        # Film filter
+        film_group = QGroupBox("Film")
+        fg = QVBoxLayout(film_group)
+        fg.setContentsMargins(8, 12, 8, 8)
+        self._film_combo = QComboBox()
+        self._film_combo.setFocusPolicy(Qt.NoFocus)
+        self._film_combo.currentIndexChanged.connect(self._on_film_changed)
+        fg.addWidget(self._film_combo)
+        pv.addWidget(film_group)
+
+        # Reload + status + load-more
+        self._reload_btn = QPushButton("↺  Reload catalog")
+        self._reload_btn.setFocusPolicy(Qt.NoFocus)
+        self._reload_btn.clicked.connect(self._load_catalog)
+        pv.addWidget(self._reload_btn)
+
+        self._status_lbl = QLabel("—")
+        self._status_lbl.setWordWrap(True)
+        self._status_lbl.setStyleSheet(
+            f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT - 1}pt;"
+        )
+        pv.addWidget(self._status_lbl)
+
+        self._more_btn = QPushButton(f"Load {_PAGE_SIZE} more  ↓")
+        self._more_btn.setFocusPolicy(Qt.NoFocus)
+        self._more_btn.setVisible(False)
+        self._more_btn.clicked.connect(self._load_more)
+        pv.addWidget(self._more_btn)
+
+        # Selected object
+        obj_group = QGroupBox("Object")
+        ov = QVBoxLayout(obj_group)
+        ov.setContentsMargins(8, 12, 8, 8)
+        ov.setSpacing(4)
+
+        self._preview = QLabel()
+        self._preview.setAlignment(Qt.AlignCenter)
+        self._preview.setMinimumHeight(140)
+        self._preview.setMaximumHeight(200)
+        self._preview.setStyleSheet(f"background: {theme.CANVAS_BG};")
+        ov.addWidget(self._preview)
+
+        self._meta_rows: dict[str, QLabel] = {}
+        for key in ("label", "film", "shot", "frame", "confidence", "model"):
+            row = QWidget()
+            rl = QHBoxLayout(row)
+            rl.setContentsMargins(0, 0, 0, 0)
+            rl.setSpacing(4)
+            kl = QLabel(f"{key}:")
+            kl.setFixedWidth(64)
+            kl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            kl.setStyleSheet(f"color: {theme.TEXT_DIM};")
+            rl.addWidget(kl)
+            vl = QLabel("—")
+            vl.setWordWrap(True)
+            rl.addWidget(vl, 1)
+            ov.addWidget(row)
+            self._meta_rows[key] = vl
+
+        pv.addWidget(obj_group)
+        pv.addStretch()
+
+        hint = QLabel("Home/End  film    PgUp/PgDn  label\n↑ ↓  object    ← →  page")
+        hint.setAlignment(Qt.AlignCenter)
+        hint.setStyleSheet(
+            f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT - 1}pt;"
+        )
+        pv.addWidget(hint)
+
+        self._sam_btn = QPushButton("SAM-3 Explorer →")
+        self._sam_btn.setFocusPolicy(Qt.NoFocus)
+        self._sam_btn.clicked.connect(self._open_sam_explorer)
+        pv.addWidget(self._sam_btn)
+
+        splitter.addWidget(panel)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+        root.addWidget(splitter)
+
+    # ------------------------------------------------------------------
+    # Catalog loading
+
+    def _load_catalog(self) -> None:
+        self._stop_loader()
+        from services.silhouette_catalog import scan_catalog
+
+        all_records = scan_catalog(self._project_path, media_type=self._media_type)
+
+        label_map: dict[str, list[dict]] = {}
+        film_set: set[str] = set()
+        for rec in all_records:
+            if "error" in rec:
+                continue
+            label = rec.get("label") or ""
+            if not label:
+                continue
+            label_map.setdefault(label, []).append(rec)
+            stem = rec.get("filename_stem") or rec.get("filename") or ""
+            if stem:
+                film_set.add(stem)
+
+        self._label_map = label_map
+        self._film_list = sorted(film_set)
+
+        self._label_combo.blockSignals(True)
+        self._label_combo.clear()
+        for label in sorted(label_map.keys()):
+            self._label_combo.addItem(f"{label}  ({len(label_map[label])})", userData=label)
+        self._label_combo.blockSignals(False)
+
+        self._film_combo.blockSignals(True)
+        self._film_combo.clear()
+        self._film_combo.addItem("All films", userData=None)
+        for stem in self._film_list:
+            self._film_combo.addItem(stem, userData=stem)
+        self._film_combo.blockSignals(False)
+
+        if not label_map:
+            self._status_lbl.setText(
+                "Catalog empty.\n\ncrossing index silhouette\nextract <label>"
+            )
+            self._clear_grid()
+            return
+
+        self._label_combo.setCurrentIndex(0)
+        self._on_label_changed(0)
+
+    # ------------------------------------------------------------------
+    # Filtering
+
+    def _on_label_changed(self, _idx: int) -> None:
+        label = self._label_combo.currentData()
+        if not label:
+            return
+        self._page_offset = 0
+        self._apply_filters()
+
+    def _on_film_changed(self, _idx: int) -> None:
+        self._page_offset = 0
+        self._apply_filters()
+
+    def _apply_filters(self) -> None:
+        label = self._label_combo.currentData()
+        film = self._film_combo.currentData()
+        records = self._label_map.get(label, [])
+        if film:
+            records = [
+                r for r in records
+                if (r.get("filename_stem") or r.get("filename") or "") == film
+            ]
+        self._current_records = records
+        self._selected_idx = -1
+        self._clear_meta()
+        self._show_page(0)
+
+    def _show_page(self, offset: int) -> None:
+        self._stop_loader()
+        self._page_offset = offset
+        total = len(self._current_records)
+        end = min(offset + _PAGE_SIZE, total)
+        self._page_records = self._current_records[offset:end]
+
+        if total == 0:
+            self._status_lbl.setText("No objects found")
+        else:
+            self._status_lbl.setText(f"{offset + 1}–{end} of {total}   loading…")
+
+        self._more_btn.setVisible(end < total)
+        self._rebuild_grid()
+        self._start_loader()
+
+    def _load_more(self) -> None:
+        new_off = self._page_offset + _PAGE_SIZE
+        if new_off < len(self._current_records):
+            self._show_page(new_off)
+
+    # ------------------------------------------------------------------
+    # Grid management
+
+    def _clear_grid(self) -> None:
+        self._stop_loader()
+        self._cells = []
+        while self._grid_layout.count():
+            item = self._grid_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+    def _rebuild_grid(self) -> None:
+        self._clear_grid()
+        cols = self._cols()
+        for i, rec in enumerate(self._page_records):
+            stem = rec.get("filename_stem") or rec.get("filename") or ""
+            shot = rec.get("shot_id", "")
+            frame = rec.get("frame", "")
+            conf = rec.get("confidence", 0)
+            tip = f"#{self._page_offset + i + 1}  {stem}  shot:{shot}  f:{frame}  conf:{conf:.3f}"
+            cell = _ThumbnailCell(i, tooltip=tip)
+            cell.clicked.connect(self._on_cell_clicked)
+            self._grid_layout.addWidget(cell, i // cols, i % cols)
+            self._cells.append(cell)
+
+    def _cols(self) -> int:
+        vw = self._scroll.viewport().width()
+        if vw <= 0:
+            vw = 800
+        return max(1, (vw - _THUMB_GAP) // (_THUMB_SIZE + _THUMB_GAP))
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if not self._cells:
+            return
+        cols = self._cols()
+        for i, cell in enumerate(self._cells):
+            self._grid_layout.addWidget(cell, i // cols, i % cols)
+
+    # ------------------------------------------------------------------
+    # Background loader
+
+    def _start_loader(self) -> None:
+        self._loader = _ThumbLoader(self._page_records, _THUMB_SIZE)
+        self._loader.thumb_ready.connect(self._on_thumb_ready)
+        self._loader.load_finished.connect(self._on_load_finished)
+        self._loader.start()
+
+    def _stop_loader(self) -> None:
+        if self._loader and self._loader.isRunning():
+            self._loader.cancel()
+            self._loader.wait(500)
+        self._loader = None
+
+    def _on_thumb_ready(self, idx: int, qimg: QImage) -> None:
+        if 0 <= idx < len(self._cells):
+            self._cells[idx].set_image(qimg)
+
+    def _on_load_finished(self, loaded: int) -> None:
+        total = len(self._current_records)
+        off = self._page_offset
+        end = min(off + _PAGE_SIZE, total)
+        self._status_lbl.setText(f"{off + 1}–{end} of {total}  ·  {loaded} loaded")
+
+    # ------------------------------------------------------------------
+    # Object selection
+
+    def _on_cell_clicked(self, idx: int) -> None:
+        if self._selected_idx == idx:
+            return
+        if 0 <= self._selected_idx < len(self._cells):
+            self._cells[self._selected_idx].set_selected(False)
+        self._selected_idx = idx
+        if 0 <= idx < len(self._cells):
+            self._cells[idx].set_selected(True)
+        if idx < len(self._page_records):
+            self._show_object_meta(self._page_records[idx])
+
+    def _clear_meta(self) -> None:
+        self._preview.clear()
+        self._preview.setText("")
+        for lbl in self._meta_rows.values():
+            lbl.setText("—")
+
+    def _show_object_meta(self, rec: dict) -> None:
+        from PIL import Image as _PIL
+
+        json_path = rec.get("path")
+        png_path = Path(str(json_path)).with_suffix(".png") if json_path else None
+        if png_path and png_path.exists():
+            try:
+                img = _PIL.open(str(png_path)).convert("RGBA")
+                img.thumbnail((_PANEL_W - 28, 190), _PIL.LANCZOS)
+                w, h = img.size
+                data = img.tobytes("raw", "RGBA")
+                qimg = QImage(data, w, h, 4 * w, QImage.Format_RGBA8888)
+                self._preview.setPixmap(QPixmap.fromImage(qimg))
+            except Exception:
+                self._preview.setText("error")
+        else:
+            self._preview.setText("no png")
+
+        shot_id = str(rec.get("shot_id", "—"))
+        if len(shot_id) > 28:
+            shot_id = "…" + shot_id[-26:]
+        film = rec.get("filename_stem") or rec.get("filename") or "—"
+        if len(film) > 26:
+            film = film[:24] + "…"
+        conf = rec.get("confidence", 0)
+
+        self._meta_rows["label"].setText(rec.get("label", "—"))
+        self._meta_rows["film"].setText(film)
+        self._meta_rows["shot"].setText(shot_id)
+        self._meta_rows["frame"].setText(str(rec.get("frame", "—")))
+        self._meta_rows["confidence"].setText(f"{conf:.3f}")
+        self._meta_rows["model"].setText(rec.get("sam_model", "—"))
+
+    # ------------------------------------------------------------------
+    # Keyboard navigation
+
+    def keyPressEvent(self, event) -> None:
+        key = event.key()
+        if key == Qt.Key_Home:
+            # Previous film
+            idx = self._film_combo.currentIndex()
+            if idx > 0:
+                self._film_combo.setCurrentIndex(idx - 1)
+        elif key == Qt.Key_End:
+            # Next film
+            idx = self._film_combo.currentIndex()
+            if idx < self._film_combo.count() - 1:
+                self._film_combo.setCurrentIndex(idx + 1)
+        elif key == Qt.Key_PageUp:
+            # Previous label
+            idx = self._label_combo.currentIndex()
+            if idx > 0:
+                self._label_combo.setCurrentIndex(idx - 1)
+        elif key == Qt.Key_PageDown:
+            # Next label
+            idx = self._label_combo.currentIndex()
+            if idx < self._label_combo.count() - 1:
+                self._label_combo.setCurrentIndex(idx + 1)
+        elif key == Qt.Key_Up:
+            # Previous object in current page
+            if self._selected_idx > 0:
+                self._on_cell_clicked(self._selected_idx - 1)
+        elif key == Qt.Key_Down:
+            # Next object in current page
+            if self._selected_idx < len(self._cells) - 1:
+                self._on_cell_clicked(self._selected_idx + 1)
+        elif key == Qt.Key_Left:
+            # Previous page
+            if self._page_offset > 0:
+                self._show_page(max(0, self._page_offset - _PAGE_SIZE))
+        elif key == Qt.Key_Right:
+            # Next page
+            next_off = self._page_offset + _PAGE_SIZE
+            if next_off < len(self._current_records):
+                self._show_page(next_off)
+        else:
+            super().keyPressEvent(event)
+
+    def _open_sam_explorer(self) -> None:
+        from tool import prefs as _prefs
+        model_name = _prefs.get("model_segmentation", _DEFAULT_MODEL) or _DEFAULT_MODEL
+        self._sam_explorer_win = SAMExplorer(
+            self._project_path, media_type=self._media_type, model_name=model_name
+        )
+        self._sam_explorer_win.show()
+
+
+# ---------------------------------------------------------------------------
+# Main window
+# ---------------------------------------------------------------------------
+
+class SilhouetteWindow(QMainWindow):
+    """Top-level window: Silhouette catalog browser."""
+
+    def __init__(
+        self,
+        project_path: str,
+        media_type: str = "movies",
+        model_name: str = _DEFAULT_MODEL,
+    ) -> None:
+        super().__init__()
+        self.setWindowTitle("Crossing — Silhouette")
+
+        self._catalog = CatalogBrowser(project_path, media_type=media_type)
+        self.setCentralWidget(self._catalog)
+        self.setMinimumSize(900, 560)
+        self.resize(1300, 760)
+        restore_window_geometry(self, "window_silhouette")
+
+    def closeEvent(self, event) -> None:
+        save_window_geometry(self, "window_silhouette")
+        super().closeEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        key = event.key()
+        mod = event.modifiers()
+        if key == Qt.Key_Escape:
+            self.close()
+        elif key in (Qt.Key_Q, Qt.Key_W) and mod & Qt.ControlModifier:
+            self.close()
+        else:
+            super().keyPressEvent(event)
+
+
 
 def run_visualizer(
     project_path: str,
     media_type: str = "movies",
     field: Optional[str] = None,   # accepted for CLI compat; not used
 ) -> None:
-    """Create QApplication (if needed) and launch the SAM-2 Explorer."""
+    """Create QApplication (if needed) and launch the Silhouette window."""
     from tool import prefs as _prefs
 
     model_name = _prefs.get("model_segmentation", _DEFAULT_MODEL) or _DEFAULT_MODEL
@@ -1074,7 +1667,7 @@ def run_visualizer(
     app = QApplication.instance() or QApplication(sys.argv)
     theme.apply_theme(app)
 
-    win = SAMExplorer(project_path, media_type=media_type, model_name=model_name)
+    win = SilhouetteWindow(project_path, media_type=media_type, model_name=model_name)
     win.show()
     sys.exit(app.exec_())
 
@@ -1082,7 +1675,7 @@ def run_visualizer(
 if __name__ == "__main__":
     import argparse
 
-    ap = argparse.ArgumentParser(description="SAM-2 Explorer")
+    ap = argparse.ArgumentParser(description="Silhouette Visualizer")
     ap.add_argument("--project", required=True, help="Project path")
     ap.add_argument("--media", default="movies")
     ap.add_argument("--field", default=None, help="(unused, kept for compat)")

@@ -42,7 +42,7 @@ _MODEL_KEYS = {
 }
 _MODEL_DEFAULTS = {
     "annotate":     "gemma4-e4b",
-    "segmentation": "sam2.1_b.pt",
+    "segmentation": "sam3.pt",
     "embed":        "BAAI/bge-small-en-v1.5",
 }
 _WEIGHT_FILE_EXTS = {".pt", ".pth", ".gguf", ".bin", ".onnx", ".engine"}

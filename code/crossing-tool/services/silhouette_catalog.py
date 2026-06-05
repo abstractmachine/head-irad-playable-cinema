@@ -3,8 +3,8 @@
 This module implements the catalog-oriented silhouette pipeline:
 
     frame
-        → segmentation (SAM2)
-        → isolated objects (all valid masks)
+        → segmentation (SAM3)
+        → isolated objects (all valid masks for concept)
         → transparent PNG per object
         → indexed catalog on disk
 
@@ -44,7 +44,7 @@ Metadata schema (object_NNNN.json)
     "bbox":           [x, y, w, h],
     "mask_area":      12345,
     "frame_size":     [1920, 1080],
-    "sam_model":      "sam2.1_b.pt",
+    "sam_model":      "sam3",
     "frame_match_model": "clip-vit-base-patch32",
     "source_frame":   "media/frames/best/movies/...",
     "png":            "object_0001.png",
@@ -389,26 +389,26 @@ def extract_objects_for_shot(
     frame_w, frame_h = image_pil.size
     frame_area = frame_w * frame_h
 
-    # --- load SAM model if not pre-loaded ---
+    # --- load SAM3 model if not pre-loaded ---
     if mask_generator is None:
         from services.silhouette import load_sam_model
         if verbose:
-            print(f"    Loading SAM '{sam_model_name}'…")
+            print(f"    Loading SAM3 '{sam_model_name}'…")
         try:
             mask_generator, sam_model_name, _ = load_sam_model(project_path, sam_model_name)
         except (ImportError, FileNotFoundError, RuntimeError) as exc:
-            return {"saved": [], "skipped": 0, "reason": f"SAM load failed: {exc}"}
+            return {"saved": [], "skipped": 0, "reason": f"SAM3 load failed: {exc}"}
 
-    # --- run SAM ---
+    # --- run SAM3 concept segmentation ---
     if verbose:
-        print(f"    Running SAM segmentation (frame {frame_index})…")
+        print(f"    Running SAM3 concept segmentation for '{label}' (frame {frame_index})…")
     try:
-        masks = mask_generator.generate(np.array(image_pil))
+        masks = mask_generator.segment_concept(image_pil, label)
     except Exception as exc:
-        return {"saved": [], "skipped": 0, "reason": f"SAM segmentation failed: {exc}"}
+        return {"saved": [], "skipped": 0, "reason": f"SAM3 segmentation failed: {exc}"}
 
     if not masks:
-        return {"saved": [], "skipped": 0, "reason": "SAM produced no masks"}
+        return {"saved": [], "skipped": 0, "reason": "SAM3 produced no masks"}
 
     # --- quality pre-filter ---
     quality_passed: list[dict] = []
@@ -589,7 +589,7 @@ def extract_catalog_for_movie(
     label: str,
     field: str,
     media_type: str = "movies",
-    sam_model_name: str = "sam2.1_b.pt",
+    sam_model_name: str = "sam3.pt",
     frame_model_name: str = "clip-vit-base-patch32",
     force: bool = False,
     verbose: bool = False,
@@ -699,7 +699,7 @@ def extract_catalog_for_all(
     label: str,
     field: str,
     media_type: str = "movies",
-    sam_model_name: str = "sam2.1_b.pt",
+    sam_model_name: str = "sam3.pt",
     frame_model_name: str = "clip-vit-base-patch32",
     force: bool = False,
     verbose: bool = False,
@@ -743,11 +743,11 @@ def extract_catalog_for_all(
         raise RuntimeError(f"CLIP model load failed: {exc}") from exc
 
     if verbose:
-        print(f"Loading SAM model '{sam_model_name}'…")
+        print(f"Loading SAM3 model '{sam_model_name}'…")
     try:
         mask_generator, effective_sam_name, _ = load_sam_model(project_path, sam_model_name)
     except (ImportError, FileNotFoundError, RuntimeError) as exc:
-        raise RuntimeError(f"SAM model load failed: {exc}") from exc
+        raise RuntimeError(f"SAM3 model load failed: {exc}") from exc
 
     total_files  = 0
     total_shots  = 0

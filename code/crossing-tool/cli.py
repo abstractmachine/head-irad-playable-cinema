@@ -240,7 +240,7 @@ _MODEL_KEYS = {
 }
 _MODEL_DEFAULTS = {
     "annotate": "gemma4-e4b",
-    "segmentation": "sam2.1_b.pt",
+    "segmentation": "sam3.pt",
     "embed": "BAAI/bge-small-en-v1.5",
     "frame_match": "clip-vit-base-patch32",
 }
@@ -7027,7 +7027,7 @@ def build_parser():
     p_sil_extract = silhouette_sub.add_parser(
         "extract",
         help=(
-            "Run CLIP + SAM2 segmentation and save all valid objects as transparent PNGs "
+            "Run CLIP + SAM3 concept segmentation and save all valid objects as transparent PNGs "
             "in the silhouette catalog"
         ),
         epilog=(
@@ -7071,8 +7071,8 @@ def build_parser():
     p_sil_extract.add_argument(
         "--model", default=None, metavar="NAME",
         help=(
-            "SAM2 checkpoint filename inside <project>/models/ "
-            "(default: segmentation model role)"
+            "SAM3 model bundle name inside <project>/models/ "
+            "(default: segmentation model role, e.g. \"sam3\")"
         ),
     )
     p_sil_extract.add_argument(
