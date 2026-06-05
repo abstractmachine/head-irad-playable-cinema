@@ -4882,7 +4882,8 @@ def _silhouette_catalog_extract(args):
 
     project_path = prefs.get("path")
     label        = args.label
-    field        = getattr(args, "field", None)  # None → search across all annotation fields
+    field        = getattr(args, "field",  None)  # None → search across all annotation fields
+    fields_multi = getattr(args, "fields", None)  # --fields: multi-field expansion mode
     media_type   = getattr(args, "media", "movies")
     force        = getattr(args, "force", False)
     verbose      = getattr(args, "verbose", False)
@@ -4898,6 +4899,20 @@ def _silhouette_catalog_extract(args):
         or prefs.get(_MODEL_KEYS["frame_match"], _MODEL_DEFAULTS["frame_match"])
     )
 
+    # Validate: exactly one of label or --fields must be given
+    if not label and not fields_multi:
+        print(
+            "✗ Specify a positional LABEL or --fields FIELD [FIELD …]",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if label and fields_multi:
+        print(
+            "✗ Cannot combine a positional LABEL with --fields; use one or the other.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     # Resolve scope
     shot_id  = getattr(args, "shot",  None)
     movie    = getattr(args, "movie", None)
@@ -4910,6 +4925,110 @@ def _silhouette_catalog_extract(args):
             file=sys.stderr,
         )
         sys.exit(1)
+
+    # ── multi-field expansion mode ─────────────────────────────────────────
+    if fields_multi:
+        from services.vocabulary_index import get_vocabulary
+        grand = {"files": 0, "shots": 0, "saved": 0, "skipped": 0, "failed": 0}
+        errors: list[str] = []
+
+        for fld in fields_multi:
+            try:
+                vocab = get_vocabulary(fld, project_path, media_type)
+            except (FileNotFoundError, KeyError) as exc:
+                msg = f"field '{fld}': {exc}"
+                errors.append(msg)
+                print(f"✗ {msg}", file=sys.stderr)
+                continue
+
+            labels = [e["value"] for e in vocab]
+            print(f"\nField '{fld}': {len(labels)} label(s) — "
+                  f"{', '.join(labels[:8])}"
+                  f"{' …' if len(labels) > 8 else ''}")
+
+            if dry_run:
+                for lbl in labels:
+                    print(f"  ── {fld}/{lbl}  (dry-run)")
+                continue
+
+            for lbl in labels:
+                print(f"  ── {fld}/{lbl}")
+                try:
+                    if movie or tmdb is not None:
+                        # Single-movie scope
+                        from data.shotlist import resolve_filename as _rfn
+                        fn = _rfn(project_path, tmdb, movie, media_type)
+                        mid = None
+                        for entry in get_metadata(project_path, media_type=media_type):
+                            if entry.get("filename") == fn:
+                                mid = compute_media_id(entry, media_type)
+                                break
+                        if not mid:
+                            raise RuntimeError(f"Could not resolve media_id for '{fn}'")
+                        s = extract_catalog_for_movie(
+                            project_path=project_path,
+                            filename=fn,
+                            media_id=mid,
+                            label=lbl,
+                            field=fld,
+                            media_type=media_type,
+                            sam_model_name=sam_model,
+                            frame_model_name=frame_model,
+                            force=force,
+                            verbose=verbose,
+                        )
+                        grand["shots"]   += s.get("total_shots",   0)
+                        grand["saved"]   += s.get("total_saved",   0)
+                        grand["skipped"] += s.get("total_skipped", 0)
+                        grand["failed"]  += s.get("failed",        0)
+                    else:
+                        # All-movies scope
+                        s = extract_catalog_for_all(
+                            project_path=project_path,
+                            label=lbl,
+                            field=fld,
+                            media_type=media_type,
+                            sam_model_name=sam_model,
+                            frame_model_name=frame_model,
+                            force=force,
+                            verbose=verbose,
+                        )
+                        grand["files"]   += s.get("total_files",   0)
+                        grand["shots"]   += s.get("total_shots",   0)
+                        grand["saved"]   += s.get("total_saved",   0)
+                        grand["skipped"] += s.get("total_skipped", 0)
+                        grand["failed"]  += s.get("total_failed",  0)
+                    print(
+                        f"     saved={s.get('total_saved', s.get('saved', 0))}  "
+                        f"skipped={s.get('total_skipped', s.get('skipped', 0))}  "
+                        f"failed={s.get('total_failed', s.get('failed', 0))}"
+                    )
+                except RuntimeError as exc:
+                    msg = f"{fld}/{lbl}: {exc}"
+                    errors.append(msg)
+                    print(f"     ✗ {exc}", file=sys.stderr)
+
+        fields_str = ", ".join(fields_multi)
+        print(
+            f"\n✓ Multi-field extract complete ({fields_str}):\n"
+            f"  files={grand['files']}  shots={grand['shots']}  "
+            f"saved={grand['saved']}  skipped={grand['skipped']}  "
+            f"failed={grand['failed']}"
+        )
+        if errors:
+            print(f"  {len(errors)} error(s):", file=sys.stderr)
+            for e in errors:
+                print(f"    ✗ {e}", file=sys.stderr)
+        if notify:
+            from services.notify import discord_notify
+            discord_notify(
+                f"✓ Silhouette multi-field extract ({fields_str}): "
+                f"saved={grand['saved']}  failed={grand['failed']}",
+                project_path,
+            )
+        if grand["failed"] or errors:
+            sys.exit(1)
+        return
 
     if verbose or dry_run:
         scope_str = (
@@ -7042,13 +7161,27 @@ def build_parser():
     p_sil_extract.set_defaults(func=cmd_index)
     p_sil_extract.add_argument(
         "label",
-        help="Object label / vocabulary word to segment (e.g. horse, saddle, cowboy)",
+        nargs="?",
+        default=None,
+        help=(
+            "Object label / vocabulary word to segment (e.g. horse, saddle, cowboy). "
+            "Omit when using --fields to auto-expand all vocabulary labels for each listed field."
+        ),
     )
     p_sil_extract.add_argument(
         "--field", default=None, metavar="FIELD",
         help=(
             "Annotation field / category to search in (e.g. animals, objects, characters). "
             "Omit to search across all annotation fields (recommended)."
+        ),
+    )
+    p_sil_extract.add_argument(
+        "--fields", nargs="+", default=None, metavar="FIELD", dest="fields",
+        help=(
+            "Expand all vocabulary labels for each listed field and extract them in one pass. "
+            "Cannot be combined with a positional LABEL. Requires --all or --movie/--tmdb scope. "
+            "Example: crossing index silhouette extract "
+            "--fields setting objects wearing action humans animals --all"
         ),
     )
     p_sil_extract.add_argument(
