@@ -179,6 +179,9 @@ def open_at_shot(
     filename: str,
     media_type: str = "movies",
     shot_id: str = "",
+    play: bool = False,
+    loop: bool = False,
+    no_continue: bool = False,
 ) -> None:
     """Open (or navigate) the Shotlist Visualizer to *filename* / *shot_id*.
 
@@ -188,7 +191,7 @@ def open_at_shot(
     open a film at a specific shot.
     """
     import subprocess as _sp
-    if ipc_send_load(project_path, filename, media_type, shot_id=shot_id, playback="pause"):
+    if ipc_send_load(project_path, filename, media_type, shot_id=shot_id, playback="play" if play else "pause"):
         return
     cmd = [
         sys.executable, str(Path(__file__)),
@@ -198,6 +201,12 @@ def open_at_shot(
     ]
     if shot_id:
         cmd += ["--shot-id", shot_id]
+    if play:
+        cmd += ["--play"]
+    if loop:
+        cmd += ["--loop"]
+    if no_continue:
+        cmd += ["--no-continue"]
     _sp.Popen(cmd)
 
 
@@ -1227,11 +1236,7 @@ class ShotlistVisualizer(QMainWindow):
         self.remove_ann_button.setToolTip("Delete the annotation for the currently selected shot")
         btn_grid.addWidget(self.remove_ann_button, 0, 1)
 
-        self.remove_all_ann_button = QPushButton("\U0001f5d1 Remove All")
-        self.remove_all_ann_button.clicked.connect(self._remove_all_annotations)
-        self.remove_all_ann_button.setFocusPolicy(Qt.NoFocus)
-        self.remove_all_ann_button.setToolTip("Delete all shot annotations for this film (cannot be undone)")
-        btn_grid.addWidget(self.remove_all_ann_button, 0, 2)
+
 
         # Row 1: shot editing
         self.split_button = QPushButton("New Shot")
@@ -1282,9 +1287,18 @@ class ShotlistVisualizer(QMainWindow):
         self.continue_button = QPushButton("Continue")
         self.continue_button.setCheckable(True)
         self.continue_button.setChecked(True)
+        self.continue_button.clicked.connect(self._on_continue_clicked)
         self.continue_button.setFocusPolicy(Qt.NoFocus)
         self.continue_button.setToolTip("When OFF: playback stops at the end of the current shot  [C]")
         btn_grid.addWidget(self.continue_button, 3, 1)
+
+        self.loop_button = QPushButton("Loop")
+        self.loop_button.setCheckable(True)
+        self.loop_button.setChecked(False)
+        self.loop_button.clicked.connect(self._on_loop_clicked)
+        self.loop_button.setFocusPolicy(Qt.NoFocus)
+        self.loop_button.setToolTip("Loop the current shot infinitely until turned off  [L]")
+        btn_grid.addWidget(self.loop_button, 3, 2)
 
         self.gremlins_button = QPushButton("\U0001f47e Gremlins")
         self.gremlins_button.setCheckable(True)
@@ -1292,7 +1306,7 @@ class ShotlistVisualizer(QMainWindow):
         self.gremlins_button.clicked.connect(self.toggle_gremlins)
         self.gremlins_button.setFocusPolicy(Qt.NoFocus)
         self.gremlins_button.setToolTip("Randomly jump movies/timecodes every 5 s  [G]")
-        btn_grid.addWidget(self.gremlins_button, 3, 2)
+        btn_grid.addWidget(self.gremlins_button, 0, 2)
 
         # Row 3 annotation buttons moved to row 0
 
@@ -1443,7 +1457,17 @@ class ShotlistVisualizer(QMainWindow):
         self.play_pause_button.setText("▶ Play")
         self.playback_timer.stop()
         self.audio.stop()
-    
+
+    def _on_continue_clicked(self):
+        """Mutual exclusion: turning Continue on disables Loop."""
+        if self.continue_button.isChecked():
+            self.loop_button.setChecked(False)
+
+    def _on_loop_clicked(self):
+        """Mutual exclusion: turning Loop on disables Continue."""
+        if self.loop_button.isChecked():
+            self.continue_button.setChecked(False)
+
     def toggle_gremlins(self):
         """Toggle gremlins mode on/off."""
         self.gremlins_active = not self.gremlins_active
@@ -1512,6 +1536,17 @@ class ShotlistVisualizer(QMainWindow):
         if self.current_frame_number >= self.total_frames:
             self.stop_playback()
             return
+
+        # Loop: when Loop is on and we reach the end of the current shot, restart from shot start
+        if self.loop_button.isChecked():
+            if 0 <= self.current_shot_index < len(self.shots):
+                end_frame = int(self.shots[self.current_shot_index].get('end_frame', self.total_frames - 1))
+                if self.current_frame_number > end_frame:
+                    start_frame = int(self.shots[self.current_shot_index].get('start_frame', 0))
+                    self.stop_playback()
+                    self.current_frame_number = start_frame
+                    self.start_playback()
+                    return
 
         # Stop at shot boundary when Continue is off
         if not self.continue_button.isChecked():
@@ -2101,7 +2136,15 @@ class ShotlistVisualizer(QMainWindow):
         elif key == Qt.Key_E:
             self.show_end_frame()
         elif key == Qt.Key_C:
-            self.continue_button.setChecked(not self.continue_button.isChecked())
+            new_state = not self.continue_button.isChecked()
+            self.continue_button.setChecked(new_state)
+            if new_state:
+                self.loop_button.setChecked(False)
+        elif key == Qt.Key_L:
+            new_state = not self.loop_button.isChecked()
+            self.loop_button.setChecked(new_state)
+            if new_state:
+                self.continue_button.setChecked(False)
         elif key == Qt.Key_I:
             self.toggle_current_ignore()
         elif key == Qt.Key_M:
@@ -2616,6 +2659,9 @@ def main():
     parser.add_argument('--all', action='store_true', help="Validate all movies with shotlists")
     parser.add_argument('--verbose', action='store_true', help="Print audio/gremlins diagnostics to stderr (also writes a crash log)")
     parser.add_argument('--shot-id', dest='shot_id', default='', help="Jump to this shot_id on startup")
+    parser.add_argument('--play', action='store_true', help="Start playback immediately on startup")
+    parser.add_argument('--loop', action='store_true', help="Enable loop mode on startup")
+    parser.add_argument('--no-continue', dest='no_continue', action='store_true', help="Disable continue mode on startup")
 
     args = parser.parse_args()
 
@@ -2698,6 +2744,14 @@ def main():
         screen = QApplication.primaryScreen()
         visualizer.setGeometry(screen.availableGeometry())
     visualizer.show()
+    QTimer.singleShot(0, lambda: (visualizer.raise_(), visualizer.activateWindow()))
+
+    # Apply initial button states from CLI args
+    if getattr(args, 'no_continue', False):
+        visualizer.continue_button.setChecked(False)
+    if getattr(args, 'loop', False):
+        visualizer.loop_button.setChecked(True)
+        visualizer.continue_button.setChecked(False)
 
     # Jump to a specific shot if requested (e.g. launched from the Mosaic Visualizer).
     if args.shot_id:
@@ -2710,6 +2764,10 @@ def main():
                         visualizer.stop_playback()
                     break
         QTimer.singleShot(250, _jump_on_start)
+
+    # Start playback if requested (slightly after shot jump to ensure seek is complete)
+    if getattr(args, 'play', False):
+        QTimer.singleShot(300, visualizer.start_playback)
 
     sys.exit(app.exec_())
 

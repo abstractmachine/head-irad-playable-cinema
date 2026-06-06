@@ -1332,6 +1332,7 @@ class CatalogBrowser(QWidget):
         ov.addWidget(self._preview)
 
         self._meta_rows: dict[str, QLabel] = {}
+        self._current_rec: dict | None = None
         for key in ("label", "film", "shot", "frame", "confidence", "model"):
             row = QWidget()
             rl = QHBoxLayout(row)
@@ -1347,6 +1348,12 @@ class CatalogBrowser(QWidget):
             rl.addWidget(vl, 1)
             ov.addWidget(row)
             self._meta_rows[key] = vl
+
+        self._shotlist_btn = QPushButton("Open in Shotlist  →")
+        self._shotlist_btn.setFocusPolicy(Qt.NoFocus)
+        self._shotlist_btn.setEnabled(False)
+        self._shotlist_btn.clicked.connect(self._open_in_shotlist)
+        ov.addWidget(self._shotlist_btn)
 
         pv.addWidget(obj_group)
         pv.addStretch()
@@ -1589,6 +1596,8 @@ class CatalogBrowser(QWidget):
         self._preview.setText("")
         for lbl in self._meta_rows.values():
             lbl.setText("—")
+        self._current_rec = None
+        self._shotlist_btn.setEnabled(False)
 
     def _show_object_meta(self, rec: dict) -> None:
         from PIL import Image as _PIL
@@ -1622,6 +1631,20 @@ class CatalogBrowser(QWidget):
         self._meta_rows["frame"].setText(str(rec.get("frame", "—")))
         self._meta_rows["confidence"].setText(f"{conf:.3f}")
         self._meta_rows["model"].setText(rec.get("sam_model", "—"))
+        self._current_rec = rec
+        self._shotlist_btn.setEnabled(bool(rec.get("filename") and rec.get("shot_id")))
+
+    def _open_in_shotlist(self) -> None:
+        rec = self._current_rec
+        if not rec:
+            return
+        filename = rec.get("filename") or ""
+        shot_id  = str(rec.get("shot_id") or "")
+        if not filename:
+            return
+        from visualizers.shot_visualizer import open_at_shot
+        open_at_shot(self._project_path, filename, self._media_type, shot_id=shot_id,
+                     loop=True, no_continue=True, play=True)
 
     # ------------------------------------------------------------------
     # Keyboard handling — event filter intercepts keys stolen by child widgets

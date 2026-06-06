@@ -2597,6 +2597,12 @@ def _shot_visualizer(args):
 
     if getattr(args, "verbose", False):
         cmd.append("--verbose")
+    if getattr(args, "play", False):
+        cmd.append("--play")
+    if getattr(args, "loop", False):
+        cmd.append("--loop")
+    if getattr(args, "no_continue", False):
+        cmd.append("--no-continue")
 
     try:
         subprocess.run(cmd, check=True)
@@ -5826,6 +5832,9 @@ def cmd_visualizer(args):
                 filename,
                 getattr(args, "media", "movies") or "movies",
                 shot_id=getattr(args, "shot_id", "") or "",
+                play=getattr(args, "play", False),
+                loop=getattr(args, "loop", False),
+                no_continue=getattr(args, "no_continue", False),
             )
         else:
             args.all = True
@@ -7956,6 +7965,22 @@ def build_parser():
         dest="shot_id",
         default="",
         help="Jump to a specific shot_id on open",
+    )
+    p_vis_shot.add_argument(
+        "--play",
+        action="store_true",
+        help="Start playback immediately on open",
+    )
+    p_vis_shot.add_argument(
+        "--loop",
+        action="store_true",
+        help="Enable loop mode on open",
+    )
+    p_vis_shot.add_argument(
+        "--no-continue",
+        dest="no_continue",
+        action="store_true",
+        help="Disable continue mode on open",
     )
     _add_verbose_arg(p_vis_shot, help="Enable verbose logging in the shotlist visualizer")
 

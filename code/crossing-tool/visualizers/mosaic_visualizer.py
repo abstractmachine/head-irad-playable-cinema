@@ -1511,7 +1511,8 @@ class MosaicVisualizer(QMainWindow):
             return
 
         from visualizers.shot_visualizer import open_at_shot
-        open_at_shot(self.project_path, filename, "movies", shot_id=shot_id)
+        open_at_shot(self.project_path, filename, "movies", shot_id=shot_id,
+                     loop=True, no_continue=True, play=True)
         self.status.showMessage(
             f"Opening Shotlist Visualizer → {filename}  shot {shot_id}", 4000
         )
