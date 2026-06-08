@@ -52,6 +52,7 @@ from PyQt5.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QSlider,
     QLineEdit,
     QMainWindow,
     QPushButton,
@@ -1305,12 +1306,67 @@ class CatalogBrowser(QWidget):
         lg.addWidget(self._label_combo)
         pv.addWidget(label_group)
 
+        # Quality Filters
+        q_group = QGroupBox("Quality Filters")
+        ql = QVBoxLayout(q_group)
+        ql.setContentsMargins(8, 8, 8, 8)
+        # Helper to add a slider row: <filter name> + <value> + <slider>
+        def _add_slider_row(parent_layout, label_text, default=0):
+            row = QWidget()
+            rl = QHBoxLayout(row)
+            rl.setContentsMargins(0, 0, 0, 0)
+            rl.setSpacing(6)
+            lbl = QLabel(label_text)
+            lbl.setFixedWidth(110)
+            val_lbl = QLabel(f"{default}")
+            val_lbl.setFixedWidth(36)
+            s = QSlider(Qt.Horizontal)
+            s.setRange(0, 100)
+            s.setValue(int(default))
+            s.setSingleStep(1)
+            s.setPageStep(5)
+            # Only allow mouse interaction (no keyboard focus)
+            s.setFocusPolicy(Qt.NoFocus)
+            # Update numeric label and reapply filters when changed
+            s.valueChanged.connect(lambda v, l=val_lbl: l.setText(str(v)))
+            s.valueChanged.connect(lambda _v: self._on_quality_changed())
+            rl.addWidget(lbl)
+            rl.addWidget(val_lbl)
+            rl.addWidget(s, 1)
+            parent_layout.addWidget(row)
+            return s, val_lbl
+
+        self._s_usefulness, self._s_usefulness_val = _add_slider_row(ql, "Min usefulness", 0)
+        self._s_fullness, self._s_fullness_val = _add_slider_row(ql, "Min fullness", 0)
+        self._s_size, self._s_size_val = _add_slider_row(ql, "Min size", 0)
+        self._s_max_overlap, self._s_max_overlap_val = _add_slider_row(ql, "Max overlap (%)", 100)
+        self._s_slabel, self._s_slabel_val = _add_slider_row(ql, "Min semantic label", 0)
+        self._s_sfield, self._s_sfield_val = _add_slider_row(ql, "Min semantic field", 0)
+        pv.addWidget(q_group)
+
         self._status_lbl = QLabel("—")
         self._status_lbl.setWordWrap(True)
         self._status_lbl.setStyleSheet(
             f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT - 1}pt;"
         )
         pv.addWidget(self._status_lbl)
+
+        # Sort selector
+        sort_row = QWidget()
+        sort_layout = QHBoxLayout(sort_row)
+        sort_layout.setContentsMargins(0, 0, 0, 0)
+        sort_layout.setSpacing(6)
+        sort_lbl = QLabel("Sort by")
+        sort_lbl.setFixedWidth(64)
+        self._sort_combo = QComboBox()
+        for k in ("usefulness", "fullness", "size", "semantic_label", "semantic_field", "confidence"):
+            self._sort_combo.addItem(k, userData=k)
+        # Make sort combo mouse-only so it does not capture global nav keys
+        self._sort_combo.setFocusPolicy(Qt.NoFocus)
+        self._sort_combo.currentIndexChanged.connect(self._on_sort_changed)
+        sort_layout.addWidget(sort_lbl)
+        sort_layout.addWidget(self._sort_combo, 1)
+        pv.addWidget(sort_row)
 
         self._more_btn = QPushButton(f"Load {_PAGE_SIZE} more  ↓")
         self._more_btn.setFocusPolicy(Qt.NoFocus)
@@ -1333,7 +1389,7 @@ class CatalogBrowser(QWidget):
 
         self._meta_rows: dict[str, QLabel] = {}
         self._current_rec: dict | None = None
-        for key in ("label", "film", "shot", "frame", "confidence", "model"):
+        for key in ("label", "film", "shot", "frame", "confidence", "usefulness", "fullness", "size", "overlap", "semantic_label", "semantic_field", "model"):
             row = QWidget()
             rl = QHBoxLayout(row)
             rl.setContentsMargins(0, 0, 0, 0)
@@ -1475,10 +1531,71 @@ class CatalogBrowser(QWidget):
                 r for r in records
                 if (r.get("filename_stem") or r.get("filename") or "") == film
             ]
+
+        # Apply quality filters (values are 0-100 in the UI widgets)
+        def _get_score(rec, key, default=0.0):
+            # scores are saved as top-level fields by the indexer
+            return float(rec.get(f"{key}_score", rec.get(key) or default))
+
+        min_use = (self._s_usefulness.value() / 100.0) if hasattr(self, '_s_usefulness') else 0.0
+        min_full = (self._s_fullness.value() / 100.0) if hasattr(self, '_s_fullness') else 0.0
+        min_size = (self._s_size.value() / 100.0) if hasattr(self, '_s_size') else 0.0
+        max_overlap_pct = int(self._s_max_overlap.value()) if hasattr(self, '_s_max_overlap') else 100
+        max_intrusion = max(0.0, min(1.0, (100 - max_overlap_pct) / 100.0))
+        min_slabel = (self._s_slabel.value() / 100.0) if hasattr(self, '_s_slabel') else 0.0
+        min_sfield = (self._s_sfield.value() / 100.0) if hasattr(self, '_s_sfield') else 0.0
+
+        def _passes_quality(r):
+            use = _get_score(r, 'usefulness', 0.0)
+            if use < min_use:
+                return False
+            if _get_score(r, 'fullness', 0.0) < min_full:
+                return False
+            if _get_score(r, 'size', 0.0) < min_size:
+                return False
+            # intrusion ~= 1 - overlap_score
+            overlap = _get_score(r, 'overlap', 1.0)
+            intrusion = 1.0 - overlap
+            if intrusion > max_intrusion:
+                return False
+            if _get_score(r, 'semantic_label', 0.0) < min_slabel:
+                return False
+            if _get_score(r, 'semantic_field', 0.0) < min_sfield:
+                return False
+            return True
+
+        records = [r for r in records if _passes_quality(r)]
+
+        # Sort
+        sort_key = self._sort_combo.currentData() if hasattr(self, '_sort_combo') else 'usefulness'
+        def _sort_val(r):
+            if sort_key == 'confidence':
+                return float(r.get('confidence', 0.0))
+            # try *_score fields first
+            v = r.get(f"{sort_key}_score")
+            if v is None:
+                # fallback to similar key names
+                v = r.get(sort_key) or 0.0
+            try:
+                return float(v)
+            except Exception:
+                return 0.0
+
+        records.sort(key=_sort_val, reverse=True)
         self._current_records = records
         self._selected_idx = -1
         self._clear_meta()
         self._show_page(0)
+
+    def _on_quality_changed(self) -> None:
+        # Re-apply filters when sliders change. Numeric labels are updated
+        # directly by each slider's valueChanged signal handler.
+        self._page_offset = 0
+        self._apply_filters()
+
+    def _on_sort_changed(self, _idx: int) -> None:
+        self._page_offset = 0
+        self._apply_filters()
 
     def _show_page(self, offset: int) -> None:
         self._stop_loader()
@@ -1631,6 +1748,23 @@ class CatalogBrowser(QWidget):
         self._meta_rows["frame"].setText(str(rec.get("frame", "—")))
         self._meta_rows["confidence"].setText(f"{conf:.3f}")
         self._meta_rows["model"].setText(rec.get("sam_model", "—"))
+
+        def _get_score_val(r, key):
+            # accept either top-level '<key>_score' or legacy '<key>'
+            v = r.get(f"{key}_score")
+            if v is None:
+                v = r.get(key)
+            try:
+                return float(v) if v is not None else 0.0
+            except Exception:
+                return 0.0
+
+        self._meta_rows["usefulness"].setText(f"{_get_score_val(rec, 'usefulness'):.3f}")
+        self._meta_rows["fullness"].setText(f"{_get_score_val(rec, 'fullness'):.3f}")
+        self._meta_rows["size"].setText(f"{_get_score_val(rec, 'size'):.3f}")
+        self._meta_rows["overlap"].setText(f"{_get_score_val(rec, 'overlap'):.3f}")
+        self._meta_rows["semantic_label"].setText(f"{_get_score_val(rec, 'semantic_label'):.3f}")
+        self._meta_rows["semantic_field"].setText(f"{_get_score_val(rec, 'semantic_field'):.3f}")
         self._current_rec = rec
         self._shotlist_btn.setEnabled(bool(rec.get("filename") and rec.get("shot_id")))
 

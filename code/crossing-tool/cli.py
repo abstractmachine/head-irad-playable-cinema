@@ -4869,6 +4869,26 @@ def _index_silhouette(args):
         _silhouette_catalog_audit(args)
     elif silhouette_action == "clear":
         _silhouette_catalog_clear(args)
+    elif silhouette_action == "score":
+        # Compute and persist silhouette quality scores
+        from services.silhouette_scoring import compute_scores_for_catalog
+
+        project_path = prefs.get("path")
+        media_type = getattr(args, "media", "movies")
+        label = getattr(args, "label", None)
+        field = getattr(args, "field", None)
+        rebuild = getattr(args, "rebuild", False)
+        verbose = getattr(args, "verbose", False)
+
+        summary = compute_scores_for_catalog(
+            project_path=project_path,
+            media_type=media_type,
+            label=label,
+            field=field,
+            rebuild=rebuild,
+            verbose=verbose,
+        )
+        print(f"Scoring summary: processed={summary.get('processed', 0)} skipped={summary.get('skipped',0)} errors={summary.get('errors',0)}")
     else:
         print("✗ index silhouette: specify a subcommand (extract, audit, clear)", file=sys.stderr)
         sys.exit(1)
@@ -7311,6 +7331,34 @@ def build_parser():
     )
     _add_media_arg(p_sil_clear)
     _add_dry_run_arg(p_sil_clear, help="Show what would be deleted without removing any files")
+
+    # ── score ─────────────────────────────────────────────────────────────
+    p_sil_score = silhouette_sub.add_parser(
+        "score",
+        help="Compute and persist silhouette quality scores for catalog objects",
+        epilog=(
+            "Examples:\n"
+            "  crossing index silhouette score --all\n"
+            "  crossing index silhouette score --label horse\n"
+            "  crossing index silhouette score --field animals --rebuild\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_sil_score.set_defaults(func=cmd_index)
+    p_sil_score.add_argument(
+        "--label", default=None, metavar="LABEL",
+        help="Restrict scoring to a specific label",
+    )
+    p_sil_score.add_argument(
+        "--field", default=None, metavar="FIELD",
+        help="Restrict scoring to a specific annotation field (e.g. animals)",
+    )
+    p_sil_score.add_argument(
+        "--rebuild", action="store_true",
+        help="Recompute scores even when they already exist on disk",
+    )
+    _add_media_arg(p_sil_score)
+    _add_verbose_arg(p_sil_score, help="Print per-object scoring progress")
 
     # index palette
     p_index_palette = index_sub.add_parser(
