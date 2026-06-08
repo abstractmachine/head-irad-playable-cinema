@@ -3120,6 +3120,9 @@ class BookVisualizerWindow(QMainWindow):
         self._save_current_layers()
         self._close_doc()
         save_window_geometry(self, "window_book")
+        app = QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
         super().closeEvent(event)
 
     # ------------------------------------------------------------------
@@ -3992,6 +3995,12 @@ class BookVisualizerWindow(QMainWindow):
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
         if event.type() == QEvent.KeyPress:
+            # Only steal keys when this window is the active top-level window.
+            # Without this guard every key press in any other in-process window
+            # (e.g. Shot Visualizer) would also be caught here, because the
+            # filter is registered on QApplication rather than on a child widget.
+            if QApplication.activeWindow() is not self:
+                return super().eventFilter(obj, event)
             key  = event.key()
             mods = event.modifiers()
             # Never intercept when a line-edit or open combo popup is active
