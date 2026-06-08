@@ -315,6 +315,10 @@ class ComposeVisualizer(QMainWindow):
 def run_visualizer(project_path: str, initial_query: str = "") -> None:
     """Create the QApplication (if needed) and launch the visualizer window."""
     app = QApplication.instance() or QApplication(sys.argv)
+        from visualizers._window_helpers import raise_existing_window
+        if raise_existing_window("composition"):
+            return
+
     theme.apply_theme(app)
     win = ComposeVisualizer(project_path, initial_query=initial_query)
     win.show()

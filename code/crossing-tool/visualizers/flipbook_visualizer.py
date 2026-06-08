@@ -620,6 +620,10 @@ def run_visualizer(
 ) -> None:
     """Create QApplication (if needed) and open the flipbook visualizer."""
     global _FONT_FAMILY
+    from visualizers._window_helpers import raise_existing_window
+    if raise_existing_window("flipbook"):
+        return
+
     app = QApplication.instance() or QApplication(sys.argv)
     theme.apply_theme(app)
     _FONT_FAMILY = _load_flipbook_font()

@@ -1512,6 +1512,184 @@ class _CutOverlay(QWidget):
                     return
             self._close_wip()
             return
+        if self._tool == _TOOL_TEXT:
+            # Double-click in text tool: expand to word under cursor
+            pos = QPointF(event.pos())
+            hit = self._which_page(pos.x(), pos.y())
+            if hit is None:
+                return
+            page_idx, nx, ny = hit
+            doc = getattr(self._view, "_doc", None)
+            if doc is None:
+                return
+            try:
+                page = doc[page_idx]
+            except Exception:
+                return
+            try:
+                import fitz
+            except Exception:
+                return
+            pw = page.rect.width
+            ph = page.rect.height
+            px = nx * pw
+            py = ny * ph
+
+            raw = page.get_text("rawdict", flags=fitz.TEXT_PRESERVE_WHITESPACE)
+            # Group chars by logical line to avoid expanding across lines
+            lines_chars = []  # list of lists of (bbox, char)
+            for block in raw.get("blocks", []):
+                if block.get("type") != 0:
+                    continue
+                for line in block.get("lines", []):
+                    line_chars: list = []
+                    for span in line.get("spans", []):
+                        for ch in span.get("chars", []):
+                            bbox = ch.get("bbox")
+                            if not bbox or len(bbox) < 4:
+                                continue
+                            c = ch.get("c", "")
+                            line_chars.append((bbox, c))
+                    if line_chars:
+                        # ensure left-to-right order
+                        line_chars.sort(key=lambda bc: bc[0][0])
+                        lines_chars.append(line_chars)
+
+            if not lines_chars:
+                return
+
+            # Find the line and char index nearest to the click, preferring
+            # a char whose bbox contains the point.  Fallback chooses the
+            # line whose vertical centre is closest to the click, then the
+            # nearest char within that line (by horizontal distance).
+            found_line = None
+            found_idx = None
+            for li, lchars in enumerate(lines_chars):
+                for ci, (bbox, ch) in enumerate(lchars):
+                    x0, y0, x1, y1 = bbox
+                    if x0 <= px <= x1 and y0 <= py <= y1:
+                        found_line = li
+                        found_idx = ci
+                        break
+                if found_line is not None:
+                    break
+
+            if found_line is None:
+                # pick line by vertical proximity
+                def line_vcentre(li):
+                    lchars = lines_chars[li]
+                    y0s = [b[1] for b, _ in lchars]
+                    y1s = [b[3] for b, _ in lchars]
+                    return (min(y0s) + max(y1s)) / 2.0
+
+                chosen_line = None
+                # lines that vertically contain the point
+                containing = [i for i in range(len(lines_chars)) if min(b[1] for b, _ in lines_chars[i]) <= py <= max(b[3] for b, _ in lines_chars[i])]
+                if containing:
+                    chosen_line = containing[0]
+                else:
+                    chosen_line = min(range(len(lines_chars)), key=lambda i: abs(line_vcentre(i) - py))
+
+                # nearest char in chosen line by horizontal centre distance
+                best_ci = None
+                best_dx = None
+                for ci, (bbox, ch) in enumerate(lines_chars[chosen_line]):
+                    cx = (bbox[0] + bbox[2]) / 2.0
+                    dx = abs(cx - px)
+                    if best_ci is None or dx < best_dx:
+                        best_ci = ci
+                        best_dx = dx
+                found_line = chosen_line
+                found_idx = best_ci
+
+            if found_line is None or found_idx is None:
+                return
+
+            # Expand to word within the same line only (exclude spaces, punctuation,
+            # parentheses, various quotation marks, colons/semicolons, and dashes)
+            delims = {
+                " ", "\t", "\n", ",", ".",
+                ":", ";",
+                "(", ")",
+                '"', "'",
+                "\u201C", "\u201D",  # “ ”
+                "\u2018", "\u2019",  # ‘ ’
+                "\u00AB", "\u00BB",  # « »
+                "\u2039", "\u203A",  # ‹ ›
+                "\u2013", "\u2014",  # – — (en dash, em dash)
+            }
+            lchars = lines_chars[found_line]
+            # If clicked char is a delimiter, search within the same line.
+            # Also treat a double-hyphen ("--") sequence as a delimiter when
+            # the clicked char is '-' adjacent to another '-'.
+            cur_ch = lchars[found_idx][1]
+            is_delim = cur_ch in delims
+            if not is_delim and cur_ch == '-':
+                # check adjacent chars for double-hyphen
+                if (found_idx + 1 < len(lchars) and lchars[found_idx + 1][1] == '-') or (
+                    found_idx - 1 >= 0 and lchars[found_idx - 1][1] == '-'
+                ):
+                    is_delim = True
+
+            if is_delim:
+                left = found_idx - 1
+                right = found_idx + 1
+                found = None
+                while left >= 0 or right < len(lchars):
+                    if left >= 0 and lchars[left][1] not in delims and lchars[left][1] != '-':
+                        found = left
+                        break
+                    if right < len(lchars) and lchars[right][1] not in delims and lchars[right][1] != '-':
+                        found = right
+                        break
+                    left -= 1
+                    right += 1
+                if found is None:
+                    return
+                found_idx = found
+
+            # expand left/right but keep within line bounds
+            li = found_idx
+            ll = li
+            while ll - 1 >= 0 and lchars[ll - 1][1] not in delims:
+                ll -= 1
+            rr = li
+            while rr + 1 < len(lchars) and lchars[rr + 1][1] not in delims:
+                rr += 1
+
+            sel_chars = lchars[ll: rr + 1]
+            if not sel_chars:
+                return
+
+            x0 = min(b[0] for b, _ in sel_chars)
+            y0 = min(b[1] for b, _ in sel_chars)
+            x1 = max(b[2] for b, _ in sel_chars)
+            y1 = max(b[3] for b, _ in sel_chars)
+
+            x0n = x0 / pw
+            y0n = y0 / ph
+            x1n = x1 / pw
+            y1n = y1 / ph
+
+            text = "".join(c for _, c in sel_chars)
+            spread_idx = getattr(self._view, "_spread_idx", 0)
+            color = _SELECTION_COLORS[self._text_color_idx % len(_SELECTION_COLORS)]
+            self._text_color_idx += 1
+            sel = {
+                "id": f"text_{uuid.uuid4().hex[:8]}",
+                "type": "TextSelection",
+                "name": "Text",
+                "page": page_idx,
+                "spread": spread_idx,
+                "text": text,
+                "rects": [[x0n, y0n, x1n, y1n]],
+                "color": color,
+                "visible": True,
+            }
+            self._text_sels.append(sel)
+            self.update()
+            self.text_sel_committed.emit(sel)
+            return
         if self._tool == _TOOL_NONE:
             pos = QPointF(event.pos())
             hit_pt = self._hit_point(pos)
@@ -3988,6 +4166,10 @@ class BookVisualizerWindow(QMainWindow):
 
 def run_visualizer(project_path: str) -> None:
     """Launch the Book Visualizer window."""
+    from visualizers._window_helpers import raise_existing_window
+    if raise_existing_window("book"):
+        return
+
     app = QApplication.instance() or QApplication(sys.argv)
     theme.apply_theme(app)
     window = BookVisualizerWindow(project_path)

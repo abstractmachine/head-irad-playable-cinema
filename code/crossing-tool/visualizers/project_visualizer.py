@@ -93,6 +93,7 @@ class ProjectVisualizer(QMainWindow):
         super().__init__()
         self.setWindowTitle("Crossing — Project")
         self._procs: dict[str, subprocess.Popen] = {}
+        self._windows: dict[str, object] = {}  # in-process visualizer windows
         self._backup_proc: subprocess.Popen | None = None
         self._backup_poll_timer: QTimer | None = None
         self._backup_master_fd: int = -1
@@ -255,40 +256,6 @@ class ProjectVisualizer(QMainWindow):
         self._backup_poll_timer.setInterval(500)
         self._backup_poll_timer.timeout.connect(self._poll_backup_proc)
         self._backup_poll_timer.start()
-
-    _BACKUP_SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-
-    def _poll_backup_proc(self) -> None:
-        # Read any available bytes from the pty master fd (keep buffer trimmed)
-        if self._backup_master_fd >= 0:
-            try:
-                chunk = os.read(self._backup_master_fd, 4096)
-                if chunk:
-                    self._backup_stdout_buf += chunk
-                    if len(self._backup_stdout_buf) > 8192:
-                        self._backup_stdout_buf = self._backup_stdout_buf[-4096:]
-            except (BlockingIOError, OSError):
-                pass
-
-        # Advance spinner regardless of whether new bytes arrived
-        frame = self._BACKUP_SPINNER[self._backup_anim_frame % len(self._BACKUP_SPINNER)]
-        self._backup_anim_frame += 1
-        self.backup_btn.setText(f"{frame}  Backing Up")
-
-        if self._backup_proc is None or self._backup_proc.poll() is not None:
-            if self._backup_master_fd >= 0:
-                try:
-                    os.close(self._backup_master_fd)
-                except OSError:
-                    pass
-                self._backup_master_fd = -1
-            if self._backup_poll_timer is not None:
-                self._backup_poll_timer.stop()
-                self._backup_poll_timer = None
-            self._backup_proc = None
-            self.backup_btn.setStyleSheet("")
-            self.backup_btn.setText("Backup")
-            self._refresh_backup_button()
 
     # ------------------------------------------------------------------
     # Defaults
@@ -463,25 +430,84 @@ class ProjectVisualizer(QMainWindow):
         if not _prefs.get("path"):
             QMessageBox.warning(self, "No Project", "Please set a project folder first.")
             return
+
+        # Raise an already-open in-process window (works because all visualizers
+        # opened via this launcher share the same QApplication event loop).
+        from visualizers._window_helpers import raise_existing_window
+        if raise_existing_window(subcommand):
+            return
+
+        # Open the visualizer in-process so future raises are always reliable.
+        project_path = _prefs.get("path")
+        try:
+            win = self._create_in_process_window(subcommand, project_path)
+        except Exception as exc:
+            import traceback
+            QMessageBox.critical(
+                self, "Error",
+                f"Could not open {subcommand} visualizer:\n{exc}\n\n{traceback.format_exc()}",
+            )
+            return
+
+        if win is not None:
+            win.show()
+            self._windows[subcommand] = win  # keep reference so Qt doesn't GC it
+            return
+
+        # Fallback for subcommands not handled in-process (e.g. shotlist).
+        # For shotlist specifically, ping its IPC socket to raise the window.
+        if subcommand == "shotlist":
+            project_path = _prefs.get("path") or ""
+            try:
+                from visualizers.shot_visualizer import ipc_send_load, _ipc_socket_path
+                if _ipc_socket_path(project_path).exists():
+                    ipc_send_load(project_path, "", "movies")
+                    return
+            except Exception:
+                pass
+
         proc = self._procs.get(subcommand)
         if proc is not None and proc.poll() is None:
-            # Already running — raise its window
-            title = _VISUALIZER_TITLE.get(subcommand, subcommand.capitalize())
-            raised = False
-            for cmd in (
-                ["wmctrl", "-a", title],
-                ["xdotool", "search", "--name", title, "windowactivate", "--sync"],
-            ):
-                try:
-                    subprocess.Popen(cmd)
-                    raised = True
-                    break
-                except FileNotFoundError:
-                    continue
-            return
+            return  # already running, nothing more we can do without OS tools
+
         self._procs[subcommand] = subprocess.Popen(
             [sys.executable, str(_CLI_PATH), "visualizer", subcommand]
         )
+
+    def _create_in_process_window(self, subcommand: str, project_path: str):
+        """Instantiate the named visualizer as a window inside this process.
+
+        Returns the window (not yet shown) or None for subcommands that must
+        run as separate processes (e.g. shotlist with its own IPC server).
+        """
+        media_type = "movies"
+        if subcommand == "metadata":
+            from visualizers.metadata_visualizer import MetadataVisualizer
+            return MetadataVisualizer(project_path)
+        elif subcommand == "cloud":
+            from visualizers.cloud_visualizer import CloudVisualizer
+            return CloudVisualizer(project_path)
+        elif subcommand == "mosaic":
+            from visualizers.mosaic_visualizer import MosaicVisualizer
+            return MosaicVisualizer(project_path)
+        elif subcommand == "composition":
+            from visualizers.composition_visualizer import ComposeVisualizer
+            return ComposeVisualizer(project_path)
+        elif subcommand == "book":
+            from visualizers.book_visualizer import BookVisualizerWindow
+            return BookVisualizerWindow(project_path)
+        elif subcommand == "silhouette":
+            model_name = _prefs.get("model_segmentation", "sam3.pt") or "sam3.pt"
+            from visualizers.silhouette_visualizer import SilhouetteWindow
+            return SilhouetteWindow(project_path, media_type=media_type, model_name=model_name)
+        elif subcommand == "palette":
+            from visualizers.palette_visualizer import PaletteVisualizerWindow
+            return PaletteVisualizerWindow(project_path, media_type=media_type)
+        elif subcommand == "flipbook":
+            import visualizers.flipbook_visualizer as _fv
+            _fv._FONT_FAMILY = _fv._load_flipbook_font()
+            return _fv.FlipbookVisualizerWindow(project_path, media_type=media_type)
+        return None  # caller falls through to subprocess
 
     # ------------------------------------------------------------------
     # Keyboard

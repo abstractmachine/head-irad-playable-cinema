@@ -2671,6 +2671,10 @@ class MosaicVisualizer(QMainWindow):
 
 def run_visualizer(project_path: str) -> None:
     """Create the QApplication (if needed) and launch the visualizer window."""
+    from visualizers._window_helpers import raise_existing_window
+    if raise_existing_window("mosaic"):
+        return
+
     app = QApplication.instance() or QApplication(sys.argv)
     theme.apply_theme(app)
     win = MosaicVisualizer(project_path)

@@ -1904,6 +1904,10 @@ def run_visualizer(
 
     model_name = _prefs.get("model_segmentation", _DEFAULT_MODEL) or _DEFAULT_MODEL
 
+    from visualizers._window_helpers import raise_existing_window
+    if raise_existing_window("silhouette"):
+        return
+
     app = QApplication.instance() or QApplication(sys.argv)
     theme.apply_theme(app)
 

@@ -831,6 +831,9 @@ class ShotlistVisualizer(QMainWindow):
         """Handle a load request arriving from the IPC socket."""
         self.raise_()
         self.activateWindow()
+        if not filename:
+            # Empty filename = raise-only ping; nothing else to do.
+            return
         if media_type != self.media_type:
             # Different media type — not supported mid-session; ignore silently.
             return

@@ -636,6 +636,10 @@ def run_visualizer(
     media_type: str = "movies",
 ) -> None:
     """Create QApplication (if needed) and open the palette visualizer."""
+    from visualizers._window_helpers import raise_existing_window
+    if raise_existing_window("palette"):
+        return
+
     app = QApplication.instance() or QApplication(sys.argv)
     theme.apply_theme(app)
     win = PaletteVisualizerWindow(project_path, media_type=media_type)

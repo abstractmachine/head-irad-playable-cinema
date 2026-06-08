@@ -731,6 +731,10 @@ class CloudVisualizer(QMainWindow):
 
 def run_visualizer(project_path: str) -> None:
     """Create the QApplication (if needed) and launch the cloud visualizer."""
+    from visualizers._window_helpers import raise_existing_window
+    if raise_existing_window("cloud"):
+        return
+
     app = QApplication.instance() or QApplication(sys.argv)
     theme.apply_theme(app)
     win = CloudVisualizer(project_path)
