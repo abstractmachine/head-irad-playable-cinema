@@ -90,7 +90,7 @@ if "QT_QPA_PLATFORM_PLUGIN_PATH" in os.environ:
 _GUTTER       = 16    # px gap between left and right page in a spread
 _MARGIN       = 24    # px outer margin around pages
 _BAR_H        = 8     # px height of the page position bar
-_PANEL_WIDTH  = 240   # px — right panel preferred width
+_PANEL_WIDTH  = 270   # px — right panel preferred width
 
 # Tool modes
 _TOOL_NONE  = "none"
@@ -3212,6 +3212,10 @@ class _SilhouetteBrowserPanel(QWidget):
 
     silhouette_insert_requested = pyqtSignal(str, dict)  # (abs png_path, metadata)
 
+    # Background colour for the selected tab + its content pane.
+    # Noticeably darker than PANEL_BG (#6e6e6e) so the active tab stands out.
+    _TAB_CONTENT_BG = "#5a5a5a"
+
     # Standard annotation field order — same ordering as CatalogBrowser
     _FIELD_ORDER = [
         "--all", "setting", "description", "objects",
@@ -3264,13 +3268,9 @@ class _SilhouetteBrowserPanel(QWidget):
         # bar using QPalette::Light (white on dark themes) regardless of any
         # stylesheet setting.  Disabling it removes the white line entirely.
         self._tabs.tabBar().setDrawBase(False)
-        # Inactive tab colour = midpoint between PANEL_BG (#6e6e6e) and BG (#808080)
         _tab_inactive = "#777777"
         self._tabs.setStyleSheet(
             f"QTabWidget           {{ background: {theme.BG}; border: none; }}"
-            # border: none + top: -1px closes the 1px layout gap between the
-            # tab bar and the content pane (drawBase(False) already removed the
-            # white line so we no longer need a coloured border to hide it).
             f"QTabWidget::pane     {{ border: none; background: transparent; top: -1px; }}"
             f"QTabBar              {{ background: {theme.BG}; border: none; }}"
             f"QTabBar::tab {{"
@@ -3278,9 +3278,9 @@ class _SilhouetteBrowserPanel(QWidget):
             f"  padding: 4px 10px; border: none; margin-bottom: 0px;"
             f"  font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
             f"}}"
-            f"QTabBar::tab:selected {{ background: {theme.PANEL_BG};"
+            f"QTabBar::tab:selected {{ background: {self._TAB_CONTENT_BG};"
             f"                         color: {theme.TEXT}; border: none; }}"
-            f"QTabBar::tab:hover    {{ background: {theme.PANEL_BG}; color: {theme.TEXT}; }}"
+            f"QTabBar::tab:hover    {{ background: {self._TAB_CONTENT_BG}; color: {theme.TEXT}; }}"
         )
         self._tabs.addTab(self._build_silhouettes_tab(), "Silhouettes")
         self._tabs.addTab(self._build_engravings_tab(),  "Engravings")
@@ -3288,7 +3288,10 @@ class _SilhouetteBrowserPanel(QWidget):
 
     def _build_silhouettes_tab(self) -> QWidget:
         widget = QWidget()
-        widget.setStyleSheet(_PANEL_STYLESHEET)
+        widget.setStyleSheet(_PANEL_STYLESHEET.replace(
+            f"QWidget {{ background: {theme.PANEL_BG}; }}",
+            f"QWidget {{ background: {self._TAB_CONTENT_BG}; }}",
+        ))
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(8, 8, 8, 4)
         layout.setSpacing(6)
@@ -3364,7 +3367,7 @@ class _SilhouetteBrowserPanel(QWidget):
 
         # Pagination bar ─────────────────────────────────────────────
         page_row = QWidget()
-        page_row.setStyleSheet(f"background: {theme.PANEL_BG};")
+        page_row.setStyleSheet(f"background: {self._TAB_CONTENT_BG};")
         pr = QHBoxLayout(page_row)
         pr.setContentsMargins(4, 4, 4, 4)
         pr.setSpacing(4)
@@ -3393,7 +3396,10 @@ class _SilhouetteBrowserPanel(QWidget):
 
     def _build_engravings_tab(self) -> QWidget:
         widget = QWidget()
-        widget.setStyleSheet(_PANEL_STYLESHEET)
+        widget.setStyleSheet(_PANEL_STYLESHEET.replace(
+            f"QWidget {{ background: {theme.PANEL_BG}; }}",
+            f"QWidget {{ background: {self._TAB_CONTENT_BG}; }}",
+        ))
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(16, 16, 16, 16)
 
@@ -3693,7 +3699,7 @@ class BookVisualizerWindow(QMainWindow):
         self.setCentralWidget(central)
 
         outer = QVBoxLayout(central)
-        outer.setContentsMargins(4, 4, 4, 4)
+        outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
         splitter = GripSplitter(Qt.Horizontal)
