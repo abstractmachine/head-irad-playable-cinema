@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from styles import theme
 from styles.theme import GripSplitter, save_window_geometry, restore_window_geometry
 
-from PyQt5.QtCore import Qt, QByteArray, QEvent, pyqtSignal, QMimeData, QPoint, QRect, QRectF, QSize, QTimer, QPointF
+from PyQt5.QtCore import Qt, QByteArray, QEvent, pyqtSignal, QMimeData, QPoint, QRect, QRectF, QSize, QThread, QTimer, QPointF
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -56,6 +56,7 @@ from PyQt5.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QStackedWidget,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -3086,6 +3087,562 @@ class _IllustrationsDrawer(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# Silhouette Browser sidebar — embedded catalog browser for Book Visualizer
+# ---------------------------------------------------------------------------
+
+_BROWSER_PANEL_W    = 280   # px — preferred width of the silhouette browser column
+_BROWSER_THUMB_SZ   = 80    # px per thumbnail cell
+_BROWSER_THUMB_GAP  = 6     # px gap between cells
+_BROWSER_PAGE_SIZE  = 50    # silhouettes per page
+_BROWSER_LOAD_BATCH = 15    # loader yields UI thread every N images
+
+
+class _BrowserThumbLoader(QThread):
+    """Background loader: reads PNG thumbnails and emits QImages for the sidebar grid.
+
+    Mirrors the _ThumbLoader in silhouette_visualizer.py but is self-contained
+    here to avoid cross-visualizer imports.
+    """
+
+    thumb_ready   = pyqtSignal(int, QImage)  # (cell index, QImage)
+    load_finished = pyqtSignal()
+
+    def __init__(self, records: list, size: int, parent=None) -> None:
+        super().__init__(parent)
+        self._records   = records
+        self._size      = size
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def run(self) -> None:
+        try:
+            from PIL import Image as _PIL
+        except ImportError:
+            self.load_finished.emit()
+            return
+
+        for i, rec in enumerate(self._records):
+            if self._cancelled:
+                break
+            json_path = rec.get("path")
+            if not json_path:
+                continue
+            png_path = Path(str(json_path)).with_suffix(".png")
+            try:
+                img = _PIL.open(str(png_path)).convert("RGBA")
+                img.thumbnail((self._size, self._size), _PIL.LANCZOS)
+                w, h = img.size
+                data = img.tobytes("raw", "RGBA")
+                qimg = QImage(data, w, h, 4 * w, QImage.Format_RGBA8888)
+                self.thumb_ready.emit(i, qimg.copy())
+            except Exception:
+                pass
+            if (i + 1) % _BROWSER_LOAD_BATCH == 0:
+                self.msleep(2)   # yield so UI stays responsive
+
+        self.load_finished.emit()
+
+
+class _BrowserThumbCell(QLabel):
+    """Single thumbnail cell in the silhouette browser grid.
+
+    Emits ``single_clicked`` on left-click and ``double_clicked`` on
+    double-click so the browser can distinguish selection from insertion.
+    """
+
+    single_clicked = pyqtSignal(int)  # cell index
+    double_clicked = pyqtSignal(int)  # cell index
+
+    def __init__(self, index: int, tooltip: str = "", parent=None) -> None:
+        super().__init__(parent)
+        self._index    = index
+        self._selected = False
+        self.setFixedSize(_BROWSER_THUMB_SZ, _BROWSER_THUMB_SZ)
+        self.setAlignment(Qt.AlignCenter)
+        self.setCursor(Qt.PointingHandCursor)
+        if tooltip:
+            self.setToolTip(tooltip)
+        self._apply_style()
+        self.setText("·")   # placeholder until image loads
+
+    def set_image(self, qimg: QImage) -> None:
+        """Called from the GUI thread when the loader delivers a QImage."""
+        self.setPixmap(QPixmap.fromImage(qimg))
+        self.setText("")
+
+    def set_selected(self, selected: bool) -> None:
+        self._selected = selected
+        self._apply_style()
+
+    def _apply_style(self) -> None:
+        border = (
+            f"2px solid {theme.ACCENT}" if self._selected else "1px solid transparent"
+        )
+        self.setStyleSheet(
+            f"background: {theme.CANVAS_BG}; border: {border};"
+            f" color: {theme.TEXT_DIM};"
+            f" font-family: '{theme.FAMILY_MONO}'; font-size: {theme.BASE_PT}pt;"
+        )
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.LeftButton:
+            self.single_clicked.emit(self._index)
+        super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.LeftButton:
+            self.double_clicked.emit(self._index)
+        super().mouseDoubleClickEvent(event)
+
+
+class _SilhouetteBrowserPanel(QWidget):
+    """Docked sidebar panel for browsing the silhouette catalog.
+
+    Two tabs:
+        Silhouettes — Scope / Field / Label filters + paginated thumbnail grid.
+        Engravings  — placeholder with a disabled Create button.
+
+    Emits ``silhouette_insert_requested(png_path, metadata)`` when the user
+    double-clicks a thumbnail.  ``BookVisualizerWindow`` connects this signal
+    to ``_insert_silhouette``, which copies the PNG into the book's
+    ``illustrations/silhouettes/`` folder and creates an Image layer.
+    """
+
+    silhouette_insert_requested = pyqtSignal(str, dict)  # (abs png_path, metadata)
+
+    # Standard annotation field order — same ordering as CatalogBrowser
+    _FIELD_ORDER = [
+        "--all", "setting", "description", "objects",
+        "action", "humans", "wearing", "animals", "text",
+    ]
+
+    def __init__(
+        self,
+        project_path: str,
+        media_type: str = "movies",
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self._project_path = project_path
+        self._media_type   = media_type
+
+        # Catalog data (populated by _load_catalog)
+        self._field_map: dict = {}    # {field: {label: [records]}}
+        self._film_list: list = []    # sorted list of film stems
+
+        # Current filtered view
+        self._current_records: list = []
+        self._page_idx:        int  = 0
+        self._page_count:      int  = 1
+
+        # Grid state
+        self._page_records: list = []   # records slice shown in the current grid
+        self._cells:        list = []
+        self._selected_idx: int  = -1
+        self._loader: Optional[_BrowserThumbLoader] = None
+
+        self.setStyleSheet(_PANEL_STYLESHEET)
+        self.setMinimumWidth(180)
+        self._build_ui()
+
+        # Defer catalog scan until after the window has finished its first layout pass
+        QTimer.singleShot(0, self._load_catalog)
+
+    # ------------------------------------------------------------------
+    # UI construction
+
+    def _build_ui(self) -> None:
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self._tabs = QTabWidget()
+        self._tabs.setDocumentMode(True)
+        # drawBase draws a 1px platform-palette line at the bottom of the tab
+        # bar using QPalette::Light (white on dark themes) regardless of any
+        # stylesheet setting.  Disabling it removes the white line entirely.
+        self._tabs.tabBar().setDrawBase(False)
+        # Inactive tab colour = midpoint between PANEL_BG (#6e6e6e) and BG (#808080)
+        _tab_inactive = "#777777"
+        self._tabs.setStyleSheet(
+            f"QTabWidget           {{ background: {theme.BG}; border: none; }}"
+            f"QTabWidget::pane     {{ border: 1px solid {theme.PANEL_BG};"
+            f"                        background: transparent; top: 0px; }}"
+            f"QTabBar              {{ background: {theme.BG}; border: none; }}"
+            f"QTabBar::tab {{"
+            f"  background: {_tab_inactive}; color: {theme.TEXT};"
+            f"  padding: 4px 10px; border: none; margin-bottom: 0px;"
+            f"  font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
+            f"}}"
+            f"QTabBar::tab:selected {{ background: {theme.PANEL_BG};"
+            f"                         color: {theme.TEXT}; border: none; }}"
+            f"QTabBar::tab:hover    {{ background: {theme.BTN_HOVER}; }}"
+        )
+        self._tabs.addTab(self._build_silhouettes_tab(), "Silhouettes")
+        self._tabs.addTab(self._build_engravings_tab(),  "Engravings")
+        outer.addWidget(self._tabs)
+
+    def _build_silhouettes_tab(self) -> QWidget:
+        widget = QWidget()
+        widget.setStyleSheet(_PANEL_STYLESHEET)
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(8, 8, 8, 4)
+        layout.setSpacing(6)
+
+        combo_style = (
+            f"QComboBox {{ background: {theme.INPUT_BG}; color: {theme.TEXT};"
+            f" font-size: {theme.BASE_PT}pt; }}"
+        )
+
+        # Scope ──────────────────────────────────────────────────────
+        scope_grp = QGroupBox("Scope")
+        sg = QVBoxLayout(scope_grp)
+        sg.setContentsMargins(6, 8, 6, 6)
+        self._scope_combo = QComboBox()
+        self._scope_combo.setFocusPolicy(Qt.NoFocus)
+        self._scope_combo.setStyleSheet(combo_style)
+        self._scope_combo.currentIndexChanged.connect(self._on_scope_changed)
+        sg.addWidget(self._scope_combo)
+        layout.addWidget(scope_grp)
+
+        # Field ──────────────────────────────────────────────────────
+        field_grp = QGroupBox("Field")
+        fg = QVBoxLayout(field_grp)
+        fg.setContentsMargins(6, 8, 6, 6)
+        self._field_combo = QComboBox()
+        self._field_combo.setFocusPolicy(Qt.NoFocus)
+        self._field_combo.setStyleSheet(combo_style)
+        self._field_combo.currentIndexChanged.connect(self._on_field_changed)
+        fg.addWidget(self._field_combo)
+        layout.addWidget(field_grp)
+
+        # Label ──────────────────────────────────────────────────────
+        label_grp = QGroupBox("Label")
+        lg = QVBoxLayout(label_grp)
+        lg.setContentsMargins(6, 8, 6, 6)
+        self._label_combo = QComboBox()
+        self._label_combo.setFocusPolicy(Qt.NoFocus)
+        self._label_combo.setStyleSheet(combo_style)
+        self._label_combo.currentIndexChanged.connect(self._on_label_changed)
+        lg.addWidget(self._label_combo)
+        layout.addWidget(label_grp)
+
+        # Status line ────────────────────────────────────────────────
+        self._status_lbl = QLabel("—")
+        self._status_lbl.setWordWrap(True)
+        self._status_lbl.setStyleSheet(
+            f"color: {theme.TEXT_DIM}; font-size: {max(7, theme.BASE_PT - 1)}pt;"
+        )
+        layout.addWidget(self._status_lbl)
+
+        # Thumbnail grid scroll area ─────────────────────────────────
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._scroll.setFrameShape(QFrame.NoFrame)
+        self._scroll.setFocusPolicy(Qt.NoFocus)
+        self._scroll.setStyleSheet(
+            f"QScrollArea {{ background: {theme.CANVAS_BG}; border: none; }}"
+        )
+
+        self._grid_widget = QWidget()
+        self._grid_widget.setStyleSheet(f"background: {theme.CANVAS_BG};")
+        self._grid_layout = QGridLayout(self._grid_widget)
+        self._grid_layout.setContentsMargins(
+            _BROWSER_THUMB_GAP, _BROWSER_THUMB_GAP,
+            _BROWSER_THUMB_GAP, _BROWSER_THUMB_GAP,
+        )
+        self._grid_layout.setSpacing(_BROWSER_THUMB_GAP)
+        self._grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self._scroll.setWidget(self._grid_widget)
+
+        layout.addWidget(self._scroll, 1)   # stretch=1 → grid fills remaining height
+
+        # Pagination bar ─────────────────────────────────────────────
+        page_row = QWidget()
+        page_row.setStyleSheet(f"background: {theme.PANEL_BG};")
+        pr = QHBoxLayout(page_row)
+        pr.setContentsMargins(4, 4, 4, 4)
+        pr.setSpacing(4)
+
+        self._prev_btn = QPushButton("◀")
+        self._prev_btn.setFixedSize(28, 24)
+        self._prev_btn.setFocusPolicy(Qt.NoFocus)
+        self._prev_btn.clicked.connect(self._on_prev_page)
+        pr.addWidget(self._prev_btn)
+
+        self._page_lbl = QLabel("—")
+        self._page_lbl.setAlignment(Qt.AlignCenter)
+        self._page_lbl.setStyleSheet(
+            f"color: {theme.TEXT}; font-size: {max(7, theme.BASE_PT - 1)}pt;"
+        )
+        pr.addWidget(self._page_lbl, 1)
+
+        self._next_btn = QPushButton("▶")
+        self._next_btn.setFixedSize(28, 24)
+        self._next_btn.setFocusPolicy(Qt.NoFocus)
+        self._next_btn.clicked.connect(self._on_next_page)
+        pr.addWidget(self._next_btn)
+
+        layout.addWidget(page_row)
+        return widget
+
+    def _build_engravings_tab(self) -> QWidget:
+        widget = QWidget()
+        widget.setStyleSheet(_PANEL_STYLESHEET)
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(16, 16, 16, 16)
+
+        note = QLabel("Engraving generation is not yet implemented.")
+        note.setWordWrap(True)
+        note.setAlignment(Qt.AlignCenter)
+        note.setStyleSheet(
+            f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt;"
+        )
+        layout.addStretch()
+        layout.addWidget(note)
+
+        create_btn = QPushButton("Create")
+        create_btn.setEnabled(False)
+        create_btn.setToolTip("Engraving generation is not yet implemented")
+        create_btn.setFocusPolicy(Qt.NoFocus)
+        create_btn.setStyleSheet(
+            f"QPushButton:disabled {{ color: {theme.TEXT_DIM};"
+            f" background-color: {theme.BTN_BG}; }}"
+        )
+        layout.addWidget(create_btn, 0, Qt.AlignCenter)
+        layout.addStretch()
+        return widget
+
+    # ------------------------------------------------------------------
+    # Catalog loading
+
+    def _load_catalog(self) -> None:
+        """Scan the silhouette catalog and populate filter combos."""
+        self._stop_loader()
+        try:
+            from services.silhouette_catalog import scan_catalog
+            all_records = scan_catalog(self._project_path, media_type=self._media_type)
+        except Exception:
+            self._status_lbl.setText("Catalog unavailable.")
+            self._update_pagination(0, 1)
+            return
+
+        field_map: dict = {"--all": {}}
+        film_set:  set  = set()
+        for rec in all_records:
+            if "error" in rec:
+                continue
+            label = rec.get("label") or ""
+            field = rec.get("field") or "--all"
+            if not label:
+                continue
+            field_map.setdefault(field, {}).setdefault(label, []).append(rec)
+            field_map["--all"].setdefault(label, []).append(rec)
+            stem = rec.get("filename_stem") or rec.get("filename") or ""
+            if stem:
+                film_set.add(stem)
+
+        self._field_map = field_map
+        self._film_list = sorted(film_set)
+
+        # Scope combo
+        self._scope_combo.blockSignals(True)
+        self._scope_combo.clear()
+        self._scope_combo.addItem("All Movies", userData=None)
+        for stem in self._film_list:
+            self._scope_combo.addItem(stem, userData=stem)
+        self._scope_combo.blockSignals(False)
+
+        # Field combo (standard order, only fields that have data)
+        present = set(field_map.keys())
+        self._field_combo.blockSignals(True)
+        self._field_combo.clear()
+        for f in self._FIELD_ORDER:
+            if f in present:
+                self._field_combo.addItem(f, userData=f)
+        for f in sorted(present - set(self._FIELD_ORDER)):
+            self._field_combo.addItem(f, userData=f)
+        self._field_combo.blockSignals(False)
+
+        if not field_map.get("--all"):
+            self._status_lbl.setText("Catalog empty.\ncrossing index silhouette")
+            self._label_combo.clear()
+            self._clear_grid()
+            self._update_pagination(0, 1)
+            return
+
+        self._field_combo.setCurrentIndex(0)
+        self._on_field_changed(0)
+
+    # ------------------------------------------------------------------
+    # Filter cascade
+
+    def _on_scope_changed(self, _idx: int) -> None:
+        self._page_idx = 0
+        self._apply_filters()
+
+    def _on_field_changed(self, _idx: int) -> None:
+        """Rebuild the label combo for the newly selected field."""
+        field = self._field_combo.currentData() or "--all"
+        label_counts = self._field_map.get(field, {})
+        self._label_combo.blockSignals(True)
+        self._label_combo.clear()
+        for label in sorted(label_counts.keys()):
+            count = len(label_counts[label])
+            self._label_combo.addItem(f"{label}  ({count})", userData=label)
+        self._label_combo.blockSignals(False)
+        self._page_idx = 0
+        if self._label_combo.count() > 0:
+            self._label_combo.setCurrentIndex(0)
+        self._apply_filters()
+
+    def _on_label_changed(self, _idx: int) -> None:
+        self._page_idx = 0
+        self._apply_filters()
+
+    def _apply_filters(self) -> None:
+        field   = self._field_combo.currentData() or "--all"
+        label   = self._label_combo.currentData()
+        film    = self._scope_combo.currentData()
+        records = self._field_map.get(field, {}).get(label, []) if label else []
+        if film:
+            records = [
+                r for r in records
+                if (r.get("filename_stem") or r.get("filename") or "") == film
+            ]
+        self._current_records = records
+        self._selected_idx    = -1
+        self._show_page(0)
+
+    # ------------------------------------------------------------------
+    # Pagination
+
+    def _show_page(self, page_idx: int) -> None:
+        total      = len(self._current_records)
+        page_count = max(1, math.ceil(total / _BROWSER_PAGE_SIZE)) if total else 1
+        self._page_idx   = max(0, min(page_idx, page_count - 1))
+        self._page_count = page_count
+        self._update_pagination(self._page_idx, page_count)
+
+        start = self._page_idx * _BROWSER_PAGE_SIZE
+        end   = min(start + _BROWSER_PAGE_SIZE, total)
+        self._page_records = self._current_records[start:end]
+
+        if total == 0:
+            self._status_lbl.setText("No objects found")
+        else:
+            self._status_lbl.setText(f"{start + 1}–{end} of {total}")
+
+        self._cells = []
+        self._clear_grid()
+        self._rebuild_grid()
+        self._start_loader()
+
+    def _update_pagination(self, page_idx: int, page_count: int) -> None:
+        self._page_lbl.setText(f"Page {page_idx + 1} / {page_count}")
+        self._prev_btn.setEnabled(page_idx > 0)
+        self._next_btn.setEnabled(page_idx < page_count - 1)
+
+    def _on_prev_page(self) -> None:
+        if self._page_idx > 0:
+            self._show_page(self._page_idx - 1)
+
+    def _on_next_page(self) -> None:
+        if self._page_idx < self._page_count - 1:
+            self._show_page(self._page_idx + 1)
+
+    # ------------------------------------------------------------------
+    # Grid management
+
+    def _clear_grid(self) -> None:
+        self._stop_loader()
+        while self._grid_layout.count():
+            item = self._grid_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+    def _cols(self) -> int:
+        vw = self._scroll.viewport().width()
+        if vw <= 0:
+            vw = 200
+        return max(1, (vw - _BROWSER_THUMB_GAP) // (_BROWSER_THUMB_SZ + _BROWSER_THUMB_GAP))
+
+    def _rebuild_grid(self) -> None:
+        cols      = self._cols()
+        start_abs = self._page_idx * _BROWSER_PAGE_SIZE
+        for i, rec in enumerate(self._page_records):
+            label = rec.get("label", "")
+            stem  = rec.get("filename_stem") or rec.get("filename") or ""
+            frame = rec.get("frame", "")
+            tip   = f"#{start_abs + i + 1}  {label}  {stem}  f:{frame}"
+            cell  = _BrowserThumbCell(i, tooltip=tip)
+            cell.single_clicked.connect(self._on_cell_single)
+            cell.double_clicked.connect(self._on_cell_double)
+            self._grid_layout.addWidget(cell, i // cols, i % cols)
+            self._cells.append(cell)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if not self._cells:
+            return
+        cols = self._cols()
+        for i, cell in enumerate(self._cells):
+            self._grid_layout.addWidget(cell, i // cols, i % cols)
+
+    # ------------------------------------------------------------------
+    # Background loader
+
+    def _start_loader(self) -> None:
+        if not self._page_records:
+            return
+        self._loader = _BrowserThumbLoader(self._page_records, _BROWSER_THUMB_SZ)
+        self._loader.thumb_ready.connect(self._on_thumb_ready)
+        self._loader.start()
+
+    def _stop_loader(self) -> None:
+        if self._loader and self._loader.isRunning():
+            self._loader.cancel()
+            self._loader.wait(500)
+        self._loader = None
+
+    def _on_thumb_ready(self, idx: int, qimg: QImage) -> None:
+        if 0 <= idx < len(self._cells):
+            self._cells[idx].set_image(qimg)
+
+    # ------------------------------------------------------------------
+    # Selection and insertion
+
+    def _on_cell_single(self, idx: int) -> None:
+        """Select the thumbnail at *idx* and highlight it."""
+        if self._selected_idx == idx:
+            return
+        if 0 <= self._selected_idx < len(self._cells):
+            self._cells[self._selected_idx].set_selected(False)
+        self._selected_idx = idx
+        if 0 <= idx < len(self._cells):
+            self._cells[idx].set_selected(True)
+
+    def _on_cell_double(self, idx: int) -> None:
+        """Select thumbnail and emit an insert request to the Book Visualizer."""
+        self._on_cell_single(idx)
+        abs_idx = self._page_idx * _BROWSER_PAGE_SIZE + idx
+        if abs_idx >= len(self._current_records):
+            return
+        rec       = self._current_records[abs_idx]
+        json_path = rec.get("path")
+        if not json_path:
+            return
+        png_path = Path(str(json_path)).with_suffix(".png")
+        if not png_path.exists():
+            return
+        self.silhouette_insert_requested.emit(str(png_path), dict(rec))
+
+
+# ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
 
@@ -3117,6 +3674,7 @@ class BookVisualizerWindow(QMainWindow):
         QApplication.instance().installEventFilter(self)
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        self._sil_browser._stop_loader()
         self._save_current_layers()
         self._close_doc()
         save_window_geometry(self, "window_book")
@@ -3164,14 +3722,21 @@ class BookVisualizerWindow(QMainWindow):
 
         splitter.addWidget(left_col)
 
-        # ── RIGHT: control panel (mosaic-style) ───────────────────────
+        # ── MIDDLE: Silhouette browser sidebar ────────────────────────
+        self._sil_browser = _SilhouetteBrowserPanel(self._project_path)
+        self._sil_browser.silhouette_insert_requested.connect(self._insert_silhouette)
+        splitter.addWidget(self._sil_browser)
+
+        # ── RIGHT: control panel (Book / Tools / Layers) ──────────────
         panel = self._build_control_panel()
         splitter.addWidget(panel)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 0)
+        splitter.setStretchFactor(0, 1)   # canvas gets all extra space
+        splitter.setStretchFactor(1, 0)   # silhouette browser: fixed
+        splitter.setStretchFactor(2, 0)   # control panel: fixed
+        splitter.setSizes([10000, _BROWSER_PANEL_W, _PANEL_WIDTH])
 
         self.setMinimumSize(700, 480)
-        self.resize(1200, 800)
+        self.resize(1500, 800)
 
     def _build_control_panel(self) -> QWidget:
         # Outer container with fixed width
@@ -3453,17 +4018,13 @@ class BookVisualizerWindow(QMainWindow):
         self._layer_panel.layer_deleted.connect(self._on_panel_layer_deleted)
         self._layer_panel.layer_renamed.connect(self._on_panel_layer_renamed)
         self._layer_panel.layers_reordered.connect(self._on_panel_layers_reordered)
-        layers_body_layout.addWidget(self._layer_panel)
+        self._layer_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        layers_body_layout.addWidget(self._layer_panel, stretch=1)
 
-        layers_container_layout.addWidget(self._layers_body)
+        self._layers_body.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        layers_container_layout.addWidget(self._layers_body, stretch=1)
 
-        layout.addWidget(layers_container)
-
-        # ── Illustrations drawer ──────────────────────────────────────
-        self._illus_drawer = _IllustrationsDrawer()
-        layout.addWidget(self._illus_drawer)
-
-        layout.addStretch()
+        layout.addWidget(layers_container, stretch=1)
 
         return outer
 
@@ -3531,7 +4092,6 @@ class BookVisualizerWindow(QMainWindow):
             self._import_btn.setText("Import")
             self._import_btn.setToolTip("Import a PDF into this book")
             self._persist_current(slug)
-            self._illus_drawer.set_book(self._project_path, slug)
             self._overlay.set_book_dir(None)
             self._spread_view.set_book_dir(None)
             return
@@ -3544,7 +4104,6 @@ class BookVisualizerWindow(QMainWindow):
             self._import_btn.setText("Import")
             self._import_btn.setToolTip("Import a PDF into this book")
             self._persist_current(slug)
-            self._illus_drawer.set_book(self._project_path, slug)
             self._overlay.set_book_dir(book_dir(self._project_path, slug))
             self._spread_view.set_book_dir(book_dir(self._project_path, slug))
             return
@@ -3580,8 +4139,6 @@ class BookVisualizerWindow(QMainWindow):
         # Set book dir for image layer resolution
         self._overlay.set_book_dir(book_dir(self._project_path, slug))
         self._spread_view.set_book_dir(book_dir(self._project_path, slug))
-        # Refresh illustrations drawer
-        self._illus_drawer.set_book(self._project_path, slug)
 
     def _go_spread(self, idx: int) -> None:
         """Jump to spread *idx*."""
@@ -3887,6 +4444,76 @@ class BookVisualizerWindow(QMainWindow):
         for lid in ids:
             self._layer_panel.remove_layer(lid)
         self._save_current_layers()
+
+    # ------------------------------------------------------------------
+    # Silhouette insertion (from the browser panel)
+
+    def _insert_silhouette(self, png_path: str, meta: dict) -> None:
+        """Insert a catalog silhouette PNG as an Image layer on the active page.
+
+        Copies the source PNG into ``illustrations/silhouettes/`` inside the
+        current book directory so it becomes part of the book's local asset
+        set, then creates an Image layer centred on the active spread page.
+        The existing cut-overlay / layer pipeline is reused without change.
+        """
+        if self._doc is None or not self._slug:
+            return
+
+        # Determine the target page (prefer the right page; fall back to left)
+        right_i  = self._spread_view._right_i
+        left_i   = self._spread_view._left_i
+        page_idx = right_i if right_i is not None else left_i
+        if page_idx is None:
+            return
+
+        # Copy PNG into book's illustrations/silhouettes/ directory
+        from data.book import book_dir as _book_dir_fn
+        bdir     = _book_dir_fn(self._project_path, self._slug)
+        dest_dir = bdir / "illustrations" / "silhouettes"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        src       = Path(png_path)
+        dest_name = f"{meta.get('label', 'sil')}_{src.stem}_{uuid.uuid4().hex[:6]}.png"
+        dest      = dest_dir / dest_name
+        try:
+            _shutil.copy2(str(src), str(dest))
+        except OSError:
+            return
+
+        source_rel = str(dest.relative_to(bdir))
+
+        # Compute aspect-correct default height
+        default_w = _IMG_DEFAULT_W
+        default_h = default_w
+        pix = QPixmap(str(dest))
+        if not pix.isNull() and pix.height() > 0:
+            rects = self._overlay._visible_page_rects()
+            r = rects.get(page_idx)
+            if r and r.width() > 0 and r.height() > 0:
+                pix_aspect = pix.width() / pix.height()
+                sw = default_w * r.width()
+                sh = sw / pix_aspect
+                default_h = sh / r.height()
+
+        layer = {
+            "id":       f"img_{uuid.uuid4().hex[:8]}",
+            "type":     "Image",
+            "name":     Path(source_rel).stem,
+            "source":   source_rel,
+            "page":     page_idx,
+            "spread":   self._spread_idx,
+            "x":        0.5,
+            "y":        0.5,
+            "width":    default_w,
+            "height":   default_h,
+            "rotation": 0.0,
+            "z_index":  len(self._overlay.current_layers()),
+        }
+        self._overlay._layers.append(layer)
+        self._overlay._sel_id = layer["id"]
+        self._overlay._sel_pt = None
+        self._overlay.update()
+        self._on_layer_committed(layer)
 
     # ------------------------------------------------------------------
     # Button actions

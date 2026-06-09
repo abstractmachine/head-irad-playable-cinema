@@ -76,5 +76,6 @@ crossing search "close-up of a gun"
 - [Commands](documentation/commands.md) — full CLI reference for all commands and flags
 - [Keyboard Shortcuts](documentation/shortcuts.md) — keyboard navigation for all visualizers
 - [Project Structure](documentation/project.md) — project folder layout, metadata fields, notes, requirements
+- [Visualizers](documentation/visualizers.md) - ...
 - [Source Code](documentation/source.md) — source file tree and key functions per module
 - [MCP Server](documentation/mcp.md) — Claude Desktop integration via Model Context Protocol
