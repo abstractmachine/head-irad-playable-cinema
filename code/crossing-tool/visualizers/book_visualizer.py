@@ -3268,8 +3268,10 @@ class _SilhouetteBrowserPanel(QWidget):
         _tab_inactive = "#777777"
         self._tabs.setStyleSheet(
             f"QTabWidget           {{ background: {theme.BG}; border: none; }}"
-            f"QTabWidget::pane     {{ border: 1px solid {theme.PANEL_BG};"
-            f"                        background: transparent; top: 0px; }}"
+            # border: none + top: -1px closes the 1px layout gap between the
+            # tab bar and the content pane (drawBase(False) already removed the
+            # white line so we no longer need a coloured border to hide it).
+            f"QTabWidget::pane     {{ border: none; background: transparent; top: -1px; }}"
             f"QTabBar              {{ background: {theme.BG}; border: none; }}"
             f"QTabBar::tab {{"
             f"  background: {_tab_inactive}; color: {theme.TEXT};"
@@ -3278,7 +3280,7 @@ class _SilhouetteBrowserPanel(QWidget):
             f"}}"
             f"QTabBar::tab:selected {{ background: {theme.PANEL_BG};"
             f"                         color: {theme.TEXT}; border: none; }}"
-            f"QTabBar::tab:hover    {{ background: {theme.BTN_HOVER}; }}"
+            f"QTabBar::tab:hover    {{ background: {theme.PANEL_BG}; color: {theme.TEXT}; }}"
         )
         self._tabs.addTab(self._build_silhouettes_tab(), "Silhouettes")
         self._tabs.addTab(self._build_engravings_tab(),  "Engravings")
