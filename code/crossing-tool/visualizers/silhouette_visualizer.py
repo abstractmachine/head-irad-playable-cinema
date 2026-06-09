@@ -1273,8 +1273,8 @@ class CatalogBrowser(QWidget):
         pv.setContentsMargins(14, 14, 14, 14)
         pv.setSpacing(14)
 
-        # Movie Scope (top)
-        movie_group = QGroupBox("Movie Scope")
+        # Scope (top)
+        movie_group = QGroupBox("Scope")
         mg = QVBoxLayout(movie_group)
         mg.setContentsMargins(8, 12, 8, 8)
         self._film_combo = QComboBox()

@@ -1817,8 +1817,8 @@ class MosaicVisualizer(QMainWindow):
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(14)
 
-        # Movie scope
-        scope_group = QGroupBox("Movie Scope")
+        # Scope
+        scope_group = QGroupBox("Scope")
         scope_layout = QVBoxLayout(scope_group)
         scope_layout.setContentsMargins(8, 12, 8, 8)
         self.movie_combo = QComboBox()
