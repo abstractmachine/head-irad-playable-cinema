@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from styles import theme
 from styles.theme import GripSplitter, save_window_geometry, restore_window_geometry
 
-from PyQt5.QtCore import Qt, QByteArray, QEvent, pyqtSignal, QMimeData, QPoint, QRect, QRectF, QSize, QThread, QTimer, QPointF
+from PyQt5.QtCore import Qt, QByteArray, QEvent, pyqtSignal, QMimeData, QObject, QPoint, QRect, QRectF, QSize, QThread, QTimer, QPointF
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -3398,6 +3398,7 @@ class _SilhouetteBrowserPanel(QWidget):
     """
 
     silhouette_insert_requested = pyqtSignal(str, dict)  # (abs png_path, metadata)
+    engraving_delete_requested   = pyqtSignal(str)        # layer_id of engraving to delete
 
     # Background colour for the selected tab + its content pane.
     # Noticeably darker than PANEL_BG (#6e6e6e) so the active tab stands out.
@@ -3941,7 +3942,57 @@ class _SilhouetteBrowserPanel(QWidget):
                     )
                     cell.set_image(pix.toImage())
 
-            self._eng_grid_layout.addWidget(cell, i // cols, i % cols)
+            # Wrap cell in a fixed-size container; overlay a trash button that
+            # is hidden by default and revealed only on mouse-enter.
+            layer_id = entry.get("layer_id", "")
+            container = QWidget()
+            container.setFixedSize(_BROWSER_THUMB_SZ, _BROWSER_THUMB_SZ)
+            container.setStyleSheet("background: transparent;")
+            cell.setParent(container)
+            cell.move(0, 0)
+
+            _TRASH_SZ = 20
+            del_btn = QPushButton(container)
+            del_btn.setIcon(_svg_icon("trash", _TRASH_SZ, "#ffffff"))
+            del_btn.setIconSize(QSize(_TRASH_SZ, _TRASH_SZ))
+            del_btn.setFixedSize(_TRASH_SZ + 4, _TRASH_SZ + 4)
+            del_btn.move(_BROWSER_THUMB_SZ - _TRASH_SZ - 6, 4)
+            del_btn.setCursor(Qt.PointingHandCursor)
+            del_btn.setToolTip(f"Delete engraving \"{entry.get('name', '')}\"")
+            del_btn.setStyleSheet(
+                "QPushButton {"
+                "  background: rgba(100,20,20,210);"
+                "  border: none; border-radius: 3px;"
+                "}"
+                "QPushButton:hover { background: rgba(160,30,30,230); }"
+            )
+            del_btn.hide()
+            del_btn.clicked.connect(
+                lambda _checked, lid=layer_id: self.engraving_delete_requested.emit(lid)
+            )
+
+            # Show/hide the button on container hover via event filter.
+            # Guard show/hide with try/except: deleteLater() is deferred so Qt
+            # may still deliver a Leave event after the C++ object is gone.
+            class _HoverFilter(QObject):
+                def __init__(self, btn):
+                    super().__init__(btn)
+                    self._btn = btn
+                def eventFilter(self, obj, ev):
+                    try:
+                        if ev.type() == QEvent.Enter:
+                            self._btn.show()
+                        elif ev.type() == QEvent.Leave:
+                            self._btn.hide()
+                    except RuntimeError:
+                        pass  # C++ object already deleted — ignore
+                    return False
+
+            filt = _HoverFilter(del_btn)
+            container.installEventFilter(filt)
+            container.setMouseTracking(True)
+
+            self._eng_grid_layout.addWidget(container, i // cols, i % cols)
 
 # ---------------------------------------------------------------------------
 # Main window
@@ -4028,6 +4079,7 @@ class BookVisualizerWindow(QMainWindow):
         # ── MIDDLE: Silhouette browser sidebar ────────────────────────
         self._sil_browser = _SilhouetteBrowserPanel(self._project_path)
         self._sil_browser.silhouette_insert_requested.connect(self._insert_silhouette)
+        self._sil_browser.engraving_delete_requested.connect(self._on_engraving_delete_requested)
         splitter.addWidget(self._sil_browser)
 
         # ── RIGHT: control panel (Book / Tools / Layers) ──────────────
@@ -4587,9 +4639,10 @@ class BookVisualizerWindow(QMainWindow):
         # ------------------------------------------------------------------
         # Page-aware preprocessing
         # ------------------------------------------------------------------
-        preprocessing_path: str       = ""
-        preprocessing_size: list      = []
-        preprocess_cache_key: str     = ""
+        preprocessing_path: str   = ""
+        preprocessing_size: list  = []
+        preprocess_cache_key: str = ""
+        preprocess_dpi: int       = 0
 
         if source_png and self._doc is not None:
             try:
@@ -4622,6 +4675,7 @@ class BookVisualizerWindow(QMainWindow):
                 preprocessing_path    = pre["preprocessing_path"]
                 preprocessing_size    = pre["preprocessing_size"]
                 preprocess_cache_key  = pre["cache_key"]
+                preprocess_dpi        = pre.get("preprocess_dpi", 0)
             except Exception as _exc:
                 # Preprocessing failure is non-fatal; the layer is still created.
                 import traceback
@@ -4654,6 +4708,7 @@ class BookVisualizerWindow(QMainWindow):
             "preprocessing_path":    preprocessing_path,
             "preprocessing_size":    preprocessing_size,
             "preprocess_cache_key":  preprocess_cache_key,
+            "preprocess_dpi":        preprocess_dpi,
             # Future AI generation fields (reserved):
             "model":          None,
             "preset":         None,
@@ -4694,6 +4749,7 @@ class BookVisualizerWindow(QMainWindow):
             "preprocessing_path":    preprocessing_path,
             "preprocessing_size":    preprocessing_size,
             "preprocess_cache_key":  preprocess_cache_key,
+            "preprocess_dpi":        preprocess_dpi,
             # Future AI generation fields (reserved):
             "model":          None,
             "preset":         None,
@@ -4704,6 +4760,57 @@ class BookVisualizerWindow(QMainWindow):
         }
         self._sil_browser.add_engraving(entry)
         self._sil_browser._tabs.setCurrentIndex(1)
+
+    def _on_engraving_delete_requested(self, layer_id: str) -> None:
+        """Delete an engraving: confirm if the layer exists on any page."""
+        # Find the engraving entry in the browser list
+        entry = next(
+            (e for e in self._sil_browser._engravings if e.get("layer_id") == layer_id),
+            None,
+        )
+        name = entry.get("name", layer_id) if entry else layer_id
+
+        # Check whether the layer is currently placed on any page
+        eng_layer = self._overlay._layer_by_id(layer_id)
+        if eng_layer is not None:
+            page = eng_layer.get("page")
+            page_label = f"page {page + 1}" if page is not None else "a page"
+            reply = QMessageBox.question(
+                self,
+                "Delete Engraving",
+                f"The engraving \"{name}\" is placed on {page_label}.\n\n"
+                "Deleting it will also remove the layer from that page.\n\n"
+                "Continue?",
+                QMessageBox.Ok | QMessageBox.Cancel,
+                QMessageBox.Cancel,
+            )
+            if reply != QMessageBox.Ok:
+                return
+
+            # Remove the layer from the overlay and layer panel
+            self._overlay._layers.remove(eng_layer)
+            if self._overlay._sel_id == layer_id:
+                self._overlay._sel_id = None
+                self._overlay._sel_pt = None
+            self._overlay.update()
+            self._layer_panel.remove_layer(layer_id)
+
+            # Remove child_layers reference from the parent silhouette
+            parent_id = eng_layer.get("parent_layer_id")
+            if parent_id:
+                parent = self._overlay._layer_by_id(parent_id)
+                if parent is not None:
+                    child_list = parent.get("child_layers", [])
+                    if layer_id in child_list:
+                        child_list.remove(layer_id)
+
+            self._save_current_layers()
+
+        # Remove from the Engravings tab list and refresh
+        self._sil_browser._engravings = [
+            e for e in self._sil_browser._engravings if e.get("layer_id") != layer_id
+        ]
+        self._sil_browser._refresh_engravings_tab()
 
     # ------------------------------------------------------------------
     # Layer persistence

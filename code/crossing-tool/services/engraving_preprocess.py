@@ -11,6 +11,17 @@ Prepares a placed silhouette for a future engraving generator by:
 
 This module produces NO stylistic engraving effects.  The output is the
 clean, page-scaled source that a future generator will consume.
+
+Resolution strategy
+-------------------
+Preprocessing targets 300 DPI by default — a standard print resolution for
+book illustration work.  At 300 DPI an A4-width page (~8.27 in) yields
+~2480 px, giving a future engraving generator enough detail for fine line
+work without excessive memory cost.
+
+Current default : 300 DPI (print-oriented)
+Future          : derive directly from the book export resolution so that
+                  the preprocessing canvas matches the final print output.
 """
 
 from __future__ import annotations
@@ -27,13 +38,25 @@ from typing import Optional
 
 PREPROCESS_VERSION = "v1"
 
-# Reference DPI used to derive pixel dimensions from physical page size.
-# 150 DPI gives ~1240 px for an A4-width page — a comfortable generator input.
-_PAGE_DPI: int = 150
+# Default DPI used to derive pixel dimensions from the physical page size.
+# 300 DPI is a standard print resolution for book illustration work:
+#   A4 width (~8.27 in) → ~2480 px  — enough detail for fine engraving lines.
+#
+# Current default : 300 DPI (print-oriented preprocessing)
+# Future          : derive directly from the book export resolution.
+DEFAULT_PREPROCESS_DPI: int = 300
 
 # Canvas size guard-rails (pixels, per dimension).
-_MIN_DIM: int  = 128
-_MAX_DIM: int  = 4096
+# Silhouettes are mostly binary/alpha imagery so PNG compression stays
+# efficient even at large sizes; 8192 px avoids prematurely clamping
+# large page objects that a future generator may need at full detail.
+MIN_PREPROCESS_DIMENSION: int = 128
+MAX_PREPROCESS_DIMENSION: int = 8192
+
+# Internal short aliases used by the module.
+_PAGE_DPI = DEFAULT_PREPROCESS_DPI
+_MIN_DIM  = MIN_PREPROCESS_DIMENSION
+_MAX_DIM  = MAX_PREPROCESS_DIMENSION
 
 
 # ---------------------------------------------------------------------------
@@ -159,13 +182,15 @@ def preprocess_engraving_source(
     cache_dir
         Directory where the PNG and sidecar JSON will be written.
     dpi
-        Reference DPI for target-size computation (default 150).
+        Reference DPI for target-size computation.
+        Defaults to ``DEFAULT_PREPROCESS_DPI`` (300 DPI, print-oriented).
 
     Returns
     -------
     dict with keys:
         preprocessing_path : str   — absolute path of the output PNG
         preprocessing_size : list  — [width_px, height_px]
+        preprocess_dpi     : int   — DPI used to compute the canvas
         cache_key          : str   — hex fingerprint of the geometry
         version            : str   — preprocessing version tag
     """
@@ -192,6 +217,7 @@ def preprocess_engraving_source(
                 return {
                     "preprocessing_path": str(out_png),
                     "preprocessing_size": saved["preprocessing_size"],
+                    "preprocess_dpi":     saved.get("dpi", dpi),
                     "cache_key":          cache_key,
                     "version":            PREPROCESS_VERSION,
                 }
@@ -275,6 +301,7 @@ def preprocess_engraving_source(
     return {
         "preprocessing_path": str(out_png),
         "preprocessing_size": [tw, th],
+        "preprocess_dpi":     dpi,
         "cache_key":          cache_key,
         "version":            PREPROCESS_VERSION,
     }
