@@ -16,12 +16,15 @@ Spread layout (book-style):
 Navigation:
   Left/Right arrows — previous/next spread
   Click page bar    — jump to spread
-  Home/End          — previous/next book
+  Home/End          — previous/next Scope in the active browser tab
+  PgUp/PgDn         — previous/next Field in the active browser tab
+  Up/Down arrows    — previous/next Label in the active browser tab
   Escape / Ctrl+Q / Ctrl+W — close
 """
 
 from __future__ import annotations
 
+import datetime
 import json
 import math
 import os
@@ -742,7 +745,7 @@ class _SpreadView(QWidget):
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor(theme.CANVAS_BG))
+        p.fillRect(self.rect(), QColor(theme.PANEL_BG))
 
         if self._doc is None:
             p.end()
@@ -2409,7 +2412,7 @@ class _PageBar(QWidget):
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor(theme.INPUT_BG))
+        p.fillRect(self.rect(), QColor(theme.PANEL_BG))
         n = self._spread_count
         if n > 0:
             cell_w = self.width() / n
@@ -2585,7 +2588,7 @@ class _LayerPanel(QWidget):
         self._list.setDragDropMode(QListWidget.InternalMove)
         self._list.setDefaultDropAction(Qt.MoveAction)
         self._list.setStyleSheet(
-            f"QListWidget {{ background: {theme.INPUT_BG}; border: none; }}"
+            f"QListWidget {{ background: transparent; border: none; }}"
             f"QListWidget::item {{ border-bottom: 1px solid {theme.PANEL_BG}; }}"
             f"QListWidget::item:selected {{ background: transparent; }}"
         )
@@ -3150,10 +3153,15 @@ class _BrowserThumbCell(QLabel):
 
     Emits ``single_clicked`` on left-click and ``double_clicked`` on
     double-click so the browser can distinguish selection from insertion.
+    Emits ``engraving_requested`` when the plus-circle overlay button is clicked
+    on a selected cell.
     """
 
-    single_clicked = pyqtSignal(int)  # cell index
-    double_clicked = pyqtSignal(int)  # cell index
+    single_clicked     = pyqtSignal(int)  # cell index
+    double_clicked     = pyqtSignal(int)  # cell index
+    engraving_requested = pyqtSignal(int) # cell index
+
+    _BTN_SZ = 20  # overlay button size in px
 
     def __init__(self, index: int, tooltip: str = "", parent=None) -> None:
         super().__init__(parent)
@@ -3167,6 +3175,32 @@ class _BrowserThumbCell(QLabel):
         self._apply_style()
         self.setText("·")   # placeholder until image loads
 
+        # Engraving action button — visible only when the cell is selected
+        self._engrave_btn = QPushButton(self)
+        self._engrave_btn.setFixedSize(self._BTN_SZ, self._BTN_SZ)
+        self._engrave_btn.setFocusPolicy(Qt.NoFocus)
+        self._engrave_btn.setCursor(Qt.PointingHandCursor)
+        self._engrave_btn.setToolTip("Generate engraving from this silhouette")
+        icon = _svg_icon("plus-circle-solid", size=14, color="#ffffff")
+        self._engrave_btn.setIcon(icon)
+        self._engrave_btn.setIconSize(QSize(14, 14))
+        self._engrave_btn.setStyleSheet(
+            f"QPushButton {{ background-color: {theme.ACCENT}; border: none;"
+            f" border-radius: 3px; padding: 0; }}"
+            f"QPushButton:hover    {{ background-color: {theme.BTN_HOVER}; }}"
+            f"QPushButton:pressed  {{ background-color: {theme.BTN_PRESSED}; }}"
+        )
+        # Position: bottom-right corner, 2 px from each edge
+        self._engrave_btn.move(
+            _BROWSER_THUMB_SZ - self._BTN_SZ - 2,
+            _BROWSER_THUMB_SZ - self._BTN_SZ - 2,
+        )
+        self._engrave_btn.hide()
+        self._engrave_btn.clicked.connect(self._on_engrave_clicked)
+
+    def _on_engrave_clicked(self) -> None:
+        self.engraving_requested.emit(self._index)
+
     def set_image(self, qimg: QImage) -> None:
         """Called from the GUI thread when the loader delivers a QImage."""
         self.setPixmap(QPixmap.fromImage(qimg))
@@ -3175,13 +3209,14 @@ class _BrowserThumbCell(QLabel):
     def set_selected(self, selected: bool) -> None:
         self._selected = selected
         self._apply_style()
+        self._engrave_btn.setVisible(selected)
 
     def _apply_style(self) -> None:
         border = (
             f"2px solid {theme.ACCENT}" if self._selected else "1px solid transparent"
         )
         self.setStyleSheet(
-            f"background: {theme.CANVAS_BG}; border: {border};"
+            f"background: transparent; border: {border};"
             f" color: {theme.TEXT_DIM};"
             f" font-family: '{theme.FAMILY_MONO}'; font-size: {theme.BASE_PT}pt;"
         )
@@ -3247,9 +3282,13 @@ class _SilhouetteBrowserPanel(QWidget):
         self._selected_idx: int  = -1
         self._loader: Optional[_BrowserThumbLoader] = None
 
+        # Engraving collection (persisted to <project_path>/engravings.json)
+        self._engravings: list = []
+
         self.setStyleSheet(_PANEL_STYLESHEET)
         self.setMinimumWidth(180)
         self._build_ui()
+        self._load_engravings()
 
         # Defer catalog scan until after the window has finished its first layout pass
         QTimer.singleShot(0, self._load_catalog)
@@ -3268,13 +3307,12 @@ class _SilhouetteBrowserPanel(QWidget):
         # bar using QPalette::Light (white on dark themes) regardless of any
         # stylesheet setting.  Disabling it removes the white line entirely.
         self._tabs.tabBar().setDrawBase(False)
-        _tab_inactive = "#777777"
         self._tabs.setStyleSheet(
-            f"QTabWidget           {{ background: {theme.BG}; border: none; }}"
+            f"QTabWidget           {{ background: {theme.PANEL_BG}; border: none; }}"
             f"QTabWidget::pane     {{ border: none; background: transparent; top: -1px; }}"
-            f"QTabBar              {{ background: {theme.BG}; border: none; }}"
+            f"QTabBar              {{ background: {theme.PANEL_BG}; border: none; }}"
             f"QTabBar::tab {{"
-            f"  background: {_tab_inactive}; color: {theme.TEXT};"
+            f"  background: {theme.PANEL_BG}; color: {theme.TEXT};"
             f"  padding: 4px 10px; border: none; margin-bottom: 0px;"
             f"  font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
             f"}}"
@@ -3349,11 +3387,11 @@ class _SilhouetteBrowserPanel(QWidget):
         self._scroll.setFrameShape(QFrame.NoFrame)
         self._scroll.setFocusPolicy(Qt.NoFocus)
         self._scroll.setStyleSheet(
-            f"QScrollArea {{ background: {theme.CANVAS_BG}; border: none; }}"
+            f"QScrollArea {{ background: transparent; border: none; }}"
         )
 
         self._grid_widget = QWidget()
-        self._grid_widget.setStyleSheet(f"background: {theme.CANVAS_BG};")
+        self._grid_widget.setStyleSheet("background: transparent;")
         self._grid_layout = QGridLayout(self._grid_widget)
         self._grid_layout.setContentsMargins(
             _BROWSER_THUMB_GAP, _BROWSER_THUMB_GAP,
@@ -3401,27 +3439,41 @@ class _SilhouetteBrowserPanel(QWidget):
             f"QWidget {{ background: {self._TAB_CONTENT_BG}; }}",
         ))
         layout = QVBoxLayout(widget)
-        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        note = QLabel("Engraving generation is not yet implemented.")
-        note.setWordWrap(True)
-        note.setAlignment(Qt.AlignCenter)
-        note.setStyleSheet(
+        # Scroll area containing the sorted engraving entry list
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setFocusPolicy(Qt.NoFocus)
+        scroll.setStyleSheet(
+            f"QScrollArea {{ background: {self._TAB_CONTENT_BG}; border: none; }}"
+        )
+
+        self._eng_container = QWidget()
+        self._eng_container.setStyleSheet(f"background: {self._TAB_CONTENT_BG};")
+        self._eng_list_layout = QVBoxLayout(self._eng_container)
+        self._eng_list_layout.setContentsMargins(6, 6, 6, 6)
+        self._eng_list_layout.setSpacing(4)
+        self._eng_list_layout.setAlignment(Qt.AlignTop)
+
+        # Initial empty-state label (replaced by _refresh_engravings_tab)
+        self._eng_empty_lbl = QLabel(
+            "No engravings yet.\nSelect a silhouette and click \u2295 to create one."
+        )
+        self._eng_empty_lbl.setWordWrap(True)
+        self._eng_empty_lbl.setAlignment(Qt.AlignCenter)
+        self._eng_empty_lbl.setStyleSheet(
             f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt;"
+            f" background: transparent; padding: 16px;"
         )
-        layout.addStretch()
-        layout.addWidget(note)
+        self._eng_list_layout.addWidget(self._eng_empty_lbl)
+        self._eng_list_layout.addStretch()
 
-        create_btn = QPushButton("Create")
-        create_btn.setEnabled(False)
-        create_btn.setToolTip("Engraving generation is not yet implemented")
-        create_btn.setFocusPolicy(Qt.NoFocus)
-        create_btn.setStyleSheet(
-            f"QPushButton:disabled {{ color: {theme.TEXT_DIM};"
-            f" background-color: {theme.BTN_BG}; }}"
-        )
-        layout.addWidget(create_btn, 0, Qt.AlignCenter)
-        layout.addStretch()
+        scroll.setWidget(self._eng_container)
+        layout.addWidget(scroll, 1)
         return widget
 
     # ------------------------------------------------------------------
@@ -3590,6 +3642,7 @@ class _SilhouetteBrowserPanel(QWidget):
             cell  = _BrowserThumbCell(i, tooltip=tip)
             cell.single_clicked.connect(self._on_cell_single)
             cell.double_clicked.connect(self._on_cell_double)
+            cell.engraving_requested.connect(self._on_engraving_requested)
             self._grid_layout.addWidget(cell, i // cols, i % cols)
             self._cells.append(cell)
 
@@ -3622,6 +3675,32 @@ class _SilhouetteBrowserPanel(QWidget):
             self._cells[idx].set_image(qimg)
 
     # ------------------------------------------------------------------
+    # Keyboard navigation helpers (called from BookVisualizerWindow.eventFilter)
+
+    @staticmethod
+    def _step_combo(combo: QComboBox, delta: int) -> None:
+        """Advance *combo* by *delta* steps, wrapping at the ends."""
+        n = combo.count()
+        if n == 0:
+            return
+        new_idx = (combo.currentIndex() + delta) % n
+        combo.setCurrentIndex(new_idx)
+
+    def step_scope(self, delta: int) -> None:
+        """Step the Scope combo by *delta* (works on both tabs)."""
+        self._step_combo(self._scope_combo, delta)
+
+    def step_field(self, delta: int) -> None:
+        """Step the Field combo by *delta* (Silhouettes tab only)."""
+        if self._tabs.currentIndex() == 0:
+            self._step_combo(self._field_combo, delta)
+
+    def step_label(self, delta: int) -> None:
+        """Step the Label combo by *delta* (Silhouettes tab only)."""
+        if self._tabs.currentIndex() == 0:
+            self._step_combo(self._label_combo, delta)
+
+    # ------------------------------------------------------------------
     # Selection and insertion
 
     def _on_cell_single(self, idx: int) -> None:
@@ -3648,6 +3727,136 @@ class _SilhouetteBrowserPanel(QWidget):
         if not png_path.exists():
             return
         self.silhouette_insert_requested.emit(str(png_path), dict(rec))
+
+    def _on_engraving_requested(self, idx: int) -> None:
+        """Create an engraving placeholder from the silhouette at cell *idx*."""
+        abs_idx = self._page_idx * _BROWSER_PAGE_SIZE + idx
+        if abs_idx >= len(self._current_records):
+            return
+        rec = self._current_records[abs_idx]
+        self._create_engraving(rec)
+
+    # ------------------------------------------------------------------
+    # Engraving collection
+
+    def _engravings_path(self) -> Path:
+        return Path(self._project_path) / "engravings.json"
+
+    def _load_engravings(self) -> None:
+        p = self._engravings_path()
+        if not p.exists():
+            self._engravings = []
+            return
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            self._engravings = data if isinstance(data, list) else []
+        except Exception:
+            self._engravings = []
+        self._refresh_engravings_tab()
+
+    def _save_engravings(self) -> None:
+        p = self._engravings_path()
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(self._engravings, f, ensure_ascii=False, indent=2)
+
+    def _create_engraving(self, rec: dict) -> None:
+        """Build a placeholder engraving record, persist it and refresh the tab."""
+        now = datetime.datetime.now()
+        timestamp  = now.strftime("%Y%m%d_%H%M%S")
+        label      = (rec.get("label") or "unknown").strip() or "unknown"
+        safe_label = label.lower().replace(" ", "_")
+        name       = f"{safe_label}_{timestamp}"
+
+        png_path = ""
+        if rec.get("path"):
+            png_path = str(Path(str(rec["path"])).with_suffix(".png"))
+
+        entry = {
+            "name":                name,
+            "source_silhouette_id": rec.get("id") or rec.get("path") or "",
+            "source_label":        label,
+            "source_png":          png_path,
+            "created_at":          now.isoformat(),
+            # Reserved for future AI generation fields:
+            "model":          None,
+            "preset":         None,
+            "line_density":   None,
+            "line_thickness": None,
+            "white_space":    None,
+            "output_png":     None,
+        }
+        self._engravings.append(entry)
+        self._save_engravings()
+        self._refresh_engravings_tab()
+        # Automatically switch to the Engravings tab
+        self._tabs.setCurrentIndex(1)
+
+    def _refresh_engravings_tab(self) -> None:
+        """Rebuild the engraving entry list in alphabetical order."""
+        # Remove all existing children from the layout
+        while self._eng_list_layout.count():
+            item = self._eng_list_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+        sorted_eng = sorted(self._engravings, key=lambda e: e.get("name", ""))
+
+        if not sorted_eng:
+            empty_lbl = QLabel(
+                "No engravings yet.\n"
+                "Select a silhouette and click \u2295 to create one."
+            )
+            empty_lbl.setWordWrap(True)
+            empty_lbl.setAlignment(Qt.AlignCenter)
+            empty_lbl.setStyleSheet(
+                f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt;"
+                f" background: transparent; padding: 16px;"
+            )
+            self._eng_list_layout.addWidget(empty_lbl)
+            self._eng_list_layout.addStretch()
+            return
+
+        for entry in sorted_eng:
+            self._eng_list_layout.addWidget(self._make_engraving_row(entry))
+        self._eng_list_layout.addStretch()
+
+    def _make_engraving_row(self, entry: dict) -> QWidget:
+        """Return a single row widget for an engraving entry."""
+        row = QWidget()
+        row.setStyleSheet(
+            f"QWidget {{ background: {theme.BTN_BG}; border-radius: 3px; }}"
+        )
+        rl = QHBoxLayout(row)
+        rl.setContentsMargins(6, 4, 6, 4)
+        rl.setSpacing(6)
+
+        # Thumbnail: reuse the source silhouette PNG converted to grayscale
+        thumb_lbl = QLabel()
+        thumb_lbl.setFixedSize(40, 40)
+        thumb_lbl.setAlignment(Qt.AlignCenter)
+        thumb_lbl.setStyleSheet("background: transparent;")
+        png = entry.get("source_png", "")
+        if png:
+            pix = QPixmap(png)
+            if not pix.isNull():
+                pix = pix.scaled(40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                grey = pix.toImage().convertToFormat(QImage.Format_Grayscale8)
+                thumb_lbl.setPixmap(QPixmap.fromImage(grey))
+        rl.addWidget(thumb_lbl)
+
+        # Name label
+        name_lbl = QLabel(entry.get("name", ""))
+        name_lbl.setStyleSheet(
+            f"color: {theme.TEXT}; font-size: {max(7, theme.BASE_PT - 1)}pt;"
+            f" background: transparent;"
+            f" font-family: '{theme.FAMILY_MONO}';"
+        )
+        name_lbl.setWordWrap(False)
+        rl.addWidget(name_lbl, 1)
+
+        return row
 
 
 # ---------------------------------------------------------------------------
@@ -3707,7 +3916,7 @@ class BookVisualizerWindow(QMainWindow):
 
         # ── LEFT: spread view + page bar ─────────────────────────────
         left_col = QWidget()
-        left_col.setStyleSheet(f"background: {theme.CANVAS_BG};")
+        left_col.setStyleSheet(f"background: {theme.PANEL_BG};")
         left_layout = QVBoxLayout(left_col)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(0)
@@ -3977,30 +4186,12 @@ class BookVisualizerWindow(QMainWindow):
         layout.addWidget(tools_group)
 
         # ── Layers group ──────────────────────────────────────────────
-        layers_container = QWidget()
-        layers_container.setStyleSheet("")
-        layers_container_layout = QVBoxLayout(layers_container)
-        layers_container_layout.setContentsMargins(0, 0, 0, 0)
-        layers_container_layout.setSpacing(0)
+        layers_group = QGroupBox("Layers")
+        layers_group_layout = QVBoxLayout(layers_group)
+        layers_group_layout.setContentsMargins(6, 6, 6, 6)
+        layers_group_layout.setSpacing(4)
 
-        # Header row — same pattern as _IllustrationsDrawer
-        layers_hdr = QWidget()
-        layers_hdr.setStyleSheet(f"background: {theme.BTN_BG}; border-radius: 3px;")
-        layers_hdr.setFixedHeight(26)
-        layers_hdr_lay = QHBoxLayout(layers_hdr)
-        layers_hdr_lay.setContentsMargins(6, 0, 4, 0)
-        layers_hdr_lay.setSpacing(0)
-
-        self._layers_toggle_btn = QPushButton("▼  Layers")
-        self._layers_toggle_btn.setStyleSheet(
-            f"QPushButton {{ background: transparent; border: none; color: {theme.TEXT};"
-            f" font-size: {theme.BASE_PT}pt; font-weight: bold; text-align: left; }}"
-        )
-        self._layers_toggle_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self._layers_toggle_btn.setFocusPolicy(Qt.NoFocus)
-        self._layers_toggle_btn.clicked.connect(self._toggle_layers)
-        layers_hdr_lay.addWidget(self._layers_toggle_btn)
-
+        # Eye (visibility) button in the group header area
         self._layers_visible_btn = QPushButton()
         self._layers_visible_btn.setCheckable(True)
         self._layers_visible_btn.setChecked(True)
@@ -4012,13 +4203,7 @@ class BookVisualizerWindow(QMainWindow):
         self._layers_visible_btn.setIcon(_svg_icon("eye-solid", 14, theme.ACCENT))
         self._layers_visible_btn.setIconSize(QSize(14, 14))
         self._layers_visible_btn.toggled.connect(self._on_layers_visible_toggled)
-        layers_hdr_lay.addWidget(self._layers_visible_btn)
-        layers_container_layout.addWidget(layers_hdr)
-
-        self._layers_body = QWidget()
-        layers_body_layout = QVBoxLayout(self._layers_body)
-        layers_body_layout.setContentsMargins(0, 4, 0, 0)
-        layers_body_layout.setSpacing(4)
+        layers_group_layout.addWidget(self._layers_visible_btn, 0, Qt.AlignRight)
 
         self._layer_panel = _LayerPanel()
         self._layer_panel.setMinimumHeight(100)
@@ -4027,12 +4212,10 @@ class BookVisualizerWindow(QMainWindow):
         self._layer_panel.layer_renamed.connect(self._on_panel_layer_renamed)
         self._layer_panel.layers_reordered.connect(self._on_panel_layers_reordered)
         self._layer_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        layers_body_layout.addWidget(self._layer_panel, stretch=1)
+        layers_group_layout.addWidget(self._layer_panel, stretch=1)
 
-        self._layers_body.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        layers_container_layout.addWidget(self._layers_body, stretch=1)
-
-        layout.addWidget(layers_container, stretch=1)
+        layers_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        layout.addWidget(layers_group, stretch=1)
 
         return outer
 
@@ -4285,12 +4468,6 @@ class BookVisualizerWindow(QMainWindow):
         self._mask_right_btn.setEnabled(right_i is not None)
         self._mask_left_btn.setChecked(left_i is not None and left_i in masked)
         self._mask_right_btn.setChecked(right_i is not None and right_i in masked)
-
-    def _toggle_layers(self) -> None:
-        visible = self._layers_body.isVisible()
-        self._layers_body.setVisible(not visible)
-        arrow = "▶" if visible else "▼"
-        self._layers_toggle_btn.setText(f"{arrow}  Layers")
 
     def _on_layers_visible_toggled(self, checked: bool) -> None:
         icon_name = "eye-solid" if checked else "eye-closed"
@@ -4649,11 +4826,20 @@ class BookVisualizerWindow(QMainWindow):
                 if key == Qt.Key_Right:
                     self._go_spread(self._spread_idx + 1)
                     return True
-                if key in (Qt.Key_Up, Qt.Key_Home):
-                    self._show_book(max(0, self._current_book_idx - 1))
+                if key in (Qt.Key_Home, Qt.Key_End):
+                    self._sil_browser.step_scope(
+                        -1 if key == Qt.Key_Home else 1
+                    )
                     return True
-                if key in (Qt.Key_Down, Qt.Key_End):
-                    self._show_book(min(len(self._books) - 1, self._current_book_idx + 1))
+                if key in (Qt.Key_PageUp, Qt.Key_PageDown):
+                    self._sil_browser.step_field(
+                        -1 if key == Qt.Key_PageUp else 1
+                    )
+                    return True
+                if key in (Qt.Key_Up, Qt.Key_Down):
+                    self._sil_browser.step_label(
+                        -1 if key == Qt.Key_Up else 1
+                    )
                     return True
                 if key == Qt.Key_T:
                     new_tool = _TOOL_NONE if self._tool == _TOOL_TEXT else _TOOL_TEXT

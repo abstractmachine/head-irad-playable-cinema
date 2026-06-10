@@ -370,6 +370,7 @@ class _GripHandle(QSplitterHandle):
 
     def paintEvent(self, event):
         p = QPainter(self)
+        p.fillRect(self.rect(), QColor(PANEL_BG))
         p.setRenderHint(QPainter.Antialiasing)
         colour = self._HOVER_COLOUR if self._hovered else self._DOT_COLOUR
         p.setBrush(colour)
