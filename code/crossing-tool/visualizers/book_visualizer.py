@@ -75,6 +75,7 @@ from PyQt5.QtGui import (
     QPen,
     QPixmap,
     QPolygonF,
+    QTransform,
 )
 try:
     from PyQt5.QtSvg import QSvgRenderer
@@ -539,6 +540,7 @@ class _SpreadView(QWidget):
         img_layers = [
             l for l in layers_by_page.get(page_idx, [])
             if l.get("type") == "Image" and l.get("source")
+            and l.get("visible", True)
         ]
         # Apply text mask to the bare PDF layer before compositing illustrations,
         # so that illustrations always remain visible even on a masked page.
@@ -569,6 +571,10 @@ class _SpreadView(QWidget):
             painter.save()
             painter.translate(cx, cy)
             painter.rotate(rot)
+            sx = -1.0 if layer.get("flip_h", False) else 1.0
+            sy = -1.0 if layer.get("flip_v", False) else 1.0
+            if sx != 1.0 or sy != 1.0:
+                painter.scale(sx, sy)
             painter.drawImage(QRectF(-sw / 2, -sh / 2, sw, sh), pix.toImage())
             painter.restore()
 
@@ -798,6 +804,8 @@ class _CutOverlay(QWidget):
     selection_changed = pyqtSignal(str)   # emitted with layer id (or "")
     text_sel_committed = pyqtSignal(dict) # emitted when a text selection is created
     text_sel_removed   = pyqtSignal(str)  # emitted with text sel id on deletion
+    engraving_requested       = pyqtSignal(dict)                          # emitted with Image layer dict
+    silhouette_drop_requested = pyqtSignal(str, int, float, float, dict)  # abs_path, page_idx, nx, ny, meta
 
     @staticmethod
     def _make_cross_cursor(color: str, size: int = 21) -> QCursor:
@@ -870,6 +878,11 @@ class _CutOverlay(QWidget):
         self._text_drag_start_n: Optional[tuple] = None  # (nx, ny) drag origin (normalised)
         self._text_drag_end_n:   Optional[tuple] = None  # (nx, ny) drag current end
 
+        # Page action buttons (hover/select on Image layers)
+        self._hover_img_id: Optional[str] = None          # Image layer currently under cursor
+        self._action_btn_rects: dict = {}                  # lid → {"engrave": QRect, "delete": QRect}
+        self._action_icons_cache: Optional[dict] = None   # lazy-loaded icon pixmaps
+
         self.setAttribute(Qt.WA_NoSystemBackground)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAcceptDrops(True)
@@ -899,6 +912,100 @@ class _CutOverlay(QWidget):
         else:
             self.setCursor(Qt.ArrowCursor)
         self.update()
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        if self._hover_img_id is not None:
+            self._hover_img_id = None
+            self.update()
+        super().leaveEvent(event)
+
+    # ------------------------------------------------------------------
+    # Page action buttons
+
+    def _get_action_icons(self) -> dict:
+        """Lazy-load and cache action button icon pixmaps."""
+        if self._action_icons_cache is None:
+            self._action_icons_cache = {
+                "engrave": _svg_icon("plus-circle-solid", 14, "#ffffff"),
+                "delete":  _svg_icon("trash-solid",       14, "#ffffff"),
+                "flip_h":  _svg_icon("flip",              14, "#ffffff"),
+                "flip_v":  _svg_icon("flip-reverse",      14, "#ffffff"),
+            }
+        return self._action_icons_cache
+
+    def _draw_img_action_buttons(self, p: QPainter, layer: dict, rects: dict) -> None:
+        """Draw [Delete] [Engrave] action buttons above the selected/hovered image."""
+        page_idx = layer.get("page")
+        r = rects.get(page_idx)
+        if r is None:
+            return
+        corners = self._img_corners_screen(layer, r)
+        min_x = int(min(c.x() for c in corners))
+        min_y = int(min(c.y() for c in corners))
+        sz, gap = 22, 4
+        # Four buttons left-aligned above the image bounding box:
+        # [delete] [flip_h] [flip_v] [engrave]
+        del_rect = QRect(min_x,                  min_y - sz - 3, sz, sz)
+        fh_rect  = QRect(min_x +     (sz + gap), min_y - sz - 3, sz, sz)
+        fv_rect  = QRect(min_x + 2 * (sz + gap), min_y - sz - 3, sz, sz)
+        eng_rect = QRect(min_x + 3 * (sz + gap), min_y - sz - 3, sz, sz)
+        self._action_btn_rects[layer["id"]] = {
+            "engrave": eng_rect, "delete": del_rect,
+            "flip_h":  fh_rect,  "flip_v": fv_rect,
+        }
+        icons = self._get_action_icons()
+        for btn_rect, icon_key, btn_color in [
+            (del_rect, "delete",  QColor(160,  60,  60, 220)),
+            (fh_rect,  "flip_h",  QColor( 60,  90,  90, 220)),
+            (fv_rect,  "flip_v",  QColor( 60,  90,  90, 220)),
+            (eng_rect, "engrave", QColor( 60,  60, 160, 220)),
+        ]:
+            p.setPen(Qt.NoPen)
+            p.setBrush(btn_color)
+            p.drawRoundedRect(btn_rect, 3, 3)
+            icon_pix = icons[icon_key].pixmap(14, 14)
+            if not icon_pix.isNull():
+                if icon_key == "flip_v":
+                    icon_pix = icon_pix.transformed(QTransform().rotate(90))
+                ix = btn_rect.x() + (sz - icon_pix.width())  // 2
+                iy = btn_rect.y() + (sz - icon_pix.height()) // 2
+                p.drawPixmap(ix, iy, icon_pix)
+
+    def _check_action_buttons(self, pos: QPointF) -> bool:
+        """Return True and handle the action if *pos* hits an action button."""
+        pt = pos.toPoint()
+        for lid, btns in self._action_btn_rects.items():
+            eng_rect = btns.get("engrave")
+            del_rect = btns.get("delete")
+            fh_rect  = btns.get("flip_h")
+            fv_rect  = btns.get("flip_v")
+            if eng_rect and eng_rect.contains(pt):
+                layer = self._layer_by_id(lid)
+                if layer:
+                    self.engraving_requested.emit(dict(layer))
+                return True
+            if del_rect and del_rect.contains(pt):
+                layer = self._layer_by_id(lid)
+                if layer:
+                    self._sel_id = lid
+                    self._sel_pt = None
+                    self.delete_selected_layer()
+                return True
+            if fh_rect and fh_rect.contains(pt):
+                layer = self._layer_by_id(lid)
+                if layer:
+                    layer["flip_h"] = not layer.get("flip_h", False)
+                    self.update()
+                    self.layer_committed.emit(dict(layer))
+                return True
+            if fv_rect and fv_rect.contains(pt):
+                layer = self._layer_by_id(lid)
+                if layer:
+                    layer["flip_v"] = not layer.get("flip_v", False)
+                    self.update()
+                    self.layer_committed.emit(dict(layer))
+                return True
+        return False
 
     def set_layers(self, layers: list) -> None:
         """Replace displayed layers (e.g. on book switch)."""
@@ -1332,46 +1439,24 @@ class _CutOverlay(QWidget):
         if not mime.hasFormat("application/x-crossing-illus-source"):
             event.ignore()
             return
-        source_rel = bytes(mime.data("application/x-crossing-illus-source")).decode("utf-8")
+        raw = bytes(mime.data("application/x-crossing-illus-source")).decode("utf-8")
+        try:
+            payload  = json.loads(raw)
+            abs_path = payload.get("abs_path", "")
+            meta     = payload.get("meta", {})
+        except (json.JSONDecodeError, ValueError):
+            abs_path = ""
+            meta     = {}
+        if not abs_path or not Path(abs_path).exists():
+            event.ignore()
+            return
         pos = QPointF(event.pos())
         hit = self._which_page(pos.x(), pos.y())
         if hit is None:
             event.ignore()
             return
         page_idx, nx, ny = hit
-        # Determine height that preserves pixel aspect ratio
-        default_w = _IMG_DEFAULT_W
-        default_h = default_w
-        full_path = self._resolve_img_path(source_rel)
-        if full_path:
-            pix = QPixmap(str(full_path))
-            if not pix.isNull() and pix.height() > 0:
-                rects = self._visible_page_rects()
-                r = rects.get(page_idx)
-                if r and r.width() > 0 and r.height() > 0:
-                    pix_aspect = pix.width() / pix.height()
-                    sw = default_w * r.width()
-                    sh = sw / pix_aspect
-                    default_h = sh / r.height()
-        layer = {
-            "id":       f"img_{uuid.uuid4().hex[:8]}",
-            "type":     "Image",
-            "name":     Path(source_rel).stem,
-            "source":   source_rel,
-            "page":     page_idx,
-            "spread":   self._view._spread_idx,
-            "x":        nx,
-            "y":        ny,
-            "width":    default_w,
-            "height":   default_h,
-            "rotation": 0.0,
-            "z_index":  len(self._layers),
-        }
-        self._layers.append(layer)
-        self._sel_id = layer["id"]
-        self._sel_pt = None
-        self.update()
-        self.layer_committed.emit(layer)
+        self.silhouette_drop_requested.emit(abs_path, page_idx, nx, ny, meta)
         event.acceptProposedAction()
 
     # ------------------------------------------------------------------
@@ -1488,6 +1573,9 @@ class _CutOverlay(QWidget):
         if event.button() != Qt.LeftButton:
             return
         pos = QPointF(event.pos())
+        # Action buttons take priority over everything (select tool only)
+        if self._tool == _TOOL_NONE and self._check_action_buttons(pos):
+            return
         if self._tool == _TOOL_CUT:
             self._cut_press(pos)
         elif self._tool == _TOOL_ERASE:
@@ -2183,6 +2271,14 @@ class _CutOverlay(QWidget):
     # Hover for segment-insertion indicator
 
     def _update_hover(self, pos: QPointF) -> None:
+        # Track which Image layer is under the cursor (select-tool only)
+        if self._tool == _TOOL_NONE:
+            new_hov = self._hit_image_body(pos)
+            if new_hov != self._hover_img_id:
+                self._hover_img_id = new_hov
+        else:
+            self._hover_img_id = None
+
         # Show segment-insertion hint when:
         #   • select tool: whole layer selected (_sel_pt is None)
         #   • cut tool: layer selected and no WIP in progress
@@ -2304,6 +2400,8 @@ class _CutOverlay(QWidget):
         for layer in self._layers:
             if layer.get("type") != "Image":
                 continue
+            if not layer.get("visible", True):
+                continue
             page_idx = layer.get("page")
             r = rects.get(page_idx)
             if r is None:
@@ -2315,6 +2413,10 @@ class _CutOverlay(QWidget):
             p.save()
             p.translate(cx, cy)
             p.rotate(rot)
+            sx = -1.0 if layer.get("flip_h", False) else 1.0
+            sy = -1.0 if layer.get("flip_v", False) else 1.0
+            if sx != 1.0 or sy != 1.0:
+                p.scale(sx, sy)
             if pix and not pix.isNull():
                 p.drawImage(QRectF(-sw / 2, -sh / 2, sw, sh), pix.toImage())
             else:
@@ -2385,6 +2487,23 @@ class _CutOverlay(QWidget):
                     p.setBrush(Qt.NoBrush)
                     p.drawEllipse(rot_h, float(_IMG_ROT_R), float(_IMG_ROT_R))
 
+        # ── image action buttons (hover / selected) ──────────────────────
+        self._action_btn_rects.clear()
+        no_drag = (
+            self._img_drag_id   is None
+            and self._img_resize_id is None
+            and self._img_rotate_id is None
+        )
+        if no_drag and self._layers_visible:
+            for layer in self._layers:
+                if layer.get("type") != "Image":
+                    continue
+                if not layer.get("visible", True):
+                    continue
+                lid = layer["id"]
+                if lid == self._sel_id or lid == self._hover_img_id:
+                    self._draw_img_action_buttons(p, layer, rects)
+
         p.end()
 
 
@@ -2444,15 +2563,17 @@ class _PageBar(QWidget):
 class _LayerRow(QWidget):
     """One layer entry: drag handle | name (double-click to rename) | × button."""
 
-    delete_requested = pyqtSignal(str)   # layer id
-    rename_requested = pyqtSignal(str, str)  # layer id, new name
-    selected         = pyqtSignal(str)   # layer id
+    delete_requested     = pyqtSignal(str)        # layer id
+    rename_requested     = pyqtSignal(str, str)   # layer id, new name
+    selected             = pyqtSignal(str)         # layer id
+    visibility_toggled   = pyqtSignal(str, bool)  # layer id, new visible state
 
     def __init__(self, layer: dict, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._lid  = layer["id"]
         self._name = layer.get("name", "Cut")
         self._layer_type = layer.get("type", "Cut")
+        self._visible = layer.get("visible", True)
         self._editing = False
 
         lay = QHBoxLayout(self)
@@ -2460,8 +2581,9 @@ class _LayerRow(QWidget):
         lay.setSpacing(4)
 
         # -- type icon --
-        _LAYER_ICONS = {"Cut": "cut", "Image": "journal-page"}
-        icon_name = _LAYER_ICONS.get(self._layer_type)
+        _LAYER_ICONS = {"Cut": "cut", "Image": "journal-page", "Engraving": "plus-circle-solid"}
+        _display_key = layer.get("layer_subtype") or self._layer_type
+        icon_name = _LAYER_ICONS.get(_display_key) or _LAYER_ICONS.get(self._layer_type)
         if icon_name:
             self._type_icon = QLabel()
             self._type_icon.setPixmap(_svg_icon(icon_name, 12, theme.TEXT_DIM).pixmap(12, 12))
@@ -2476,7 +2598,8 @@ class _LayerRow(QWidget):
             f"color: {theme.TEXT}; font-family: '{theme.FAMILY_UI}';"
             f" font-size: {theme.BASE_PT}pt;"
         )
-        self._name_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._name_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self._name_label.setMaximumWidth(120)
 
         # -- inline editor (edit state) --
         self._name_edit = QLineEdit(self._name)
@@ -2486,13 +2609,29 @@ class _LayerRow(QWidget):
             f" border: 1px solid {theme.ACCENT}; border-radius: 2px; padding: 0 2px;"
             f" selection-background-color: {theme.ACCENT}; selection-color: {theme.TEXT}; }}"
         )
-        self._name_edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._name_edit.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self._name_edit.setMaximumWidth(120)
         self._name_edit.hide()
         self._name_edit.returnPressed.connect(self._commit_rename)
         self._name_edit.editingFinished.connect(self._commit_rename)
 
         lay.addWidget(self._name_label)
         lay.addWidget(self._name_edit)
+
+        # -- eye (visibility) button --
+        self._eye_btn = QPushButton()
+        self._eye_btn.setIcon(_svg_icon(
+            "eye-solid" if self._visible else "eye-closed", 12,
+            theme.TEXT_DIM if self._visible else theme.ACCENT
+        ))
+        self._eye_btn.setIconSize(QSize(12, 12))
+        self._eye_btn.setFixedSize(18, 18)
+        self._eye_btn.setStyleSheet(
+            "QPushButton { background: transparent; border: none; }"
+        )
+        self._eye_btn.setToolTip("Toggle layer visibility")
+        self._eye_btn.clicked.connect(self._on_eye_clicked)
+        lay.addWidget(self._eye_btn)
 
         self._del_btn = QPushButton()
         self._del_btn.setIcon(_svg_icon("trash", 12, theme.TEXT_DIM))
@@ -2510,6 +2649,16 @@ class _LayerRow(QWidget):
         self.setFocusPolicy(Qt.NoFocus)
         self._del_btn.setFocusPolicy(Qt.NoFocus)
         self.set_selected(False)
+
+    def _on_eye_clicked(self) -> None:
+        self._visible = not self._visible
+        self._eye_btn.setIcon(_svg_icon(
+            "eye-solid" if self._visible else "eye-closed", 12,
+            theme.TEXT_DIM if self._visible else theme.ACCENT
+        ))
+        # Refresh italic/dim style without changing selection state
+        self.set_selected(self._lid == getattr(self.parent(), "_sel_id", None))
+        self.visibility_toggled.emit(self._lid, self._visible)
 
     def _start_rename(self) -> None:
         if self._editing:
@@ -2536,9 +2685,11 @@ class _LayerRow(QWidget):
     def set_selected(self, selected: bool) -> None:
         bg = theme.ACCENT if selected else theme.BTN_BG
         text = theme.TEXT if selected else theme.TEXT_DIM
+        font_style = "normal" if self._visible else "italic"
         self._name_label.setStyleSheet(
             f"color: {text}; font-family: '{theme.FAMILY_UI}';"
-            f" font-size: {theme.BASE_PT}pt; background: transparent;"
+            f" font-size: {theme.BASE_PT}pt; font-style: {font_style};"
+            f" background: transparent;"
         )
         self.setStyleSheet(
             f"_LayerRow {{ background: {bg}; border-radius: 3px; }}"
@@ -2572,6 +2723,7 @@ class _LayerPanel(QWidget):
     layer_deleted     = pyqtSignal(str)       # id
     layer_renamed     = pyqtSignal(str, str)  # id, name
     layers_reordered  = pyqtSignal(list)      # new id order
+    layer_visibility_toggled = pyqtSignal(str, bool)  # id, visible
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -2593,6 +2745,7 @@ class _LayerPanel(QWidget):
             f"QListWidget::item:selected {{ background: transparent; }}"
         )
         self._list.setSpacing(1)
+        self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._list.model().rowsMoved.connect(self._on_rows_moved)
         outer.addWidget(self._list)
 
@@ -2612,6 +2765,7 @@ class _LayerPanel(QWidget):
         row.delete_requested.connect(self.layer_deleted)
         row.rename_requested.connect(self._on_rename)
         row.selected.connect(self._on_select)
+        row.visibility_toggled.connect(self.layer_visibility_toggled)
 
         item = QListWidgetItem()
         item.setData(Qt.UserRole, lid)
@@ -3153,20 +3307,18 @@ class _BrowserThumbCell(QLabel):
 
     Emits ``single_clicked`` on left-click and ``double_clicked`` on
     double-click so the browser can distinguish selection from insertion.
-    Emits ``engraving_requested`` when the plus-circle overlay button is clicked
-    on a selected cell.
     """
 
-    single_clicked     = pyqtSignal(int)  # cell index
-    double_clicked     = pyqtSignal(int)  # cell index
-    engraving_requested = pyqtSignal(int) # cell index
-
-    _BTN_SZ = 20  # overlay button size in px
+    single_clicked = pyqtSignal(int)  # cell index
+    double_clicked = pyqtSignal(int)  # cell index
 
     def __init__(self, index: int, tooltip: str = "", parent=None) -> None:
         super().__init__(parent)
-        self._index    = index
-        self._selected = False
+        self._index          = index
+        self._selected       = False
+        self._drag_abs_path  = ""      # set by _rebuild_grid after construction
+        self._drag_meta: dict = {}     # record dict used for the drag payload
+        self._press_pos: Optional[QPoint] = None
         self.setFixedSize(_BROWSER_THUMB_SZ, _BROWSER_THUMB_SZ)
         self.setAlignment(Qt.AlignCenter)
         self.setCursor(Qt.PointingHandCursor)
@@ -3174,32 +3326,6 @@ class _BrowserThumbCell(QLabel):
             self.setToolTip(tooltip)
         self._apply_style()
         self.setText("·")   # placeholder until image loads
-
-        # Engraving action button — visible only when the cell is selected
-        self._engrave_btn = QPushButton(self)
-        self._engrave_btn.setFixedSize(self._BTN_SZ, self._BTN_SZ)
-        self._engrave_btn.setFocusPolicy(Qt.NoFocus)
-        self._engrave_btn.setCursor(Qt.PointingHandCursor)
-        self._engrave_btn.setToolTip("Generate engraving from this silhouette")
-        icon = _svg_icon("plus-circle-solid", size=14, color="#ffffff")
-        self._engrave_btn.setIcon(icon)
-        self._engrave_btn.setIconSize(QSize(14, 14))
-        self._engrave_btn.setStyleSheet(
-            f"QPushButton {{ background-color: {theme.ACCENT}; border: none;"
-            f" border-radius: 3px; padding: 0; }}"
-            f"QPushButton:hover    {{ background-color: {theme.BTN_HOVER}; }}"
-            f"QPushButton:pressed  {{ background-color: {theme.BTN_PRESSED}; }}"
-        )
-        # Position: bottom-right corner, 2 px from each edge
-        self._engrave_btn.move(
-            _BROWSER_THUMB_SZ - self._BTN_SZ - 2,
-            _BROWSER_THUMB_SZ - self._BTN_SZ - 2,
-        )
-        self._engrave_btn.hide()
-        self._engrave_btn.clicked.connect(self._on_engrave_clicked)
-
-    def _on_engrave_clicked(self) -> None:
-        self.engraving_requested.emit(self._index)
 
     def set_image(self, qimg: QImage) -> None:
         """Called from the GUI thread when the loader delivers a QImage."""
@@ -3209,7 +3335,6 @@ class _BrowserThumbCell(QLabel):
     def set_selected(self, selected: bool) -> None:
         self._selected = selected
         self._apply_style()
-        self._engrave_btn.setVisible(selected)
 
     def _apply_style(self) -> None:
         border = (
@@ -3223,6 +3348,7 @@ class _BrowserThumbCell(QLabel):
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.LeftButton:
+            self._press_pos = event.pos()
             self.single_clicked.emit(self._index)
         super().mousePressEvent(event)
 
@@ -3231,13 +3357,39 @@ class _BrowserThumbCell(QLabel):
             self.double_clicked.emit(self._index)
         super().mouseDoubleClickEvent(event)
 
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if (event.buttons() & Qt.LeftButton
+                and self._press_pos is not None
+                and self._drag_abs_path
+                and (event.pos() - self._press_pos).manhattanLength()
+                    >= QApplication.startDragDistance()):
+            mime = QMimeData()
+            payload = json.dumps({"abs_path": self._drag_abs_path,
+                                   "meta":     self._drag_meta})
+            mime.setData("application/x-crossing-illus-source",
+                         QByteArray(payload.encode()))
+            drag = QDrag(self)
+            drag.setMimeData(mime)
+            pix = self.pixmap()
+            if pix and not pix.isNull():
+                scaled = pix.scaled(48, 48, Qt.KeepAspectRatio,
+                                    Qt.SmoothTransformation)
+                drag.setPixmap(scaled)
+                drag.setHotSpot(QPoint(scaled.width() // 2,
+                                       scaled.height() // 2))
+            self._press_pos = None  # prevent re-triggering on same press
+            drag.exec_(Qt.CopyAction)
+            return
+        super().mouseMoveEvent(event)
+
 
 class _SilhouetteBrowserPanel(QWidget):
     """Docked sidebar panel for browsing the silhouette catalog.
 
     Two tabs:
         Silhouettes — Scope / Field / Label filters + paginated thumbnail grid.
-        Engravings  — placeholder with a disabled Create button.
+        Engravings  — generated asset library; entries are added by the
+                       page-centric adaptive engraving workflow.
 
     Emits ``silhouette_insert_requested(png_path, metadata)`` when the user
     double-clicks a thumbnail.  ``BookVisualizerWindow`` connects this signal
@@ -3282,13 +3434,12 @@ class _SilhouetteBrowserPanel(QWidget):
         self._selected_idx: int  = -1
         self._loader: Optional[_BrowserThumbLoader] = None
 
-        # Engraving collection (persisted to <project_path>/engravings.json)
+        # Engraving collection — populated externally by BookVisualizerWindow
         self._engravings: list = []
 
         self.setStyleSheet(_PANEL_STYLESHEET)
         self.setMinimumWidth(180)
         self._build_ui()
-        self._load_engravings()
 
         # Defer catalog scan until after the window has finished its first layout pass
         QTimer.singleShot(0, self._load_catalog)
@@ -3442,38 +3593,28 @@ class _SilhouetteBrowserPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Scroll area containing the sorted engraving entry list
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setFocusPolicy(Qt.NoFocus)
-        scroll.setStyleSheet(
+        # Scroll area containing the engraving thumbnail grid
+        self._eng_scroll = QScrollArea()
+        self._eng_scroll.setWidgetResizable(True)
+        self._eng_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._eng_scroll.setFrameShape(QFrame.NoFrame)
+        self._eng_scroll.setFocusPolicy(Qt.NoFocus)
+        self._eng_scroll.setStyleSheet(
             f"QScrollArea {{ background: {self._TAB_CONTENT_BG}; border: none; }}"
         )
 
         self._eng_container = QWidget()
         self._eng_container.setStyleSheet(f"background: {self._TAB_CONTENT_BG};")
-        self._eng_list_layout = QVBoxLayout(self._eng_container)
-        self._eng_list_layout.setContentsMargins(6, 6, 6, 6)
-        self._eng_list_layout.setSpacing(4)
-        self._eng_list_layout.setAlignment(Qt.AlignTop)
-
-        # Initial empty-state label (replaced by _refresh_engravings_tab)
-        self._eng_empty_lbl = QLabel(
-            "No engravings yet.\nSelect a silhouette and click \u2295 to create one."
+        self._eng_grid_layout = QGridLayout(self._eng_container)
+        self._eng_grid_layout.setContentsMargins(
+            _BROWSER_THUMB_GAP, _BROWSER_THUMB_GAP,
+            _BROWSER_THUMB_GAP, _BROWSER_THUMB_GAP,
         )
-        self._eng_empty_lbl.setWordWrap(True)
-        self._eng_empty_lbl.setAlignment(Qt.AlignCenter)
-        self._eng_empty_lbl.setStyleSheet(
-            f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt;"
-            f" background: transparent; padding: 16px;"
-        )
-        self._eng_list_layout.addWidget(self._eng_empty_lbl)
-        self._eng_list_layout.addStretch()
+        self._eng_grid_layout.setSpacing(_BROWSER_THUMB_GAP)
+        self._eng_grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
 
-        scroll.setWidget(self._eng_container)
-        layout.addWidget(scroll, 1)
+        self._eng_scroll.setWidget(self._eng_container)
+        layout.addWidget(self._eng_scroll, 1)
         return widget
 
     # ------------------------------------------------------------------
@@ -3642,7 +3783,14 @@ class _SilhouetteBrowserPanel(QWidget):
             cell  = _BrowserThumbCell(i, tooltip=tip)
             cell.single_clicked.connect(self._on_cell_single)
             cell.double_clicked.connect(self._on_cell_double)
-            cell.engraving_requested.connect(self._on_engraving_requested)
+            # Populate drag source — same resolution as _on_cell_double
+            json_path = rec.get("path")
+            if json_path:
+                png_path = Path(str(json_path)).with_suffix(".png")
+                if png_path.exists():
+                    cell._drag_abs_path = str(png_path)
+                    cell._drag_meta     = {k: str(v) if isinstance(v, Path) else v
+                                           for k, v in rec.items()}
             self._grid_layout.addWidget(cell, i // cols, i % cols)
             self._cells.append(cell)
 
@@ -3728,75 +3876,24 @@ class _SilhouetteBrowserPanel(QWidget):
             return
         self.silhouette_insert_requested.emit(str(png_path), dict(rec))
 
-    def _on_engraving_requested(self, idx: int) -> None:
-        """Create an engraving placeholder from the silhouette at cell *idx*."""
-        abs_idx = self._page_idx * _BROWSER_PAGE_SIZE + idx
-        if abs_idx >= len(self._current_records):
-            return
-        rec = self._current_records[abs_idx]
-        self._create_engraving(rec)
-
     # ------------------------------------------------------------------
-    # Engraving collection
+    # Engraving collection — public API (called by BookVisualizerWindow)
 
-    def _engravings_path(self) -> Path:
-        return Path(self._project_path) / "engravings.json"
-
-    def _load_engravings(self) -> None:
-        p = self._engravings_path()
-        if not p.exists():
-            self._engravings = []
-            return
-        try:
-            with open(p, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            self._engravings = data if isinstance(data, list) else []
-        except Exception:
-            self._engravings = []
+    def set_engravings(self, entries: list) -> None:
+        """Replace the full engraving list and refresh the Engravings tab."""
+        self._engravings = list(entries)
         self._refresh_engravings_tab()
 
-    def _save_engravings(self) -> None:
-        p = self._engravings_path()
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump(self._engravings, f, ensure_ascii=False, indent=2)
-
-    def _create_engraving(self, rec: dict) -> None:
-        """Build a placeholder engraving record, persist it and refresh the tab."""
-        now = datetime.datetime.now()
-        timestamp  = now.strftime("%Y%m%d_%H%M%S")
-        label      = (rec.get("label") or "unknown").strip() or "unknown"
-        safe_label = label.lower().replace(" ", "_")
-        name       = f"{safe_label}_{timestamp}"
-
-        png_path = ""
-        if rec.get("path"):
-            png_path = str(Path(str(rec["path"])).with_suffix(".png"))
-
-        entry = {
-            "name":                name,
-            "source_silhouette_id": rec.get("id") or rec.get("path") or "",
-            "source_label":        label,
-            "source_png":          png_path,
-            "created_at":          now.isoformat(),
-            # Reserved for future AI generation fields:
-            "model":          None,
-            "preset":         None,
-            "line_density":   None,
-            "line_thickness": None,
-            "white_space":    None,
-            "output_png":     None,
-        }
+    def add_engraving(self, entry: dict) -> None:
+        """Append one engraving entry and refresh the Engravings tab."""
         self._engravings.append(entry)
-        self._save_engravings()
         self._refresh_engravings_tab()
-        # Automatically switch to the Engravings tab
-        self._tabs.setCurrentIndex(1)
 
     def _refresh_engravings_tab(self) -> None:
-        """Rebuild the engraving entry list in alphabetical order."""
-        # Remove all existing children from the layout
-        while self._eng_list_layout.count():
-            item = self._eng_list_layout.takeAt(0)
+        """Rebuild the engraving thumbnail grid in alphabetical order."""
+        # Clear existing grid items
+        while self._eng_grid_layout.count():
+            item = self._eng_grid_layout.takeAt(0)
             w = item.widget()
             if w:
                 w.deleteLater()
@@ -3806,7 +3903,8 @@ class _SilhouetteBrowserPanel(QWidget):
         if not sorted_eng:
             empty_lbl = QLabel(
                 "No engravings yet.\n"
-                "Select a silhouette and click \u2295 to create one."
+                "Drop a silhouette on the page,\n"
+                "then click \u2295 Adaptive Engraving."
             )
             empty_lbl.setWordWrap(True)
             empty_lbl.setAlignment(Qt.AlignCenter)
@@ -3814,50 +3912,28 @@ class _SilhouetteBrowserPanel(QWidget):
                 f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt;"
                 f" background: transparent; padding: 16px;"
             )
-            self._eng_list_layout.addWidget(empty_lbl)
-            self._eng_list_layout.addStretch()
+            self._eng_grid_layout.addWidget(empty_lbl, 0, 0)
             return
 
-        for entry in sorted_eng:
-            self._eng_list_layout.addWidget(self._make_engraving_row(entry))
-        self._eng_list_layout.addStretch()
+        vw = self._eng_scroll.viewport().width()
+        if vw <= 0:
+            vw = 200
+        cols = max(1, (vw - _BROWSER_THUMB_GAP) // (_BROWSER_THUMB_SZ + _BROWSER_THUMB_GAP))
 
-    def _make_engraving_row(self, entry: dict) -> QWidget:
-        """Return a single row widget for an engraving entry."""
-        row = QWidget()
-        row.setStyleSheet(
-            f"QWidget {{ background: {theme.BTN_BG}; border-radius: 3px; }}"
-        )
-        rl = QHBoxLayout(row)
-        rl.setContentsMargins(6, 4, 6, 4)
-        rl.setSpacing(6)
-
-        # Thumbnail: reuse the source silhouette PNG converted to grayscale
-        thumb_lbl = QLabel()
-        thumb_lbl.setFixedSize(40, 40)
-        thumb_lbl.setAlignment(Qt.AlignCenter)
-        thumb_lbl.setStyleSheet("background: transparent;")
-        png = entry.get("source_png", "")
-        if png:
-            pix = QPixmap(png)
-            if not pix.isNull():
-                pix = pix.scaled(40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                grey = pix.toImage().convertToFormat(QImage.Format_Grayscale8)
-                thumb_lbl.setPixmap(QPixmap.fromImage(grey))
-        rl.addWidget(thumb_lbl)
-
-        # Name label
-        name_lbl = QLabel(entry.get("name", ""))
-        name_lbl.setStyleSheet(
-            f"color: {theme.TEXT}; font-size: {max(7, theme.BASE_PT - 1)}pt;"
-            f" background: transparent;"
-            f" font-family: '{theme.FAMILY_MONO}';"
-        )
-        name_lbl.setWordWrap(False)
-        rl.addWidget(name_lbl, 1)
-
-        return row
-
+        for i, entry in enumerate(sorted_eng):
+            cell = _BrowserThumbCell(i, tooltip=entry.get("name", ""))
+            # Load thumbnail from source_png, convert to greyscale
+            png = entry.get("source_png", "")
+            if png:
+                pix = QPixmap(png)
+                if not pix.isNull():
+                    pix = pix.scaled(
+                        _BROWSER_THUMB_SZ, _BROWSER_THUMB_SZ,
+                        Qt.KeepAspectRatio, Qt.SmoothTransformation,
+                    )
+                    grey = pix.toImage().convertToFormat(QImage.Format_Grayscale8)
+                    cell.set_image(grey)
+            self._eng_grid_layout.addWidget(cell, i // cols, i % cols)
 
 # ---------------------------------------------------------------------------
 # Main window
@@ -3932,6 +4008,8 @@ class BookVisualizerWindow(QMainWindow):
         self._overlay.selection_changed.connect(self._on_overlay_selection)
         self._overlay.text_sel_committed.connect(self._on_text_sel_committed)
         self._overlay.text_sel_removed.connect(self._on_text_sel_removed)
+        self._overlay.engraving_requested.connect(self._on_engraving_requested)
+        self._overlay.silhouette_drop_requested.connect(self._on_silhouette_drop)
 
         self._page_bar = _PageBar()
         self._page_bar.jumped.connect(self._go_spread)
@@ -4211,6 +4289,7 @@ class BookVisualizerWindow(QMainWindow):
         self._layer_panel.layer_deleted.connect(self._on_panel_layer_deleted)
         self._layer_panel.layer_renamed.connect(self._on_panel_layer_renamed)
         self._layer_panel.layers_reordered.connect(self._on_panel_layers_reordered)
+        self._layer_panel.layer_visibility_toggled.connect(self._on_panel_layer_visibility)
         self._layer_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layers_group_layout.addWidget(self._layer_panel, stretch=1)
 
@@ -4477,6 +4556,92 @@ class BookVisualizerWindow(QMainWindow):
         self._spread_view.set_layers_visible(checked)
 
     # ------------------------------------------------------------------
+    # Engraving workflow (page-centric)
+
+    def _on_engraving_requested(self, source_layer: dict) -> None:
+        """Create a placeholder engraving child layer from a placed silhouette."""
+        now        = datetime.datetime.now()
+        timestamp  = now.strftime("%Y%m%d_%H%M%S")
+        label      = source_layer.get("name", "engraving").strip() or "engraving"
+        safe_label = label.lower().replace(" ", "_")
+        name       = f"{safe_label}_{timestamp}"
+        eng_id     = f"eng_{uuid.uuid4().hex[:8]}"
+
+        # Resolve source PNG path for the engravings-tab thumbnail
+        source_rel = source_layer.get("source", "")
+        source_png = ""
+        book_dir   = self._overlay._book_dir
+        if book_dir and source_rel:
+            candidate = book_dir / source_rel
+            if candidate.exists():
+                source_png = str(candidate)
+
+        # Build the engraving layer (reuses source image as placeholder)
+        eng_layer = {
+            "id":                    eng_id,
+            "type":                  "Image",
+            "layer_subtype":         "Engraving",
+            "name":                  name,
+            "parent_layer_id":       source_layer["id"],
+            "source_silhouette_id":  source_rel,
+            "source":                source_rel,
+            "page":                  source_layer["page"],
+            "spread":                source_layer["spread"],
+            "x":                     source_layer["x"],
+            "y":                     source_layer["y"],
+            "width":                 source_layer["width"],
+            "height":                source_layer["height"],
+            "rotation":              source_layer.get("rotation", 0.0),
+            "z_index":               len(self._overlay.current_layers()),
+            "visible":               True,
+            "created":               now.isoformat(),
+            # Future AI generation fields:
+            "model":          None,
+            "preset":         None,
+            "line_density":   None,
+            "line_thickness": None,
+            "white_space":    None,
+            "output_png":     None,
+        }
+
+        # Hide parent silhouette — keep it in the document, record child link
+        parent = self._overlay._layer_by_id(source_layer["id"])
+        if parent is not None:
+            parent["visible"] = False
+            parent.setdefault("child_layers", []).append(eng_id)
+
+        # Add engraving layer and select it
+        self._overlay._layers.append(eng_layer)
+        self._overlay._sel_id = eng_id
+        self._overlay._sel_pt = None
+        self._overlay.update()
+
+        # Persist layers and rebuild the layer panel (so hidden parent dims)
+        self._on_layer_committed(eng_layer)
+        self._refresh_layer_panel()
+
+        # Add to the Engravings tab and switch to it
+        entry = {
+            "name":                  name,
+            "layer_id":              eng_id,
+            "parent_layer_id":       source_layer["id"],
+            "source_silhouette_id":  source_rel,
+            "source_png":            source_png,
+            "page":                  source_layer["page"],
+            "width":                 source_layer["width"],
+            "height":                source_layer["height"],
+            "created":               now.isoformat(),
+            "model":          None,
+            "preset":         None,
+            "line_density":   None,
+            "line_thickness": None,
+            "white_space":    None,
+            "output_png":     None,
+        }
+        self._sil_browser.add_engraving(entry)
+        self._sil_browser._tabs.setCurrentIndex(1)
+
+    # ------------------------------------------------------------------
     # Layer persistence
 
     def _refresh_layer_panel(self) -> None:
@@ -4601,6 +4766,15 @@ class BookVisualizerWindow(QMainWindow):
         self._overlay.reorder_layers(new_order)
         self._save_current_layers()
 
+    def _on_panel_layer_visibility(self, lid: str, visible: bool) -> None:
+        """Toggle a layer's visible flag from the layer-panel eye button."""
+        layer = self._overlay._layer_by_id(lid)
+        if layer is not None:
+            layer["visible"] = visible
+            self._overlay.update()
+            self._spread_view.set_layers(self._overlay.current_layers())
+            self._save_current_layers()
+
     # ------------------------------------------------------------------
     # Trash action
 
@@ -4634,21 +4808,31 @@ class BookVisualizerWindow(QMainWindow):
     # Silhouette insertion (from the browser panel)
 
     def _insert_silhouette(self, png_path: str, meta: dict) -> None:
-        """Insert a catalog silhouette PNG as an Image layer on the active page.
-
-        Copies the source PNG into ``illustrations/silhouettes/`` inside the
-        current book directory so it becomes part of the book's local asset
-        set, then creates an Image layer centred on the active spread page.
-        The existing cut-overlay / layer pipeline is reused without change.
-        """
+        """Insert a catalog silhouette PNG centred on the active spread page."""
         if self._doc is None or not self._slug:
             return
-
-        # Determine the target page (prefer the right page; fall back to left)
         right_i  = self._spread_view._right_i
         left_i   = self._spread_view._left_i
         page_idx = right_i if right_i is not None else left_i
         if page_idx is None:
+            return
+        self._insert_silhouette_at(png_path, meta, page_idx, 0.5, 0.5)
+
+    def _on_silhouette_drop(self, abs_path: str, page_idx: int,
+                             nx: float, ny: float, meta: dict) -> None:
+        """Handle a drag-drop from the silhouette browser onto a page."""
+        self._insert_silhouette_at(abs_path, meta, page_idx, nx, ny)
+
+    def _insert_silhouette_at(self, png_path: str, meta: dict,
+                               page_idx: int, nx: float, ny: float) -> None:
+        """Copy *png_path* into the book asset dir and create an Image layer.
+
+        Copies the source PNG into ``illustrations/silhouettes/`` inside the
+        current book directory so it becomes part of the book's local asset
+        set, then creates an Image layer at the normalised position *(nx, ny)*
+        on *page_idx*.
+        """
+        if self._doc is None or not self._slug:
             return
 
         # Copy PNG into book's illustrations/silhouettes/ directory
@@ -4687,8 +4871,8 @@ class BookVisualizerWindow(QMainWindow):
             "source":   source_rel,
             "page":     page_idx,
             "spread":   self._spread_idx,
-            "x":        0.5,
-            "y":        0.5,
+            "x":        nx,
+            "y":        ny,
             "width":    default_w,
             "height":   default_h,
             "rotation": 0.0,
