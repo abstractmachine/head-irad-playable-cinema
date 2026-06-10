@@ -257,6 +257,33 @@ class ProjectVisualizer(QMainWindow):
         self._backup_poll_timer.timeout.connect(self._poll_backup_proc)
         self._backup_poll_timer.start()
 
+    def _poll_backup_proc(self) -> None:
+        """Called every 500 ms to drain pty output and detect completion."""
+        # Drain any available output from the pty master
+        try:
+            chunk = os.read(self._backup_master_fd, 4096)
+            self._backup_stdout_buf += chunk
+        except (BlockingIOError, OSError):
+            pass
+
+        # Animate the button label: "Backing Up", "Backing Up.", "Backing Up..", "Backing Up..."
+        self._backup_anim_frame = (self._backup_anim_frame + 1) % 4
+        dots = "." * self._backup_anim_frame
+        self.backup_btn.setText(f"Backing Up{dots}")
+
+        # Check if the process has finished
+        if self._backup_proc is None or self._backup_proc.poll() is not None:
+            self._backup_poll_timer.stop()
+            rc = self._backup_proc.returncode if self._backup_proc else -1
+            try:
+                os.close(self._backup_master_fd)
+            except OSError:
+                pass
+            self._backup_proc = None
+            self.backup_btn.setEnabled(True)
+            self.backup_btn.setText("Run Backup")
+            self.backup_btn.setStyleSheet("")
+
     # ------------------------------------------------------------------
     # Defaults
 

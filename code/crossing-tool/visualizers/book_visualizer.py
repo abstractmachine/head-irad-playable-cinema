@@ -870,6 +870,12 @@ class _CutOverlay(QWidget):
         self._book_dir:          Optional[Path]   = None
         self._pixmap_cache:      dict             = {}      # source_rel → QPixmap
 
+        # Spinner animation state for generating layers
+        self._spinner_angle: float = 0.0
+        self._spinner_timer = QTimer(self)
+        self._spinner_timer.setInterval(40)  # ~25 fps
+        self._spinner_timer.timeout.connect(self._tick_spinner)
+
         # text selection state
         self._text_sels: list          = []               # committed text selection dicts
         self._text_sels_visible: bool  = True
@@ -1033,6 +1039,40 @@ class _CutOverlay(QWidget):
 
     def current_layers(self) -> list:
         return list(self._layers)
+
+    # ------------------------------------------------------------------
+    # Spinner helpers for generating layers
+
+    def _tick_spinner(self) -> None:
+        """Advance spinner angle and repaint if any layer is still generating."""
+        generating = any(l.get("generating") for l in self._layers)
+        if not generating:
+            self._spinner_timer.stop()
+            return
+        self._spinner_angle = (self._spinner_angle + 12) % 360
+        self.update()
+
+    def start_spinner_for(self, layer_id: str) -> None:
+        """Mark *layer_id* as generating and start the spinner timer."""
+        layer = self._layer_by_id(layer_id)
+        if layer is not None:
+            layer["generating"] = True
+        if not self._spinner_timer.isActive():
+            self._spinner_timer.start()
+
+    def stop_spinner_for(self, layer_id: str) -> None:
+        """Clear the generating flag for *layer_id*."""
+        layer = self._layer_by_id(layer_id)
+        if layer is not None:
+            layer.pop("generating", None)
+            layer.pop("generate_error", None)
+
+    def mark_generate_error(self, layer_id: str) -> None:
+        """Flag *layer_id* as having a generation error."""
+        layer = self._layer_by_id(layer_id)
+        if layer is not None:
+            layer.pop("generating", None)
+            layer["generate_error"] = True
 
     def set_text_selections(self, sels: list) -> None:
         """Replace text selections (e.g. on book switch)."""
@@ -1230,7 +1270,13 @@ class _CutOverlay(QWidget):
         self.update()
 
     def _resolve_img_path(self, source_rel: str) -> Optional[Path]:
-        if self._book_dir is None or not source_rel:
+        if not source_rel:
+            return None
+        # Absolute paths (preprocessing / generation outputs) resolve directly.
+        p_abs = Path(source_rel)
+        if p_abs.is_absolute() and p_abs.exists():
+            return p_abs
+        if self._book_dir is None:
             return None
         p = self._book_dir / source_rel
         return p if p.exists() else None
@@ -2409,7 +2455,21 @@ class _CutOverlay(QWidget):
             cx, cy, sw, sh, rot = self._img_transform(layer, r)
             if sw < 1 or sh < 1:
                 continue
-            pix = self._get_pixmap(layer.get("source", ""))
+
+            is_generating = layer.get("generating", False)
+            is_error      = layer.get("generate_error", False)
+
+            # Resolve display source:
+            # 1. output_png (final binary engraving) if present
+            # 2. source (relative, falls back to preprocessing placeholder)
+            # 3. preprocessing_path (absolute)
+            display_src = (
+                layer.get("output_png", "") or
+                layer.get("source", "") or
+                layer.get("preprocessing_path", "")
+            )
+            pix = self._get_pixmap(display_src) if display_src else None
+
             p.save()
             p.translate(cx, cy)
             p.rotate(rot)
@@ -2417,7 +2477,28 @@ class _CutOverlay(QWidget):
             sy = -1.0 if layer.get("flip_v", False) else 1.0
             if sx != 1.0 or sy != 1.0:
                 p.scale(sx, sy)
-            if pix and not pix.isNull():
+
+            if is_error:
+                # Error state: warm red tinted placeholder
+                p.setPen(QPen(QColor("#cc4444"), 1, Qt.DashLine))
+                p.setBrush(QColor(100, 40, 40, 80))
+                p.drawRect(QRectF(-sw / 2, -sh / 2, sw, sh))
+            elif is_generating:
+                # Generating state: light placeholder + spinner arc
+                p.setPen(QPen(QColor("#888888"), 1, Qt.DashLine))
+                p.setBrush(QColor(60, 60, 80, 60))
+                p.drawRect(QRectF(-sw / 2, -sh / 2, sw, sh))
+                # Spinner arc (drawn in unscaled/unflipped space)
+                r_spin = min(sw, sh) * 0.18
+                r_spin = max(8.0, min(32.0, r_spin))
+                arc_rect = QRectF(-r_spin, -r_spin, r_spin * 2, r_spin * 2)
+                spin_pen = QPen(QColor("#7799ff"), max(2.0, r_spin * 0.18))
+                spin_pen.setCapStyle(Qt.RoundCap)
+                p.setPen(spin_pen)
+                p.setBrush(Qt.NoBrush)
+                start_angle = int((90 - self._spinner_angle) * 16)
+                p.drawArc(arc_rect, start_angle, 120 * 16)
+            elif pix and not pix.isNull():
                 p.drawImage(QRectF(-sw / 2, -sh / 2, sw, sh), pix.toImage())
             else:
                 # placeholder when image file is missing
@@ -2502,7 +2583,9 @@ class _CutOverlay(QWidget):
                     continue
                 lid = layer["id"]
                 if lid == self._sel_id or lid == self._hover_img_id:
-                    self._draw_img_action_buttons(p, layer, rects)
+                    # Don't offer to engrave an engraving
+                    if layer.get("layer_subtype") != "Engraving":
+                        self._draw_img_action_buttons(p, layer, rects)
 
         p.end()
 
@@ -3930,9 +4013,12 @@ class _SilhouetteBrowserPanel(QWidget):
 
             cell = _BrowserThumbCell(i, tooltip=tip)
 
-            # Prefer the preprocessed PNG for the thumbnail; fall back to source.
-            # The preprocessed image already has the correct orientation/scale.
-            thumb_png = entry.get("preprocessing_path", "") or entry.get("source_png", "")
+            # Prefer output_png (final engraving) → preprocessing_path → source_png
+            thumb_png = (
+                entry.get("output_png", "") or
+                entry.get("preprocessing_path", "") or
+                entry.get("source_png", "")
+            )
             if thumb_png and Path(thumb_png).exists():
                 pix = QPixmap(thumb_png)
                 if not pix.isNull():
@@ -3995,6 +4081,79 @@ class _SilhouetteBrowserPanel(QWidget):
             self._eng_grid_layout.addWidget(container, i // cols, i % cols)
 
 # ---------------------------------------------------------------------------
+# Engraving generation worker
+# ---------------------------------------------------------------------------
+
+
+class _EngravingWorker(QObject):
+    """Background worker that runs the engraving generator.
+
+    Uses a plain ``threading.Thread`` rather than ``QThread`` to avoid the
+    NVML/CUDA initialisation assert that occurs when PyTorch is started from
+    inside Qt's managed thread pool.  PyQt5 automatically delivers signals
+    emitted from non-Qt threads to the main thread via queued connections.
+
+    Calls services.engraving_generate.generate_engraving — the same
+    function used by ``crossing engraving smoke-test``.
+
+    Signals
+    -------
+    finished(engraving_id, output_png, metadata_dict)
+        Emitted on successful completion.
+    failed(engraving_id, error_message)
+        Emitted when generation raises any exception.
+    """
+
+    finished = pyqtSignal(str, str, dict)   # eng_id, output_png, metadata
+    failed   = pyqtSignal(str, str)         # eng_id, error_message
+
+    def __init__(
+        self,
+        *,
+        project_path: str,
+        engraving_id: str,
+        preprocessing_path: str,
+        preprocessing_size: list,
+        cache_dir: Path,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self._project_path       = project_path
+        self._engraving_id       = engraving_id
+        self._preprocessing_path = preprocessing_path
+        self._preprocessing_size = preprocessing_size
+        self._cache_dir          = Path(cache_dir)
+        self._thread             = None
+
+    def start(self) -> None:
+        import threading
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        try:
+            from services.engraving_generate import validate_models, generate_engraving
+
+            validate_models(self._project_path)
+
+            result = generate_engraving(
+                project_path=self._project_path,
+                preprocessing_path=self._preprocessing_path,
+                preprocessing_size=self._preprocessing_size,
+                engraving_id=self._engraving_id,
+                cache_dir=self._cache_dir,
+            )
+            self.finished.emit(
+                self._engraving_id,
+                result["output_png"],
+                result["metadata"],
+            )
+        except Exception:
+            import traceback
+            self.failed.emit(self._engraving_id, traceback.format_exc())
+
+
+# ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
 
@@ -4018,6 +4177,9 @@ class BookVisualizerWindow(QMainWindow):
         self._tool: str = _TOOL_NONE
         self._next_layer_id: int = 1      # used by _CutOverlay for id generation
         self._clipboard_layer: Optional[dict] = None  # copy/cut clipboard
+
+        # Active generation workers: engraving_id → _EngravingWorker
+        self._engraving_workers: dict = {}
 
         self._build_ui()
         self._load_all_books()
@@ -4750,7 +4912,7 @@ class BookVisualizerWindow(QMainWindow):
             "preprocessing_size":    preprocessing_size,
             "preprocess_cache_key":  preprocess_cache_key,
             "preprocess_dpi":        preprocess_dpi,
-            # Future AI generation fields (reserved):
+            # Generation fields — populated when worker finishes:
             "model":          None,
             "preset":         None,
             "line_density":   None,
@@ -4760,6 +4922,78 @@ class BookVisualizerWindow(QMainWindow):
         }
         self._sil_browser.add_engraving(entry)
         self._sil_browser._tabs.setCurrentIndex(1)
+
+        # ------------------------------------------------------------------
+        # Launch generation worker if preprocessing produced an asset
+        # ------------------------------------------------------------------
+        if preprocessing_path and preprocessing_size:
+            self._start_engraving_worker(eng_id, preprocessing_path, preprocessing_size)
+
+    def _start_engraving_worker(
+        self,
+        eng_id: str,
+        preprocessing_path: str,
+        preprocessing_size: list,
+    ) -> None:
+        """Spawn a background generation worker for *eng_id*."""
+        from data.book import book_dir as _book_dir_fn
+        eng_cache_dir = _book_dir_fn(self._project_path, self._slug) / "engravings"
+
+        worker = _EngravingWorker(
+            project_path=self._project_path,
+            engraving_id=eng_id,
+            preprocessing_path=preprocessing_path,
+            preprocessing_size=preprocessing_size,
+            cache_dir=eng_cache_dir,
+            parent=self,
+        )
+        worker.finished.connect(self._on_engraving_generated)
+        worker.failed.connect(self._on_engraving_failed)
+        self._engraving_workers[eng_id] = worker
+
+        # Show spinner on the page overlay
+        self._overlay.start_spinner_for(eng_id)
+
+        worker.start()
+
+    def _on_engraving_generated(self, eng_id: str, output_png: str, metadata: dict) -> None:
+        """Called on the GUI thread when generation succeeds."""
+        # Stop spinner
+        self._overlay.stop_spinner_for(eng_id)
+
+        # Update the layer: set output_png so the overlay draws it
+        layer = self._overlay._layer_by_id(eng_id)
+        if layer is not None:
+            layer["output_png"] = output_png
+            layer["model"]      = metadata.get("base_model")
+            layer["generator"]  = metadata.get("generator")
+            # Evict the pixmap cache so the new file is loaded
+            self._overlay._pixmap_cache.pop(output_png, None)
+            self._overlay.update()
+            self._on_layer_committed(layer)
+
+        # Update the Engravings tab entry
+        for entry in self._sil_browser._engravings:
+            if entry.get("layer_id") == eng_id:
+                entry["output_png"] = output_png
+                entry["model"]      = metadata.get("base_model")
+                entry["generator"]  = metadata.get("generator")
+                break
+        self._sil_browser._refresh_engravings_tab()
+
+        # Also refresh the spread view (it renders separately from overlay)
+        self._spread_view._cache.clear()
+        self._spread_view._reveal_cache.clear()
+        self._spread_view._do_render()
+
+        self._engraving_workers.pop(eng_id, None)
+
+    def _on_engraving_failed(self, eng_id: str, error_msg: str) -> None:
+        """Called on the GUI thread when generation fails."""
+        self._overlay.mark_generate_error(eng_id)
+        self._overlay.update()
+        self._engraving_workers.pop(eng_id, None)
+        print(f"[engraving] generation failed for {eng_id}:\n{error_msg}")
 
     def _on_engraving_delete_requested(self, layer_id: str) -> None:
         """Delete an engraving: confirm if the layer exists on any page."""
@@ -4811,6 +5045,26 @@ class BookVisualizerWindow(QMainWindow):
             e for e in self._sil_browser._engravings if e.get("layer_id") != layer_id
         ]
         self._sil_browser._refresh_engravings_tab()
+
+        # Delete all files on disk belonging to this engraving ID
+        if entry is not None:
+            self._delete_engraving_files(layer_id)
+
+    def _delete_engraving_files(self, eng_id: str) -> None:
+        """Remove all cached files for *eng_id* from the engravings directory."""
+        try:
+            from data.book import book_dir as _book_dir_fn
+            eng_cache_dir = _book_dir_fn(self._project_path, self._slug) / "engravings"
+            if not eng_cache_dir.is_dir():
+                return
+            for f in eng_cache_dir.iterdir():
+                if f.name.startswith(f"{eng_id}_"):
+                    try:
+                        f.unlink()
+                    except OSError:
+                        pass
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Layer persistence

@@ -5696,6 +5696,79 @@ def _index_motif_generate(args):
 # book command family
 # ---------------------------------------------------------------------------
 
+def cmd_engraving(args):
+    sub = args.engraving_subcommand
+    if sub == "smoke-test":
+        _engraving_smoke_test(args)
+    else:
+        print("✗ engraving: specify a subcommand.", file=sys.stderr)
+        sys.exit(1)
+
+
+def _engraving_smoke_test(args):
+    """Minimal end-to-end smoke test: preprocessing PNG → raw PNG + binary PNG."""
+    import traceback
+    from pathlib import Path as _Path
+
+    preprocessing_path = _Path(args.preprocessing_png).resolve()
+    if not preprocessing_path.exists():
+        print(f"✗ preprocessing PNG not found: {preprocessing_path}", file=sys.stderr)
+        sys.exit(1)
+
+    project_path = prefs.get("path")
+    if not project_path:
+        print("✗ No project path set.  Run: crossing tool path /path/to/project", file=sys.stderr)
+        sys.exit(1)
+
+    # Output directory: next to the preprocessing PNG by default, or --out-dir
+    if args.out_dir:
+        out_dir = _Path(args.out_dir).resolve()
+    else:
+        out_dir = preprocessing_path.parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Derive a stable ID from the input filename
+    engraving_id = preprocessing_path.stem.removesuffix("_preprocess_v1")
+    if not engraving_id:
+        engraving_id = "smoke"
+
+    # Read image size from the preprocessing PNG
+    try:
+        from PIL import Image as _PilImage
+        with _PilImage.open(preprocessing_path) as _im:
+            preprocessing_size = list(_im.size)   # [width, height]
+    except Exception as exc:
+        print(f"✗ Cannot read preprocessing PNG: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"[engraving smoke-test]")
+    print(f"  preprocessing : {preprocessing_path}")
+    print(f"  size          : {preprocessing_size[0]} x {preprocessing_size[1]} px")
+    print(f"  output dir    : {out_dir}")
+    print(f"  engraving id  : {engraving_id}")
+    print()
+
+    try:
+        from services.engraving_generate import validate_models, generate_engraving
+
+        validate_models(project_path)
+        result = generate_engraving(
+            project_path=project_path,
+            preprocessing_path=str(preprocessing_path),
+            preprocessing_size=preprocessing_size,
+            engraving_id=engraving_id,
+            cache_dir=out_dir,
+        )
+    except Exception:
+        print("[engraving smoke-test] FAILED:", file=sys.stderr)
+        traceback.print_exc()
+        sys.exit(1)
+
+    print("[engraving smoke-test] SUCCESS")
+    print(f"  raw    : {result['raw_png']}")
+    print(f"  binary : {result['output_png']}")
+
+
 def cmd_book(args):
     sub = args.book_subcommand
     if sub == "new":
@@ -8087,6 +8160,28 @@ def build_parser():
         "book",
         help="Browse imported books as page spreads",
     )
+
+    # ── engraving command ─────────────────────────────────────────────────────
+    p_engraving = sub.add_parser("engraving", help="Engraving generation utilities")
+    p_engraving.set_defaults(func=cmd_engraving, engraving_subcommand=None)
+    engraving_sub = p_engraving.add_subparsers(dest="engraving_subcommand", required=True)
+
+    p_eng_smoke = engraving_sub.add_parser(
+        "smoke-test",
+        help="Run SDXL + ControlNet on a preprocessing PNG and write raw + binary output",
+    )
+    p_eng_smoke.add_argument(
+        "preprocessing_png",
+        help="Path to the RGBA preprocessing PNG to use as ControlNet input",
+    )
+    p_eng_smoke.add_argument(
+        "--out-dir",
+        dest="out_dir",
+        default=None,
+        metavar="DIR",
+        help="Directory to write output PNGs (default: same directory as input)",
+    )
+    p_eng_smoke.set_defaults(func=cmd_engraving)
 
     # ── book command ─────────────────────────────────────────────────────────
     p_book = sub.add_parser("book", help="Manage books (create, delete, list, import PDF)")
