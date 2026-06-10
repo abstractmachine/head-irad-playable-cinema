@@ -28,12 +28,15 @@ import datetime
 import json
 import math
 import os
+import subprocess
 import sys
 import uuid
 from pathlib import Path
 from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+_CLI_PATH = Path(__file__).parent.parent / "cli.py"
 
 from styles import theme
 from styles.theme import GripSplitter, save_window_geometry, restore_window_geometry
@@ -2484,15 +2487,15 @@ class _CutOverlay(QWidget):
                 p.setBrush(QColor(100, 40, 40, 80))
                 p.drawRect(QRectF(-sw / 2, -sh / 2, sw, sh))
             elif is_generating:
-                # Generating state: light placeholder + spinner arc
-                p.setPen(QPen(QColor("#888888"), 1, Qt.DashLine))
-                p.setBrush(QColor(60, 60, 80, 60))
+                # Generating state: fuchsia placeholder + spinner arc
+                p.setPen(QPen(QColor("#ff00ff"), 1, Qt.DashLine))
+                p.setBrush(QColor(120, 0, 120, 60))
                 p.drawRect(QRectF(-sw / 2, -sh / 2, sw, sh))
                 # Spinner arc (drawn in unscaled/unflipped space)
                 r_spin = min(sw, sh) * 0.18
                 r_spin = max(8.0, min(32.0, r_spin))
                 arc_rect = QRectF(-r_spin, -r_spin, r_spin * 2, r_spin * 2)
-                spin_pen = QPen(QColor("#7799ff"), max(2.0, r_spin * 0.18))
+                spin_pen = QPen(QColor("#ff00ff"), max(2.0, r_spin * 0.18))
                 spin_pen.setCapStyle(Qt.RoundCap)
                 p.setPen(spin_pen)
                 p.setBrush(Qt.NoBrush)
@@ -4088,13 +4091,10 @@ class _SilhouetteBrowserPanel(QWidget):
 class _EngravingWorker(QObject):
     """Background worker that runs the engraving generator.
 
-    Uses a plain ``threading.Thread`` rather than ``QThread`` to avoid the
-    NVML/CUDA initialisation assert that occurs when PyTorch is started from
-    inside Qt's managed thread pool.  PyQt5 automatically delivers signals
-    emitted from non-Qt threads to the main thread via queued connections.
-
-    Calls services.engraving_generate.generate_engraving — the same
-    function used by ``crossing engraving smoke-test``.
+    Spawns ``crossing engraving smoke-test`` in a subprocess so each
+    generation gets a fresh CUDA context.  Running CUDA inside a
+    threading.Thread causes NVML reinitialisation failures on second
+    and subsequent invocations.
 
     Signals
     -------
@@ -4132,22 +4132,43 @@ class _EngravingWorker(QObject):
 
     def _run(self) -> None:
         try:
-            from services.engraving_generate import validate_models, generate_engraving
-
-            validate_models(self._project_path)
-
-            result = generate_engraving(
-                project_path=self._project_path,
-                preprocessing_path=self._preprocessing_path,
-                preprocessing_size=self._preprocessing_size,
-                engraving_id=self._engraving_id,
-                cache_dir=self._cache_dir,
+            cmd = [
+                sys.executable, str(_CLI_PATH),
+                "engraving", "smoke-test",
+                self._preprocessing_path,
+                "--out-dir",      str(self._cache_dir),
+                "--project-path", self._project_path,
+            ]
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
             )
-            self.finished.emit(
-                self._engraving_id,
-                result["output_png"],
-                result["metadata"],
-            )
+            if proc.returncode != 0:
+                output = (proc.stdout + proc.stderr).strip()
+                self.failed.emit(self._engraving_id, output)
+                return
+
+            # Read the generation JSON written by the smoke-test
+            gen_json = self._cache_dir / f"{self._engraving_id}_generation.json"
+            if not gen_json.exists():
+                self.failed.emit(
+                    self._engraving_id,
+                    f"generation JSON not found: {gen_json}",
+                )
+                return
+
+            meta = json.loads(gen_json.read_text(encoding="utf-8"))
+            output_png = meta.get("output_png", "")
+            if not output_png or not Path(output_png).exists():
+                self.failed.emit(
+                    self._engraving_id,
+                    f"output_png missing from generation JSON: {gen_json}",
+                )
+                return
+
+            self.finished.emit(self._engraving_id, output_png, meta)
+
         except Exception:
             import traceback
             self.failed.emit(self._engraving_id, traceback.format_exc())

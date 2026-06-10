@@ -5715,7 +5715,7 @@ def _engraving_smoke_test(args):
         print(f"✗ preprocessing PNG not found: {preprocessing_path}", file=sys.stderr)
         sys.exit(1)
 
-    project_path = prefs.get("path")
+    project_path = getattr(args, "project_path", None) or prefs.get("path")
     if not project_path:
         print("✗ No project path set.  Run: crossing tool path /path/to/project", file=sys.stderr)
         sys.exit(1)
@@ -5750,6 +5750,16 @@ def _engraving_smoke_test(args):
 
     try:
         from services.engraving_generate import validate_models, generate_engraving
+        from services.engraving_prompt import load_engraving_prompt, EngravingPromptError
+
+        # Verify prompt exists before loading models
+        try:
+            prompt_filename, _ = load_engraving_prompt(project_path)
+            print(f"  prompt        : {prompt_filename}")
+            print()
+        except EngravingPromptError as exc:
+            print(f"\u2717 {exc}", file=sys.stderr)
+            sys.exit(1)
 
         validate_models(project_path)
         result = generate_engraving(
@@ -8180,6 +8190,13 @@ def build_parser():
         default=None,
         metavar="DIR",
         help="Directory to write output PNGs (default: same directory as input)",
+    )
+    p_eng_smoke.add_argument(
+        "--project-path",
+        dest="project_path",
+        default=None,
+        metavar="PATH",
+        help="Project directory (overrides saved prefs)",
     )
     p_eng_smoke.set_defaults(func=cmd_engraving)
 

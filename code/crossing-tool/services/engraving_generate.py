@@ -1,4 +1,4 @@
-"""SDXL + ControlNet-Scribble engraving generator  (v1 — simplified).
+"""SDXL + ControlNet-Scribble engraving generator  (v1).
 
 Minimal working pipeline:
 
@@ -11,8 +11,10 @@ Minimal working pipeline:
         ↓  greyscale → threshold
     output_png  (strict binary B&W, black lines on white)
 
-Deliberately minimal: no LoRA, no textual-inversion, no prompt files.
-Add those back incrementally once a base generation succeeds.
+Prompt is loaded from the project's prompt directory at generation time:
+    <project>/prompts/engravings/<latest>.txt
+
+No LoRA, no textual-inversion.
 """
 
 from __future__ import annotations
@@ -34,11 +36,6 @@ DEFAULT_GUIDANCE  = 7.5
 DEFAULT_CN_SCALE  = 0.85
 DEFAULT_THRESHOLD = 128
 
-# Simple fixed prompt — good enough for a first successful render
-DEFAULT_PROMPT = (
-    "19th century steel engraving, black ink on white paper, "
-    "isolated subject, high contrast linework, fine crosshatch"
-)
 NEGATIVE_PROMPT = (
     "photograph, photorealistic, color, colour, painting, watercolor, "
     "sketch, pencil, charcoal, 3d render, blurry, noise, grain"
@@ -118,6 +115,10 @@ def generate_engraving(
     import numpy as np
     from diffusers import StableDiffusionXLControlNetPipeline, ControlNetModel
 
+    # Load prompt from project prompt directory
+    from services.engraving_prompt import load_engraving_prompt, EngravingPromptError
+    prompt_filename, prompt_text = load_engraving_prompt(project_path)
+
     models_dir = Path(project_path) / "models"
     cache_dir  = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -161,7 +162,7 @@ def generate_engraving(
     # 4. Run generation
     generator = torch.Generator(device="cuda").manual_seed(seed)
     result = pipe(
-        prompt=DEFAULT_PROMPT,
+        prompt=prompt_text,
         negative_prompt=NEGATIVE_PROMPT,
         image=conditioning_img,
         num_inference_steps=num_inference_steps,
@@ -195,7 +196,8 @@ def generate_engraving(
         "num_inference_steps":           num_inference_steps,
         "guidance_scale":                guidance_scale,
         "controlnet_conditioning_scale": controlnet_conditioning_scale,
-        "prompt":                        DEFAULT_PROMPT,
+        "prompt_filename":               prompt_filename,
+        "prompt":                        prompt_text,
         "negative_prompt":               NEGATIVE_PROMPT,
         "threshold":                     binary_threshold,
         "preprocessing_path":            str(preprocessing_path),
