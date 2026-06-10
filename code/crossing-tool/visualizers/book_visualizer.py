@@ -3247,7 +3247,7 @@ class _IllustrationsDrawer(QWidget):
 # Silhouette Browser sidebar — embedded catalog browser for Book Visualizer
 # ---------------------------------------------------------------------------
 
-_BROWSER_PANEL_W    = 280   # px — preferred width of the silhouette browser column
+_BROWSER_PANEL_W    = 295   # px — preferred width of the silhouette browser column (3 cols + margin)
 _BROWSER_THUMB_SZ   = 80    # px per thumbnail cell
 _BROWSER_THUMB_GAP  = 6     # px gap between cells
 _BROWSER_PAGE_SIZE  = 50    # silhouettes per page
@@ -3921,18 +3921,26 @@ class _SilhouetteBrowserPanel(QWidget):
         cols = max(1, (vw - _BROWSER_THUMB_GAP) // (_BROWSER_THUMB_SZ + _BROWSER_THUMB_GAP))
 
         for i, entry in enumerate(sorted_eng):
-            cell = _BrowserThumbCell(i, tooltip=entry.get("name", ""))
-            # Load thumbnail from source_png, convert to greyscale
-            png = entry.get("source_png", "")
-            if png:
-                pix = QPixmap(png)
+            # Build tooltip: name + preprocessing size (if available)
+            tip = entry.get("name", "")
+            pre_size = entry.get("preprocessing_size")
+            if pre_size and len(pre_size) == 2:
+                tip = f"{tip}\n{pre_size[0]}×{pre_size[1]} px (preprocessed)"
+
+            cell = _BrowserThumbCell(i, tooltip=tip)
+
+            # Prefer the preprocessed PNG for the thumbnail; fall back to source.
+            # The preprocessed image already has the correct orientation/scale.
+            thumb_png = entry.get("preprocessing_path", "") or entry.get("source_png", "")
+            if thumb_png and Path(thumb_png).exists():
+                pix = QPixmap(thumb_png)
                 if not pix.isNull():
                     pix = pix.scaled(
                         _BROWSER_THUMB_SZ, _BROWSER_THUMB_SZ,
                         Qt.KeepAspectRatio, Qt.SmoothTransformation,
                     )
-                    grey = pix.toImage().convertToFormat(QImage.Format_Grayscale8)
-                    cell.set_image(grey)
+                    cell.set_image(pix.toImage())
+
             self._eng_grid_layout.addWidget(cell, i // cols, i % cols)
 
 # ---------------------------------------------------------------------------
@@ -4559,7 +4567,7 @@ class BookVisualizerWindow(QMainWindow):
     # Engraving workflow (page-centric)
 
     def _on_engraving_requested(self, source_layer: dict) -> None:
-        """Create a placeholder engraving child layer from a placed silhouette."""
+        """Create an engraving child layer and run page-aware preprocessing."""
         now        = datetime.datetime.now()
         timestamp  = now.strftime("%Y%m%d_%H%M%S")
         label      = source_layer.get("name", "engraving").strip() or "engraving"
@@ -4567,7 +4575,7 @@ class BookVisualizerWindow(QMainWindow):
         name       = f"{safe_label}_{timestamp}"
         eng_id     = f"eng_{uuid.uuid4().hex[:8]}"
 
-        # Resolve source PNG path for the engravings-tab thumbnail
+        # Resolve source PNG path for preprocessing and thumbnail
         source_rel = source_layer.get("source", "")
         source_png = ""
         book_dir   = self._overlay._book_dir
@@ -4576,7 +4584,52 @@ class BookVisualizerWindow(QMainWindow):
             if candidate.exists():
                 source_png = str(candidate)
 
-        # Build the engraving layer (reuses source image as placeholder)
+        # ------------------------------------------------------------------
+        # Page-aware preprocessing
+        # ------------------------------------------------------------------
+        preprocessing_path: str       = ""
+        preprocessing_size: list      = []
+        preprocess_cache_key: str     = ""
+
+        if source_png and self._doc is not None:
+            try:
+                page_idx = source_layer["page"]
+                pdf_page = self._doc[page_idx]
+                page_pt_w = float(pdf_page.rect.width)
+                page_pt_h = float(pdf_page.rect.height)
+
+                from data.book import book_dir as _book_dir_fn
+                eng_cache_dir = _book_dir_fn(self._project_path, self._slug) / "engravings"
+
+                from services.engraving_preprocess import preprocess_engraving_source
+                pre = preprocess_engraving_source(
+                    source_png=source_png,
+                    engraving_id=eng_id,
+                    parent_layer_id=source_layer["id"],
+                    source_silhouette_id=source_rel,
+                    page_idx=page_idx,
+                    x=source_layer["x"],
+                    y=source_layer["y"],
+                    width=source_layer["width"],
+                    height=source_layer["height"],
+                    rotation=source_layer.get("rotation", 0.0),
+                    flip_h=source_layer.get("flip_h", False),
+                    flip_v=source_layer.get("flip_v", False),
+                    page_pt_w=page_pt_w,
+                    page_pt_h=page_pt_h,
+                    cache_dir=eng_cache_dir,
+                )
+                preprocessing_path    = pre["preprocessing_path"]
+                preprocessing_size    = pre["preprocessing_size"]
+                preprocess_cache_key  = pre["cache_key"]
+            except Exception as _exc:
+                # Preprocessing failure is non-fatal; the layer is still created.
+                import traceback
+                traceback.print_exc()
+
+        # ------------------------------------------------------------------
+        # Build the engraving layer
+        # ------------------------------------------------------------------
         eng_layer = {
             "id":                    eng_id,
             "type":                  "Image",
@@ -4592,10 +4645,16 @@ class BookVisualizerWindow(QMainWindow):
             "width":                 source_layer["width"],
             "height":                source_layer["height"],
             "rotation":              source_layer.get("rotation", 0.0),
+            "flip_h":                source_layer.get("flip_h", False),
+            "flip_v":                source_layer.get("flip_v", False),
             "z_index":               len(self._overlay.current_layers()),
             "visible":               True,
             "created":               now.isoformat(),
-            # Future AI generation fields:
+            # Preprocessing provenance:
+            "preprocessing_path":    preprocessing_path,
+            "preprocessing_size":    preprocessing_size,
+            "preprocess_cache_key":  preprocess_cache_key,
+            # Future AI generation fields (reserved):
             "model":          None,
             "preset":         None,
             "line_density":   None,
@@ -4631,6 +4690,11 @@ class BookVisualizerWindow(QMainWindow):
             "width":                 source_layer["width"],
             "height":                source_layer["height"],
             "created":               now.isoformat(),
+            # Preprocessing result:
+            "preprocessing_path":    preprocessing_path,
+            "preprocessing_size":    preprocessing_size,
+            "preprocess_cache_key":  preprocess_cache_key,
+            # Future AI generation fields (reserved):
             "model":          None,
             "preset":         None,
             "line_density":   None,
