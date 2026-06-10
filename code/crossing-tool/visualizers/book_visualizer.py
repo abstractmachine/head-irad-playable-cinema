@@ -4460,15 +4460,15 @@ class BookVisualizerWindow(QMainWindow):
         except Exception:
             pass
         self._show_spread()
-        # Load layers for this book
+        # Set book dir first so image-layer resolution is available during load
+        self._overlay.set_book_dir(book_dir(self._project_path, slug))
+        self._spread_view.set_book_dir(book_dir(self._project_path, slug))
+        # Load layers for this book (also rebuilds the Engravings tab)
         self._load_book_layers(slug)
         # Load text selections for this book
         self._load_book_text_sels(slug)
         # Load mask state for this book
         self._load_book_mask(slug)
-        # Set book dir for image layer resolution
-        self._overlay.set_book_dir(book_dir(self._project_path, slug))
-        self._spread_view.set_book_dir(book_dir(self._project_path, slug))
 
     def _go_spread(self, idx: int) -> None:
         """Jump to spread *idx*."""
@@ -4831,6 +4831,51 @@ class BookVisualizerWindow(QMainWindow):
         self._overlay.set_layers(layers)
         self._spread_view.set_layers(layers)
         self._refresh_layer_panel()
+        self._rebuild_engravings_from_layers(layers)
+
+    def _rebuild_engravings_from_layers(self, layers: list) -> None:
+        """Reconstruct the Engravings tab from persisted Engraving layers.
+
+        Called every time a book is (re)loaded so the tab is never empty after
+        a restart even though engraving entries are not stored separately.
+        """
+        book_d = self._overlay._book_dir
+
+        entries = []
+        for layer in layers:
+            if layer.get("layer_subtype") != "Engraving":
+                continue
+
+            source_rel = layer.get("source_silhouette_id") or layer.get("source", "")
+            source_png = ""
+            if book_d and source_rel:
+                candidate = book_d / source_rel
+                if candidate.exists():
+                    source_png = str(candidate)
+
+            entries.append({
+                "name":                  layer.get("name", ""),
+                "layer_id":              layer["id"],
+                "parent_layer_id":       layer.get("parent_layer_id", ""),
+                "source_silhouette_id":  source_rel,
+                "source_png":            source_png,
+                "page":                  layer.get("page"),
+                "width":                 layer.get("width"),
+                "height":                layer.get("height"),
+                "created":               layer.get("created", ""),
+                "preprocessing_path":    layer.get("preprocessing_path", ""),
+                "preprocessing_size":    layer.get("preprocessing_size", []),
+                "preprocess_cache_key":  layer.get("preprocess_cache_key", ""),
+                "preprocess_dpi":        layer.get("preprocess_dpi", 0),
+                "model":                 layer.get("model"),
+                "preset":                layer.get("preset"),
+                "line_density":          layer.get("line_density"),
+                "line_thickness":        layer.get("line_thickness"),
+                "white_space":           layer.get("white_space"),
+                "output_png":            layer.get("output_png"),
+            })
+
+        self._sil_browser.set_engravings(entries)
 
     def _save_current_layers(self) -> None:
         if not self._slug:
