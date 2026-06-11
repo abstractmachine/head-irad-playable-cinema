@@ -1,20 +1,19 @@
-"""SDXL + ControlNet-Scribble engraving generator  (v1).
+"""FLUX.1-Kontext-dev engraving generator.
 
-Minimal working pipeline:
+Pipeline:
 
     preprocessing PNG (RGBA)
-        ↓  alpha → binary RGB scribble conditioning image
-    ControlNet-Scribble (controlnet-scribble-sdxl-1.0)
-        ↓
-    SDXL base (stable-diffusion-xl-base-1.0)
-    raw_png   (RGB output)
-        ↓  greyscale → threshold
-    output_png  (strict binary B&W, black lines on white)
+        ↓  composited onto white, passed as reference image
+    FLUX.1-Kontext-dev
+        ↓  conditioned on the project engraving prompt
+    raw_png   (RGB FLUX output, saved first)
+        ↓  binary threshold (strict B&W)
+    output_png  (black = line, white = paper, no greys)
 
-Prompt is loaded from the project's prompt directory at generation time:
-    <project>/prompts/engravings/<latest>.txt
-
-No LoRA, no textual-inversion.
+The preprocessing PNG is used directly — no scribble conversion, no mask.
+Prompt is loaded from <project>/prompts/engravings/<latest>.txt.
+Optional *context* dict is used for {variable} substitution in the prompt
+(e.g. ``{label}``, ``{field}``).  Unknown placeholders are left unchanged.
 """
 
 from __future__ import annotations
@@ -23,23 +22,31 @@ import json
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Model name constants
+# Constants
 # ---------------------------------------------------------------------------
 
-SDXL_BASE_NAME    = "stable-diffusion-xl-base-1.0"
-CONTROLNET_NAME   = "controlnet-scribble-sdxl-1.0"
+MODEL_NAME    = "FLUX.1-Kontext-dev"
+GENERATOR_TAG = "flux_kontext_v1"
 
-GENERATOR_TAG     = "sdxl_controlnet_scribble_v1"
 DEFAULT_SEED      = 42
-DEFAULT_STEPS     = 30
-DEFAULT_GUIDANCE  = 7.5
-DEFAULT_CN_SCALE  = 0.85
-DEFAULT_THRESHOLD = 128
+DEFAULT_STEPS     = 28       # recommended for Kontext-dev
+DEFAULT_GUIDANCE  = 2.5
+DEFAULT_THRESHOLD = 128      # binary conversion midpoint
 
-NEGATIVE_PROMPT = (
-    "photograph, photorealistic, color, colour, painting, watercolor, "
-    "sketch, pencil, charcoal, 3d render, blurry, noise, grain"
-)
+
+# ---------------------------------------------------------------------------
+# Prompt context injection
+# ---------------------------------------------------------------------------
+
+class _SafeDict(dict):
+    """dict subclass that returns ``{key}`` for missing keys.
+
+    Allows ``prompt.format_map(_SafeDict(**ctx))`` to expand known variables
+    while leaving unknown ``{placeholders}`` unchanged rather than raising.
+    """
+
+    def __missing__(self, key: str) -> str:
+        return f"{{{key}}}"
 
 
 # ---------------------------------------------------------------------------
@@ -47,49 +54,13 @@ NEGATIVE_PROMPT = (
 # ---------------------------------------------------------------------------
 
 def validate_models(project_path: str) -> None:
-    """Raise RuntimeError listing any missing required model directories."""
-    models_dir = Path(project_path) / "models"
-    required = [SDXL_BASE_NAME, CONTROLNET_NAME]
-    missing = [n for n in required if not (models_dir / n).is_dir()]
-    if missing:
-        lines = "\n".join(f"  {m}" for m in missing)
+    """Raise RuntimeError if the FLUX Kontext model directory is missing."""
+    model_dir = Path(project_path) / "models" / MODEL_NAME
+    if not model_dir.is_dir():
         raise RuntimeError(
-            f"Missing engraving model(s):\n{lines}\n\n"
-            f"Run:  crossing tool model download <name>"
+            f"Engraving model not found:\n  {model_dir}\n\n"
+            f"Run:  crossing tool model download black-forest-labs/FLUX.1-Kontext-dev"
         )
-
-
-# ---------------------------------------------------------------------------
-# Conditioning image preparation
-# ---------------------------------------------------------------------------
-
-def _make_scribble_conditioning(preprocessing_path: str, target_size: tuple[int, int]) -> "Image.Image":
-    """Convert RGBA preprocessing asset to an RGB scribble conditioning image.
-
-    The preprocessing asset has:
-      - subject pixels:   non-zero alpha
-      - background:       transparent (alpha=0)
-
-    ControlNet-Scribble expects:
-      - white background
-      - dark subject outlines / filled areas
-
-    We convert alpha → inverted mask: subject=black, background=white.
-    This gives the ControlNet a clean shape signal.
-    """
-    from PIL import Image
-    import numpy as np
-
-    img = Image.open(preprocessing_path).convert("RGBA")
-    if img.size != target_size:
-        img = img.resize(target_size, Image.LANCZOS)
-
-    arr = np.array(img)
-    alpha = arr[:, :, 3]
-
-    # Binary mask: subject pixels → black (0), background → white (255)
-    scribble = np.where(alpha > 10, 0, 255).astype(np.uint8)
-    return Image.fromarray(scribble).convert("RGB")
 
 
 # ---------------------------------------------------------------------------
@@ -100,121 +71,118 @@ def generate_engraving(
     *,
     project_path: str,
     preprocessing_path: str,
-    preprocessing_size: list[int],
     engraving_id: str,
     cache_dir: Path,
     seed: int = DEFAULT_SEED,
     num_inference_steps: int = DEFAULT_STEPS,
     guidance_scale: float = DEFAULT_GUIDANCE,
-    controlnet_conditioning_scale: float = DEFAULT_CN_SCALE,
+    context: dict | None = None,
     binary_threshold: int = DEFAULT_THRESHOLD,
+    # Accepted but ignored — kept for API compatibility with the Book Visualizer
+    # worker which passes preprocessing_size from the layer record.
+    preprocessing_size: list | None = None,
 ) -> dict:
-    """Run SDXL + ControlNet-Scribble and produce a binary engraving PNG."""
+    """Run FLUX.1-Kontext-dev on a preprocessing PNG and produce engraving PNGs.
+
+    Steps
+    -----
+    1. Load the project engraving prompt; expand ``{variable}`` placeholders
+       from *context* (label, field, etc.) using safe substitution.
+    2. Composite the preprocessing PNG (RGBA) onto white → RGB reference image.
+    3. Run FLUX.1-Kontext-dev → write ``{engraving_id}_raw.png``.
+    4. Apply binary threshold → write ``{engraving_id}_output.png``
+       (strict B&W: black = line, white = paper, no greys).
+    5. Write ``{engraving_id}_generation.json`` with full provenance.
+
+    Returns
+    -------
+    dict with keys:
+        raw_png    — path to the FLUX output PNG
+        output_png — path to the strict B&W PNG
+        metadata   — provenance dict (also written as a sidecar JSON)
+    """
     import os
-    # Force CUDA allocator to use expandable segments so it doesn't call
-    # nvmlInit_v2_() lazily mid-pipeline (Blackwell + PyTorch 2.12+cu130 bug:
-    # NVML_SUCCESS == nvmlInit_v2_() assert in CUDACachingAllocator.cpp).
-    # Must be set before the first torch.cuda call.
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
     import torch
     from PIL import Image
-    import numpy as np
-    from diffusers import StableDiffusionXLControlNetPipeline, ControlNetModel
 
-    # Force CUDA context + NVML fully initialized now, before any model loading.
-    # This prevents the lazy NVML init from firing inside a deep conv/allocator call.
+    # Force CUDA + NVML fully initialised before any model loading
     torch.cuda.init()
-    torch.cuda.mem_get_info()   # triggers NVML and verifies it works
+    torch.cuda.mem_get_info()
 
-    # Load prompt from project prompt directory
-    from services.engraving_prompt import load_engraving_prompt, EngravingPromptError
+    from services.engraving_prompt import load_engraving_prompt
     prompt_filename, prompt_text = load_engraving_prompt(project_path)
 
-    models_dir = Path(project_path) / "models"
-    cache_dir  = Path(cache_dir)
+    # Expand any {variable} placeholders from the silhouette context.
+    # _SafeDict leaves unknown placeholders unchanged rather than raising.
+    if context:
+        prompt_text = prompt_text.format_map(_SafeDict(**(context or {})))
+
+    model_dir = Path(project_path) / "models" / MODEL_NAME
+    cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     raw_png_path    = cache_dir / f"{engraving_id}_raw.png"
-    output_png_path = cache_dir / f"{engraving_id}_binary.png"
+    output_png_path = cache_dir / f"{engraving_id}_output.png"
 
-    tw, th = int(preprocessing_size[0]), int(preprocessing_size[1])
+    # Composite RGBA preprocessing PNG onto white — FLUX expects RGB.
+    src = Image.open(preprocessing_path).convert("RGBA")
+    tw, th = src.size
+    bg = Image.new("RGB", (tw, th), (255, 255, 255))
+    bg.paste(src, mask=src.split()[3])
+    reference_image = bg
 
-    # 1. Build scribble conditioning image
-    conditioning_img = _make_scribble_conditioning(preprocessing_path, (tw, th))
+    from diffusers import FluxKontextPipeline
 
-    # 2. Load ControlNet
-    controlnet = ControlNetModel.from_pretrained(
-        str(models_dir / CONTROLNET_NAME),
-        torch_dtype=torch.float16,
+    pipe = FluxKontextPipeline.from_pretrained(
+        str(model_dir),
+        torch_dtype=torch.bfloat16,
         local_files_only=True,
     )
+    # enable_model_cpu_offload() moves components to GPU one at a time,
+    # avoiding the large single allocation that triggers the NVML assert
+    # on Blackwell + PyTorch 2.12.
+    pipe.enable_model_cpu_offload()
 
-    # 3. Load SDXL pipeline
-    pipe = StableDiffusionXLControlNetPipeline.from_pretrained(
-        str(models_dir / SDXL_BASE_NAME),
-        controlnet=controlnet,
-        torch_dtype=torch.float16,
-        use_safetensors=True,
-        local_files_only=True,
-        variant="fp16",
-    )
-    pipe = pipe.to("cuda")
-    # The SDXL VAE is numerically unstable in fp16.
-    # upcast_vae() is deprecated; the new recommended call is pipe.vae.to(torch.float32),
-    # but that only casts the *weights* — the pipeline still passes fp16 *latents* in,
-    # causing a dtype mismatch in post_quant_conv.
-    # Fix: cast the VAE weights to fp32 AND wrap vae.decode so latents are upcast first.
-    pipe.vae.to(torch.float32)
-    _orig_vae_decode = pipe.vae.decode
-    def _fp32_decode(z, *a, **kw):
-        return _orig_vae_decode(z.to(torch.float32), *a, **kw)
-    pipe.vae.decode = _fp32_decode
-
-    # 4. Run generation
     generator = torch.Generator(device="cuda").manual_seed(seed)
     result = pipe(
+        image=reference_image,
         prompt=prompt_text,
-        negative_prompt=NEGATIVE_PROMPT,
-        image=conditioning_img,
         num_inference_steps=num_inference_steps,
         guidance_scale=guidance_scale,
-        controlnet_conditioning_scale=controlnet_conditioning_scale,
         width=tw,
         height=th,
         generator=generator,
     )
     raw_image: Image.Image = result.images[0]
 
-    # 5. Save raw output
+    # Save the raw FLUX output first (full colour, unprocessed)
     raw_image.save(str(raw_png_path))
 
-    # 6. Binary threshold — black = line, white = paper
-    grey = raw_image.convert("L")
-    arr  = np.array(grey)
-    binary_arr = ((arr < binary_threshold) * 255).astype(np.uint8)
-    Image.fromarray(binary_arr, mode="L").save(str(output_png_path))
-
-    # 7. Unload to free VRAM
-    del pipe, controlnet
+    del pipe
     torch.cuda.empty_cache()
 
-    # 8. Sidecar JSON
+    # ------------------------------------------------------------------
+    # Binary conversion: strict B&W (black = line, white = paper, no greys)
+    # ------------------------------------------------------------------
+    grey = raw_image.convert("L")
+    bw   = grey.point(lambda p: 0 if p < binary_threshold else 255)
+    bw.convert("RGB").save(str(output_png_path))
+
     meta = {
-        "generator":                     GENERATOR_TAG,
-        "base_model":                    SDXL_BASE_NAME,
-        "controlnet":                    CONTROLNET_NAME,
-        "seed":                          seed,
-        "num_inference_steps":           num_inference_steps,
-        "guidance_scale":                guidance_scale,
-        "controlnet_conditioning_scale": controlnet_conditioning_scale,
-        "prompt_filename":               prompt_filename,
-        "prompt":                        prompt_text,
-        "negative_prompt":               NEGATIVE_PROMPT,
-        "threshold":                     binary_threshold,
-        "preprocessing_path":            str(preprocessing_path),
-        "raw_png":                       str(raw_png_path),
-        "output_png":                    str(output_png_path),
+        "generator":           GENERATOR_TAG,
+        "model":               MODEL_NAME,
+        "seed":                seed,
+        "num_inference_steps": num_inference_steps,
+        "guidance_scale":      guidance_scale,
+        "binary_threshold":    binary_threshold,
+        "prompt_filename":     prompt_filename,
+        "prompt":              prompt_text,
+        "context":             context or {},
+        "preprocessing_path":  str(preprocessing_path),
+        "raw_png":             str(raw_png_path),
+        "output_png":          str(output_png_path),
     }
     (cache_dir / f"{engraving_id}_generation.json").write_text(
         json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8"

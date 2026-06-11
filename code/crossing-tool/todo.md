@@ -14,3 +14,6 @@
 - [x]   Add audio normalization analysis tool + adjustment during runtime
 - [x]   Normalize *all* the audio levels across all the films (via a new `crossing media movies normalize` command)
 - [x]   Add a way to adjust the *best* frame corresponding to the current, annotated, shot
+- [ ]   Re-run silhouette detections:
+        - `crossing index silhouette extract   --fields objects wearing humans animals   --all --verbose --notify --notify-each`
+- [ ]   

@@ -935,7 +935,7 @@ class _CutOverlay(QWidget):
         """Lazy-load and cache action button icon pixmaps."""
         if self._action_icons_cache is None:
             self._action_icons_cache = {
-                "engrave": _svg_icon("plus-circle-solid", 14, "#ffffff"),
+                "engrave": _svg_icon("media-image-plus",  14, "#ffffff"),
                 "delete":  _svg_icon("trash-solid",       14, "#ffffff"),
                 "flip_h":  _svg_icon("flip",              14, "#ffffff"),
                 "flip_v":  _svg_icon("flip-reverse",      14, "#ffffff"),
@@ -4031,6 +4031,22 @@ class _SilhouetteBrowserPanel(QWidget):
                     )
                     cell.set_image(pix.toImage())
 
+            # Enable drag-and-drop onto book pages.
+            # Use the best available image: output_png first, then fallbacks.
+            drag_png = (
+                entry.get("output_png", "") or
+                entry.get("preprocessing_path", "") or
+                entry.get("source_png", "")
+            )
+            if drag_png and Path(drag_png).exists():
+                cell._drag_abs_path = drag_png
+                cell._drag_meta = {
+                    "label": entry.get("name", "engraving"),
+                    "layer_id":   entry.get("layer_id", ""),
+                    "output_png": entry.get("output_png", ""),
+                    "source_png": entry.get("source_png", ""),
+                }
+
             # Wrap cell in a fixed-size container; overlay a trash button that
             # is hidden by default and revealed only on mouse-enter.
             layer_id = entry.get("layer_id", "")
@@ -4115,6 +4131,7 @@ class _EngravingWorker(QObject):
         preprocessing_path: str,
         preprocessing_size: list,
         cache_dir: Path,
+        context_json: str = "",
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -4123,6 +4140,7 @@ class _EngravingWorker(QObject):
         self._preprocessing_path = preprocessing_path
         self._preprocessing_size = preprocessing_size
         self._cache_dir          = Path(cache_dir)
+        self._context_json       = context_json
         self._thread             = None
 
     def start(self) -> None:
@@ -4139,6 +4157,8 @@ class _EngravingWorker(QObject):
                 "--out-dir",      str(self._cache_dir),
                 "--project-path", self._project_path,
             ]
+            if self._context_json:
+                cmd += ["--context", self._context_json]
             proc = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -4948,17 +4968,28 @@ class BookVisualizerWindow(QMainWindow):
         # Launch generation worker if preprocessing produced an asset
         # ------------------------------------------------------------------
         if preprocessing_path and preprocessing_size:
-            self._start_engraving_worker(eng_id, preprocessing_path, preprocessing_size)
+            # Build silhouette context for prompt variable substitution
+            context = {
+                "label":      source_layer.get("label", source_layer.get("name", "")),
+                "field":      source_layer.get("field", ""),
+                "layer_name": source_layer.get("name", ""),
+                "page":       str(source_layer.get("page", "")),
+            }
+            self._start_engraving_worker(eng_id, preprocessing_path, preprocessing_size, context=context)
 
     def _start_engraving_worker(
         self,
         eng_id: str,
         preprocessing_path: str,
         preprocessing_size: list,
+        context: dict | None = None,
     ) -> None:
         """Spawn a background generation worker for *eng_id*."""
+        import json as _json
         from data.book import book_dir as _book_dir_fn
         eng_cache_dir = _book_dir_fn(self._project_path, self._slug) / "engravings"
+
+        context_json = _json.dumps(context, ensure_ascii=False) if context else ""
 
         worker = _EngravingWorker(
             project_path=self._project_path,
@@ -4966,6 +4997,7 @@ class BookVisualizerWindow(QMainWindow):
             preprocessing_path=preprocessing_path,
             preprocessing_size=preprocessing_size,
             cache_dir=eng_cache_dir,
+            context_json=context_json,
             parent=self,
         )
         worker.finished.connect(self._on_engraving_generated)
@@ -4986,7 +5018,7 @@ class BookVisualizerWindow(QMainWindow):
         layer = self._overlay._layer_by_id(eng_id)
         if layer is not None:
             layer["output_png"] = output_png
-            layer["model"]      = metadata.get("base_model")
+            layer["model"]      = metadata.get("model")
             layer["generator"]  = metadata.get("generator")
             # Evict the pixmap cache so the new file is loaded
             self._overlay._pixmap_cache.pop(output_png, None)
@@ -5359,6 +5391,8 @@ class BookVisualizerWindow(QMainWindow):
             "id":       f"img_{uuid.uuid4().hex[:8]}",
             "type":     "Image",
             "name":     Path(source_rel).stem,
+            "label":    meta.get("label", ""),
+            "field":    meta.get("field", ""),
             "source":   source_rel,
             "page":     page_idx,
             "spread":   self._spread_idx,
