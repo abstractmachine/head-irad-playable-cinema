@@ -3388,6 +3388,45 @@ class _BrowserThumbLoader(QThread):
         self.load_finished.emit()
 
 
+class _EngravingThumbLoader(QThread):
+    """Background loader for engraving thumbnail images.
+
+    Accepts a list of ``(index, abs_path)`` pairs and emits ``thumb_ready``
+    for each successfully loaded image so the GUI thread can update cells
+    without blocking.
+    """
+
+    thumb_ready = pyqtSignal(int, QImage)
+
+    def __init__(self, paths: list, size: int, parent=None) -> None:
+        super().__init__(parent)
+        self._paths     = paths   # list of (int, str)
+        self._size      = size
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def run(self) -> None:
+        try:
+            from PIL import Image as _PIL
+        except ImportError:
+            return
+        for i, path in self._paths:
+            if self._cancelled:
+                break
+            try:
+                img = _PIL.open(path).convert("RGBA")
+                img.thumbnail((self._size, self._size), _PIL.LANCZOS)
+                w, h = img.size
+                data = img.tobytes("raw", "RGBA")
+                qimg = QImage(data, w, h, 4 * w, QImage.Format_RGBA8888)
+                self.thumb_ready.emit(i, qimg.copy())
+            except Exception:
+                pass
+            self.msleep(2)   # yield so UI stays responsive
+
+
 class _BrowserThumbCell(QLabel):
     """Single thumbnail cell in the silhouette browser grid.
 
@@ -3524,6 +3563,11 @@ class _SilhouetteBrowserPanel(QWidget):
         # Engraving collection — populated externally by BookVisualizerWindow
         self._engravings: list = []
 
+        # Engraving thumbnail loader (background thread, like _loader for silhouettes)
+        self._eng_loader = None
+        self._eng_cells:      list = []   # _BrowserThumbCell instances for the current grid
+        self._eng_containers: list = []   # matching container widgets (for resize re-layout)
+
         self.setStyleSheet(_PANEL_STYLESHEET)
         self.setMinimumWidth(180)
         self._build_ui()
@@ -3560,6 +3604,7 @@ class _SilhouetteBrowserPanel(QWidget):
         )
         self._tabs.addTab(self._build_silhouettes_tab(), "Silhouettes")
         self._tabs.addTab(self._build_engravings_tab(),  "Engravings")
+        self._tabs.currentChanged.connect(self._on_tab_changed)
         outer.addWidget(self._tabs)
 
     def _build_silhouettes_tab(self) -> QWidget:
@@ -3883,11 +3928,32 @@ class _SilhouetteBrowserPanel(QWidget):
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
-        if not self._cells:
-            return
-        cols = self._cols()
-        for i, cell in enumerate(self._cells):
-            self._grid_layout.addWidget(cell, i // cols, i % cols)
+        if self._cells:
+            cols = self._cols()
+            for i, cell in enumerate(self._cells):
+                self._grid_layout.addWidget(cell, i // cols, i % cols)
+        if self._eng_containers:
+            vw = self._eng_scroll.viewport().width()
+            if vw <= 0:
+                vw = 200
+            cols = max(1, (vw - _BROWSER_THUMB_GAP) // (_BROWSER_THUMB_SZ + _BROWSER_THUMB_GAP))
+            for i, container in enumerate(self._eng_containers):
+                self._eng_grid_layout.addWidget(container, i // cols, i % cols)
+
+    def _on_tab_changed(self, index: int) -> None:
+        """Re-layout the engravings grid when the Engravings tab becomes visible.
+
+        The grid is built while the tab is hidden, so viewport().width() is 0
+        at that point.  This fires once the tab is actually shown and the
+        scroll area has its real width.
+        """
+        if index == 1 and self._eng_containers:  # 1 = Engravings tab
+            vw = self._eng_scroll.viewport().width()
+            if vw <= 0:
+                vw = 200
+            cols = max(1, (vw - _BROWSER_THUMB_GAP) // (_BROWSER_THUMB_SZ + _BROWSER_THUMB_GAP))
+            for i, container in enumerate(self._eng_containers):
+                self._eng_grid_layout.addWidget(container, i // cols, i % cols)
 
     # ------------------------------------------------------------------
     # Background loader
@@ -3908,6 +3974,18 @@ class _SilhouetteBrowserPanel(QWidget):
     def _on_thumb_ready(self, idx: int, qimg: QImage) -> None:
         if 0 <= idx < len(self._cells):
             self._cells[idx].set_image(qimg)
+
+    def _stop_eng_loader(self) -> None:
+        if self._eng_loader and self._eng_loader.isRunning():
+            self._eng_loader.cancel()
+            self._eng_loader.wait(500)
+        self._eng_loader    = None
+        self._eng_cells     = []
+        self._eng_containers = []
+
+    def _on_eng_thumb_ready(self, idx: int, qimg: QImage) -> None:
+        if 0 <= idx < len(self._eng_cells):
+            self._eng_cells[idx].set_image(qimg)
 
     # ------------------------------------------------------------------
     # Keyboard navigation helpers (called from BookVisualizerWindow.eventFilter)
@@ -3978,6 +4056,9 @@ class _SilhouetteBrowserPanel(QWidget):
 
     def _refresh_engravings_tab(self) -> None:
         """Rebuild the engraving thumbnail grid in alphabetical order."""
+        # Stop any in-flight thumbnail loader and reset the cell list.
+        self._stop_eng_loader()
+
         # Clear existing grid items
         while self._eng_grid_layout.count():
             item = self._eng_grid_layout.takeAt(0)
@@ -4016,21 +4097,6 @@ class _SilhouetteBrowserPanel(QWidget):
 
             cell = _BrowserThumbCell(i, tooltip=tip)
 
-            # Prefer output_png (final engraving) → preprocessing_path → source_png
-            thumb_png = (
-                entry.get("output_png", "") or
-                entry.get("preprocessing_path", "") or
-                entry.get("source_png", "")
-            )
-            if thumb_png and Path(thumb_png).exists():
-                pix = QPixmap(thumb_png)
-                if not pix.isNull():
-                    pix = pix.scaled(
-                        _BROWSER_THUMB_SZ, _BROWSER_THUMB_SZ,
-                        Qt.KeepAspectRatio, Qt.SmoothTransformation,
-                    )
-                    cell.set_image(pix.toImage())
-
             # Enable drag-and-drop onto book pages.
             # Use the best available image: output_png first, then fallbacks.
             drag_png = (
@@ -4041,7 +4107,7 @@ class _SilhouetteBrowserPanel(QWidget):
             if drag_png and Path(drag_png).exists():
                 cell._drag_abs_path = drag_png
                 cell._drag_meta = {
-                    "label": entry.get("name", "engraving"),
+                    "label":      entry.get("name", "engraving"),
                     "layer_id":   entry.get("layer_id", ""),
                     "output_png": entry.get("output_png", ""),
                     "source_png": entry.get("source_png", ""),
@@ -4097,7 +4163,33 @@ class _SilhouetteBrowserPanel(QWidget):
             container.installEventFilter(filt)
             container.setMouseTracking(True)
 
+            self._eng_cells.append(cell)
+            self._eng_containers.append(container)
             self._eng_grid_layout.addWidget(container, i // cols, i % cols)
+
+        # Start background thumbnail loader for engraving images.
+        # Loading large FLUX/preprocessing PNGs synchronously would block
+        # the GUI thread for several seconds when many engravings are present.
+        # Do NOT call _stop_eng_loader() here — that would reset _eng_cells to
+        # [] after we just populated it, so _on_eng_thumb_ready would never
+        # find any cells.  Just cancel the previous loader if one is running.
+        if self._eng_loader and self._eng_loader.isRunning():
+            self._eng_loader.cancel()
+            self._eng_loader.wait(500)
+        self._eng_loader = None
+        paths = [
+            (i, thumb)
+            for i, entry in enumerate(sorted_eng)
+            if (thumb := (
+                entry.get("output_png", "") or
+                entry.get("preprocessing_path", "") or
+                entry.get("source_png", "")
+            )) and Path(thumb).exists()
+        ]
+        if paths:
+            self._eng_loader = _EngravingThumbLoader(paths, _BROWSER_THUMB_SZ)
+            self._eng_loader.thumb_ready.connect(self._on_eng_thumb_ready)
+            self._eng_loader.start()
 
 # ---------------------------------------------------------------------------
 # Engraving generation worker
@@ -4230,6 +4322,7 @@ class BookVisualizerWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802
         self._sil_browser._stop_loader()
+        self._sil_browser._stop_eng_loader()
         self._save_current_layers()
         self._close_doc()
         save_window_geometry(self, "window_book")
@@ -4968,12 +5061,30 @@ class BookVisualizerWindow(QMainWindow):
         # Launch generation worker if preprocessing produced an asset
         # ------------------------------------------------------------------
         if preprocessing_path and preprocessing_size:
-            # Build silhouette context for prompt variable substitution
+            # ------------------------------------------------------------------
+            # Build silhouette context for $variable prompt template expansion.
+            # Resolve movie title from metadata if filename_stem is available.
+            # ------------------------------------------------------------------
+            filename_stem = source_layer.get("filename_stem", "")
+            movie = ""
+            if filename_stem:
+                try:
+                    from data.metadata import get_metadata
+                    metas = get_metadata(self._project_path, filename_stem)
+                    if metas:
+                        m = metas[0]
+                        title = m.get("title", "")
+                        year  = m.get("year", "")
+                        movie = f"{title} ({year})" if title and year else title
+                except Exception:
+                    pass
+
             context = {
-                "label":      source_layer.get("label", source_layer.get("name", "")),
-                "field":      source_layer.get("field", ""),
-                "layer_name": source_layer.get("name", ""),
-                "page":       str(source_layer.get("page", "")),
+                "label":       source_layer.get("label", source_layer.get("name", "")),
+                "field":       source_layer.get("field", ""),
+                "movie":       movie,
+                "shot_id":     source_layer.get("shot_id", ""),
+                "description": source_layer.get("description", ""),
             }
             self._start_engraving_worker(eng_id, preprocessing_path, preprocessing_size, context=context)
 
@@ -5143,15 +5254,26 @@ class BookVisualizerWindow(QMainWindow):
     def _rebuild_engravings_from_layers(self, layers: list) -> None:
         """Reconstruct the Engravings tab from persisted Engraving layers.
 
-        Called every time a book is (re)loaded so the tab is never empty after
-        a restart even though engraving entries are not stored separately.
+        Primary source: Engraving layers in *layers* (loaded from layers.json).
+        Recovery source: ``*_generation.json`` files in the book's engravings/
+        directory.  Any engraving found on disk whose ID is not already
+        represented by a layer is added as a thumbnail-only entry so previously
+        generated assets are never silently lost between sessions.
+
+        Called every time a book is (re)loaded.
         """
         book_d = self._overlay._book_dir
 
         entries = []
+        seen_ids: set = set()
+
+        # ── Primary: rebuild from Engraving layers ─────────────────────────
         for layer in layers:
             if layer.get("layer_subtype") != "Engraving":
                 continue
+
+            eng_id = layer["id"]
+            seen_ids.add(eng_id)
 
             source_rel = layer.get("source_silhouette_id") or layer.get("source", "")
             source_png = ""
@@ -5162,7 +5284,7 @@ class BookVisualizerWindow(QMainWindow):
 
             entries.append({
                 "name":                  layer.get("name", ""),
-                "layer_id":              layer["id"],
+                "layer_id":              eng_id,
                 "parent_layer_id":       layer.get("parent_layer_id", ""),
                 "source_silhouette_id":  source_rel,
                 "source_png":            source_png,
@@ -5181,6 +5303,55 @@ class BookVisualizerWindow(QMainWindow):
                 "white_space":           layer.get("white_space"),
                 "output_png":            layer.get("output_png"),
             })
+
+        # ── Recovery: scan engravings directory for orphaned generation JSON ─
+        if book_d:
+            eng_dir = book_d / "engravings"
+            if eng_dir.is_dir():
+                for gen_json in sorted(eng_dir.glob("*_generation.json")):
+                    # Derive eng_id from filename: "<eng_id>_generation.json"
+                    eng_id = gen_json.stem.replace("_generation", "")
+                    if eng_id in seen_ids:
+                        continue  # already represented by a layer entry
+                    try:
+                        meta = json.loads(gen_json.read_text(encoding="utf-8"))
+                    except Exception:
+                        continue
+
+                    output_png       = meta.get("output_png", "")
+                    preprocessing_path = meta.get("preprocessing_path", "")
+
+                    # Load preprocessing size from sidecar JSON if available
+                    preprocessing_size = []
+                    pre_json = eng_dir / f"{eng_id}_preprocess_v1.json"
+                    if pre_json.exists():
+                        try:
+                            pre = json.loads(pre_json.read_text(encoding="utf-8"))
+                            preprocessing_size = pre.get("preprocessing_size", [])
+                        except Exception:
+                            pass
+
+                    entries.append({
+                        "name":               eng_id,
+                        "layer_id":           eng_id,
+                        "parent_layer_id":    "",
+                        "source_silhouette_id": "",
+                        "source_png":         "",
+                        "page":               None,
+                        "width":              None,
+                        "height":             None,
+                        "created":            "",
+                        "preprocessing_path": preprocessing_path,
+                        "preprocessing_size": preprocessing_size,
+                        "preprocess_cache_key": "",
+                        "preprocess_dpi":     0,
+                        "model":              meta.get("model"),
+                        "preset":             None,
+                        "line_density":       None,
+                        "line_thickness":     None,
+                        "white_space":        None,
+                        "output_png":         output_png,
+                    })
 
         self._sil_browser.set_engravings(entries)
 
@@ -5388,20 +5559,23 @@ class BookVisualizerWindow(QMainWindow):
                 default_h = sh / r.height()
 
         layer = {
-            "id":       f"img_{uuid.uuid4().hex[:8]}",
-            "type":     "Image",
-            "name":     Path(source_rel).stem,
-            "label":    meta.get("label", ""),
-            "field":    meta.get("field", ""),
-            "source":   source_rel,
-            "page":     page_idx,
-            "spread":   self._spread_idx,
-            "x":        nx,
-            "y":        ny,
-            "width":    default_w,
-            "height":   default_h,
-            "rotation": 0.0,
-            "z_index":  len(self._overlay.current_layers()),
+            "id":             f"img_{uuid.uuid4().hex[:8]}",
+            "type":           "Image",
+            "name":           Path(source_rel).stem,
+            "label":          meta.get("label", ""),
+            "field":          meta.get("field", ""),
+            "shot_id":        meta.get("shot_id", ""),
+            "filename_stem":  meta.get("filename_stem", ""),
+            "description":    meta.get("description", ""),
+            "source":         source_rel,
+            "page":           page_idx,
+            "spread":         self._spread_idx,
+            "x":              nx,
+            "y":              ny,
+            "width":          default_w,
+            "height":         default_h,
+            "rotation":       0.0,
+            "z_index":        len(self._overlay.current_layers()),
         }
         self._overlay._layers.append(layer)
         self._overlay._sel_id = layer["id"]

@@ -3,7 +3,19 @@
 Finds the alphabetically-last .txt file under
     <project>/prompts/engravings/
 
-and returns its filename and full text content.
+and returns its filename and raw template text.
+
+The template uses ``string.Template`` (``$variable``) syntax.  Canonical
+variables expanded by the generation pipeline:
+
+    $label       — silhouette subject label (e.g. "horse")
+    $field       — category / field (e.g. "animals")
+    $movie       — movie title + year (e.g. "Belle Starr (1941)")
+    $shot_id     — canonical shot identifier (e.g. "tmdb_72473@f012472-f012544")
+    $description — annotation-derived description text
+
+Unknown ``$placeholders`` are left unchanged by ``safe_substitute``.
+Missing variables default to empty strings.
 """
 
 from __future__ import annotations
@@ -17,11 +29,14 @@ class EngravingPromptError(RuntimeError):
 
 
 def load_engraving_prompt(project_path: str) -> tuple[str, str]:
-    """Return (prompt_filename, prompt_text) from the latest engraving prompt.
+    """Return *(prompt_filename, prompt_template)* from the latest engraving prompt.
 
     Searches ``<project>/prompts/engravings/`` for ``*.txt`` files and picks
     the alphabetically last one (date-versioned filenames sort chronologically
     by convention: ``engravings-YYYY-MM-DD-vN.txt``).
+
+    The returned text is the raw template string — callers should expand
+    ``$variable`` placeholders via ``string.Template.safe_substitute``.
 
     Raises
     ------

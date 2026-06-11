@@ -5,20 +5,22 @@ Pipeline:
     preprocessing PNG (RGBA)
         ↓  composited onto white, passed as reference image
     FLUX.1-Kontext-dev
-        ↓  conditioned on the project engraving prompt
+        ↓  conditioned on the project engraving prompt (template expanded)
     raw_png   (RGB FLUX output, saved first)
         ↓  binary threshold (strict B&W)
     output_png  (black = line, white = paper, no greys)
 
 The preprocessing PNG is used directly — no scribble conversion, no mask.
-Prompt is loaded from <project>/prompts/engravings/<latest>.txt.
-Optional *context* dict is used for {variable} substitution in the prompt
-(e.g. ``{label}``, ``{field}``).  Unknown placeholders are left unchanged.
+Prompt is loaded from <project>/prompts/engravings/<latest>.txt as a
+``string.Template``; ``$variable`` placeholders are expanded from the
+*context* dict (e.g. ``$label``, ``$field``, ``$movie``, ``$shot_id``,
+``$description``).  Unknown placeholders are left unchanged (safe_substitute).
 """
 
 from __future__ import annotations
 
 import json
+import string
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -35,18 +37,27 @@ DEFAULT_THRESHOLD = 128      # binary conversion midpoint
 
 
 # ---------------------------------------------------------------------------
-# Prompt context injection
+# Prompt template expansion
 # ---------------------------------------------------------------------------
 
-class _SafeDict(dict):
-    """dict subclass that returns ``{key}`` for missing keys.
+def _expand_prompt(template_text: str, context: dict | None) -> str:
+    """Expand ``$variable`` placeholders in *template_text* using *context*.
 
-    Allows ``prompt.format_map(_SafeDict(**ctx))`` to expand known variables
-    while leaving unknown ``{placeholders}`` unchanged rather than raising.
+    Uses ``string.Template.safe_substitute`` so that unknown placeholders
+    (variables not present in *context*) are left literally unchanged rather
+    than raising.  The five canonical variables default to an empty string so
+    they render as blank lines rather than un-expanded ``$label`` literals.
     """
-
-    def __missing__(self, key: str) -> str:
-        return f"{{{key}}}"
+    defaults = {
+        "label":       "",
+        "field":       "",
+        "movie":       "",
+        "shot_id":     "",
+        "description": "",
+    }
+    if context:
+        defaults.update({k: str(v) for k, v in context.items() if v is not None})
+    return string.Template(template_text).safe_substitute(defaults)
 
 
 # ---------------------------------------------------------------------------
@@ -86,8 +97,10 @@ def generate_engraving(
 
     Steps
     -----
-    1. Load the project engraving prompt; expand ``{variable}`` placeholders
-       from *context* (label, field, etc.) using safe substitution.
+    1. Load the latest engraving prompt template; expand ``$variable``
+       placeholders from *context* (label, field, movie, shot_id, description)
+       using ``string.Template.safe_substitute`` — missing variables default
+       to empty strings, unknown placeholders are left unchanged.
     2. Composite the preprocessing PNG (RGBA) onto white → RGB reference image.
     3. Run FLUX.1-Kontext-dev → write ``{engraving_id}_raw.png``.
     4. Apply binary threshold → write ``{engraving_id}_output.png``
@@ -112,12 +125,8 @@ def generate_engraving(
     torch.cuda.mem_get_info()
 
     from services.engraving_prompt import load_engraving_prompt
-    prompt_filename, prompt_text = load_engraving_prompt(project_path)
-
-    # Expand any {variable} placeholders from the silhouette context.
-    # _SafeDict leaves unknown placeholders unchanged rather than raising.
-    if context:
-        prompt_text = prompt_text.format_map(_SafeDict(**(context or {})))
+    prompt_filename, prompt_template = load_engraving_prompt(project_path)
+    prompt_text = _expand_prompt(prompt_template, context)
 
     model_dir = Path(project_path) / "models" / MODEL_NAME
     cache_dir = Path(cache_dir)
