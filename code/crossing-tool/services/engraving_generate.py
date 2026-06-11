@@ -110,10 +110,22 @@ def generate_engraving(
     binary_threshold: int = DEFAULT_THRESHOLD,
 ) -> dict:
     """Run SDXL + ControlNet-Scribble and produce a binary engraving PNG."""
+    import os
+    # Force CUDA allocator to use expandable segments so it doesn't call
+    # nvmlInit_v2_() lazily mid-pipeline (Blackwell + PyTorch 2.12+cu130 bug:
+    # NVML_SUCCESS == nvmlInit_v2_() assert in CUDACachingAllocator.cpp).
+    # Must be set before the first torch.cuda call.
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
     import torch
     from PIL import Image
     import numpy as np
     from diffusers import StableDiffusionXLControlNetPipeline, ControlNetModel
+
+    # Force CUDA context + NVML fully initialized now, before any model loading.
+    # This prevents the lazy NVML init from firing inside a deep conv/allocator call.
+    torch.cuda.init()
+    torch.cuda.mem_get_info()   # triggers NVML and verifies it works
 
     # Load prompt from project prompt directory
     from services.engraving_prompt import load_engraving_prompt, EngravingPromptError

@@ -5700,9 +5700,79 @@ def cmd_engraving(args):
     sub = args.engraving_subcommand
     if sub == "smoke-test":
         _engraving_smoke_test(args)
+    elif sub == "smoke-test-flux":
+        _engraving_smoke_test_flux(args)
     else:
         print("✗ engraving: specify a subcommand.", file=sys.stderr)
         sys.exit(1)
+
+
+def _engraving_smoke_test_flux(args):
+    """Standalone FLUX.1-Kontext-dev benchmark: preprocessing PNG → raw PNG."""
+    import traceback
+    from pathlib import Path as _Path
+
+    preprocessing_path = _Path(args.preprocessing_png).resolve()
+    if not preprocessing_path.exists():
+        print(f"✗ preprocessing PNG not found: {preprocessing_path}", file=sys.stderr)
+        sys.exit(1)
+
+    project_path = getattr(args, "project_path", None) or prefs.get("path")
+    if not project_path:
+        print("✗ No project path set.  Run: crossing tool path /path/to/project", file=sys.stderr)
+        sys.exit(1)
+
+    if args.out_dir:
+        out_dir = _Path(args.out_dir).resolve()
+    else:
+        out_dir = preprocessing_path.parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    engraving_id = preprocessing_path.stem.removesuffix("_preprocess_v1")
+    if not engraving_id:
+        engraving_id = "flux_smoke"
+
+    try:
+        from PIL import Image as _PilImage
+        with _PilImage.open(preprocessing_path) as _im:
+            w, h = _im.size
+    except Exception as exc:
+        print(f"✗ Cannot read preprocessing PNG: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    print("[engraving smoke-test-flux]")
+    print(f"  preprocessing : {preprocessing_path}")
+    print(f"  size          : {w} x {h} px")
+    print(f"  output dir    : {out_dir}")
+    print(f"  engraving id  : {engraving_id}")
+    print()
+
+    try:
+        from services.engraving_generate_flux import validate_flux_model, generate_engraving_flux
+        from services.engraving_prompt import load_engraving_prompt, EngravingPromptError
+
+        try:
+            prompt_filename, _ = load_engraving_prompt(project_path)
+            print(f"  prompt        : {prompt_filename}")
+            print()
+        except EngravingPromptError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        validate_flux_model(project_path)
+        result = generate_engraving_flux(
+            project_path=project_path,
+            preprocessing_path=str(preprocessing_path),
+            engraving_id=engraving_id,
+            cache_dir=out_dir,
+        )
+    except Exception:
+        print("[engraving smoke-test-flux] FAILED:", file=sys.stderr)
+        traceback.print_exc()
+        sys.exit(1)
+
+    print("[engraving smoke-test-flux] SUCCESS")
+    print(f"  raw : {result['raw_png']}")
 
 
 def _engraving_smoke_test(args):
@@ -8199,6 +8269,30 @@ def build_parser():
         help="Project directory (overrides saved prefs)",
     )
     p_eng_smoke.set_defaults(func=cmd_engraving)
+
+    p_eng_smoke_flux = engraving_sub.add_parser(
+        "smoke-test-flux",
+        help="Run FLUX.1-Kontext-dev on a preprocessing PNG and write a raw output PNG",
+    )
+    p_eng_smoke_flux.add_argument(
+        "preprocessing_png",
+        help="Path to the RGBA preprocessing PNG (passed directly to FLUX as reference image)",
+    )
+    p_eng_smoke_flux.add_argument(
+        "--out-dir",
+        dest="out_dir",
+        default=None,
+        metavar="DIR",
+        help="Directory to write output PNG (default: same directory as input)",
+    )
+    p_eng_smoke_flux.add_argument(
+        "--project-path",
+        dest="project_path",
+        default=None,
+        metavar="PATH",
+        help="Project directory (overrides saved prefs)",
+    )
+    p_eng_smoke_flux.set_defaults(func=cmd_engraving)
 
     # ── book command ─────────────────────────────────────────────────────────
     p_book = sub.add_parser("book", help="Manage books (create, delete, list, import PDF)")
