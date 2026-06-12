@@ -4889,8 +4889,10 @@ def _index_silhouette(args):
             verbose=verbose,
         )
         print(f"Scoring summary: processed={summary.get('processed', 0)} skipped={summary.get('skipped',0)} errors={summary.get('errors',0)}")
+    elif silhouette_action == "backfill-scanned":
+        _silhouette_backfill_scanned(args)
     else:
-        print("✗ index silhouette: specify a subcommand (extract, audit, clear)", file=sys.stderr)
+        print("✗ index silhouette: specify a subcommand (extract, audit, clear, backfill-scanned)", file=sys.stderr)
         sys.exit(1)
 
 
@@ -4959,7 +4961,31 @@ def _silhouette_catalog_extract(args):
         grand = {"files": 0, "shots": 0, "saved": 0, "skipped": 0, "failed": 0}
         errors: list[str] = []
 
-        for fld in fields_multi:
+        start_from_field = getattr(args, "start_from_field", None)
+        start_from_label = getattr(args, "start_from_label", None)
+
+        # Validate --start-from-field
+        if start_from_field and start_from_field not in fields_multi:
+            print(
+                f"✗ --start-from-field '{start_from_field}' is not in the --fields list "
+                f"({', '.join(fields_multi)})",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        # Determine which fields to actually process
+        active_fields = fields_multi
+        if start_from_field:
+            idx = fields_multi.index(start_from_field)
+            skipped_fields = fields_multi[:idx]
+            active_fields = fields_multi[idx:]
+            if skipped_fields:
+                print(f"  (skipping fields: {', '.join(skipped_fields)})")
+
+        # first_field is the one where --start-from-label applies (if set)
+        first_field = active_fields[0] if active_fields else None
+
+        for fld in active_fields:
             try:
                 vocab = get_vocabulary(fld, project_path, media_type)
             except (FileNotFoundError, KeyError) as exc:
@@ -4969,6 +4995,21 @@ def _silhouette_catalog_extract(args):
                 continue
 
             labels = [e["value"] for e in vocab]
+
+            # Apply --start-from-label only for the first active field
+            if start_from_label and fld == first_field:
+                if start_from_label not in labels:
+                    print(
+                        f"  ✗ --start-from-label '{start_from_label}' not found in "
+                        f"field '{fld}'; starting from the beginning of this field.",
+                        file=sys.stderr,
+                    )
+                else:
+                    skip_idx = labels.index(start_from_label)
+                    if skip_idx:
+                        print(f"  (skipping {skip_idx} label(s) before '{start_from_label}')")
+                    labels = labels[skip_idx:]
+
             print(f"\nField '{fld}': {len(labels)} label(s) — "
                   f"{', '.join(labels[:8])}"
                   f"{' …' if len(labels) > 8 else ''}")
@@ -4979,8 +5020,17 @@ def _silhouette_catalog_extract(args):
                 continue
 
             fld_totals = {"files": 0, "shots": 0, "saved": 0, "skipped": 0, "failed": 0}
+            fld_skipped_labels = 0
 
             for lbl in labels:
+                # Auto-skip labels already fully scanned (--all scope only; single-movie
+                # runs don't write the corpus-wide sentinel so we never skip them).
+                if not force and not movie and tmdb is None:
+                    from services.silhouette_catalog import is_label_scanned
+                    if is_label_scanned(project_path, media_type, fld, lbl):
+                        fld_skipped_labels += 1
+                        continue
+
                 print(f"  ── {fld}/{lbl}")
                 try:
                     if movie or tmdb is not None:
@@ -5041,6 +5091,9 @@ def _silhouette_catalog_extract(args):
             # Accumulate into grand totals
             for k in grand:
                 grand[k] += fld_totals[k]
+
+            if fld_skipped_labels:
+                print(f"  ({fld_skipped_labels} label(s) skipped — already scanned)")
 
             # Per-field notification (--notify-each)
             if notify_items:
@@ -5263,6 +5316,39 @@ def _print_silhouette_extract_summary(summary: dict, label: str, filename: str) 
     else:
         print(f"✓ '{label}' in {filename}")
         print(f"  shots={shots}  saved={saved}  skipped={skipped}  failed={failed}")
+
+
+def _silhouette_backfill_scanned(args):
+    """Write scanned sentinels for (field, label) pairs that have existing catalog entries."""
+    from services.silhouette_catalog import backfill_scanned_from_catalog
+
+    project_path = prefs.get("path")
+    media_type   = getattr(args, "media", "movies")
+
+    print(f"Scanning catalog for existing (field, label) pairs…")
+    result = backfill_scanned_from_catalog(project_path, media_type)
+
+    written = result["written"]
+    already = result["already"]
+    pairs   = result["pairs"]
+
+    if not pairs:
+        print("  No catalog entries found — nothing to backfill.")
+        return
+
+    for fld, lbl in pairs:
+        status = "already" if already and not written else "✓"
+        print(f"  {status}  {fld}/{lbl}")
+
+    print(
+        f"\n✓ Backfill complete: {written} sentinel(s) written, "
+        f"{already} already existed."
+    )
+    if written:
+        print(
+            "  Labels with no catalog entries (scanned but found nothing) will be\n"
+            "  re-run on the next extract pass — this is fast (text search only, no GPU)."
+        )
 
 
 def _silhouette_catalog_audit(args):
@@ -7351,12 +7437,45 @@ def build_parser():
         help="CLIP model name for best-frame selection (default: frame_match model role)",
     )
     p_sil_extract.add_argument(
+        "--start-from-field", default=None, dest="start_from_field", metavar="FIELD",
+        help=(
+            "When using --fields, skip all fields listed before FIELD and begin processing "
+            "from FIELD onwards. Useful for resuming an interrupted --fields run."
+        ),
+    )
+    p_sil_extract.add_argument(
+        "--start-from-label", default=None, dest="start_from_label", metavar="LABEL",
+        help=(
+            "When using --fields, skip all labels (alphabetically) before LABEL within the "
+            "first active field. Combined with --start-from-field to resume mid-field. "
+            "Has no effect for subsequent fields (they run in full)."
+        ),
+    )
+    p_sil_extract.add_argument(
         "--force", action="store_true",
         help="Re-extract even if catalog entries for this shot already exist",
     )
     _add_dry_run_arg(p_sil_extract, help="List candidate shots without running segmentation or writing files")
     _add_verbose_arg(p_sil_extract, help="Print progress (model loading, frame selection, mask counts, saved paths)")
     _add_notify_args(p_sil_extract)
+
+    # ── backfill-scanned ───────────────────────────────────────────────────
+    p_sil_backfill = silhouette_sub.add_parser(
+        "backfill-scanned",
+        help="Retroactively write scanned sentinels from existing catalog data (one-time recovery)",
+        epilog=(
+            "Use this once after upgrading from a version without sentinel tracking.\n"
+            "It marks every (field, label) pair that already has catalog entries as\n"
+            "fully scanned so future --fields runs skip them automatically.\n\n"
+            "Labels that were scanned but produced no results will be re-run on the\n"
+            "next extract pass — this is fast (annotation text search only, no GPU).\n\n"
+            "Example:\n"
+            "  crossing index silhouette backfill-scanned"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_sil_backfill.set_defaults(func=cmd_index)
+    _add_media_arg(p_sil_backfill)
 
     # ── audit ──────────────────────────────────────────────────────────────
     p_sil_audit = silhouette_sub.add_parser(

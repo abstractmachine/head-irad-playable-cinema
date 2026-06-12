@@ -79,6 +79,52 @@ _MAX_OBJECTS_PER_SHOT   = 8       # cap on accepted objects extracted from a sin
 _PNG_CROP_PAD_PX        = 6       # pixel padding around tight bbox when saving PNG
 
 
+def _scanned_marker_path(
+    project_path: str,
+    media_type: str,
+    field: str,
+    label: str,
+) -> Path:
+    """Return the path of the sentinel file that marks a (field, label) as fully scanned."""
+    safe = _safe_label(label)
+    safe_field = re.sub(r"[^a-z0-9_]", "_", field.lower().strip())
+    return catalog_base_dir(project_path, media_type) / ".scanned" / safe_field / safe
+
+
+def is_label_scanned(
+    project_path: str,
+    media_type: str,
+    field: str,
+    label: str,
+) -> bool:
+    """Return True when a corpus-wide scan for (field, label) has already completed."""
+    return _scanned_marker_path(project_path, media_type, field, label).exists()
+
+
+def mark_label_scanned(
+    project_path: str,
+    media_type: str,
+    field: str,
+    label: str,
+) -> None:
+    """Write a sentinel file recording that (field, label) has been fully scanned."""
+    p = _scanned_marker_path(project_path, media_type, field, label)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.touch()
+
+
+def unmark_label_scanned(
+    project_path: str,
+    media_type: str,
+    field: str,
+    label: str,
+) -> None:
+    """Remove the scanned sentinel for (field, label), e.g. when --force is used."""
+    p = _scanned_marker_path(project_path, media_type, field, label)
+    if p.exists():
+        p.unlink()
+
+
 # ---------------------------------------------------------------------------
 # Path helpers
 # ---------------------------------------------------------------------------
@@ -798,6 +844,11 @@ def extract_catalog_for_all(
             except Exception:
                 pass
 
+    # Mark this (field, label) pair as fully scanned so future runs can skip it.
+    # Only mark when there were no failures (a partial run should be retried).
+    if total_failed == 0:
+        mark_label_scanned(project_path, media_type, field, label)
+
     return {
         "total_files":   total_files,
         "total_shots":   total_shots,
@@ -853,6 +904,61 @@ def scan_catalog(
                     records.append({"path": json_file, "error": "unreadable"})
 
     return records
+
+
+def backfill_scanned_from_catalog(
+    project_path: str,
+    media_type: str = "movies",
+) -> dict:
+    """Write scanned sentinels for every (field, label) pair that has existing
+    catalog entries on disk.
+
+    This is a one-time recovery tool for runs started before sentinel tracking
+    was introduced.  It cannot mark labels that were scanned but found no
+    results — those will be re-run on the next ``--fields`` pass (fast: text
+    search only, no GPU).
+
+    Returns a dict:
+      ``written``  — sentinels newly written
+      ``already``  — sentinels that already existed
+      ``pairs``    — list of (field, label) pairs found
+    """
+    base = catalog_base_dir(project_path, media_type)
+    if not base.exists():
+        return {"written": 0, "already": 0, "pairs": []}
+
+    # Collect unique (field, label) pairs from all object JSON files.
+    # Read only the first JSON per label-dir to get field+label cheaply.
+    pairs: set[tuple[str, str]] = set()
+
+    for item_dir in base.iterdir():
+        if not item_dir.is_dir() or item_dir.name.startswith("."):
+            continue
+        for label_dir in item_dir.iterdir():
+            if not label_dir.is_dir():
+                continue
+            # Read first available JSON to get field + label
+            for json_file in sorted(label_dir.glob("object_????.json")):
+                try:
+                    meta = json.loads(json_file.read_text(encoding="utf-8"))
+                    fld = meta.get("field")
+                    lbl = meta.get("label")
+                    if fld and lbl:
+                        pairs.add((fld, lbl))
+                except Exception:
+                    pass
+                break  # only need one file per label_dir
+
+    written = 0
+    already = 0
+    for fld, lbl in sorted(pairs):
+        if is_label_scanned(project_path, media_type, fld, lbl):
+            already += 1
+        else:
+            mark_label_scanned(project_path, media_type, fld, lbl)
+            written += 1
+
+    return {"written": written, "already": already, "pairs": sorted(pairs)}
 
 
 # ---------------------------------------------------------------------------
