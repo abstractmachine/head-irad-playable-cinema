@@ -410,7 +410,7 @@ class SearchWorker(QThread):
                                 filename=r.get("filename", ""),
                                 shot_id=r.get("shot_id", ""),
                                 query=self.query,
-                                media_type="movies",
+                                media_type="movie",
                                 model=clip_model,
                                 processor=clip_processor,
                                 device=clip_device,
@@ -478,7 +478,7 @@ class VocabularyWorker(QThread):
                 use_all      = use_all,
                 show_count   = True,
                 project_path = self.project_path,
-                media_type   = "movies",
+                media_type   = "movie",
                 sort         = "count",
             )
             self.items_ready.emit(result)
@@ -1043,7 +1043,7 @@ class BestOnlyWorker(QThread):
             if self._cancelled:
                 break
             img_path = best_frame_path(
-                self.project_path, "movies", self.filename, shot_id
+                self.project_path, "movie", self.filename, shot_id
             )
             path_str = str(img_path) if img_path.exists() else None
             result = {
@@ -1095,7 +1095,7 @@ class AllShotsWorker(QThread):
         try:
             from data.shotlist import read_shotlist
 
-            shots = read_shotlist(self.project_path, self.filename, "movies")
+            shots = read_shotlist(self.project_path, self.filename, "movie")
             movie_id   = Path(self.filename).stem
             video_path = _find_video_path(self.project_path, movie_id)
 
@@ -1186,7 +1186,7 @@ class ScenesWorker(QThread):
             from data.shotlist import read_shotlist
             from data.metadata import get_metadata
 
-            shots      = read_shotlist(self.project_path, self.filename, "movies")
+            shots      = read_shotlist(self.project_path, self.filename, "movie")
             movie_id   = Path(self.filename).stem
             video_path = _find_video_path(self.project_path, movie_id)
 
@@ -1204,7 +1204,7 @@ class ScenesWorker(QThread):
                 _cap.release()
 
             # Clean title + year from stored metadata; fall back to filename parsing
-            meta_list = get_metadata(self.project_path, self.filename, "movies")
+            meta_list = get_metadata(self.project_path, self.filename, "movie")
             if meta_list:
                 _meta = meta_list[0]
             else:
@@ -1299,7 +1299,7 @@ class ScenesWorker(QThread):
                 pixmap: Optional[QPixmap] = None
                 if self.best_lookup and shot_id in self.best_lookup:
                     img_path = best_frame_path(
-                        self.project_path, "movies", self.filename, shot_id
+                        self.project_path, "movie", self.filename, shot_id
                     )
                     if img_path.exists():
                         pixmap = QPixmap(str(img_path))
@@ -1511,7 +1511,7 @@ class MosaicVisualizer(QMainWindow):
             return
 
         from visualizers.shot_visualizer import open_at_shot
-        open_at_shot(self.project_path, filename, "movies", shot_id=shot_id,
+        open_at_shot(self.project_path, filename, "movie", shot_id=shot_id,
                      loop=True, no_continue=True, play=True)
         self.status.showMessage(
             f"Opening Shotlist Visualizer → {filename}  shot {shot_id}", 4000
@@ -1525,7 +1525,7 @@ class MosaicVisualizer(QMainWindow):
         if not filename or not shot_id:
             return
         try:
-            shots = read_shotlist(self.project_path, filename, "movies")
+            shots = read_shotlist(self.project_path, filename, "movie")
             new_ignored = False
             for shot in shots:
                 if shot.get("shot_id") == shot_id:
@@ -1533,7 +1533,7 @@ class MosaicVisualizer(QMainWindow):
                     new_ignored = current not in ("true", "1", "yes")
                     shot["Ignore"] = "True" if new_ignored else "False"
                     break
-            write_shotlist(self.project_path, filename, "movies", shots)
+            write_shotlist(self.project_path, filename, "movie", shots)
             result["Ignore"] = "True" if new_ignored else "False"
             tile = self.canvas.tile_for_shot(shot_id)
             if tile:
@@ -1553,7 +1553,7 @@ class MosaicVisualizer(QMainWindow):
         if not filename or not shot_id:
             return
         try:
-            shots = read_shotlist(self.project_path, filename, "movies")
+            shots = read_shotlist(self.project_path, filename, "movie")
             shot_idx = next(
                 (i for i, s in enumerate(shots) if s.get("shot_id") == shot_id), None
             )
@@ -1576,7 +1576,7 @@ class MosaicVisualizer(QMainWindow):
                 else:
                     break
             _renumber_scenes(shots)
-            write_shotlist(self.project_path, filename, "movies", shots)
+            write_shotlist(self.project_path, filename, "movie", shots)
 
             # Build shot_id → new scene map from the modified shots list
             shot_scene_map = {
@@ -1653,7 +1653,7 @@ class MosaicVisualizer(QMainWindow):
         if not filename or not target_scene:
             return
         try:
-            shots = read_shotlist(self.project_path, filename, "movies")
+            shots = read_shotlist(self.project_path, filename, "movie")
             first_idx = next(
                 (i for i, s in enumerate(shots) if s.get("Scene") == target_scene), None
             )
@@ -1665,7 +1665,7 @@ class MosaicVisualizer(QMainWindow):
                 if shot.get("Scene") == target_scene:
                     shot["Scene"] = prev_scene
             _renumber_scenes(shots)
-            write_shotlist(self.project_path, filename, "movies", shots)
+            write_shotlist(self.project_path, filename, "movie", shots)
 
             # Build shot_id → new scene map from the modified shots list
             shot_scene_map = {
@@ -1974,7 +1974,7 @@ class MosaicVisualizer(QMainWindow):
     def _populate_movies(self) -> None:
         try:
             from data.metadata import get_metadata
-            rows = get_metadata(self.project_path, media_type="movies")
+            rows = get_metadata(self.project_path, media_type="movie")
             sorted_rows = sorted(rows, key=lambda r: (r.get("title") or "").lower())
             for row in sorted_rows:
                 title = row.get("title", "")
@@ -2050,7 +2050,7 @@ class MosaicVisualizer(QMainWindow):
         if self.best_mode and scope and not self._query_best_active:
             from services.frame_match import load_best_frame_lookup
             self._best_lookup = load_best_frame_lookup(
-                self.project_path, scope, "movies"
+                self.project_path, scope, "movie"
             )
 
         from tool import prefs as _prefs
@@ -2078,7 +2078,7 @@ class MosaicVisualizer(QMainWindow):
             if bf:
                 img_path = best_frame_path(
                     self.project_path,
-                    "movies",
+                    "movie",
                     result.get("movie_id", ""),
                     shot_id,
                 )
@@ -2144,7 +2144,7 @@ class MosaicVisualizer(QMainWindow):
         self.pdf_btn.setEnabled(False)
         self.video_btn.setEnabled(False)
 
-        lookup = load_best_frame_lookup(self.project_path, filename, "movies")
+        lookup = load_best_frame_lookup(self.project_path, filename, "movie")
         if not lookup:
             self._progress.setRange(0, 1)
             self._progress.setValue(0)
@@ -2324,7 +2324,7 @@ class MosaicVisualizer(QMainWindow):
         best_lookup: dict = {}
         if self.best_mode:
             from services.frame_match import load_best_frame_lookup
-            best_lookup = load_best_frame_lookup(self.project_path, filename, "movies")
+            best_lookup = load_best_frame_lookup(self.project_path, filename, "movie")
 
         self._scenes_worker = ScenesWorker(
             filename, self.project_path, best_lookup,

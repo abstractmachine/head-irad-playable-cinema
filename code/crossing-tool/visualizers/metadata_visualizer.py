@@ -58,11 +58,15 @@ OVERVIEW_MAX_CHARS = 340
 def _resolve_thumbnail(project_path: str, media_type: str, filename: str) -> Path | None:
     """Return the thumbnail path for *filename*, or None if not found."""
     stem = Path(filename).stem
-    thumb_dir = Path(project_path) / "media" / "thumbnails" / media_type
-    for name in (stem + ".jpg", stem.replace(" ", "-") + ".jpg"):
-        p = thumb_dir / name
-        if p.exists():
-            return p
+    dirs_to_try = [media_type]
+    if media_type == "movie":
+        dirs_to_try.append("movies")  # backward-compat: existing projects store under movies/
+    for mdir in dirs_to_try:
+        thumb_dir = Path(project_path) / "media" / "thumbnails" / mdir
+        for name in (stem + ".jpg", stem.replace(" ", "-") + ".jpg"):
+            p = thumb_dir / name
+            if p.exists():
+                return p
     return None
 
 
@@ -159,7 +163,7 @@ class _MovieCard(_BaseCard):
     """Compact card for a single movie metadata record."""
 
     def __init__(self, record: dict, thumb_bytes: bytes, parent=None) -> None:
-        super().__init__(record.get("filename", ""), "movies", parent)
+        super().__init__(record.get("filename", ""), "movie", parent)
 
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
@@ -420,7 +424,7 @@ class MetadataVisualizer(QMainWindow):
         self._movies_total   = 0
         self._gameplay_total = 0
 
-        self._movies_loader = _MetadataLoader(self._project_path, "movies", self)
+        self._movies_loader = _MetadataLoader(self._project_path, "movie", self)
         self._movies_loader.total_known.connect(self._movies_col.set_total)
         self._movies_loader.record_ready.connect(self._on_movie_record)
         self._movies_loader.finished_loading.connect(self._on_movies_done)

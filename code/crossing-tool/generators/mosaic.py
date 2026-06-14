@@ -559,11 +559,11 @@ def build_shots_results(
     from data.shotlist import read_shotlist
 
     movie_id = Path(filename).stem
-    shots    = read_shotlist(project_path, filename, "movies")
+    shots    = read_shotlist(project_path, filename, "movie")
 
     if best_mode:
         from services.frame_match import load_best_frame_lookup
-        lookup = load_best_frame_lookup(project_path, filename, "movies")
+        lookup = load_best_frame_lookup(project_path, filename, "movie")
         return [
             {
                 "filename":       filename,
@@ -626,7 +626,7 @@ def build_scenes_results(
     from data.metadata import get_metadata
 
     movie_id   = Path(filename).stem
-    shots      = read_shotlist(project_path, filename, "movies")
+    shots      = read_shotlist(project_path, filename, "movie")
     video_path = _find_video_path(project_path, movie_id)
 
     # Video dimensions for correctly-proportioned intertitle tiles
@@ -647,7 +647,7 @@ def build_scenes_results(
             pass
 
     # Title and year from stored metadata, falling back to filename parsing
-    meta_list = get_metadata(project_path, filename, "movies")
+    meta_list = get_metadata(project_path, filename, "movie")
     if meta_list:
         _meta = meta_list[0]
     else:
@@ -668,7 +668,7 @@ def build_scenes_results(
     best_lookup: dict = {}
     if best_mode:
         from services.frame_match import load_best_frame_lookup
-        best_lookup = load_best_frame_lookup(project_path, filename, "movies")
+        best_lookup = load_best_frame_lookup(project_path, filename, "movie")
 
     results: list[dict] = []
 

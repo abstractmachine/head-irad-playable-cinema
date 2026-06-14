@@ -15,12 +15,12 @@ import hashlib
 import re
 
 
-def compute_media_id(record: dict, media_type: str = "movies") -> str:
+def compute_media_id(record: dict, media_type: str = "movie") -> str:
     """Return a stable media_id for a metadata record.
 
     Args:
         record:     Dict with at minimum a 'filename' or 'title' field.
-        media_type: "movies" | "gameplay"  (controls fallback slug prefix)
+        media_type: "movie" | "gameplay"  (controls fallback slug prefix)
     """
     # TMDB movie -------------------------------------------------------
     tmdb = str(record.get("tmdb") or record.get("tmdb_id") or "").strip()
@@ -45,7 +45,7 @@ def compute_media_id(record: dict, media_type: str = "movies") -> str:
     hash_input = filename or title
 
     # Gameplay clip ----------------------------------------------------
-    if media_type == "gameplay":
+    if media_type in ("gameplay",):
         # Prefer an explicit 'game' key, then fall back to the first word of title/filename
         game_hint = str(record.get("game") or title or filename)
         slug = _game_slug(game_hint)

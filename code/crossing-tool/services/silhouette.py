@@ -692,7 +692,7 @@ def find_candidates(
     field: str,
     scope_type: str,
     scope_value: str | None,
-    media_type: str = "movies",
+    media_type: str = "movie",
     limit: int = 20,
     limit_per_item: int = 3,
 ) -> list[dict]:
@@ -1170,7 +1170,7 @@ def build_silhouette(
     field: str,
     scope_type: str,
     scope_value: str | None,
-    media_type: str = "movies",
+    media_type: str = "movie",
     sam_model_name: str = "sam3.pt",
     frame_model_name: str = "clip-vit-base-patch32",
     force: bool = False,
@@ -1186,7 +1186,7 @@ def build_silhouette(
     field:              Annotation field / category (e.g. ``"animals"``).
     scope_type:         ``"all"``, ``"movie"``, or ``"shot"``.
     scope_value:        Movie title / media_id, or shot_id.  None for "all".
-    media_type:         ``"movies"`` or ``"gameplay"``.
+    media_type:         ``"movie"`` or ``"gameplay"``.
     sam_model_name:     SAM3 checkpoint filename inside ``<project>/models/``.
     frame_model_name:   CLIP model name/path for frame matching.
     force:              Overwrite existing cached result.

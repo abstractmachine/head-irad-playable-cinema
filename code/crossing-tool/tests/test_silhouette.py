@@ -79,11 +79,11 @@ class TestScoreToStr(unittest.TestCase):
 
 class TestSilhouetteCacheDir(unittest.TestCase):
     def test_all_scope(self):
-        p = silhouette_cache_dir("/proj", "movies", "all", "animals", "horse")
+        p = silhouette_cache_dir("/proj", "movie", "all", "animals", "horse")
         self.assertEqual(p, Path("/proj/data/silhouettes/movies/all/animals/horse"))
 
     def test_movie_scope(self):
-        p = silhouette_cache_dir("/proj", "movies", "movie-tmdb_11969", "objects", "saddle")
+        p = silhouette_cache_dir("/proj", "movie", "movie-tmdb_11969", "objects", "saddle")
         self.assertEqual(
             p,
             Path("/proj/data/silhouettes/movies/movie-tmdb_11969/objects/saddle"),
@@ -91,11 +91,11 @@ class TestSilhouetteCacheDir(unittest.TestCase):
 
     def test_shot_scope(self):
         shot = "tmdb_281957@f001240-f001310"
-        p = silhouette_cache_dir("/proj", "movies", f"shot-{shot}", "animals", "horse")
+        p = silhouette_cache_dir("/proj", "movie", f"shot-{shot}", "animals", "horse")
         self.assertTrue(str(p).endswith(f"shot-{shot}/animals/horse"))
 
     def test_field_and_word_are_lowercased(self):
-        p = silhouette_cache_dir("/proj", "movies", "all", "Animals", "Horse")
+        p = silhouette_cache_dir("/proj", "movie", "all", "Animals", "Horse")
         self.assertEqual(p, Path("/proj/data/silhouettes/movies/all/animals/horse"))
 
 
@@ -126,7 +126,7 @@ class TestSilhouetteJsonPath(unittest.TestCase):
     def test_path_combines_dir_and_filename(self):
         path = silhouette_json_path(
             project_path="/proj",
-            media_type="movies",
+            media_type="movie",
             scope="all",
             field="animals",
             word="horse",
@@ -288,24 +288,24 @@ class TestMaskToPolygon(unittest.TestCase):
 class TestSilhouetteExists(unittest.TestCase):
     def test_no_dir_returns_false(self):
         with tempfile.TemporaryDirectory() as tmp:
-            exists, path = silhouette_exists(tmp, "movies", "all", "animals", "horse")
+            exists, path = silhouette_exists(tmp, "movie", "all", "animals", "horse")
             self.assertFalse(exists)
             self.assertIsNone(path)
 
     def test_empty_dir_returns_false(self):
         with tempfile.TemporaryDirectory() as tmp:
-            cache = silhouette_cache_dir(tmp, "movies", "all", "animals", "horse")
+            cache = silhouette_cache_dir(tmp, "movie", "all", "animals", "horse")
             cache.mkdir(parents=True)
-            exists, path = silhouette_exists(tmp, "movies", "all", "animals", "horse")
+            exists, path = silhouette_exists(tmp, "movie", "all", "animals", "horse")
             self.assertFalse(exists)
 
     def test_existing_file_returns_true(self):
         with tempfile.TemporaryDirectory() as tmp:
-            cache = silhouette_cache_dir(tmp, "movies", "all", "animals", "horse")
+            cache = silhouette_cache_dir(tmp, "movie", "all", "animals", "horse")
             cache.mkdir(parents=True)
             fn = silhouette_filename("tmdb_1", "tmdb_1@f000000-f000100", 50, 0.8)
             (cache / fn).write_text("{}", encoding="utf-8")
-            exists, path = silhouette_exists(tmp, "movies", "all", "animals", "horse")
+            exists, path = silhouette_exists(tmp, "movie", "all", "animals", "horse")
             self.assertTrue(exists)
             self.assertIsNotNone(path)
             self.assertEqual(path.name, fn)
@@ -318,20 +318,20 @@ class TestSilhouetteExists(unittest.TestCase):
 class TestManifest(unittest.TestCase):
     def test_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:
-            manifest = load_silhouette_manifest(tmp, "movies")
+            manifest = load_silhouette_manifest(tmp, "movie")
             self.assertEqual(manifest, {"entries": []})
             manifest["entries"].append({"word": "horse", "field": "animals"})
-            save_silhouette_manifest(tmp, "movies", manifest)
-            reloaded = load_silhouette_manifest(tmp, "movies")
+            save_silhouette_manifest(tmp, "movie", manifest)
+            reloaded = load_silhouette_manifest(tmp, "movie")
             self.assertEqual(len(reloaded["entries"]), 1)
             self.assertEqual(reloaded["entries"][0]["word"], "horse")
 
     def test_corrupt_file_returns_empty(self):
         with tempfile.TemporaryDirectory() as tmp:
-            mpath = Path(tmp) / "data" / "silhouettes" / "movies" / "manifest.json"
+            mpath = Path(tmp) / "data" / "silhouettes" / "movie" / "manifest.json"
             mpath.parent.mkdir(parents=True)
             mpath.write_text("NOT JSON", encoding="utf-8")
-            manifest = load_silhouette_manifest(tmp, "movies")
+            manifest = load_silhouette_manifest(tmp, "movie")
             self.assertEqual(manifest, {"entries": []})
 
 
@@ -348,7 +348,7 @@ class TestFindCandidates(unittest.TestCase):
             field="animals",
             scope_type="shot",
             scope_value="tmdb_1@f000000-f000100",
-            media_type="movies",
+            media_type="movie",
         )
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0]["shot_id"], "tmdb_1@f000000-f000100")
@@ -364,7 +364,7 @@ class TestFindCandidates(unittest.TestCase):
             field="animals",
             scope_type="all",
             scope_value=None,
-            media_type="movies",
+            media_type="movie",
         )
         mock_fc.assert_called_once()
         self.assertEqual(result, [])
@@ -406,7 +406,7 @@ class TestBuildSilhouettePayloadShape(unittest.TestCase):
             "word": "horse",
             "field": "animals",
             "scope": "all",
-            "media_type": "movies",
+            "media_type": "movie",
             "source_filename": "film.mp4",
             "media_id": "tmdb_1",
             "shot_id": "tmdb_1@f000000-f000100",
@@ -452,7 +452,7 @@ class TestBuildSilhouettePayloadShape(unittest.TestCase):
                     field="animals",
                     scope_type="all",
                     scope_value=None,
-                    media_type="movies",
+                    media_type="movie",
                     sam_model_name="sam2.1_b.pt",
                     frame_model_name="clip-vit-base-patch32",
                     force=False,
@@ -506,7 +506,7 @@ class TestBuildSilhouetteRejection(unittest.TestCase):
                     field="animals",
                     scope_type="all",
                     scope_value=None,
-                    media_type="movies",
+                    media_type="movie",
                     sam_model_name="sam2.1_b.pt",
                     frame_model_name="clip-vit-base-patch32",
                     force=False,
@@ -533,7 +533,7 @@ class TestBuildSilhouetteRejection(unittest.TestCase):
                     field="animals",
                     scope_type="all",
                     scope_value=None,
-                    media_type="movies",
+                    media_type="movie",
                     sam_model_name="sam2.1_b.pt",
                     frame_model_name="clip-vit-base-patch32",
                     force=False,
@@ -571,7 +571,7 @@ class TestBuildSilhouetteDryRun(unittest.TestCase):
                     field="animals",
                     scope_type="all",
                     scope_value=None,
-                    media_type="movies",
+                    media_type="movie",
                     sam_model_name="sam2.1_b.pt",
                     frame_model_name="clip-vit-base-patch32",
                     force=False,
@@ -593,7 +593,7 @@ class TestBuildSilhouetteCacheHit(unittest.TestCase):
     def test_cache_hit_returns_immediately(self):
         with tempfile.TemporaryDirectory() as tmp:
             # Pre-populate the cache
-            cache = silhouette_cache_dir(tmp, "movies", "all", "animals", "horse")
+            cache = silhouette_cache_dir(tmp, "movie", "all", "animals", "horse")
             cache.mkdir(parents=True)
             fn = silhouette_filename("tmdb_1", "tmdb_1@f000000-f000100", 50, 0.8)
             payload = {"word": "horse", "field": "animals", "score": 0.8}
@@ -611,7 +611,7 @@ class TestBuildSilhouetteCacheHit(unittest.TestCase):
                     field="animals",
                     scope_type="all",
                     scope_value=None,
-                    media_type="movies",
+                    media_type="movie",
                     sam_model_name="sam2.1_b.pt",
                     frame_model_name="clip-vit-base-patch32",
                     force=False,
@@ -640,25 +640,25 @@ class TestScanRecordsFlat(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             # Two silhouettes for horse/animals — different scopes
             f1 = (
-                Path(tmp) / "data" / "silhouettes" / "movies"
+                Path(tmp) / "data" / "silhouettes" / "movie"
                 / "movie-tmdb_1" / "animals" / "horse"
                 / silhouette_filename("tmdb_1", "tmdb_1@f000000-f000050", 25, 0.85)
             )
             f2 = (
-                Path(tmp) / "data" / "silhouettes" / "movies"
+                Path(tmp) / "data" / "silhouettes" / "movie"
                 / "movie-tmdb_2" / "animals" / "horse"
                 / silhouette_filename("tmdb_2", "tmdb_2@f000100-f000200", 150, 0.72)
             )
             # One silhouette for saddle/objects
             f3 = (
-                Path(tmp) / "data" / "silhouettes" / "movies"
+                Path(tmp) / "data" / "silhouettes" / "movie"
                 / "all" / "objects" / "saddle"
                 / silhouette_filename("tmdb_1", "tmdb_1@f000060-f000090", 70, 0.60)
             )
             for f in (f1, f2, f3):
                 self._write_json(f, {"word": f.parent.name, "score": 0.5})
 
-            records = scan_records_flat(tmp, "movies")
+            records = scan_records_flat(tmp, "movie")
 
         self.assertEqual(len(records), 3)
         words = [r["word"] for r in records]
@@ -671,19 +671,19 @@ class TestScanRecordsFlat(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             f1 = (
-                Path(tmp) / "data" / "silhouettes" / "movies"
+                Path(tmp) / "data" / "silhouettes" / "movie"
                 / "all" / "animals" / "horse"
                 / silhouette_filename("tmdb_1", "tmdb_1@f000000-f000050", 25, 0.80)
             )
             f2 = (
-                Path(tmp) / "data" / "silhouettes" / "movies"
+                Path(tmp) / "data" / "silhouettes" / "movie"
                 / "all" / "objects" / "saddle"
                 / silhouette_filename("tmdb_1", "tmdb_1@f000060-f000090", 70, 0.60)
             )
             for f in (f1, f2):
                 self._write_json(f, {})
 
-            records = scan_records_flat(tmp, "movies", filter_field="animals")
+            records = scan_records_flat(tmp, "movie", filter_field="animals")
 
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["field"], "animals")
@@ -695,19 +695,19 @@ class TestScanRecordsFlat(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             # Two horse records in the same scope — higher score should come first
             high = (
-                Path(tmp) / "data" / "silhouettes" / "movies"
+                Path(tmp) / "data" / "silhouettes" / "movie"
                 / "all" / "animals" / "horse"
                 / silhouette_filename("tmdb_1", "tmdb_1@f000000-f000010", 5, 0.90)
             )
             low = (
-                Path(tmp) / "data" / "silhouettes" / "movies"
+                Path(tmp) / "data" / "silhouettes" / "movie"
                 / "all" / "animals" / "horse"
                 / silhouette_filename("tmdb_2", "tmdb_2@f000000-f000010", 5, 0.65)
             )
             for f in (high, low):
                 self._write_json(f, {})
 
-            records = scan_records_flat(tmp, "movies")
+            records = scan_records_flat(tmp, "movie")
 
         scores = [r["score"] for r in records]
         self.assertEqual(scores, sorted(scores, reverse=True))
@@ -716,7 +716,7 @@ class TestScanRecordsFlat(unittest.TestCase):
         from services.silhouette import scan_records_flat
 
         with tempfile.TemporaryDirectory() as tmp:
-            records = scan_records_flat(tmp, "movies")
+            records = scan_records_flat(tmp, "movie")
 
         self.assertEqual(records, [])
 
@@ -725,13 +725,13 @@ class TestScanRecordsFlat(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             f = (
-                Path(tmp) / "data" / "silhouettes" / "movies"
+                Path(tmp) / "data" / "silhouettes" / "movie"
                 / "all" / "animals" / "horse"
                 / silhouette_filename("tmdb_1", "tmdb_1@f000000-f000010", 5, 0.80)
             )
             self._write_json(f, {})
 
-            records = scan_records_flat(tmp, "movies")
+            records = scan_records_flat(tmp, "movie")
 
         self.assertEqual(len(records), 1)
         rec = records[0]
@@ -790,7 +790,7 @@ class TestClipScoreFloor(unittest.TestCase):
                             with patch("services.frame_match.find_query_best_frame_for_shot", return_value=(50, 0.9)):
                                 with tempfile.TemporaryDirectory() as tmp:
                                     import os
-                                    video_dir = Path(tmp) / "media" / "videos" / "movies"
+                                    video_dir = Path(tmp) / "media" / "videos" / "movie"
                                     video_dir.mkdir(parents=True)
                                     (video_dir / "film.mp4").touch()
 
@@ -801,7 +801,7 @@ class TestClipScoreFloor(unittest.TestCase):
                                         shot_id="tmdb_1@f000000-f000100",
                                         filename="film.mp4",
                                         media_id="tmdb_1",
-                                        media_type="movies",
+                                        media_type="movie",
                                         sam_model_name="sam2.1_b.pt",
                                         frame_model_name="clip-vit-base-patch32",
                                         clip_model=MagicMock(),
@@ -860,7 +860,7 @@ class TestRunnerUpMargin(unittest.TestCase):
                         with patch("services.frame_match._get_video_fps", return_value=24.0):
                             with patch("services.frame_match.find_query_best_frame_for_shot", return_value=(50, 0.9)):
                                 with tempfile.TemporaryDirectory() as tmp:
-                                    video_dir = Path(tmp) / "media" / "videos" / "movies"
+                                    video_dir = Path(tmp) / "media" / "videos" / "movie"
                                     video_dir.mkdir(parents=True)
                                     (video_dir / "film.mp4").touch()
 
@@ -871,7 +871,7 @@ class TestRunnerUpMargin(unittest.TestCase):
                                         shot_id="tmdb_1@f000000-f000100",
                                         filename="film.mp4",
                                         media_id="tmdb_1",
-                                        media_type="movies",
+                                        media_type="movie",
                                         sam_model_name="sam2.1_b.pt",
                                         frame_model_name="clip-vit-base-patch32",
                                         clip_model=MagicMock(),
@@ -933,7 +933,7 @@ class TestRunnerUpMargin(unittest.TestCase):
                                 with patch("services.frame_match.best_frame_path") as mock_bfp:
                                     mock_bfp.return_value = Path("/nonexistent/frame.jpg")
                                     with tempfile.TemporaryDirectory() as tmp:
-                                        video_dir = Path(tmp) / "media" / "videos" / "movies"
+                                        video_dir = Path(tmp) / "media" / "videos" / "movie"
                                         video_dir.mkdir(parents=True)
                                         (video_dir / "film.mp4").touch()
 
@@ -944,7 +944,7 @@ class TestRunnerUpMargin(unittest.TestCase):
                                             shot_id="tmdb_1@f000000-f000100",
                                             filename="film.mp4",
                                             media_id="tmdb_1",
-                                            media_type="movies",
+                                            media_type="movie",
                                             sam_model_name="sam2.1_b.pt",
                                             frame_model_name="clip-vit-base-patch32",
                                             clip_model=MagicMock(),

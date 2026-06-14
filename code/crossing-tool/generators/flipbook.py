@@ -387,7 +387,7 @@ def _render_cover_back(
 def load_flipbook_data(
     project_path: str,
     filename: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
 ) -> dict:
     """Load and join annotation + palette data for a movie.
 
@@ -669,7 +669,7 @@ def export_flipbook_pdf(
 def generate_flipbook_for_movie(
     project_path: str,
     filename: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     *,
     force: bool = False,
     verbose: bool = False,
@@ -680,7 +680,7 @@ def generate_flipbook_for_movie(
     ----------
     project_path: Project root directory.
     filename:     Video filename.
-    media_type:   ``"movies"`` or ``"gameplay"``.
+    media_type:   ``"movie"`` or ``"gameplay"``.
     force:        Overwrite existing PDF.
     verbose:      Print page progress.
 
@@ -717,7 +717,7 @@ def generate_flipbook_for_movie(
 
 def generate_flipbook_for_all_movies(
     project_path: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     *,
     force: bool = False,
     verbose: bool = False,

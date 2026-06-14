@@ -46,7 +46,7 @@ def _composite_for_clip(png_path: Path):
 
 def compute_scores_for_catalog(
     project_path: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     label: Optional[str] = None,
     field: Optional[str] = None,
     rebuild: bool = False,

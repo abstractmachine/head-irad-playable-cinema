@@ -163,7 +163,7 @@ mcp = FastMCP("crossing")
 
 @mcp.tool()
 def list_movies(
-    media_type: str = "movies",
+    media_type: str = "movie",
     compact: bool = False,
     limit: int = 0,
     offset: int = 0,
@@ -176,15 +176,16 @@ def list_movies(
     only). Use limit/offset for pagination.
 
     Args:
-        media_type: "movies" (default) or "gameplay".
+        media_type: "movie" (default) or "gameplay".
         compact:    Return minimal fields only (default False).
         limit:      Max films to return (0 = no limit).
         offset:     Skip this many films before returning (0 = no skip).
 
     Read-only. Reads: data/metadata/<media_type>.json
     """
-    if media_type not in ("movies", "gameplay"):
-        return _err(f"Invalid media_type {media_type!r}. Must be 'movies' or 'gameplay'.")
+    if media_type not in ("movie", "movies", "gameplay"):
+        return _err(f"Invalid media_type {media_type!r}. Must be 'movie' or 'gameplay'.")
+    media_type = "movie" if media_type == "movies" else media_type
 
     result = _ctx()
     if isinstance(result, str):
@@ -240,13 +241,13 @@ def list_movies(
 @mcp.tool()
 def get_metadata(
     film: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
 ) -> str:
     """Get full metadata for one film by title, filename, or TMDb ID.
 
     Args:
         film:       Title substring, exact filename, or numeric TMDb ID.
-        media_type: "movies" (default) or "gameplay".
+        media_type: "movie" (default) or "gameplay".
 
     Read-only. Reads: data/metadata/<media_type>.json
     """
@@ -271,7 +272,7 @@ def get_metadata(
 @mcp.tool()
 def get_shotlist(
     film: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     scene: str = "",
     compact: bool = False,
     limit: int = 0,
@@ -285,7 +286,7 @@ def get_shotlist(
 
     Args:
         film:       Title substring, exact filename, or numeric TMDb ID.
-        media_type: "movies" (default) or "gameplay".
+        media_type: "movie" (default) or "gameplay".
         scene:      Scene number to filter to (e.g. "3"). Empty = all scenes.
         compact:    Return minimal fields only: shot_id, start_time, end_time,
                     Scene (default False).
@@ -352,7 +353,7 @@ def get_shotlist(
 @mcp.tool()
 def get_subtitles(
     film: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     start_secs: float = 0.0,
     end_secs: float = 0.0,
     limit: int = 0,
@@ -362,7 +363,7 @@ def get_subtitles(
 
     Args:
         film:       Title substring, exact filename, or numeric TMDb ID.
-        media_type: "movies" (default) or "gameplay".
+        media_type: "movie" (default) or "gameplay".
         start_secs: Window start in seconds (0 = from beginning).
         end_secs:   Window end in seconds (0 = to end of film).
         limit:      Max cues to return (0 = no limit).
@@ -424,7 +425,7 @@ def get_subtitles(
 @mcp.tool()
 def list_motifs(
     film: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     include_full_shots: bool = False,
 ) -> str:
     """Get the motif word sequence for one film.
@@ -436,7 +437,7 @@ def list_motifs(
 
     Args:
         film:               Title substring, exact filename, or numeric TMDb ID.
-        media_type:         "movies" (default) or "gameplay".
+        media_type:         "movie" (default) or "gameplay".
         include_full_shots: Include full per-shot motif objects (default False).
 
     Read-only. Reads: data/motifs/<media_type>/<stem>.json
@@ -478,7 +479,7 @@ def list_motifs(
 @mcp.tool()
 def list_palettes(
     film: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     include_full: bool = False,
 ) -> str:
     """Get the colour palette data for one film's shots.
@@ -491,7 +492,7 @@ def list_palettes(
 
     Args:
         film:         Title substring, exact filename, or numeric TMDb ID.
-        media_type:   "movies" (default) or "gameplay".
+        media_type:   "movie" (default) or "gameplay".
         include_full: Include the full per-shot palette data (default False).
                       Warning: can be very large for feature-length films.
 
@@ -552,7 +553,7 @@ def list_silhouettes(
     word: str,
     field: str = "objects",
     scope: str = "all",
-    media_type: str = "movies",
+    media_type: str = "movie",
 ) -> str:
     """List cached silhouette extractions for a vocabulary word.
 
@@ -563,7 +564,7 @@ def list_silhouettes(
         word:       The vocabulary term to look up (e.g. "horse", "gun").
         field:      Annotation field: "objects", "animals", "humans", "wearing".
         scope:      "all" (full corpus) or "movie-<media_id>" for one film.
-        media_type: "movies" (default) or "gameplay".
+        media_type: "movie" (default) or "gameplay".
 
     Read-only. Reads: data/silhouettes/<media_type>/<scope>/<field>/<word>/
     """
@@ -615,7 +616,7 @@ def search_shots(
     field: str = "",
     limit: int = 40,
     limit_per_film: int = 0,
-    media_type: str = "movies",
+    media_type: str = "movie",
 ) -> str:
     """Search shot annotations across the archive by keyword or phrase.
 
@@ -631,7 +632,7 @@ def search_shots(
                        Empty string searches all fields.
         limit:         Maximum total results (default 40, 0 = no limit).
         limit_per_film: Maximum results per film (0 = no per-film limit).
-        media_type:    "movies" (default) or "gameplay".
+        media_type:    "movie" (default) or "gameplay".
 
     Read-only. Reads: data/annotations/shots/, data/shotlists/, data/metadata/
     """
@@ -671,7 +672,7 @@ def search_vocabulary(
     field: str,
     top: int = 50,
     sort: str = "count",
-    media_type: str = "movies",
+    media_type: str = "movie",
 ) -> str:
     """Query the vocabulary index for a given annotation field.
 
@@ -683,7 +684,7 @@ def search_vocabulary(
                     "humans", "wearing".
         top:        Number of terms to return (default 50, 0 = all).
         sort:       "count" (most frequent first) or "alphabetical".
-        media_type: "movies" (default) or "gameplay".
+        media_type: "movie" (default) or "gameplay".
 
     Read-only. Reads: data/index/vocabulary_<media_type>.json
     """
@@ -837,7 +838,7 @@ def test_image_png() -> list:
 def debug_frame_bytes(
     film: str,
     shot_id: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     width: int = 400,
 ) -> str:
     """Diagnostic: fetch a frame and report byte-level details WITHOUT returning the image.
@@ -953,7 +954,7 @@ def debug_frame_bytes(
 def get_best_frame(
     film: str,
     shot_id: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     width: int = 400,
 ) -> list:
     """Retrieve a single frame thumbnail for a specific shot.
@@ -965,7 +966,7 @@ def get_best_frame(
     Args:
         film:       Title substring, filename, or TMDb ID of the film.
         shot_id:    Canonical shot identifier (e.g. "tmdb_4638@f001234-f001456").
-        media_type: "movies" (default) or "gameplay".
+        media_type: "movie" (default) or "gameplay".
         width:      Thumbnail width in pixels (default 400; max recommended 800).
 
     Read-only. Reads: media/frames/best/ and/or media/videos/
@@ -996,7 +997,7 @@ def get_best_frames(
     films: list[str] | None = None,
     field: str = "",
     width: int = 400,
-    media_type: str = "movies",
+    media_type: str = "movie",
 ) -> list:
     """Search shots by keyword and return frame thumbnails for the top results.
 
@@ -1010,7 +1011,7 @@ def get_best_frames(
         films:      Optional list of film titles to restrict search.
         field:      Annotation field to restrict search (empty = all fields).
         width:      Thumbnail width in pixels (default 400).
-        media_type: "movies" (default) or "gameplay".
+        media_type: "movie" (default) or "gameplay".
 
     Read-only. Reads: data/annotations/, media/frames/best/, media/videos/
     """
@@ -1053,7 +1054,7 @@ def get_palette_frames(
     films: list[str] | None = None,
     limit: int = 4,
     width: int = 400,
-    media_type: str = "movies",
+    media_type: str = "movie",
 ) -> list:
     """Retrieve frame thumbnails for shots matching colour-palette filters.
 
@@ -1077,7 +1078,7 @@ def get_palette_frames(
         films:           Optional list of film titles to restrict search.
         limit:           Max frames to return (default 4; max recommended 8).
         width:           Thumbnail width in pixels (default 400).
-        media_type:      "movies" (default) or "gameplay".
+        media_type:      "movie" (default) or "gameplay".
 
     Read-only. Reads: data/palettes/, media/frames/best/, media/videos/
     """
@@ -1121,7 +1122,7 @@ def get_motif_frames(
     films: list[str] | None = None,
     limit: int = 4,
     width: int = 400,
-    media_type: str = "movies",
+    media_type: str = "movie",
 ) -> list:
     """Retrieve frame thumbnails for shots whose motif word matches *motif*.
 
@@ -1133,7 +1134,7 @@ def get_motif_frames(
         films:      Optional list of film titles to restrict search.
         limit:      Max frames to return (default 4; max recommended 8).
         width:      Thumbnail width in pixels (default 400).
-        media_type: "movies" (default) or "gameplay".
+        media_type: "movie" (default) or "gameplay".
 
     Read-only. Reads: data/motifs/, media/frames/best/, media/videos/
     """
@@ -1164,7 +1165,7 @@ def get_context_frames(
     shot_id: str,
     window: int = 3,
     width: int = 400,
-    media_type: str = "movies",
+    media_type: str = "movie",
 ) -> list:
     """Retrieve frame thumbnails for a shot and its neighboring shots.
 
@@ -1177,7 +1178,7 @@ def get_context_frames(
         shot_id:    Central shot identifier.
         window:     Shots to show on each side (default 3; max 6).
         width:      Thumbnail width in pixels (default 400).
-        media_type: "movies" (default) or "gameplay".
+        media_type: "movie" (default) or "gameplay".
 
     Read-only. Reads: data/shotlists/, media/frames/best/, media/videos/
     """
@@ -1211,7 +1212,7 @@ def get_context_frames(
 @mcp.tool()
 def generate_flipbook(
     film: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     force: bool = False,
 ) -> str:
     """Generate a cinematic flipbook PDF for one film.
@@ -1225,7 +1226,7 @@ def generate_flipbook(
 
     Args:
         film:       Title substring, exact filename, or numeric TMDb ID.
-        media_type: "movies" (default) or "gameplay".
+        media_type: "movie" (default) or "gameplay".
         force:      Overwrite if PDF already exists (default False).
 
     Output-writing. Reads: data/motifs/, data/palettes/
@@ -1268,7 +1269,7 @@ def generate_mosaic(
     field: str = "",
     limit: int = 40,
     layout: str = "landscape",
-    media_type: str = "movies",
+    media_type: str = "movie",
 ) -> str:
     """Generate a mosaic contact sheet from shot search results.
 
@@ -1283,7 +1284,7 @@ def generate_mosaic(
         field:      Annotation field to restrict search (empty = all fields).
         limit:      Max frames in the mosaic (default 40).
         layout:     "landscape" (default) or "portrait".
-        media_type: "movies" (default) or "gameplay".
+        media_type: "movie" (default) or "gameplay".
 
     Output-writing. Reads: data/annotations/, media/videos/
                    Writes: output/mosaics/
@@ -1335,7 +1336,7 @@ def generate_cloud(
     style: str = "default",
     max_words: int = 150,
     min_count: int = 2,
-    media_type: str = "movies",
+    media_type: str = "movie",
 ) -> str:
     """Generate a word-cloud PDF from shot annotation text.
 
@@ -1353,7 +1354,7 @@ def generate_cloud(
         style:      Style preset name (default = "default"; "western" available).
         max_words:  Maximum words to render (default 150).
         min_count:  Minimum occurrences to include (default 2).
-        media_type: "movies" (default) or "gameplay".
+        media_type: "movie" (default) or "gameplay".
 
     Output-writing. Reads: data/annotations/
                    Writes: output/clouds/
@@ -1395,7 +1396,7 @@ def generate_composition(
     field: str = "",
     orientation: str = "portrait",
     seed: int = 0,
-    media_type: str = "movies",
+    media_type: str = "movie",
 ) -> str:
     """Generate a single-frame composition image from a shot search result.
 
@@ -1411,7 +1412,7 @@ def generate_composition(
         orientation: "portrait" (1240×1754, poster-like) or
                      "landscape" (1920×1080, cinematic).
         seed:        RNG seed for reproducibility (0 = random).
-        media_type:  "movies" (default) or "gameplay".
+        media_type:  "movie" (default) or "gameplay".
 
     Output-writing. Reads: data/annotations/, media/videos/
                    Writes: output/compositions/
@@ -1465,7 +1466,7 @@ def generate_composition(
 @mcp.tool()
 def generate_catalog(
     films: list[str] | None = None,
-    media_type: str = "movies",
+    media_type: str = "movie",
     include_annotations: bool = False,
     include_motifs: bool = False,
     inline: bool = False,
@@ -1485,7 +1486,7 @@ def generate_catalog(
     Args:
         films:               Optional list of film titles/filenames to include.
                              Omit or pass null to include all films.
-        media_type:          "movies" (default) or "gameplay".
+        media_type:          "movie" (default) or "gameplay".
         include_annotations: Include per-shot annotation summaries (large output).
         include_motifs:      Include motif word sequences for each film.
         inline:              Return the full catalog object in the response
@@ -1589,7 +1590,7 @@ def compare_motifs(
     films: list[str] | None = None,
     mode: str = "overlap",
     limit: int | None = None,
-    media_type: str = "movies",
+    media_type: str = "movie",
 ) -> str:
     """Compare motif usage across films.
 
@@ -1602,7 +1603,7 @@ def compare_motifs(
                     "sequence"  — ordered motif word list per film
                     "rare"      — words appearing in exactly 1 film
         limit:      Cap on returned entries.
-        media_type: "movies" (default) or "gameplay".
+        media_type: "movie" (default) or "gameplay".
 
     Read-only. Reads: data/motifs/, data/metadata/
     """
@@ -1630,7 +1631,7 @@ def get_all_motifs(
     films: list[str] | None = None,
     sort: str = "frequency",
     limit: int | None = None,
-    media_type: str = "movies",
+    media_type: str = "movie",
 ) -> str:
     """Return a global motif frequency index across the archive.
 
@@ -1642,7 +1643,7 @@ def get_all_motifs(
         sort:       "frequency" (most common first, default),
                     "alphabetical", or "rarity" (least common first).
         limit:      Cap on returned vocabulary entries.
-        media_type: "movies" (default) or "gameplay".
+        media_type: "movie" (default) or "gameplay".
 
     Read-only. Reads: data/motifs/, data/metadata/
     """
@@ -1681,7 +1682,7 @@ def search_palette(
     chroma_max: float | None = None,
     films: list[str] | None = None,
     limit: int | None = None,
-    media_type: str = "movies",
+    media_type: str = "movie",
 ) -> str:
     """Filter shots by colour-space characteristics from the palette cache.
 
@@ -1705,7 +1706,7 @@ def search_palette(
         chroma_min/max:    Fine-grained chroma bounds (0–1).
         films:          Restrict to these film titles (None → all).
         limit:          Cap on returned results.
-        media_type:     "movies" (default) or "gameplay".
+        media_type:     "movie" (default) or "gameplay".
 
     Read-only. Reads: data/palettes/, data/shotlists/, data/metadata/
     """
@@ -1748,7 +1749,7 @@ def search_cooccurrence(
     fields: list[str] | None = None,
     films: list[str] | None = None,
     limit: int | None = None,
-    media_type: str = "movies",
+    media_type: str = "movie",
 ) -> str:
     """Find shots containing multiple annotation terms simultaneously.
 
@@ -1763,7 +1764,7 @@ def search_cooccurrence(
                     None → search all fields.
         films:      Restrict to these film titles (None → all).
         limit:      Cap on returned results.
-        media_type: "movies" (default) or "gameplay".
+        media_type: "movie" (default) or "gameplay".
 
     Read-only. Reads: data/annotations/ (via services/search.py index)
     """
@@ -1798,7 +1799,7 @@ def get_shot_context(
     include_subtitles: bool = False,
     include_motif: bool = False,
     include_palette: bool = False,
-    media_type: str = "movies",
+    media_type: str = "movie",
 ) -> str:
     """Return neighboring shots around a given shot_id with optional enrichment.
 
@@ -1813,7 +1814,7 @@ def get_shot_context(
         include_subtitles:  Attach overlapping subtitle cues.
         include_motif:      Attach the motif word annotation.
         include_palette:    Attach fg/bg dominant colour.
-        media_type:         "movies" (default) or "gameplay".
+        media_type:         "movie" (default) or "gameplay".
 
     Read-only. Reads: data/shotlists/, data/annotations/, data/subtitles/,
                       data/motifs/, data/palettes/
@@ -1846,7 +1847,7 @@ def get_shot_context(
 def align_subtitles_to_shots(
     film: str,
     scene: int | None = None,
-    media_type: str = "movies",
+    media_type: str = "movie",
 ) -> str:
     """Align subtitle cues to shotlist entries by time overlap.
 
@@ -1857,7 +1858,7 @@ def align_subtitles_to_shots(
     Args:
         film:       Film title substring, filename, or TMDb ID.
         scene:      Restrict to one scene number. Omit for all scenes.
-        media_type: "movies" (default) or "gameplay".
+        media_type: "movie" (default) or "gameplay".
 
     Read-only. Reads: data/shotlists/, media/subtitles/
     """
@@ -1883,7 +1884,7 @@ def align_subtitles_to_shots(
 
 @mcp.tool()
 def get_archive_stats(
-    media_type: str = "movies",
+    media_type: str = "movie",
 ) -> str:
     """Return archive-level coverage statistics.
 
@@ -1892,7 +1893,7 @@ def get_archive_stats(
     loaded — counts are derived from file presence and header scanning only.
 
     Args:
-        media_type: "movies" (default) or "gameplay".
+        media_type: "movie" (default) or "gameplay".
 
     Read-only. Reads: data/metadata/, data/shotlists/, data/annotations/,
                       data/motifs/, data/palettes/, media/subtitles/,

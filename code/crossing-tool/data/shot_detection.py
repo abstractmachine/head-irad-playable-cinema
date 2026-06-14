@@ -166,7 +166,7 @@ def write_shotlist_csv(
     project_path: str,
     filename: str,
     shots: list[dict[str, Any]],
-    media_type: str = "movies",
+    media_type: str = "movie",
     force: bool = False
 ) -> Path:
     """Write detected shots to CSV file.
@@ -175,7 +175,7 @@ def write_shotlist_csv(
         project_path: Path to project
         filename: Video filename
         shots: List of shot dicts with start, end, confidence, source
-        media_type: movies or gameplay
+        media_type: movie or gameplay
         force: Overwrite existing file if True
     
     Returns:

@@ -72,7 +72,7 @@ def _make_catalog_entry(label_dir: Path, index: int, shot_id: str = "tmdb_1@f0-f
         "shot_id":        shot_id,
         "filename":       "film.mkv",
         "filename_stem":  label_dir.parent.name,
-        "media_type":     "movies",
+        "media_type":     "movie",
         "media_id":       "tmdb_1",
         "frame":          50,
         "confidence":     0.75,
@@ -102,18 +102,18 @@ class TestSafeLabel(unittest.TestCase):
 
 class TestCatalogDirHelpers(unittest.TestCase):
     def test_catalog_base_dir(self):
-        p = catalog_base_dir("/project", "movies")
+        p = catalog_base_dir("/project", "movie")
         self.assertEqual(p, Path("/project/data/silhouettes/catalog/movies"))
 
     def test_catalog_item_dir(self):
-        p = catalog_item_dir("/project", "movies", "django_1966", "horse")
+        p = catalog_item_dir("/project", "movie", "django_1966", "horse")
         self.assertEqual(
             p,
             Path("/project/data/silhouettes/catalog/movies/django_1966/horse"),
         )
 
     def test_catalog_item_dir_label_sanitized(self):
-        p = catalog_item_dir("/project", "movies", "film", "Wild Horse")
+        p = catalog_item_dir("/project", "movie", "film", "Wild Horse")
         self.assertEqual(p.name, "wild_horse")
 
 
@@ -338,36 +338,36 @@ class TestExtractObjectPng(unittest.TestCase):
 class TestScanCatalog(unittest.TestCase):
     def test_empty_base_returns_empty(self):
         with tempfile.TemporaryDirectory() as tmp:
-            records = scan_catalog(tmp, media_type="movies")
+            records = scan_catalog(tmp, media_type="movie")
             self.assertEqual(records, [])
 
     def test_finds_entries(self):
         with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp) / "data" / "silhouettes" / "catalog" / "movies"
+            base = Path(tmp) / "data" / "silhouettes" / "catalog" / "movie"
             label_dir = base / "django_1966" / "horse"
             _make_catalog_entry(label_dir, 1)
             _make_catalog_entry(label_dir, 2)
 
-            records = scan_catalog(tmp, media_type="movies")
+            records = scan_catalog(tmp, media_type="movie")
             self.assertEqual(len(records), 2)
 
     def test_filter_by_label(self):
         with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp) / "data" / "silhouettes" / "catalog" / "movies"
+            base = Path(tmp) / "data" / "silhouettes" / "catalog" / "movie"
             _make_catalog_entry(base / "film" / "horse",  1)
             _make_catalog_entry(base / "film" / "cowboy", 1)
 
-            records = scan_catalog(tmp, media_type="movies", label="horse")
+            records = scan_catalog(tmp, media_type="movie", label="horse")
             self.assertEqual(len(records), 1)
             self.assertEqual(records[0]["label"], "horse")
 
     def test_filter_by_filename_stem(self):
         with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp) / "data" / "silhouettes" / "catalog" / "movies"
+            base = Path(tmp) / "data" / "silhouettes" / "catalog" / "movie"
             _make_catalog_entry(base / "film_a" / "horse", 1)
             _make_catalog_entry(base / "film_b" / "horse", 1)
 
-            records = scan_catalog(tmp, media_type="movies", filename_stem="film_a")
+            records = scan_catalog(tmp, media_type="movie", filename_stem="film_a")
             self.assertEqual(len(records), 1)
             self.assertEqual(records[0]["filename_stem"], "film_a")
 
@@ -379,20 +379,20 @@ class TestScanCatalog(unittest.TestCase):
 class TestAuditCatalog(unittest.TestCase):
     def test_empty_catalog(self):
         with tempfile.TemporaryDirectory() as tmp:
-            report = audit_catalog(tmp, media_type="movies")
+            report = audit_catalog(tmp, media_type="movie")
             self.assertEqual(report["total_objects"], 0)
             self.assertEqual(report["labels"], {})
             self.assertEqual(report["media_items"], {})
 
     def test_populated_catalog(self):
         with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp) / "data" / "silhouettes" / "catalog" / "movies"
+            base = Path(tmp) / "data" / "silhouettes" / "catalog" / "movie"
             _make_catalog_entry(base / "film_a" / "horse",  1)
             _make_catalog_entry(base / "film_a" / "horse",  2)
             _make_catalog_entry(base / "film_a" / "cowboy", 1)
             _make_catalog_entry(base / "film_b" / "horse",  1)
 
-            report = audit_catalog(tmp, media_type="movies")
+            report = audit_catalog(tmp, media_type="movie")
             self.assertEqual(report["total_objects"], 4)
             self.assertEqual(report["labels"]["horse"],  3)
             self.assertEqual(report["labels"]["cowboy"], 1)
@@ -401,23 +401,23 @@ class TestAuditCatalog(unittest.TestCase):
 
     def test_by_label_sorted_descending(self):
         with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp) / "data" / "silhouettes" / "catalog" / "movies"
+            base = Path(tmp) / "data" / "silhouettes" / "catalog" / "movie"
             for i in range(1, 4):
                 _make_catalog_entry(base / "film" / "horse", i)
             _make_catalog_entry(base / "film" / "cowboy", 1)
 
-            report = audit_catalog(tmp, media_type="movies")
+            report = audit_catalog(tmp, media_type="movie")
             by_label = report["by_label"]
             self.assertEqual(by_label[0][0], "horse")
             self.assertEqual(by_label[0][1], 3)
 
     def test_filter_by_label(self):
         with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp) / "data" / "silhouettes" / "catalog" / "movies"
+            base = Path(tmp) / "data" / "silhouettes" / "catalog" / "movie"
             _make_catalog_entry(base / "film" / "horse",  1)
             _make_catalog_entry(base / "film" / "cowboy", 1)
 
-            report = audit_catalog(tmp, media_type="movies", label="horse")
+            report = audit_catalog(tmp, media_type="movie", label="horse")
             self.assertEqual(report["total_objects"], 1)
             self.assertNotIn("cowboy", report["labels"])
 
@@ -435,10 +435,10 @@ class TestClearCatalog(unittest.TestCase):
 
     def test_dry_run_deletes_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp) / "data" / "silhouettes" / "catalog" / "movies"
+            base = Path(tmp) / "data" / "silhouettes" / "catalog" / "movie"
             self._populate(base)
 
-            result = clear_catalog(tmp, media_type="movies", dry_run=True)
+            result = clear_catalog(tmp, media_type="movie", dry_run=True)
             self.assertTrue(result["dry_run"])
             self.assertGreater(result["deleted_files"], 0)
             # Files must still exist
@@ -446,10 +446,10 @@ class TestClearCatalog(unittest.TestCase):
 
     def test_clear_by_label(self):
         with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp) / "data" / "silhouettes" / "catalog" / "movies"
+            base = Path(tmp) / "data" / "silhouettes" / "catalog" / "movie"
             self._populate(base)
 
-            clear_catalog(tmp, media_type="movies", label="horse", dry_run=False)
+            clear_catalog(tmp, media_type="movie", label="horse", dry_run=False)
 
             # horse files gone
             self.assertFalse((base / "film_a" / "horse" / "object_0001.png").exists())
@@ -458,10 +458,10 @@ class TestClearCatalog(unittest.TestCase):
 
     def test_clear_by_filename_stem(self):
         with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp) / "data" / "silhouettes" / "catalog" / "movies"
+            base = Path(tmp) / "data" / "silhouettes" / "catalog" / "movie"
             self._populate(base)
 
-            clear_catalog(tmp, media_type="movies", filename_stem="film_a", dry_run=False)
+            clear_catalog(tmp, media_type="movie", filename_stem="film_a", dry_run=False)
 
             # film_a gone
             self.assertFalse((base / "film_a").exists())
@@ -470,16 +470,16 @@ class TestClearCatalog(unittest.TestCase):
 
     def test_clear_all(self):
         with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp) / "data" / "silhouettes" / "catalog" / "movies"
+            base = Path(tmp) / "data" / "silhouettes" / "catalog" / "movie"
             self._populate(base)
 
-            result = clear_catalog(tmp, media_type="movies", dry_run=False)
+            result = clear_catalog(tmp, media_type="movie", dry_run=False)
             self.assertFalse(base.exists())
             self.assertGreater(result["deleted_files"], 0)
 
     def test_clear_nonexistent_is_safe(self):
         with tempfile.TemporaryDirectory() as tmp:
-            result = clear_catalog(tmp, media_type="movies", dry_run=False)
+            result = clear_catalog(tmp, media_type="movie", dry_run=False)
             self.assertEqual(result["deleted_files"], 0)
 
 

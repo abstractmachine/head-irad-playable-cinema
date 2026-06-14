@@ -256,7 +256,10 @@ def find_latest_title_prompt(project_path: str, prefix: str) -> Optional[Path]:
 
     Returns ``None`` when the directory does not exist or no match is found.
     """
-    d = Path(project_path) / "prompts" / "movies" / "motifs"
+    d = Path(project_path) / "prompts" / "movie" / "motifs"
+    if not d.exists() or not d.is_dir():
+        # Backward-compat: try legacy 'movies/' folder
+        d = Path(project_path) / "prompts" / "movies" / "motifs"
     if not d.exists() or not d.is_dir():
         return None
     pattern = f"title-{prefix}-*.txt"
@@ -442,7 +445,7 @@ def set_film_title(
 def generate_film_title(
     project_path: str,
     filename: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     model_name: str = "Qwen3-VL-8B-Instruct",
     force: bool = False,
     verbose: bool = False,
@@ -460,7 +463,7 @@ def generate_film_title(
     ----------
     project_path :      Project root directory.
     filename :          Video filename (e.g. ``"The Searchers (1956).mp4"``).
-    media_type :        ``"movies"`` or ``"gameplay"``.
+    media_type :        ``"movie"`` or ``"gameplay"``.
     model_name :        Model name / path for generation.
     force :             Regenerate even if cached title already exists.
     verbose :           Print progress lines.
@@ -593,7 +596,7 @@ def generate_film_title(
 
 def generate_film_titles_for_all_movies(
     project_path: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     model_name: str = "Qwen3-VL-8B-Instruct",
     *,
     force: bool = False,

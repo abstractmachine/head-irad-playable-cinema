@@ -259,7 +259,7 @@ def search_shots(
     limit_per_item: int | None,
     use_all: bool,
     project_path: str | None = None,
-    media_type: str = "movies",
+    media_type: str = "movie",
 ) -> dict:
     """Search shot annotations and return a structured result dict.
 
@@ -273,7 +273,7 @@ def search_shots(
     limit_per_item: Max results per movie (applied before global limit).
     use_all:        Force search across all movies, ignoring *scopes*.
     project_path:   Project root directory.
-    media_type:     "movies" or "gameplay".
+    media_type:     "movie" or "gameplay".
 
     Returns
     -------
@@ -467,7 +467,7 @@ def vocabulary_from_field(
     use_all: bool,
     show_count: bool,
     project_path: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     sort: str = "alphabetical",
 ) -> list:
     """Return distinct values found in *field* across all matching shots.
@@ -485,7 +485,7 @@ def vocabulary_from_field(
     show_count:   If True return ``[{"value": v, "count": n}, ...]``;
                   otherwise return ``["v1", "v2", ...]``.
     project_path: Project root directory.
-    media_type:   ``"movies"`` or ``"gameplay"``.
+    media_type:   ``"movie"`` or ``"gameplay"``.
     sort:         ``"alphabetical"`` (default) or ``"count"`` (desc).
 
     Returns

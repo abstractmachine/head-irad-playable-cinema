@@ -17,22 +17,51 @@ Usage:
 
 import argparse
 
+# ---------------------------------------------------------------------------
+# Media-type normalisation
+# ---------------------------------------------------------------------------
+
+_MEDIA_TYPE_ALIASES: dict[str, str] = {
+    "movies": "movie",
+    "movie":  "movie",
+    "gameplay": "gameplay",
+}
+
+
+def normalize_media_type(s: str) -> str:
+    """Return the canonical media type for *s*.
+
+    Accepts the legacy plural ``"movies"`` and normalises it to the canonical
+    singular ``"movie"``.  ``"gameplay"`` passes through unchanged.
+
+    >>> normalize_media_type("movies")
+    'movie'
+    >>> normalize_media_type("movie")
+    'movie'
+    >>> normalize_media_type("gameplay")
+    'gameplay'
+    """
+    return _MEDIA_TYPE_ALIASES.get(s, s)
+
 
 def _add_media_arg(
     p: argparse.ArgumentParser,
     *,
-    default: str | None = "movies",
+    default: str | None = "movie",
     required: bool = False,
 ) -> None:
-    """Add ``--media {movies,gameplay}`` to *p*.
+    """Add ``--media {movie,gameplay}`` to *p*.
 
-    Most subcommands default to ``"movies"``.  Pass ``default=None`` for
+    Most subcommands default to ``"movie"``.  Pass ``default=None`` for
     optional media selectors, or ``required=True`` for commands that must have
     an explicit value (e.g. ``remove``).
+
+    The legacy value ``"movies"`` is accepted as an alias and normalised by
+    callers via :func:`normalize_media_type`.
     """
     p.add_argument(
         "--media",
-        choices=["movies", "gameplay"],
+        choices=["movie", "movies", "gameplay"],
         default=default,
         required=required,
     )

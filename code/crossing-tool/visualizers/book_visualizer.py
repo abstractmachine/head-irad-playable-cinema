@@ -3585,7 +3585,7 @@ class _SilhouetteBrowserPanel(QWidget):
     def __init__(
         self,
         project_path: str,
-        media_type: str = "movies",
+        media_type: str = "movie",
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
@@ -5957,7 +5957,7 @@ class BookVisualizerWindow(QMainWindow):
             open_at_shot(
                 self._project_path,
                 filename,
-                "movies",
+                "movie",
                 shot_id=shot_id or "",
                 loop=True,
             )

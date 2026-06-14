@@ -245,7 +245,7 @@ def write_text_file(
     Args:
         project_path: Project root path.
         filename:     Source video filename (used to derive the stem).
-        media_type:   ``"movies"`` or ``"gameplay"``.
+        media_type:   ``"movie"`` or ``"gameplay"``.
         lines:        Pure serialized payload lines — no display indices.
         force:        Overwrite the file if it already exists.
 
@@ -271,7 +271,7 @@ def load_annotation_items(project_path: str, filename: str, media_type: str) -> 
     Args:
         project_path: Project root path.
         filename:     Video filename (e.g. ``"7th Cavalry (1956) {tmdb-5678}.mp4"``).
-        media_type:   ``"movies"`` or ``"gameplay"``.
+        media_type:   ``"movie"`` or ``"gameplay"``.
 
     Returns:
         List of annotation item dicts as stored in the shot annotation JSON.
@@ -323,7 +323,7 @@ def write_embeddings(
     Args:
         project_path: Project root path.
         filename:     Source video filename.
-        media_type:   ``"movies"`` or ``"gameplay"``.
+        media_type:   ``"movie"`` or ``"gameplay"``.
         embeddings:   ``np.ndarray`` of shape ``(N, dim)`` in float32.
         force:        Overwrite existing file when True.
 

@@ -31,7 +31,7 @@ Metadata schema (object_NNNN.json)
 -----------------------------------
 {
     "schema_version": "1",
-    "media_type":     "movies",
+    "media_type":     "movie",
     "filename":       "django_1966.mkv",
     "filename_stem":  "django_1966",
     "media_id":       "tmdb_11969",
@@ -634,7 +634,7 @@ def extract_catalog_for_movie(
     media_id: str,
     label: str,
     field: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     sam_model_name: str = "sam3.pt",
     frame_model_name: str = "clip-vit-base-patch32",
     force: bool = False,
@@ -744,7 +744,7 @@ def extract_catalog_for_all(
     project_path: str,
     label: str,
     field: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     sam_model_name: str = "sam3.pt",
     frame_model_name: str = "clip-vit-base-patch32",
     force: bool = False,
@@ -864,7 +864,7 @@ def extract_catalog_for_all(
 
 def scan_catalog(
     project_path: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     label: str | None = None,
     filename_stem: str | None = None,
 ) -> list[dict]:
@@ -877,6 +877,9 @@ def scan_catalog(
     Pass *filename_stem* to restrict to one media item.
     """
     base = catalog_base_dir(project_path, media_type)
+    if not base.exists() and media_type == "movie":
+        # Backward-compat: existing projects stored catalog under 'movies/'
+        base = catalog_base_dir(project_path, "movies")
     records: list[dict] = []
 
     if not base.exists():
@@ -908,7 +911,7 @@ def scan_catalog(
 
 def backfill_scanned_from_catalog(
     project_path: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
 ) -> dict:
     """Write scanned sentinels for every (field, label) pair that has existing
     catalog entries on disk.
@@ -967,7 +970,7 @@ def backfill_scanned_from_catalog(
 
 def audit_catalog(
     project_path: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     label: str | None = None,
     filename_stem: str | None = None,
 ) -> dict:
@@ -1012,7 +1015,7 @@ def audit_catalog(
 
 def clear_catalog(
     project_path: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     label: str | None = None,
     filename_stem: str | None = None,
     dry_run: bool = False,

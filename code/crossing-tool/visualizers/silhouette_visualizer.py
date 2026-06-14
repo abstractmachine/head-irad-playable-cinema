@@ -493,7 +493,7 @@ class SAMExplorer(QMainWindow):
     def __init__(
         self,
         project_path: str,
-        media_type: str = "movies",
+        media_type: str = "movie",
         model_name: str = _DEFAULT_MODEL,
     ) -> None:
         super().__init__()
@@ -1308,7 +1308,7 @@ class CatalogBrowser(QWidget):
         "action", "humans", "wearing", "animals", "text",
     ]
 
-    def __init__(self, project_path: str, media_type: str = "movies", parent=None) -> None:
+    def __init__(self, project_path: str, media_type: str = "movie", parent=None) -> None:
         super().__init__(parent)
         self._project_path = project_path
         self._media_type = media_type
@@ -2007,7 +2007,7 @@ class SilhouetteWindow(QMainWindow):
     def __init__(
         self,
         project_path: str,
-        media_type: str = "movies",
+        media_type: str = "movie",
         model_name: str = _DEFAULT_MODEL,
         initial_film: Optional[str] = None,
         initial_field: Optional[str] = None,
@@ -2073,7 +2073,7 @@ class SilhouetteWindow(QMainWindow):
 
 def run_visualizer(
     project_path: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     field: Optional[str] = None,
     initial_film: Optional[str] = None,
     initial_field: Optional[str] = None,
@@ -2109,7 +2109,7 @@ def open_at_silhouette(
     project_path: str,
     filename_stem: str = "",
     field: Optional[str] = None,
-    media_type: str = "movies",
+    media_type: str = "movie",
     label: Optional[str] = None,
     shot_id: Optional[str] = None,
 ) -> None:
@@ -2153,7 +2153,7 @@ if __name__ == "__main__":
 
     ap = argparse.ArgumentParser(description="Silhouette Visualizer")
     ap.add_argument("--project", required=True, help="Project path")
-    ap.add_argument("--media",  default="movies")
+    ap.add_argument("--media",  default="movie")
     ap.add_argument("--field",  default=None)
     ap.add_argument("--film",   default=None, help="Initial film stem to select")
     ap.add_argument("--label",  default=None, help="Initial label to select")

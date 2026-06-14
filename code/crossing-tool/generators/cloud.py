@@ -13,7 +13,7 @@ Example::
         project_path,
         scope=None,          # None → all movies
         field="description",
-        media_type="movies",
+        media_type="movie",
     )
     print("Saved to:", out)
 """
@@ -260,7 +260,7 @@ def extract_annotation_words(
     *,
     scope: str | None = None,
     field: str | None = None,
-    media_type: str = "movies",
+    media_type: str = "movie",
     min_count: int = 1,
 ) -> Counter:
     """Count word frequencies from annotation JSON files.
@@ -270,7 +270,7 @@ def extract_annotation_words(
         scope:        Movie title / id substring to restrict to; ``None`` → all.
         field:        Annotation field name (e.g. ``"description"``); ``None``
                       → aggregate all text-bearing fields.
-        media_type:   ``"movies"`` or ``"gameplay"`` (default: ``"movies"``).
+        media_type:   ``"movie"`` or ``"gameplay"`` (default: ``"movie"``).
         min_count:    Minimum occurrence count to retain a word.
 
     Returns:
@@ -504,7 +504,7 @@ def cloud_from_annotations(
     *,
     scope: str | None = None,
     field: str | None = None,
-    media_type: str = "movies",
+    media_type: str = "movie",
     output_path: "str | Path | None" = None,
     max_words: int = _MAX_WORDS,
     min_count: int = 2,
@@ -521,7 +521,7 @@ def cloud_from_annotations(
         project_path: Project root directory.
         scope:        Movie title / id substring; ``None`` → all movies.
         field:        Annotation field to read; ``None`` → all fields.
-        media_type:   ``"movies"`` or ``"gameplay"`` (default: ``"movies"``).
+        media_type:   ``"movie"`` or ``"gameplay"`` (default: ``"movie"``).
         output_path:  Destination file path.  Auto-generated under
                       ``output/clouds/`` when not provided.
         max_words:    Maximum words to render (default 150).

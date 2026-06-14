@@ -74,7 +74,7 @@ def _write_best_frame_png(project: str, media_type: str, filename: str, shot_id:
 
 class TestGetPalettePath(unittest.TestCase):
     def test_path_structure(self):
-        p = get_palette_path("/project", "My Film (1956).mp4", "movies")
+        p = get_palette_path("/project", "My Film (1956).mp4", "movie")
         self.assertEqual(
             p,
             Path("/project/data/palettes/movies/My Film (1956).json"),
@@ -99,31 +99,31 @@ class TestLoadSavePalette(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_load_returns_none_when_absent(self):
-        self.assertIsNone(load_palette(self.project, "film.mp4", "movies"))
+        self.assertIsNone(load_palette(self.project, "film.mp4", "movie"))
 
     def test_save_then_load_round_trips(self):
         data = {"movie": {"filename": "film.mp4"}, "shots": []}
-        save_palette(self.project, "film.mp4", "movies", data)
-        result = load_palette(self.project, "film.mp4", "movies")
+        save_palette(self.project, "film.mp4", "movie", data)
+        result = load_palette(self.project, "film.mp4", "movie")
         self.assertEqual(result, data)
 
     def test_save_raises_when_exists_no_force(self):
         data = {"shots": []}
-        save_palette(self.project, "film.mp4", "movies", data)
+        save_palette(self.project, "film.mp4", "movie", data)
         with self.assertRaises(FileExistsError):
-            save_palette(self.project, "film.mp4", "movies", data, force=False)
+            save_palette(self.project, "film.mp4", "movie", data, force=False)
 
     def test_save_overwrites_when_force(self):
-        save_palette(self.project, "film.mp4", "movies", {"shots": []})
+        save_palette(self.project, "film.mp4", "movie", {"shots": []})
         new_data = {"shots": [{"shot_index": 0}]}
-        save_palette(self.project, "film.mp4", "movies", new_data, force=True)
-        result = load_palette(self.project, "film.mp4", "movies")
+        save_palette(self.project, "film.mp4", "movie", new_data, force=True)
+        result = load_palette(self.project, "film.mp4", "movie")
         self.assertEqual(result, new_data)
 
     def test_get_palette_alias(self):
         data = {"shots": []}
-        save_palette(self.project, "film.mp4", "movies", data)
-        self.assertEqual(get_palette(self.project, "film.mp4", "movies"), data)
+        save_palette(self.project, "film.mp4", "movie", data)
+        self.assertEqual(get_palette(self.project, "film.mp4", "movie"), data)
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +190,7 @@ class TestExtractFgBg(unittest.TestCase):
 
 class TestCreatePaletteForMovie(unittest.TestCase):
     FILENAME = "My Film (1956) {tmdb-99}.mp4"
-    MEDIA_TYPE = "movies"
+    MEDIA_TYPE = "movie"
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -358,7 +358,7 @@ class TestCreatePaletteForAllMovies(unittest.TestCase):
 
         with patch("data.palette.get_metadata", return_value=meta), \
              patch("data.palette.create_palette_for_movie", return_value=movie_summary):
-            result = create_palette_for_all_movies(self.project, "movies")
+            result = create_palette_for_all_movies(self.project, "movie")
 
         self.assertEqual(result["total_files"], 2)
 
@@ -370,7 +370,7 @@ class TestCreatePaletteForAllMovies(unittest.TestCase):
                  "data.palette.create_palette_for_movie",
                  side_effect=FileNotFoundError("no annotations"),
              ):
-            result = create_palette_for_all_movies(self.project, "movies")
+            result = create_palette_for_all_movies(self.project, "movie")
 
         self.assertEqual(result["total_files"], 1)
         # Should not raise; results should contain the skipped entry
@@ -629,7 +629,7 @@ class TestExtractFgBgFull(unittest.TestCase):
         from data.palette import create_palette_for_movie
 
         FILENAME  = "diag_test {tmdb-1}.mp4"
-        MEDIA_TYPE = "movies"
+        MEDIA_TYPE = "movie"
         shot_id   = "tmdb_1@f0000-f0100"
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -961,7 +961,7 @@ class TestExtractFgBgFullFigure(unittest.TestCase):
         from unittest.mock import patch
 
         FILENAME   = "figure_test {tmdb-99}.mp4"
-        MEDIA_TYPE = "movies"
+        MEDIA_TYPE = "movie"
         shot_id    = "tmdb_99@f0000-f0100"
 
         with tempfile.TemporaryDirectory() as tmpdir:

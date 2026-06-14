@@ -49,14 +49,14 @@ def normalize_shot_fields(shot: dict) -> dict:
     return result
 
 
-def resolve_filename(project_path: str, tmdb_id: str | None, filename: str | None, media_type: str = "movies") -> str:
+def resolve_filename(project_path: str, tmdb_id: str | None, filename: str | None, media_type: str = "movie") -> str:
     """Resolve TMDb ID or filename to actual filename.
     
     Args:
         project_path: Path to project
         tmdb_id: TMDb ID (if provided, takes precedence)
         filename: Full filename (used if tmdb_id is None)
-        media_type: movies or gameplay
+        media_type: movie or gameplay
     
     Returns:
         Resolved filename
@@ -117,9 +117,12 @@ def list_shotlists(project_path: str, media_type: str | None = None) -> list[dic
     meta_by_filename = {e['filename']: e for e in all_entries if e.get('filename')}
     shotlists = []
 
-    types_to_check = [media_type] if media_type else ['movies', 'gameplay']
+    types_to_check = [media_type] if media_type else ['movie', 'gameplay']
     for mtype in types_to_check:
+        # Try canonical path; fall back to legacy 'movies/' folder for the movie type
         shotlist_dir = Path(project_path) / "data" / "shotlists" / mtype
+        if not shotlist_dir.is_dir() and mtype == "movie":
+            shotlist_dir = Path(project_path) / "data" / "shotlists" / "movies"
         if not shotlist_dir.is_dir():
             continue
         for csv_path in sorted(shotlist_dir.glob("*.csv")):
@@ -128,7 +131,7 @@ def list_shotlists(project_path: str, media_type: str | None = None) -> list[dic
             # Find metadata entry whose filename stem matches
             entry = None
             for fn, e in meta_by_filename.items():
-                if Path(fn).stem == stem and e.get('media_type', 'movies') == mtype:
+                if Path(fn).stem == stem and e.get('media_type', 'movie') in ('movie', 'movies', mtype):
                     entry = e
                     break
             if entry is None:
@@ -156,10 +159,12 @@ def list_shotlists(project_path: str, media_type: str | None = None) -> list[dic
     return shotlists
 
 
-def read_shotlist(project_path: str, filename: str, media_type: str = "movies") -> list[dict[str, Any]]:
+def read_shotlist(project_path: str, filename: str, media_type: str = "movie") -> list[dict[str, Any]]:
     """Read shotlist CSV and return all shots."""
     shotlist_path = get_shotlist_path(project_path, filename, media_type)
-    
+    if not shotlist_path.exists() and media_type == "movie":
+        # Backward-compat: try legacy 'movies/' folder
+        shotlist_path = get_shotlist_path(project_path, filename, "movies")
     if not shotlist_path.exists():
         raise FileNotFoundError(f"Shotlist not found: {shotlist_path}")
     
@@ -199,7 +204,7 @@ def write_shotlist(project_path: str, filename: str, media_type: str, shots: lis
         writer.writerows(shots)
 
 
-def annotate_shot(project_path: str, filename: str, shot_index: int, caption: str, media_type: str = "movies") -> None:
+def annotate_shot(project_path: str, filename: str, shot_index: int, caption: str, media_type: str = "movie") -> None:
     """Add or update annotation for a specific shot (0-indexed)."""
     shots = read_shotlist(project_path, filename, media_type)
     
@@ -210,7 +215,7 @@ def annotate_shot(project_path: str, filename: str, shot_index: int, caption: st
     write_shotlist(project_path, filename, media_type, shots)
 
 
-def annotate_scene(project_path: str, filename: str, scene_number: int, caption: str, media_type: str = "movies") -> None:
+def annotate_scene(project_path: str, filename: str, scene_number: int, caption: str, media_type: str = "movie") -> None:
     """Add or update annotation for all shots in a scene."""
     shots = read_shotlist(project_path, filename, media_type)
     
@@ -227,7 +232,7 @@ def annotate_scene(project_path: str, filename: str, scene_number: int, caption:
     write_shotlist(project_path, filename, media_type, shots)
 
 
-def get_shot(project_path: str, filename: str, shot_index: int, media_type: str = "movies") -> dict[str, Any]:
+def get_shot(project_path: str, filename: str, shot_index: int, media_type: str = "movie") -> dict[str, Any]:
     """Get a specific shot by index."""
     shots = read_shotlist(project_path, filename, media_type)
     
@@ -259,11 +264,11 @@ def migrate_shotlist_fields(project_path: str, media_type: str | None = None, dr
 
     Args:
         project_path: Path to the project root.
-        media_type: "movies", "gameplay", or None (both).
+        media_type: "movie", "gameplay", or None (both).
         dry_run: If True, report what would change but don't write anything.
     """
     _LEGACY_TEMPORAL = set(_TEMPORAL_FIELD_ALIASES.keys())
-    types_to_check = [media_type] if media_type else ["movies", "gameplay"]
+    types_to_check = [media_type] if media_type else ["movie", "gameplay"]
     results = []
 
     for mtype in types_to_check:
@@ -329,7 +334,7 @@ def migrate_shotlist_fields(project_path: str, media_type: str | None = None, dr
     return results
 
 
-def get_scene_shots(project_path: str, filename: str, scene_number: int, media_type: str = "movies") -> list[dict[str, Any]]:
+def get_scene_shots(project_path: str, filename: str, scene_number: int, media_type: str = "movie") -> list[dict[str, Any]]:
     """Get all shots in a specific scene."""
     shots = read_shotlist(project_path, filename, media_type)
     scene_shots = [s for s in shots if s.get('Scene') == str(scene_number)]

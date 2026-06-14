@@ -404,7 +404,7 @@ class CloudVisualizer(QMainWindow):
         self.movie_combo.installEventFilter(self)
         scope_layout.addWidget(self.movie_combo)
         self.media_combo = QComboBox()
-        self.media_combo.addItems(["movies", "gameplay"])
+        self.media_combo.addItems(["movie", "gameplay"])
         self.media_combo.currentIndexChanged.connect(self._populate_movies)
         scope_layout.addWidget(self.media_combo)
         rp.addWidget(scope_group)

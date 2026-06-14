@@ -298,7 +298,7 @@ class _GridWidget(QWidget):
         shots: list[dict],
         project_path: str = "",
         filename: str = "",
-        media_type: str = "movies",
+        media_type: str = "movie",
     ) -> None:
         for cell in self._cells:
             cell.setParent(None)  # type: ignore[arg-type]
@@ -391,7 +391,7 @@ class PaletteVisualizerWindow(QMainWindow):
     def __init__(
         self,
         project_path: str,
-        media_type: str = "movies",
+        media_type: str = "movie",
     ) -> None:
         super().__init__()
         self.setWindowTitle("Crossing — Palette Visualizer")
@@ -633,7 +633,7 @@ class PaletteVisualizerWindow(QMainWindow):
 
 def run_visualizer(
     project_path: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
 ) -> None:
     """Create QApplication (if needed) and open the palette visualizer."""
     from visualizers._window_helpers import raise_existing_window
@@ -651,6 +651,6 @@ if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--project", required=True)
-    ap.add_argument("--media", default="movies")
+    ap.add_argument("--media", default="movie")
     parsed = ap.parse_args()
     run_visualizer(parsed.project, media_type=parsed.media)

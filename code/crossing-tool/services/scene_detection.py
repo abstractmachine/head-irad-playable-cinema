@@ -242,7 +242,7 @@ def apply_scene_numbers(
 def detect_scenes_for_movie(
     project_path: str,
     filename: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     *,
     min_scene_length: int = 3,
     scale: float = 1.0,
@@ -341,7 +341,7 @@ def detect_scenes_for_movie(
 
 def detect_scenes_for_all_movies(
     project_path: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     *,
     min_scene_length: int = 3,
     scale: float = 1.0,

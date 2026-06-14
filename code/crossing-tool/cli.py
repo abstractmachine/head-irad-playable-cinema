@@ -11,9 +11,9 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from tool import prefs
-from tool.helpers import _add_media_arg, _add_tmdb_arg, _add_verbose_arg, _add_dry_run_arg
+from tool.helpers import _add_media_arg, _add_tmdb_arg, _add_verbose_arg, _add_dry_run_arg, normalize_media_type
 
-_MEDIA_FOLDER = {"movie": "movies", "gameplay": "gameplay"}
+_MEDIA_FOLDER = {"movie": "movie", "movies": "movie", "gameplay": "gameplay"}
 _TOOL_VERSION = "2.0.0"  # Updated for new folder structure (videos/thumbnails/subtitles with media_type subdirs)
 
 
@@ -393,12 +393,7 @@ def cmd_media_channels(args):
     project_path = prefs.get("path")
 
     selector = getattr(args, "target", None)
-    type_map = {
-        "movie": "movies",
-        "movies": "movies",
-        "gameplay": "gameplay",
-    }
-    selected_media_type = type_map.get(selector) if selector else None
+    selected_media_type = normalize_media_type(selector) if selector else None
 
     do_all = getattr(args, "all", False)
     count_only = getattr(args, "count", False)
@@ -413,13 +408,13 @@ def cmd_media_channels(args):
     # Convenience mode: `crossing media channels --count` defaults to all movies.
     if count_only and not do_all and not selected_media_type and not query:
         do_all = True
-        selected_media_type = "movies"
+        selected_media_type = "movie"
 
     if not do_all and (not selected_media_type or not query):
         print("✗ Provide either --all, or: crossing media channels {movie|gameplay} <query>", file=sys.stderr)
         sys.exit(1)
 
-    media_types = [selected_media_type] if selected_media_type else ["movies", "gameplay"]
+    media_types = [selected_media_type] if selected_media_type else ["movie", "gameplay"]
 
     total = 0
     ok = 0
@@ -579,12 +574,7 @@ def cmd_media_normalize(args):
 
     # Accept both singular and plural names from CLI selectors/options.
     selector = getattr(args, "target", None)
-    type_map = {
-        "movie": "movies",
-        "movies": "movies",
-        "gameplay": "gameplay",
-    }
-    selected_media_type = type_map.get(selector) if selector else None
+    selected_media_type = normalize_media_type(selector) if selector else None
 
     normalize_all = getattr(args, "all", False)
     verbose = getattr(args, "verbose", False)
@@ -598,7 +588,7 @@ def cmd_media_normalize(args):
         print("✗ Provide either --all, or: crossing media normalize {movie|gameplay} <query>", file=sys.stderr)
         sys.exit(1)
 
-    media_types = [selected_media_type] if selected_media_type else ["movies", "gameplay"]
+    media_types = [selected_media_type] if selected_media_type else ["movie", "gameplay"]
 
     total = 0
     ok = 0
@@ -873,7 +863,7 @@ def cmd_search(args):
         use_all = getattr(args, "all", False)
         show_count = getattr(args, "show_count", False)
         sort = getattr(args, "sort", "alphabetical")
-        media_type = getattr(args, "media", "movies")
+        media_type = normalize_media_type(getattr(args, "media", "movie"))
         project_path = prefs.get("path")
         output_format = getattr(args, "output_format", "auto")
         top = getattr(args, "top", None)
@@ -999,7 +989,7 @@ def cmd_search(args):
         use_all = getattr(args, "all", False)
         limit = getattr(args, "limit", None)
         limit_per_item = getattr(args, "limit_per_item", None)
-        media_type = getattr(args, "media", "movies")
+        media_type = normalize_media_type(getattr(args, "media", "movie"))
         result = search_shots(
             query=text_query,
             scopes=scopes,
@@ -1032,7 +1022,7 @@ def cmd_search(args):
         use_all = getattr(args, "all", False)
         limit = getattr(args, "limit", None)
         limit_per_item = getattr(args, "limit_per_item", None)
-        media_type = getattr(args, "media", "movies")
+        media_type = normalize_media_type(getattr(args, "media", "movie"))
         project_path = prefs.get("path")
         model_name = (
             getattr(args, "model", None)
@@ -1111,7 +1101,7 @@ def cmd_search(args):
     field = getattr(args, "field", None)
     limit = getattr(args, "limit", None)
     limit_per_item = getattr(args, "limit_per_item", None)
-    media_type = getattr(args, "media", "movies")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
 
     result = search_shots(
         query=args.query,
@@ -1206,7 +1196,7 @@ def _meta_set(args):
 def _meta_update(args):
     from data.metadata import fetch_metadata, fetch_thumbnail, fetch_subtitle, set_metadata, get_metadata, load_json_metadata
     project_path = prefs.get("path")
-    media_type = getattr(args, "media", "movies")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
     force = getattr(args, "force", False)
     single_file = getattr(args, "file", None)
 
@@ -1328,7 +1318,7 @@ def _meta_update(args):
 def _meta_count(args):
     from data.metadata import get_metadata
     project_path = prefs.get("path")
-    media_type = getattr(args, "media", "movies")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
     rows = get_metadata(project_path, media_type=media_type)
     print(f"{len(rows)} {media_type}")
 
@@ -1336,7 +1326,7 @@ def _meta_count(args):
 def _meta_list(args):
     from data.metadata import get_metadata
     project_path = prefs.get("path")
-    media_type = getattr(args, "media", "movies")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
 
     rows = get_metadata(project_path, media_type=media_type)
 
@@ -1369,7 +1359,7 @@ def _meta_list(args):
 def _meta_prune(args):
     from data.metadata import get_metadata, prune_metadata
     project_path = prefs.get("path")
-    media_type = getattr(args, "media", "movies")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
     media_dir = Path(project_path) / "media" / "videos" / media_type
 
     rows = get_metadata(project_path, media_type=media_type)
@@ -1397,7 +1387,7 @@ def _meta_audit(args):
     from data.subtitles import subtitle_exists as _subtitle_exists
 
     project_path = prefs.get("path")
-    media_type = getattr(args, "media", "movies")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
 
     video_dir     = Path(project_path) / "media" / "videos"     / media_type
     shotlist_dir  = Path(project_path) / "data"  / "shotlists"  / media_type
@@ -1640,7 +1630,7 @@ def _scene_detect(args):
     from data.shotlist import read_shotlist, write_shotlist, resolve_filename
 
     project_path = prefs.get("path")
-    media_type = getattr(args, "media", "movies")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
     force = getattr(args, "force", False)
     dry_run = getattr(args, "dry_run", False)
     verbose = getattr(args, "verbose", False)
@@ -2946,7 +2936,7 @@ def _annotate_frame(args):
     """
     _require_path()
     project_path = prefs.get("path")
-    media_type = getattr(args, "media", "movies")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
 
     model_name = (
         getattr(args, "model", None)
@@ -3068,7 +3058,7 @@ def _annotate_remove(args):
 
     _require_path()
     project_path = prefs.get("path")
-    media_type = getattr(args, "media", "movies")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
 
     if getattr(args, "all", False):
         from data.metadata import get_metadata
@@ -3099,7 +3089,7 @@ def _annotate_best(args):
     if best_action == "migrate":
         _require_path()
         project_path = prefs.get("path")
-        media_type = getattr(args, "media", "movies")
+        media_type = normalize_media_type(getattr(args, "media", "movie"))
         try:
             from services.frame_match import migrate_best_frame_sources
             summary = migrate_best_frame_sources(project_path, media_type)
@@ -3128,7 +3118,7 @@ def _annotate_migrate(args):
 
     _require_path()
     project_path = prefs.get("path")
-    media_type   = getattr(args, "media", "movies")
+    media_type   = normalize_media_type(getattr(args, "media", "movie"))
 
     if getattr(args, "all", False):
         from data.metadata import get_metadata
@@ -3182,7 +3172,7 @@ def _annotate_validate(args):
     from data.annotate import load_label_list_fields
 
     project_path = prefs.get("path")
-    media_type   = getattr(args, "media", "movies")
+    media_type   = normalize_media_type(getattr(args, "media", "movie"))
     dry_run      = getattr(args, "dry_run", False)
 
     label_fields = load_label_list_fields(project_path)
@@ -3239,7 +3229,7 @@ def _annotate_audit(args):
     from data.shotlist import read_shotlist
 
     project_path = prefs.get("path")
-    media_type   = getattr(args, "media", "movies")
+    media_type   = normalize_media_type(getattr(args, "media", "movie"))
 
     entries = get_metadata(project_path, media_type=media_type)
     if not entries:
@@ -3553,7 +3543,7 @@ def _mosaic_shots(args):
     from generators.mosaic import mosaic_pdf_from_shots
 
     project_path  = prefs.get("path")
-    media_type    = getattr(args, "media", "movies")
+    media_type    = normalize_media_type(getattr(args, "media", "movie"))
     best_mode     = getattr(args, "best", False)
     output_path   = getattr(args, "output", None)
     open_result   = not getattr(args, "no_open", False)
@@ -3632,7 +3622,7 @@ def _mosaic_scenes(args):
     from generators.mosaic import mosaic_pdf_from_scenes
 
     project_path  = prefs.get("path")
-    media_type    = getattr(args, "media", "movies")
+    media_type    = normalize_media_type(getattr(args, "media", "movie"))
     best_mode     = getattr(args, "best", False)
     output_path   = getattr(args, "output", None)
     open_result   = not getattr(args, "no_open", False)
@@ -3711,7 +3701,7 @@ def _mosaic_search(args):
     from generators.mosaic import mosaic_from_search_results
 
     project_path = prefs.get("path")
-    media_type   = getattr(args, "media", "movies")
+    media_type   = normalize_media_type(getattr(args, "media", "movie"))
     scopes       = (args.scope or []) + (getattr(args, "movie", None) or [])
     use_all      = getattr(args, "all", False)
     field        = getattr(args, "field", None)
@@ -3846,7 +3836,7 @@ def _mosaic_export(args):
     from generators.mosaic import export_frames_from_search_results
 
     project_path = prefs.get("path")
-    media_type   = getattr(args, "media", "movies")
+    media_type   = normalize_media_type(getattr(args, "media", "movie"))
     scopes       = (args.scope or []) + (getattr(args, "movie", None) or [])
     scopes       = scopes or None
     use_all      = getattr(args, "all", False)
@@ -3917,7 +3907,7 @@ def cmd_cloud(args):
     project_path = prefs.get("path")
     scope        = getattr(args, "scope", None) or None
     field        = getattr(args, "field", None) or None
-    media_type   = getattr(args, "media", "movies")
+    media_type   = normalize_media_type(getattr(args, "media", "movie"))
     max_words    = getattr(args, "max_words", 150)
     min_count    = getattr(args, "min_count", 2)
     output_path  = getattr(args, "output", None)
@@ -3983,7 +3973,7 @@ def cmd_film_title(args):
     """Generate a semantic condensation title for one or all movies."""
     _require_path()
     project_path = prefs.get("path")
-    media_type   = getattr(args, "media", "movies") or "movies"
+    media_type   = normalize_media_type(getattr(args, "media", "movie")) or "movie"
     force        = getattr(args, "force", False)
     verbose      = getattr(args, "verbose", False)
     model_name   = getattr(args, "model", "Qwen3-VL-8B-Instruct") or "Qwen3-VL-8B-Instruct"
@@ -4094,7 +4084,7 @@ def cmd_flipbook(args):
     """Generate a cinematic motif flipbook PDF (one page per shot)."""
     _require_path()
     project_path = prefs.get("path")
-    media_type   = getattr(args, "media", "movies") or "movies"
+    media_type   = normalize_media_type(getattr(args, "media", "movie")) or "movie"
     force        = getattr(args, "force", False)
     verbose      = getattr(args, "verbose", False)
     open_result  = not getattr(args, "no_open", False)
@@ -4201,7 +4191,7 @@ def _flipbook_visualizer(args):
     from visualizers.flipbook_visualizer import run_visualizer
     run_visualizer(
         prefs.get("path"),
-        media_type=getattr(args, "media", "movies") or "movies",
+        media_type=normalize_media_type(getattr(args, "media", "movie")) or "movie",
     )
 
 
@@ -4245,7 +4235,7 @@ def _index_serialize(args):
     )
 
     project_path = prefs.get("path")
-    media_type = getattr(args, "media", "movies")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
 
     query_words = getattr(args, "query", None) or []
     query_str = " ".join(query_words).strip() if query_words else None
@@ -4340,7 +4330,7 @@ def _index_embed(args):
     )
 
     project_path = prefs.get("path")
-    media_type = getattr(args, "media", "movies")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
 
     query_words = getattr(args, "query", None) or []
     query_str = " ".join(query_words).strip() if query_words else None
@@ -4731,7 +4721,7 @@ def _index_update(args):
     from data.shotlist import resolve_filename
 
     project_path = prefs.get("path")
-    media_type = getattr(args, "media", "movies")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
     query_words = getattr(args, "query", None) or []
     query_str = " ".join(query_words).strip() if query_words else None
     tmdb = getattr(args, "tmdb", None)
@@ -4784,7 +4774,7 @@ def _index_audit(args):
     from data.shotlist import resolve_filename
 
     project_path = prefs.get("path")
-    media_type = getattr(args, "media", "movies")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
     query_words = getattr(args, "query", None) or []
     query_str = " ".join(query_words).strip() if query_words else None
     tmdb = getattr(args, "tmdb", None)
@@ -4834,11 +4824,11 @@ def _index_vocabulary(args):
     from services.vocabulary_index import build_vocabulary_index
 
     project_path = prefs.get("path")
-    media_type   = getattr(args, "media", "movies")
+    media_type   = normalize_media_type(getattr(args, "media", "movie"))
     force        = getattr(args, "force", False)
     do_all       = getattr(args, "all", False)
 
-    media_types = ["movies", "gameplay"] if do_all else [media_type]
+    media_types = ["movie", "gameplay"] if do_all else [media_type]
 
     for mt in media_types:
         print(f"Building vocabulary index ({mt})...")
@@ -4874,7 +4864,7 @@ def _index_silhouette(args):
         from services.silhouette_scoring import compute_scores_for_catalog
 
         project_path = prefs.get("path")
-        media_type = getattr(args, "media", "movies")
+        media_type = normalize_media_type(getattr(args, "media", "movie"))
         label = getattr(args, "label", None)
         field = getattr(args, "field", None)
         rebuild = getattr(args, "rebuild", False)
@@ -4912,7 +4902,7 @@ def _silhouette_catalog_extract(args):
     label        = args.label
     field        = getattr(args, "field",  None)  # None → search across all annotation fields
     fields_multi = getattr(args, "fields", None)  # --fields: multi-field expansion mode
-    media_type   = getattr(args, "media", "movies")
+    media_type   = normalize_media_type(getattr(args, "media", "movie"))
     force        = getattr(args, "force", False)
     verbose      = getattr(args, "verbose", False)
     dry_run      = getattr(args, "dry_run", False)
@@ -5323,7 +5313,7 @@ def _silhouette_backfill_scanned(args):
     from services.silhouette_catalog import backfill_scanned_from_catalog
 
     project_path = prefs.get("path")
-    media_type   = getattr(args, "media", "movies")
+    media_type   = normalize_media_type(getattr(args, "media", "movie"))
 
     print(f"Scanning catalog for existing (field, label) pairs…")
     result = backfill_scanned_from_catalog(project_path, media_type)
@@ -5356,7 +5346,7 @@ def _silhouette_catalog_audit(args):
     from services.silhouette_catalog import audit_catalog, catalog_base_dir
 
     project_path   = prefs.get("path")
-    media_type     = getattr(args, "media", "movies")
+    media_type     = normalize_media_type(getattr(args, "media", "movie"))
     label          = getattr(args, "label", None)
     movie          = getattr(args, "movie", None)
     tmdb           = getattr(args, "tmdb",  None)
@@ -5413,7 +5403,7 @@ def _silhouette_catalog_clear(args):
     from services.silhouette_catalog import clear_catalog
 
     project_path = prefs.get("path")
-    media_type   = getattr(args, "media", "movies")
+    media_type   = normalize_media_type(getattr(args, "media", "movie"))
     label        = getattr(args, "label", None)
     movie        = getattr(args, "movie", None)
     tmdb         = getattr(args, "tmdb",  None)
@@ -5471,7 +5461,7 @@ def _index_palette_create(args):
     from data.shotlist import resolve_filename
 
     project_path = prefs.get("path")
-    media_type = getattr(args, "media", "movies")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
     force = getattr(args, "force", False)
     verbose = getattr(args, "verbose", False)
     notify_each = getattr(args, "notify_items", False)
@@ -5584,7 +5574,7 @@ def _index_palette_get(args):
     from data.shotlist import resolve_filename
 
     project_path = prefs.get("path")
-    media_type = getattr(args, "media", "movies")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
 
     do_all = getattr(args, "all", False)
     movie_query = getattr(args, "movie", None)
@@ -5669,7 +5659,7 @@ def _index_motif_generate(args):
     from data.shotlist import resolve_filename
 
     project_path = prefs.get("path")
-    media_type   = getattr(args, "media",    "movies")
+    media_type   = normalize_media_type(getattr(args, "media", "movie"))
     force        = getattr(args, "force",    False)
     verbose      = getattr(args, "verbose",  False)
     do_all       = getattr(args, "all",      False)
@@ -6025,7 +6015,7 @@ def cmd_visualizer(args):
             open_at_shot(
                 prefs.get("path"),
                 filename,
-                getattr(args, "media", "movies") or "movies",
+                normalize_media_type(getattr(args, "media", "movie")) or "movie",
                 shot_id=getattr(args, "shot_id", "") or "",
                 play=getattr(args, "play", False),
                 loop=getattr(args, "loop", False),
@@ -6083,7 +6073,7 @@ def _silhouette_visualizer(args):
     from visualizers.silhouette_visualizer import run_visualizer
     run_visualizer(
         prefs.get("path"),
-        media_type=getattr(args, "media", "movies") or "movies",
+        media_type=normalize_media_type(getattr(args, "media", "movie")) or "movie",
         field=getattr(args, "field", None),
     )
 
@@ -6094,7 +6084,7 @@ def _palette_visualizer(args):
     from visualizers.palette_visualizer import run_visualizer
     run_visualizer(
         prefs.get("path"),
-        media_type=getattr(args, "media", "movies") or "movies",
+        media_type=normalize_media_type(getattr(args, "media", "movie")) or "movie",
     )
 
 
@@ -6292,7 +6282,7 @@ def _search_motifs(args):
     """Handle: crossing search motifs compare|list [options]."""
     from services.analysis import compare_motifs, get_all_motifs
     project_path = prefs.get("path")
-    media_type = getattr(args, "media", "movies")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
     remaining = args.scope or []
     sub_cmd = remaining[0] if remaining else "list"
     films = (remaining[1:] or []) + (getattr(args, "movie", None) or []) or None
@@ -6323,7 +6313,7 @@ def _search_palette_cmd(args):
     """Handle: crossing search palette [filter flags]."""
     from services.analysis import search_palette
     project_path = prefs.get("path")
-    media_type = getattr(args, "media", "movies")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
     remaining = args.scope or []
     films = list(remaining) + (getattr(args, "movie", None) or []) or None
 
@@ -6365,7 +6355,7 @@ def _search_frames_cmd(args):
     """Handle: crossing search frames <query> [options]."""
     from services.frame_retrieval import retrieve_frames_for_query
     project_path = prefs.get("path")
-    media_type = getattr(args, "media", "movies")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
     remaining = args.scope or []
     # First token after 'frames' is the query; remaining are film filters.
     if not remaining:
@@ -6413,7 +6403,7 @@ def _search_palette_frames_cmd(args):
     """Handle: crossing search palette-frames [filter flags]."""
     from services.frame_retrieval import retrieve_palette_frames
     project_path = prefs.get("path")
-    media_type = getattr(args, "media", "movies")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
     remaining = args.scope or []
     films = list(remaining) + (getattr(args, "movie", None) or []) or None
     limit = getattr(args, "limit", None) or 4
@@ -6469,7 +6459,7 @@ def _search_motif_frames_cmd(args):
     """Handle: crossing search motif-frames <motif> [options]."""
     from services.frame_retrieval import retrieve_motif_frames
     project_path = prefs.get("path")
-    media_type = getattr(args, "media", "movies")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
     remaining = args.scope or []
     if not remaining:
         print("error: 'search motif-frames' requires a motif word", file=sys.stderr)
@@ -6513,7 +6503,7 @@ def _shotlist_context_frames(args):
     """Handle: crossing shotlist context-frames <film> <shot_id> [options]."""
     from services.frame_retrieval import retrieve_context_frames
     project_path = prefs.get("path")
-    media_type = getattr(args, "media", "movies")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
     film = getattr(args, "film", None) or getattr(args, "filename", None)
     shot_id = getattr(args, "shot_id", None)
     if not film or not shot_id:
@@ -6561,7 +6551,7 @@ def _search_cooccurrence_cmd(args):
     """Handle: crossing search cooccurrence --terms A B [options]."""
     from services.analysis import search_cooccurrence
     project_path = prefs.get("path")
-    media_type = getattr(args, "media", "movies")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
     terms = getattr(args, "terms", None) or []
     if not terms:
         print("error: 'search cooccurrence' requires --terms TERM [TERM ...]", file=sys.stderr)
@@ -6583,7 +6573,7 @@ def _shotlist_context(args):
     """Handle: crossing shotlist context <film> <shot_id> [options]."""
     from services.analysis import get_shot_context
     project_path = prefs.get("path")
-    media_type = getattr(args, "media", "movies")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
     film = getattr(args, "film", None) or getattr(args, "filename", None)
     shot_id = getattr(args, "shot_id", None)
     if not film or not shot_id:
@@ -6631,7 +6621,7 @@ def _meta_stats(args):
     """Handle: crossing metadata stats."""
     from services.analysis import get_archive_stats
     project_path = prefs.get("path")
-    media_type = getattr(args, "media", "movies")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
     result = get_archive_stats(project_path=project_path, media_type=media_type)
     if getattr(args, "json", False):
         print(json.dumps(result, indent=2))
@@ -6669,7 +6659,7 @@ def cmd_subtitles(args):
 def _subtitles_align(args):
     from services.analysis import align_subtitles_to_shots
     project_path = prefs.get("path")
-    media_type = getattr(args, "media", "movies")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
     film = getattr(args, "film", None) or getattr(args, "filename", None)
     if not film:
         print("error: subtitles align requires a film argument", file=sys.stderr)

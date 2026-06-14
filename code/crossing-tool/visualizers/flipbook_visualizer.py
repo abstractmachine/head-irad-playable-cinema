@@ -282,7 +282,7 @@ class FlipbookVisualizerWindow(QMainWindow):
     def __init__(
         self,
         project_path: str,
-        media_type: str = "movies",
+        media_type: str = "movie",
     ) -> None:
         super().__init__()
         self.setWindowTitle("Crossing — Flipbook Visualizer")
@@ -616,7 +616,7 @@ class FlipbookVisualizerWindow(QMainWindow):
 
 def run_visualizer(
     project_path: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
 ) -> None:
     """Create QApplication (if needed) and open the flipbook visualizer."""
     global _FONT_FAMILY
@@ -636,6 +636,6 @@ if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--project", required=True)
-    ap.add_argument("--media", default="movies")
+    ap.add_argument("--media", default="movie")
     parsed = ap.parse_args()
     run_visualizer(parsed.project, media_type=parsed.media)

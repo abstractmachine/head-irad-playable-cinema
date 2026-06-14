@@ -103,8 +103,13 @@ def load_palette(project_path: str, filename: str, media_type: str) -> dict | No
 
     Normalises legacy method names to ``"figure"`` so that caches created
     before the method rename remain readable without regeneration.
+
+    Falls back to the legacy ``movies/`` folder when ``media_type == "movie"``
+    and the canonical path does not exist.
     """
     path = get_palette_path(project_path, filename, media_type)
+    if not path.exists() and media_type == "movie":
+        path = get_palette_path(project_path, filename, "movies")
     if not path.exists():
         return None
     try:
@@ -980,7 +985,7 @@ def _process_one_shot(
 def create_palette_for_movie(
     project_path: str,
     filename: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     *,
     force: bool = False,
     verbose: bool = False,
@@ -1140,7 +1145,7 @@ def create_palette_for_movie(
 
 def create_palette_for_all_movies(
     project_path: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     *,
     force: bool = False,
     verbose: bool = False,

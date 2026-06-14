@@ -10,7 +10,16 @@ from pathlib import Path
 from typing import Any
 import warnings
 
-_MEDIA_TYPES = ("movies", "gameplay")
+_MEDIA_TYPES = ("movie", "gameplay")
+
+# Accepted aliases → canonical media type
+_MEDIA_TYPE_ALIASES: dict[str, str] = {"movies": "movie", "movie": "movie", "gameplay": "gameplay"}
+
+
+def normalize_media_type(s: str) -> str:
+    """Normalise legacy ``"movies"`` alias to canonical ``"movie"``."""
+    return _MEDIA_TYPE_ALIASES.get(s, s)
+
 
 MOVIE_REQUIRED = {"title", "year"}
 
@@ -27,7 +36,7 @@ def _all_metadata(project_path: str, media_type: str | None = None) -> list[dict
     return results
 
 
-def get_metadata(project_path: str, query: str | None = None, media_type: str = "movies") -> list[dict]:
+def get_metadata(project_path: str, query: str | None = None, media_type: str = "movie") -> list[dict]:
     """Return metadata entries.
 
     query=None  → all entries
@@ -60,12 +69,12 @@ def get_metadata(project_path: str, query: str | None = None, media_type: str = 
 def set_metadata(project_path: str, data: dict, match_filename: str | None = None) -> Path:
     """Write metadata to the JSON file for the appropriate media type.
 
-    The data dict must contain 'filename'. 'media_type' defaults to 'movies'.
+    The data dict must contain 'filename'. 'media_type' defaults to 'movie'.
     If a record with the same media_id exists it is replaced; otherwise appended.
     match_filename lets callers rename an existing record (pass the old filename).
     """
     from data.media_id import compute_media_id
-    media_type = data.get("media_type", "movies")
+    media_type = normalize_media_type(data.get("media_type", "movie"))
     filename = data.get("filename")
     if not filename:
         raise ValueError("metadata must include a 'filename' field")
@@ -97,7 +106,7 @@ def set_metadata(project_path: str, data: dict, match_filename: str | None = Non
     return upsert_json_record(project_path, record, media_type, match_key="media_id")
 
 
-def prune_metadata(project_path: str, media_type: str = "movies") -> list[dict]:
+def prune_metadata(project_path: str, media_type: str = "movie") -> list[dict]:
     """Delete metadata records whose file no longer exists on disk.
 
     Returns the list of pruned records.
@@ -119,9 +128,9 @@ def prune_metadata(project_path: str, media_type: str = "movies") -> list[dict]:
 def validate_metadata(data: dict) -> tuple[bool, list[str]]:
     """Validate a metadata dict. Returns (ok, [error_messages])."""
     errors: list[str] = []
-    media_type = data.get("media_type", "movies")
+    media_type = normalize_media_type(data.get("media_type", "movie"))
 
-    if media_type == "movies":
+    if media_type == "movie":
         for field in MOVIE_REQUIRED:
             if field not in data:
                 errors.append(f"missing required field: {field!r}")
@@ -151,7 +160,7 @@ def _parse_filename(filename: str) -> dict[str, Any]:
 
     stub: dict[str, Any] = {
         "filename": filename,
-        "media_type": "movies",
+        "media_type": "movie",
         "title": title,
     }
     if year_match:
@@ -400,7 +409,10 @@ def fetch_metadata(filename: str, project_path: str) -> dict[str, Any]:
     ]
 
     # Get actual video file duration using ffprobe
-    video_path = Path(project_path) / "media" / "videos" / "movies" / filename
+    # Try canonical path first, fall back to legacy 'movies/' folder
+    video_path = Path(project_path) / "media" / "videos" / "movie" / filename
+    if not video_path.exists():
+        video_path = Path(project_path) / "media" / "videos" / "movies" / filename
     actual_duration = None
     if video_path.exists():
         actual_duration = _get_video_duration(video_path)
@@ -430,8 +442,17 @@ def _json_path(project_path: str, media_type: str) -> Path:
 
 
 def load_json_metadata(project_path: str, media_type: str) -> list[dict]:
-    """Load records from the JSON metadata file.  Returns [] if the file does not exist."""
+    """Load records from the JSON metadata file.  Returns [] if the file does not exist.
+
+    Accepts ``"movie"`` (canonical) or the legacy ``"movies"`` alias.
+    When the canonical ``movie.json`` does not exist, falls back to reading the
+    legacy ``movies.json`` so that existing project data continues to load.
+    """
+    media_type = normalize_media_type(media_type)
     path = _json_path(project_path, media_type)
+    if not path.exists() and media_type == "movie":
+        # Backward-compat: try legacy plural filename
+        path = _json_path(project_path, "movies")
     if not path.exists():
         return []
     data = json.loads(path.read_text(encoding="utf-8"))

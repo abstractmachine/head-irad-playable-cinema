@@ -488,7 +488,7 @@ class ProjectVisualizer(QMainWindow):
             try:
                 from visualizers.shot_visualizer import ipc_send_load, _ipc_socket_path
                 if _ipc_socket_path(project_path).exists():
-                    ipc_send_load(project_path, "", "movies")
+                    ipc_send_load(project_path, "", "movie")
                     return
             except Exception:
                 pass
@@ -507,7 +507,7 @@ class ProjectVisualizer(QMainWindow):
         Returns the window (not yet shown) or None for subcommands that must
         run as separate processes (e.g. shotlist with its own IPC server).
         """
-        media_type = "movies"
+        media_type = "movie"
         if subcommand == "metadata":
             from visualizers.metadata_visualizer import MetadataVisualizer
             return MetadataVisualizer(project_path)

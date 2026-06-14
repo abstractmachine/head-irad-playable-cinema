@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-def import_files(sources: list, project_path: str, dest: str = "movies", platform: str | None = None) -> list[str]:
+def import_files(sources: list, project_path: str, dest: str = "movie", platform: str | None = None) -> list[str]:
     """Import media files and return list of successfully imported filenames.
 
     If platform is None (default), files are copied as-is.

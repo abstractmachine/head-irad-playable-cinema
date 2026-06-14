@@ -7,7 +7,7 @@ PROFILES = {
 }
 
 
-def transcode_file(src: Path, project_path: str, media_type: str = "movies", platform: str = "universal") -> Path | None:
+def transcode_file(src: Path, project_path: str, media_type: str = "movie", platform: str = "universal") -> Path | None:
     from services.normalize import normalize_filename
     dest_dir = Path(project_path) / "media" / "videos" / media_type
     dest_dir.mkdir(parents=True, exist_ok=True)

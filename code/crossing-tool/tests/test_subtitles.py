@@ -70,52 +70,52 @@ and more random text
 class TestSubtitlePathResolution(unittest.TestCase):
     def test_canonical_path_found(self):
         with tempfile.TemporaryDirectory() as tmp:
-            project = _make_project(Path(tmp), "movies", "My Film.mp4", _SIMPLE_SRT)
-            result = subtitle_path_for(str(project), "movies", "My Film.mp4")
+            project = _make_project(Path(tmp), "movie", "My Film.mp4", _SIMPLE_SRT)
+            result = subtitle_path_for(str(project), "movie", "My Film.mp4")
             self.assertIsNotNone(result)
             self.assertEqual(result.name, "My Film.srt")
 
     def test_legacy_dash_path_found(self):
         """The legacy dash-separated filename should be found when the canonical doesn't exist."""
         with tempfile.TemporaryDirectory() as tmp:
-            sub_dir = Path(tmp) / "media" / "subtitles" / "movies"
+            sub_dir = Path(tmp) / "media" / "subtitles" / "movie"
             sub_dir.mkdir(parents=True)
             (sub_dir / "My-Film.srt").write_text(_SIMPLE_SRT, encoding="utf-8")
-            result = subtitle_path_for(str(tmp), "movies", "My Film.mp4")
+            result = subtitle_path_for(str(tmp), "movie", "My Film.mp4")
             self.assertIsNotNone(result)
             self.assertEqual(result.name, "My-Film.srt")
 
     def test_canonical_preferred_over_legacy(self):
         """Canonical (space) name takes priority when both exist."""
         with tempfile.TemporaryDirectory() as tmp:
-            sub_dir = Path(tmp) / "media" / "subtitles" / "movies"
+            sub_dir = Path(tmp) / "media" / "subtitles" / "movie"
             sub_dir.mkdir(parents=True)
             (sub_dir / "My Film.srt").write_text(_SIMPLE_SRT, encoding="utf-8")
             (sub_dir / "My-Film.srt").write_text(_SIMPLE_SRT, encoding="utf-8")
-            result = subtitle_path_for(str(tmp), "movies", "My Film.mp4")
+            result = subtitle_path_for(str(tmp), "movie", "My Film.mp4")
             self.assertIsNotNone(result)
             self.assertEqual(result.name, "My Film.srt")
 
     def test_missing_returns_none(self):
         with tempfile.TemporaryDirectory() as tmp:
-            _make_project(Path(tmp), "movies", "My Film.mp4")  # no SRT written
-            result = subtitle_path_for(str(tmp), "movies", "My Film.mp4")
+            _make_project(Path(tmp), "movie", "My Film.mp4")  # no SRT written
+            result = subtitle_path_for(str(tmp), "movie", "My Film.mp4")
             self.assertIsNone(result)
 
     def test_subtitle_exists_true(self):
         with tempfile.TemporaryDirectory() as tmp:
-            project = _make_project(Path(tmp), "movies", "Film.mp4", _SIMPLE_SRT)
-            self.assertTrue(subtitle_exists(str(project), "movies", "Film.mp4"))
+            project = _make_project(Path(tmp), "movie", "Film.mp4", _SIMPLE_SRT)
+            self.assertTrue(subtitle_exists(str(project), "movie", "Film.mp4"))
 
     def test_subtitle_exists_false(self):
         with tempfile.TemporaryDirectory() as tmp:
-            project = _make_project(Path(tmp), "movies", "Film.mp4")
-            self.assertFalse(subtitle_exists(str(project), "movies", "Film.mp4"))
+            project = _make_project(Path(tmp), "movie", "Film.mp4")
+            self.assertFalse(subtitle_exists(str(project), "movie", "Film.mp4"))
 
     def test_different_media_type(self):
         """Subtitle in 'movies' dir must not match 'gameplay' lookup."""
         with tempfile.TemporaryDirectory() as tmp:
-            _make_project(Path(tmp), "movies", "Film.mp4", _SIMPLE_SRT)
+            _make_project(Path(tmp), "movie", "Film.mp4", _SIMPLE_SRT)
             self.assertFalse(subtitle_exists(str(tmp), "gameplay", "Film.mp4"))
 
 
@@ -176,22 +176,22 @@ class TestSRTParsing(unittest.TestCase):
 class TestLoadSubtitleCues(unittest.TestCase):
     def test_loads_cues_from_file(self):
         with tempfile.TemporaryDirectory() as tmp:
-            project = _make_project(Path(tmp), "movies", "Film.mp4", _SIMPLE_SRT)
-            cues = load_subtitle_cues(str(project), "movies", "Film.mp4")
+            project = _make_project(Path(tmp), "movie", "Film.mp4", _SIMPLE_SRT)
+            cues = load_subtitle_cues(str(project), "movie", "Film.mp4")
             self.assertEqual(len(cues), 3)
 
     def test_returns_empty_when_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
-            _make_project(Path(tmp), "movies", "Film.mp4")
-            cues = load_subtitle_cues(str(tmp), "movies", "Film.mp4")
+            _make_project(Path(tmp), "movie", "Film.mp4")
+            cues = load_subtitle_cues(str(tmp), "movie", "Film.mp4")
             self.assertEqual(cues, [])
 
     def test_loads_legacy_dash_filename(self):
         with tempfile.TemporaryDirectory() as tmp:
-            sub_dir = Path(tmp) / "media" / "subtitles" / "movies"
+            sub_dir = Path(tmp) / "media" / "subtitles" / "movie"
             sub_dir.mkdir(parents=True)
             (sub_dir / "My-Film.srt").write_text(_SIMPLE_SRT, encoding="utf-8")
-            cues = load_subtitle_cues(str(tmp), "movies", "My Film.mp4")
+            cues = load_subtitle_cues(str(tmp), "movie", "My Film.mp4")
             self.assertEqual(len(cues), 3)
 
 

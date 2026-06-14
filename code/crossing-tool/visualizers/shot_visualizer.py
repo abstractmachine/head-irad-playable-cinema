@@ -116,7 +116,7 @@ class _IpcServer(_QThread):
                     if msg.get("action") == "load":
                         self.load_requested.emit(
                             msg.get("filename", ""),
-                            msg.get("media_type", "movies"),
+                            msg.get("media_type", "movie"),
                             msg.get("shot_id", ""),
                             msg.get("playback", "pause"),
                         )
@@ -177,7 +177,7 @@ def ipc_send_load(
 def open_at_shot(
     project_path: str,
     filename: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     shot_id: str = "",
     play: bool = False,
     loop: bool = False,
@@ -718,7 +718,7 @@ class ShotlistVisualizer(QMainWindow):
     _audio_start_signal = pyqtSignal(float, float)
 
     def __init__(self, project_path: str, filenames: list, current_index: int = 0,
-                 media_type: str = "movies", verbose: bool = False):
+                 media_type: str = "movie", verbose: bool = False):
         super().__init__()
         self._verbose = verbose
 
@@ -932,7 +932,7 @@ class ShotlistVisualizer(QMainWindow):
                 shot["best_frame"] = None
 
         # Load subtitle cues (movies only; gameplay has no subtitles)
-        if self.media_type == "movies":
+        if self.media_type == "movie":
             from data.subtitles import load_subtitle_cues as _load_cues
             self.subtitle_cues = _load_cues(
                 self.project_path, self.media_type, self.filename
@@ -2656,7 +2656,7 @@ def main():
     parser = argparse.ArgumentParser(description="Validate shot boundaries with frame-precise display")
     parser.add_argument('query', nargs='?', help="Filename substring to match")
     parser.add_argument('--tmdb', type=int, help="TMDb ID")
-    parser.add_argument('--media', choices=['movies', 'gameplay'], default='movies')
+    parser.add_argument('--media', choices=['movie', 'movies', 'gameplay'], default='movie')
     parser.add_argument('--project', help="Project path (default: current directory)")
     parser.add_argument('--filenames', nargs='+', help="Explicit list of filenames (passed by cli.py)")
     parser.add_argument('--all', action='store_true', help="Validate all movies with shotlists")
@@ -2718,6 +2718,8 @@ def main():
     # Verify shotlists exist
     for fn in filenames:
         shotlist_path = get_shotlist_path(project_path, fn, args.media)
+        if not shotlist_path.exists() and args.media == "movie":
+            shotlist_path = get_shotlist_path(project_path, fn, "movies")
         if not shotlist_path.exists():
             print(f"✗ Error: No shotlist found for {fn}", file=sys.stderr)
             print("Run 'crossing shotlist shot detect' first to generate shotlist.", file=sys.stderr)

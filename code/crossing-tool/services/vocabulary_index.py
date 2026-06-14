@@ -19,7 +19,7 @@ Output schema::
     {
       "meta": {
         "built_at": "2026-05-08T12:00:00+00:00",
-        "media_type": "movies",
+        "media_type": "movie",
         "vocabulary_fields": ["setting", "humans", "animals", ...],
         "canonicalization": "noun_lemma_v1",
         "files_processed": 314,
@@ -218,7 +218,7 @@ def _compute_source_hash(project_path: str, media_type: str) -> str:
 # Public API
 # ---------------------------------------------------------------------------
 
-def vocabulary_cache_is_stale(project_path: str, media_type: str = "movies") -> bool:
+def vocabulary_cache_is_stale(project_path: str, media_type: str = "movie") -> bool:
     """Return True when the cache is missing or the annotation files have changed.
 
     Also returns True when the cache was built with an older canonicalization
@@ -239,7 +239,7 @@ def vocabulary_cache_is_stale(project_path: str, media_type: str = "movies") -> 
 
 def build_vocabulary_index(
     project_path: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     force: bool = False,
 ) -> dict:
     """Scan annotation JSON files and build a vocabulary index.
@@ -414,7 +414,7 @@ def build_vocabulary_index(
     return index
 
 
-def load_vocabulary_index(project_path: str, media_type: str = "movies") -> dict:
+def load_vocabulary_index(project_path: str, media_type: str = "movie") -> dict:
     """Load the vocabulary index from cache.
 
     Raises FileNotFoundError if the cache file is missing (stale is allowed —
@@ -433,7 +433,7 @@ def load_vocabulary_index(project_path: str, media_type: str = "movies") -> dict
 # Convenience query API
 # ---------------------------------------------------------------------------
 
-def get_vocabulary_fields(project_path: str, media_type: str = "movies") -> List[str]:
+def get_vocabulary_fields(project_path: str, media_type: str = "movie") -> List[str]:
     """Return the list of fields included in the vocabulary index.
 
     Reads ``vocabulary_fields`` from the cache meta when available, otherwise
@@ -455,7 +455,7 @@ def get_vocabulary_fields(project_path: str, media_type: str = "movies") -> List
 def get_vocabulary(
     field: str,
     project_path: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     sort: str = "alphabetical",
 ) -> List[dict]:
     """Return vocabulary entries for *field* as ``[{"value": str, "count": int}, ...]``.
@@ -464,7 +464,7 @@ def get_vocabulary(
     ----------
     field:        Annotation field name (must be in the vocabulary allowlist).
     project_path: Project root directory.
-    media_type:   ``"movies"`` or ``"gameplay"``.
+    media_type:   ``"movie"`` or ``"gameplay"``.
     sort:         ``"alphabetical"`` (default) or ``"count"`` (descending).
 
     Raises

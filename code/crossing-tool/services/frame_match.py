@@ -70,7 +70,7 @@ def best_frame_path(
 def load_best_frame_lookup(
     project_path: str,
     filename: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
 ) -> dict:
     """Return a {shot_id: best_frame_dict} mapping for *filename*.
 
@@ -554,7 +554,7 @@ def _save_annotation_entries(agg_path: Path, entries: List[Dict[str, Any]]) -> N
 def annotate_best_frames(
     project_path: str,
     filename: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     model_name: str = "clip-vit-base-patch32",
     force: bool = False,
     verbose: bool = False,
@@ -809,7 +809,7 @@ def clear_best_frame(shot: Dict[str, Any]) -> None:
 
 def migrate_best_frame_sources(
     project_path: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
 ) -> Dict[str, Any]:
     """Backfill ``source`` (and ``fallback_reason``) on existing best_frame dicts.
 

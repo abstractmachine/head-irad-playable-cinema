@@ -51,7 +51,7 @@ _COLD_A_MAX = -5.0   # a* < this (when b* also low) → greenish/cyan
 
 def compare_motifs(
     project_path: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     films: list[str] | None = None,
     mode: str = "overlap",
     limit: int | None = None,
@@ -61,7 +61,7 @@ def compare_motifs(
     Parameters
     ----------
     project_path : Project root directory.
-    media_type   : "movies" or "gameplay".
+    media_type   : "movie" or "gameplay".
     films        : Film title substrings / filenames to include.
                    None → all films that have a motif file.
     mode         : One of:
@@ -155,7 +155,7 @@ def compare_motifs(
 
 def get_all_motifs(
     project_path: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     films: list[str] | None = None,
     sort: str = "frequency",
     limit: int | None = None,
@@ -165,7 +165,7 @@ def get_all_motifs(
     Parameters
     ----------
     project_path : Project root directory.
-    media_type   : "movies" or "gameplay".
+    media_type   : "movie" or "gameplay".
     films        : Restrict to these films (None → all).
     sort         : "frequency" (most common first), "alphabetical", or "rarity"
                    (least common first — same as frequency but reversed).
@@ -222,7 +222,7 @@ def get_all_motifs(
 
 def search_palette(
     project_path: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     films: list[str] | None = None,
     *,
     warm: bool = False,
@@ -405,7 +405,7 @@ def _region_passes(
 def search_cooccurrence(
     project_path: str,
     terms: list[str],
-    media_type: str = "movies",
+    media_type: str = "movie",
     films: list[str] | None = None,
     fields: list[str] | None = None,
     operator: str = "AND",
@@ -419,7 +419,7 @@ def search_cooccurrence(
     ----------
     project_path : Project root directory.
     terms        : List of search terms (at least 1 required).
-    media_type   : "movies" or "gameplay".
+    media_type   : "movie" or "gameplay".
     films        : Restrict to these film title substrings.
     fields       : Restrict each term search to these annotation fields.
                    None → search all fields.
@@ -515,7 +515,7 @@ def get_shot_context(
     project_path: str,
     film: str,
     shot_id: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     window: int = 3,
     include_subtitles: bool = False,
     include_motif: bool = False,
@@ -528,7 +528,7 @@ def get_shot_context(
     project_path      : Project root directory.
     film              : Film title substring, filename, or TMDb ID.
     shot_id           : Canonical shot identifier (e.g. "tmdb_4638@f001234-f001456").
-    media_type        : "movies" or "gameplay".
+    media_type        : "movie" or "gameplay".
     window            : Number of shots to include on each side of the central shot.
     include_subtitles : Attach overlapping subtitle cues to each shot.
     include_motif     : Attach the motif word to each shot.
@@ -671,7 +671,7 @@ def _to_secs(time_str: str) -> float | None:
 def align_subtitles_to_shots(
     project_path: str,
     film: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
     scene: int | None = None,
 ) -> dict:
     """Join subtitle cues to shots by time overlap.
@@ -684,7 +684,7 @@ def align_subtitles_to_shots(
     ----------
     project_path : Project root directory.
     film         : Film title substring, filename, or TMDb ID.
-    media_type   : "movies" or "gameplay".
+    media_type   : "movie" or "gameplay".
     scene        : Restrict to one scene number (int). None → all scenes.
 
     Returns
@@ -762,7 +762,7 @@ def align_subtitles_to_shots(
 
 def get_archive_stats(
     project_path: str,
-    media_type: str = "movies",
+    media_type: str = "movie",
 ) -> dict:
     """Return archive-level coverage statistics.
 
