@@ -40,6 +40,101 @@ DEFAULT_THRESHOLD = 128      # binary conversion midpoint
 # Prompt template expansion
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Prompt template expansion
+# ---------------------------------------------------------------------------
+
+# Size classes and their corresponding line-weight hints, keyed by the
+# longest on-page dimension in millimetres.
+_SIZE_CLASS_THRESHOLDS: list[tuple[float, str, str]] = [
+    # (min_mm, size_class, line_weight_hint)
+    (80.0,  "large",       "heavy — use bold 2–3 pt contours, coarse hatching"),
+    (40.0,  "medium",      "medium — use 1–2 pt contours, moderate hatching"),
+    (20.0,  "small",       "fine — use 0.75–1 pt contours, delicate hatching"),
+    ( 0.0,  "very_small",  "minimal — use 0.5 pt contours, very sparse hatching"),
+]
+
+_PT_PER_MM = 2.8346   # 1 mm = 72 / 25.4 pt
+
+
+def build_size_context(
+    preprocessing_size: list | None,
+    preprocess_dpi: int | float,
+    page_pt_w: float,
+    page_pt_h: float,
+    width_frac: float,
+    height_frac: float,
+) -> dict:
+    """Return a dict of size-aware prompt variables derived from placement metadata.
+
+    Parameters
+    ----------
+    preprocessing_size : [w_px, h_px] from the preprocessing sidecar.
+    preprocess_dpi     : DPI used to compute the preprocessing canvas.
+    page_pt_w          : PDF page width in points.
+    page_pt_h          : PDF page height in points.
+    width_frac         : Normalised object width fraction [0, 1].
+    height_frac        : Normalised object height fraction [0, 1].
+
+    All parameters are safe-fallback: missing or zero values yield empty strings.
+    """
+    try:
+        dpi = float(preprocess_dpi) if preprocess_dpi else 0.0
+        if not dpi:
+            dpi = 300.0
+
+        # On-page physical size (mm)
+        obj_w_mm = (width_frac  * page_pt_w / _PT_PER_MM) if (page_pt_w and width_frac)  else 0.0
+        obj_h_mm = (height_frac * page_pt_h / _PT_PER_MM) if (page_pt_h and height_frac) else 0.0
+
+        page_w_mm = (page_pt_w / _PT_PER_MM) if page_pt_w else 0.0
+        page_h_mm = (page_pt_h / _PT_PER_MM) if page_pt_h else 0.0
+
+        # Pixel dimensions from preprocessing sidecar (most accurate source)
+        obj_w_px = int(preprocessing_size[0]) if (preprocessing_size and len(preprocessing_size) >= 2) else 0
+        obj_h_px = int(preprocessing_size[1]) if (preprocessing_size and len(preprocessing_size) >= 2) else 0
+
+        # Size class from longest on-page dimension
+        longest_mm = max(obj_w_mm, obj_h_mm)
+        size_class = "unknown"
+        line_weight_hint = ""
+        for threshold, sc, hint in _SIZE_CLASS_THRESHOLDS:
+            if longest_mm >= threshold:
+                size_class = sc
+                line_weight_hint = hint
+                break
+
+        def _fmt_mm(v: float) -> str:
+            return f"{v:.1f}" if v else ""
+
+        def _fmt_px(v: int) -> str:
+            return str(v) if v else ""
+
+        return {
+            "page_dpi":         str(int(round(dpi))) if dpi else "",
+            "page_width_mm":    _fmt_mm(page_w_mm),
+            "page_height_mm":   _fmt_mm(page_h_mm),
+            "object_width_mm":  _fmt_mm(obj_w_mm),
+            "object_height_mm": _fmt_mm(obj_h_mm),
+            "object_width_px":  _fmt_px(obj_w_px),
+            "object_height_px": _fmt_px(obj_h_px),
+            "size_class":       size_class,
+            "line_weight_hint": line_weight_hint,
+        }
+    except Exception:
+        return {
+            "page_dpi":         "",
+            "page_width_mm":    "",
+            "page_height_mm":   "",
+            "object_width_mm":  "",
+            "object_height_mm": "",
+            "object_width_px":  "",
+            "object_height_px": "",
+            "size_class":       "",
+            "line_weight_hint": "",
+        }
+
+
 def _expand_prompt(template_text: str, context: dict | None) -> str:
     """Expand ``$variable`` placeholders in *template_text* using *context*.
 
@@ -49,14 +144,31 @@ def _expand_prompt(template_text: str, context: dict | None) -> str:
     they render as blank lines rather than un-expanded ``$label`` literals.
     """
     defaults = {
-        "label":       "",
-        "field":       "",
-        "movie":       "",
-        "shot_id":     "",
-        "description": "",
+        "label":            "",
+        "field":            "",
+        "movie":            "",
+        "shot_id":          "",
+        "description":      "",
+        # Size-aware variables (v4+) — available for display/metadata but not injected
+        "page_dpi":         "",
+        "page_width_mm":    "",
+        "page_height_mm":   "",
+        "object_width_mm":  "",
+        "object_height_mm": "",
+        "object_width_px":  "",
+        "object_height_px": "",
+        "size_class":       "",
+        # User-controlled generation parameter
+        "line_weight":      "1.0",
     }
+    # Merge context but explicitly exclude line_weight_hint — it must never
+    # appear in the compiled prompt sent to FLUX (kept in metadata only).
+    _PROMPT_EXCLUDED = {"line_weight_hint"}
     if context:
-        defaults.update({k: str(v) for k, v in context.items() if v is not None})
+        defaults.update(
+            {k: str(v) for k, v in context.items()
+             if v is not None and k not in _PROMPT_EXCLUDED}
+        )
     return string.Template(template_text).safe_substitute(defaults)
 
 
@@ -128,6 +240,10 @@ def generate_engraving(
     prompt_filename, prompt_template = load_engraving_prompt(project_path)
     prompt_text = _expand_prompt(prompt_template, context)
 
+    print(f"\n[engraving] prompt file : {prompt_filename}")
+    print(f"[engraving] context     : {context}")
+    print(f"[engraving] compiled prompt:\n{'-' * 60}\n{prompt_text}\n{'-' * 60}\n")
+
     model_dir = Path(project_path) / "models" / MODEL_NAME
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -186,6 +302,7 @@ def generate_engraving(
         "num_inference_steps": num_inference_steps,
         "guidance_scale":      guidance_scale,
         "binary_threshold":    binary_threshold,
+        "line_weight":         float((context or {}).get("line_weight", 1.0)),
         "prompt_filename":     prompt_filename,
         "prompt":              prompt_text,
         "context":             context or {},

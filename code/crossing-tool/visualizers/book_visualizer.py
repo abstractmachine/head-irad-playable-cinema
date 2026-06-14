@@ -61,6 +61,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSlider,
     QStackedWidget,
     QTabWidget,
     QVBoxLayout,
@@ -187,9 +188,25 @@ def _load_layers(project_path: str, slug: str) -> list:
     try:
         with open(p, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return data if isinstance(data, list) else []
+        layers = data if isinstance(data, list) else []
     except Exception:
         return []
+
+    # Back-fill line_weight on engraving layers that pre-date the field.
+    # The generation JSON sidecar is the authoritative source.
+    from data.book import book_dir
+    eng_dir = book_dir(project_path, slug) / "engravings"
+    for layer in layers:
+        if layer.get("layer_subtype") == "Engraving" and "line_weight" not in layer:
+            eng_id = layer.get("id", "")
+            gen_json = eng_dir / f"{eng_id}_generation.json"
+            try:
+                meta = json.loads(gen_json.read_text(encoding="utf-8"))
+                layer["line_weight"] = float(meta.get("line_weight") or 1.0)
+            except Exception:
+                layer["line_weight"] = 1.0
+
+    return layers
 
 
 def _save_layers(project_path: str, slug: str, layers: list) -> None:
@@ -364,6 +381,7 @@ class _SpreadView(QWidget):
         self._REVEAL_MAX_DEPTH: int = 4
         self._book_dir: Optional[Path] = None   # for image layer compositing
         self._layers_visible: bool = True       # toggled by "Visible" checkbox
+        self._drag_layer_id: Optional[str] = None  # excluded from baked composite during drag
 
         # Text-mask state  (set of page indices where mask is ON)
         self._masked_pages: set = set()
@@ -431,6 +449,20 @@ class _SpreadView(QWidget):
     def set_book_dir(self, book_dir: Optional[Path]) -> None:
         """Set the base directory used to resolve image layer sources."""
         self._book_dir = book_dir
+        self._cache.clear()
+        self._reveal_cache.clear()
+        if self._doc is not None:
+            self._do_render()
+
+    def set_drag_layer_id(self, layer_id: Optional[str]) -> None:
+        """Exclude *layer_id* from the baked composite while it is being dragged.
+
+        The overlay draws the layer live during the drag; calling with ``None``
+        re-includes all layers and re-bakes the spread.
+        """
+        if self._drag_layer_id == layer_id:
+            return
+        self._drag_layer_id = layer_id
         self._cache.clear()
         self._reveal_cache.clear()
         if self._doc is not None:
@@ -731,6 +763,7 @@ class _SpreadView(QWidget):
             return
         w, h = self.width(), self.height()
         if w <= 0 or h <= 0:
+            self._debounce.start()  # retry once layout is complete
             return
         key = (self._slug, self._left_i, self._right_i, w, h)
         if key not in self._cache:
@@ -740,7 +773,7 @@ class _SpreadView(QWidget):
             if self._layers_visible:
                 for layer in self._all_layers:
                     pi = layer.get("page")
-                    if pi is not None:
+                    if pi is not None and layer.get("id") != self._drag_layer_id:
                         layers_by_page.setdefault(pi, []).append(layer)
             left_img  = self._render_page_with_reveals(self._left_i,  cell_w, cell_h, layers_by_page, 0) if self._left_i  is not None else None
             right_img = self._render_page_with_reveals(self._right_i, cell_w, cell_h, layers_by_page, 0) if self._right_i is not None else None
@@ -943,7 +976,11 @@ class _CutOverlay(QWidget):
         return self._action_icons_cache
 
     def _draw_img_action_buttons(self, p: QPainter, layer: dict, rects: dict) -> None:
-        """Draw [Delete] [Engrave] action buttons above the selected/hovered image."""
+        """Draw [Delete] [Engrave] action buttons above the selected/hovered image.
+
+        If there is not enough room above the image (buttons would be clipped),
+        they are placed below the bottom edge instead.
+        """
         page_idx = layer.get("page")
         r = rects.get(page_idx)
         if r is None:
@@ -951,13 +988,18 @@ class _CutOverlay(QWidget):
         corners = self._img_corners_screen(layer, r)
         min_x = int(min(c.x() for c in corners))
         min_y = int(min(c.y() for c in corners))
+        max_y = int(max(c.y() for c in corners))
         sz, gap = 22, 4
-        # Four buttons left-aligned above the image bounding box:
-        # [delete] [flip_h] [flip_v] [engrave]
-        del_rect = QRect(min_x,                  min_y - sz - 3, sz, sz)
-        fh_rect  = QRect(min_x +     (sz + gap), min_y - sz - 3, sz, sz)
-        fv_rect  = QRect(min_x + 2 * (sz + gap), min_y - sz - 3, sz, sz)
-        eng_rect = QRect(min_x + 3 * (sz + gap), min_y - sz - 3, sz, sz)
+        # Place above by default; fall back to below when too close to the top.
+        if min_y - sz - 3 >= 0:
+            btn_y = min_y - sz - 3
+        else:
+            btn_y = max_y + 3
+        # Four buttons left-aligned: [delete] [flip_h] [flip_v] [engrave]
+        del_rect = QRect(min_x,                  btn_y, sz, sz)
+        fh_rect  = QRect(min_x +     (sz + gap), btn_y, sz, sz)
+        fv_rect  = QRect(min_x + 2 * (sz + gap), btn_y, sz, sz)
+        eng_rect = QRect(min_x + 3 * (sz + gap), btn_y, sz, sz)
         self._action_btn_rects[layer["id"]] = {
             "engrave": eng_rect, "delete": del_rect,
             "flip_h":  fh_rect,  "flip_v": fv_rect,
@@ -1880,6 +1922,7 @@ class _CutOverlay(QWidget):
                 self._img_drag_id = None
                 self._img_drag_start = None
                 self._img_drag_origin = None
+                self._view.set_drag_layer_id(None)
                 self.layer_committed.emit({})
             elif self._pt_drag_id is not None:
                 dragged_id = self._pt_drag_id
@@ -2203,6 +2246,7 @@ class _CutOverlay(QWidget):
                             sel_layer["width"], sel_layer["height"],
                             sel_layer.get("rotation", 0.0),
                         )
+                        self._view.set_drag_layer_id(self._sel_id)
                         self.update()
                         return
 
@@ -2221,6 +2265,7 @@ class _CutOverlay(QWidget):
                     img_layer["width"], img_layer["height"],
                     img_layer.get("rotation", 0.0),
                 )
+                self._view.set_drag_layer_id(img_lid)
             self.update()
             return
 
@@ -3333,7 +3378,7 @@ class _IllustrationsDrawer(QWidget):
 # Silhouette Browser sidebar — embedded catalog browser for Book Visualizer
 # ---------------------------------------------------------------------------
 
-_BROWSER_PANEL_W    = 295   # px — preferred width of the silhouette browser column (3 cols + margin)
+_BROWSER_PANEL_W    = 420   # px — preferred width of the silhouette browser column (3 cols + margin)
 _BROWSER_THUMB_SZ   = 80    # px per thumbnail cell
 _BROWSER_THUMB_GAP  = 6     # px gap between cells
 _BROWSER_PAGE_SIZE  = 50    # silhouettes per page
@@ -3524,6 +3569,8 @@ class _SilhouetteBrowserPanel(QWidget):
 
     silhouette_insert_requested = pyqtSignal(str, dict)  # (abs png_path, metadata)
     engraving_delete_requested   = pyqtSignal(str)        # layer_id of engraving to delete
+    thumbnail_selected           = pyqtSignal(dict)       # catalog record on single-click
+    engraving_selected           = pyqtSignal(dict)       # engraving entry on single-click
 
     # Background colour for the selected tab + its content pane.
     # Noticeably darker than PANEL_BG (#6e6e6e) so the active tab stands out.
@@ -3567,6 +3614,7 @@ class _SilhouetteBrowserPanel(QWidget):
         self._eng_loader = None
         self._eng_cells:      list = []   # _BrowserThumbCell instances for the current grid
         self._eng_containers: list = []   # matching container widgets (for resize re-layout)
+        self._selected_eng_idx: int = -1
 
         self.setStyleSheet(_PANEL_STYLESHEET)
         self.setMinimumWidth(180)
@@ -3982,6 +4030,7 @@ class _SilhouetteBrowserPanel(QWidget):
         self._eng_loader    = None
         self._eng_cells     = []
         self._eng_containers = []
+        self._selected_eng_idx = -1
 
     def _on_eng_thumb_ready(self, idx: int, qimg: QImage) -> None:
         if 0 <= idx < len(self._eng_cells):
@@ -4016,6 +4065,17 @@ class _SilhouetteBrowserPanel(QWidget):
     # ------------------------------------------------------------------
     # Selection and insertion
 
+    def _on_eng_cell_single(self, idx: int) -> None:
+        """Highlight the clicked engraving cell and emit engraving_selected."""
+        if 0 <= self._selected_eng_idx < len(self._eng_cells):
+            self._eng_cells[self._selected_eng_idx].set_selected(False)
+        self._selected_eng_idx = idx
+        if 0 <= idx < len(self._eng_cells):
+            self._eng_cells[idx].set_selected(True)
+        sorted_eng = sorted(self._engravings, key=lambda e: e.get("name", ""))
+        if idx < len(sorted_eng):
+            self.engraving_selected.emit(dict(sorted_eng[idx]))
+
     def _on_cell_single(self, idx: int) -> None:
         """Select the thumbnail at *idx* and highlight it."""
         if self._selected_idx == idx:
@@ -4025,6 +4085,15 @@ class _SilhouetteBrowserPanel(QWidget):
         self._selected_idx = idx
         if 0 <= idx < len(self._cells):
             self._cells[idx].set_selected(True)
+        abs_idx = self._page_idx * _BROWSER_PAGE_SIZE + idx
+        if abs_idx < len(self._current_records):
+            self.thumbnail_selected.emit(dict(self._current_records[abs_idx]))
+
+    def clear_selection(self) -> None:
+        """Deselect the currently highlighted thumbnail without emitting a signal."""
+        if 0 <= self._selected_idx < len(self._cells):
+            self._cells[self._selected_idx].set_selected(False)
+        self._selected_idx = -1
 
     def _on_cell_double(self, idx: int) -> None:
         """Select thumbnail and emit an insert request to the Book Visualizer."""
@@ -4107,10 +4176,11 @@ class _SilhouetteBrowserPanel(QWidget):
             if drag_png and Path(drag_png).exists():
                 cell._drag_abs_path = drag_png
                 cell._drag_meta = {
-                    "label":      entry.get("name", "engraving"),
-                    "layer_id":   entry.get("layer_id", ""),
-                    "output_png": entry.get("output_png", ""),
-                    "source_png": entry.get("source_png", ""),
+                    "label":       entry.get("name", "engraving"),
+                    "layer_id":    entry.get("layer_id", ""),
+                    "output_png":  entry.get("output_png", ""),
+                    "source_png":  entry.get("source_png", ""),
+                    "line_weight": entry.get("line_weight", 1.0),
                 }
 
             # Wrap cell in a fixed-size container; overlay a trash button that
@@ -4165,6 +4235,7 @@ class _SilhouetteBrowserPanel(QWidget):
 
             self._eng_cells.append(cell)
             self._eng_containers.append(container)
+            cell.single_clicked.connect(self._on_eng_cell_single)
             self._eng_grid_layout.addWidget(container, i // cols, i % cols)
 
         # Start background thumbnail loader for engraving images.
@@ -4253,11 +4324,15 @@ class _EngravingWorker(QObject):
                 cmd += ["--context", self._context_json]
             proc = subprocess.run(
                 cmd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 text=True,
             )
+            # Echo subprocess output to the parent process terminal
+            if proc.stdout:
+                print(proc.stdout, end="", flush=True)
             if proc.returncode != 0:
-                output = (proc.stdout + proc.stderr).strip()
+                output = proc.stdout.strip()
                 self.failed.emit(self._engraving_id, output)
                 return
 
@@ -4291,6 +4366,271 @@ class _EngravingWorker(QObject):
 # ---------------------------------------------------------------------------
 
 
+class _InspectorPanel(QWidget):
+    """Inspector panel shown in the right column when an Image layer or catalog
+    thumbnail is selected.  Replaces Book / Tools / Layers for the duration of
+    the selection (Unity-style contextual Inspector).
+
+    The parent window switches a ``QStackedWidget`` to index 1 to reveal this
+    panel, and back to index 0 to restore the default layout.
+    """
+
+    line_weight_changed = pyqtSignal(float)  # slider moved
+    open_in_shotlist    = pyqtSignal(str, str)  # (filename_stem, shot_id)
+    open_in_silhouette  = pyqtSignal(str, str, str, str)  # (filename_stem, field, label, shot_id)
+
+    # Line weight slider: integers 25–400 → displayed as value / 100
+    _LW_MIN     = 25
+    _LW_MAX     = 400
+    _LW_DEFAULT = 100   # = 1.0
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._filename_stem = ""
+        self._shot_id       = ""
+        self._field         = ""
+        self._label         = ""
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        dim  = f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt;"
+        val  = f"color: {theme.TEXT};     font-size: {theme.BASE_PT}pt;"
+        bold = f"color: {theme.TEXT};     font-size: {theme.BASE_PT + 1}pt; font-weight: bold;"
+
+        # ── Header ─────────────────────────────────────────────────────
+        # Helper: two-column key / value row
+        def _row(label_text: str, value_widget: QWidget, parent_layout: QVBoxLayout) -> None:
+            row = QHBoxLayout()
+            lbl = QLabel(label_text + ":")
+            lbl.setStyleSheet(dim)
+            lbl.setFixedWidth(80)
+            row.addWidget(lbl)
+            row.addWidget(value_widget, 1)
+            parent_layout.addLayout(row)
+
+        def _val() -> QLabel:
+            w = QLabel("—")
+            w.setStyleSheet(val)
+            w.setWordWrap(True)
+            w.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            return w
+
+        # ── Selection ──────────────────────────────────────────────────
+        sel_group = QGroupBox("Selection")
+        sel_lay   = QVBoxLayout(sel_group)
+        sel_lay.setContentsMargins(8, 12, 8, 8)
+        sel_lay.setSpacing(4)
+
+        self._lbl_label = _val()
+        self._lbl_field = _val()
+        self._lbl_movie = _val()
+        self._lbl_shot  = _val()
+        self._lbl_shot.setStyleSheet(val + " font-family: monospace; font-size: 8pt;")
+        _row("Label", self._lbl_label, sel_lay)
+        _row("Field", self._lbl_field, sel_lay)
+        _row("Movie", self._lbl_movie, sel_lay)
+        _row("Shot",  self._lbl_shot,  sel_lay)
+        layout.addWidget(sel_group)
+
+        # ── Page Information ───────────────────────────────────────────
+        page_group = QGroupBox("Page Information")
+        page_lay   = QVBoxLayout(page_group)
+        page_lay.setContentsMargins(8, 12, 8, 8)
+        page_lay.setSpacing(4)
+
+        self._lbl_dpi    = _val()
+        self._lbl_page_w = _val()
+        self._lbl_page_h = _val()
+        _row("DPI",    self._lbl_dpi,    page_lay)
+        _row("Width",  self._lbl_page_w, page_lay)
+        _row("Height", self._lbl_page_h, page_lay)
+        layout.addWidget(page_group)
+
+        # ── Object Information ─────────────────────────────────────────
+        obj_group = QGroupBox("Object Information")
+        obj_lay   = QVBoxLayout(obj_group)
+        obj_lay.setContentsMargins(8, 12, 8, 8)
+        obj_lay.setSpacing(4)
+
+        self._lbl_obj_w_px = _val()
+        self._lbl_obj_h_px = _val()
+        self._lbl_obj_w_mm = _val()
+        self._lbl_obj_h_mm = _val()
+        _row("Width (px)",  self._lbl_obj_w_px, obj_lay)
+        _row("Height (px)", self._lbl_obj_h_px, obj_lay)
+        _row("Width (mm)",  self._lbl_obj_w_mm, obj_lay)
+        _row("Height (mm)", self._lbl_obj_h_mm, obj_lay)
+        layout.addWidget(obj_group)
+
+        # ── Line Weight ────────────────────────────────────────────────
+        lw_group = QGroupBox("Line Weight")
+        lw_lay   = QVBoxLayout(lw_group)
+        lw_lay.setContentsMargins(8, 12, 8, 8)
+        lw_lay.setSpacing(6)
+
+        lw_row = QHBoxLayout()
+        self._lw_slider = QSlider(Qt.Horizontal)
+        self._lw_slider.setRange(self._LW_MIN, self._LW_MAX)
+        self._lw_slider.setValue(self._LW_DEFAULT)
+        self._lw_slider.setSingleStep(5)
+        self._lw_slider.setPageStep(25)
+        self._lw_slider.setTickInterval(75)
+        self._lw_slider.setTickPosition(QSlider.TicksBelow)
+        self._lw_slider.setFocusPolicy(Qt.NoFocus)
+        lw_row.addWidget(self._lw_slider, 1)
+
+        self._lw_val = QLabel("1.00")
+        self._lw_val.setStyleSheet(val)
+        self._lw_val.setFixedWidth(34)
+        self._lw_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        lw_row.addWidget(self._lw_val)
+        lw_lay.addLayout(lw_row)
+
+        rng_row = QHBoxLayout()
+        for txt, align in (("0.25", Qt.AlignLeft), ("4.00", Qt.AlignRight)):
+            rl = QLabel(txt)
+            rl.setStyleSheet(dim)
+            rl.setAlignment(align)
+            rng_row.addWidget(rl, 1)
+        lw_lay.addLayout(rng_row)
+
+        self._lw_slider.valueChanged.connect(self._on_lw_slider)
+        layout.addWidget(lw_group)
+
+        # ── Viewer buttons ──────────────────────────────────────────────
+        btn_row = QHBoxLayout()
+        self._shotlist_btn = QPushButton("Shotlist")
+        self._shotlist_btn.setEnabled(False)
+        self._shotlist_btn.clicked.connect(
+            lambda: self.open_in_shotlist.emit(self._filename_stem, self._shot_id)
+        )
+        btn_row.addWidget(self._shotlist_btn)
+
+        self._silhouette_btn = QPushButton("Silhouette")
+        self._silhouette_btn.setEnabled(False)
+        self._silhouette_btn.clicked.connect(
+            lambda: self.open_in_silhouette.emit(
+                self._filename_stem, self._field, self._label, self._shot_id
+            )
+        )
+        btn_row.addWidget(self._silhouette_btn)
+        layout.addLayout(btn_row)
+
+        layout.addStretch()
+
+    # ------------------------------------------------------------------
+
+    def _on_lw_slider(self, value: int) -> None:
+        lw = value / 100.0
+        self._lw_val.setText(f"{lw:.2f}")
+        self.line_weight_changed.emit(lw)
+
+    def current_line_weight(self) -> float:
+        return self._lw_slider.value() / 100.0
+
+    def set_line_weight(self, value: float) -> None:
+        self._lw_slider.blockSignals(True)
+        self._lw_slider.setValue(
+            max(self._LW_MIN, min(self._LW_MAX, int(round(value * 100))))
+        )
+        self._lw_slider.blockSignals(False)
+        self._lw_val.setText(f"{value:.2f}")
+
+    def load_layer(
+        self,
+        layer: dict,
+        page_pt_w: float = 0.0,
+        page_pt_h: float = 0.0,
+        movie: str = "",
+    ) -> None:
+        """Populate inspector from a placed Image/Engraving layer dict."""
+        self._lbl_label.setText(layer.get("label") or layer.get("name") or "—")
+        self._lbl_field.setText(layer.get("field") or "—")
+        self._lbl_movie.setText(movie or "—")
+        self._lbl_shot.setText(layer.get("shot_id") or "—")
+
+        try:
+            from services.engraving_generate import build_size_context
+            sc = build_size_context(
+                preprocessing_size=layer.get("preprocessing_size") or [],
+                preprocess_dpi=layer.get("preprocess_dpi") or 0,
+                page_pt_w=page_pt_w,
+                page_pt_h=page_pt_h,
+                width_frac=layer.get("width", 0.0),
+                height_frac=layer.get("height", 0.0),
+            )
+        except Exception:
+            sc = {}
+
+        def _mm(key: str) -> str:
+            v = sc.get(key, "")
+            return f"{v} mm" if v else "—"
+
+        def _px(key: str) -> str:
+            v = sc.get(key, "")
+            return f"{v} px" if v else "—"
+
+        self._lbl_dpi.setText(sc.get("page_dpi") or "—")
+        self._lbl_page_w.setText(_mm("page_width_mm"))
+        self._lbl_page_h.setText(_mm("page_height_mm"))
+        self._lbl_obj_w_px.setText(_px("object_width_px"))
+        self._lbl_obj_h_px.setText(_px("object_height_px"))
+        self._lbl_obj_w_mm.setText(_mm("object_width_mm"))
+        self._lbl_obj_h_mm.setText(_mm("object_height_mm"))
+
+        self.set_line_weight(float(layer.get("line_weight") or 1.0))
+        self._filename_stem = layer.get("filename_stem", "")
+        self._shot_id       = layer.get("shot_id", "")
+        self._field         = layer.get("field", "")
+        self._label         = layer.get("label") or layer.get("name") or ""
+        self._shotlist_btn.setEnabled(bool(self._filename_stem))
+        self._silhouette_btn.setEnabled(bool(self._filename_stem))
+
+    def load_record(self, record: dict) -> None:
+        """Populate inspector from a catalog record (browser thumbnail selection)."""
+        self._lbl_label.setText(record.get("label") or "—")
+        self._lbl_field.setText(record.get("field") or "—")
+        self._lbl_movie.setText(record.get("filename_stem") or "—")
+        self._lbl_shot.setText(record.get("shot_id") or "—")
+        for w in (
+            self._lbl_dpi, self._lbl_page_w, self._lbl_page_h,
+            self._lbl_obj_w_px, self._lbl_obj_h_px,
+            self._lbl_obj_w_mm, self._lbl_obj_h_mm,
+        ):
+            w.setText("—")
+        self.set_line_weight(float(record.get("line_weight") or 1.0))
+        self._filename_stem = record.get("filename_stem", "")
+        self._shot_id       = record.get("shot_id", "")
+        self._field         = record.get("field", "")
+        self._label         = record.get("label") or ""
+        self._shotlist_btn.setEnabled(bool(self._filename_stem))
+        self._silhouette_btn.setEnabled(bool(self._filename_stem))
+
+    def clear(self) -> None:
+        """Reset all display fields to '—'."""
+        for w in (
+            self._lbl_label, self._lbl_field, self._lbl_movie, self._lbl_shot,
+            self._lbl_dpi, self._lbl_page_w, self._lbl_page_h,
+            self._lbl_obj_w_px, self._lbl_obj_h_px,
+            self._lbl_obj_w_mm, self._lbl_obj_h_mm,
+        ):
+            w.setText("—")
+        self._lw_slider.blockSignals(True)
+        self._lw_slider.setValue(self._LW_DEFAULT)
+        self._lw_slider.blockSignals(False)
+        self._lw_val.setText("1.00")
+        self._filename_stem = ""
+        self._shot_id       = ""
+        self._field         = ""
+        self._label         = ""
+        self._shotlist_btn.setEnabled(False)
+        self._silhouette_btn.setEnabled(False)
+
+
 class BookVisualizerWindow(QMainWindow):
     """Main window for the Book Visualizer."""
 
@@ -4314,11 +4654,21 @@ class BookVisualizerWindow(QMainWindow):
         # Active generation workers: engraving_id → _EngravingWorker
         self._engraving_workers: dict = {}
 
+        # Inspector state
+        self._inspector_layer:  Optional[dict] = None
+        self._inspector_record: Optional[dict] = None
+
         self._build_ui()
         self._load_all_books()
         restore_window_geometry(self, "window_book")
         # Grab navigation keys regardless of which child widget has focus
         QApplication.instance().installEventFilter(self)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        # Ensure the spread renders on first show (the initial _do_render call in
+        # __init__ fires before the widget has a valid size, so we retry here).
+        QTimer.singleShot(0, self._spread_view._do_render)
 
     def closeEvent(self, event) -> None:  # noqa: N802
         self._sil_browser._stop_loader()
@@ -4376,10 +4726,15 @@ class BookVisualizerWindow(QMainWindow):
         self._sil_browser = _SilhouetteBrowserPanel(self._project_path)
         self._sil_browser.silhouette_insert_requested.connect(self._insert_silhouette)
         self._sil_browser.engraving_delete_requested.connect(self._on_engraving_delete_requested)
+        self._sil_browser.thumbnail_selected.connect(self._on_browser_thumbnail_selected)
+        self._sil_browser.engraving_selected.connect(self._on_browser_engraving_selected)
         splitter.addWidget(self._sil_browser)
 
         # ── RIGHT: control panel (Book / Tools / Layers) ──────────────
         panel = self._build_control_panel()
+        self._inspector.line_weight_changed.connect(self._on_inspector_lw_changed)
+        self._inspector.open_in_shotlist.connect(self._on_open_in_shotlist)
+        self._inspector.open_in_silhouette.connect(self._on_open_in_silhouette)
         splitter.addWidget(panel)
         splitter.setStretchFactor(0, 1)   # canvas gets all extra space
         splitter.setStretchFactor(1, 0)   # silhouette browser: fixed
@@ -4410,7 +4765,25 @@ class BookVisualizerWindow(QMainWindow):
         panel = QWidget()
         panel.setStyleSheet(_PANEL_STYLESHEET)
         scroll.setWidget(panel)
-        outer_layout.addWidget(scroll)
+
+        # ── QStackedWidget: page 0 = default, page 1 = inspector ──────
+        self._right_stack = QStackedWidget()
+        self._right_stack.addWidget(scroll)          # page 0: default
+
+        inspector_scroll = QScrollArea()
+        inspector_scroll.setFocusPolicy(Qt.NoFocus)
+        inspector_scroll.setWidgetResizable(True)
+        inspector_scroll.setFrameShape(QFrame.NoFrame)
+        inspector_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        inspector_scroll.setStyleSheet(
+            f"QScrollArea {{ background: {theme.PANEL_BG}; border: none; }}"
+        )
+        self._inspector = _InspectorPanel()
+        self._inspector.setStyleSheet(_PANEL_STYLESHEET)
+        inspector_scroll.setWidget(self._inspector)
+        self._right_stack.addWidget(inspector_scroll)  # page 1: inspector
+
+        outer_layout.addWidget(self._right_stack)
 
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(14, 14, 14, 14)
@@ -4939,6 +5312,8 @@ class BookVisualizerWindow(QMainWindow):
         preprocessing_size: list  = []
         preprocess_cache_key: str = ""
         preprocess_dpi: int       = 0
+        page_pt_w: float          = 0.0
+        page_pt_h: float          = 0.0
 
         if source_png and self._doc is not None:
             try:
@@ -5000,6 +5375,12 @@ class BookVisualizerWindow(QMainWindow):
             "z_index":               len(self._overlay.current_layers()),
             "visible":               True,
             "created":               now.isoformat(),
+            "line_weight":           float(source_layer.get("line_weight") or 1.0),
+            "label":                 source_layer.get("label", ""),
+            "field":                 source_layer.get("field", ""),
+            "shot_id":               source_layer.get("shot_id", ""),
+            "filename_stem":         source_layer.get("filename_stem", ""),
+            "description":           source_layer.get("description", ""),
             # Preprocessing provenance:
             "preprocessing_path":    preprocessing_path,
             "preprocessing_size":    preprocessing_size,
@@ -5046,6 +5427,12 @@ class BookVisualizerWindow(QMainWindow):
             "preprocessing_size":    preprocessing_size,
             "preprocess_cache_key":  preprocess_cache_key,
             "preprocess_dpi":        preprocess_dpi,
+            "line_weight":           float(source_layer.get("line_weight") or 1.0),
+            "label":                 source_layer.get("label", ""),
+            "field":                 source_layer.get("field", ""),
+            "shot_id":               source_layer.get("shot_id", ""),
+            "filename_stem":         source_layer.get("filename_stem", ""),
+            "description":           source_layer.get("description", ""),
             # Generation fields — populated when worker finishes:
             "model":          None,
             "preset":         None,
@@ -5085,7 +5472,24 @@ class BookVisualizerWindow(QMainWindow):
                 "movie":       movie,
                 "shot_id":     source_layer.get("shot_id", ""),
                 "description": source_layer.get("description", ""),
+                "line_weight": str(source_layer.get("line_weight", 1.0)),
             }
+
+            # Merge size-aware variables (v4 prompt support)
+            try:
+                from services.engraving_generate import build_size_context
+                size_ctx = build_size_context(
+                    preprocessing_size=preprocessing_size,
+                    preprocess_dpi=preprocess_dpi,
+                    page_pt_w=page_pt_w,
+                    page_pt_h=page_pt_h,
+                    width_frac=source_layer["width"],
+                    height_frac=source_layer["height"],
+                )
+                context.update(size_ctx)
+            except Exception:
+                pass
+
             self._start_engraving_worker(eng_id, preprocessing_path, preprocessing_size, context=context)
 
     def _start_engraving_worker(
@@ -5128,9 +5532,15 @@ class BookVisualizerWindow(QMainWindow):
         # Update the layer: set output_png so the overlay draws it
         layer = self._overlay._layer_by_id(eng_id)
         if layer is not None:
-            layer["output_png"] = output_png
-            layer["model"]      = metadata.get("model")
-            layer["generator"]  = metadata.get("generator")
+            layer["output_png"]          = output_png
+            layer["model"]               = metadata.get("model")
+            layer["generator"]           = metadata.get("generator")
+            layer["line_weight"]         = metadata.get("line_weight", 1.0)
+            layer["seed"]                = metadata.get("seed")
+            layer["num_inference_steps"] = metadata.get("num_inference_steps")
+            layer["guidance_scale"]      = metadata.get("guidance_scale")
+            layer["binary_threshold"]    = metadata.get("binary_threshold")
+            layer["prompt_filename"]     = metadata.get("prompt_filename")
             # Evict the pixmap cache so the new file is loaded
             self._overlay._pixmap_cache.pop(output_png, None)
             self._overlay.update()
@@ -5139,9 +5549,15 @@ class BookVisualizerWindow(QMainWindow):
         # Update the Engravings tab entry
         for entry in self._sil_browser._engravings:
             if entry.get("layer_id") == eng_id:
-                entry["output_png"] = output_png
-                entry["model"]      = metadata.get("base_model")
-                entry["generator"]  = metadata.get("generator")
+                entry["output_png"]          = output_png
+                entry["model"]               = metadata.get("model")
+                entry["generator"]           = metadata.get("generator")
+                entry["line_weight"]         = metadata.get("line_weight", 1.0)
+                entry["seed"]                = metadata.get("seed")
+                entry["num_inference_steps"] = metadata.get("num_inference_steps")
+                entry["guidance_scale"]      = metadata.get("guidance_scale")
+                entry["binary_threshold"]    = metadata.get("binary_threshold")
+                entry["prompt_filename"]     = metadata.get("prompt_filename")
                 break
         self._sil_browser._refresh_engravings_tab()
 
@@ -5194,6 +5610,7 @@ class BookVisualizerWindow(QMainWindow):
             self._layer_panel.remove_layer(layer_id)
 
             # Remove child_layers reference from the parent silhouette
+            # and restore its visibility if it has no remaining children.
             parent_id = eng_layer.get("parent_layer_id")
             if parent_id:
                 parent = self._overlay._layer_by_id(parent_id)
@@ -5201,6 +5618,8 @@ class BookVisualizerWindow(QMainWindow):
                     child_list = parent.get("child_layers", [])
                     if layer_id in child_list:
                         child_list.remove(layer_id)
+                    if not child_list:
+                        parent["visible"] = True
 
             self._save_current_layers()
 
@@ -5302,6 +5721,12 @@ class BookVisualizerWindow(QMainWindow):
                 "line_thickness":        layer.get("line_thickness"),
                 "white_space":           layer.get("white_space"),
                 "output_png":            layer.get("output_png"),
+                "line_weight":           float(layer.get("line_weight") or 1.0),
+                "label":                 layer.get("label", ""),
+                "field":                 layer.get("field", ""),
+                "shot_id":               layer.get("shot_id", ""),
+                "filename_stem":         layer.get("filename_stem", ""),
+                "description":           layer.get("description", ""),
             })
 
         # ── Recovery: scan engravings directory for orphaned generation JSON ─
@@ -5351,6 +5776,7 @@ class BookVisualizerWindow(QMainWindow):
                         "line_thickness":     None,
                         "white_space":        None,
                         "output_png":         output_png,
+                        "line_weight":        float(meta.get("line_weight") or 1.0),
                     })
 
         self._sil_browser.set_engravings(entries)
@@ -5422,6 +5848,128 @@ class BookVisualizerWindow(QMainWindow):
 
     def _on_overlay_selection(self, lid: str) -> None:
         self._layer_panel.select_layer(lid if lid else None)
+        if lid:
+            layer = self._overlay._layer_by_id(lid)
+            if layer and layer.get("type") == "Image":
+                self._show_inspector(layer=layer)
+                return
+        self._hide_inspector()
+
+    # ------------------------------------------------------------------
+    # Inspector
+
+    def _show_inspector(
+        self,
+        layer: Optional[dict] = None,
+        record: Optional[dict] = None,
+    ) -> None:
+        """Switch the right panel to Inspector mode."""
+        if layer is not None:
+            page_pt_w, page_pt_h = 0.0, 0.0
+            if self._doc is not None:
+                try:
+                    pdf_page  = self._doc[layer["page"]]
+                    page_pt_w = float(pdf_page.rect.width)
+                    page_pt_h = float(pdf_page.rect.height)
+                except Exception:
+                    pass
+            movie = ""
+            filename_stem = layer.get("filename_stem", "")
+            if filename_stem:
+                try:
+                    from data.metadata import get_metadata
+                    metas = get_metadata(self._project_path, filename_stem)
+                    if metas:
+                        m     = metas[0]
+                        title = m.get("title", "")
+                        year  = m.get("year", "")
+                        movie = f"{title} ({year})" if title and year else title
+                except Exception:
+                    pass
+            self._inspector.load_layer(layer, page_pt_w, page_pt_h, movie)
+            self._inspector_layer  = layer
+            self._inspector_record = None
+        elif record is not None:
+            self._inspector.load_record(record)
+            self._inspector_layer  = None
+            self._inspector_record = record
+        else:
+            self._hide_inspector()
+            return
+        self._right_stack.setCurrentIndex(1)
+
+    def _hide_inspector(self) -> None:
+        """Return the right panel to the default state."""
+        self._inspector_layer  = None
+        self._inspector_record = None
+        self._inspector.clear()
+        self._sil_browser.clear_selection()
+        self._right_stack.setCurrentIndex(0)
+
+    def _on_browser_engraving_selected(self, entry: dict) -> None:
+        """Show Inspector when an engraving browser thumbnail is single-clicked."""
+        layer_id = entry.get("layer_id")
+        layer = self._overlay._layer_by_id(layer_id) if layer_id else None
+        if layer is not None:
+            self._show_inspector(layer=layer)
+        else:
+            self._show_inspector(record=entry)
+
+    def _on_browser_thumbnail_selected(self, record: dict) -> None:
+        """Show Inspector when a browser thumbnail is single-clicked."""
+        if self._overlay._sel_id is not None:
+            self._overlay._sel_id = None
+            self._overlay._sel_pt = None
+            self._overlay.update()
+            self._layer_panel.select_layer(None)
+        self._show_inspector(record=record)
+
+    def _on_open_in_silhouette(self, filename_stem: str, field: str, label: str = "", shot_id: str = "") -> None:
+        """Open the Silhouette Visualizer filtered to the film, field, label and shot."""
+        if not filename_stem:
+            return
+        try:
+            from visualizers.silhouette_visualizer import open_at_silhouette
+            open_at_silhouette(
+                self._project_path,
+                filename_stem=filename_stem,
+                field=field or None,
+                label=label or None,
+                shot_id=shot_id or None,
+            )
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
+    def _on_open_in_shotlist(self, filename_stem: str, shot_id: str) -> None:
+        """Open the Shotlist Visualizer at the shot linked to the selected layer."""
+        if not filename_stem:
+            return
+        try:
+            from data.metadata import get_metadata
+            metas = get_metadata(self._project_path, filename_stem)
+            if not metas:
+                return
+            filename = metas[0].get("filename", "")
+            if not filename:
+                return
+            from visualizers.shot_visualizer import open_at_shot
+            open_at_shot(
+                self._project_path,
+                filename,
+                "movies",
+                shot_id=shot_id or "",
+                loop=True,
+            )
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
+    def _on_inspector_lw_changed(self, value: float) -> None:
+        """Persist line_weight change to the active placed layer."""
+        if self._inspector_layer is not None:
+            self._inspector_layer["line_weight"] = value
+            self._save_current_layers()
 
     # ------------------------------------------------------------------
     # Layer panel callbacks
@@ -5559,7 +6107,7 @@ class BookVisualizerWindow(QMainWindow):
                 default_h = sh / r.height()
 
         layer = {
-            "id":             f"img_{uuid.uuid4().hex[:8]}",
+            "id":             meta.get("layer_id") or f"img_{uuid.uuid4().hex[:8]}",
             "type":           "Image",
             "name":           Path(source_rel).stem,
             "label":          meta.get("label", ""),
@@ -5576,6 +6124,7 @@ class BookVisualizerWindow(QMainWindow):
             "height":         default_h,
             "rotation":       0.0,
             "z_index":        len(self._overlay.current_layers()),
+            "line_weight":    float(meta.get("line_weight") or 1.0),
         }
         self._overlay._layers.append(layer)
         self._overlay._sel_id = layer["id"]
@@ -5830,6 +6379,9 @@ class BookVisualizerWindow(QMainWindow):
                 self._overlay._sel_id = None
                 self._overlay._sel_pt = None
                 self._overlay.update()
+                self._overlay.selection_changed.emit("")
+            elif self._right_stack.currentIndex() == 1:
+                self._hide_inspector()
             return
         if key in (Qt.Key_Q, Qt.Key_W) and mods == Qt.ControlModifier:
             self.close()

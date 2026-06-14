@@ -1190,6 +1190,111 @@ class _ThumbnailCell(QLabel):
         super().mousePressEvent(event)
 
 
+# ---------------------------------------------------------------------------
+# IPC — single-instance navigate socket
+# ---------------------------------------------------------------------------
+
+def _sil_ipc_socket_path(project_path: str) -> Path:
+    """Return a per-project socket file path for the Silhouette Visualizer."""
+    import tempfile, hashlib
+    h = hashlib.md5(str(project_path).encode()).hexdigest()[:8]
+    return Path(tempfile.gettempdir()) / f"crossing_silhouette_{h}.sock"
+
+
+class _SilIpcServer(QThread):
+    """Listens on a Unix-domain socket and emits navigate_requested."""
+
+    navigate_requested = pyqtSignal(str, str, str, str)  # film, field, label, shot_id
+
+    def __init__(self, project_path: str, parent=None) -> None:
+        super().__init__(parent)
+        self._project_path = project_path
+        self._running = True
+
+    def run(self) -> None:
+        import json as _json
+        import socket as _socket
+        sock_path = _sil_ipc_socket_path(self._project_path)
+        try:
+            sock_path.unlink()
+        except FileNotFoundError:
+            pass
+        srv = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        try:
+            srv.bind(str(sock_path))
+            srv.listen(5)
+            srv.settimeout(1.0)
+            while self._running:
+                try:
+                    conn, _ = srv.accept()
+                except _socket.timeout:
+                    continue
+                try:
+                    data = b""
+                    while True:
+                        chunk = conn.recv(4096)
+                        if not chunk:
+                            break
+                        data += chunk
+                    msg = _json.loads(data.decode())
+                    if msg.get("action") == "navigate":
+                        self.navigate_requested.emit(
+                            msg.get("film", ""),
+                            msg.get("field", ""),
+                            msg.get("label", ""),
+                            msg.get("shot_id", ""),
+                        )
+                except Exception:
+                    pass
+                finally:
+                    conn.close()
+        finally:
+            srv.close()
+            try:
+                sock_path.unlink()
+            except FileNotFoundError:
+                pass
+
+    def stop(self) -> None:
+        self._running = False
+
+
+def _sil_ipc_send_navigate(
+    project_path: str,
+    film: str = "",
+    field: str = "",
+    label: str = "",
+    shot_id: str = "",
+) -> bool:
+    """Send a navigate request to a running Silhouette Visualizer.
+
+    Returns True if the message was delivered, False if no server is listening.
+    """
+    import json as _json
+    import socket as _socket
+    sock_path = _sil_ipc_socket_path(project_path)
+    if not sock_path.exists():
+        return False
+    try:
+        conn = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        conn.settimeout(2.0)
+        conn.connect(str(sock_path))
+        msg = _json.dumps({
+            "action":  "navigate",
+            "film":    film,
+            "field":   field,
+            "label":   label,
+            "shot_id": shot_id,
+        })
+        conn.sendall(msg.encode())
+        conn.close()
+        return True
+    except (ConnectionRefusedError, FileNotFoundError, OSError):
+        return False
+
+
+# ---------------------------------------------------------------------------
+
 class CatalogBrowser(QWidget):
     """Browse the silhouette catalog — mosaic-style layout.
 
@@ -1231,6 +1336,7 @@ class CatalogBrowser(QWidget):
         root.setSpacing(0)
 
         splitter = GripSplitter(Qt.Horizontal)
+        self._panel_splitter = splitter
 
         # ── LEFT: thumbnail scroll area (content / canvas area) ───────────
         self._scroll = QScrollArea()
@@ -1254,10 +1360,8 @@ class CatalogBrowser(QWidget):
         self._scroll.viewport().installEventFilter(self)
         splitter.addWidget(self._scroll)
 
-        # ── RIGHT: control panel (same pattern as mosaic_visualizer) ─────
-        panel = QWidget()
-        panel.setFixedWidth(_PANEL_W)
-        panel.setStyleSheet(
+        # ── RIGHT: control panel in a vertical-only scroll area ─────────
+        _panel_style = (
             f"QWidget {{ background: {theme.PANEL_BG}; }}"
             f" QComboBox {{ background-color: {theme.INPUT_BG}; }}"
             f" QPushButton {{ background-color: {theme.BTN_BG}; border: none;"
@@ -1269,6 +1373,18 @@ class CatalogBrowser(QWidget):
             f" QPushButton:disabled {{ color: {theme.TEXT_DIM};"
             f" background-color: {theme.BTN_BG}; }}"
         )
+        panel_scroll = QScrollArea()
+        panel_scroll.setMinimumWidth(_PANEL_W)
+        panel_scroll.setWidgetResizable(True)
+        panel_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        panel_scroll.setFrameShape(QFrame.NoFrame)
+        panel_scroll.setStyleSheet(
+            f"QScrollArea {{ background: {theme.PANEL_BG}; border: none; }}"
+        )
+        self._panel_scroll = panel_scroll
+
+        panel = QWidget()
+        panel.setStyleSheet(_panel_style)
         pv = QVBoxLayout(panel)
         pv.setContentsMargins(14, 14, 14, 14)
         pv.setSpacing(14)
@@ -1380,13 +1496,6 @@ class CatalogBrowser(QWidget):
         ov.setContentsMargins(8, 12, 8, 8)
         ov.setSpacing(4)
 
-        self._preview = QLabel()
-        self._preview.setAlignment(Qt.AlignCenter)
-        self._preview.setMinimumHeight(140)
-        self._preview.setMaximumHeight(200)
-        self._preview.setStyleSheet(f"background: {theme.CANVAS_BG};")
-        ov.addWidget(self._preview)
-
         self._meta_rows: dict[str, QLabel] = {}
         self._current_rec: dict | None = None
         for key in ("label", "film", "shot", "frame", "confidence", "usefulness", "fullness", "size", "overlap", "semantic_label", "semantic_field", "model"):
@@ -1426,7 +1535,8 @@ class CatalogBrowser(QWidget):
         self._sam_btn.clicked.connect(self._open_sam_explorer)
         pv.addWidget(self._sam_btn)
 
-        splitter.addWidget(panel)
+        panel_scroll.setWidget(panel)
+        splitter.addWidget(panel_scroll)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 0)
         splitter.setSizes([10000, _PANEL_W])
@@ -1494,6 +1604,8 @@ class CatalogBrowser(QWidget):
         # Trigger field→label cascade from the first field entry
         self._field_combo.setCurrentIndex(0)
         self._on_field_changed(0)
+        # Auto-fit panel width to the longest film title
+        QTimer.singleShot(0, self._fit_panel_width)
 
     # ------------------------------------------------------------------
     # Filtering
@@ -1709,31 +1821,12 @@ class CatalogBrowser(QWidget):
             self._show_object_meta(self._page_records[idx])
 
     def _clear_meta(self) -> None:
-        self._preview.clear()
-        self._preview.setText("")
         for lbl in self._meta_rows.values():
             lbl.setText("—")
         self._current_rec = None
         self._shotlist_btn.setEnabled(False)
 
     def _show_object_meta(self, rec: dict) -> None:
-        from PIL import Image as _PIL
-
-        json_path = rec.get("path")
-        png_path = Path(str(json_path)).with_suffix(".png") if json_path else None
-        if png_path and png_path.exists():
-            try:
-                img = _PIL.open(str(png_path)).convert("RGBA")
-                img.thumbnail((_PANEL_W - 28, 190), _PIL.LANCZOS)
-                w, h = img.size
-                data = img.tobytes("raw", "RGBA")
-                qimg = QImage(data, w, h, 4 * w, QImage.Format_RGBA8888)
-                self._preview.setPixmap(QPixmap.fromImage(qimg))
-            except Exception:
-                self._preview.setText("error")
-        else:
-            self._preview.setText("no png")
-
         shot_id = str(rec.get("shot_id", "—"))
         if len(shot_id) > 28:
             shot_id = "…" + shot_id[-26:]
@@ -1842,6 +1935,24 @@ class CatalogBrowser(QWidget):
             if next_off < len(self._current_records):
                 self._show_page(next_off)
 
+    def _fit_panel_width(self) -> None:
+        """Resize the right panel to its natural layout width."""
+        panel = self._panel_scroll.widget()
+        if panel is None:
+            return
+        total = self._panel_splitter.width()
+        if total <= 0:
+            QTimer.singleShot(100, self._fit_panel_width)
+            return
+        # Use the layout's own sizeHint — this accounts for all combo chrome,
+        # group-box insets, margins, and label widths exactly.
+        needed = panel.sizeHint().width()
+        # Reserve space for the vertical scrollbar even when it's hidden.
+        sb = self._panel_scroll.verticalScrollBar()
+        needed += sb.sizeHint().width() if sb else 16
+        needed = max(needed, _PANEL_W)
+        self._panel_splitter.setSizes([max(1, total - needed), needed])
+
     def _open_sam_explorer(self) -> None:
         from tool import prefs as _prefs
         model_name = _prefs.get("model_segmentation", _DEFAULT_MODEL) or _DEFAULT_MODEL
@@ -1849,6 +1960,41 @@ class CatalogBrowser(QWidget):
             self._project_path, media_type=self._media_type, model_name=model_name
         )
         self._sam_explorer_win.show()
+
+    def navigate_to(
+        self,
+        film: Optional[str] = None,
+        field: Optional[str] = None,
+        label: Optional[str] = None,
+        shot_id: Optional[str] = None,
+    ) -> None:
+        """Select *field*, *film* and *label* in the filter combos and apply filters.
+
+        If *shot_id* is given, the matching record's thumbnail is also selected.
+        """
+        if field:
+            for i in range(self._field_combo.count()):
+                if self._field_combo.itemData(i) == field:
+                    self._field_combo.setCurrentIndex(i)
+                    break
+        if label:
+            for i in range(self._label_combo.count()):
+                if self._label_combo.itemData(i) == label:
+                    self._label_combo.setCurrentIndex(i)
+                    break
+        if film:
+            for i in range(self._film_combo.count()):
+                if self._film_combo.itemData(i) == film:
+                    self._film_combo.setCurrentIndex(i)
+                    break
+        if shot_id:
+            for idx, rec in enumerate(self._page_records):
+                if str(rec.get("shot_id", "")) == str(shot_id):
+                    self._on_cell_clicked(idx)
+                    if 0 <= idx < len(self._cells):
+                        cell = self._cells[idx]
+                        QTimer.singleShot(0, lambda c=cell: self._scroll.ensureWidgetVisible(c))
+                    break
 
 
 # ---------------------------------------------------------------------------
@@ -1863,17 +2009,48 @@ class SilhouetteWindow(QMainWindow):
         project_path: str,
         media_type: str = "movies",
         model_name: str = _DEFAULT_MODEL,
+        initial_film: Optional[str] = None,
+        initial_field: Optional[str] = None,
+        initial_label: Optional[str] = None,
+        initial_shot: Optional[str] = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Crossing — Silhouette")
+        self._project_path = project_path
 
         self._catalog = CatalogBrowser(project_path, media_type=media_type)
+        if initial_film or initial_field or initial_label or initial_shot:
+            QTimer.singleShot(0, lambda: self._catalog.navigate_to(
+                initial_film, initial_field, initial_label, initial_shot
+            ))
         self.setCentralWidget(self._catalog)
         self.setMinimumSize(900, 560)
         self.resize(1300, 760)
         restore_window_geometry(self, "window_silhouette")
 
+        # IPC server — lets open_at_silhouette navigate an existing instance
+        self._ipc_server = _SilIpcServer(project_path, parent=self)
+        self._ipc_server.navigate_requested.connect(self._on_ipc_navigate)
+        self._ipc_server.start()
+
+    def _on_ipc_navigate(
+        self, film: str, field: str, label: str, shot_id: str
+    ) -> None:
+        """Raise this window and navigate the catalog."""
+        self.show()
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        self._catalog.navigate_to(
+            film or None,
+            field or None,
+            label or None,
+            shot_id or None,
+        )
+
     def closeEvent(self, event) -> None:
+        self._ipc_server.stop()
+        self._ipc_server.wait(1000)
         save_window_geometry(self, "window_silhouette")
         super().closeEvent(event)
 
@@ -1897,7 +2074,11 @@ class SilhouetteWindow(QMainWindow):
 def run_visualizer(
     project_path: str,
     media_type: str = "movies",
-    field: Optional[str] = None,   # accepted for CLI compat; not used
+    field: Optional[str] = None,
+    initial_film: Optional[str] = None,
+    initial_field: Optional[str] = None,
+    initial_label: Optional[str] = None,
+    initial_shot: Optional[str] = None,
 ) -> None:
     """Create QApplication (if needed) and launch the Silhouette window."""
     from tool import prefs as _prefs
@@ -1911,9 +2092,60 @@ def run_visualizer(
     app = QApplication.instance() or QApplication(sys.argv)
     theme.apply_theme(app)
 
-    win = SilhouetteWindow(project_path, media_type=media_type, model_name=model_name)
+    win = SilhouetteWindow(
+        project_path,
+        media_type=media_type,
+        model_name=model_name,
+        initial_film=initial_film or (field and None),
+        initial_field=initial_field or field,
+        initial_label=initial_label,
+        initial_shot=initial_shot,
+    )
     win.show()
     sys.exit(app.exec_())
+
+
+def open_at_silhouette(
+    project_path: str,
+    filename_stem: str = "",
+    field: Optional[str] = None,
+    media_type: str = "movies",
+    label: Optional[str] = None,
+    shot_id: Optional[str] = None,
+) -> None:
+    """Open (or navigate) the Silhouette Visualizer.
+
+    If an instance is already running (socket exists), delivers a navigate
+    command via IPC and raises the existing window.  Otherwise spawns a new
+    process with the supplied filter arguments.
+    """
+    import subprocess as _sp
+    # Try IPC first (works whether the window is in-process or a subprocess)
+    if _sil_ipc_send_navigate(
+        project_path,
+        film=filename_stem,
+        field=field or "",
+        label=label or "",
+        shot_id=str(shot_id) if shot_id else "",
+    ):
+        # Also raise any in-process window
+        from visualizers._window_helpers import raise_existing_window
+        raise_existing_window("silhouette")
+        return
+    cmd = [
+        sys.executable, str(Path(__file__)),
+        "--project", project_path,
+        "--media",   media_type,
+    ]
+    if filename_stem:
+        cmd += ["--film", filename_stem]
+    if field:
+        cmd += ["--field", field]
+    if label:
+        cmd += ["--label", label]
+    if shot_id:
+        cmd += ["--shot", str(shot_id)]
+    _sp.Popen(cmd)
 
 
 if __name__ == "__main__":
@@ -1921,7 +2153,17 @@ if __name__ == "__main__":
 
     ap = argparse.ArgumentParser(description="Silhouette Visualizer")
     ap.add_argument("--project", required=True, help="Project path")
-    ap.add_argument("--media", default="movies")
-    ap.add_argument("--field", default=None, help="(unused, kept for compat)")
+    ap.add_argument("--media",  default="movies")
+    ap.add_argument("--field",  default=None)
+    ap.add_argument("--film",   default=None, help="Initial film stem to select")
+    ap.add_argument("--label",  default=None, help="Initial label to select")
+    ap.add_argument("--shot",   default=None, help="Initial shot_id to select")
     parsed = ap.parse_args()
-    run_visualizer(parsed.project, media_type=parsed.media, field=parsed.field)
+    run_visualizer(
+        parsed.project,
+        media_type=parsed.media,
+        initial_film=parsed.film,
+        initial_field=parsed.field,
+        initial_label=parsed.label,
+        initial_shot=parsed.shot,
+    )
