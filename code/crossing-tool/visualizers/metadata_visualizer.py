@@ -42,7 +42,7 @@ from styles.theme import JumpScrollBar
 # Constants
 # ---------------------------------------------------------------------------
 
-THUMB_W = 90
+THUMB_W = 160   # max thumbnail width (aspect-ratio may give less)
 THUMB_H = 60
 CARD_H = 124           # fixed height: title + date + ~5 lines overview at 10pt
 CARD_FONT_PT  = theme.BASE_PT + 1   # one step up from global base
@@ -79,48 +79,65 @@ def _truncate(text: str, max_chars: int) -> str:
     return text[:max_chars].rstrip() + "…"
 
 
-# ---------------------------------------------------------------------------
-# Card widgets
-# ---------------------------------------------------------------------------
+class _PlaceholderCard(QFrame):
+    """Fixed-geometry skeleton card shown while metadata + thumbnails are loading."""
+
+    _THUMB_BG = "#464646"
+    _BAR_BG   = "#464646"
+    _CARD_BG  = "#595959"
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFrameShape(QFrame.NoFrame)
+        self.setFixedHeight(CARD_H)
+        self.setStyleSheet(f"QFrame {{ background-color: {self._CARD_BG}; border: none; }}")
+
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+
+        thumb_ph = QFrame()
+        thumb_ph.setFixedSize(THUMB_W, CARD_H)
+        thumb_ph.setStyleSheet(f"background-color: {self._THUMB_BG}; border: none;")
+        row.addWidget(thumb_ph)
+
+        text_col = QVBoxLayout()
+        text_col.setContentsMargins(6, 14, 6, 14)
+        text_col.setSpacing(8)
+        for bar_w in (140, 90, 200, 170, 110):
+            bar = QFrame()
+            bar.setFixedHeight(9)
+            bar.setFixedWidth(bar_w)
+            bar.setStyleSheet(
+                f"background-color: {self._BAR_BG}; border: none; border-radius: 3px;"
+            )
+            text_col.addWidget(bar)
+        text_col.addStretch(1)
+        row.addLayout(text_col, 1)
+
+
 
 _CARD_NORMAL = "QFrame { background-color: #666666; border: none; }"
 _CARD_HOVER  = f"QFrame {{ background-color: {theme.ACCENT}; border: none; }}"
 _CLI_PATH    = Path(__file__).parent.parent / "cli.py"
 
 
-class _ThumbLabel(QLabel):
-    """Label that scales its pixmap to fill the card height; width follows aspect ratio."""
-
-    def __init__(self, pix: QPixmap, parent=None):
-        super().__init__(parent)
-        self._src = pix
-        self._resizing = False
-        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
-        self.setStyleSheet("border: none; background-color: transparent;")
-        # Set an initial width from aspect ratio at THUMB_H so layout has a starting size
-        if pix and not pix.isNull() and pix.height() > 0:
-            w = max(1, round(pix.width() * THUMB_H / pix.height()))
-        else:
-            w = THUMB_H
-        self.setFixedWidth(w)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if self._resizing or not self._src or self._src.isNull() or self.height() <= 0:
-            return
-        self._resizing = True
-        try:
-            # Scale to fill exact height; width derived from aspect ratio — no cropping
-            scaled = self._src.scaled(
-                self._src.width() * 4, self.height(),
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation,
-            )
-            if scaled.width() != self.width():
-                self.setFixedWidth(scaled.width())
-            self.setPixmap(scaled)
-        finally:
-            self._resizing = False
+def _make_thumb_label(thumb_bytes: bytes) -> "QLabel":
+    """Return a fixed-size thumbnail QLabel.  Width is derived from the image
+    aspect ratio (minimum 40px); height is always CARD_H.
+    Size is determined once at creation — no dynamic resizeEvent."""
+    lbl = QLabel()
+    lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+    lbl.setStyleSheet("border: none; background-color: #464646;")
+    w = THUMB_W  # fallback if no image
+    if thumb_bytes:
+        pix = QPixmap()
+        if pix.loadFromData(thumb_bytes) and not pix.isNull() and pix.height() > 0:
+            w = max(40, round(pix.width() * CARD_H / pix.height()))
+            scaled = pix.scaled(w, CARD_H, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+            lbl.setPixmap(scaled)
+    lbl.setFixedSize(w, CARD_H)
+    return lbl
 
 
 class _BaseCard(QFrame):
@@ -169,11 +186,8 @@ class _MovieCard(_BaseCard):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(0)
 
-        # Thumbnail — cover-fills full card height, no border/background
-        pix = QPixmap()
-        if thumb_bytes:
-            pix.loadFromData(thumb_bytes)
-        thumb_label = _ThumbLabel(pix)
+        # Thumbnail — stable fixed-size label (size computed once from aspect ratio)
+        thumb_label = _make_thumb_label(thumb_bytes)
         row.addWidget(thumb_label)
 
         # Text block
@@ -193,7 +207,7 @@ class _MovieCard(_BaseCard):
         director = record.get("director", "")
         meta_parts = [p for p in (year, director) if p]
         if meta_parts:
-            meta_label = QLabel(" · ".join(meta_parts))
+            meta_label = QLabel(" \u00b7 ".join(meta_parts))
             meta_label.setObjectName("dim")
             _fm = theme.font_mono(); _fm.setPointSize(CARD_FONT_PT)
             meta_label.setFont(_fm)
@@ -226,11 +240,8 @@ class _GameplayCard(_BaseCard):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(0)
 
-        # Thumbnail — cover-fills full card height, no border/background
-        pix = QPixmap()
-        if thumb_bytes:
-            pix.loadFromData(thumb_bytes)
-        thumb_label = _ThumbLabel(pix)
+        # Thumbnail — stable fixed-size label (size computed once from aspect ratio)
+        thumb_label = _make_thumb_label(thumb_bytes)
         row.addWidget(thumb_label)
 
         # Text block
@@ -367,6 +378,36 @@ class _CardColumn(QScrollArea):
 
     def set_total(self, n: int) -> None:
         self._progress.setRange(0, max(n, 1))
+        # Pre-allocate skeleton placeholders so the column reaches its full height
+        # immediately — subsequent fill_card calls do in-place swaps (no height change).
+        self._placeholders: list = []
+        if n <= 0:
+            return
+        container = self.widget()
+        container.setUpdatesEnabled(False)
+        try:
+            for _ in range(n):
+                ph = _PlaceholderCard()
+                count = self._layout.count()
+                self._layout.insertWidget(count - 1, ph)  # before trailing stretch
+                self._placeholders.append(ph)
+        finally:
+            container.setUpdatesEnabled(True)
+
+    def fill_card(self, index: int, card: QFrame) -> None:
+        """Replace the placeholder at *index* with the real *card* in-place."""
+        if index < len(self._placeholders):
+            ph = self._placeholders[index]
+            idx = self._layout.indexOf(ph)
+            if idx >= 0:
+                self._layout.insertWidget(idx, card)
+                self._layout.removeWidget(ph)
+                ph.deleteLater()
+            self._placeholders[index] = card
+        else:
+            # Fallback: total_known was never called or count was wrong
+            count = self._layout.count()
+            self._layout.insertWidget(count - 1, card)
 
     def increment_progress(self) -> None:
         self._progress.setValue(self._progress.value() + 1)
@@ -375,7 +416,6 @@ class _CardColumn(QScrollArea):
         self._progress.setValue(0)
 
     def add_card(self, card: QFrame) -> None:
-        # Insert before the trailing stretch
         count = self._layout.count()
         self._layout.insertWidget(count - 1, card)
 
@@ -384,6 +424,14 @@ class _CardColumn(QScrollArea):
         lbl.setStyleSheet(f"color: {theme.TEXT_DIM}; background-color: transparent; border: none;")
         lbl.setAlignment(Qt.AlignCenter)
         self.add_card(lbl)
+
+    def _remove_leftover_placeholders(self) -> None:
+        """Remove any skeleton cards that never got a real card (e.g. load error)."""
+        for ph in self._placeholders:
+            if isinstance(ph, _PlaceholderCard):
+                self._layout.removeWidget(ph)
+                ph.deleteLater()
+        self._placeholders = []
 
 
 # ---------------------------------------------------------------------------
@@ -421,6 +469,8 @@ class MetadataVisualizer(QMainWindow):
         self._gameplay_queue: list[tuple[dict, bytes]] = []
         self._movie_draining    = False
         self._gameplay_draining = False
+        self._movies_fill_idx   = 0
+        self._gameplay_fill_idx = 0
         self._movies_total   = 0
         self._gameplay_total = 0
 
@@ -447,7 +497,9 @@ class MetadataVisualizer(QMainWindow):
     def _drain_movies(self) -> None:
         if self._movie_queue:
             record, thumb_bytes = self._movie_queue.pop(0)
-            self._movies_col.add_card(_MovieCard(record, thumb_bytes))
+            card = _MovieCard(record, thumb_bytes)
+            self._movies_col.fill_card(self._movies_fill_idx, card)
+            self._movies_fill_idx += 1
             self._movies_col.increment_progress()
             QTimer.singleShot(0, self._drain_movies)
         else:
@@ -455,16 +507,17 @@ class MetadataVisualizer(QMainWindow):
 
     def _on_movies_done(self, count: int) -> None:
         if count == 0:
+            self._movies_col._remove_leftover_placeholders()
             self._movies_col.finish_progress()
             self._movies_col.set_empty_message("No movie metadata found.")
         else:
-            # Drain any remaining queued cards then hide the bar
             QTimer.singleShot(0, self._finish_movies)
 
     def _finish_movies(self) -> None:
         if self._movie_queue or self._movie_draining:
             QTimer.singleShot(20, self._finish_movies)
         else:
+            self._movies_col._remove_leftover_placeholders()
             self._movies_col.finish_progress()
 
     # -- gameplay -----------------------------------------------------------
@@ -478,7 +531,9 @@ class MetadataVisualizer(QMainWindow):
     def _drain_gameplay(self) -> None:
         if self._gameplay_queue:
             record, thumb_bytes = self._gameplay_queue.pop(0)
-            self._gameplay_col.add_card(_GameplayCard(record, thumb_bytes))
+            card = _GameplayCard(record, thumb_bytes)
+            self._gameplay_col.fill_card(self._gameplay_fill_idx, card)
+            self._gameplay_fill_idx += 1
             self._gameplay_col.increment_progress()
             QTimer.singleShot(0, self._drain_gameplay)
         else:
@@ -486,6 +541,7 @@ class MetadataVisualizer(QMainWindow):
 
     def _on_gameplay_done(self, count: int) -> None:
         if count == 0:
+            self._gameplay_col._remove_leftover_placeholders()
             self._gameplay_col.finish_progress()
             self._gameplay_col.set_empty_message("No gameplay metadata found.")
         else:
@@ -495,6 +551,7 @@ class MetadataVisualizer(QMainWindow):
         if self._gameplay_queue or self._gameplay_draining:
             QTimer.singleShot(20, self._finish_gameplay)
         else:
+            self._gameplay_col._remove_leftover_placeholders()
             self._gameplay_col.finish_progress()
 
     def keyPressEvent(self, event) -> None:

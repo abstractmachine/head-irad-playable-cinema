@@ -334,6 +334,7 @@ class SearchWorker(QThread):
         project_path: str,
         best_mode: bool = False,
         model_name: str = "clip-vit-base-patch32",
+        media_type: str = "movie",
         parent=None,
     ):
         super().__init__(parent)
@@ -345,6 +346,7 @@ class SearchWorker(QThread):
         self.project_path    = project_path
         self.best_mode       = best_mode
         self.model_name      = model_name
+        self.media_type      = media_type
         self._cancelled      = False
 
     def cancel(self) -> None:
@@ -410,7 +412,7 @@ class SearchWorker(QThread):
                                 filename=r.get("filename", ""),
                                 shot_id=r.get("shot_id", ""),
                                 query=self.query,
-                                media_type="movie",
+                                media_type=self.media_type,
                                 model=clip_model,
                                 processor=clip_processor,
                                 device=clip_device,
@@ -461,11 +463,12 @@ class VocabularyWorker(QThread):
     items_ready = pyqtSignal(list)
     error       = pyqtSignal(str)
 
-    def __init__(self, field: str, scope: Optional[str], project_path: str, parent=None):
+    def __init__(self, field: str, scope: Optional[str], project_path: str, media_type: str = "movie", parent=None):
         super().__init__(parent)
         self.field        = field
         self.scope        = scope
         self.project_path = project_path
+        self.media_type   = media_type
 
     def run(self) -> None:
         try:
@@ -478,7 +481,7 @@ class VocabularyWorker(QThread):
                 use_all      = use_all,
                 show_count   = True,
                 project_path = self.project_path,
-                media_type   = "movie",
+                media_type   = self.media_type,
                 sort         = "count",
             )
             self.items_ready.emit(result)
@@ -1027,11 +1030,12 @@ class BestOnlyWorker(QThread):
     tile_ready      = pyqtSignal(dict, object)
     finished_signal = pyqtSignal(int)
 
-    def __init__(self, lookup: dict, filename: str, project_path: str, parent=None):
+    def __init__(self, lookup: dict, filename: str, project_path: str, media_type: str = "movie", parent=None):
         super().__init__(parent)
         self.lookup       = lookup
         self.filename     = filename
         self.project_path = project_path
+        self.media_type   = media_type
         self._cancelled   = False
 
     def cancel(self) -> None:
@@ -1043,7 +1047,7 @@ class BestOnlyWorker(QThread):
             if self._cancelled:
                 break
             img_path = best_frame_path(
-                self.project_path, "movie", self.filename, shot_id
+                self.project_path, self.media_type, self.filename, shot_id
             )
             path_str = str(img_path) if img_path.exists() else None
             result = {
@@ -1082,10 +1086,11 @@ class AllShotsWorker(QThread):
     finished_signal = pyqtSignal(int)
     error           = pyqtSignal(str)
 
-    def __init__(self, filename: str, project_path: str, parent=None):
+    def __init__(self, filename: str, project_path: str, media_type: str = "movie", parent=None):
         super().__init__(parent)
         self.filename     = filename
         self.project_path = project_path
+        self.media_type   = media_type
         self._cancelled   = False
 
     def cancel(self) -> None:
@@ -1095,7 +1100,7 @@ class AllShotsWorker(QThread):
         try:
             from data.shotlist import read_shotlist
 
-            shots = read_shotlist(self.project_path, self.filename, "movie")
+            shots      = read_shotlist(self.project_path, self.filename, self.media_type)
             movie_id   = Path(self.filename).stem
             video_path = _find_video_path(self.project_path, movie_id)
 
@@ -1168,6 +1173,7 @@ class ScenesWorker(QThread):
         best_lookup: "dict | None" = None,
         resume_from_shot_id: "str | None" = None,
         initial_scene: "str | None" = None,
+        media_type: str = "movie",
         parent=None,
     ):
         super().__init__(parent)
@@ -1176,6 +1182,7 @@ class ScenesWorker(QThread):
         self.best_lookup         = best_lookup or {}
         self.resume_from_shot_id = resume_from_shot_id
         self.initial_scene       = initial_scene
+        self.media_type          = media_type
         self._cancelled          = False
 
     def cancel(self) -> None:
@@ -1186,7 +1193,7 @@ class ScenesWorker(QThread):
             from data.shotlist import read_shotlist
             from data.metadata import get_metadata
 
-            shots      = read_shotlist(self.project_path, self.filename, "movie")
+            shots      = read_shotlist(self.project_path, self.filename, self.media_type)
             movie_id   = Path(self.filename).stem
             video_path = _find_video_path(self.project_path, movie_id)
 
@@ -1204,7 +1211,7 @@ class ScenesWorker(QThread):
                 _cap.release()
 
             # Clean title + year from stored metadata; fall back to filename parsing
-            meta_list = get_metadata(self.project_path, self.filename, "movie")
+            meta_list = get_metadata(self.project_path, self.filename, self.media_type)
             if meta_list:
                 _meta = meta_list[0]
             else:
@@ -1299,7 +1306,7 @@ class ScenesWorker(QThread):
                 pixmap: Optional[QPixmap] = None
                 if self.best_lookup and shot_id in self.best_lookup:
                     img_path = best_frame_path(
-                        self.project_path, "movie", self.filename, shot_id
+                        self.project_path, self.media_type, self.filename, shot_id
                     )
                     if img_path.exists():
                         pixmap = QPixmap(str(img_path))
@@ -1420,9 +1427,10 @@ _CTRL_PANEL_WIDTH = 270
 class MosaicVisualizer(QMainWindow):
     """Interactive mosaic visualizer window."""
 
-    def __init__(self, project_path: str):
+    def __init__(self, project_path: str, media_type: str = "movie"):
         super().__init__()
         self.project_path = project_path
+        self.media_type   = media_type
         self._worker: Optional[SearchWorker] = None
         self._best_worker: Optional[BestOnlyWorker] = None
         self._all_shots_worker: Optional[AllShotsWorker] = None
@@ -1511,7 +1519,7 @@ class MosaicVisualizer(QMainWindow):
             return
 
         from visualizers.shot_visualizer import open_at_shot
-        open_at_shot(self.project_path, filename, "movie", shot_id=shot_id,
+        open_at_shot(self.project_path, filename, self.media_type, shot_id=shot_id,
                      loop=True, no_continue=True, play=True)
         self.status.showMessage(
             f"Opening Shotlist Visualizer → {filename}  shot {shot_id}", 4000
@@ -1525,7 +1533,7 @@ class MosaicVisualizer(QMainWindow):
         if not filename or not shot_id:
             return
         try:
-            shots = read_shotlist(self.project_path, filename, "movie")
+            shots = read_shotlist(self.project_path, filename, self.media_type)
             new_ignored = False
             for shot in shots:
                 if shot.get("shot_id") == shot_id:
@@ -1533,7 +1541,7 @@ class MosaicVisualizer(QMainWindow):
                     new_ignored = current not in ("true", "1", "yes")
                     shot["Ignore"] = "True" if new_ignored else "False"
                     break
-            write_shotlist(self.project_path, filename, "movie", shots)
+            write_shotlist(self.project_path, filename, self.media_type, shots)
             result["Ignore"] = "True" if new_ignored else "False"
             tile = self.canvas.tile_for_shot(shot_id)
             if tile:
@@ -1553,7 +1561,7 @@ class MosaicVisualizer(QMainWindow):
         if not filename or not shot_id:
             return
         try:
-            shots = read_shotlist(self.project_path, filename, "movie")
+            shots = read_shotlist(self.project_path, filename, self.media_type)
             shot_idx = next(
                 (i for i, s in enumerate(shots) if s.get("shot_id") == shot_id), None
             )
@@ -1576,7 +1584,7 @@ class MosaicVisualizer(QMainWindow):
                 else:
                     break
             _renumber_scenes(shots)
-            write_shotlist(self.project_path, filename, "movie", shots)
+            write_shotlist(self.project_path, filename, self.media_type, shots)
 
             # Build shot_id → new scene map from the modified shots list
             shot_scene_map = {
@@ -1653,7 +1661,7 @@ class MosaicVisualizer(QMainWindow):
         if not filename or not target_scene:
             return
         try:
-            shots = read_shotlist(self.project_path, filename, "movie")
+            shots = read_shotlist(self.project_path, filename, self.media_type)
             first_idx = next(
                 (i for i, s in enumerate(shots) if s.get("Scene") == target_scene), None
             )
@@ -1665,7 +1673,7 @@ class MosaicVisualizer(QMainWindow):
                 if shot.get("Scene") == target_scene:
                     shot["Scene"] = prev_scene
             _renumber_scenes(shots)
-            write_shotlist(self.project_path, filename, "movie", shots)
+            write_shotlist(self.project_path, filename, self.media_type, shots)
 
             # Build shot_id → new scene map from the modified shots list
             shot_scene_map = {
@@ -1817,10 +1825,17 @@ class MosaicVisualizer(QMainWindow):
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(14)
 
-        # Scope
+        # Scope — media type combo then title combo
         scope_group = QGroupBox("Scope")
         scope_layout = QVBoxLayout(scope_group)
         scope_layout.setContentsMargins(8, 12, 8, 8)
+        scope_layout.setSpacing(6)
+        self.media_type_combo = QComboBox()
+        self.media_type_combo.addItems(["movie", "gameplay"])
+        self.media_type_combo.setCurrentText(self.media_type)
+        self.media_type_combo.currentTextChanged.connect(self._on_media_type_changed)
+        self.media_type_combo.installEventFilter(self)
+        scope_layout.addWidget(self.media_type_combo)
         self.movie_combo = QComboBox()
         self.movie_combo.addItem("--all")
         self.movie_combo.currentIndexChanged.connect(self._on_field_changed)
@@ -1971,19 +1986,53 @@ class MosaicVisualizer(QMainWindow):
         layout.addWidget(self.status)
         return panel
 
+    def _on_media_type_changed(self, media_type: str) -> None:
+        """Called when the media type combo changes."""
+        self.media_type = media_type
+        self.canvas.clear()
+        self._current_results = []
+        self.movie_combo.blockSignals(True)
+        self.movie_combo.clear()
+        self.movie_combo.addItem("--all")
+        self.movie_combo.blockSignals(False)
+        self._populate_movies()
+        self._update_best_button()
+
+    def _current_scope(self) -> "tuple[str, str | None]":
+        """Return (media_type, filename_or_none) for the current scope selection."""
+        filename = self.movie_combo.currentData()
+        return self.media_type, filename if filename else None
+
+    def _select_scope(self, media_type: str, filename: "str | None") -> None:
+        """Programmatically select a scope without triggering signals."""
+        self.media_type_combo.blockSignals(True)
+        self.media_type_combo.setCurrentText(media_type)
+        self.media_type = media_type
+        self.media_type_combo.blockSignals(False)
+        # Repopulate titles for this type, then select the right entry
+        self._populate_movies()
+        if filename is not None:
+            idx = self.movie_combo.findData(filename)
+            if idx >= 0:
+                self.movie_combo.setCurrentIndex(idx)
+
     def _populate_movies(self) -> None:
+        """Populate movie_combo from project metadata for the current media type."""
         try:
             from data.metadata import get_metadata
-            rows = get_metadata(self.project_path, media_type="movie")
+            rows = get_metadata(self.project_path, media_type=self.media_type)
             sorted_rows = sorted(rows, key=lambda r: (r.get("title") or "").lower())
             for row in sorted_rows:
-                title = row.get("title", "")
-                year  = row.get("year", "")
-                label = f"{title} ({year})" if year else title
-                if label:
-                    self.movie_combo.addItem(label, userData=row.get("filename", ""))
+                title    = row.get("title", "")
+                year     = row.get("year", "")
+                label    = f"{title} ({year})" if year else title
+                filename = row.get("filename", "")
+                if label and filename:
+                    self.movie_combo.addItem(label, userData=filename)
         except Exception as exc:
-            self.status.showMessage(f"Warning: could not load movie list — {exc}")
+            self.status.showMessage(f"Warning: could not load {self.media_type} list — {exc}")
+        finally:
+            self._update_best_button()
 
     # ------------------------------------------------------------------
     # Best-mode helpers
@@ -2050,7 +2099,7 @@ class MosaicVisualizer(QMainWindow):
         if self.best_mode and scope and not self._query_best_active:
             from services.frame_match import load_best_frame_lookup
             self._best_lookup = load_best_frame_lookup(
-                self.project_path, scope, "movie"
+                self.project_path, scope, self.media_type
             )
 
         from tool import prefs as _prefs
@@ -2065,6 +2114,7 @@ class MosaicVisualizer(QMainWindow):
             project_path   = self.project_path,
             best_mode      = self._query_best_active,
             model_name     = model_name,
+            media_type     = self.media_type,
         )
         self._worker.tile_ready.connect(self._on_tile_ready)
         self._worker.finished_signal.connect(self._on_search_done)
@@ -2078,7 +2128,7 @@ class MosaicVisualizer(QMainWindow):
             if bf:
                 img_path = best_frame_path(
                     self.project_path,
-                    "movie",
+                    self.media_type,
                     result.get("movie_id", ""),
                     shot_id,
                 )
@@ -2144,7 +2194,7 @@ class MosaicVisualizer(QMainWindow):
         self.pdf_btn.setEnabled(False)
         self.video_btn.setEnabled(False)
 
-        lookup = load_best_frame_lookup(self.project_path, filename, "movie")
+        lookup = load_best_frame_lookup(self.project_path, filename, self.media_type)
         if not lookup:
             self._progress.setRange(0, 1)
             self._progress.setValue(0)
@@ -2156,7 +2206,7 @@ class MosaicVisualizer(QMainWindow):
         self._total_best = len(lookup)
         self.status.showMessage(f"Loading {self._total_best} best frame(s)…")
 
-        self._best_worker = BestOnlyWorker(lookup, filename, self.project_path)
+        self._best_worker = BestOnlyWorker(lookup, filename, self.project_path, media_type=self.media_type)
         self._best_worker.tile_ready.connect(self._on_best_tile_ready)
         self._best_worker.finished_signal.connect(self._on_best_done)
         self._best_worker.start()
@@ -2230,7 +2280,7 @@ class MosaicVisualizer(QMainWindow):
         self.pdf_btn.setEnabled(False)
         self.video_btn.setEnabled(False)
 
-        self._all_shots_worker = AllShotsWorker(filename, self.project_path)
+        self._all_shots_worker = AllShotsWorker(filename, self.project_path, self.media_type)
         self._all_shots_worker.tile_ready.connect(self._on_all_shots_tile_ready)
         self._all_shots_worker.finished_signal.connect(self._on_all_shots_done)
         self._all_shots_worker.error.connect(self._on_all_shots_error)
@@ -2324,12 +2374,13 @@ class MosaicVisualizer(QMainWindow):
         best_lookup: dict = {}
         if self.best_mode:
             from services.frame_match import load_best_frame_lookup
-            best_lookup = load_best_frame_lookup(self.project_path, filename, "movie")
+            best_lookup = load_best_frame_lookup(self.project_path, filename, self.media_type)
 
         self._scenes_worker = ScenesWorker(
             filename, self.project_path, best_lookup,
             resume_from_shot_id=resume_from_shot_id,
             initial_scene=initial_scene,
+            media_type=self.media_type,
         )
         self._scenes_worker.tile_ready.connect(self._on_scenes_tile_ready)
         self._scenes_worker.finished_signal.connect(self._on_scenes_done)
@@ -2568,7 +2619,7 @@ class MosaicVisualizer(QMainWindow):
         if self._vocab_worker and self._vocab_worker.isRunning():
             self._vocab_worker.wait(1000)
 
-        scope_data = self.movie_combo.currentData()  # filename stored as userData
+        scope_data = self.movie_combo.currentData()
         scope      = scope_data if scope_data else None
 
         loading = QListWidgetItem("Loading…")
@@ -2579,6 +2630,7 @@ class MosaicVisualizer(QMainWindow):
             field        = field,
             scope        = scope,
             project_path = self.project_path,
+            media_type   = self.media_type,
         )
         self._vocab_worker.items_ready.connect(self._on_vocab_items)
         self._vocab_worker.error.connect(self._on_vocab_error)
@@ -2610,7 +2662,7 @@ class MosaicVisualizer(QMainWindow):
         if event.type() == QEvent.KeyPress:
             key = event.key()
             if key in (Qt.Key_Home, Qt.Key_End):
-                # Always navigate titles, regardless of which combo has focus
+                # Navigate titles within the current movie_combo
                 idx = self.movie_combo.currentIndex()
                 if key == Qt.Key_Home:
                     if idx > 0:
@@ -2620,7 +2672,7 @@ class MosaicVisualizer(QMainWindow):
                         self.movie_combo.setCurrentIndex(idx + 1)
                 return True
             if key in (Qt.Key_PageUp, Qt.Key_PageDown):
-                if obj in (self.movie_combo, self.field_combo, self.canvas, self.canvas.viewport()):
+                if obj in (self.movie_combo, self.media_type_combo, self.field_combo, self.canvas, self.canvas.viewport()):
                     idx = self.field_combo.currentIndex()
                     if key == Qt.Key_PageUp:
                         if idx > 0:
@@ -2669,7 +2721,7 @@ class MosaicVisualizer(QMainWindow):
 # Public launcher
 # ---------------------------------------------------------------------------
 
-def run_visualizer(project_path: str) -> None:
+def run_visualizer(project_path: str, media_type: str = "movie") -> None:
     """Create the QApplication (if needed) and launch the visualizer window."""
     from visualizers._window_helpers import raise_existing_window
     if raise_existing_window("mosaic"):
@@ -2677,6 +2729,6 @@ def run_visualizer(project_path: str) -> None:
 
     app = QApplication.instance() or QApplication(sys.argv)
     theme.apply_theme(app)
-    win = MosaicVisualizer(project_path)
+    win = MosaicVisualizer(project_path, media_type=media_type)
     win.show()
     sys.exit(app.exec_())

@@ -835,8 +835,24 @@ class ShotlistVisualizer(QMainWindow):
             # Empty filename = raise-only ping; nothing else to do.
             return
         if media_type != self.media_type:
-            # Different media type — not supported mid-session; ignore silently.
-            return
+            # Switch media type first: update combo + repopulate filenames list,
+            # but do NOT auto-load index 0 (we'll load the requested file below).
+            self.media_type = media_type
+            try:
+                from data.metadata import get_metadata as _get_meta
+                all_entries = _get_meta(self.project_path, media_type=media_type)
+                self.filenames = [e["filename"] for e in all_entries if e.get("filename")]
+            except Exception:
+                self.filenames = []
+            self._updating_combo = True
+            self.media_type_combo.blockSignals(True)
+            self.media_type_combo.setCurrentText(media_type)
+            self.media_type_combo.blockSignals(False)
+            self.movie_combo.clear()
+            for fn in self.filenames:
+                self.movie_combo.addItem(_display_name(fn), fn)
+            self._updating_combo = False
+            self.current_movie_index = -1
         if filename in self.filenames:
             idx = self.filenames.index(filename)
             self.switch_to_movie(idx)
@@ -863,18 +879,37 @@ class ShotlistVisualizer(QMainWindow):
     # Data loading
     # ------------------------------------------------------------------
 
-    def _open_video(self):
+    def _open_video(self, fatal: bool = True) -> bool:
         self.video_path = (
             Path(self.project_path) / "media" / "videos"
             / self.media_type / self.filename
         )
         if not self.video_path.exists():
-            QMessageBox.critical(self, "Error", f"Video file not found:\n{self.video_path}")
-            sys.exit(1)
+            if fatal:
+                QMessageBox.critical(self, "Error", f"Video file not found:\n{self.video_path}")
+                sys.exit(1)
+            # Runtime switch — clear cap so callers know there is no video
+            if self.cap is not None:
+                self.cap.release()
+            self.cap = None
+            self.frame_rate          = 30.0
+            self.total_frames        = 0
+            self.video_native_width  = 320
+            self.video_native_height = 180
+            self.sar_num, self.sar_den = 1, 1
+            return False
         self.cap = cv2.VideoCapture(str(self.video_path))
         if not self.cap.isOpened():
-            QMessageBox.critical(self, "Error", f"Could not open video:\n{self.video_path}")
-            sys.exit(1)
+            if fatal:
+                QMessageBox.critical(self, "Error", f"Could not open video:\n{self.video_path}")
+                sys.exit(1)
+            self.cap = None
+            self.frame_rate          = 30.0
+            self.total_frames        = 0
+            self.video_native_width  = 320
+            self.video_native_height = 180
+            self.sar_num, self.sar_den = 1, 1
+            return False
         self.frame_rate          = self.cap.get(cv2.CAP_PROP_FPS)
         self.total_frames        = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         raw_w                    = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -882,13 +917,30 @@ class ShotlistVisualizer(QMainWindow):
         self.sar_num, self.sar_den = _get_sar(str(self.video_path))
         self.video_native_width  = int(round(raw_w * self.sar_num / self.sar_den))
 
-    def _load_data(self):
-        """Load shotlist and annotations for the current film."""
+    def _load_data(self, fatal_on_missing: bool = True) -> bool:
+        """Load shotlist and annotations for the current film.
+
+        Returns True on success. If the shotlist is missing:
+        - gameplay: always silently returns empty (no dialog)
+        - movie: shows a warning; exits when fatal_on_missing=True (startup),
+          or returns False (runtime).
+        """
         try:
             self.shots = read_shotlist(self.project_path, self.filename, self.media_type)
-        except FileNotFoundError as e:
-            QMessageBox.critical(self, "Error", str(e))
-            sys.exit(1)
+        except FileNotFoundError:
+            if self.media_type == "gameplay":
+                # Gameplay shotlists don't exist yet — silently show an empty table
+                self.shots = []
+                return False
+            msg = (
+                f"No shotlist found for:\n{self.filename}\n\n"
+                "Run 'crossing shotlist shot detect' first to generate a shotlist."
+            )
+            QMessageBox.warning(self, "No Shotlist", msg)
+            if fatal_on_missing:
+                sys.exit(0)
+            self.shots = []
+            return False
         for s in self.shots:
             for k in ("start_frame", "end_frame"):
                 v = s.get(k)
@@ -939,6 +991,7 @@ class ShotlistVisualizer(QMainWindow):
             )
         else:
             self.subtitle_cues = []
+        return True
 
     def _reload_for_movie(self, index: int):
         """Reload video + data for movie *index*, then refresh the UI."""
@@ -948,8 +1001,8 @@ class ShotlistVisualizer(QMainWindow):
         self._ann_dirty = False
         if self.cap is not None:
             self.cap.release()
-        self._open_video()
-        self._load_data()
+        self._open_video(fatal=False)
+        self._load_data(fatal_on_missing=False)
 
         interval = int(1000 / self.frame_rate) if self.frame_rate > 0 else 42
         self.playback_timer.setInterval(interval)
@@ -1100,6 +1153,13 @@ class ShotlistVisualizer(QMainWindow):
         right_layout.setContentsMargins(2, 2, 2, 2)
         right_layout.setSpacing(4)
 
+        # Media type selector (movie / gameplay)
+        self.media_type_combo = QComboBox()
+        self.media_type_combo.setFocusPolicy(Qt.NoFocus)
+        self.media_type_combo.addItems(["movie", "gameplay"])
+        self.media_type_combo.setCurrentText(self.media_type)
+        self.media_type_combo.currentTextChanged.connect(self._on_media_type_changed)
+        right_layout.addWidget(self.media_type_combo)
         # Movie selector (always visible — outside the vertical splitter)
         self.movie_combo = QComboBox()
         self.movie_combo.setFocusPolicy(Qt.NoFocus)
@@ -1630,6 +1690,27 @@ class ShotlistVisualizer(QMainWindow):
                 item.setTextAlignment(Qt.AlignCenter)
                 self.scene_list.setItem(row, 0, item)
 
+    def _on_media_type_changed(self, media_type: str) -> None:
+        """Switch between movie and gameplay title lists."""
+        if media_type == self.media_type:
+            return
+        self.media_type = media_type
+        try:
+            from data.metadata import get_metadata as _get_meta
+            all_entries = _get_meta(self.project_path, media_type=media_type)
+            new_filenames = [e["filename"] for e in all_entries if e.get("filename")]
+        except Exception:
+            new_filenames = []
+        self.filenames = new_filenames if new_filenames else []
+        self._updating_combo = True
+        self.movie_combo.clear()
+        for fn in self.filenames:
+            self.movie_combo.addItem(_display_name(fn), fn)
+        self._updating_combo = False
+        if self.filenames:
+            self.current_movie_index = -1
+            self.switch_to_movie(0)
+
     def on_movie_combo_changed(self, index: int):
         """Handle movie selection from the dropdown."""
         if self._updating_combo:
@@ -1701,9 +1782,14 @@ class ShotlistVisualizer(QMainWindow):
                 return
 
     def load_first_shot(self):
-        """Load the first shot."""
+        """Load the first shot, or frame 0 of the video when no shots exist."""
         if self.shots:
             self.jump_to_shot(0)
+        elif self.cap and self.cap.isOpened():
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            ret, frame = self.cap.read()
+            if ret:
+                self._display_frame(frame)
     
     def jump_to_shot(self, index: int, show_end: bool = False):
         """Jump to a specific shot and display its first or last frame."""
@@ -2715,15 +2801,16 @@ def main():
         print("✗ Error: Must provide query, --tmdb, --filenames, or --all", file=sys.stderr)
         sys.exit(1)
 
-    # Verify shotlists exist
-    for fn in filenames:
-        shotlist_path = get_shotlist_path(project_path, fn, args.media)
-        if not shotlist_path.exists() and args.media == "movie":
-            shotlist_path = get_shotlist_path(project_path, fn, "movies")
-        if not shotlist_path.exists():
-            print(f"✗ Error: No shotlist found for {fn}", file=sys.stderr)
-            print("Run 'crossing shotlist shot detect' first to generate shotlist.", file=sys.stderr)
-            sys.exit(1)
+    # Verify shotlists exist (skip for gameplay — visualizer shows graceful message)
+    if args.media != "gameplay":
+        for fn in filenames:
+            shotlist_path = get_shotlist_path(project_path, fn, args.media)
+            if not shotlist_path.exists() and args.media == "movie":
+                shotlist_path = get_shotlist_path(project_path, fn, "movies")
+            if not shotlist_path.exists():
+                print(f"✗ Error: No shotlist found for {fn}", file=sys.stderr)
+                print("Run 'crossing shotlist shot detect' first to generate shotlist.", file=sys.stderr)
+                sys.exit(1)
 
     # Enable low-level fault handler so C-level crashes (segfaults etc.) print a traceback.
     # In verbose mode also write the crash output to a dedicated log file so it survives

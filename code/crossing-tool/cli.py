@@ -1471,7 +1471,7 @@ def cmd_remove(args):
     project_path = prefs.get("path")
 
     if not args.media:
-        print("\u2717 --media is required: choose 'movies' or 'gameplay'", file=sys.stderr)
+        print("\u2717 --media is required: choose 'movie' or 'gameplay'", file=sys.stderr)
         sys.exit(1)
 
     media_type = args.media
@@ -2550,13 +2550,21 @@ def _shot_visualizer(args):
     # Resolve the list of filenames to validate
     if getattr(args, 'all', False):
         entries = get_metadata(project_path, media_type=media_type)
-        filenames = [
-            e['filename'] for e in entries
-            if e.get('filename') and get_shotlist_path(project_path, e['filename'], media_type).exists()
-        ]
-        if not filenames:
-            print("✗ Error: No shotlists found.", file=sys.stderr)
-            sys.exit(1)
+        if media_type == "gameplay":
+            # Gameplay shotlists may not exist yet — show all gameplay entries;
+            # the visualizer itself will display a graceful "no shotlist yet" message.
+            filenames = [e['filename'] for e in entries if e.get('filename')]
+            if not filenames:
+                print("✗ Error: No gameplay metadata found.", file=sys.stderr)
+                sys.exit(1)
+        else:
+            filenames = [
+                e['filename'] for e in entries
+                if e.get('filename') and get_shotlist_path(project_path, e['filename'], media_type).exists()
+            ]
+            if not filenames:
+                print("✗ Error: No shotlists found.", file=sys.stderr)
+                sys.exit(1)
     elif args.tmdb is not None:
         entries = get_metadata(project_path, media_type=media_type)
         filenames = [e['filename'] for e in entries if e.get('tmdb') == str(args.tmdb)]
@@ -3826,7 +3834,10 @@ def _mosaic_video(args):
 def _mosaic_visualizer(args):
     """mosaic visualizer — launch the interactive live mosaic explorer GUI."""
     from visualizers.mosaic_visualizer import run_visualizer
-    run_visualizer(prefs.get("path"))
+    run_visualizer(
+        prefs.get("path"),
+        media_type=normalize_media_type(getattr(args, "media", "movie")) or "movie",
+    )
 
 
 def _mosaic_export(args):

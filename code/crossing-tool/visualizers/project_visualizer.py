@@ -516,7 +516,7 @@ class ProjectVisualizer(QMainWindow):
             return CloudVisualizer(project_path)
         elif subcommand == "mosaic":
             from visualizers.mosaic_visualizer import MosaicVisualizer
-            return MosaicVisualizer(project_path)
+            return MosaicVisualizer(project_path, media_type=media_type)
         elif subcommand == "composition":
             from visualizers.composition_visualizer import ComposeVisualizer
             return ComposeVisualizer(project_path)

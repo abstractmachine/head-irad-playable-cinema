@@ -588,6 +588,13 @@ class SAMExplorer(QMainWindow):
             nav_layout.addWidget(lbl)
             nav_layout.addWidget(combo)
 
+        self._media_type_combo = QComboBox()
+        self._media_type_combo.setFocusPolicy(Qt.NoFocus)
+        self._media_type_combo.addItems(["movie", "gameplay"])
+        self._media_type_combo.setCurrentText(self._media_type)
+        self._media_type_combo.currentTextChanged.connect(self._on_media_type_changed)
+        _nav_row("Type", self._media_type_combo)
+
         self._movie_combo = QComboBox()
         self._movie_combo.setFocusPolicy(Qt.NoFocus)
         self._movie_combo.currentIndexChanged.connect(self._on_movie_changed)
@@ -689,6 +696,12 @@ class SAMExplorer(QMainWindow):
 
     # ------------------------------------------------------------------
     # Data loading
+
+    def _on_media_type_changed(self, media_type: str) -> None:
+        if media_type == self._media_type:
+            return
+        self._media_type = media_type
+        self._load_films()
 
     def _load_films(self) -> None:
         from data.metadata import get_metadata
