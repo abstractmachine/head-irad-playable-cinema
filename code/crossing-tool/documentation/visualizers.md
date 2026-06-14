@@ -10,7 +10,7 @@ A series of "visualizers" exist to better visualize the data created via the `cr
 - [Mosaic](visualizer-mosaic.md)
 
 ## Secondary
-- [Book](visualizer-cloud.md)
+- [Book](visualizer-book.md)
 - [Cloud](visualizer-cloud.md)
 - [Flipbook](visualizer-flipbook.md)
 - [Palette](visualizer-palette.md)

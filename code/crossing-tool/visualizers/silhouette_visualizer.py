@@ -1406,6 +1406,12 @@ class CatalogBrowser(QWidget):
         movie_group = QGroupBox("Scope")
         mg = QVBoxLayout(movie_group)
         mg.setContentsMargins(8, 12, 8, 8)
+        self._catalog_media_type_combo = QComboBox()
+        self._catalog_media_type_combo.setFocusPolicy(Qt.NoFocus)
+        self._catalog_media_type_combo.addItems(["movie", "gameplay"])
+        self._catalog_media_type_combo.setCurrentText(self._media_type)
+        self._catalog_media_type_combo.currentTextChanged.connect(self._on_catalog_media_type_changed)
+        mg.addWidget(self._catalog_media_type_combo)
         self._film_combo = QComboBox()
         self._film_combo.setFocusPolicy(Qt.NoFocus)
         self._film_combo.currentIndexChanged.connect(self._on_film_changed)
@@ -1589,7 +1595,8 @@ class CatalogBrowser(QWidget):
         # Populate film combo
         self._film_combo.blockSignals(True)
         self._film_combo.clear()
-        self._film_combo.addItem("All films", userData=None)
+        _all_label = "All films" if self._media_type == "movie" else "All gameplay"
+        self._film_combo.addItem(_all_label, userData=None)
         for stem in self._film_list:
             self._film_combo.addItem(stem, userData=stem)
         self._film_combo.blockSignals(False)
@@ -1622,6 +1629,13 @@ class CatalogBrowser(QWidget):
 
     # ------------------------------------------------------------------
     # Filtering
+
+    def _on_catalog_media_type_changed(self, media_type: str) -> None:
+        """Switch the catalog to a different media type and reload."""
+        if media_type == self._media_type:
+            return
+        self._media_type = media_type
+        self._load_catalog()
 
     def _on_field_changed(self, _idx: int) -> None:
         """Rebuild the label combo for the newly selected field."""

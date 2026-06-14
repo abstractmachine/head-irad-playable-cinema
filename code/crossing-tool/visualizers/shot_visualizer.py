@@ -1784,12 +1784,20 @@ class ShotlistVisualizer(QMainWindow):
     def load_first_shot(self):
         """Load the first shot, or frame 0 of the video when no shots exist."""
         if self.shots:
+            self.ann_repr_combo.setEnabled(True)
             self.jump_to_shot(0)
-        elif self.cap and self.cap.isOpened():
-            self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-            ret, frame = self.cap.read()
-            if ret:
-                self._display_frame(frame)
+        else:
+            # No shotlist data — grey out the annotation panel and clear its contents.
+            self.ann_repr_combo.setEnabled(False)
+            self.ann_display.hide()
+            self.ann_fields_table.show()
+            self.ann_fields_table.clearContents()
+            self.ann_fields_table.setRowCount(0)
+            if self.cap and self.cap.isOpened():
+                self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                ret, frame = self.cap.read()
+                if ret:
+                    self._display_frame(frame)
     
     def jump_to_shot(self, index: int, show_end: bool = False):
         """Jump to a specific shot and display its first or last frame."""

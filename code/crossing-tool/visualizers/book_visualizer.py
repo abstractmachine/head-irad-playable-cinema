@@ -3674,6 +3674,13 @@ class _SilhouetteBrowserPanel(QWidget):
         scope_grp = QGroupBox("Scope")
         sg = QVBoxLayout(scope_grp)
         sg.setContentsMargins(6, 8, 6, 6)
+        self._sil_media_type_combo = QComboBox()
+        self._sil_media_type_combo.setFocusPolicy(Qt.NoFocus)
+        self._sil_media_type_combo.setStyleSheet(combo_style)
+        self._sil_media_type_combo.addItems(["movie", "gameplay"])
+        self._sil_media_type_combo.setCurrentText(self._media_type)
+        self._sil_media_type_combo.currentTextChanged.connect(self._on_sil_media_type_changed)
+        sg.addWidget(self._sil_media_type_combo)
         self._scope_combo = QComboBox()
         self._scope_combo.setFocusPolicy(Qt.NoFocus)
         self._scope_combo.setStyleSheet(combo_style)
@@ -3832,7 +3839,8 @@ class _SilhouetteBrowserPanel(QWidget):
         # Scope combo
         self._scope_combo.blockSignals(True)
         self._scope_combo.clear()
-        self._scope_combo.addItem("All Movies", userData=None)
+        _all_label = "All Movies" if self._media_type == "movie" else "All Gameplay"
+        self._scope_combo.addItem(_all_label, userData=None)
         for stem in self._film_list:
             self._scope_combo.addItem(stem, userData=stem)
         self._scope_combo.blockSignals(False)
@@ -3860,6 +3868,13 @@ class _SilhouetteBrowserPanel(QWidget):
 
     # ------------------------------------------------------------------
     # Filter cascade
+
+    def _on_sil_media_type_changed(self, media_type: str) -> None:
+        """Reload the silhouette catalog for the chosen media type."""
+        if media_type == self._media_type:
+            return
+        self._media_type = media_type
+        self._load_catalog()
 
     def _on_scope_changed(self, _idx: int) -> None:
         self._page_idx = 0
