@@ -1565,6 +1565,90 @@ def cmd_remove(args):
 # shotlist command
 # ---------------------------------------------------------------------------
 
+def _shotlist_create(args):
+    """Create a provisional draft shotlist using a conservative boundary strategy.
+
+    Does NOT require TransNetV2 / TensorFlow.  Uses frame differencing (OpenCV)
+    combined with coarse temporal sampling and a minimum segment length guard.
+    The result is written to the canonical shotlist path and optionally opened
+    in the Shotlist Visualizer for review.
+    """
+    from services.draft_shotlist import create_draft_shotlist
+
+    project_path = prefs.get("path")
+    media_type = normalize_media_type(getattr(args, "media", "gameplay"))
+    media_id = getattr(args, "media_id", None)
+    force = getattr(args, "force", False)
+    no_open = getattr(args, "no_open", False)
+    verbose = getattr(args, "verbose", False)
+    min_shot_sec = getattr(args, "min_shot_sec", 3.0)
+    max_shot_sec = getattr(args, "max_shot_sec", 30.0)
+    motion_threshold = getattr(args, "motion_threshold", 8.0)
+
+    if not media_id:
+        print("✗ --media-id is required for shotlist create.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Creating draft shotlist for {media_id} [{media_type}] …")
+
+    try:
+        csv_path = create_draft_shotlist(
+            project_path,
+            media_id,
+            media_type,
+            force=force,
+            min_shot_sec=min_shot_sec,
+            max_shot_sec=max_shot_sec,
+            motion_threshold=motion_threshold,
+            verbose=verbose,
+        )
+    except (ValueError, FileNotFoundError, FileExistsError, RuntimeError) as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+    print(f"✓ Draft shotlist saved: {csv_path}")
+
+    if getattr(args, "notify", False):
+        from services.notify import discord_notify
+        discord_notify(
+            f"✓ Draft shotlist created: {media_id} [{media_type}]\n"
+            f"Saved to: {csv_path}",
+            project_path,
+        )
+
+    if no_open:
+        return
+
+    # Open the result in the Shotlist Visualizer
+    print("  Opening Shotlist Visualizer …")
+    from data.metadata import get_metadata
+    entries = get_metadata(project_path, media_type=media_type)
+    record = next((e for e in entries if e.get("media_id") == media_id), None)
+    if record is None:
+        print("  (Could not resolve filename for visualizer — skipping.)", file=sys.stderr)
+        return
+
+    _require_visualizer_deps()
+
+    import subprocess as _sp
+    cli_dir = Path(__file__).parent
+    visualizer_path = cli_dir / "visualizers" / "shot_visualizer.py"
+    cmd = [
+        sys.executable, str(visualizer_path),
+        "--media",     media_type,
+        "--project",   project_path,
+        "--filenames", record["filename"],
+    ]
+    if verbose:
+        cmd.append("--verbose")
+    _sp.Popen(cmd)
+
+
 def cmd_shotlist(args):
     _require_path()
     if getattr(args, "visualizer", False):
@@ -1577,7 +1661,9 @@ def cmd_shotlist(args):
     if sub is None:
         print("✗ shotlist: specify a subcommand or use --visualizer.", file=sys.stderr)
         sys.exit(1)
-    if sub == "list":
+    if sub == "create":
+        _shotlist_create(args)
+    elif sub == "list":
         _shotlist_list(args)
     elif sub == "get":
         _shotlist_get(args)
@@ -7926,6 +8012,36 @@ def build_parser():
     p_shotlist.add_argument("--visualizer", action="store_true", help="Open the shot visualizer GUI (all films)")
     _add_media_arg(p_shotlist)
     shotlist_sub = p_shotlist.add_subparsers(dest="shotlist_subcommand", required=False)
+
+    p_shotlist_create = shotlist_sub.add_parser(
+        "create",
+        help="Create a provisional draft shotlist using motion + temporal sampling (no TransNetV2 required)",
+    )
+    p_shotlist_create.add_argument(
+        "--media-id",
+        dest="media_id",
+        required=True,
+        metavar="MEDIA_ID",
+        help="Stable media_id of the source (e.g. game_rdr2_ce5e0bba)",
+    )
+    _add_media_arg(p_shotlist_create, default="gameplay")
+    p_shotlist_create.add_argument("--force", action="store_true", help="Overwrite existing draft shotlist")
+    p_shotlist_create.add_argument("--no-open", dest="no_open", action="store_true",
+                                   help="Skip opening the Shotlist Visualizer after creation")
+    p_shotlist_create.add_argument(
+        "--min-shot-sec", dest="min_shot_sec", type=float, default=3.0, metavar="SEC",
+        help="Minimum shot duration in seconds (default: 3.0)",
+    )
+    p_shotlist_create.add_argument(
+        "--max-shot-sec", dest="max_shot_sec", type=float, default=30.0, metavar="SEC",
+        help="Maximum shot duration before a forced boundary (default: 30.0)",
+    )
+    p_shotlist_create.add_argument(
+        "--motion-threshold", dest="motion_threshold", type=float, default=8.0, metavar="DIFF",
+        help="Mean pixel-diff threshold for motion boundary detection (default: 8.0)",
+    )
+    _add_verbose_arg(p_shotlist_create, help="Print per-frame progress during detection")
+    _add_notify_args(p_shotlist_create, batch=False)
 
     p_shotlist_list = shotlist_sub.add_parser("list", help="List all available shotlists")
     _add_media_arg(p_shotlist_list, default=None)
