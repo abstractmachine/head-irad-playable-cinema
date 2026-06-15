@@ -1566,10 +1566,10 @@ def cmd_remove(args):
 # ---------------------------------------------------------------------------
 
 def _shotlist_create(args):
-    """Create a provisional draft shotlist using a conservative boundary strategy.
+    """Create a hybrid draft shotlist (classical detection + gameplay refinement).
 
-    Does NOT require TransNetV2 / TensorFlow.  Uses frame differencing (OpenCV)
-    combined with coarse temporal sampling and a minimum segment length guard.
+    Phase 1: OpenCV frame-diff (default) or TransNetV2 (--transnet).
+    Phase 2: boundary nudging, long-segment splitting, short-segment merging.
     The result is written to the canonical shotlist path and optionally opened
     in the Shotlist Visualizer for review.
     """
@@ -1581,9 +1581,11 @@ def _shotlist_create(args):
     force = getattr(args, "force", False)
     no_open = getattr(args, "no_open", False)
     verbose = getattr(args, "verbose", False)
-    min_shot_sec = getattr(args, "min_shot_sec", 3.0)
+    min_shot_sec = getattr(args, "min_shot_sec", 2.0)
     max_shot_sec = getattr(args, "max_shot_sec", 30.0)
     motion_threshold = getattr(args, "motion_threshold", 8.0)
+    nudge_sec = getattr(args, "nudge_sec", 0.5)
+    use_transnet = getattr(args, "transnet", False)
 
     if not media_id:
         print("✗ --media-id is required for shotlist create.", file=sys.stderr)
@@ -1600,6 +1602,8 @@ def _shotlist_create(args):
             min_shot_sec=min_shot_sec,
             max_shot_sec=max_shot_sec,
             motion_threshold=motion_threshold,
+            nudge_sec=nudge_sec,
+            use_transnet=use_transnet,
             verbose=verbose,
         )
     except (ValueError, FileNotFoundError, FileExistsError, RuntimeError) as exc:
@@ -8029,8 +8033,8 @@ def build_parser():
     p_shotlist_create.add_argument("--no-open", dest="no_open", action="store_true",
                                    help="Skip opening the Shotlist Visualizer after creation")
     p_shotlist_create.add_argument(
-        "--min-shot-sec", dest="min_shot_sec", type=float, default=3.0, metavar="SEC",
-        help="Minimum shot duration in seconds (default: 3.0)",
+        "--min-shot-sec", dest="min_shot_sec", type=float, default=2.0, metavar="SEC",
+        help="Minimum shot duration in seconds (default: 2.0)",
     )
     p_shotlist_create.add_argument(
         "--max-shot-sec", dest="max_shot_sec", type=float, default=30.0, metavar="SEC",
@@ -8040,7 +8044,15 @@ def build_parser():
         "--motion-threshold", dest="motion_threshold", type=float, default=8.0, metavar="DIFF",
         help="Mean pixel-diff threshold for motion boundary detection (default: 8.0)",
     )
-    _add_verbose_arg(p_shotlist_create, help="Print per-frame progress during detection")
+    p_shotlist_create.add_argument(
+        "--nudge-sec", dest="nudge_sec", type=float, default=0.5, metavar="SEC",
+        help="Half-width of fine-scan window for boundary nudging (default: 0.5; 0 disables)",
+    )
+    p_shotlist_create.add_argument(
+        "--transnet", action="store_true",
+        help="Use TransNetV2 as the Phase-1 detector (requires TensorFlow; not recommended for >1h videos)",
+    )
+    _add_verbose_arg(p_shotlist_create, help="Print per-phase progress during detection")
     _add_notify_args(p_shotlist_create, batch=False)
 
     p_shotlist_list = shotlist_sub.add_parser("list", help="List all available shotlists")
