@@ -37,19 +37,50 @@ def _repair_annotation(ann: dict, label_fields: frozenset) -> tuple[dict, list[s
 
     The dict is a new copy; the original is not mutated.
     If nothing changed the list of changes is empty.
+
+    Two repairs are applied:
+    1. Case-key mismatch: if a schema field (e.g. ``setting``) is empty/missing
+       but an uppercase variant (e.g. ``SETTING``) has data, the value is
+       copied down to the lowercase key.  This fixes annotations produced when
+       the model returned UPPERCASE keys.
+    2. Label normalisation: comma-joined / quote-wrapped values in atomic-label
+       fields are split and cleaned.
     """
+    from data.annotate import _ANNOTATION_SCHEMA
+
     repaired = dict(ann)
     changes: list[str] = []
+
+    # --- Repair 1: uppercase-key mismatch ---
+    # Fold all keys to lowercase, preferring the non-empty value when both
+    # cases appear (e.g. SETTING="forest" wins over setting="").
+    # This covers both schema fields and extra model fields (DESCRIPTION, TYPE…).
+    folded: dict = {}
+    for k, v in ann.items():
+        lk = k.lower()
+        if lk not in folded or (not folded[lk] and v):
+            folded[lk] = v
+
+    if folded != ann:
+        # Record which keys changed (uppercase removed / values promoted).
+        for k in ann:
+            if k != k.lower() and k.lower() in folded:
+                changes.append(f"  lowercased key '{k}' → '{k.lower()}'")
+        repaired = folded
+    else:
+        repaired = dict(ann)
+
+    # --- Repair 2: label normalisation ---
     for field in label_fields:
-        original = ann.get(field)
-        if not isinstance(original, list):
+        current = repaired.get(field)
+        if not isinstance(current, list):
             continue
-        original_strs = [str(v) for v in original]
-        fixed = normalize_label_list(original_strs, field, label_fields=label_fields)
-        if fixed != original_strs:
+        current_strs = [str(v) for v in current]
+        fixed = normalize_label_list(current_strs, field, label_fields=label_fields)
+        if fixed != current_strs:
             repaired[field] = fixed
             changes.append(
-                f"  {field}: {original_strs!r} → {fixed!r}"
+                f"  {field}: {current_strs!r} → {fixed!r}"
             )
     return repaired, changes
 

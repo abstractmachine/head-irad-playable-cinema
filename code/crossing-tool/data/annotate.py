@@ -228,9 +228,16 @@ def _validate_annotation(data: Dict[str, Any], *, label_fields: Optional[frozens
     use the project's ``atomic-fields.yaml`` configuration.
     Extra fields from the model are preserved.
     """
-    result = dict(data)  # keep any extra fields the model included
+    # Fold all keys to lowercase, preferring the non-empty value when both
+    # cases are present (e.g. SETTING="forest" wins over setting="").
+    # This handles both schema fields and extra model fields (DESCRIPTION, TYPE…).
+    result: Dict[str, Any] = {}
+    for _k, _v in data.items():
+        _lk = _k.lower()
+        if _lk not in result or (not result[_lk] and _v):
+            result[_lk] = _v
     for field, expected_type in _ANNOTATION_SCHEMA.items():
-        val = data.get(field)
+        val = result.get(field)
         if expected_type is str:
             result[field] = str(val) if val is not None else ""
         elif expected_type is list:
