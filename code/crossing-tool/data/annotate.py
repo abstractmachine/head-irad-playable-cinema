@@ -1562,6 +1562,7 @@ def annotate_file_shots(
     reload_every_n_shots: int = 25,
     timer: Optional[Any] = None,
     subsequent_shots: int = 0,
+    on_failure=None,
 ) -> Dict[str, Any]:
     """Annotate all shots in a single file and write canonical outputs.
 
@@ -1712,6 +1713,59 @@ def annotate_file_shots(
         except Exception:
             pass
 
+    _frame_retry_attempts = 100
+    _frame_retry_delay_s = 0.05
+
+    def _sample_and_open_frames(
+        shot_index: int,
+        shot: Dict[str, Any],
+        adaptive_frame_count: int,
+    ) -> tuple[list[str], list[Any]]:
+        """Sample shot frames and load them into PIL images with retries."""
+        last_exc: Optional[Exception] = None
+        for attempt in range(1, _frame_retry_attempts + 1):
+            try:
+                frames: List[str] = []
+                if frames_per_shot and frames_per_shot > 0:
+                    prebaked = _find_prebaked_frames(str(project_path), media_type, filename, shot_index, adaptive_frame_count)
+                    if prebaked:
+                        frames = prebaked
+                        try:
+                            _append_log(log_path, f"Using pre-baked frames for shot {shot_index}: {', '.join(Path(p).name for p in frames)}")
+                        except Exception:
+                            pass
+                    elif video_path.exists():
+                        frames = sample_frames_for_shot(
+                            str(video_path),
+                            shot.get("start_time", "0:00:00"),
+                            shot.get("end_time", shot.get("start_time", "0:00:00")),
+                            adaptive_frame_count,
+                            sample_mode,
+                        )
+
+                if not frames:
+                    raise RuntimeError("no frames available (video missing or shot has zero duration)")
+
+                pil_frames: List[Any] = []
+                from PIL import Image as _PILImage
+                for fp in frames:
+                    try:
+                        pil_frames.append(_PILImage.open(fp).convert("RGB"))
+                    except Exception as exc:
+                        _append_log(log_path, f"SHOT {shot_index} - failed to open frame {fp}: {exc}")
+                        raise RuntimeError(f"Failed to open frame {fp}: {exc}") from exc
+
+                if attempt > 1:
+                    _append_log(log_path, f"SHOT {shot_index} - frame load recovered on attempt {attempt}/{_frame_retry_attempts}")
+                return frames, pil_frames
+            except Exception as exc:
+                last_exc = exc
+                _append_log(log_path, f"SHOT {shot_index} - frame load attempt {attempt}/{_frame_retry_attempts} failed: {exc}")
+                if attempt < _frame_retry_attempts:
+                    time.sleep(min(_frame_retry_delay_s * attempt, 0.5))
+
+        raise RuntimeError(f"Failed to load frames after {_frame_retry_attempts} attempts: {last_exc}") from last_exc
+
     results: List[Dict[str, Any]] = []
     updated = 0
     skipped = 0
@@ -1809,53 +1863,21 @@ def annotate_file_shots(
             max_frames_per_shot,
         )
 
-        # Sample frames (best-effort). Prefer pre-baked frames under
-        # media/frames/<media_type>/<stem>/ if present (useful for debugging).
+        # Sample frames (best-effort) and open them into PIL images. Retry the
+        # whole path because temp-frame failures are transient in practice.
         frames: List[str] = []
-        if frames_per_shot and frames_per_shot > 0:
-            try:
-                prebaked = _find_prebaked_frames(str(project_path), media_type, filename, i, adaptive_frames)
-                if prebaked:
-                    frames = prebaked
-                    try:
-                        _append_log(log_path, f"Using pre-baked frames for shot {i}: {', '.join(Path(p).name for p in frames)}")
-                    except Exception:
-                        pass
-                elif video_path.exists():
-                    frames = sample_frames_for_shot(
-                        str(video_path),
-                        shot.get("start_time", "0:00:00"),
-                        shot.get("end_time", shot.get("start_time", "0:00:00")),
-                        adaptive_frames,
-                        sample_mode,
-                    )
-            except Exception as exc:
-                _append_log(log_path, f"SHOT {i} - frame sampling failed: {exc}")
-                failed.append((i, f"frame sampling failed: {exc}"))
-                continue
-
-        if not frames:
-            _append_log(log_path, f"SHOT {i} - no frames available (video missing or shot has zero duration)")
-            failed.append((i, "no frames available"))
-            continue
-
-        # Load frames as PIL images — required for vision input.
-        # Any failure here is a hard error for the shot: we will not call the
-        # model without images since that is the entire point of the tool.
         pil_frames: List = []
         try:
-            from PIL import Image as _PILImage
-            for fp in frames:
-                try:
-                    pil_frames.append(_PILImage.open(fp).convert("RGB"))
-                except Exception as exc:
-                    _append_log(log_path, f"SHOT {i} - failed to open frame {fp}: {exc}")
-                    raise RuntimeError(f"Failed to open frame {fp}: {exc}") from exc
-        except RuntimeError:
-            raise
+            frames, pil_frames = _sample_and_open_frames(i, shot, adaptive_frames)
         except Exception as exc:
-            _append_log(log_path, f"SHOT {i} - PIL unavailable or frame load failed: {exc}")
-            failed.append((i, f"frame load failed: {exc}"))
+            reason = f"frame load failed after retries: {exc}"
+            _append_log(log_path, f"SHOT {i} - {reason}")
+            failed.append((i, reason))
+            if on_failure is not None:
+                try:
+                    on_failure(i, reason)
+                except Exception:
+                    pass
             continue
 
         if not pil_frames:

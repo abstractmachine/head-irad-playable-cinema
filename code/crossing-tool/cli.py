@@ -2132,6 +2132,14 @@ def _shotlist_annotate(args):
                 return
 
             filename = resolve_filename(project_path, args.tmdb, args.filename, args.media)
+
+            def _notify_annotation_failure(shot_index, reason):
+                try:
+                    from services.notify import discord_notify
+                    discord_notify(f"✗ Annotate failed: {filename} shot {shot_index} — {reason}", project_path)
+                except Exception:
+                    pass
+
             summary = annotate_file_shots(
                 project_path,
                 filename,
@@ -2153,6 +2161,7 @@ def _shotlist_annotate(args):
                 verbose=getattr(args, "verbose", False),
                 write_log=getattr(args, "log", False),
                 reload_every_n_shots=getattr(args, "reload_every_n_shots", 25),
+                on_failure=_notify_annotation_failure if getattr(args, "notify", False) else None,
             )
             failed_count = len(summary.get("failed", [])) if summary.get("failed") else 0
             print(f"✓ Annotated: {filename} — updated={summary['updated']} skipped={summary['skipped']} failed={failed_count}")
