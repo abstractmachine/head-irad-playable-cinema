@@ -38,10 +38,10 @@ A [training and playback tool](./code/crossing-tool/readme.md) is currently in d
 ## Demo
 You can watch a short excerpt of the software synchronizing in real-time images from gameplay and shots from historical western cinema:
 
-[![](./code/playable-tool/images/head-irad-playable-cinema-sync-test-train-robbery.png)](https://youtu.be/-g9P9GaXHlI)
+[![](./code/archive/playable-tool/images/head-irad-playable-cinema-sync-test-train-robbery.png)](https://youtu.be/-g9P9GaXHlI)
 [Sync Demo - Train Robbery](https://youtu.be/-g9P9GaXHlI) ([https://youtu.be/-g9P9GaXHlI](https://youtu.be/-g9P9GaXHlI))
 
-[![](./code/playable-tool/images/playable-cinema-dual-sync-test-carriage-entering-stables.png)](https://youtu.be/cOG3Zf-KX_0)
+[![](./code/archive/playable-tool/images/playable-cinema-dual-sync-test-carriage-entering-stables.png)](https://youtu.be/cOG3Zf-KX_0)
 [Sync Demo - Carriage Entering Stables](https://youtu.be/cOG3Zf-KX_0) ([https://youtu.be/cOG3Zf-KX_0](https://youtu.be/cOG3Zf-KX_0))
 
 ## Cabin

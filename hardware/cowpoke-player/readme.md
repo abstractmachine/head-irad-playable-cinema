@@ -9,7 +9,7 @@ Here are the notes for our Rasperry Pi 5 video playback device.
 
 With the help of `ChatGPT 5` we have a script [player-doublebuffer.py](../../code/playable-cowpoke/playable-player/player-doublebuffer.py) that works great with correct audio playback and no visible artifacts on a Raspberry PI 5.
 
-We've also added a local SSD for fast/stable playback of the videos (cf. [playable-tool](../../code/playable-cowpoke/playable-playback/)) :
+We've also added a local SSD for fast/stable playback of the videos (cf. [playable-nickelodeon](../../code/playable-nickelodeon/)) :
 
 - [Raspberry Pi M.2 Hat+](https://www.raspberrypi.com/products/m2-hat-plus/)
 - [Transcend SSD PCIe M.2 MTE400S 1000Gb](https://www.transcend-info.com/product/internal-ssd/mte400s?srsltid=AfmBOorRtRqtcqO50wC2VchsMloFy5TofPaR3_qWkYREFl-lQRbBAg9D)
