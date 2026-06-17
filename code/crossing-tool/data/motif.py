@@ -132,10 +132,10 @@ def _natural_sort_key(p: Path) -> list:
     return [int(x) if x.isdigit() else x for x in parts]
 
 
-def find_latest_motif_prompt(project_path: str, prefix: str = "") -> Optional[Path]:
+def find_latest_motif_prompt(project_path: str, media_type: str, prefix: str = "") -> Optional[Path]:
     """Return the most recent motif prompt file for the given prefix.
 
-    Searches ``<project>/prompts/movies/motifs/``.
+    Searches ``<project>/prompts/<media_type>/motifs/``.
     With ``prefix="system"`` matches ``system-*.txt``.
     With ``prefix="user"``   matches ``user-*.txt``.
     With ``prefix=""``       matches any ``*.txt``.
@@ -158,6 +158,7 @@ def find_latest_motif_prompt(project_path: str, prefix: str = "") -> Optional[Pa
 
 def load_motif_prompts(
     project_path: str,
+    media_type: str,
     system_prompt_file: Optional[str] = None,
     user_prompt_file: Optional[str] = None,
 ) -> Tuple[str, str, Optional[str], Optional[str]]:
@@ -165,7 +166,7 @@ def load_motif_prompts(
 
     Resolution order for each prompt:
       1. Explicit file path (absolute or relative to project root)
-      2. Latest ``system-*.txt`` / ``user-*.txt`` under ``prompts/movies/motifs/``
+    2. Latest ``system-*.txt`` / ``user-*.txt`` under ``prompts/<media_type>/motifs/``
       3. Minimal built-in fallback
 
     Returns
@@ -188,7 +189,7 @@ def load_motif_prompts(
             system_filename = p.name
 
     if system_text is None:
-        latest = find_latest_motif_prompt(project_path, prefix="system")
+        latest = find_latest_motif_prompt(project_path, media_type, prefix="system")
         if latest:
             system_text = latest.read_text(encoding="utf-8")
             system_filename = latest.name
@@ -213,14 +214,14 @@ def load_motif_prompts(
             user_filename = p.name
 
     if user_text is None:
-        latest = find_latest_motif_prompt(project_path, prefix="user")
+        latest = find_latest_motif_prompt(project_path, media_type, prefix="user")
         if latest:
             user_text = latest.read_text(encoding="utf-8")
             user_filename = latest.name
 
     if user_text is None:
         user_text = (
-            "Movie: $title ($year)\n"
+            "Title: $title ($year)\n"
             "Shot: $shot_index\n"
             "Start: $timecode_start\n"
             "End: $timecode_stop\n\n"
@@ -445,7 +446,7 @@ def generate_motifs_for_movie(
     if not json_path.exists():
         raise FileNotFoundError(
             f"No annotation JSON found: {json_path}\n"
-            f"  Run: crossing annotate shot --movie '{filename}' first."
+            f"  Run: crossing annotate shot '{filename}' --media {media_type} first."
         )
 
     entries: list = json.loads(json_path.read_text(encoding="utf-8"))
@@ -482,7 +483,7 @@ def generate_motifs_for_movie(
 
     # Load prompts
     system_text, user_text, system_filename, user_filename = load_motif_prompts(
-        project_path, system_prompt_file, user_prompt_file
+        project_path, media_type, system_prompt_file, user_prompt_file
     )
 
     if verbose:
@@ -638,10 +639,10 @@ def generate_motifs_for_all_movies(
     user_prompt_file: Optional[str] = None,
     on_item_done=None,
 ) -> dict:
-    """Generate motifs for all movies that have an annotation JSON.
+    """Generate motifs for all files that have an annotation JSON.
 
-    Iterates the metadata index and skips movies without annotations.
-    Motif history resets between movies.
+    Iterates the metadata index and skips files without annotations.
+    Motif history resets between files.
 
     Returns a summary dict with aggregate counts across all processed movies.
     """

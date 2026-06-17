@@ -448,7 +448,14 @@ def sample_frames_for_shot(
         ]
         try:
             subprocess.run(cmd, check=True)
-            frame_paths.append(str(out))
+            # Some environments report a successful ffmpeg exit before the
+            # output file is visible to Python. Verify the file actually exists
+            # before returning it, with a short retry window for filesystem lag.
+            for _ in range(5):
+                if out.exists() and out.stat().st_size > 0:
+                    frame_paths.append(str(out))
+                    break
+                time.sleep(0.02)
         except Exception:
             # ignore failures — model can still run without images
             continue
