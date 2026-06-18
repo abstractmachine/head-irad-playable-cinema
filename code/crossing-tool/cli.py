@@ -5842,7 +5842,7 @@ def _index_motif_generate(args):
     verbose      = getattr(args, "verbose",  False)
     do_all       = getattr(args, "all",      False)
     query_words  = getattr(args, "query", None) or []
-    movie_query  = getattr(args, "movie", None) or (" ".join(query_words).strip() or None)
+    movie_query  = getattr(args, "movie", None) or getattr(args, "video", None) or (" ".join(query_words).strip() or None)
     tmdb         = getattr(args, "tmdb",     None)
     model_name   = getattr(args, "model",    None) or prefs.get(_MODEL_KEYS["annotate"], _MODEL_DEFAULTS["annotate"])
     notify_each  = getattr(args, "notify_items", False)
@@ -7812,6 +7812,10 @@ def build_parser():
     p_index_motif_generate.add_argument(
         "--movie", default=None, metavar="TITLE",
         help="Title substring to identify a single movie",
+    )
+    p_index_motif_generate.add_argument(
+        "--video", default=None, metavar="TITLE",
+        help="Title/filename substring to identify a single gameplay video (alias for --movie)",
     )
     _add_tmdb_arg(p_index_motif_generate, help="TMDb ID of the movie (unambiguous alternative to --movie)")
     _add_media_arg(p_index_motif_generate)
