@@ -4316,12 +4316,14 @@ def cmd_index(args):
         _index_serialize(args)
     elif sub == "embed":
         _index_embed(args)
-    elif sub == "update":
+    elif sub == "process":
         _index_update(args)
     elif sub == "audit":
         _index_audit(args)
     elif sub == "vocabulary":
         _index_vocabulary(args)
+    elif sub == "stats":
+        _index_stats(args)
     elif sub == "silhouette":
         _index_silhouette(args)
     elif sub == "palette":
@@ -4842,6 +4844,8 @@ def _index_update(args):
     )
     force = getattr(args, "force", False)
     verbose = getattr(args, "verbose", False)
+    notify_each = getattr(args, "notify_items", False)
+    notify = getattr(args, "notify", False) or notify_each
 
     if do_all:
         filenames = _resolve_all_annotation_filenames(project_path, media_type)
@@ -4855,6 +4859,13 @@ def _index_update(args):
                 force=force, verbose=verbose,
             )
             counts[result] = counts.get(result, 0) + 1
+            if notify_each:
+                from services.notify import discord_notify
+                stem = Path(fn).stem
+                if result == "ok":
+                    discord_notify(f"✓ index process {media_type}/{stem} — updated", project_path)
+                elif result == "error":
+                    discord_notify(f"✗ index process {media_type}/{stem} — error", project_path)
         total = sum(counts.values())
         parts = []
         if counts["ok"]:
@@ -4863,7 +4874,11 @@ def _index_update(args):
             parts.append(f"{counts['skip']} current")
         if counts["error"]:
             parts.append(f"{counts['error']} error(s)")
-        print(f"\n{', '.join(parts)}  —  {total} total")
+        summary = f"{', '.join(parts)}  —  {total} total"
+        print(f"\n{summary}")
+        if notify:
+            from services.notify import discord_notify
+            discord_notify(f"index process complete ({media_type})\n{summary}", project_path)
     else:
         if tmdb is None and not query_str:
             print("✗ Provide a title query, --tmdb <id>, or --all.", file=sys.stderr)
@@ -4873,10 +4888,15 @@ def _index_update(args):
         except ValueError as exc:
             print(f"✗ {exc}", file=sys.stderr)
             sys.exit(1)
-        _update_one_film(
+        result = _update_one_film(
             project_path, filename, media_type, model_name,
             force=force, verbose=verbose,
         )
+        if notify:
+            from services.notify import discord_notify
+            stem = Path(filename).stem
+            status = "updated" if result == "ok" else ("up to date" if result == "skip" else "error")
+            discord_notify(f"index process {media_type}/{stem} — {status}", project_path)
 
 
 def _index_audit(args):
@@ -4958,6 +4978,54 @@ def _index_vocabulary(args):
             print(f"Fields: {', '.join(voc_flds)}")
         print(f"Found {n_tokens} unique tokens")
         print(f"Saved: {out_rel}")
+
+
+def _index_stats(args):
+    """Print a corpus-wide statistical summary."""
+    from services.corpus_stats import get_corpus_stats, get_top_silhouette_labels
+
+    project_path = prefs.get("path")
+    output_json = getattr(args, "json", False)
+    verbose = getattr(args, "verbose", False)
+
+    try:
+        stats = get_corpus_stats(project_path)
+    except FileNotFoundError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if output_json:
+        print(json.dumps(stats, indent=2, ensure_ascii=False))
+        return
+
+    project_name = prefs.get("name") or Path(project_path).name
+    movie_count = stats["movies"]
+
+    print("Corpus Statistics")
+    print()
+    print(f"Movies:{movie_count:>25d}")
+    print(f"Gameplay Videos:{stats['gameplay_videos']:>14d}")
+    print()
+    print(f"Vocabulary Terms:{stats['vocabulary_terms']:>13d}")
+    print()
+    print(f"Annotated Shots:{stats['annotated_shots']:>15d}")
+    print(f"Detected Scenes:{stats['detected_scenes']:>16d}")
+    print()
+    print(f"Silhouette Objects:{stats['silhouette_objects']:>11d}")
+    print(f"Silhouette Labels:{stats['silhouette_labels']:>13d}")
+    print()
+    print(f"Subtitles:{stats['subtitle_files']:>13d} / {movie_count}")
+    print(f"Shotlists:{stats['shotlists']:>14d} / {movie_count}")
+    print()
+    print(f"Project: {project_name}")
+
+    if verbose:
+        labels = get_top_silhouette_labels(project_path)
+        if labels:
+            print()
+            print("Top silhouette labels:")
+            for label, count in labels:
+                print(f"{label} ({count})")
 
 
 def _index_silhouette(args):
@@ -7304,51 +7372,9 @@ def build_parser():
     p_index.set_defaults(func=cmd_index)
     index_sub = p_index.add_subparsers(dest="index_subcommand", required=True)
 
-    p_index_serialize = index_sub.add_parser(
-        "serialize",
-        help=(
-            "Serialize annotation items to text lines using the project mapping "
-            "and print them to stdout"
-        ),
-    )
-    p_index_serialize.set_defaults(func=cmd_index)
-    p_index_serialize.add_argument(
-        "query",
-        nargs="*",
-        help="Title keywords to identify the film (e.g. 7th Cavalry)",
-    )
-    _add_tmdb_arg(p_index_serialize, help="TMDb ID of the film (unambiguous alternative to title keywords)")
-    _add_media_arg(p_index_serialize)
-    p_index_serialize.add_argument(
-        "--shot", type=int, default=None, metavar="INDEX",
-        help=(
-            "Serialize only this one shot (0-based list index). "
-            "Omit to serialize all shots."
-        ),
-    )
-    p_index_serialize.add_argument(
-        "--save", action="store_true",
-        help=(
-            "Write serialized lines to "
-            "<project>/data/index/text/<media>/<stem>.txt "
-            "instead of printing to stdout"
-        ),
-    )
-    p_index_serialize.add_argument(
-        "--print", action="store_true", dest="print",
-        help="When --save is active, also print serialized lines to stdout",
-    )
-    p_index_serialize.add_argument(
-        "--force", action="store_true",
-        help="Overwrite an existing .txt file (only relevant with --save)",
-    )
-    _add_verbose_arg(p_index_serialize, help="Print each serialized line as it is produced (during --save runs)")
-
     p_index_embed = index_sub.add_parser(
         "embed",
-        help=(
-            "Generate embeddings from serialized text lines"
-        ),
+        help="Read serialized text lines and generate embeddings",
     )
     p_index_embed.set_defaults(func=cmd_index)
     p_index_embed.add_argument(
@@ -7373,9 +7399,9 @@ def build_parser():
     _add_verbose_arg(p_index_embed, help="Print model, input path, output shape, and save confirmation")
 
     p_index_update = index_sub.add_parser(
-        "update",
+        "process",
         help=(
-            "Reconcile .txt, .npy, and manifest for a film.  "
+            "Build or update the index for a film.  "
             "Only rebuilds what is missing or stale."
         ),
     )
@@ -7403,6 +7429,7 @@ def build_parser():
         help="Force a full rebuild even if files appear current",
     )
     _add_verbose_arg(p_index_update, help="Print per-file actions (txt written, npy written, unchanged)")
+    _add_notify_args(p_index_update)
 
     p_index_vocabulary = index_sub.add_parser(
         "vocabulary",
@@ -7418,6 +7445,24 @@ def build_parser():
         "--force", action="store_true",
         help="Rebuild even if a cached index already exists",
     )
+
+    p_index_stats = index_sub.add_parser(
+        "stats",
+        help="Print corpus-wide project statistics",
+        epilog=(
+            "Examples:\n"
+            "  crossing index stats\n"
+            "  crossing index stats --json\n"
+            "  crossing index stats --verbose"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_index_stats.set_defaults(func=cmd_index)
+    p_index_stats.add_argument(
+        "--json", action="store_true", dest="json",
+        help="Output raw JSON instead of formatted text",
+    )
+    _add_verbose_arg(p_index_stats, help="Print top silhouette labels after the summary")
 
     p_index_audit = index_sub.add_parser(
         "audit",
