@@ -42,6 +42,14 @@ A CLI + GUI tool for relating moving images across media — connecting gameplay
 ## Quickstart
 
 ```bash
+$ cd <crossing-tool-folder>
+$ source .venv/bin/activate
+(crossing) $ crossing -h
+```
+
+## Install
+
+```bash
 # 1. Install (see Install section below for details)
 uv tool install "crossing[all] @ git+https://github.com/abstractmachine/head-irad-playable-cinema.git#subdirectory=code/crossing-tool"
 
