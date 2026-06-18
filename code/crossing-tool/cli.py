@@ -5841,7 +5841,8 @@ def _index_motif_generate(args):
     force        = getattr(args, "force",    False)
     verbose      = getattr(args, "verbose",  False)
     do_all       = getattr(args, "all",      False)
-    movie_query  = getattr(args, "movie",    None)
+    query_words  = getattr(args, "query", None) or []
+    movie_query  = getattr(args, "movie", None) or (" ".join(query_words).strip() or None)
     tmdb         = getattr(args, "tmdb",     None)
     model_name   = getattr(args, "model",    None) or prefs.get(_MODEL_KEYS["annotate"], _MODEL_DEFAULTS["annotate"])
     notify_each  = getattr(args, "notify_items", False)
@@ -7799,6 +7800,11 @@ def build_parser():
         ),
     )
     p_index_motif_generate.set_defaults(func=cmd_index)
+    p_index_motif_generate.add_argument(
+        "query",
+        nargs="*",
+        help="Title keywords to identify the film (e.g. 7th Cavalry)",
+    )
     p_index_motif_generate.add_argument(
         "--all", action="store_true",
         help="Generate motifs for every movie in the metadata index",
