@@ -5057,24 +5057,73 @@ def _index_stats(args):
         return
 
     project_name = prefs.get("name") or Path(project_path).name
-    movie_count = stats["movies"]
+    movie_count  = stats["movies"]
+    gp_count     = stats["gameplay_videos"]
+
+    W = 31  # right-align column width
+
+    def row(label, value, suffix=""):
+        print(f"{label}:{value:>{W - len(label)}}{suffix}")
+
+    def blank():
+        print()
 
     print("Corpus Statistics")
-    print()
-    print(f"Movies:{movie_count:>25d}")
-    print(f"Gameplay Videos:{stats['gameplay_videos']:>14d}")
-    print()
-    print(f"Vocabulary Terms:{stats['vocabulary_terms']:>13d}")
-    print()
-    print(f"Annotated Shots:{stats['annotated_shots']:>15d}")
-    print(f"Detected Scenes:{stats['detected_scenes']:>16d}")
-    print()
-    print(f"Silhouette Objects:{stats['silhouette_objects']:>11d}")
-    print(f"Silhouette Labels:{stats['silhouette_labels']:>13d}")
-    print()
-    print(f"Subtitles:{stats['subtitle_files']:>13d} / {movie_count}")
-    print(f"Shotlists:{stats['shotlists']:>14d} / {movie_count}")
-    print()
+    blank()
+
+    # ── Media ────────────────────────────────────────────────────────────────
+    row("Movies", movie_count)
+    row("Gameplay Videos", gp_count)
+    blank()
+
+    # ── Annotations ──────────────────────────────────────────────────────────
+    row("Annotated Shots", stats["annotated_shots"])
+    if stats.get("annotated_shots_movie") or stats.get("annotated_shots_gameplay"):
+        if movie_count:
+            row("  ↳ Movie Shots", stats["annotated_shots_movie"])
+        if gp_count:
+            row("  ↳ Gameplay Shots", stats["annotated_shots_gameplay"])
+    row("Detected Scenes", stats["detected_scenes"])
+    blank()
+
+    # ── Best Frames ───────────────────────────────────────────────────────────
+    row("Best Frames (PNG)", stats["best_frames"])
+    by_type = stats.get("best_frames_by_type", {})
+    for mt, n in sorted(by_type.items()):
+        row(f"  ↳ {mt.capitalize()}", n)
+    row("Shots w/ Best Frame", stats["shots_with_best_frame"])
+    blank()
+
+    # ── Motifs ───────────────────────────────────────────────────────────────
+    row("Motifs", stats["motifs"])
+    for mt, n in sorted(stats.get("motifs_by_type", {}).items()):
+        row(f"  ↳ {mt.capitalize()}", n)
+    blank()
+
+    # ── Palettes ─────────────────────────────────────────────────────────────
+    row("Palettes", stats["palettes"])
+    blank()
+
+    # ── Embeddings ───────────────────────────────────────────────────────────
+    row("Embedding Indexes (.npy)", stats["embeddings"])
+    for mt, n in sorted(stats.get("embeddings_by_type", {}).items()):
+        row(f"  ↳ {mt.capitalize()}", n)
+    blank()
+
+    # ── Vocabulary ───────────────────────────────────────────────────────────
+    row("Vocabulary Terms", stats["vocabulary_terms"])
+    blank()
+
+    # ── Silhouettes ──────────────────────────────────────────────────────────
+    row("Silhouette Objects", stats["silhouette_objects"])
+    row("Silhouette Labels",  stats["silhouette_labels"])
+    blank()
+
+    # ── Assets ───────────────────────────────────────────────────────────────
+    print(f"Subtitles:{stats['subtitle_files']:>{W - 9}} / {movie_count}")
+    print(f"Shotlists:{stats['shotlists']:>{W - 9}} / {movie_count}")
+    blank()
+
     print(f"Project: {project_name}")
 
     if verbose:

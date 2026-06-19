@@ -91,6 +91,117 @@ def get_top_silhouette_labels(project_path: str, limit: int = 10) -> list[tuple[
     return sorted(label_counts.items(), key=lambda item: (-item[1], item[0]))[:limit]
 
 
+# ---------------------------------------------------------------------------
+# New extended counters
+# ---------------------------------------------------------------------------
+
+def _count_best_frames(project_path: str) -> dict[str, int]:
+    """Count PNG best-frame images under media/frames/best/<media_type>/."""
+    result: dict[str, int] = {}
+    base = Path(project_path) / "media" / "frames" / "best"
+    if not base.exists():
+        return result
+    for mt_dir in sorted(base.iterdir()):
+        if mt_dir.is_dir():
+            result[mt_dir.name] = sum(1 for _ in mt_dir.rglob("*.png"))
+    return result
+
+
+def _count_motifs(project_path: str) -> dict[str, int]:
+    """Count shots that have a motif value, broken down by media type."""
+    result: dict[str, int] = {}
+    base = Path(project_path) / "data" / "motifs"
+    if not base.exists():
+        return result
+    for mt_dir in sorted(base.iterdir()):
+        if not mt_dir.is_dir():
+            continue
+        total = 0
+        for json_file in mt_dir.glob("*.json"):
+            try:
+                data = json.loads(json_file.read_text(encoding="utf-8"))
+                shots = data.get("shots", []) if isinstance(data, dict) else data
+                total += sum(1 for s in shots if isinstance(s, dict) and s.get("value"))
+            except (OSError, json.JSONDecodeError):
+                continue
+        result[mt_dir.name] = total
+    return result
+
+
+def _count_palettes(project_path: str) -> dict[str, int]:
+    """Count palette JSON files that exist, broken down by media type."""
+    result: dict[str, int] = {}
+    base = Path(project_path) / "data" / "palettes"
+    if not base.exists():
+        return result
+    # palettes live directly under data/palettes/ (one file per media item,
+    # named after the video stem, not nested by media type).
+    count = sum(1 for f in base.rglob("*.json"))
+    if count:
+        result["total"] = count
+    return result
+
+
+def _count_embeddings(project_path: str) -> dict[str, int]:
+    """Count .npy embedding files under data/annotations/shots/<media_type>/."""
+    result: dict[str, int] = {}
+    base = Path(project_path) / "data" / "annotations" / "shots"
+    if not base.exists():
+        return result
+    for mt_dir in sorted(base.iterdir()):
+        if mt_dir.is_dir():
+            result[mt_dir.name] = len(list(mt_dir.glob("*.npy")))
+    return result
+
+
+def _count_shots_with_best_frame(project_path: str) -> dict[str, int]:
+    """Count annotation entries that have a best_frame.frame value, per media type."""
+    result: dict[str, int] = {}
+    base = Path(project_path) / "data" / "annotations" / "shots"
+    if not base.exists():
+        return result
+    for mt_dir in sorted(base.iterdir()):
+        if not mt_dir.is_dir():
+            continue
+        total = 0
+        for json_file in mt_dir.glob("*.json"):
+            if json_file.name.endswith(".manifest.json"):
+                continue
+            try:
+                entries = json.loads(json_file.read_text(encoding="utf-8"))
+                for entry in entries:
+                    bf = entry.get("shot", {}).get("best_frame") if isinstance(entry, dict) else None
+                    if bf and bf.get("frame") is not None:
+                        total += 1
+            except (OSError, json.JSONDecodeError):
+                continue
+        result[mt_dir.name] = total
+    return result
+
+
+def _count_annotated_shots_by_type(project_path: str) -> dict[str, int]:
+    """Count annotation entries per media type."""
+    result: dict[str, int] = {}
+    base = Path(project_path) / "data" / "annotations" / "shots"
+    if not base.exists():
+        return result
+    for mt_dir in sorted(base.iterdir()):
+        if not mt_dir.is_dir():
+            continue
+        total = 0
+        for json_file in mt_dir.glob("*.json"):
+            if json_file.name.endswith(".manifest.json"):
+                continue
+            try:
+                payload = json.loads(json_file.read_text(encoding="utf-8"))
+                if isinstance(payload, list):
+                    total += sum(1 for e in payload if isinstance(e, dict))
+            except (OSError, json.JSONDecodeError):
+                continue
+        result[mt_dir.name] = total
+    return result
+
+
 def get_corpus_stats(project_path: str) -> dict[str, Any]:
     """Return corpus-level project statistics."""
     movie_metadata = load_json_metadata(project_path, "movie")
@@ -99,7 +210,11 @@ def get_corpus_stats(project_path: str) -> dict[str, Any]:
     vocabulary_index = load_vocabulary_index(project_path, "movie")
     vocabulary_terms = int(vocabulary_index.get("meta", {}).get("total_tokens", 0))
 
-    annotated_shots = _count_annotated_shots(project_path, "movie")
+    annotated_shots_by_type = _count_annotated_shots_by_type(project_path)
+    annotated_shots_movie = annotated_shots_by_type.get("movie", 0)
+    annotated_shots_gameplay = annotated_shots_by_type.get("gameplay", 0)
+    annotated_shots = annotated_shots_movie + annotated_shots_gameplay
+
     detected_scenes = _count_detected_scenes(project_path, movie_metadata)
 
     silhouette_objects, label_counts = _combined_silhouette_report(project_path)
@@ -107,14 +222,40 @@ def get_corpus_stats(project_path: str) -> dict[str, Any]:
     subtitle_files = _count_present_assets(project_path, movie_metadata, _subtitle_path_exists)
     shotlists = _count_present_assets(project_path, movie_metadata, _shotlist_path_exists)
 
+    best_frames_by_type = _count_best_frames(project_path)
+    motifs_by_type = _count_motifs(project_path)
+    palettes = _count_palettes(project_path)
+    embeddings_by_type = _count_embeddings(project_path)
+    shots_with_best_frame_by_type = _count_shots_with_best_frame(project_path)
+
     return {
+        # Media
         "movies": len(movie_metadata),
         "gameplay_videos": len(gameplay_metadata),
-        "vocabulary_terms": vocabulary_terms,
+        # Annotations
         "annotated_shots": annotated_shots,
+        "annotated_shots_movie": annotated_shots_movie,
+        "annotated_shots_gameplay": annotated_shots_gameplay,
         "detected_scenes": detected_scenes,
+        # Best frames (CLIP-selected representative frames)
+        "best_frames": sum(best_frames_by_type.values()),
+        "best_frames_by_type": best_frames_by_type,
+        "shots_with_best_frame": sum(shots_with_best_frame_by_type.values()),
+        "shots_with_best_frame_by_type": shots_with_best_frame_by_type,
+        # Motifs
+        "motifs": sum(motifs_by_type.values()),
+        "motifs_by_type": motifs_by_type,
+        # Palettes
+        "palettes": palettes.get("total", 0),
+        # Embeddings
+        "embeddings": sum(embeddings_by_type.values()),
+        "embeddings_by_type": embeddings_by_type,
+        # Vocabulary
+        "vocabulary_terms": vocabulary_terms,
+        # Silhouettes
         "silhouette_objects": silhouette_objects,
         "silhouette_labels": len(label_counts),
+        # Assets
         "subtitle_files": subtitle_files,
         "shotlists": shotlists,
     }
