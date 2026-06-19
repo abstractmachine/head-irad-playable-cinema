@@ -1987,6 +1987,58 @@ def _repair_annotation_file(project_path, filename, media_type, label_fields, *,
     return file_fixes, False
 
 
+def _auto_index_and_motif(
+    project_path: str,
+    filename: str,
+    media_type: str,
+    *,
+    verbose: bool = False,
+) -> None:
+    """Run index processing and motif generation for one file after annotation."""
+    from pathlib import Path
+
+    stem = Path(filename).stem
+    embed_model = prefs.get(_MODEL_KEYS["embed"], _MODEL_DEFAULTS["embed"])
+    motif_model = prefs.get(_MODEL_KEYS["annotate"], _MODEL_DEFAULTS["annotate"])
+
+    # --- Index processing ---
+    print(f"  [{stem}] Running index processing…")
+    try:
+        result = _update_one_film(
+            project_path, filename, media_type, embed_model,
+            force=False, verbose=verbose,
+        )
+        if result == "ok":
+            print(f"  [{stem}] Index updated.")
+        elif result == "skip":
+            print(f"  [{stem}] Index up to date.")
+        else:
+            print(f"  ✗ [{stem}] Index processing failed.", file=sys.stderr)
+    except Exception as _exc:
+        print(f"  ✗ [{stem}] Index processing error: {_exc}", file=sys.stderr)
+
+    # --- Motif generation ---
+    print(f"  [{stem}] Running motif generation…")
+    try:
+        from data.motif import generate_motifs_for_movie
+        motif_summary = generate_motifs_for_movie(
+            project_path,
+            filename,
+            media_type,
+            model_name=motif_model,
+            force=False,
+            verbose=verbose,
+        )
+        n_gen = motif_summary.get("processed", 0)
+        n_skip = motif_summary.get("skipped", 0)
+        n_fail = motif_summary.get("failed", 0)
+        print(f"  [{stem}] Motifs: generated={n_gen} skipped={n_skip} failed={n_fail}")
+    except FileNotFoundError as _exc:
+        print(f"  ✗ [{stem}] Motif generation skipped: {_exc}", file=sys.stderr)
+    except Exception as _exc:
+        print(f"  ✗ [{stem}] Motif generation error: {_exc}", file=sys.stderr)
+
+
 def _shotlist_annotate(args):
     if getattr(args, "annotate_type", None) is None:
         print("✗ annotate: specify a subcommand.", file=sys.stderr)
@@ -2078,6 +2130,8 @@ def _shotlist_annotate(args):
                         _val_fixes, _ = _repair_annotation_file(project_path, _fn, args.media, _label_fields)
                         if _val_fixes and getattr(args, "verbose", False):
                             print(f"  {_fn}: normalised {_val_fixes} annotation field(s)")
+                        # Auto index processing + motif generation
+                        _auto_index_and_motif(project_path, _fn, args.media, verbose=getattr(args, "verbose", False))
 
                     if not _notify_items:
                         return
@@ -2205,6 +2259,8 @@ def _shotlist_annotate(args):
             _val_fixes, _val_invalid = _repair_annotation_file(project_path, filename, args.media, _label_fields)
             if _val_fixes:
                 print(f"Normalised {_val_fixes} annotation field(s)")
+            # Auto index processing + motif generation
+            _auto_index_and_motif(project_path, filename, args.media, verbose=getattr(args, "verbose", False))
             return
 
         elif args.annotate_type == "scene":
@@ -2255,6 +2311,8 @@ def _shotlist_annotate(args):
                     discord_notify(f"✓ Annotated scene {args.scene_number} in {filename} — updated={summary['updated']} skipped={summary['skipped']} failed={failed_count}", project_path)
                 except Exception:
                     pass
+            # Auto index processing + motif generation
+            _auto_index_and_motif(project_path, filename, args.media, verbose=getattr(args, "verbose", False))
             return
 
     except ImportError as e:

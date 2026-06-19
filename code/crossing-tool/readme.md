@@ -53,27 +53,15 @@ $ source .venv/bin/activate
 # 1. Install (see Install section below for details)
 uv tool install "crossing[all] @ git+https://github.com/abstractmachine/head-irad-playable-cinema.git#subdirectory=code/crossing-tool"
 
-# 2. Point crossing at your project folder (created automatically if doesn't exist)
+# 2. Point crossing to your project folder (created automatically if doesn't exist)
 crossing tool path ~/my-project
 
 # 3. Set your API keys (TMDb required for metadata; others optional)
 crossing tool api_key set tmdb <key>
 crossing tool api_key set opensubtitles <key>
 
-# 4. Import a film (transcodes to H.264/AAC, fetches metadata + subtitles)
-crossing media import /path/to/film.mkv
-
-# 5. Detect shot boundaries
-crossing shotlist shot detect "Film Title"
-
-# 6. Open the project launcher (configure path, models, open any visualizer)
+# 4. Open the project launcher (configure path, models, open any visualizer)
 crossing visualizer
-
-# 7. Annotate shots with an LLM
-crossing annotate shot "Film Title"
-
-# 8. Search annotations
-crossing search "close-up of a gun"
 ```
 
 ---
