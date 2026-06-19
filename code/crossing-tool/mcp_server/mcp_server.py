@@ -686,7 +686,7 @@ def search_vocabulary(
         sort:       "count" (most frequent first) or "alphabetical".
         media_type: "movie" (default) or "gameplay".
 
-    Read-only. Reads: data/index/vocabulary_<media_type>.json
+    Read-only. Reads: data/vocabulary/vocabulary_<media_type>.json
     """
     result = _ctx()
     if isinstance(result, str):

@@ -5029,7 +5029,7 @@ def _index_vocabulary(args):
         n_files   = meta.get("files_processed", "?")
         n_tokens  = meta.get("total_tokens", 0)
         voc_flds  = meta.get("vocabulary_fields") or []
-        out_rel   = Path("data") / "index" / f"vocabulary_{mt}.json"
+        out_rel   = Path("data") / "vocabulary" / f"vocabulary_{mt}.json"
         if n_files != "?":
             print(f"Processed {n_files} files")
         if voc_flds:

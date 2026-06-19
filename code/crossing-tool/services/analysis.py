@@ -839,7 +839,7 @@ def get_archive_stats(
 
     # Vocabulary stats from index meta
     vocab_stats: dict = {}
-    vocab_index_path = base / "data" / "index" / f"vocabulary_{media_type}.json"
+    vocab_index_path = base / "data" / "vocabulary" / f"vocabulary_{media_type}.json"
     if vocab_index_path.exists():
         try:
             meta = json.loads(vocab_index_path.read_text(encoding="utf-8")).get("meta", {})

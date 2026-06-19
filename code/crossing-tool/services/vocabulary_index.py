@@ -189,7 +189,7 @@ def canonicalize_vocabulary_value(field: str, value: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _vocab_path(project_path: str, media_type: str) -> Path:
-    return Path(project_path) / "data" / "index" / f"vocabulary_{media_type}.json"
+    return Path(project_path) / "data" / "vocabulary" / f"vocabulary_{media_type}.json"
 
 
 def _ann_dir(project_path: str, media_type: str) -> Path:

@@ -68,7 +68,7 @@ class TestCorpusStats(unittest.TestCase):
             )
 
             _write_json(
-                project / "data" / "index" / "vocabulary_movie.json",
+                project / "data" / "vocabulary" / "vocabulary_movie.json",
                 {
                     "meta": {"total_tokens": 3, "vocabulary_fields": ["animals", "objects"]},
                     "fields": {
