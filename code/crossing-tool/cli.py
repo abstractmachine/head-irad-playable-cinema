@@ -2038,27 +2038,6 @@ def _auto_index_and_motif(
     except Exception as _exc:
         print(f"  ✗ [{stem}] Motif generation error: {_exc}", file=sys.stderr)
 
-    # --- Frame extraction ---
-    print(f"  [{stem}] Running frame extraction…")
-    try:
-        from data.frames import extract_best_frames_for_media
-        frame_summary = extract_best_frames_for_media(
-            project_path,
-            media_type,
-            filename=filename,
-            force=False,
-            verbose=verbose,
-        )
-        n_created = frame_summary.get("items_created", 0)
-        n_reused  = frame_summary.get("items_reused", 0)
-        n_skip_f  = frame_summary.get("items_skipped", 0)
-        n_fail_f  = frame_summary.get("items_failed", 0)
-        print(f"  [{stem}] Frames: created={n_created} reused={n_reused} skipped={n_skip_f} failed={n_fail_f}")
-    except FileNotFoundError as _exc:
-        print(f"  ✗ [{stem}] Frame extraction skipped: {_exc}", file=sys.stderr)
-    except Exception as _exc:
-        print(f"  ✗ [{stem}] Frame extraction error: {_exc}", file=sys.stderr)
-
 
 def _shotlist_annotate(args):
     if getattr(args, "annotate_type", None) is None:
@@ -4409,8 +4388,6 @@ def cmd_index(args):
         _index_palette(args)
     elif sub == "motif":
         _index_motif(args)
-    elif sub == "frames":
-        _index_frames(args)
     else:
         print("✗ index: specify a subcommand.", file=sys.stderr)
         sys.exit(1)
@@ -6025,126 +6002,6 @@ def _index_motif_generate(args):
         )
 
     if summary.get("failed", 0):
-        sys.exit(1)
-
-
-def _index_frames(args):
-    """Extract one best-frame JPG per shot for one or all media items."""
-    from data.frames import extract_best_frames_for_media, extract_best_frames_for_all
-
-    project_path = prefs.get("path")
-    media_type   = normalize_media_type(getattr(args, "media", "movie"))
-    media_id     = getattr(args, "media_id", None)
-    do_all       = getattr(args, "all", False)
-    force        = getattr(args, "force", False)
-    dry_run      = getattr(args, "dry_run", False)
-    limit        = getattr(args, "limit", None)
-    verbose      = getattr(args, "verbose", False)
-    notify       = getattr(args, "notify", False)
-
-    def _print_summary(s: dict) -> None:
-        mid    = s.get("media_id") or "?"
-        mtype  = s.get("media_type") or media_type
-        out    = s.get("output_dir") or ""
-        err    = s.get("error")
-        if err:
-            print(f"  ✗ {mtype} {mid}: {err}", file=sys.stderr)
-            return
-        print(f"✓ Frames extracted for {mtype} {mid}")
-        print(f"  total:   {s.get('items_total', 0)}")
-        print(f"  created: {s.get('items_created', 0)}")
-        print(f"  reused:  {s.get('items_reused', 0)}")
-        print(f"  skipped: {s.get('items_skipped', 0)}")
-        print(f"  failed:  {s.get('items_failed', 0)}")
-        if out:
-            print(f"  output:  {out}/")
-
-    if do_all:
-        results = extract_best_frames_for_all(
-            project_path,
-            media_type,
-            force=force,
-            dry_run=dry_run,
-            limit=limit,
-            verbose=verbose,
-        )
-        if not results:
-            print(f"No annotation JSON files found for {media_type}.", file=sys.stderr)
-            sys.exit(1)
-
-        totals = {k: 0 for k in ("items_total", "items_created", "items_reused", "items_skipped", "items_failed")}
-        for s in results:
-            _print_summary(s)
-            for k in totals:
-                totals[k] += s.get(k, 0)
-
-        if len(results) > 1:
-            print(f"\n── Global total ──")
-            print(f"  files:   {len(results)}")
-            print(f"  total:   {totals['items_total']}")
-            print(f"  created: {totals['items_created']}")
-            print(f"  reused:  {totals['items_reused']}")
-            print(f"  skipped: {totals['items_skipped']}")
-            print(f"  failed:  {totals['items_failed']}")
-
-        if notify:
-            try:
-                from services.notify import discord_notify
-                discord_notify(
-                    f"✓ index frames complete ({media_type})\n"
-                    f"files={len(results)} created={totals['items_created']} "
-                    f"reused={totals['items_reused']} failed={totals['items_failed']}",
-                    project_path,
-                )
-            except Exception:
-                pass
-
-        any_failed = sum(s.get("items_failed", 0) for s in results)
-        if any_failed:
-            sys.exit(1)
-        return
-
-    # Single media item — require --media-id
-    if not media_id:
-        print("✗ Provide --media-id <id> or --all.", file=sys.stderr)
-        sys.exit(1)
-
-    try:
-        summary = extract_best_frames_for_media(
-            project_path,
-            media_type,
-            media_id=media_id,
-            force=force,
-            dry_run=dry_run,
-            limit=limit,
-            verbose=verbose,
-        )
-    except FileNotFoundError as exc:
-        print(f"✗ {exc}", file=sys.stderr)
-        sys.exit(1)
-    except ValueError as exc:
-        print(f"✗ {exc}", file=sys.stderr)
-        sys.exit(1)
-    except Exception as exc:
-        print(f"✗ {exc}", file=sys.stderr)
-        sys.exit(1)
-
-    _print_summary(summary)
-
-    if notify:
-        try:
-            from services.notify import discord_notify
-            discord_notify(
-                f"✓ index frames {media_type} {media_id}\n"
-                f"created={summary.get('items_created', 0)} "
-                f"reused={summary.get('items_reused', 0)} "
-                f"failed={summary.get('items_failed', 0)}",
-                project_path,
-            )
-        except Exception:
-            pass
-
-    if summary.get("items_failed", 0):
         sys.exit(1)
 
 
@@ -8034,44 +7891,6 @@ def build_parser():
     )
     _add_verbose_arg(p_index_motif_generate, help="Print [001] motif lines while generating")
     _add_notify_args(p_index_motif_generate)
-
-    p_index_frames = index_sub.add_parser(
-        "frames",
-        help="Extract one representative JPG per shot from the best_frame annotation metadata",
-        epilog=(
-            "Examples:\n"
-            "  crossing index frames --media gameplay --media-id game_rdr2_ce5e0bba\n"
-            "  crossing index frames --media movie --all\n"
-            "  crossing index frames --media movie --all --force\n"
-            "  crossing index frames --media gameplay --media-id game_rdr2_ce5e0bba --limit 100 --verbose\n"
-            "  crossing index frames --media gameplay --media-id game_rdr2_ce5e0bba --dry-run"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    p_index_frames.set_defaults(func=cmd_index)
-    p_index_frames.add_argument(
-        "--media-id",
-        dest="media_id",
-        default=None,
-        metavar="MEDIA_ID",
-        help="Stable media_id of the source (e.g. game_rdr2_ce5e0bba, tmdb_14168)",
-    )
-    _add_media_arg(p_index_frames)
-    p_index_frames.add_argument(
-        "--all", action="store_true",
-        help="Extract frames for all media items that have an annotation JSON",
-    )
-    p_index_frames.add_argument(
-        "--force", action="store_true",
-        help="Re-extract JPGs even if they already exist",
-    )
-    _add_dry_run_arg(p_index_frames)
-    p_index_frames.add_argument(
-        "--limit", type=int, default=None, metavar="N",
-        help="Process at most N shots per media item (useful for testing)",
-    )
-    _add_verbose_arg(p_index_frames, help="Print per-shot progress (reuse/extract/skip/fail)")
-    _add_notify_args(p_index_frames)
 
     # media command group
     p_media = sub.add_parser(
