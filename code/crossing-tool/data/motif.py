@@ -594,6 +594,9 @@ def generate_motifs_for_movie(
             processed_values.append(value)
             processed += 1
 
+            # Write canonical shot.motif directly into the annotation entry
+            shot_data["motif"] = value
+
             if verbose:
                 print(f"[{i+1:03d}] {value}")
 
@@ -615,6 +618,11 @@ def generate_motifs_for_movie(
 
     motif_doc["shots"] = ordered_shots
     save_motif_doc(project_path, filename, media_type, motif_doc)
+
+    # Also save the updated annotation JSON with shot.motif attached
+    json_path.write_text(
+        json.dumps(entries, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
 
     return {
         "filename":  filename,
@@ -740,4 +748,211 @@ def generate_motifs_for_all_movies(
         "total_skipped":   total_skipped,
         "total_failed":    total_failed,
         "errors":          errors,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Motif attachment  (sidecar → annotation JSON)
+# ---------------------------------------------------------------------------
+
+def _motif_value_from_entry(shot_data: dict) -> Optional[str]:
+    """Extract the motif value from an annotation item's shot block.
+
+    Handles:
+    - ``shot.motif`` as a plain string  (canonical new form)
+    - ``shot.motif`` as a dict with keys ``value``, ``motif``, ``word``, or ``label``
+      (legacy / transitional forms)
+
+    Returns the stripped value string or ``None`` when absent / empty.
+    """
+    motif = shot_data.get("motif")
+    if motif is None:
+        return None
+    if isinstance(motif, str):
+        v = motif.strip()
+        return v if v else None
+    if isinstance(motif, dict):
+        for key in ("value", "motif", "word", "label"):
+            v = (motif.get(key) or "").strip()
+            if v:
+                return v
+    return None
+
+
+def load_motif_words(
+    project_path: str,
+    filename: str,
+    media_type: str,
+) -> list[str]:
+    """Return an ordered list of motif values for all shots in a film.
+
+    Resolution priority:
+    1. ``item["shot"]["motif"]`` in the annotation JSON (canonical after attach or generation).
+    2. ``data/motifs/<media_type>/<stem>.json`` sidecar (legacy fallback).
+
+    Returns only non-empty values.
+    """
+    from data.annotate import get_annotation_json_path
+
+    json_path = get_annotation_json_path(project_path, filename, media_type)
+
+    if json_path.exists():
+        try:
+            entries: list = json.loads(json_path.read_text(encoding="utf-8"))
+        except Exception:
+            entries = []
+
+        sidecar_doc = load_motif_doc(project_path, filename, media_type)
+        sidecar_by_id: dict[str, str] = {
+            str(s["shot_id"]): s.get("value", "").strip()
+            for s in sidecar_doc.get("shots", [])
+            if isinstance(s, dict) and s.get("shot_id")
+        }
+
+        words: list[str] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            shot_data = entry.get("shot")
+            if not isinstance(shot_data, dict):
+                continue
+            val = _motif_value_from_entry(shot_data)
+            if val is None:
+                sid = str(shot_data.get("shot_id", "")).strip()
+                val = sidecar_by_id.get(sid) or None
+            if val:
+                words.append(val)
+        return words
+
+    # No annotation JSON — fall back entirely to sidecar
+    doc = load_motif_doc(project_path, filename, media_type)
+    return [
+        s.get("value", "").strip()
+        for s in doc.get("shots", [])
+        if s.get("value", "").strip()
+    ]
+
+
+def attach_motifs_to_annotation(
+    project_path: str,
+    filename: str,
+    media_type: str,
+    *,
+    force: bool = False,
+    dry_run: bool = False,
+    verbose: bool = False,
+) -> dict:
+    """Copy motif values from the sidecar ``data/motifs/`` doc into the annotation JSON.
+
+    For each annotation item:
+    - If ``shot.motif`` is absent → add it from the sidecar.
+    - If ``shot.motif`` already matches the sidecar value → skip (unchanged).
+    - If ``shot.motif`` exists but differs from the sidecar:
+        - without ``--force``: count as a conflict, do not overwrite.
+        - with ``--force``:    overwrite.
+
+    Parameters
+    ----------
+    project_path : Project root.
+    filename :     Video filename.
+    media_type :   ``"movie"`` or ``"gameplay"``.
+    force :        Overwrite existing conflicts.
+    dry_run :      Report what would change; do not write any files.
+    verbose :      Print per-shot detail.
+
+    Returns
+    -------
+    dict with keys:
+        ``shots``, ``found``, ``added``, ``unchanged``, ``conflicts``, ``missing``
+    """
+    from data.annotate import get_annotation_json_path
+
+    json_path = get_annotation_json_path(project_path, filename, media_type)
+    if not json_path.exists():
+        raise FileNotFoundError(
+            f"No annotation JSON found: {json_path}\n"
+            f"  Run: crossing annotate shot '{filename}' --media {media_type} first."
+        )
+
+    entries: list = json.loads(json_path.read_text(encoding="utf-8"))
+
+    # Build shot_id → sidecar motif value lookup
+    motif_doc = load_motif_doc(project_path, filename, media_type)
+    sidecar_by_id: dict[str, str] = {}
+    for s in motif_doc.get("shots", []):
+        if not isinstance(s, dict):
+            continue
+        sid = str(s.get("shot_id", "")).strip()
+        val = (s.get("value") or "").strip()
+        if sid and val:
+            sidecar_by_id[sid] = val
+
+    total_shots = 0
+    found       = 0  # shots with a sidecar motif
+    added       = 0  # shot.motif was absent → added
+    unchanged   = 0  # shot.motif already matched sidecar
+    conflicts   = 0  # shot.motif differed from sidecar
+    missing     = 0  # no sidecar motif for this shot_id
+    dirty       = False
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        shot_data = entry.get("shot")
+        if not isinstance(shot_data, dict):
+            continue
+
+        total_shots += 1
+        shot_id = str(shot_data.get("shot_id", "")).strip()
+        sidecar_val = sidecar_by_id.get(shot_id)
+
+        if not sidecar_val:
+            missing += 1
+            if verbose:
+                print(f"  - {shot_id}  (no sidecar motif)")
+            continue
+
+        found += 1
+        current_val = _motif_value_from_entry(shot_data)
+
+        if current_val is None:
+            # Absent → add
+            if verbose:
+                print(f"  + {shot_id}  → {sidecar_val!r}")
+            if not dry_run:
+                shot_data["motif"] = sidecar_val
+                dirty = True
+            added += 1
+
+        elif current_val == sidecar_val:
+            # Matches → nothing to do
+            unchanged += 1
+            if verbose:
+                print(f"  = {shot_id}  {sidecar_val!r}")
+
+        else:
+            # Conflict
+            conflicts += 1
+            if force:
+                if verbose:
+                    print(f"  ! {shot_id}  conflict: {current_val!r} → {sidecar_val!r}  (overwritten)")
+                if not dry_run:
+                    shot_data["motif"] = sidecar_val
+                    dirty = True
+            else:
+                if verbose:
+                    print(f"  ! {shot_id}  conflict: {current_val!r} vs {sidecar_val!r}  (kept existing; use --force to overwrite)")
+
+    if dirty and not dry_run:
+        json_path.write_text(
+            json.dumps(entries, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+
+    return {
+        "shots":     total_shots,
+        "found":     found,
+        "added":     added,
+        "unchanged": unchanged,
+        "conflicts": conflicts,
+        "missing":   missing,
     }

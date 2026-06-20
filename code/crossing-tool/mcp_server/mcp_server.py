@@ -440,7 +440,7 @@ def list_motifs(
         media_type:         "movie" (default) or "gameplay".
         include_full_shots: Include full per-shot motif objects (default False).
 
-    Read-only. Reads: data/motifs/<media_type>/<stem>.json
+    Read-only. Prefers shot.motif from annotation JSON; falls back to data/motifs/ sidecar.
     """
     result = _ctx()
     if isinstance(result, str):
@@ -449,7 +449,7 @@ def list_motifs(
 
     try:
         from data.metadata import get_metadata as _get_metadata
-        from data.motif import load_motif_doc
+        from data.motif import load_motif_doc, load_motif_words
 
         entries = _get_metadata(project_path, query=film, media_type=media_type)
         if not entries:
@@ -460,6 +460,7 @@ def list_motifs(
         entry = entries[0]
         filename = entry["filename"]
 
+        motifs = load_motif_words(project_path, filename, media_type)
         doc = load_motif_doc(project_path, filename, media_type)
         shots = doc.get("shots", [])
 
@@ -467,8 +468,8 @@ def list_motifs(
             title=entry.get("title", ""),
             filename=filename,
             film_title=doc.get("title"),
-            shot_count=len(shots),
-            motifs=[s.get("value", "") for s in shots],
+            shot_count=len(motifs),
+            motifs=motifs,
             **( {"shots": shots} if include_full_shots else {} ),
         )
 
@@ -1504,7 +1505,6 @@ def generate_catalog(
     try:
         from data.metadata import get_metadata as _get_metadata
         from data.shotlist import get_shotlist_path, read_shotlist
-        from data.motif import load_motif_doc
 
         all_entries = _get_metadata(project_path, media_type=media_type)
         ann_base = Path(project_path) / "data" / "annotations" / "shots" / media_type
@@ -1549,8 +1549,9 @@ def generate_catalog(
                     pass
 
             if include_motifs and filename:
+                from data.motif import load_motif_words, load_motif_doc
+                record["motifs"] = load_motif_words(project_path, filename, media_type)
                 motif_doc = load_motif_doc(project_path, filename, media_type)
-                record["motifs"] = [s.get("value", "") for s in motif_doc.get("shots", [])]
                 film_title = motif_doc.get("title")
                 if film_title:
                     record["film_motif_title"] = film_title.get("value", "")

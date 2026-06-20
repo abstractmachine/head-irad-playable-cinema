@@ -3702,7 +3702,7 @@ def _mosaic_thumbnails(args):
 
 
 def _mosaic_shots(args):
-    """mosaic shots [--movie TITLE | --all] — PDF contact sheet of every shot."""
+    """mosaic shots [--title TITLE | --all] — PDF contact sheet of every shot."""
     import subprocess
     from data.metadata import get_metadata
     from generators.mosaic import mosaic_pdf_from_shots
@@ -3732,7 +3732,7 @@ def _mosaic_shots(args):
             sys.exit(1)
         filenames = [rows[0]["filename"]]
     else:
-        print("✗ mosaic shots: specify --movie TITLE or --all.", file=sys.stderr)
+        print("✗ mosaic shots: specify --title TITLE or --all.", file=sys.stderr)
         sys.exit(1)
 
     mode_label = " (best)" if best_mode else ""
@@ -3781,7 +3781,7 @@ def _mosaic_shots(args):
 
 
 def _mosaic_scenes(args):
-    """mosaic scenes [--movie TITLE | --all] — PDF with scene intertitles."""
+    """mosaic scenes [--title TITLE | --all] — PDF with scene intertitles."""
     import subprocess
     from data.metadata import get_metadata
     from generators.mosaic import mosaic_pdf_from_scenes
@@ -3811,7 +3811,7 @@ def _mosaic_scenes(args):
             sys.exit(1)
         filenames = [rows[0]["filename"]]
     else:
-        print("✗ mosaic scenes: specify --movie TITLE or --all.", file=sys.stderr)
+        print("✗ mosaic scenes: specify --title TITLE or --all.", file=sys.stderr)
         sys.exit(1)
 
     mode_label = " (best)" if best_mode else ""
@@ -4157,11 +4157,11 @@ def cmd_film_title(args):
     )
     from data.shotlist import resolve_filename
 
-    # Manual override: --set VALUE --movie <title>
+    # Manual override: --set VALUE --title <title>
     set_value = getattr(args, "set", None)
     if set_value is not None:
         if not movie:
-            print("✗ film-title --set: specify --movie", file=sys.stderr)
+            print("✗ film-title --set: specify --title", file=sys.stderr)
             sys.exit(1)
         try:
             filename = resolve_filename(project_path, None, movie, media_type)
@@ -4209,7 +4209,7 @@ def cmd_film_title(args):
         return
 
     if not movie:
-        print("✗ film-title: specify --movie or --all.", file=sys.stderr)
+        print("✗ film-title: specify --title or --all.", file=sys.stderr)
         sys.exit(1)
 
     try:
@@ -4313,7 +4313,7 @@ def cmd_flipbook(args):
 
     # Single movie
     if not movie and not tmdb_id:
-        print("✗ flipbook: specify --movie, --tmdb, or --all.", file=sys.stderr)
+        print("✗ flipbook: specify --title, --tmdb, or --all.", file=sys.stderr)
         sys.exit(1)
 
     try:
@@ -4374,7 +4374,7 @@ def cmd_index(args):
         _index_serialize(args)
     elif sub == "embed":
         _index_embed(args)
-    elif sub == "process":
+    elif sub in ("process", "annotation-embeddings"):
         _index_update(args)
     elif sub == "audit":
         _index_audit(args)
@@ -4593,6 +4593,7 @@ def _update_one_film(
     *,
     force: bool = False,
     verbose: bool = False,
+    limit: int | None = None,
 ) -> str:
     """Reconcile .txt, .npy, and manifest for one film.
 
@@ -4676,6 +4677,8 @@ def _update_one_film(
         except FileNotFoundError as exc:
             print(f"  ✗ {stem}  {exc}", file=sys.stderr)
             return "error"
+        if limit is not None:
+            items = items[:limit]
         lines = [serialize_annotation_item(item, mapping) for item in items]
         write_text_file(project_path, filename, media_type, lines, force=True)
         if verbose:
@@ -4893,7 +4896,10 @@ def _index_update(args):
     project_path = prefs.get("path")
     media_type = normalize_media_type(getattr(args, "media", "movie"))
     query_words = getattr(args, "query", None) or []
-    query_str = " ".join(query_words).strip() if query_words else None
+    query_str = (
+        getattr(args, "movie", None)
+        or (" ".join(query_words).strip() if query_words else None)
+    )
     tmdb = getattr(args, "tmdb", None)
     do_all = getattr(args, "all", False)
     model_name = (
@@ -4902,6 +4908,7 @@ def _index_update(args):
     )
     force = getattr(args, "force", False)
     verbose = getattr(args, "verbose", False)
+    limit = getattr(args, "limit", None)
     notify_each = getattr(args, "notify_items", False)
     notify = getattr(args, "notify", False) or notify_each
 
@@ -4914,7 +4921,7 @@ def _index_update(args):
         for fn in filenames:
             result = _update_one_film(
                 project_path, fn, media_type, model_name,
-                force=force, verbose=verbose,
+                force=force, verbose=verbose, limit=limit,
             )
             counts[result] = counts.get(result, 0) + 1
             if notify_each:
@@ -4939,7 +4946,7 @@ def _index_update(args):
             discord_notify(f"index process complete ({media_type})\n{summary}", project_path)
     else:
         if tmdb is None and not query_str:
-            print("✗ Provide a title query, --tmdb <id>, or --all.", file=sys.stderr)
+            print("✗ Provide a title query, --title <value>, --tmdb <id>, or --all.", file=sys.stderr)
             sys.exit(1)
         try:
             filename = resolve_filename(project_path, tmdb, query_str, media_type)
@@ -4948,7 +4955,7 @@ def _index_update(args):
             sys.exit(1)
         result = _update_one_film(
             project_path, filename, media_type, model_name,
-            force=force, verbose=verbose,
+            force=force, verbose=verbose, limit=limit,
         )
         if notify:
             from services.notify import discord_notify
@@ -5225,7 +5232,7 @@ def _silhouette_catalog_extract(args):
 
     if not shot_id and not movie and tmdb is None and not do_all:
         print(
-            "✗ Specify a scope: --shot <shot_id>, --movie <title>, --tmdb <id>, or --all",
+            "✗ Specify a scope: --shot <shot_id>, --title <title>, --tmdb <id>, or --all",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -5708,7 +5715,7 @@ def _silhouette_catalog_clear(args):
 
     if not do_all and label is None and filename_stem is None:
         print(
-            "✗ Specify --all, --label <label>, --movie <title>, or --tmdb <id>.\n"
+            "✗ Specify --all, --label <label>, --title <title>, or --tmdb <id>.\n"
             "  Use --all to clear the entire catalog (irreversible without --dry-run).",
             file=sys.stderr,
         )
@@ -5802,7 +5809,7 @@ def _index_palette_create(args):
 
     if tmdb is None and movie_query is None:
         print(
-            "✗ Specify a target: --all, --movie <title>, or --tmdb <id>",
+            "✗ Specify a target: --all, --title <title>, or --tmdb <id>",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -5891,7 +5898,7 @@ def _index_palette_get(args):
 
     if tmdb is None and movie_query is None:
         print(
-            "✗ Specify a target: --all, --movie <title>, or --tmdb <id>",
+            "✗ Specify a target: --all, --title <title>, or --tmdb <id>",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -5908,7 +5915,7 @@ def _index_palette_get(args):
         print(
             f"✗ No palette cache found for '{filename}'.\n"
             f"  Expected: {cache_path}\n"
-            f"  Run: crossing index palette create --movie {movie_query or filename}",
+            f"  Run: crossing index palette create --title {movie_query or filename}",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -5929,12 +5936,14 @@ def _index_palette_get(args):
 
 
 def _index_motif(args):
-    """Dispatch ``crossing index motif <generate>``."""
+    """Dispatch ``crossing index motif <generate|attach>``."""
     motif_action = getattr(args, "motif_action", None)
     if motif_action == "generate":
         _index_motif_generate(args)
+    elif motif_action == "attach":
+        _index_motif_attach(args)
     else:
-        print("✗ index motif: specify a subcommand (generate)", file=sys.stderr)
+        print("✗ index motif: specify a subcommand (generate, attach)", file=sys.stderr)
         sys.exit(1)
 
 
@@ -6002,7 +6011,7 @@ def _index_motif_generate(args):
 
     if tmdb is None and movie_query is None:
         print(
-            "✗ Specify a target: --all, --movie <title>, or --tmdb <id>",
+            "✗ Specify a target: --all, --title <title>, or --tmdb <id>",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -6052,6 +6061,127 @@ def _index_motif_generate(args):
 
     if summary.get("failed", 0):
         sys.exit(1)
+
+
+def _index_motif_attach(args):
+    """Attach motif values from data/motifs/ sidecars into annotation JSON as shot.motif."""
+    from data.motif import attach_motifs_to_annotation
+    from data.shotlist import resolve_filename
+    from data.annotate import get_annotation_json_path
+
+    project_path = prefs.get("path")
+    media_type   = normalize_media_type(getattr(args, "media", "movie"))
+    force        = getattr(args, "force",   False)
+    dry_run      = getattr(args, "dry_run", False)
+    verbose      = getattr(args, "verbose", False)
+    do_all       = getattr(args, "all",     False)
+    query_words  = getattr(args, "query", None) or []
+    movie_query  = getattr(args, "movie", None) or (" ".join(query_words).strip() or None)
+    tmdb         = getattr(args, "tmdb", None)
+
+    if dry_run:
+        print("(dry run — no files will be modified)")
+
+    if do_all:
+        # Resolve all files that have annotation JSON
+        from data.annotate import get_annotation_json_path
+        from data.metadata import get_metadata
+        meta_entries = get_metadata(project_path, media_type=media_type)
+        filenames = [
+            e["filename"] for e in meta_entries
+            if e.get("filename")
+            and get_annotation_json_path(project_path, e["filename"], media_type).exists()
+        ]
+        if not filenames:
+            print(f"No annotation JSON files found under {media_type}.", file=sys.stderr)
+            sys.exit(1)
+
+        total_files = 0
+        total_updated = 0
+        total_skipped = 0
+        total_conflicts = 0
+        total_missing_sidecars = 0
+        total_missing_shots = 0
+
+        for fn in filenames:
+            stem = Path(fn).stem
+            try:
+                r = attach_motifs_to_annotation(
+                    project_path, fn, media_type,
+                    force=force, dry_run=dry_run, verbose=False,
+                )
+            except FileNotFoundError as exc:
+                print(f"  ✗ {stem}: {exc}", file=sys.stderr)
+                continue
+
+            total_files += 1
+            # A file counts as "updated" when anything was added or force-overwritten
+            n_updated = r["added"] + (r["conflicts"] if force else 0)
+            if n_updated:
+                total_updated += 1
+            else:
+                total_skipped += 1
+
+            if r["missing"] and r["found"] == 0:
+                total_missing_sidecars += 1
+            total_conflicts  += (r["conflicts"] if not force else 0)
+            total_missing_shots += r["missing"]
+
+            if verbose:
+                tag = "(dry run) " if dry_run else ""
+                print(
+                    f"  {tag}{stem}: "
+                    f"shots={r['shots']}  found={r['found']}  "
+                    f"added={r['added']}  unchanged={r['unchanged']}  "
+                    f"conflicts={r['conflicts']}  missing={r['missing']}"
+                )
+
+        print(f"\nFiles processed:         {total_files}")
+        print(f"Updated:                 {total_updated}")
+        print(f"Skipped (up to date):    {total_skipped}")
+        print(f"Missing motif sidecars:  {total_missing_sidecars}")
+        print(f"Conflicts (not written): {total_conflicts}")
+        print(f"Missing shot motifs:     {total_missing_shots}")
+        return
+
+    if tmdb is None and not movie_query:
+        print("✗ Specify a target: --all, --title <value>, or --tmdb <id>.", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        filename = resolve_filename(project_path, tmdb, movie_query, media_type)
+    except ValueError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        r = attach_motifs_to_annotation(
+            project_path, filename, media_type,
+            force=force, dry_run=dry_run, verbose=verbose,
+        )
+    except FileNotFoundError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    from data.metadata import get_metadata
+    meta_entries = get_metadata(project_path, media_type=media_type)
+    meta = next((e for e in meta_entries if e.get("filename") == filename), {})
+    title = meta.get("title") or Path(filename).stem
+
+    prefix = "(dry run) " if dry_run else ""
+    print(f"{title}")
+    print(f"  {prefix}shots:       {r['shots']}")
+    print(f"  {prefix}motifs found: {r['found']}")
+    print(f"  {prefix}added:        {r['added']}")
+    print(f"  {prefix}unchanged:    {r['unchanged']}")
+    print(f"  {prefix}conflicts:    {r['conflicts']}")
+    print(f"  {prefix}missing:      {r['missing']}")
+    if r["conflicts"] and not force:
+        print(
+            f"  ⚠  {r['conflicts']} conflict(s) — existing shot.motif differs from sidecar. "
+            f"Use --force to overwrite.",
+            file=sys.stderr,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -6646,7 +6776,7 @@ def _search_frames_cmd(args):
     # First token after 'frames' is the query; remaining are film filters.
     if not remaining:
         print("error: 'search frames' requires a query string", file=sys.stderr)
-        print("  crossing search frames <query> [--movie FILM] [--limit 4] [--width 400] [--save-dir DIR]", file=sys.stderr)
+        print("  crossing search frames <query> [--title FILM] [--limit 4] [--width 400] [--save-dir DIR]", file=sys.stderr)
         sys.exit(1)
     query = remaining[0]
     films = remaining[1:] + (getattr(args, "movie", None) or []) or None
@@ -6749,7 +6879,7 @@ def _search_motif_frames_cmd(args):
     remaining = args.scope or []
     if not remaining:
         print("error: 'search motif-frames' requires a motif word", file=sys.stderr)
-        print("  crossing search motif-frames <motif> [--movie FILM] [--limit 4] [--save-dir DIR]", file=sys.stderr)
+        print("  crossing search motif-frames <motif> [--title FILM] [--limit 4] [--save-dir DIR]", file=sys.stderr)
         sys.exit(1)
     motif = remaining[0]
     films = remaining[1:] + (getattr(args, "movie", None) or []) or None
@@ -7253,7 +7383,7 @@ def build_parser():
     )
     p_mosaic_search.add_argument("query", help="Search query (e.g. \"gun\" or \"sunset\")")
     p_mosaic_search.add_argument("scope", nargs="*", help="Fuzzy movie-title filter(s); omit to search all movies")
-    p_mosaic_search.add_argument("--movie", nargs="+", default=None, metavar="TITLE", help="Fuzzy movie-title filter(s) (named alternative to positional scope)")
+    p_mosaic_search.add_argument("--title", dest="movie", nargs="+", default=None, metavar="TITLE", help="Fuzzy title filter(s) (named alternative to positional scope)")
     p_mosaic_search.add_argument("--field", default=None, help="Restrict search to one annotation field")
     p_mosaic_search.add_argument("--limit", type=int, default=None, help="Max search results / mosaic tiles")
     p_mosaic_search.add_argument("--all", action="store_true", help="Search all movies (overrides positional scopes)")
@@ -7277,7 +7407,7 @@ def build_parser():
     )
     p_mosaic_export.add_argument("query", help="Search query (e.g. \"gun\" or \"sunset\")")
     p_mosaic_export.add_argument("scope", nargs="*", help="Fuzzy movie-title filter(s); omit to search all movies")
-    p_mosaic_export.add_argument("--movie", nargs="+", default=None, metavar="TITLE", help="Fuzzy movie-title filter(s)")
+    p_mosaic_export.add_argument("--title", dest="movie", nargs="+", default=None, metavar="TITLE", help="Fuzzy title filter(s)")
     p_mosaic_export.add_argument("--field", default=None, help="Restrict search to one annotation field")
     p_mosaic_export.add_argument("--limit", type=int, default=None, help="Max results to export")
     p_mosaic_export.add_argument("--all", action="store_true", help="Search all movies (overrides positional scopes)")
@@ -7319,8 +7449,8 @@ def build_parser():
         help="PDF contact sheet of every shot in a movie (first or best frame per shot)",
     )
     p_mosaic_shots.add_argument(
-        "--movie", default=None, metavar="TITLE",
-        help="Fuzzy movie title (required unless --all is used)",
+        "--title", dest="movie", default=None, metavar="TITLE",
+        help="Fuzzy title or filename slug fragment (required unless --all is used)",
     )
     p_mosaic_shots.add_argument(
         "--all", action="store_true",
@@ -7342,8 +7472,8 @@ def build_parser():
         help="PDF contact sheet of shots grouped by scene, with title and scene-number intertitles",
     )
     p_mosaic_scenes.add_argument(
-        "--movie", default=None, metavar="TITLE",
-        help="Fuzzy movie title (required unless --all is used)",
+        "--title", dest="movie", default=None, metavar="TITLE",
+        help="Fuzzy title or filename slug fragment (required unless --all is used)",
     )
     p_mosaic_scenes.add_argument(
         "--all", action="store_true",
@@ -7418,8 +7548,8 @@ def build_parser():
     )
     p_flipbook.set_defaults(func=cmd_flipbook)
     p_flipbook.add_argument(
-        "--movie", default=None, metavar="TITLE",
-        help="Movie title to generate flipbook for",
+        "--title", dest="movie", default=None, metavar="TITLE",
+        help="Title or filename slug fragment to generate flipbook for",
     )
     p_flipbook.add_argument(
         "--all", action="store_true", dest="all",
@@ -7449,8 +7579,8 @@ def build_parser():
     )
     p_film_title.set_defaults(func=cmd_film_title)
     p_film_title.add_argument(
-        "--movie", default=None, metavar="TITLE",
-        help="Movie title to generate a film title for",
+        "--title", dest="movie", default=None, metavar="TITLE",
+        help="Title or filename slug fragment to generate a film title for",
     )
     p_film_title.add_argument(
         "--all", action="store_true", dest="all",
@@ -7467,7 +7597,7 @@ def build_parser():
     )
     p_film_title.add_argument(
         "--set", default=None, metavar="VALUE",
-        help="Manually set the film title motif to VALUE (skips AI generation; requires --movie)",
+        help="Manually set the film title motif to VALUE (skips AI generation; requires --title)",
     )
     _add_verbose_arg(p_film_title, help="Print per-movie progress")
     _add_notify_args(p_film_title)
@@ -7475,14 +7605,14 @@ def build_parser():
     # index command group
     p_index = sub.add_parser(
         "index",
-        help="Build and inspect text indices for annotation data",
+        help="Build and inspect annotation-embedding indexes and related indexes",
     )
     p_index.set_defaults(func=cmd_index)
     index_sub = p_index.add_subparsers(dest="index_subcommand", required=True)
 
     p_index_embed = index_sub.add_parser(
         "embed",
-        help="Read serialized text lines and generate embeddings",
+        help="Read serialized annotation text lines and generate annotation embeddings",
     )
     p_index_embed.set_defaults(func=cmd_index)
     p_index_embed.add_argument(
@@ -7509,7 +7639,7 @@ def build_parser():
     p_index_update = index_sub.add_parser(
         "process",
         help=(
-            "Build or update the index for a film.  "
+            "Serialize shot annotations and build annotation-embedding indexes.  "
             "Only rebuilds what is missing or stale."
         ),
     )
@@ -7521,6 +7651,10 @@ def build_parser():
     )
     _add_tmdb_arg(p_index_update, help="TMDb ID of the film (unambiguous alternative to title keywords)")
     _add_media_arg(p_index_update)
+    p_index_update.add_argument(
+        "--title", dest="movie", default=None, metavar="TITLE",
+        help="Title, slug, or partial ID to identify a single film (alternative to positional query)",
+    )
     p_index_update.add_argument(
         "--model", default=None, metavar="NAME",
         help=(
@@ -7536,8 +7670,54 @@ def build_parser():
         "--force", action="store_true",
         help="Force a full rebuild even if files appear current",
     )
+    p_index_update.add_argument(
+        "--limit", type=int, default=None, metavar="N",
+        help="Limit serialization and embedding to the first N annotation items (useful for testing)",
+    )
     _add_verbose_arg(p_index_update, help="Print per-file actions (txt written, npy written, unchanged)")
     _add_notify_args(p_index_update)
+
+    # Alias: `crossing index annotation-embeddings` → same logic as `crossing index process`
+    p_index_annot_embed = index_sub.add_parser(
+        "annotation-embeddings",
+        help=(
+            "Alias for 'process'.  "
+            "Serialize shot annotations and build annotation-embedding indexes."
+        ),
+    )
+    p_index_annot_embed.set_defaults(func=cmd_index)
+    p_index_annot_embed.add_argument(
+        "query",
+        nargs="*",
+        help="Title keywords to identify the film (e.g. 7th Cavalry)",
+    )
+    _add_tmdb_arg(p_index_annot_embed, help="TMDb ID of the film (unambiguous alternative to title keywords)")
+    _add_media_arg(p_index_annot_embed)
+    p_index_annot_embed.add_argument(
+        "--title", dest="movie", default=None, metavar="TITLE",
+        help="Title, slug, or partial ID to identify a single film (alternative to positional query)",
+    )
+    p_index_annot_embed.add_argument(
+        "--model", default=None, metavar="NAME",
+        help=(
+            "Embedding model name or path.  "
+            "Defaults to the 'embed' model role (crossing tool model set embed <name>)."
+        ),
+    )
+    p_index_annot_embed.add_argument(
+        "--all", action="store_true",
+        help="Process all films that have an annotation JSON",
+    )
+    p_index_annot_embed.add_argument(
+        "--force", action="store_true",
+        help="Force a full rebuild even if files appear current",
+    )
+    p_index_annot_embed.add_argument(
+        "--limit", type=int, default=None, metavar="N",
+        help="Limit serialization and embedding to the first N annotation items (useful for testing)",
+    )
+    _add_verbose_arg(p_index_annot_embed, help="Print per-file actions (txt written, npy written, unchanged)")
+    _add_notify_args(p_index_annot_embed)
 
     p_index_vocabulary = index_sub.add_parser(
         "vocabulary",
@@ -7607,7 +7787,7 @@ def build_parser():
             "  clear     Delete catalog entries\n\n"
             "Examples:\n"
             "  crossing index silhouette extract horse --field animals --all\n"
-            "  crossing index silhouette extract horse --field animals --movie Django\n"
+            "  crossing index silhouette extract horse --field animals --title Django\n"
             "  crossing index silhouette extract saddle --field objects --tmdb 11969\n"
             "  crossing index silhouette extract cowboy --field characters --shot tmdb_281957@f001240-f001310\n"
             "  crossing index silhouette audit\n"
@@ -7629,7 +7809,7 @@ def build_parser():
         epilog=(
             "Examples:\n"
             "  crossing index silhouette extract horse --field animals --all\n"
-            "  crossing index silhouette extract horse --field animals --movie Django\n"
+            "  crossing index silhouette extract horse --field animals --title Django\n"
             "  crossing index silhouette extract saddle --field objects --tmdb 11969\n"
             "  crossing index silhouette extract cowboy --field characters --shot tmdb_281957@f001240-f001310"
         ),
@@ -7656,14 +7836,14 @@ def build_parser():
         "--fields", nargs="+", default=None, metavar="FIELD", dest="fields",
         help=(
             "Expand all vocabulary labels for each listed field and extract them in one pass. "
-            "Cannot be combined with a positional LABEL. Requires --all or --movie/--tmdb scope. "
+            "Cannot be combined with a positional LABEL. Requires --all or --title/--tmdb scope. "
             "Example: crossing index silhouette extract "
             "--fields setting objects wearing action humans animals --all"
         ),
     )
     p_sil_extract.add_argument(
-        "--movie", default=None, metavar="TITLE",
-        help="Restrict extraction to this movie (title substring)",
+        "--title", dest="movie", default=None, metavar="TITLE",
+        help="Restrict extraction to this film (title or slug substring)",
     )
     _add_tmdb_arg(p_sil_extract, help="Restrict extraction to the movie with this TMDb ID")
     p_sil_extract.add_argument(
@@ -7738,7 +7918,7 @@ def build_parser():
             "Examples:\n"
             "  crossing index silhouette audit\n"
             "  crossing index silhouette audit --label horse\n"
-            "  crossing index silhouette audit --movie Django\n"
+            "  crossing index silhouette audit --title Django\n"
             "  crossing index silhouette audit --json"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -7749,8 +7929,8 @@ def build_parser():
         help="Filter report to a single label",
     )
     p_sil_audit.add_argument(
-        "--movie", default=None, metavar="TITLE",
-        help="Filter report to a single movie (title substring)",
+        "--title", dest="movie", default=None, metavar="TITLE",
+        help="Filter report to a single film (title or slug substring)",
     )
     _add_tmdb_arg(p_sil_audit, help="Filter report to the movie with this TMDb ID")
     p_sil_audit.add_argument(
@@ -7771,7 +7951,7 @@ def build_parser():
             "Examples:\n"
             "  crossing index silhouette clear --label horse --dry-run\n"
             "  crossing index silhouette clear --label horse\n"
-            "  crossing index silhouette clear --movie Django\n"
+            "  crossing index silhouette clear --title Django\n"
             "  crossing index silhouette clear --all"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -7782,8 +7962,8 @@ def build_parser():
         help="Delete only objects with this label",
     )
     p_sil_clear.add_argument(
-        "--movie", default=None, metavar="TITLE",
-        help="Delete only objects from this movie (title substring)",
+        "--title", dest="movie", default=None, metavar="TITLE",
+        help="Delete only objects from this film (title or slug substring)",
     )
     _add_tmdb_arg(p_sil_clear, help="Delete only objects from the movie with this TMDb ID")
     p_sil_clear.add_argument(
@@ -7828,10 +8008,10 @@ def build_parser():
         epilog=(
             "Examples:\n"
             "  crossing index palette create --all\n"
-            "  crossing index palette create --movie 'The Searchers'\n"
+            "  crossing index palette create --title 'The Searchers'\n"
             "  crossing index palette create --tmdb 12345 --force\n"
-            "  crossing index palette get --movie 'The Searchers'\n"
-            "  crossing index palette get --movie 'The Searchers' --shot 4\n"
+            "  crossing index palette get --title 'The Searchers'\n"
+            "  crossing index palette get --title 'The Searchers' --shot 4\n"
             "  crossing index palette get --all"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -7852,10 +8032,10 @@ def build_parser():
         help="Process every movie in the metadata index",
     )
     p_index_palette_create.add_argument(
-        "--movie", default=None, metavar="TITLE",
-        help="Title substring to identify a single movie",
+        "--title", dest="movie", default=None, metavar="TITLE",
+        help="Title or slug substring to identify a single film",
     )
-    _add_tmdb_arg(p_index_palette_create, help="TMDb ID of the movie (unambiguous alternative to --movie)")
+    _add_tmdb_arg(p_index_palette_create, help="TMDb ID of the movie (unambiguous alternative to --title)")
     _add_media_arg(p_index_palette_create)
     p_index_palette_create.add_argument(
         "--force", action="store_true",
@@ -7874,10 +8054,10 @@ def build_parser():
         help="List palette status for every movie",
     )
     p_index_palette_get.add_argument(
-        "--movie", default=None, metavar="TITLE",
-        help="Title substring to identify a single movie",
+        "--title", dest="movie", default=None, metavar="TITLE",
+        help="Title or slug substring to identify a single film",
     )
-    _add_tmdb_arg(p_index_palette_get, help="TMDb ID of the movie (unambiguous alternative to --movie)")
+    _add_tmdb_arg(p_index_palette_get, help="TMDb ID of the movie (unambiguous alternative to --title)")
     _add_media_arg(p_index_palette_get)
     p_index_palette_get.add_argument(
         "--shot", type=int, default=None, metavar="INDEX",
@@ -7887,13 +8067,14 @@ def build_parser():
     # index motif
     p_index_motif = index_sub.add_parser(
         "motif",
-        help="Generate cinematic motifs for shots (one word per shot, progression-aware)",
+        help="Generate and manage cinematic motifs for shots",
         epilog=(
             "Examples:\n"
             "  crossing index motif generate --all\n"
-            "  crossing index motif generate --movie 'The Searchers'\n"
-            "  crossing index motif generate --movie 'Django' --force\n"
-            "  crossing index motif generate --all --verbose"
+            "  crossing index motif generate --title 'The Searchers'\n"
+            "  crossing index motif attach --all\n"
+            "  crossing index motif attach --media gameplay --title 'ce5e0bba'\n"
+            "  crossing index motif attach --all --dry-run --verbose"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -7917,14 +8098,14 @@ def build_parser():
         help="Generate motifs for every movie in the metadata index",
     )
     p_index_motif_generate.add_argument(
-        "--movie", default=None, metavar="TITLE",
-        help="Title substring to identify a single movie",
+        "--title", dest="movie", default=None, metavar="TITLE",
+        help="Title or slug substring to identify a single film or gameplay video",
     )
     p_index_motif_generate.add_argument(
         "--video", default=None, metavar="TITLE",
-        help="Title/filename substring to identify a single gameplay video (alias for --movie)",
+        help="Title/filename substring to identify a single gameplay video (alias for --title)",
     )
-    _add_tmdb_arg(p_index_motif_generate, help="TMDb ID of the movie (unambiguous alternative to --movie)")
+    _add_tmdb_arg(p_index_motif_generate, help="TMDb ID of the movie (unambiguous alternative to --title)")
     _add_media_arg(p_index_motif_generate)
     p_index_motif_generate.add_argument(
         "--model", default=None, metavar="NAME",
@@ -7940,6 +8121,44 @@ def build_parser():
     )
     _add_verbose_arg(p_index_motif_generate, help="Print [001] motif lines while generating")
     _add_notify_args(p_index_motif_generate)
+
+    p_index_motif_attach = motif_sub.add_parser(
+        "attach",
+        help=(
+            "Copy motif values from data/motifs/ sidecars into annotation JSON "
+            "as shot.motif (required before annotation-embedding rebuild includes motif)"
+        ),
+        epilog=(
+            "Examples:\n"
+            "  crossing index motif attach --all\n"
+            "  crossing index motif attach --media gameplay --title ce5e0bba\n"
+            "  crossing index motif attach --all --force\n"
+            "  crossing index motif attach --all --dry-run --verbose"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_index_motif_attach.set_defaults(func=cmd_index)
+    p_index_motif_attach.add_argument(
+        "query",
+        nargs="*",
+        help="Title keywords to identify the film (e.g. 7th Cavalry)",
+    )
+    p_index_motif_attach.add_argument(
+        "--all", action="store_true",
+        help="Attach motifs for every film/video that has an annotation JSON",
+    )
+    p_index_motif_attach.add_argument(
+        "--title", dest="movie", default=None, metavar="TITLE",
+        help="Title, slug, or partial ID to identify a single film",
+    )
+    _add_tmdb_arg(p_index_motif_attach, help="TMDb ID of the film (unambiguous alternative to --title)")
+    _add_media_arg(p_index_motif_attach)
+    p_index_motif_attach.add_argument(
+        "--force", action="store_true",
+        help="Overwrite shot.motif when it conflicts with the sidecar value",
+    )
+    _add_dry_run_arg(p_index_motif_attach, help="Report what would change without modifying any files")
+    _add_verbose_arg(p_index_motif_attach, help="Print per-shot detail (added / unchanged / conflict)")
 
     # media command group
     p_media = sub.add_parser(
@@ -8130,7 +8349,7 @@ def build_parser():
         ),
     )
     p_search.add_argument("scope", nargs="*", help="Fuzzy movie-title filter(s); omit to search all movies")
-    p_search.add_argument("--movie", nargs="+", default=None, metavar="TITLE", help="Fuzzy movie-title filter(s) (named alternative to positional scope)")
+    p_search.add_argument("--title", dest="movie", nargs="+", default=None, metavar="TITLE", help="Fuzzy title filter(s) (named alternative to positional scope)")
     p_search.add_argument("--field", default=None, help="Restrict search to one annotation field (e.g. objects)")
     p_search.add_argument("--limit", type=int, default=None, help="Max results to return overall")
     p_search.add_argument("--limit-per-item", dest="limit_per_item", type=int, default=None, help="Max results per movie")

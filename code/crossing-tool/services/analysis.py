@@ -85,10 +85,8 @@ def compare_motifs(
         filename = entry.get("filename", "")
         if not filename:
             continue
-        from data.motif import load_motif_doc
-        doc = load_motif_doc(project_path, filename, media_type)
-        shots = doc.get("shots", [])
-        words = [s.get("value", "") for s in shots if s.get("value", "").strip()]
+        from data.motif import load_motif_words
+        words = load_motif_words(project_path, filename, media_type)
         if words:
             title = entry.get("title") or Path(filename).stem
             per_film[title] = words
@@ -185,14 +183,12 @@ def get_all_motifs(
         filename = entry.get("filename", "")
         if not filename:
             continue
-        from data.motif import load_motif_doc
-        doc = load_motif_doc(project_path, filename, media_type)
-        shots = doc.get("shots", [])
-        words = [s.get("value", "") for s in shots if s.get("value", "").strip()]
+        from data.motif import load_motif_words
+        words = load_motif_words(project_path, filename, media_type)
         if words:
             title = entry.get("title") or Path(filename).stem
             film_titles.append(title)
-            total_shots += len(shots)
+            total_shots += len(words)
             counts.update(words)
 
     if sort == "frequency":

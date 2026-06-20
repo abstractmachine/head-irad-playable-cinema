@@ -171,6 +171,40 @@ def save_vocabulary_fields(project_path: str, fields: list[str]) -> None:
     _save_fields_yaml(project_path, data)
 
 
+def _get_serialized_field_value(item: dict, field: str) -> Any:
+    """Return the serializable value for *field* from *item*.
+
+    Most fields are read directly from ``item["shot"]["annotation"]``.
+    Virtual fields whose data lives outside the annotation block are
+    handled here so that ``mapping.yaml`` remains the single source of
+    truth for what appears in annotation-embedding text.
+
+    Virtual field mappings
+    ----------------------
+    ``motif`` → ``item["shot"]["motif"]`` as a plain string (canonical form
+                after ``crossing index motif attach`` or motif generation).
+                Also accepts the legacy dict forms with keys ``value``,
+                ``motif``, ``word``, or ``label`` for backward compatibility.
+    """
+    shot = item.get("shot", {})
+    annotation = shot.get("annotation", {})
+
+    if field == "motif":
+        motif = shot.get("motif")
+        if isinstance(motif, dict):
+            return (
+                motif.get("value")
+                or motif.get("motif")
+                or motif.get("word")
+                or motif.get("label")
+            )
+        if isinstance(motif, str):
+            return motif
+        return None
+
+    return annotation.get(field)
+
+
 def serialize_annotation_item(item: dict, mapping: dict) -> str:
     """Serialize one annotation item to a single line of text.
 
@@ -179,10 +213,15 @@ def serialize_annotation_item(item: dict, mapping: dict) -> str:
     - list → joined with ", "
     - None / missing → skipped when skip_empty is True, otherwise ""
 
+    Virtual fields (e.g. ``motif``) that live outside ``shot.annotation``
+    are resolved via :func:`_get_serialized_field_value`.
+
     Args:
         item:    One entry from the annotation JSON list.  Expected shape:
                  ``{ movie: {...}, annotation: {...},
-                     shot: { shot_id: "<media_id>@fSTART-fEND", annotation: { field: value, ... } } }``
+                     shot: { shot_id: "<media_id>@fSTART-fEND",
+                             annotation: { field: value, ... },
+                             motif: { value: "..." } } }``
         mapping: Parsed mapping config dict with keys:
                  ``fields``, ``include_labels``, ``separator``, ``skip_empty``.
 
@@ -195,11 +234,9 @@ def serialize_annotation_item(item: dict, mapping: dict) -> str:
     separator: str = mapping.get("separator", " | ")
     skip_empty: bool = mapping.get("skip_empty", True)
 
-    shot_annotation: dict = item.get("shot", {}).get("annotation", {})
-
     parts: list[str] = []
     for field in fields:
-        value: Any = shot_annotation.get(field)
+        value: Any = _get_serialized_field_value(item, field)
 
         if value is None:
             if skip_empty:
@@ -557,6 +594,9 @@ def build_manifest(
     return {
         "version": MANIFEST_VERSION,
         "updated_at": now,
+        "index_type": "annotation-embeddings",
+        "embedding_source": "serialized shot annotations",
+        "embedding_modality": "text",
         "media_type": media_type,
         "json": {
             "filename": json_path.name,
