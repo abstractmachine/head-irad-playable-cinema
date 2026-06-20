@@ -668,7 +668,7 @@ def generate_motifs_for_all_movies(
         except Exception:
             continue
         _motif_doc = load_motif_doc(project_path, filename, media_type)
-        if _count_missing_motifs(entries, _motif_doc.get("shots", []), force) > 0:
+        if _count_missing_motifs(entries, force) > 0:
             movies_needing_work.append((meta, json_path))
 
     if not movies_needing_work:
