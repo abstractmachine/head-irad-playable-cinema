@@ -46,7 +46,7 @@ Riding across a prairie, entering a saloon, boarding a train, or simply pausing 
 ----
 
 ::: {.page .imagepage}
-![](images/head-irad-dead-crossing-cabin-cube.jpg){.bg}
+![](images/Cabin-Naked.png){.bg}
 
 ::: {.overlay .wordcenter}
 # CABIN

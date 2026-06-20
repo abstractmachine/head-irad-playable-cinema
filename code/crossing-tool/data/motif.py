@@ -368,23 +368,17 @@ def generate_motif(
 # ---------------------------------------------------------------------------
 
 
-def _count_missing_motifs(entries: list, motif_shots: list, force: bool) -> int:
+def _count_missing_motifs(entries: list, force: bool) -> int:
     """Return the number of shots in *entries* that need a motif generated.
 
-    Matches annotation entries against *motif_shots* by ``shot_id``.
-    A shot is considered complete when it has a non-empty ``value`` in
-    *motif_shots* and *force* is False.
+    Checks the canonical ``shot.motif`` field. A shot is considered complete
+    when it has a non-empty string there and *force* is False.
     """
     if force:
         return sum(
             1 for e in entries
             if isinstance(e, dict) and isinstance(e.get("shot"), dict)
         )
-    motif_by_id: dict = {
-        str(s["shot_id"]): s
-        for s in motif_shots
-        if isinstance(s, dict) and s.get("shot_id")
-    }
     count = 0
     for entry in entries:
         if not isinstance(entry, dict):
@@ -392,9 +386,8 @@ def _count_missing_motifs(entries: list, motif_shots: list, force: bool) -> int:
         shot_data = entry.get("shot")
         if not isinstance(shot_data, dict):
             continue
-        shot_id = str(shot_data.get("shot_id", ""))
-        existing = motif_by_id.get(shot_id)
-        if not isinstance(existing, dict) or not existing.get("value", "").strip():
+        motif = shot_data.get("motif")
+        if not isinstance(motif, str) or not motif.strip():
             count += 1
     return count
 
@@ -494,7 +487,7 @@ def generate_motifs_for_movie(
     # Only load when there is actually work to do — avoid the slow model-init
     # path when every shot already has a motif and --force is not set.
     if pipeline is None:
-        needed = _count_missing_motifs(entries, motif_doc.get("shots", []), force)
+        needed = _count_missing_motifs(entries, force)
         if needed == 0:
             return {
                 "filename":  filename,
@@ -527,17 +520,17 @@ def generate_motifs_for_movie(
 
         shot_id_str = str(shot_data.get("shot_id", ""))
 
-        # Skip if motif already exists in the motif doc (unless --force)
-        existing_motif = motif_by_id.get(shot_id_str)
+        # Skip if canonical shot.motif already set (unless --force)
+        canonical_motif = shot_data.get("motif")
         if (
             not force
-            and isinstance(existing_motif, dict)
-            and existing_motif.get("value", "").strip()
+            and isinstance(canonical_motif, str)
+            and canonical_motif.strip()
         ):
             skipped += 1
-            processed_values.append(existing_motif["value"])
+            processed_values.append(canonical_motif.strip())
             if verbose:
-                print(f"[{i+1:03d}] (skip) {existing_motif['value']}")
+                print(f"[{i+1:03d}] (skip) {canonical_motif.strip()}")
             continue
 
         # Extract annotation fields
