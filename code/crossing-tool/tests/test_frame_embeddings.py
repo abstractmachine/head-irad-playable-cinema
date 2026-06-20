@@ -421,5 +421,337 @@ class TestMigrateNames(unittest.TestCase):
         self.assertGreaterEqual(counts["missing"], 1)
 
 
+# ---------------------------------------------------------------------------
+# Frame-embedding audit tests
+# ---------------------------------------------------------------------------
+
+def _build_valid_manifest(
+    item_count: int,
+    embed_dim: int,
+    valid_count: int,
+    missing_count: int,
+    npy_shape: list,
+    valid_shape: list,
+) -> dict:
+    """Helper: build a minimal but schema-conformant manifest dict."""
+    return {
+        "version": "1",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "index_type": "frame-embeddings",
+        "embedding_modality": "image",
+        "embedding_source": "best-frame images",
+        "media_type": "movie",
+        "filename": "Film",
+        "json": {
+            "filename": "Film.annotations.json",
+            "path": "data/annotations/shots/movie/Film.annotations.json",
+            "hash": "deadbeef",
+            "item_count": item_count,
+        },
+        "frames": {
+            "source": "best-frame PNGs",
+            "valid_count": valid_count,
+            "missing_count": missing_count,
+        },
+        "npy": {
+            "filename": "Film.frames.npy",
+            "path": "data/annotations/shots/movie/Film.frames.npy",
+            "hash": "deadbeef",
+            "shape": npy_shape,
+            "dtype": "float32",
+        },
+        "valid": {
+            "filename": "Film.frames.valid.npy",
+            "path": "data/annotations/shots/movie/Film.frames.valid.npy",
+            "hash": "deadbeef",
+            "shape": valid_shape,
+            "dtype": "bool",
+        },
+        "model": {"role": "frame_match", "name": "clip-vit-base-patch32"},
+    }
+
+
+def _normalized_row(dim: int) -> np.ndarray:
+    """Return a float32 unit-norm vector of length *dim*."""
+    v = np.ones(dim, dtype="float32")
+    v /= np.linalg.norm(v)
+    return v
+
+
+class TestAuditFrameEmbeddings(unittest.TestCase):
+    """audit_frame_embeddings checks shape, dtype, manifest, and vector validity."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = self._tmp.name
+        self.project = Path(self.tmp)
+        self.media_type = "movie"
+        self.filename = "Film A.mp4"
+        self.stem = "Film A"
+        self.base = self.project / "data" / "annotations" / "shots" / self.media_type
+        self.base.mkdir(parents=True)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    # ---- convenience writers ----------------------------------------
+
+    def _write_annotation_json(self, item_count: int) -> Path:
+        path = self.base / f"{self.stem}.annotations.json"
+        items = [
+            {"shot": {"shot_id": f"tmdb_1@f{i:06d}-f{i+100:06d}"}}
+            for i in range(item_count)
+        ]
+        _write_json(path, items)
+        return path
+
+    def _write_frames_npy(self, rows: np.ndarray) -> Path:
+        path = self.base / f"{self.stem}.frames.npy"
+        _write_npy(path, rows)
+        return path
+
+    def _write_valid_npy(self, mask: np.ndarray) -> Path:
+        path = self.base / f"{self.stem}.frames.valid.npy"
+        _write_npy(path, mask)
+        return path
+
+    def _write_manifest(self, manifest: dict) -> Path:
+        path = self.base / f"{self.stem}.frames.manifest.json"
+        _write_json(path, manifest)
+        return path
+
+    def _full_ok_setup(self, n: int = 4, dim: int = 8) -> None:
+        """Write a fully-valid set of frame-embedding files."""
+        embeddings = np.stack([_normalized_row(dim)] * n).astype("float32")
+        mask = np.ones(n, dtype=bool)
+        manifest = _build_valid_manifest(
+            item_count=n,
+            embed_dim=dim,
+            valid_count=n,
+            missing_count=0,
+            npy_shape=[n, dim],
+            valid_shape=[n],
+        )
+        self._write_annotation_json(n)
+        self._write_frames_npy(embeddings)
+        self._write_valid_npy(mask)
+        self._write_manifest(manifest)
+
+    def _audit(self):
+        from services.frame_embeddings_audit import audit_frame_embeddings
+        return audit_frame_embeddings(self.tmp, self.filename, self.media_type)
+
+    # ---- test 1: happy path -------------------------------------------
+
+    def test_ok_case(self):
+        """All files present, fully consistent — audit reports ok."""
+        self._full_ok_setup(n=4, dim=8)
+        result = self._audit()
+        self.assertEqual(result["status"], "ok", result["issues"])
+        self.assertEqual(result["issues"], [])
+        self.assertEqual(result["item_count"], 4)
+        self.assertEqual(result["valid_count"], 4)
+        self.assertEqual(result["missing_count"], 0)
+
+    # ---- test 2: missing frame files ---------------------------------
+
+    def test_missing_all_frame_files(self):
+        """Annotation JSON present, frame files absent — reports missing."""
+        self._write_annotation_json(3)
+        result = self._audit()
+        self.assertEqual(result["status"], "missing")
+        self.assertEqual(result["item_count"], 3)
+        issues_str = " ".join(result["issues"])
+        self.assertIn("frames.npy", issues_str)
+        self.assertIn("frames.valid.npy", issues_str)
+        self.assertIn("frames.manifest.json", issues_str)
+
+    def test_missing_only_npy(self):
+        """Only frames.npy missing — reports missing with specific issue."""
+        n, dim = 3, 8
+        mask = np.ones(n, dtype=bool)
+        manifest = _build_valid_manifest(n, dim, n, 0, [n, dim], [n])
+        self._write_annotation_json(n)
+        # intentionally skip _write_frames_npy
+        self._write_valid_npy(mask)
+        self._write_manifest(manifest)
+        result = self._audit()
+        self.assertEqual(result["status"], "missing")
+        self.assertTrue(any("frames.npy" in iss for iss in result["issues"]))
+
+    # ---- test 3: row count mismatch (npy) ----------------------------
+
+    def test_row_count_mismatch_npy(self):
+        """frames.npy has N-1 rows — reports invalid."""
+        n, dim = 5, 8
+        embeddings = np.stack([_normalized_row(dim)] * (n - 1)).astype("float32")
+        mask = np.ones(n, dtype=bool)
+        manifest = _build_valid_manifest(n, dim, n, 0, [n, dim], [n])
+        self._write_annotation_json(n)
+        self._write_frames_npy(embeddings)
+        self._write_valid_npy(mask)
+        self._write_manifest(manifest)
+        result = self._audit()
+        self.assertEqual(result["status"], "invalid")
+        self.assertTrue(any("row count mismatch" in iss for iss in result["issues"]))
+
+    # ---- test 4: valid mask length mismatch --------------------------
+
+    def test_valid_mask_length_mismatch(self):
+        """frames.valid.npy has N-1 rows — reports invalid."""
+        n, dim = 5, 8
+        embeddings = np.stack([_normalized_row(dim)] * n).astype("float32")
+        mask = np.ones(n - 1, dtype=bool)
+        manifest = _build_valid_manifest(n, dim, n, 0, [n, dim], [n])
+        self._write_annotation_json(n)
+        self._write_frames_npy(embeddings)
+        self._write_valid_npy(mask)
+        self._write_manifest(manifest)
+        result = self._audit()
+        self.assertEqual(result["status"], "invalid")
+        self.assertTrue(any("valid-mask length" in iss for iss in result["issues"]))
+
+    # ---- test 5: manifest npy shape mismatch -------------------------
+
+    def test_manifest_npy_shape_mismatch(self):
+        """Manifest claims wrong npy shape — reports invalid."""
+        n, dim = 4, 8
+        embeddings = np.stack([_normalized_row(dim)] * n).astype("float32")
+        mask = np.ones(n, dtype=bool)
+        # Manifest says shape is [n, dim+1] (wrong)
+        manifest = _build_valid_manifest(n, dim, n, 0, [n, dim + 1], [n])
+        self._write_annotation_json(n)
+        self._write_frames_npy(embeddings)
+        self._write_valid_npy(mask)
+        self._write_manifest(manifest)
+        result = self._audit()
+        self.assertEqual(result["status"], "invalid")
+        self.assertTrue(any("manifest npy shape" in iss for iss in result["issues"]))
+
+    # ---- test 6: valid/missing count mismatch in manifest ------------
+
+    def test_manifest_valid_count_mismatch(self):
+        """Manifest valid_count disagrees with actual True count — reports invalid."""
+        n, dim = 4, 8
+        embeddings = np.stack(
+            [_normalized_row(dim)] * 3 + [np.zeros(dim, dtype="float32")]
+        ).astype("float32")
+        mask = np.array([True, True, True, False], dtype=bool)
+        # Manifest says valid_count=4, missing_count=0 — wrong
+        manifest = _build_valid_manifest(n, dim, 4, 0, [n, dim], [n])
+        self._write_annotation_json(n)
+        self._write_frames_npy(embeddings)
+        self._write_valid_npy(mask)
+        self._write_manifest(manifest)
+        result = self._audit()
+        self.assertEqual(result["status"], "invalid")
+        issues_str = " ".join(result["issues"])
+        self.assertIn("valid_count", issues_str)
+
+    # ---- test 7: invalid rows that are not zero ----------------------
+
+    def test_invalid_row_not_zero(self):
+        """valid=False row has non-zero embedding — reports invalid."""
+        n, dim = 4, 8
+        v = _normalized_row(dim)
+        embeddings = np.stack([v, v, v, v]).astype("float32")
+        # Row 3 is marked invalid but is NOT all-zero
+        mask = np.array([True, True, True, False], dtype=bool)
+        manifest = _build_valid_manifest(n, dim, 3, 1, [n, dim], [n])
+        self._write_annotation_json(n)
+        self._write_frames_npy(embeddings)
+        self._write_valid_npy(mask)
+        self._write_manifest(manifest)
+        result = self._audit()
+        self.assertEqual(result["status"], "invalid")
+        self.assertTrue(
+            any("non-zero" in iss for iss in result["issues"]),
+            result["issues"],
+        )
+
+    # ---- test 8: valid rows with bad norm ----------------------------
+
+    def test_valid_row_norm_far_from_one(self):
+        """valid=True row has norm far from 1.0 — reports invalid."""
+        n, dim = 3, 8
+        v_bad = np.ones(dim, dtype="float32") * 10.0   # norm >> 1
+        v_ok = _normalized_row(dim)
+        embeddings = np.stack([v_ok, v_bad, v_ok]).astype("float32")
+        mask = np.ones(n, dtype=bool)
+        manifest = _build_valid_manifest(n, dim, n, 0, [n, dim], [n])
+        self._write_annotation_json(n)
+        self._write_frames_npy(embeddings)
+        self._write_valid_npy(mask)
+        self._write_manifest(manifest)
+        result = self._audit()
+        self.assertEqual(result["status"], "invalid")
+        self.assertTrue(any("norm" in iss for iss in result["issues"]))
+
+    def test_valid_row_all_zero_vector(self):
+        """valid=True row is all zeros — reports invalid."""
+        n, dim = 3, 8
+        v_ok = _normalized_row(dim)
+        v_zero = np.zeros(dim, dtype="float32")
+        embeddings = np.stack([v_ok, v_zero, v_ok]).astype("float32")
+        mask = np.ones(n, dtype=bool)
+        manifest = _build_valid_manifest(n, dim, n, 0, [n, dim], [n])
+        self._write_annotation_json(n)
+        self._write_frames_npy(embeddings)
+        self._write_valid_npy(mask)
+        self._write_manifest(manifest)
+        result = self._audit()
+        self.assertEqual(result["status"], "invalid")
+        # Should report either zero-vector or bad-norm
+        self.assertTrue(
+            any("zero" in iss or "norm" in iss for iss in result["issues"]),
+            result["issues"],
+        )
+
+    # ---- test 9: mixed valid/invalid rows pass -----------------------
+
+    def test_ok_with_some_missing_rows(self):
+        """Some rows missing (zero + valid=False) is acceptable."""
+        n, dim = 4, 8
+        v_ok = _normalized_row(dim)
+        v_zero = np.zeros(dim, dtype="float32")
+        embeddings = np.stack([v_ok, v_zero, v_ok, v_zero]).astype("float32")
+        mask = np.array([True, False, True, False], dtype=bool)
+        manifest = _build_valid_manifest(n, dim, 2, 2, [n, dim], [n])
+        self._write_annotation_json(n)
+        self._write_frames_npy(embeddings)
+        self._write_valid_npy(mask)
+        self._write_manifest(manifest)
+        result = self._audit()
+        self.assertEqual(result["status"], "ok", result["issues"])
+        self.assertEqual(result["valid_count"], 2)
+        self.assertEqual(result["missing_count"], 2)
+
+    # ---- test 10: manifest wrong index_type --------------------------
+
+    def test_manifest_wrong_index_type(self):
+        """Manifest has wrong index_type — reports invalid."""
+        n, dim = 2, 8
+        embeddings = np.stack([_normalized_row(dim)] * n).astype("float32")
+        mask = np.ones(n, dtype=bool)
+        manifest = _build_valid_manifest(n, dim, n, 0, [n, dim], [n])
+        manifest["index_type"] = "text-embeddings"  # wrong
+        self._write_annotation_json(n)
+        self._write_frames_npy(embeddings)
+        self._write_valid_npy(mask)
+        self._write_manifest(manifest)
+        result = self._audit()
+        self.assertEqual(result["status"], "invalid")
+        self.assertTrue(any("index_type" in iss for iss in result["issues"]))
+
+    # ---- test 11: annotation JSON missing ----------------------------
+
+    def test_annotation_json_missing(self):
+        """Annotation JSON does not exist at all — reports missing."""
+        result = self._audit()
+        self.assertEqual(result["status"], "missing")
+        self.assertIsNone(result["item_count"])
+
+
 if __name__ == "__main__":
     unittest.main()
+

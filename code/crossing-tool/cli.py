@@ -5184,7 +5184,12 @@ def _index_annotations_migrate_names(args):
 
 
 def _index_frame_embeddings(args):
-    """Build frame-embedding index for one film or all films."""
+    """Build frame-embedding index for one film or all films, or audit an existing index."""
+    frame_embeddings_action = getattr(args, "frame_embeddings_action", None)
+    if frame_embeddings_action == "audit":
+        _index_frame_embeddings_audit(args)
+        return
+
     from data.shotlist import resolve_filename
     from services.frame_embeddings import build_frame_embeddings
 
@@ -5280,6 +5285,106 @@ def _index_frame_embeddings(args):
         r = _run_one(filename)
         if r == "error":
             sys.exit(1)
+
+
+def _index_frame_embeddings_audit(args):
+    """Verify frame-embedding indexes for one film or all films. Never modifies files."""
+    from data.shotlist import resolve_filename
+    from services.frame_embeddings_audit import audit_frame_embeddings
+
+    project_path = prefs.get("path")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
+    query_str = getattr(args, "movie", None)
+    tmdb = getattr(args, "tmdb", None)
+    do_all = getattr(args, "all", False)
+    missing_only = getattr(args, "missing_only", False)
+    invalid_only = getattr(args, "invalid_only", False)
+    limit = getattr(args, "limit", None)
+    verbose = getattr(args, "verbose", False)
+
+    def _run_one(filename: str) -> str:
+        result = audit_frame_embeddings(
+            project_path, filename, media_type, verbose=verbose
+        )
+        status = result["status"]
+        stem = Path(filename).stem
+        issues = result.get("issues", [])
+        item_count = result.get("item_count")
+        valid_count = result.get("valid_count")
+        missing_count = result.get("missing_count")
+        npy_shape = result.get("npy_shape")
+
+        # Filtering
+        if missing_only and status != "missing":
+            return status
+        if invalid_only and status != "invalid":
+            return status
+
+        if not verbose:
+            if status == "ok":
+                shape_str = (
+                    f"{npy_shape[0]} × {npy_shape[1]}" if npy_shape and len(npy_shape) == 2 else ""
+                )
+                miss_note = f"  missing={missing_count}" if missing_count else ""
+                print(f"✓  {stem}  ok  {shape_str}{miss_note}")
+            elif status == "missing":
+                print(f"✗  {stem}  missing  [{'; '.join(issues)}]")
+            else:
+                print(f"✗  {stem}  invalid  [{'; '.join(issues)}]")
+        else:
+            icon = "✓" if status == "ok" else "✗"
+            print(f"\n{stem}")
+            if item_count is not None:
+                print(f"  annotations   {item_count} items")
+            if npy_shape:
+                print(f"  frames.npy    {npy_shape[0]} × {npy_shape[1]}")
+            if valid_count is not None:
+                print(f"  valid         {valid_count}")
+            if missing_count is not None:
+                print(f"  missing       {missing_count}")
+            if issues:
+                for iss in issues:
+                    print(f"  ✗ {iss}")
+            print(f"  status        {icon}  {status}")
+
+        return status
+
+    have_invalid = False
+
+    if do_all:
+        filenames = _resolve_all_annotation_filenames(project_path, media_type)
+        if not filenames:
+            print(f"No annotation JSON files found under {media_type}.", file=sys.stderr)
+            sys.exit(1)
+        if limit is not None:
+            filenames = filenames[:limit]
+        tally: dict[str, int] = {}
+        for fn in filenames:
+            s = _run_one(fn)
+            tally[s] = tally.get(s, 0) + 1
+        total = sum(tally.values())
+        parts = []
+        for key in ("ok", "missing", "invalid"):
+            if tally.get(key):
+                parts.append(f"{tally[key]} {key}")
+        print(f"\n{', '.join(parts)}  —  {total} files checked")
+        if tally.get("missing") or tally.get("invalid"):
+            have_invalid = True
+    else:
+        if tmdb is None and not query_str:
+            print("✗ Provide --title <value>, --tmdb <id>, or --all.", file=sys.stderr)
+            sys.exit(1)
+        try:
+            filename = resolve_filename(project_path, tmdb, query_str, media_type)
+        except ValueError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            sys.exit(1)
+        s = _run_one(filename)
+        if s in ("missing", "invalid"):
+            have_invalid = True
+
+    if have_invalid:
+        sys.exit(1)
 
 
 def _index_stats(args):
@@ -7969,7 +8074,8 @@ def build_parser():
         "frame-embeddings",
         help=(
             "Embed best-frame PNGs with CLIP and save a frame-embedding index "
-            "(.frames.npy / .frames.valid.npy / .frames.manifest.json)."
+            "(.frames.npy / .frames.valid.npy / .frames.manifest.json). "
+            "Use 'crossing index frame-embeddings audit' to verify an existing index."
         ),
         epilog=(
             "Examples:\n"
@@ -7977,11 +8083,13 @@ def build_parser():
             "  crossing index frame-embeddings --media movie --title \"3 10 To Yuma\" --force --verbose\n"
             "  crossing index frame-embeddings --media movie --all --force\n"
             "  crossing index frame-embeddings --media gameplay --all --force\n"
-            "  crossing index frame-embeddings --media gameplay --title ce5e0bba --limit 20 --verbose"
+            "  crossing index frame-embeddings --media gameplay --title ce5e0bba --limit 20 --verbose\n"
+            "  crossing index frame-embeddings audit --media movie --all\n"
+            "  crossing index frame-embeddings audit --media movie --title \"3 10 To Yuma\""
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p_index_frame_embed.set_defaults(func=cmd_index)
+    p_index_frame_embed.set_defaults(func=cmd_index, frame_embeddings_action=None)
     p_index_frame_embed.add_argument(
         "--title", dest="movie", default=None, metavar="TITLE",
         help="Title, slug, or partial ID to identify a single film",
@@ -8005,6 +8113,48 @@ def build_parser():
         help="Process only the first N annotation items (smoke testing)",
     )
     _add_verbose_arg(p_index_frame_embed, help="Print per-shot / per-batch progress")
+
+    frame_embed_sub = p_index_frame_embed.add_subparsers(dest="frame_embeddings_action")
+
+    p_frame_embed_audit = frame_embed_sub.add_parser(
+        "audit",
+        help="Verify shape, dtype, manifest, and vector consistency of frame-embedding indexes",
+        epilog=(
+            "Examples:\n"
+            "  crossing index frame-embeddings audit --media movie --all\n"
+            "  crossing index frame-embeddings audit --media gameplay --all\n"
+            "  crossing index frame-embeddings audit --media movie --title \"3 10 To Yuma\"\n"
+            "  crossing index frame-embeddings audit --media gameplay --title ce5e0bba\n"
+            "  crossing index frame-embeddings audit --media movie --all --missing-only\n"
+            "  crossing index frame-embeddings audit --media movie --all --invalid-only\n"
+            "  crossing index frame-embeddings audit --media movie --all --limit 10 --verbose"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_frame_embed_audit.set_defaults(func=cmd_index)
+    p_frame_embed_audit.add_argument(
+        "--title", dest="movie", default=None, metavar="TITLE",
+        help="Title, slug, or partial ID to identify a single film",
+    )
+    _add_tmdb_arg(p_frame_embed_audit, help="TMDb ID of the film (unambiguous alternative to --title)")
+    _add_media_arg(p_frame_embed_audit)
+    p_frame_embed_audit.add_argument(
+        "--all", action="store_true",
+        help="Audit all films that have an annotation JSON",
+    )
+    p_frame_embed_audit.add_argument(
+        "--missing-only", action="store_true", dest="missing_only",
+        help="Only print items with missing frame-embedding files",
+    )
+    p_frame_embed_audit.add_argument(
+        "--invalid-only", action="store_true", dest="invalid_only",
+        help="Only print items with consistency errors",
+    )
+    p_frame_embed_audit.add_argument(
+        "--limit", type=int, default=None, metavar="N",
+        help="Check only the first N annotation files",
+    )
+    _add_verbose_arg(p_frame_embed_audit, help="Show per-check detail for each film")
 
     p_index_audit = index_sub.add_parser(
         "audit",
