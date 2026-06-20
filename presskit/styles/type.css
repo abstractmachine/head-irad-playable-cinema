@@ -1,0 +1,55 @@
+@font-face {
+  font-family: "Libre Clarendon";
+  src: url("fonts/libre_clarendon/fonts/LibreClarendonWide-44Light.otf") format("opentype");
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Libre Clarendon Wide";
+  src: url("fonts/libre_clarendon/fonts/LibreClarendonWide-44Light.otf") format("opentype");
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Libre Clarendon";
+  src: url("fonts/libre_clarendon/fonts/LibreClarendonNormal-68Regular.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Libre Clarendon";
+  src: url("fonts/libre_clarendon/fonts/LibreClarendonNormal-110Medium.otf") format("opentype");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Libre Clarendon";
+  src: url("fonts/libre_clarendon/fonts/LibreClarendonNormal-162Bold.otf") format("opentype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Libre Clarendon";
+  src: url("fonts/libre_clarendon/fonts/LibreClarendonNormal-212Black.otf") format("opentype");
+  font-weight: 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Hanken Grotesk";
+  src: url("fonts/Hanken_Grotesk/HankenGrotesk-VariableFont_wght.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}

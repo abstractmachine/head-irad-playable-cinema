@@ -1,11 +1,97 @@
+
+/* Cover: 6-col × 18-row Müller-Brockmann grid
+   3 col tracks of 2 cols each (1fr each), 5mm column-gap
+   Row 1 = 18pt (one line-height) so P row-2 baseline = H2 line-2 baseline
+   Rows 2–18 fill remaining space equally
+   H1 → row 1  col 1  (cols 1+2)
+   H2 → row 1  col 2  (cols 3+4)
+   P  → row 2  col 1  (cols 1+2)
+   Grid math (overlay padding 16mm top/bottom, 18mm sides):
+   Content width  = 297 - 36 = 261mm
+   Each col track = (261 - 2×5mm gap) / 3 = 83.67mm
+   Col 1 right    = 18 + 83.67 = 101.67mm  (gap to 106.67mm)
+   Col 2 right    = 106.67 + 83.67 = 190.33mm (gap to 195.33mm)
+   Content height = 210 - 32 = 178mm
+   Row 1          = 18pt = 6.35mm
+   Rows 2–18      = (178 - 6.35) / 17 = 10.1mm each
+   P top (row 2)  = 16mm + 6.35mm = 22.35mm → = H2 line 2 top ✓
+*/
+
+.cover .overlay,
+.covertext {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: 18pt repeat(17, 1fr);
+  column-gap: 5mm;
+  color: #f7f2e8;
+}
+
 .cover h1 {
-  max-width: 280mm;
+  grid-column: 1;
+  grid-row: 1;
+  align-self: start;
+  margin: 0;
+  font-family: "Libre Clarendon", Georgia, serif;
+  font-size: 18pt;
+  line-height: 1.0;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #f7f2e8;
 }
 
 .cover h2 {
-  max-width: 280mm;
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+  margin: 0;
+  font-family: "Libre Clarendon", Georgia, serif;
+  font-size: 18pt;
+  line-height: 1.0;
+  font-style: italic;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #f7f2e8;
 }
 
 .cover p {
-  font-style: italic;
+  grid-column: 1;
+  grid-row: 2;
+  align-self: start;
+  margin: 0;
+  font-family: "Libre Clarendon", Georgia, serif;
+  font-size: 18pt;
+  line-height: 1.0;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  color: #f7f2e8;
 }
+
+/* DEBUG ─── uncomment to re-enable grid overlay ──────────────────
+.cover .overlay {
+  background-image:
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent 9.39mm,
+      rgba(255, 60, 60, 0.7) 9.39mm,
+      rgba(255, 60, 60, 0.7) 9.89mm
+    ),
+    linear-gradient(to bottom, rgba(255,60,60,0.6) 4mm, transparent 4mm, transparent 8mm, rgba(255,60,60,0.6) 8mm),
+    linear-gradient(to bottom, rgba(255,60,60,0.6) 4mm, transparent 4mm, transparent 8mm, rgba(255,60,60,0.6) 8mm);
+  background-size:
+    100% 9.89mm,
+    1px 8mm,
+    1px 8mm;
+  background-position:
+    0 16mm,
+    101.67mm 0,
+    190.33mm 0;
+  background-repeat: repeat, repeat-y, repeat-y;
+}
+
+.cover h1 { outline: 1px dotted rgba(255, 80, 80, 0.9); }
+.cover h2 { outline: 1px dotted rgba(80, 160, 255, 0.9); }
+.cover p  { outline: 1px dotted rgba(80, 210, 80, 0.9); }
+─────────────────────────────────────────────────────────────── */

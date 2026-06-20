@@ -27,6 +27,9 @@ Douglas Edric Stanley
 
 ::: {.page .textpage}
 ::: {.overlay .textcopy}
+
+## STANDOFF
+
 Cowpokes riding through the ghost town of an abandoned Western.
 
 A cabin.
@@ -35,9 +38,15 @@ A crossroads.
 
 Two mediums, revolvers drawn, caught in a deadly standoff.
 
+## INSTALLATION
+
 Dead Crossing is an interactive installation where visitors explore the landscapes of an iconic popular Western video game, their movements triggering encounters with fragments drawn from more than three hundred Western films.
 
+## CROSS-MEDIA SYNCING
+
 The video game becomes a real-time editing instrument. Each movement through the landscape generates new pathways through cinema history, assembling an endless film from the recurring images, gestures, characters, and myths of the American West.
+
+## DEMO
 
 Riding across a prairie, entering a saloon, boarding a train, or simply pausing before a distant horizon continuously generates new associations between video game imagery and cinema history. As visitors navigate the game world, they simultaneously navigate an archive of Western cinema, transforming gameplay into a form of live remix cinema.
 :::
@@ -183,10 +192,10 @@ In the exhibition, live gameplay is continuously analysed and synchronized with 
 
 ::: {.page .textpage}
 ::: {.overlay .textcopy .creditsblock}
-## CREDITS
-
 **Dead Crossing**  
 2026
+
+## TEAM
 
 Concept, artistic direction, software development, installation design and production  
 **Douglas Edric Stanley**
@@ -200,7 +209,11 @@ Cowpoke Controller development
 Cabin construction consulting and production  
 **Colin Castellano**
 
+## FINANCING
+
 Developed within the framework of the Playable Cinema research project.
+**Douglas Edric Stanley**
+Research Lead, HEAD – Genève, HES-SO
 
 Research leadership and institutional support  
 **Anthony Masure**  
@@ -210,6 +223,7 @@ Research administration and coordination
 **Christelle Granite-Noble**  
 IRAD, HEAD – Genève, HES-SO
 
-Funded by the HES-SO RCDAV Research Programme.
+Funded by the HES-SO Research Programme
+**Réseau de Compétences Design et Arts visuels** | **RCDAV**
 :::
 :::

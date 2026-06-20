@@ -85,51 +85,7 @@ hr {
   inset: 0;
   z-index: 2;
   box-sizing: border-box;
-  padding: 14mm 16mm 12mm 16mm;
-}
-
-/* Cover: title flush-left, stacked */
-.cover .overlay,
-.covertext {
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-start;
-  align-items: flex-start;
-  gap: 2mm;
-  color: #f7f2e8;
-}
-
-.cover h1 {
-  margin: 0;
-  font-family: "Libre Clarendon", Georgia, serif;
-  font-size: 36pt;
-  line-height: 0.65;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-  color: #f7f2e8;
-}
-
-.cover h2 {
-  margin: 0;
-  font-family: "Libre Clarendon", Georgia, serif;
-  font-size: 18pt;
-  line-height: 1.0;
-  font-style: italic;
-  font-weight: 400;
-  text-transform: none;
-  letter-spacing: 0;
-  color: #f7f2e8;
-}
-
-.cover p {
-  margin: 0;
-  font-family: "Libre Clarendon", Georgia, serif;
-  font-size: 18pt;
-  line-height: 1.0;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: #f7f2e8;
+  padding: 16mm 18mm;
 }
 
 /* Image pages: single huge centered word / phrase */
@@ -144,7 +100,7 @@ hr {
 .imagepage h1 {
   margin: 0;
   font-family: "Libre Clarendon", Georgia, serif;
-  font-size: 96pt;
+  font-size: 92pt;
   line-height: 0.9;
   font-weight: 200;
   text-transform: uppercase;
@@ -174,6 +130,7 @@ hr {
    right padding = 18 + 39.3 + 5 = 62mm
    text area     = 261 - 88 = 173mm → 2 cols × 84mm + 5mm gap
 */
+
 .textpage .overlay {
   position: static;
   width: 297mm;
@@ -205,7 +162,7 @@ hr {
 .textpage blockquote,
 .textpage ul,
 .textpage ol {
-  margin: 0 0 0.75em 0;
+  margin: 0 0 1.38em 0;
   font-family: "Libre Clarendon", Georgia, serif;
   font-size: 10.6pt;
   line-height: 1.38;

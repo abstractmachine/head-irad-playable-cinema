@@ -39,6 +39,7 @@ pandoc dead-crossing.md \
   --no-highlight \
   --template=templates/default.html5 \
   --resource-path=.:images:styles \
+  --css=styles/type.css \
   --css=styles/base.css \
   --css=styles/print.css \
   --css=styles/cover.css \
