@@ -80,13 +80,13 @@ class TestScoreToStr(unittest.TestCase):
 class TestSilhouetteCacheDir(unittest.TestCase):
     def test_all_scope(self):
         p = silhouette_cache_dir("/proj", "movie", "all", "animals", "horse")
-        self.assertEqual(p, Path("/proj/data/silhouettes/movies/all/animals/horse"))
+        self.assertEqual(p, Path("/proj/data/silhouettes/movie/all/animals/horse"))
 
     def test_movie_scope(self):
         p = silhouette_cache_dir("/proj", "movie", "movie-tmdb_11969", "objects", "saddle")
         self.assertEqual(
             p,
-            Path("/proj/data/silhouettes/movies/movie-tmdb_11969/objects/saddle"),
+            Path("/proj/data/silhouettes/movie/movie-tmdb_11969/objects/saddle"),
         )
 
     def test_shot_scope(self):
@@ -96,7 +96,7 @@ class TestSilhouetteCacheDir(unittest.TestCase):
 
     def test_field_and_word_are_lowercased(self):
         p = silhouette_cache_dir("/proj", "movie", "all", "Animals", "Horse")
-        self.assertEqual(p, Path("/proj/data/silhouettes/movies/all/animals/horse"))
+        self.assertEqual(p, Path("/proj/data/silhouettes/movie/all/animals/horse"))
 
 
 class TestSilhouetteFilename(unittest.TestCase):
@@ -135,7 +135,7 @@ class TestSilhouetteJsonPath(unittest.TestCase):
             frame_index=1532,
             score=0.942,
         )
-        self.assertIn("/data/silhouettes/movies/all/animals/horse/", str(path))
+        self.assertIn("/data/silhouettes/movie/all/animals/horse/", str(path))
         self.assertTrue(str(path).endswith(".json"))
 
 

@@ -103,13 +103,13 @@ class TestSafeLabel(unittest.TestCase):
 class TestCatalogDirHelpers(unittest.TestCase):
     def test_catalog_base_dir(self):
         p = catalog_base_dir("/project", "movie")
-        self.assertEqual(p, Path("/project/data/silhouettes/catalog/movies"))
+        self.assertEqual(p, Path("/project/data/silhouettes/catalog/movie"))
 
     def test_catalog_item_dir(self):
         p = catalog_item_dir("/project", "movie", "django_1966", "horse")
         self.assertEqual(
             p,
-            Path("/project/data/silhouettes/catalog/movies/django_1966/horse"),
+            Path("/project/data/silhouettes/catalog/movie/django_1966/horse"),
         )
 
     def test_catalog_item_dir_label_sanitized(self):
