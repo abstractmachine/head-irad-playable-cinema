@@ -1,0 +1,297 @@
+.
+├── archive
+│   └── readme.md
+├── build.sh
+├── dead-crossing.md
+├── dead-crossing.pdf
+├── images
+│   ├── cowboy-metaphysics-book.jpg
+│   ├── cowboy-metaphysics-book.jpg.avif
+│   ├── cowpoke-controller-walnut.png
+│   ├── Gradient-Background.psd
+│   ├── head-irad-cowpoke-controller-front-2025-11-03.png
+│   ├── head-irad-dead-crossing-cabin-cube-assembly-ladder.jpg
+│   ├── head-irad-dead-crossing-cabin-cube-construction.jpg
+│   ├── head-irad-dead-crossing-cabin-cube.jpg
+│   ├── head-irad-dead-crossing-cabin-cube.psd
+│   ├── head-irad-dead-crossing-cabin-cube-vertical.jpg
+│   ├── head-irad-dead-crossing-cabin-cube-vertical.psd
+│   ├── head-irad-dead-crossing-cabin-cube-video.jpg
+│   ├── head-irad-dead-crossing-cabin-cube-video.png
+│   ├── head-irad-dead-crossing-cabin-cube-web.jpg
+│   ├── head-irad-dead-crossing-cabin-instllation-overhead-view-web.jpg
+│   ├── head-irad-dead-crossing-cabin-overhead-assembly.jpg
+│   ├── head-irad-dead-crossing-cabin-overhead-assembly-ladder.jpg
+│   ├── head-irad-playable-cinema-sync-test-train-robbery-web.jpg
+│   ├── insideinside-DouglasEdricStanley-Installation.jpg
+│   ├── playable-cinema-cowpoke-cabin-back-view.jpg
+│   ├── playable-cinema-cowpoke-cabin-back-view.psd
+│   ├── playable-cinema-cowpoke-cabin.jpg
+│   ├── playable-cinema-cowpoke-cabin-side-view.jpg
+│   ├── playable-cinema-cowpoke-cabin-side-view.psd
+│   ├── playable-cinema-cowpoke-controller-bar.jpg
+│   ├── playable-cinema-cowpoke-controller-bar.psd
+│   ├── playable-cinema-cowpoke-controller-bath.jpg
+│   ├── playable-cinema-cowpoke-controller-bath.psd
+│   ├── playable-cinema-cowpoke-controller-cheat.jpg
+│   ├── playable-cinema-cowpoke-controller-cheat.psd
+│   ├── playable-cinema-cowpoke-controller-cheat-titles.jpg
+│   ├── playable-cinema-cowpoke-controller-drunkard.jpg
+│   ├── playable-cinema-cowpoke-controller-drunkard.psd
+│   ├── playable-cinema-cowpoke-controller-drunkard-titles.jpg
+│   ├── playable-cinema-cowpoke-controller-widow.jpg
+│   ├── playable-cinema-cowpoke-controller-widow.psd
+│   └── playable-cinema-dual-sync-test-carriage-entering-stables-web.jpg
+├── poster
+│   └── cowpoke-poster.psd
+├── presentations
+│   └── istituto-svizzero
+│       └── readme.md
+├── readme.md
+├── styles
+│   ├── base.css
+│   ├── cover.css
+│   ├── fonts
+│   │   ├── Hanken_Grotesk
+│   │   │   ├── HankenGrotesk-Italic-VariableFont_wght.ttf
+│   │   │   ├── HankenGrotesk-VariableFont_wght.ttf
+│   │   │   ├── OFL.txt
+│   │   │   ├── README.txt
+│   │   │   └── static
+│   │   │       ├── HankenGrotesk-BlackItalic.ttf
+│   │   │       ├── HankenGrotesk-Black.ttf
+│   │   │       ├── HankenGrotesk-BoldItalic.ttf
+│   │   │       ├── HankenGrotesk-Bold.ttf
+│   │   │       ├── HankenGrotesk-ExtraBoldItalic.ttf
+│   │   │       ├── HankenGrotesk-ExtraBold.ttf
+│   │   │       ├── HankenGrotesk-ExtraLightItalic.ttf
+│   │   │       ├── HankenGrotesk-ExtraLight.ttf
+│   │   │       ├── HankenGrotesk-Italic.ttf
+│   │   │       ├── HankenGrotesk-LightItalic.ttf
+│   │   │       ├── HankenGrotesk-Light.ttf
+│   │   │       ├── HankenGrotesk-MediumItalic.ttf
+│   │   │       ├── HankenGrotesk-Medium.ttf
+│   │   │       ├── HankenGrotesk-Regular.ttf
+│   │   │       ├── HankenGrotesk-SemiBoldItalic.ttf
+│   │   │       ├── HankenGrotesk-SemiBold.ttf
+│   │   │       ├── HankenGrotesk-ThinItalic.ttf
+│   │   │       └── HankenGrotesk-Thin.ttf
+│   │   ├── libre_clarendon
+│   │   │   ├── FONTLOG.txt
+│   │   │   ├── fonts
+│   │   │   │   ├── LibreClarendonCondensed-136Bold.otf
+│   │   │   │   ├── LibreClarendonCondensed-176Black.otf
+│   │   │   │   ├── LibreClarendonCondensed-40Light.otf
+│   │   │   │   ├── LibreClarendonCondensed-62Regular.otf
+│   │   │   │   ├── LibreClarendonCondensed-96Medium.otf
+│   │   │   │   ├── LibreClarendonNarrow-104Medium.otf
+│   │   │   │   ├── LibreClarendonNarrow-150Bold.otf
+│   │   │   │   ├── LibreClarendonNarrow-194Black.otf
+│   │   │   │   ├── LibreClarendonNarrow-42Light.otf
+│   │   │   │   ├── LibreClarendonNarrow-66Regular.otf
+│   │   │   │   ├── LibreClarendonNormal-110Medium.otf
+│   │   │   │   ├── LibreClarendonNormal-162Bold.otf
+│   │   │   │   ├── LibreClarendonNormal-212Black.otf
+│   │   │   │   ├── LibreClarendonNormal-42Light.otf
+│   │   │   │   ├── LibreClarendonNormal-68Regular.otf
+│   │   │   │   ├── LibreClarendonWide-120Medium.otf
+│   │   │   │   ├── LibreClarendonWide-176Bold.otf
+│   │   │   │   ├── LibreClarendonWide-230Black.otf
+│   │   │   │   ├── LibreClarendonWide-44Light.otf
+│   │   │   │   └── LibreClarendonWide-74Regular.otf
+│   │   │   ├── OFL.txt
+│   │   │   └── README.md
+│   │   ├── Roboto
+│   │   │   ├── OFL.txt
+│   │   │   ├── README.txt
+│   │   │   ├── Roboto-Italic-VariableFont_wdth,wght.ttf
+│   │   │   ├── Roboto-VariableFont_wdth,wght.ttf
+│   │   │   └── static
+│   │   │       ├── Roboto-BlackItalic.ttf
+│   │   │       ├── Roboto-Black.ttf
+│   │   │       ├── Roboto-BoldItalic.ttf
+│   │   │       ├── Roboto-Bold.ttf
+│   │   │       ├── Roboto_Condensed-BlackItalic.ttf
+│   │   │       ├── Roboto_Condensed-Black.ttf
+│   │   │       ├── Roboto_Condensed-BoldItalic.ttf
+│   │   │       ├── Roboto_Condensed-Bold.ttf
+│   │   │       ├── Roboto_Condensed-ExtraBoldItalic.ttf
+│   │   │       ├── Roboto_Condensed-ExtraBold.ttf
+│   │   │       ├── Roboto_Condensed-ExtraLightItalic.ttf
+│   │   │       ├── Roboto_Condensed-ExtraLight.ttf
+│   │   │       ├── Roboto_Condensed-Italic.ttf
+│   │   │       ├── Roboto_Condensed-LightItalic.ttf
+│   │   │       ├── Roboto_Condensed-Light.ttf
+│   │   │       ├── Roboto_Condensed-MediumItalic.ttf
+│   │   │       ├── Roboto_Condensed-Medium.ttf
+│   │   │       ├── Roboto_Condensed-Regular.ttf
+│   │   │       ├── Roboto_Condensed-SemiBoldItalic.ttf
+│   │   │       ├── Roboto_Condensed-SemiBold.ttf
+│   │   │       ├── Roboto_Condensed-ThinItalic.ttf
+│   │   │       ├── Roboto_Condensed-Thin.ttf
+│   │   │       ├── Roboto-ExtraBoldItalic.ttf
+│   │   │       ├── Roboto-ExtraBold.ttf
+│   │   │       ├── Roboto-ExtraLightItalic.ttf
+│   │   │       ├── Roboto-ExtraLight.ttf
+│   │   │       ├── Roboto-Italic.ttf
+│   │   │       ├── Roboto-LightItalic.ttf
+│   │   │       ├── Roboto-Light.ttf
+│   │   │       ├── Roboto-MediumItalic.ttf
+│   │   │       ├── Roboto-Medium.ttf
+│   │   │       ├── Roboto-Regular.ttf
+│   │   │       ├── Roboto-SemiBoldItalic.ttf
+│   │   │       ├── Roboto-SemiBold.ttf
+│   │   │       ├── Roboto_SemiCondensed-BlackItalic.ttf
+│   │   │       ├── Roboto_SemiCondensed-Black.ttf
+│   │   │       ├── Roboto_SemiCondensed-BoldItalic.ttf
+│   │   │       ├── Roboto_SemiCondensed-Bold.ttf
+│   │   │       ├── Roboto_SemiCondensed-ExtraBoldItalic.ttf
+│   │   │       ├── Roboto_SemiCondensed-ExtraBold.ttf
+│   │   │       ├── Roboto_SemiCondensed-ExtraLightItalic.ttf
+│   │   │       ├── Roboto_SemiCondensed-ExtraLight.ttf
+│   │   │       ├── Roboto_SemiCondensed-Italic.ttf
+│   │   │       ├── Roboto_SemiCondensed-LightItalic.ttf
+│   │   │       ├── Roboto_SemiCondensed-Light.ttf
+│   │   │       ├── Roboto_SemiCondensed-MediumItalic.ttf
+│   │   │       ├── Roboto_SemiCondensed-Medium.ttf
+│   │   │       ├── Roboto_SemiCondensed-Regular.ttf
+│   │   │       ├── Roboto_SemiCondensed-SemiBoldItalic.ttf
+│   │   │       ├── Roboto_SemiCondensed-SemiBold.ttf
+│   │   │       ├── Roboto_SemiCondensed-ThinItalic.ttf
+│   │   │       ├── Roboto_SemiCondensed-Thin.ttf
+│   │   │       ├── Roboto-ThinItalic.ttf
+│   │   │       └── Roboto-Thin.ttf
+│   │   ├── Roboto_Mono
+│   │   │   ├── OFL.txt
+│   │   │   ├── README.txt
+│   │   │   ├── RobotoMono-Italic-VariableFont_wght.ttf
+│   │   │   ├── RobotoMono-VariableFont_wght.ttf
+│   │   │   └── static
+│   │   │       ├── RobotoMono-BoldItalic.ttf
+│   │   │       ├── RobotoMono-Bold.ttf
+│   │   │       ├── RobotoMono-ExtraLightItalic.ttf
+│   │   │       ├── RobotoMono-ExtraLight.ttf
+│   │   │       ├── RobotoMono-Italic.ttf
+│   │   │       ├── RobotoMono-LightItalic.ttf
+│   │   │       ├── RobotoMono-Light.ttf
+│   │   │       ├── RobotoMono-MediumItalic.ttf
+│   │   │       ├── RobotoMono-Medium.ttf
+│   │   │       ├── RobotoMono-Regular.ttf
+│   │   │       ├── RobotoMono-SemiBoldItalic.ttf
+│   │   │       ├── RobotoMono-SemiBold.ttf
+│   │   │       ├── RobotoMono-ThinItalic.ttf
+│   │   │       └── RobotoMono-Thin.ttf
+│   │   ├── Roboto_Serif
+│   │   │   ├── OFL.txt
+│   │   │   ├── README.txt
+│   │   │   ├── RobotoSerif-Italic-VariableFont_GRAD,opsz,wdth,wght.ttf
+│   │   │   ├── RobotoSerif-VariableFont_GRAD,opsz,wdth,wght.ttf
+│   │   │   └── static
+│   │   │       ├── RobotoSerif_120pt-BlackItalic.ttf
+│   │   │       ├── RobotoSerif_120pt-Black.ttf
+│   │   │       ├── RobotoSerif_120pt-BoldItalic.ttf
+│   │   │       ├── RobotoSerif_120pt-Bold.ttf
+│   │   │       ├── RobotoSerif_120pt-ExtraBoldItalic.ttf
+│   │   │       ├── RobotoSerif_120pt-ExtraBold.ttf
+│   │   │       ├── RobotoSerif_120pt-ExtraLightItalic.ttf
+│   │   │       ├── RobotoSerif_120pt-ExtraLight.ttf
+│   │   │       ├── RobotoSerif_120pt-Italic.ttf
+│   │   │       ├── RobotoSerif_120pt-LightItalic.ttf
+│   │   │       ├── RobotoSerif_120pt-Light.ttf
+│   │   │       ├── RobotoSerif_120pt-MediumItalic.ttf
+│   │   │       ├── RobotoSerif_120pt-Medium.ttf
+│   │   │       ├── RobotoSerif_120pt-Regular.ttf
+│   │   │       ├── RobotoSerif_120pt-SemiBoldItalic.ttf
+│   │   │       ├── RobotoSerif_120pt-SemiBold.ttf
+│   │   │       ├── RobotoSerif_120pt-ThinItalic.ttf
+│   │   │       ├── RobotoSerif_120pt-Thin.ttf
+│   │   │       ├── RobotoSerif_28pt-BlackItalic.ttf
+│   │   │       ├── RobotoSerif_28pt-Black.ttf
+│   │   │       ├── RobotoSerif_28pt-BoldItalic.ttf
+│   │   │       ├── RobotoSerif_28pt-Bold.ttf
+│   │   │       ├── RobotoSerif_28pt-ExtraBoldItalic.ttf
+│   │   │       ├── RobotoSerif_28pt-ExtraBold.ttf
+│   │   │       ├── RobotoSerif_28pt-ExtraLightItalic.ttf
+│   │   │       ├── RobotoSerif_28pt-ExtraLight.ttf
+│   │   │       ├── RobotoSerif_28pt-Italic.ttf
+│   │   │       ├── RobotoSerif_28pt-LightItalic.ttf
+│   │   │       ├── RobotoSerif_28pt-Light.ttf
+│   │   │       ├── RobotoSerif_28pt-MediumItalic.ttf
+│   │   │       ├── RobotoSerif_28pt-Medium.ttf
+│   │   │       ├── RobotoSerif_28pt-Regular.ttf
+│   │   │       ├── RobotoSerif_28pt-SemiBoldItalic.ttf
+│   │   │       ├── RobotoSerif_28pt-SemiBold.ttf
+│   │   │       ├── RobotoSerif_28pt-ThinItalic.ttf
+│   │   │       ├── RobotoSerif_28pt-Thin.ttf
+│   │   │       ├── RobotoSerif_36pt-BlackItalic.ttf
+│   │   │       ├── RobotoSerif_36pt-Black.ttf
+│   │   │       ├── RobotoSerif_36pt-BoldItalic.ttf
+│   │   │       ├── RobotoSerif_36pt-Bold.ttf
+│   │   │       ├── RobotoSerif_36pt-ExtraBoldItalic.ttf
+│   │   │       ├── RobotoSerif_36pt-ExtraBold.ttf
+│   │   │       ├── RobotoSerif_36pt-ExtraLightItalic.ttf
+│   │   │       ├── RobotoSerif_36pt-ExtraLight.ttf
+│   │   │       ├── RobotoSerif_36pt-Italic.ttf
+│   │   │       ├── RobotoSerif_36pt-LightItalic.ttf
+│   │   │       ├── RobotoSerif_36pt-Light.ttf
+│   │   │       ├── RobotoSerif_36pt-MediumItalic.ttf
+│   │   │       ├── RobotoSerif_36pt-Medium.ttf
+│   │   │       ├── RobotoSerif_36pt-Regular.ttf
+│   │   │       ├── RobotoSerif_36pt-SemiBoldItalic.ttf
+│   │   │       ├── RobotoSerif_36pt-SemiBold.ttf
+│   │   │       ├── RobotoSerif_36pt-ThinItalic.ttf
+│   │   │       ├── RobotoSerif_36pt-Thin.ttf
+│   │   │       ├── RobotoSerif_72pt-BlackItalic.ttf
+│   │   │       ├── RobotoSerif_72pt-Black.ttf
+│   │   │       ├── RobotoSerif_72pt-BoldItalic.ttf
+│   │   │       ├── RobotoSerif_72pt-Bold.ttf
+│   │   │       ├── RobotoSerif_72pt-ExtraBoldItalic.ttf
+│   │   │       ├── RobotoSerif_72pt-ExtraBold.ttf
+│   │   │       ├── RobotoSerif_72pt-ExtraLightItalic.ttf
+│   │   │       ├── RobotoSerif_72pt-ExtraLight.ttf
+│   │   │       ├── RobotoSerif_72pt-Italic.ttf
+│   │   │       ├── RobotoSerif_72pt-LightItalic.ttf
+│   │   │       ├── RobotoSerif_72pt-Light.ttf
+│   │   │       ├── RobotoSerif_72pt-MediumItalic.ttf
+│   │   │       ├── RobotoSerif_72pt-Medium.ttf
+│   │   │       ├── RobotoSerif_72pt-Regular.ttf
+│   │   │       ├── RobotoSerif_72pt-SemiBoldItalic.ttf
+│   │   │       ├── RobotoSerif_72pt-SemiBold.ttf
+│   │   │       ├── RobotoSerif_72pt-ThinItalic.ttf
+│   │   │       ├── RobotoSerif_72pt-Thin.ttf
+│   │   │       ├── RobotoSerif-BlackItalic.ttf
+│   │   │       ├── RobotoSerif-Black.ttf
+│   │   │       ├── RobotoSerif-BoldItalic.ttf
+│   │   │       ├── RobotoSerif-Bold.ttf
+│   │   │       ├── RobotoSerif-ExtraBoldItalic.ttf
+│   │   │       ├── RobotoSerif-ExtraBold.ttf
+│   │   │       ├── RobotoSerif-ExtraLightItalic.ttf
+│   │   │       ├── RobotoSerif-ExtraLight.ttf
+│   │   │       ├── RobotoSerif-Italic.ttf
+│   │   │       ├── RobotoSerif-LightItalic.ttf
+│   │   │       ├── RobotoSerif-Light.ttf
+│   │   │       ├── RobotoSerif-MediumItalic.ttf
+│   │   │       ├── RobotoSerif-Medium.ttf
+│   │   │       ├── RobotoSerif-Regular.ttf
+│   │   │       ├── RobotoSerif-SemiBoldItalic.ttf
+│   │   │       ├── RobotoSerif-SemiBold.ttf
+│   │   │       ├── RobotoSerif-ThinItalic.ttf
+│   │   │       └── RobotoSerif-Thin.ttf
+│   │   └── Roboto_Slab
+│   │       ├── LICENSE.txt
+│   │       ├── README.txt
+│   │       ├── RobotoSlab-VariableFont_wght.ttf
+│   │       └── static
+│   │           ├── RobotoSlab-Black.ttf
+│   │           ├── RobotoSlab-Bold.ttf
+│   │           ├── RobotoSlab-ExtraBold.ttf
+│   │           ├── RobotoSlab-ExtraLight.ttf
+│   │           ├── RobotoSlab-Light.ttf
+│   │           ├── RobotoSlab-Medium.ttf
+│   │           ├── RobotoSlab-Regular.ttf
+│   │           ├── RobotoSlab-SemiBold.ttf
+│   │           └── RobotoSlab-Thin.ttf
+│   └── print.css
+└── tree.txt
+
+20 directories, 275 files

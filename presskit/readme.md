@@ -1,40 +1,91 @@
-# *Playable Cinema* Presskit
-This is the still-in-progress presskit for the research project [Playable Cinema](https://www.hesge.ch/head/projets/2024/institut%20de%20recherche%20en%20art%20et%20en%20design%2Cresearch/all), [IRAD](https://www.hesge.ch/head/en/programs-research/research), [HEAD - Genève](http://head-geneve.ch), [HES-SO](https://www.hes-so.ch/accueil).
+# Dead Crossing Presskit
 
-## Project
-Cowpokes riding through the ghost town of an abandoned Western. Isolated cabin, solitary frames, staring out onto the flickering plains of a mythology fading to red. A crossroads. Two mediums, revolvers drawn, caught in a deadly standoff.
+This folder contains the source for the Dead Crossing PDF presskit.
 
-![Cowpoke Cabin - Side View](./images/playable-cinema-cowpoke-cabin-side-view.jpg)
+## One-liner
 
-Playable Cinema is a research project exploring how artificial intelligence can ride the invisible frontier between cinema history and interactive gameplay. By using machine learning to analyze hundreds of Westerns, the project constructs a generative database where fragments of film history and the streams of live gameplay bleed into one another; where the joystick becomes an editing tool for an infinite Western fever dream looping through the ghosts of cinematic history.
+A frontier cabin where visitors play through an iconic Western videogame while a machine-learning system continuously remixes more than three hundred Western films into a live cinematic remix.
 
-![Inside Inside, Douglas Edric Stanley, installation view](./images/insideinside-DouglasEdricStanley-Installation.jpg)
+## Pitch
 
-The project began by building a dataset that connects patterns between dystopian cinema and the award-winning indie game *Inside* (Playdead, 2016). This installation has been exibited in various locations and contexts (San Francisco, Lausanne, Marseille, Genève, …). This testbed served as a prototype for a larger-scale dataset comparing Western films and the iconic western video game, *Red Dead Redemption 2*.
+Dead Crossing is an installation built as a frontier cabin, a custom controller, and a traversable archive of Western cinema. Visitors enter a physical structure, navigate a popular Western videogame, and trigger a real-time editing system that cross-indexes gameplay with hundreds of Western films. The result is a live remix cinema that treats the American West as a mythology made of recurring images, gestures, and icons.
 
-![Playable Cinema Research Project, IRAD, HEAD – Genève](./images/playable-cinema-cowpoke-controller-bar.jpg)
+## Presskit
 
-In this current form, the project explores how hybrid strategies can emerge new curatorial methodologies as generative tools collaborate with humans in assembling the haunted archive of our shared hallucinations of the West.
-
-![Playable Cinema Research Project, IRAD, HEAD – Genève](./images/playable-cinema-cowpoke-controller-cheat.jpg)
-
-![Playable Cinema Research Project, IRAD, HEAD – Genève](./images/playable-cinema-cowpoke-controller-drunkard.jpg)
+- Presskit PDF: `./dead-crossing.pdf`
+- Markdown source: `./dead-crossing.md`
+- Images: `./images/`
+- Stylesheets: `./styles/`
 
 ## Team
-- [Douglas Edric Stanley](https://abstractmachine.net), Project Lead
-- [Faust Perillaud](https://2024.head-geneve.show/en/projects/spectral-yard-fp-100e1), Research Assistant, training & labelling
-- [Guillaume Stagnaro](https://www.stagnaro.net), [Cowpoke Controller](../hardware/cowpoke-controller/) Developer
 
-## Financing
-This project was financed with a research grant from the [Network of Expertise in Design and Visual Arts](https://www.hesge.ch/head/en/programs-research/research) / [Réseau de compétences Design et Arts visuels](https://www.hesge.ch/head/formations-recherche/recherche).
+- Douglas Edric Stanley — Project Lead
+- Faust Perillaud — Research Assistant, training and labelling
+- Guillaume Stagnaro — Cowpoke Controller Developer
 
-## HEAD – Genève
-- [Anthony Masure](https://www.anthonymasure.com), Dean of Research, [IRAD](https://www.hesge.ch/head/en/programs-research/research), [HEAD – Genève](https://www.hesge.ch/head/en), [HES-SO](https://www.hes-so.ch/)
-- [Christelle Granite-Noble](https://www.hesge.ch/head/annuaire/christelle-granite-noble), Administrative Coordination, [IRAD](https://www.hesge.ch/head/en/programs-research/research), [HEAD – Genève](https://www.hesge.ch/head/en), [HES-SO](https://www.hes-so.ch/)
+### Financing
 
-## Presentations
-- [Playable Cinema](./presentations/istituto-svizzero/readme.md), Istituto Svizzero, Rome, 27 November 2025
-- TBA
+This project was financed with a research grant from the Network of Expertise in Design and Visual Arts / Réseau de compétences Design et Arts visuels.
 
-## Tools
-More information on our presentation workflow can be found here: [/code](../code/), [/hardware](../hardware/).
+### HEAD – Genève
+
+- Anthony Masure — Dean of Research, IRAD, HEAD – Genève, HES-SO
+- Christelle Granite-Noble — Administrative Coordination, IRAD, HEAD – Genève, HES-SO
+
+## Content
+
+This presskit is built from the following files:
+
+- `dead-crossing.md` — presskit source in Markdown
+- `styles/` — CSS files for Pandoc and print layout
+- `images/` — images used by the presskit
+- `build.sh` — build script for generating the PDF
+
+## Install
+
+### Requirements
+
+- Ubuntu 22.04 or later. Should also work on macOS. Is Windoze still a thing?
+- `pandoc`
+- `python3`
+- `python3-venv`
+- `weasyprint` and its system dependencies
+
+### System packages
+
+```bash
+sudo apt update
+sudo apt install -y pandoc python3 python3-venv python3-pip
+sudo apt install -y libcairo2 libpango-1.0-0 libgdk-pixbuf-2.0-0 libffi-dev shared-mime-info fonts-dejavu fonts-liberation
+pandoc --version
+weasyprint --version
+```
+
+### Python
+
+```bash
+cd presskit
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install weasyprint
+```
+
+## Build
+
+```bash
+./build.sh
+```
+
+### Manual Build
+
+```bash
+pandoc dead-crossing.md \
+  --from markdown+hard_line_breaks \
+  --pdf-engine=weasyprint \
+  --resource-path=.:images:styles \
+  --css=styles/base.css \
+  --css=styles/print.css \
+  --css=styles/cover.css \
+  -o dead-crossing.pdf
+```

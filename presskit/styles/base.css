@@ -1,0 +1,153 @@
+@font-face {
+  font-family: "Libre Clarendon";
+  src: url("fonts/libre_clarendon/fonts/LibreClarendonNormal-68Regular.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Libre Clarendon";
+  src: url("fonts/libre_clarendon/fonts/LibreClarendonNormal-162Bold.otf") format("opentype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Libre Clarendon";
+  src: url("fonts/libre_clarendon/fonts/LibreClarendonNormal-212Black.otf") format("opentype");
+  font-weight: 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Libre Clarendon";
+  src: url("fonts/libre_clarendon/fonts/LibreClarendonNormal-42Light.otf") format("opentype");
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Libre Clarendon Wide";
+  src: url("fonts/libre_clarendon/fonts/LibreClarendonWide-44Light.otf") format("opentype");
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Hanken Grotesk";
+  src: url("fonts/Hanken_Grotesk/HankenGrotesk-VariableFont_wght.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --paper: #f7f2e8;
+  --ink: #171717;
+  --muted: rgba(23, 23, 23, 0.72);
+  --rule: rgba(23, 23, 23, 0.18);
+
+  --serif: "Libre Clarendon", Georgia, serif;
+  --sans: "Hanken Grotesk", Helvetica, Arial, sans-serif;
+
+  --cover-size: 30pt;
+  --chapter-size: 18pt;
+  --body-size: 10.6pt;
+  --body-leading: 1.38;
+  --small-size: 8.6pt;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: var(--body-size);
+  line-height: var(--body-leading);
+  hyphens: auto;
+  font-kerning: normal;
+}
+
+header#title-block-header,
+header.title-block-header,
+div.title-block-header,
+section.title-block-header,
+.title-block-header {
+  display: none !important;
+}
+
+p {
+  margin: 0 0 0.75em 0;
+}
+
+h1, h2, h3, h4 {
+  margin: 0;
+  font-family: var(--serif);
+  line-height: 0.96;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+h1 { font-size: var(--cover-size); }
+h2 { font-size: var(--chapter-size); }
+h3 { font-size: 12pt; }
+
+small,
+.caption,
+.note,
+figcaption {
+  font-family: var(--sans);
+  font-size: var(--small-size);
+  color: var(--muted);
+}
+
+blockquote {
+  margin: 0;
+  padding: 0;
+  font-style: italic;
+}
+
+ul, ol {
+  margin: 0 0 0.9em 1.1em;
+  padding: 0;
+}
+
+li {
+  margin: 0 0 0.24em 0;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.corpus {
+  font-family: var(--sans);
+}
+
+.corpus ul {
+  list-style: none;
+  margin-left: 0;
+  padding-left: 0;
+}
+
+.corpus li {
+  margin: 0 0 0.2em 0;
+}

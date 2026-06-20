@@ -1,0 +1,11 @@
+.cover h1 {
+  max-width: 240mm;
+}
+
+.cover h2 {
+  max-width: 240mm;
+}
+
+.cover p {
+  font-style: italic;
+}

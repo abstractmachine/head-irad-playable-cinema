@@ -1,0 +1,235 @@
+@page {
+  size: A4 landscape;
+  margin: 0;
+}
+
+html, body {
+  width: 297mm;
+  min-height: 210mm;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: #f7f2e8;
+  color: #171717;
+}
+
+/* Markdown separators are only structural markers; do not render them. */
+hr {
+  display: none;
+  border: 0;
+  margin: 0;
+  height: 0;
+}
+
+/* Base page wrapper */
+.page {
+  position: relative;
+  width: 297mm;
+  height: 210mm;
+  overflow: hidden;
+  box-sizing: border-box;
+  break-after: page;
+  page-break-after: always;
+}
+
+/* Force alternation:
+   image pages on left/even pages
+   text pages on right/odd pages
+*/
+.cover,
+.imagepage {
+  break-before: left;
+  page-break-before: left;
+  background: #000;
+}
+
+.textpage {
+  break-before: right;
+  page-break-before: right;
+  background: #f7f2e8;
+  color: #171717;
+}
+
+/* Full-bleed background image */
+.page .bg {
+  position: absolute;
+  inset: 0;
+  width: 297mm;
+  height: 210mm;
+  object-fit: cover;
+  object-position: center center;
+  z-index: 0;
+}
+
+/* Dark overlay only for image pages / cover */
+.cover::before,
+.imagepage::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    rgba(0, 0, 0, 0.44) 0%,
+    rgba(0, 0, 0, 0.18) 22%,
+    rgba(0, 0, 0, 0.02) 55%
+  );
+}
+
+/* Overlay container */
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  box-sizing: border-box;
+  padding: 14mm 16mm 12mm 16mm;
+}
+
+/* Cover: title flush-left, stacked */
+.cover .overlay,
+.covertext {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: flex-start;
+  gap: 2mm;
+  color: #f7f2e8;
+}
+
+.cover h1 {
+  margin: 0;
+  font-family: "Libre Clarendon", Georgia, serif;
+  font-size: 36pt;
+  line-height: 0.65;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #f7f2e8;
+}
+
+.cover h2 {
+  margin: 0;
+  font-family: "Libre Clarendon", Georgia, serif;
+  font-size: 18pt;
+  line-height: 1.0;
+  font-style: italic;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #f7f2e8;
+}
+
+.cover p {
+  margin: 0;
+  font-family: "Libre Clarendon", Georgia, serif;
+  font-size: 18pt;
+  line-height: 1.0;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #f7f2e8;
+}
+
+/* Image pages: single huge centered word / phrase */
+.imagepage .overlay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: #f7f2e8;
+}
+
+.imagepage h1 {
+  margin: 0;
+  font-family: "Libre Clarendon", Georgia, serif;
+  /* Clamp font siye between 48pt and 80pt, scaling with viewport width */
+  font-size: clamp(48pt, 12vw, 80pt);
+  line-height: 0.9;
+  font-weight: 200;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #f7f2e8;
+}
+
+.imagepage h1.long,
+.imagepage .long h1 {
+  font-size: clamp(24pt, 5.5vw, 58pt);
+  line-height: 0.92;
+}
+
+.overlay .wordcenter h1 {
+  font-family: "Libre Clarendon Wide", "Libre Clarendon", Georgia, serif;
+  font-weight: 300;
+  font-size: clamp(68pt, 16vw, 164pt);
+  line-height: 0.9;
+}
+
+/* Text pages: simple essay pages, no black overlay */
+.textpage .overlay {
+  position: absolute;
+  inset: 0;
+  padding: 16mm 18mm;
+  display: block;
+  color: #171717;
+}
+
+.textpage h2 {
+  margin: 0 0 4mm 0;
+  font-family: "Libre Clarendon", Georgia, serif;
+  font-size: 18pt;
+  line-height: 0.98;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #171717;
+}
+
+.textpage p,
+.textpage blockquote,
+.textpage ul,
+.textpage ol {
+  margin: 0 0 0.75em 0;
+  font-family: "Libre Clarendon", Georgia, serif;
+  font-size: 10.6pt;
+  line-height: 1.38;
+  color: #171717;
+}
+
+.textpage blockquote {
+  padding-left: 4mm;
+  border-left: 1px solid rgba(23, 23, 23, 0.35);
+}
+
+.textpage ul {
+  margin-left: 4mm;
+}
+
+/* Credits page can be image-backed or plain, but keep the typography lighter */
+.credits .overlay p,
+.credits .overlay ul,
+.credits .overlay li {
+  font-family: "Hanken Grotesk", Helvetica, Arial, sans-serif;
+}
+
+.corpus {
+  margin-top: 1mm;
+  padding: 0;
+}
+
+.corpus li {
+  display: block;
+  margin: 0 0 0.2em 0;
+}
+
+/* Safety: no browser-style links in PDF */
+a {
+  text-decoration: none;
+}
+
+@media print {
+  a {
+    text-decoration: none;
+  }
+}
