@@ -137,3 +137,37 @@ class TestCorpusStats(unittest.TestCase):
             self.assertEqual(stats["shotlists"], 2)
 
             self.assertEqual(get_top_silhouette_labels(str(project), limit=2), [("horse", 2), ("chair", 1)])
+
+    def test_motif_count_from_annotation_json(self):
+        """_count_motifs reads shot.motif from annotation JSON, not data/motifs/."""
+        from services.corpus_stats import _count_motifs
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project = Path(tmp_dir)
+
+            # Two movie shots with canonical shot.motif, one without
+            _write_json(
+                project / "data" / "annotations" / "shots" / "movie" / "film-one.json",
+                [
+                    {"shot": {"shot_id": "s1", "annotation": {}, "motif": "riding"}},
+                    {"shot": {"shot_id": "s2", "annotation": {}, "motif": "duel"}},
+                    {"shot": {"shot_id": "s3", "annotation": {}}},          # no motif
+                    {"shot": {"shot_id": "s4", "annotation": {}, "motif": ""}},  # empty string
+                    {"shot": {"shot_id": "s5", "annotation": {}, "motif": None}},  # null
+                ],
+            )
+            # One gameplay shot with motif
+            _write_json(
+                project / "data" / "annotations" / "shots" / "gameplay" / "game.json",
+                [
+                    {"shot": {"shot_id": "g1", "annotation": {}, "motif": "snow"}},
+                ],
+            )
+            # A sidecar file that must be ignored
+            sidecar = project / "data" / "motifs" / "movie" / "film-one.json"
+            _write_json(sidecar, {"shots": [{"shot_id": "s1", "value": "legacy"}] * 99})
+
+            result = _count_motifs(str(project))
+
+            self.assertEqual(result.get("movie", 0), 2)
+            self.assertEqual(result.get("gameplay", 0), 1)

@@ -1994,31 +1994,16 @@ def _auto_index_and_motif(
     *,
     verbose: bool = False,
 ) -> None:
-    """Run index processing and motif generation for one file after annotation."""
+    """Run motif generation then annotation-embedding index for one file after annotation."""
     from pathlib import Path
 
     stem = Path(filename).stem
     embed_model = prefs.get(_MODEL_KEYS["embed"], _MODEL_DEFAULTS["embed"])
     motif_model = prefs.get(_MODEL_KEYS["annotate"], _MODEL_DEFAULTS["annotate"])
 
-    # --- Index processing ---
-    print(f"  [{stem}] Running index processing…")
-    try:
-        result = _update_one_film(
-            project_path, filename, media_type, embed_model,
-            force=False, verbose=verbose,
-        )
-        if result == "ok":
-            print(f"  [{stem}] Index updated.")
-        elif result == "skip":
-            print(f"  [{stem}] Index up to date.")
-        else:
-            print(f"  ✗ [{stem}] Index processing failed.", file=sys.stderr)
-    except Exception as _exc:
-        print(f"  ✗ [{stem}] Index processing error: {_exc}", file=sys.stderr)
-
-    # --- Motif generation ---
+    # --- Motif generation (must run before annotation-embeddings so motif is included) ---
     print(f"  [{stem}] Running motif generation…")
+    motif_ok = False
     try:
         from data.motif import generate_motifs_for_movie
         motif_summary = generate_motifs_for_movie(
@@ -2033,10 +2018,27 @@ def _auto_index_and_motif(
         n_skip = motif_summary.get("skipped", 0)
         n_fail = motif_summary.get("failed", 0)
         print(f"  [{stem}] Motifs: generated={n_gen} skipped={n_skip} failed={n_fail}")
+        motif_ok = True
     except FileNotFoundError as _exc:
         print(f"  ✗ [{stem}] Motif generation skipped: {_exc}", file=sys.stderr)
     except Exception as _exc:
         print(f"  ✗ [{stem}] Motif generation error: {_exc}", file=sys.stderr)
+
+    # --- Annotation-embedding index (force=True so motif field is always included) ---
+    print(f"  [{stem}] Running annotation-embedding index…")
+    try:
+        result = _update_one_film(
+            project_path, filename, media_type, embed_model,
+            force=motif_ok, verbose=verbose,
+        )
+        if result == "ok":
+            print(f"  [{stem}] Index updated.")
+        elif result == "skip":
+            print(f"  [{stem}] Index up to date.")
+        else:
+            print(f"  ✗ [{stem}] Index processing failed.", file=sys.stderr)
+    except Exception as _exc:
+        print(f"  ✗ [{stem}] Index processing error: {_exc}", file=sys.stderr)
 
 
 def _shotlist_annotate(args):
@@ -5936,14 +5938,16 @@ def _index_palette_get(args):
 
 
 def _index_motif(args):
-    """Dispatch ``crossing index motif <generate|attach>``."""
+    """Dispatch ``crossing index motif <generate|attach|audit>``."""
     motif_action = getattr(args, "motif_action", None)
     if motif_action == "generate":
         _index_motif_generate(args)
     elif motif_action == "attach":
         _index_motif_attach(args)
+    elif motif_action == "audit":
+        _index_motif_audit(args)
     else:
-        print("✗ index motif: specify a subcommand (generate, attach)", file=sys.stderr)
+        print("✗ index motif: specify a subcommand (generate, attach, audit)", file=sys.stderr)
         sys.exit(1)
 
 
@@ -6182,6 +6186,80 @@ def _index_motif_attach(args):
             f"Use --force to overwrite.",
             file=sys.stderr,
         )
+
+
+def _index_motif_audit(args):
+    """Audit canonical shot.motif coverage across annotation JSON files."""
+    from services.motif_audit import audit_motifs_for_all, audit_motifs_for_file
+    from data.shotlist import resolve_filename
+
+    project_path = prefs.get("path")
+    media_type   = normalize_media_type(getattr(args, "media", "movie"))
+    do_all       = getattr(args, "all",          False)
+    missing_only = getattr(args, "missing_only", False)
+    zero_only    = getattr(args, "zero_only",    False)
+    limit        = getattr(args, "limit",        None)
+    verbose      = getattr(args, "verbose",      False)
+    query_words  = getattr(args, "query", None) or []
+    movie_query  = getattr(args, "movie", None) or (" ".join(query_words).strip() or None)
+    tmdb         = getattr(args, "tmdb", None)
+
+    if do_all:
+        report = audit_motifs_for_all(project_path, media_type)
+        pct = report["coverage"] * 100
+        print("Motif Audit\n")
+        print(f"Media: {media_type}")
+        print(f"Files checked:       {report['files_checked']}")
+        print(f"Shots checked:       {report['shots_checked']}")
+        print(f"Shots with motif:    {report['motifs_present']}")
+        print(f"Shots missing motif: {report['motifs_missing']}")
+        print(f"Coverage:            {pct:.2f}%")
+
+        files = report["files"]
+        if missing_only:
+            files = [f for f in files if f["missing"] > 0]
+        if zero_only:
+            files = [f for f in files if f["present"] == 0]
+        if limit is not None:
+            files = files[:limit]
+
+        if files:
+            print("\nFiles with missing motifs:")
+            for f in files:
+                label = f"{f['missing']} missing / {f['total']} total"
+                print(f"  {label:<30}  {f['filename']}")
+                if verbose and f["missing_shot_ids"]:
+                    print(f"    missing shot_ids:")
+                    for sid in f["missing_shot_ids"]:
+                        print(f"      {sid}")
+        return
+
+    if tmdb is None and not movie_query:
+        print("✗ Specify a target: --all, --title <value>, or --tmdb <id>.", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        filename = resolve_filename(project_path, tmdb, movie_query, media_type)
+    except ValueError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        f = audit_motifs_for_file(project_path, filename, media_type)
+    except (FileNotFoundError, OSError) as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    pct = (f["present"] / f["total"] * 100) if f["total"] else 100.0
+    print(f"Motif Audit: {Path(filename).stem}\n")
+    print(f"Shots checked:       {f['total']}")
+    print(f"Shots with motif:    {f['present']}")
+    print(f"Shots missing motif: {f['missing']}")
+    print(f"Coverage:            {pct:.2f}%")
+    if verbose and f["missing_shot_ids"]:
+        print("\nMissing shot_ids (first 10):")
+        for sid in f["missing_shot_ids"]:
+            print(f"  {sid}")
 
 
 # ---------------------------------------------------------------------------
@@ -8074,7 +8152,10 @@ def build_parser():
             "  crossing index motif generate --title 'The Searchers'\n"
             "  crossing index motif attach --all\n"
             "  crossing index motif attach --media gameplay --title 'ce5e0bba'\n"
-            "  crossing index motif attach --all --dry-run --verbose"
+            "  crossing index motif attach --all --dry-run --verbose\n"
+            "  crossing index motif audit --media movie --all\n"
+            "  crossing index motif audit --media movie --all --missing-only\n"
+            "  crossing index motif audit --media movie --title 'High Noon'"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -8159,6 +8240,49 @@ def build_parser():
     )
     _add_dry_run_arg(p_index_motif_attach, help="Report what would change without modifying any files")
     _add_verbose_arg(p_index_motif_attach, help="Print per-shot detail (added / unchanged / conflict)")
+
+    p_index_motif_audit = motif_sub.add_parser(
+        "audit",
+        help="Report canonical shot.motif coverage (read-only)",
+        epilog=(
+            "Examples:\n"
+            "  crossing index motif audit --media movie --all\n"
+            "  crossing index motif audit --media movie --all --missing-only\n"
+            "  crossing index motif audit --media movie --all --zero-only\n"
+            "  crossing index motif audit --media movie --all --verbose\n"
+            "  crossing index motif audit --media movie --title 'High Noon'"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_index_motif_audit.set_defaults(func=cmd_index)
+    p_index_motif_audit.add_argument(
+        "query",
+        nargs="*",
+        help="Title keywords to identify a single film",
+    )
+    p_index_motif_audit.add_argument(
+        "--all", action="store_true",
+        help="Audit every file that has an annotation JSON",
+    )
+    p_index_motif_audit.add_argument(
+        "--title", dest="movie", default=None, metavar="TITLE",
+        help="Title or slug substring to identify a single film",
+    )
+    _add_tmdb_arg(p_index_motif_audit, help="TMDb ID of the film (unambiguous alternative to --title)")
+    _add_media_arg(p_index_motif_audit)
+    p_index_motif_audit.add_argument(
+        "--missing-only", action="store_true",
+        help="List only files where at least one shot is missing a motif",
+    )
+    p_index_motif_audit.add_argument(
+        "--zero-only", action="store_true",
+        help="List only files where no shots have a motif",
+    )
+    p_index_motif_audit.add_argument(
+        "--limit", type=int, default=None, metavar="N",
+        help="Limit the number of files listed",
+    )
+    _add_verbose_arg(p_index_motif_audit, help="Print the first missing shot_ids per file")
 
     # media command group
     p_media = sub.add_parser(

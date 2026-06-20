@@ -108,9 +108,9 @@ def _count_best_frames(project_path: str) -> dict[str, int]:
 
 
 def _count_motifs(project_path: str) -> dict[str, int]:
-    """Count shots that have a motif value, broken down by media type."""
+    """Count shots with a canonical shot.motif string in annotation JSON, by media type."""
     result: dict[str, int] = {}
-    base = Path(project_path) / "data" / "motifs"
+    base = Path(project_path) / "data" / "annotations" / "shots"
     if not base.exists():
         return result
     for mt_dir in sorted(base.iterdir()):
@@ -118,10 +118,19 @@ def _count_motifs(project_path: str) -> dict[str, int]:
             continue
         total = 0
         for json_file in mt_dir.glob("*.json"):
+            if json_file.name.endswith(".manifest.json"):
+                continue
             try:
-                data = json.loads(json_file.read_text(encoding="utf-8"))
-                shots = data.get("shots", []) if isinstance(data, dict) else data
-                total += sum(1 for s in shots if isinstance(s, dict) and s.get("value"))
+                entries = json.loads(json_file.read_text(encoding="utf-8"))
+                for entry in entries:
+                    if not isinstance(entry, dict):
+                        continue
+                    shot = entry.get("shot")
+                    if not isinstance(shot, dict):
+                        continue
+                    motif = shot.get("motif")
+                    if isinstance(motif, str) and motif.strip():
+                        total += 1
             except (OSError, json.JSONDecodeError):
                 continue
         result[mt_dir.name] = total
@@ -170,8 +179,13 @@ def _count_shots_with_best_frame(project_path: str) -> dict[str, int]:
             try:
                 entries = json.loads(json_file.read_text(encoding="utf-8"))
                 for entry in entries:
-                    bf = entry.get("shot", {}).get("best_frame") if isinstance(entry, dict) else None
-                    if bf and bf.get("frame") is not None:
+                    if not isinstance(entry, dict):
+                        continue
+                    shot = entry.get("shot")
+                    if not isinstance(shot, dict):
+                        continue
+                    bf = shot.get("best_frame")
+                    if bf and isinstance(bf, dict) and bf.get("frame") is not None:
                         total += 1
             except (OSError, json.JSONDecodeError):
                 continue
