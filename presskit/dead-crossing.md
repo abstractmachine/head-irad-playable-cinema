@@ -19,7 +19,7 @@ Douglas Edric Stanley
 ![](images/standoff.jpg){.bg}
 
 ::: {.overlay .wordcenter}
-# CROSSROADS
+# STANDOFF
 :::
 :::
 
@@ -28,7 +28,7 @@ Douglas Edric Stanley
 ::: {.page .textpage}
 ::: {.overlay .textcopy}
 
-## STANDOFF
+## CROSSROADS
 
 Cowpokes riding through the ghost town of an abandoned Western.
 
