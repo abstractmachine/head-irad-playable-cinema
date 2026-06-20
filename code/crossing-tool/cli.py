@@ -6218,6 +6218,9 @@ def _index_motif_audit(args):
         files = report["files"]
         if missing_only:
             files = [f for f in files if f["missing"] > 0]
+        elif not zero_only:
+            # default: only show files that actually have missing shots
+            files = [f for f in files if f["missing"] > 0]
         if zero_only:
             files = [f for f in files if f["present"] == 0]
         if limit is not None:
