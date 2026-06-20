@@ -4378,6 +4378,8 @@ def cmd_index(args):
         _index_embed(args)
     elif sub in ("process", "annotation-embeddings"):
         _index_update(args)
+    elif sub == "frame-embeddings":
+        _index_frame_embeddings(args)
     elif sub == "audit":
         _index_audit(args)
     elif sub == "vocabulary":
@@ -5047,6 +5049,105 @@ def _index_vocabulary(args):
         print(f"Saved: {out_rel}")
 
 
+def _index_frame_embeddings(args):
+    """Build frame-embedding index for one film or all films."""
+    from data.shotlist import resolve_filename
+    from services.frame_embeddings import build_frame_embeddings
+
+    project_path = prefs.get("path")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
+    query_str = getattr(args, "movie", None)
+    tmdb = getattr(args, "tmdb", None)
+    do_all = getattr(args, "all", False)
+    force = getattr(args, "force", False)
+    verbose = getattr(args, "verbose", False)
+    batch_size = getattr(args, "batch_size", 32)
+    limit = getattr(args, "limit", None)
+
+    model_name = prefs.get(_MODEL_KEYS["frame_match"], _MODEL_DEFAULTS["frame_match"])
+
+    def _run_one(filename: str) -> str:
+        """Embed one film. Returns 'ok', 'skip', or 'error'."""
+        try:
+            result = build_frame_embeddings(
+                project_path=project_path,
+                filename=filename,
+                media_type=media_type,
+                model_name=model_name,
+                force=force,
+                verbose=verbose,
+                batch_size=batch_size,
+                limit=limit,
+            )
+        except FileNotFoundError as exc:
+            print(f"  ✗ {exc}", file=sys.stderr)
+            return "error"
+        except RuntimeError as exc:
+            print(f"  ✗ {exc}", file=sys.stderr)
+            return "error"
+        except Exception as exc:
+            print(f"  ✗ unexpected error: {exc}", file=sys.stderr)
+            return "error"
+
+        status = result.get("status", "ok")
+        stem = Path(filename).stem
+
+        if status == "skip":
+            print(f"✓ {stem}  current")
+            return "skip"
+
+        shape = result.get("shape", [])
+        valid_count = result.get("valid_count", 0)
+        missing_count = result.get("missing_count", 0)
+        npy_path = result.get("npy_path")
+        shape_str = f"{shape[0]} × {shape[1]}" if len(shape) == 2 else str(shape)
+
+        if verbose:
+            print(f"✓ frame-embeddings {stem}")
+            print(f"  shape:        {shape_str}")
+            print(f"  valid:        {valid_count}")
+            print(f"  missing:      {missing_count}")
+            print(f"  model:        {model_name}")
+            if npy_path:
+                rel = Path(npy_path).relative_to(project_path)
+                print(f"  saved:        {rel}")
+        else:
+            miss_note = f"  missing={missing_count}" if missing_count else ""
+            print(f"✓ {stem}  updated  valid={valid_count}{miss_note}")
+        return "ok"
+
+    if do_all:
+        filenames = _resolve_all_annotation_filenames(project_path, media_type)
+        if not filenames:
+            print(f"No annotation JSON files found under {media_type}.", file=sys.stderr)
+            sys.exit(1)
+        counts: dict[str, int] = {"ok": 0, "skip": 0, "error": 0}
+        for fn in filenames:
+            r = _run_one(fn)
+            counts[r] = counts.get(r, 0) + 1
+        total = sum(counts.values())
+        parts = []
+        if counts["ok"]:
+            parts.append(f"{counts['ok']} updated")
+        if counts["skip"]:
+            parts.append(f"{counts['skip']} current")
+        if counts["error"]:
+            parts.append(f"{counts['error']} failed")
+        print(f"\n{', '.join(parts)}  —  {total} total")
+    else:
+        if tmdb is None and not query_str:
+            print("✗ Provide --title <value>, --tmdb <id>, or --all.", file=sys.stderr)
+            sys.exit(1)
+        try:
+            filename = resolve_filename(project_path, tmdb, query_str, media_type)
+        except ValueError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            sys.exit(1)
+        r = _run_one(filename)
+        if r == "error":
+            sys.exit(1)
+
+
 def _index_stats(args):
     """Print a corpus-wide statistical summary."""
     from services.corpus_stats import get_corpus_stats, get_top_silhouette_labels
@@ -5114,8 +5215,13 @@ def _index_stats(args):
     blank()
 
     # ── Embeddings ───────────────────────────────────────────────────────────
-    row("Embedding Indexes (.npy)", stats["embeddings"])
+    row("Annotation Embeddings (.npy)", stats["embeddings"])
     for mt, n in sorted(stats.get("embeddings_by_type", {}).items()):
+        row(f"  ↳ {mt.capitalize()}", n)
+    blank()
+
+    row("Frame Embeddings (.frames.npy)", stats["frame_embeddings"])
+    for mt, n in sorted(stats.get("frame_embeddings_by_type", {}).items()):
         row(f"  ↳ {mt.capitalize()}", n)
     blank()
 
@@ -7832,6 +7938,47 @@ def build_parser():
         help="Output raw JSON instead of formatted text",
     )
     _add_verbose_arg(p_index_stats, help="Print top silhouette labels after the summary")
+
+    p_index_frame_embed = index_sub.add_parser(
+        "frame-embeddings",
+        help=(
+            "Embed best-frame PNGs with CLIP and save a frame-embedding index "
+            "(.frames.npy / .frames.valid.npy / .frames.manifest.json)."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  crossing index frame-embeddings --media gameplay --title ce5e0bba --force --verbose\n"
+            "  crossing index frame-embeddings --media movie --title \"3 10 To Yuma\" --force --verbose\n"
+            "  crossing index frame-embeddings --media movie --all --force\n"
+            "  crossing index frame-embeddings --media gameplay --all --force\n"
+            "  crossing index frame-embeddings --media gameplay --title ce5e0bba --limit 20 --verbose"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_index_frame_embed.set_defaults(func=cmd_index)
+    p_index_frame_embed.add_argument(
+        "--title", dest="movie", default=None, metavar="TITLE",
+        help="Title, slug, or partial ID to identify a single film",
+    )
+    _add_tmdb_arg(p_index_frame_embed, help="TMDb ID of the film (unambiguous alternative to --title)")
+    _add_media_arg(p_index_frame_embed)
+    p_index_frame_embed.add_argument(
+        "--all", action="store_true",
+        help="Process all films that have an annotation JSON",
+    )
+    p_index_frame_embed.add_argument(
+        "--force", action="store_true",
+        help="Overwrite existing frame-embedding files",
+    )
+    p_index_frame_embed.add_argument(
+        "--batch-size", type=int, default=32, metavar="N",
+        help="Number of images per CLIP forward pass (default: 32)",
+    )
+    p_index_frame_embed.add_argument(
+        "--limit", type=int, default=None, metavar="N",
+        help="Process only the first N annotation items (smoke testing)",
+    )
+    _add_verbose_arg(p_index_frame_embed, help="Print per-shot / per-batch progress")
 
     p_index_audit = index_sub.add_parser(
         "audit",

@@ -152,14 +152,45 @@ def _count_palettes(project_path: str) -> dict[str, int]:
 
 
 def _count_embeddings(project_path: str) -> dict[str, int]:
-    """Count .npy embedding files under data/annotations/shots/<media_type>/."""
+    """Count annotation-embedding .npy files under data/annotations/shots/<media_type>/.
+
+    Excludes ``*.frames.npy`` (frame-embedding layer) and
+    ``*.frames.valid.npy`` (frame validity masks) so the count reflects
+    only annotation-embedding indexes.
+    """
     result: dict[str, int] = {}
     base = Path(project_path) / "data" / "annotations" / "shots"
     if not base.exists():
         return result
     for mt_dir in sorted(base.iterdir()):
         if mt_dir.is_dir():
-            result[mt_dir.name] = len(list(mt_dir.glob("*.npy")))
+            count = sum(
+                1
+                for f in mt_dir.glob("*.npy")
+                if not f.name.endswith(".frames.npy")
+                and not f.name.endswith(".frames.valid.npy")
+            )
+            result[mt_dir.name] = count
+    return result
+
+
+def _count_frame_embeddings(project_path: str) -> dict[str, int]:
+    """Count frame-embedding .frames.npy files under data/annotations/shots/<media_type>/.
+
+    Counts only ``*.frames.npy`` — does not count ``*.frames.valid.npy``.
+    """
+    result: dict[str, int] = {}
+    base = Path(project_path) / "data" / "annotations" / "shots"
+    if not base.exists():
+        return result
+    for mt_dir in sorted(base.iterdir()):
+        if mt_dir.is_dir():
+            count = sum(
+                1
+                for f in mt_dir.glob("*.frames.npy")
+                if not f.name.endswith(".frames.valid.npy")
+            )
+            result[mt_dir.name] = count
     return result
 
 
@@ -240,6 +271,7 @@ def get_corpus_stats(project_path: str) -> dict[str, Any]:
     motifs_by_type = _count_motifs(project_path)
     palettes = _count_palettes(project_path)
     embeddings_by_type = _count_embeddings(project_path)
+    frame_embeddings_by_type = _count_frame_embeddings(project_path)
     shots_with_best_frame_by_type = _count_shots_with_best_frame(project_path)
 
     return {
@@ -261,9 +293,12 @@ def get_corpus_stats(project_path: str) -> dict[str, Any]:
         "motifs_by_type": motifs_by_type,
         # Palettes
         "palettes": palettes.get("total", 0),
-        # Embeddings
+        # Annotation embeddings (.npy, excludes .frames.npy)
         "embeddings": sum(embeddings_by_type.values()),
         "embeddings_by_type": embeddings_by_type,
+        # Frame embeddings (.frames.npy)
+        "frame_embeddings": sum(frame_embeddings_by_type.values()),
+        "frame_embeddings_by_type": frame_embeddings_by_type,
         # Vocabulary
         "vocabulary_terms": vocabulary_terms,
         # Silhouettes

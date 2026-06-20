@@ -872,3 +872,65 @@ def migrate_best_frame_sources(
             files_updated += 1
 
     return {"files_updated": files_updated, "shots_updated": shots_updated}
+
+
+# ---------------------------------------------------------------------------
+# Public frame-embedding helpers
+# ---------------------------------------------------------------------------
+
+def load_frame_embedding_model(project_path: str, model_name: str):
+    """Load the CLIP model for frame image embedding.
+
+    Thin public wrapper around ``_load_clip_model``.
+
+    Returns ``(model, processor, device)`` — the same tuple produced by the
+    internal helper so that call sites for best-frame detection and
+    frame-embedding indexing share the same loader.
+    """
+    return _load_clip_model(project_path, model_name)
+
+
+def embed_frame_images(
+    images: List,
+    model,
+    processor,
+    device: str,
+) -> "np.ndarray":
+    """Embed a batch of PIL images using the CLIP image encoder.
+
+    Each image is independently encoded via ``model.get_image_features``.
+    The resulting vectors are L2-normalised to unit length so they are
+    ready for cosine-similarity search.
+
+    Args:
+        images:    List of ``PIL.Image`` objects (RGB mode recommended).
+        model:     A loaded ``CLIPModel`` instance.
+        processor: The matching ``CLIPProcessor`` instance.
+        device:    ``"cuda"`` or ``"cpu"``.
+
+    Returns:
+        ``np.ndarray`` of shape ``(len(images), dim)`` in float32.
+        Returns an empty array of shape ``(0, 0)`` when *images* is empty.
+    """
+    import torch
+    import numpy as np
+
+    if not images:
+        return np.zeros((0, 0), dtype="float32")
+
+    inputs = processor(
+        images=images,
+        return_tensors="pt",
+        padding=True,
+    ).to(device)
+
+    with torch.no_grad():
+        # Use the vision model + visual projection directly so we only need
+        # pixel_values and avoid any text-related keys the processor might add.
+        pixel_values = inputs["pixel_values"]
+        vision_outputs = model.vision_model(pixel_values=pixel_values)
+        image_embeds = model.visual_projection(vision_outputs.pooler_output)
+
+    # L2-normalise to unit vectors
+    image_embeds = image_embeds / image_embeds.norm(dim=-1, keepdim=True)
+    return image_embeds.cpu().numpy().astype("float32")

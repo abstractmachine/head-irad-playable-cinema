@@ -623,3 +623,46 @@ def build_manifest(
             "embed_model": embed_model,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Frame-embedding paths
+# ---------------------------------------------------------------------------
+
+def get_frame_embeddings_path(project_path: str, filename: str, media_type: str) -> Path:
+    """Return the canonical path for the frame-embeddings ``.frames.npy`` file.
+
+    ``<project>/data/annotations/shots/<media_type>/<stem>.frames.npy``
+    """
+    stem = Path(filename).stem
+    return (
+        Path(project_path)
+        / "data" / "annotations" / "shots" / media_type
+        / f"{stem}.frames.npy"
+    )
+
+
+def get_frame_valid_path(project_path: str, filename: str, media_type: str) -> Path:
+    """Return the canonical path for the frame validity mask ``.frames.valid.npy`` file.
+
+    ``<project>/data/annotations/shots/<media_type>/<stem>.frames.valid.npy``
+    """
+    stem = Path(filename).stem
+    return (
+        Path(project_path)
+        / "data" / "annotations" / "shots" / media_type
+        / f"{stem}.frames.valid.npy"
+    )
+
+
+def get_frame_manifest_path(project_path: str, filename: str, media_type: str) -> Path:
+    """Return the canonical path for the frame-embedding manifest ``.frames.manifest.json``.
+
+    ``<project>/data/annotations/shots/<media_type>/<stem>.frames.manifest.json``
+    """
+    stem = Path(filename).stem
+    return (
+        Path(project_path)
+        / "data" / "annotations" / "shots" / media_type
+        / f"{stem}.frames.manifest.json"
+    )

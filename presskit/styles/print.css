@@ -144,8 +144,7 @@ hr {
 .imagepage h1 {
   margin: 0;
   font-family: "Libre Clarendon", Georgia, serif;
-  /* Clamp font siye between 48pt and 80pt, scaling with viewport width */
-  font-size: clamp(48pt, 12vw, 80pt);
+  font-size: 96pt;
   line-height: 0.9;
   font-weight: 200;
   text-transform: uppercase;
@@ -166,23 +165,39 @@ hr {
   line-height: 0.9;
 }
 
-/* Text pages: simple essay pages, no black overlay */
+/* Text pages: 6-column Müller-Brockmann grid
+   Col 1 (39mm) reserved for captions later.
+   Cols 2+3 and 4+5 carry the two text flows.
+   Col 6 (39mm) reserved / right margin.
+   Outer margins: 18mm. Gutter: 5mm.
+   left padding  = 18 + 39.3 + 5 = 62mm
+   right padding = 18 + 39.3 + 5 = 62mm
+   text area     = 261 - 88 = 173mm → 2 cols × 84mm + 5mm gap
+*/
 .textpage .overlay {
-  position: absolute;
-  inset: 0;
-  padding: 16mm 18mm;
+  position: static;
+  width: 297mm;
+  height: 210mm;
+  padding: 16mm 62mm 16mm 62mm;
+  box-sizing: border-box;
   display: block;
   color: #171717;
+  column-count: 2;
+  column-gap: 5mm;
+  column-fill: auto;
 }
 
 .textpage h2 {
-  margin: 0 0 4mm 0;
+  float: left;
+  clear: left;
+  width: 39mm;
+  margin: 0 0 0 -44mm;
   font-family: "Libre Clarendon", Georgia, serif;
-  font-size: 18pt;
-  line-height: 0.98;
+  font-size: 10.6pt;
+  line-height: 1.38;
   font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
+  text-transform: none;
+  letter-spacing: 0;
   color: #171717;
 }
 
