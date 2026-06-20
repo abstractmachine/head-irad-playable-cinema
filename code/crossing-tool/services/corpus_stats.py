@@ -64,11 +64,7 @@ def _count_present_assets(project_path: str, metadata: list[dict], exists_fn) ->
 def _shotlist_path_exists(project_path: str, filename: str) -> bool:
     from data.shotlist import get_shotlist_path
 
-    path = get_shotlist_path(project_path, filename, "movie")
-    if path.exists():
-        return True
-    legacy = get_shotlist_path(project_path, filename, "movies")
-    return legacy.exists()
+    return get_shotlist_path(project_path, filename, "movie").exists()
 
 
 def _subtitle_path_exists(project_path: str, filename: str) -> bool:
@@ -271,7 +267,7 @@ def get_corpus_stats(project_path: str) -> dict[str, Any]:
 
     return {
         # Media
-        "movies": len(movie_metadata),
+        "movie_videos": len(movie_metadata),
         "gameplay_videos": len(gameplay_metadata),
         # Annotations
         "annotated_shots": annotated_shots,

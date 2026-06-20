@@ -258,9 +258,6 @@ def find_latest_title_prompt(project_path: str, prefix: str) -> Optional[Path]:
     """
     d = Path(project_path) / "prompts" / "movie" / "motifs"
     if not d.exists() or not d.is_dir():
-        # Backward-compat: try legacy 'movies/' folder
-        d = Path(project_path) / "prompts" / "movies" / "motifs"
-    if not d.exists() or not d.is_dir():
         return None
     pattern = f"title-{prefix}-*.txt"
     # Skip zero-byte files (often in-progress drafts that haven't been written yet)

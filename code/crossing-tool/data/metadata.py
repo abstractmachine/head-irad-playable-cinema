@@ -12,13 +12,19 @@ import warnings
 
 _MEDIA_TYPES = ("movie", "gameplay")
 
-# Accepted aliases → canonical media type
-_MEDIA_TYPE_ALIASES: dict[str, str] = {"movies": "movie", "movie": "movie", "gameplay": "gameplay"}
-
 
 def normalize_media_type(s: str) -> str:
-    """Normalise legacy ``"movies"`` alias to canonical ``"movie"``."""
-    return _MEDIA_TYPE_ALIASES.get(s, s)
+    """Return the canonical media type for *s*.
+
+    Only ``"movie"`` and ``"gameplay"`` are valid.  ``"movies"`` and any other
+    value raise ``ValueError``.
+    """
+    if s in _MEDIA_TYPES:
+        return s
+    raise ValueError(
+        f"Invalid media type: {s!r}. "
+        f"Valid media types: {', '.join(_MEDIA_TYPES)}"
+    )
 
 
 MOVIE_REQUIRED = {"title", "year"}
@@ -409,10 +415,7 @@ def fetch_metadata(filename: str, project_path: str) -> dict[str, Any]:
     ]
 
     # Get actual video file duration using ffprobe
-    # Try canonical path first, fall back to legacy 'movies/' folder
     video_path = Path(project_path) / "media" / "videos" / "movie" / filename
-    if not video_path.exists():
-        video_path = Path(project_path) / "media" / "videos" / "movies" / filename
     actual_duration = None
     if video_path.exists():
         actual_duration = _get_video_duration(video_path)
@@ -444,15 +447,12 @@ def _json_path(project_path: str, media_type: str) -> Path:
 def load_json_metadata(project_path: str, media_type: str) -> list[dict]:
     """Load records from the JSON metadata file.  Returns [] if the file does not exist.
 
-    Accepts ``"movie"`` (canonical) or the legacy ``"movies"`` alias.
+    Accepts ``"movie"`` or ``"gameplay"`` (canonical media types only).
     When the canonical ``movie.json`` does not exist, falls back to reading the
     legacy ``movies.json`` so that existing project data continues to load.
     """
     media_type = normalize_media_type(media_type)
     path = _json_path(project_path, media_type)
-    if not path.exists() and media_type == "movie":
-        # Backward-compat: try legacy plural filename
-        path = _json_path(project_path, "movies")
     if not path.exists():
         return []
     data = json.loads(path.read_text(encoding="utf-8"))

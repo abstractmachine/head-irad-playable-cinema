@@ -84,9 +84,6 @@ def find_latest_motif_prompt(project_path: str, media_type: str, prefix: str = "
     Returns ``None`` when the directory does not exist or no match found.
     """
     d = Path(project_path) / "prompts" / media_type / "motifs"
-    if not d.exists() and media_type == "movie":
-        # Backward-compat: try legacy 'movies/' folder
-        d = Path(project_path) / "prompts" / "movies" / "motifs"
     if not d.exists() or not d.is_dir():
         return None
     pattern = f"{prefix}-*.txt" if prefix else "*.txt"

@@ -119,10 +119,8 @@ def list_shotlists(project_path: str, media_type: str | None = None) -> list[dic
 
     types_to_check = [media_type] if media_type else ['movie', 'gameplay']
     for mtype in types_to_check:
-        # Try canonical path; fall back to legacy 'movies/' folder for the movie type
+        # Try canonical path only
         shotlist_dir = Path(project_path) / "data" / "shotlists" / mtype
-        if not shotlist_dir.is_dir() and mtype == "movie":
-            shotlist_dir = Path(project_path) / "data" / "shotlists" / "movies"
         if not shotlist_dir.is_dir():
             continue
         for csv_path in sorted(shotlist_dir.glob("*.csv")):
@@ -131,12 +129,11 @@ def list_shotlists(project_path: str, media_type: str | None = None) -> list[dic
             # Find metadata entry whose filename stem matches
             entry = None
             for fn, e in meta_by_filename.items():
-                if Path(fn).stem == stem and e.get('media_type', 'movie') in ('movie', 'movies', mtype):
+                if Path(fn).stem == stem and e.get('media_type', 'movie') in ('movie', mtype):
                     entry = e
                     break
             if entry is None:
                 continue
-
             with open(csv_path, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 rows = list(reader)
@@ -162,9 +159,6 @@ def list_shotlists(project_path: str, media_type: str | None = None) -> list[dic
 def read_shotlist(project_path: str, filename: str, media_type: str = "movie") -> list[dict[str, Any]]:
     """Read shotlist CSV and return all shots."""
     shotlist_path = get_shotlist_path(project_path, filename, media_type)
-    if not shotlist_path.exists() and media_type == "movie":
-        # Backward-compat: try legacy 'movies/' folder
-        shotlist_path = get_shotlist_path(project_path, filename, "movies")
     if not shotlist_path.exists():
         raise FileNotFoundError(f"Shotlist not found: {shotlist_path}")
     

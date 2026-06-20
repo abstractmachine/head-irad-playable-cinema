@@ -183,9 +183,8 @@ def list_movies(
 
     Read-only. Reads: data/metadata/<media_type>.json
     """
-    if media_type not in ("movie", "movies", "gameplay"):
+    if media_type not in ("movie", "gameplay"):
         return _err(f"Invalid media_type {media_type!r}. Must be 'movie' or 'gameplay'.")
-    media_type = "movie" if media_type == "movies" else media_type
 
     result = _ctx()
     if isinstance(result, str):

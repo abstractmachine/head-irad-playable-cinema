@@ -877,9 +877,6 @@ def scan_catalog(
     Pass *filename_stem* to restrict to one media item.
     """
     base = catalog_base_dir(project_path, media_type)
-    if not base.exists() and media_type == "movie":
-        # Backward-compat: existing projects stored catalog under 'movies/'
-        base = catalog_base_dir(project_path, "movies")
     records: list[dict] = []
 
     if not base.exists():

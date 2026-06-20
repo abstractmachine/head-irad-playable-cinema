@@ -126,7 +126,7 @@ class TestCorpusStats(unittest.TestCase):
 
             stats = get_corpus_stats(str(project))
 
-            self.assertEqual(stats["movies"], 2)
+            self.assertEqual(stats["movie_videos"], 2)
             self.assertEqual(stats["gameplay_videos"], 1)
             self.assertEqual(stats["vocabulary_terms"], 3)
             self.assertEqual(stats["annotated_shots"], 3)

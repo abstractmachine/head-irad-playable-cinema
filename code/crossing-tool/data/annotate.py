@@ -48,10 +48,6 @@ def _append_log(path, text: str) -> None:
 def find_latest_prompt(project_path: str, media_type: str = "movie", prefix: str = "") -> Optional[Path]:
     d = Path(project_path) / "prompts" / media_type / "shots"
     if not d.exists() or not d.is_dir():
-        # Backward-compat: try legacy 'movies/' prompts folder
-        if media_type == "movie":
-            d = Path(project_path) / "prompts" / "movies" / "shots"
-    if not d.exists() or not d.is_dir():
         return None
     pattern = f"{prefix}-*.txt" if prefix else "*.txt"
     files = [p for p in d.glob(pattern) if p.is_file()]
@@ -1344,12 +1340,6 @@ def _load_existing_agg(project_path: str, filename: str, media_type: str) -> Dic
     agg_path = (
         Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{stem}.annotations.json"
     )
-    # Backward-compat: if canonical path doesn't exist and media_type is 'movie',
-    # try the legacy 'movies/' folder.
-    if not agg_path.exists() and media_type == "movie":
-        agg_path = (
-            Path(project_path) / "data" / "annotations" / "shots" / "movies" / f"{stem}.annotations.json"
-        )
     result: Dict[str, Any] = {}
     if not agg_path.exists():
         return result

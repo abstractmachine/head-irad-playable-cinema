@@ -13,7 +13,7 @@ if _PROJECT_ROOT not in sys.path:
 from tool import prefs
 from tool.helpers import _add_media_arg, _add_tmdb_arg, _add_verbose_arg, _add_dry_run_arg, normalize_media_type
 
-_MEDIA_FOLDER = {"movie": "movie", "movies": "movie", "gameplay": "gameplay"}
+_MEDIA_FOLDER = {"movie": "movie", "gameplay": "gameplay"}
 _TOOL_VERSION = "2.0.0"  # Updated for new folder structure (videos/thumbnails/subtitles with media_type subdirs)
 
 
@@ -5301,7 +5301,7 @@ def _index_stats(args):
         return
 
     project_name = prefs.get("name") or Path(project_path).name
-    movie_count  = stats["movies"]
+    movie_count  = stats["movie_videos"]
     gp_count     = stats["gameplay_videos"]
 
     W = 31  # right-align column width

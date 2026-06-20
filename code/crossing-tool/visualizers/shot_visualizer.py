@@ -2750,7 +2750,7 @@ def main():
     parser = argparse.ArgumentParser(description="Validate shot boundaries with frame-precise display")
     parser.add_argument('query', nargs='?', help="Filename substring to match")
     parser.add_argument('--tmdb', type=int, help="TMDb ID")
-    parser.add_argument('--media', choices=['movie', 'movies', 'gameplay'], default='movie')
+    parser.add_argument('--media', choices=['movie', 'gameplay'], default='movie')
     parser.add_argument('--project', help="Project path (default: current directory)")
     parser.add_argument('--filenames', nargs='+', help="Explicit list of filenames (passed by cli.py)")
     parser.add_argument('--all', action='store_true', help="Validate all movies with shotlists")
@@ -2813,8 +2813,6 @@ def main():
     if args.media != "gameplay":
         for fn in filenames:
             shotlist_path = get_shotlist_path(project_path, fn, args.media)
-            if not shotlist_path.exists() and args.media == "movie":
-                shotlist_path = get_shotlist_path(project_path, fn, "movies")
             if not shotlist_path.exists():
                 print(f"✗ Error: No shotlist found for {fn}", file=sys.stderr)
                 print("Run 'crossing shotlist shot detect' first to generate shotlist.", file=sys.stderr)
