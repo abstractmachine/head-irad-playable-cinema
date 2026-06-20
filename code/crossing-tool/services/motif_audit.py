@@ -117,8 +117,12 @@ def audit_motifs_for_all(
                 if sid:
                     missing_shot_ids.append(sid)
 
+        file_stem = json_path.stem
+        # Strip canonical .annotations suffix so the filename matches the video stem
+        if file_stem.endswith(".annotations"):
+            file_stem = file_stem[: -len(".annotations")]
         file_results.append({
-            "filename": json_path.stem,   # stem matches the display convention
+            "filename": file_stem,   # stem matches the display convention
             "total": total,
             "present": present,
             "missing": total - present,

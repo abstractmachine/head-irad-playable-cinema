@@ -6,11 +6,11 @@ generation (``data/motif.py``) — one title per film, not one motif per shot.
 
 Storage schema
 --------------
-The title is stored in the shared per-movie motif file:
+The title is stored in a dedicated per-film file at:
 
-    <project>/data/motifs/<media_type>/<stem>.json
+    <project>/data/film_titles/<media_type>/<stem>.json
 
-Under the ``"title"`` key (schema of that sub-object)::
+Schema::
 
     {
         "value":         "carrying",
@@ -20,8 +20,8 @@ Under the ``"title"`` key (schema of that sub-object)::
         "generated_at":  "2026-05-22T14:30:00+00:00"
     }
 
-The file also contains per-shot motifs under ``"shots"`` (managed by
-``data.motif``) and will eventually hold per-scene motifs under ``"scenes"``.
+This is separate from the per-shot motif data which lives inside the
+canonical annotation JSON (``data/annotations/shots/.annotations.json``).
 
 Prompt discovery
 ----------------
@@ -46,7 +46,7 @@ Prompt variables
 ``$title_candidates`` — newline-separated list of candidate fragments
                         extracted deterministically from the movie title
 ``$motif_history``    — complete ordered motif progression, one per line,
-                        derived from the per-movie motif file (``data/motifs/``)
+                        derived from the annotation JSON (``shot.motif``)
 
 Normalization
 -------------
@@ -389,6 +389,15 @@ def normalize_film_title(text: str) -> str:
 # Path helpers
 # ---------------------------------------------------------------------------
 
+def get_film_title_path(project_path: str, filename: str, media_type: str) -> "Path":
+    """Return the canonical path for the per-film title JSON file.
+
+    ``<project>/data/film_titles/<media_type>/<stem>.json``
+    """
+    stem = Path(filename).stem
+    return Path(project_path) / "data" / "film_titles" / media_type / f"{stem}.json"
+
+
 def load_film_motif(
     project_path: str,
     filename: str,
@@ -396,14 +405,16 @@ def load_film_motif(
 ) -> Optional[dict]:
     """Load the cached film-level title motif dict, or ``None`` if not yet generated.
 
-    Reads from the shared motif file at
-    ``<project>/data/motifs/<media_type>/<stem>.json``
-    and returns the ``"title"`` sub-object.
+    Reads from ``<project>/data/film_titles/<media_type>/<stem>.json``.
     """
-    from data.motif import load_motif_doc
-    doc = load_motif_doc(project_path, filename, media_type)
-    title = doc.get("title")
-    return title if isinstance(title, dict) and title.get("value", "").strip() else None
+    path = get_film_title_path(project_path, filename, media_type)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return data if isinstance(data, dict) and data.get("value", "").strip() else None
 
 
 def set_film_title(
@@ -414,17 +425,15 @@ def set_film_title(
 ) -> dict:
     """Manually set the film title motif value, bypassing AI generation.
 
-    Saves the value directly into the motif doc as a manual override and
+    Saves the value directly into the film title file as a manual override and
     returns the new title motif dict.
     """
     import datetime
-    from data.motif import load_motif_doc, save_motif_doc
 
     value = value.strip()
     if not value:
         raise ValueError("Title value must not be empty")
 
-    motif_doc = load_motif_doc(project_path, filename, media_type)
     title_motif = {
         "value": value,
         "model": "manual",
@@ -433,8 +442,9 @@ def set_film_title(
             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         },
     }
-    motif_doc["title"] = title_motif
-    save_motif_doc(project_path, filename, media_type, motif_doc)
+    path = get_film_title_path(project_path, filename, media_type)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(title_motif, indent=2, ensure_ascii=False), encoding="utf-8")
     return title_motif
 
 
@@ -483,13 +493,12 @@ def generate_film_title(
     """
     from data.annotate import _load_text_generation_pipeline
     from data.metadata import get_metadata
-    from data.motif import load_motif_doc, save_motif_doc, motif_history_from_doc
+    from data.motif import motif_history_text
 
-    # Load the shared motif doc
-    motif_doc = load_motif_doc(project_path, filename, media_type)
+    # Load the existing cached title (if any)
+    existing_title = load_film_motif(project_path, filename, media_type)
 
     # Short-circuit if title already generated and not forcing
-    existing_title = motif_doc.get("title")
     if not force and isinstance(existing_title, dict) and existing_title.get("value", "").strip():
         if verbose:
             print(
@@ -498,8 +507,21 @@ def generate_film_title(
             )
         return existing_title
 
-    # Build motif history from per-shot motifs in the motif doc
-    motif_history = motif_history_from_doc(motif_doc)
+    # Build motif history from annotation JSON
+    from data.annotate import get_annotation_json_path
+    import json as _json
+    json_path = get_annotation_json_path(project_path, filename, media_type)
+    if not json_path.exists():
+        raise FileNotFoundError(
+            f"No annotation JSON found: {json_path}\n"
+            f"  Run: crossing annotate shot '{filename}' --media {media_type} first."
+        )
+    try:
+        ann_entries: list = _json.loads(json_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(f"Cannot read annotation JSON: {exc}") from exc
+
+    motif_history = motif_history_text(ann_entries)
     if not motif_history.strip():
         raise ValueError(
             f"No shot motifs found for '{filename}'.\n"
@@ -580,9 +602,10 @@ def generate_film_title(
         "fallback":      used_fallback,
     }
 
-    # Write title into the shared motif doc
-    motif_doc["title"] = film_motif
-    save_motif_doc(project_path, filename, media_type, motif_doc)
+    # Write title to the dedicated film title file
+    title_path = get_film_title_path(project_path, filename, media_type)
+    title_path.parent.mkdir(parents=True, exist_ok=True)
+    title_path.write_text(json.dumps(film_motif, indent=2, ensure_ascii=False), encoding="utf-8")
 
     if verbose:
         print(f"  → {title}: {value}")
@@ -616,7 +639,7 @@ def generate_film_titles_for_all_movies(
     """
     from data.metadata import get_metadata
     from data.annotate import _load_text_generation_pipeline
-    from data.motif import load_motif_doc, motif_history_from_doc
+    from data.motif import load_motif_words
 
     meta_entries = get_metadata(project_path, media_type=media_type)
 
@@ -627,12 +650,11 @@ def generate_film_titles_for_all_movies(
         fn = meta.get("filename")
         if not fn:
             continue
-        # Skip if no shot motifs have been generated yet (nothing to summarise)
-        motif_doc = load_motif_doc(project_path, fn, media_type)
-        if not motif_history_from_doc(motif_doc):
+        # Skip if no shot motifs exist yet (nothing to summarise)
+        if not load_motif_words(project_path, fn, media_type):
             continue
         if not force:
-            existing_title = motif_doc.get("title")
+            existing_title = load_film_motif(project_path, fn, media_type)
             if isinstance(existing_title, dict) and existing_title.get("value", "").strip():
                 skippable.append(fn)
                 continue

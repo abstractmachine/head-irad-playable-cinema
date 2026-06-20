@@ -312,7 +312,7 @@ def search_shots(
         movie_title = f"{movie_title_raw} ({year})" if year else movie_title_raw
         tmdb_id = entry.get("tmdb") or entry.get("tmdb_id")
 
-        ann_path = ann_base / f"{stem}.json"
+        ann_path = ann_base / f"{stem}.annotations.json"
         if not ann_path.exists():
             continue
 
@@ -523,7 +523,7 @@ def vocabulary_from_field(
         if not filename:
             continue
         stem = Path(filename).stem
-        ann_path = ann_base / f"{stem}.json"
+        ann_path = ann_base / f"{stem}.annotations.json"
         if not ann_path.exists():
             continue
         try:

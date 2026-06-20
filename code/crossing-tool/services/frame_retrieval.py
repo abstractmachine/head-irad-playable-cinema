@@ -403,8 +403,10 @@ def retrieve_motif_frames(
     yields fewer than *limit* results.
     Returns up to *limit* result dicts.
     """
+    import json as _json
     from data.metadata import get_metadata as _get_metadata
-    from data.motif import load_motif_doc, get_motif_path
+    from data.annotate import get_annotation_json_path
+    from data.motif import _motif_value_from_entry
     from data.shotlist import read_shotlist
 
     all_entries = _get_metadata(project_path, media_type=media_type)
@@ -433,12 +435,17 @@ def retrieve_motif_frames(
         filename = entry.get("filename", "")
         if not filename:
             continue
-        if not get_motif_path(project_path, filename, media_type).exists():
+
+        ann_path = get_annotation_json_path(project_path, filename, media_type)
+        if not ann_path.exists():
+            continue
+
+        try:
+            ann_entries = _json.loads(ann_path.read_text(encoding="utf-8"))
+        except Exception:
             continue
 
         film_title = entry.get("title", Path(filename).stem)
-
-        doc = load_motif_doc(project_path, filename, media_type)
 
         # Build shotlist timing lookup.
         timing_by_id: dict[str, dict] = {}
@@ -450,14 +457,19 @@ def retrieve_motif_frames(
         except FileNotFoundError:
             pass
 
-        for shot_entry in doc.get("shots", []):
-            value = shot_entry.get("value", "")
+        for ann_entry in ann_entries:
+            if not isinstance(ann_entry, dict):
+                continue
+            shot_data = ann_entry.get("shot")
+            if not isinstance(shot_data, dict):
+                continue
+            value = _motif_value_from_entry(shot_data) or ""
             if not value:
                 continue
             if value.lower() != motif_lower and motif_lower not in value.lower():
                 continue
 
-            shot_id = shot_entry.get("shot_id", "")
+            shot_id = str(shot_data.get("shot_id", ""))
             timing  = timing_by_id.get(shot_id, {})
 
             image_data = _fetch_frame(
@@ -476,11 +488,7 @@ def retrieve_motif_frames(
                 film_title, filename, shot_id, image_data,
                 start_time=timing.get("start_time", ""),
                 end_time=timing.get("end_time", ""),
-                metadata={
-                    "motif": value,
-                    "score": shot_entry.get("score"),
-                    "model": shot_entry.get("model"),
-                },
+                metadata={"motif": value},
             ))
 
             if len(results) >= limit:

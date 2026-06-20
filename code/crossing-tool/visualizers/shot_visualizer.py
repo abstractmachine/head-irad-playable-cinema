@@ -524,7 +524,7 @@ _BEST_COLUMN_INDEX = 3
 
 def _get_annotation_json_path(project_path: str, filename: str, media_type: str) -> Path:
     stem = Path(filename).stem
-    return Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{stem}.json"
+    return Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{stem}.annotations.json"
 
 
 def _read_annotation_json(path: Path) -> list:

@@ -170,26 +170,22 @@ def _make_shot_page(
     entry: dict,
     palette_shot: Optional[dict],
     shot_index: int,
-    motif_shot: Optional[dict] = None,
 ) -> dict:
     """Build a page descriptor dict for one shot annotation entry.
 
-    Combines motif from the motif file (preferred) or annotation with palette
-    colors.  Uses neutral fallbacks when data is absent.
+    Reads motif from ``entry["shot"]["motif"]`` (canonical string) and
+    combines it with palette colors.  Uses neutral fallbacks when data is absent.
     """
     shot_data = entry.get("shot", {}) if isinstance(entry, dict) else {}
 
-    # Motif: prefer separate motif file, fall back to value embedded in annotation
-    if isinstance(motif_shot, dict):
-        motif_value = (motif_shot.get("value") or "").strip()
+    # Motif: read from canonical shot.motif field
+    motif_obj = shot_data.get("motif") if isinstance(shot_data, dict) else None
+    if isinstance(motif_obj, dict):
+        motif_value = (motif_obj.get("value") or "").strip()
+    elif isinstance(motif_obj, str):
+        motif_value = motif_obj.strip()
     else:
-        motif_obj = shot_data.get("motif") if isinstance(shot_data, dict) else None
-        if isinstance(motif_obj, dict):
-            motif_value = (motif_obj.get("value") or "").strip()
-        elif isinstance(motif_obj, str):
-            motif_value = motif_obj.strip()
-        else:
-            motif_value = ""
+        motif_value = ""
     if not motif_value:
         motif_value = "—"
 
@@ -432,17 +428,9 @@ def load_flipbook_data(
         except Exception:
             pass
 
-    # Load motif doc (best-effort — may be absent until motifs are generated)
-    from data.motif import load_motif_doc as _load_motif_doc
-    motif_doc = _load_motif_doc(project_path, filename, media_type)
-    motif_by_id: dict[str, dict] = {}
-    motif_by_index: dict[int, dict] = {}
-    for _idx, _ms in enumerate(motif_doc.get("shots", [])):
-        if isinstance(_ms, dict):
-            _sid = str(_ms.get("shot_id", ""))
-            if _sid:
-                motif_by_id[_sid] = _ms
-            motif_by_index[_idx] = _ms
+    # Load film-level title motif (best-effort — may be absent until generated)
+    from data.film_motif import load_film_motif as _load_film_motif
+    film_motif_title = _load_film_motif(project_path, filename, media_type) or {}
 
     # Movie metadata
     meta_entries = get_metadata(project_path, media_type=media_type)
@@ -481,10 +469,8 @@ def load_flipbook_data(
         # Join palette by shot_id first, then by index
         palette_shot = palette_by_id.get(shot_id) or palette_by_index.get(i)
 
-        # Join motif by shot_id first, then by annotation entry index
-        motif_shot = motif_by_id.get(shot_id) or motif_by_index.get(i)
-
-        page = _make_shot_page(entry, palette_shot, i, motif_shot)
+        # Motif: read directly from annotation entry's shot.motif
+        page = _make_shot_page(entry, palette_shot, i)
         shot_pages.append(page)
 
     # Cover colors: use the first title-card shot for the front cover
@@ -511,8 +497,8 @@ def load_flipbook_data(
     front_bg = front_shot["bg_rgb"] if front_shot else list(_COVER_BG)
     back_bg  = back_shot["bg_rgb"]  if back_shot  else list(_COVER_BG)
 
-    # Film title motif from the shared motif doc (best-effort — may be absent until generated)
-    film_motif = motif_doc.get("title") or {}
+    # Film title motif from the dedicated film title file (best-effort)
+    film_motif = film_motif_title
 
     # Front cover: semantic condensation title (or original title as fallback)
     front_text = film_motif.get("value", "").strip() or title

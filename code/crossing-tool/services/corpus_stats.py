@@ -152,11 +152,11 @@ def _count_palettes(project_path: str) -> dict[str, int]:
 
 
 def _count_embeddings(project_path: str) -> dict[str, int]:
-    """Count annotation-embedding .npy files under data/annotations/shots/<media_type>/.
+    """Count annotation-embedding ``.annotations.npy`` files under data/annotations/shots/.
 
-    Excludes ``*.frames.npy`` (frame-embedding layer) and
-    ``*.frames.valid.npy`` (frame validity masks) so the count reflects
-    only annotation-embedding indexes.
+    Counts only ``*.annotations.npy`` — the canonical new name.
+    Old ambiguous ``*.npy`` files (pre-migration) are intentionally not counted
+    here so that the stats reflect the new canonical naming convention.
     """
     result: dict[str, int] = {}
     base = Path(project_path) / "data" / "annotations" / "shots"
@@ -164,12 +164,7 @@ def _count_embeddings(project_path: str) -> dict[str, int]:
         return result
     for mt_dir in sorted(base.iterdir()):
         if mt_dir.is_dir():
-            count = sum(
-                1
-                for f in mt_dir.glob("*.npy")
-                if not f.name.endswith(".frames.npy")
-                and not f.name.endswith(".frames.valid.npy")
-            )
+            count = sum(1 for f in mt_dir.glob("*.annotations.npy"))
             result[mt_dir.name] = count
     return result
 

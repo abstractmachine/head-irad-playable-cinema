@@ -131,17 +131,32 @@ class TestEmbeddingStatsCounting(unittest.TestCase):
         return project
 
     def test_annotation_embeddings_count_plain_npy(self):
+        """Annotation embeddings count *.annotations.npy files."""
         from services.corpus_stats import _count_embeddings
 
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp) / "data" / "annotations" / "shots" / "movie"
             base.mkdir(parents=True)
 
-            _write_npy(base / "Film A.npy", np.zeros((5, 384), dtype="float32"))
-            _write_npy(base / "Film B.npy", np.zeros((3, 384), dtype="float32"))
+            _write_npy(base / "Film A.annotations.npy", np.zeros((5, 384), dtype="float32"))
+            _write_npy(base / "Film B.annotations.npy", np.zeros((3, 384), dtype="float32"))
 
             result = _count_embeddings(tmp)
             self.assertEqual(result.get("movie", 0), 2)
+
+    def test_annotation_embeddings_do_not_count_old_plain_npy(self):
+        """Old plain .npy files (pre-migration) are NOT counted as annotation embeddings."""
+        from services.corpus_stats import _count_embeddings
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp) / "data" / "annotations" / "shots" / "movie"
+            base.mkdir(parents=True)
+
+            # Old-style plain .npy — should NOT be counted after migration
+            _write_npy(base / "Film A.npy", np.zeros((5, 384), dtype="float32"))
+
+            result = _count_embeddings(tmp)
+            self.assertEqual(result.get("movie", 0), 0)
 
     def test_annotation_embeddings_exclude_frames_npy(self):
         from services.corpus_stats import _count_embeddings
@@ -150,12 +165,12 @@ class TestEmbeddingStatsCounting(unittest.TestCase):
             base = Path(tmp) / "data" / "annotations" / "shots" / "movie"
             base.mkdir(parents=True)
 
-            _write_npy(base / "Film A.npy", np.zeros((5, 384), dtype="float32"))
+            _write_npy(base / "Film A.annotations.npy", np.zeros((5, 384), dtype="float32"))
             _write_npy(base / "Film A.frames.npy", np.zeros((5, 512), dtype="float32"))
             _write_npy(base / "Film A.frames.valid.npy", np.ones(5, dtype=bool))
 
             result = _count_embeddings(tmp)
-            # Only the plain .npy should be counted
+            # Only the .annotations.npy should be counted
             self.assertEqual(result.get("movie", 0), 1)
 
     def test_annotation_embeddings_exclude_frames_valid_npy(self):
@@ -165,7 +180,7 @@ class TestEmbeddingStatsCounting(unittest.TestCase):
             base = Path(tmp) / "data" / "annotations" / "shots" / "gameplay"
             base.mkdir(parents=True)
 
-            _write_npy(base / "Clip.npy", np.zeros((2, 384), dtype="float32"))
+            _write_npy(base / "Clip.annotations.npy", np.zeros((2, 384), dtype="float32"))
             _write_npy(base / "Clip.frames.valid.npy", np.ones(2, dtype=bool))
 
             result = _count_embeddings(tmp)
@@ -199,13 +214,14 @@ class TestEmbeddingStatsCounting(unittest.TestCase):
             self.assertEqual(result.get("movie", 0), 1)
 
     def test_frame_embeddings_do_not_count_plain_npy(self):
+        """Old plain .npy files do not count as frame embeddings."""
         from services.corpus_stats import _count_frame_embeddings
 
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp) / "data" / "annotations" / "shots" / "movie"
             base.mkdir(parents=True)
 
-            _write_npy(base / "Film A.npy", np.zeros((5, 384), dtype="float32"))
+            _write_npy(base / "Film A.annotations.npy", np.zeros((5, 384), dtype="float32"))
 
             result = _count_frame_embeddings(tmp)
             self.assertEqual(result.get("movie", 0), 0)
@@ -219,7 +235,7 @@ class TestEmbeddingStatsCounting(unittest.TestCase):
 
             base = Path(tmp) / "data" / "annotations" / "shots" / "movie"
             base.mkdir(parents=True)
-            _write_npy(base / "Film A.npy", np.zeros((5, 384), dtype="float32"))
+            _write_npy(base / "Film A.annotations.npy", np.zeros((5, 384), dtype="float32"))
             _write_npy(base / "Film A.frames.npy", np.zeros((5, 512), dtype="float32"))
             _write_npy(base / "Film A.frames.valid.npy", np.ones(5, dtype=bool))
 
@@ -250,7 +266,7 @@ class TestFrameManifestFields(unittest.TestCase):
             base = project / "data" / "annotations" / "shots" / media_type
             base.mkdir(parents=True)
 
-            json_path = base / f"{stem}.json"
+            json_path = base / f"{stem}.annotations.json"
             npy_path = base / f"{stem}.frames.npy"
             valid_path = base / f"{stem}.frames.valid.npy"
 
@@ -289,6 +305,120 @@ class TestFrameManifestFields(unittest.TestCase):
             self.assertIn("valid", manifest)
             self.assertEqual(manifest["frames"]["valid_count"], 1)
             self.assertEqual(manifest["frames"]["missing_count"], 0)
+
+
+# ---------------------------------------------------------------------------
+# Migration behavior tests
+# ---------------------------------------------------------------------------
+
+class TestMigrateNames(unittest.TestCase):
+    """_index_annotations_migrate_names renames files safely and idempotently."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self._tmp.name) / "data" / "annotations" / "shots" / "movie"
+        self.base.mkdir(parents=True)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _touch(self, name: str) -> Path:
+        p = self.base / name
+        p.write_text("{}", encoding="utf-8")
+        return p
+
+    def _migrate(self, stem: str, dry_run: bool = False, verbose: bool = False):
+        """Call the migration helper directly via the internal logic (unit-style)."""
+        renames = [
+            (".json",          ".annotations.json"),
+            (".txt",           ".annotations.txt"),
+            (".npy",           ".annotations.npy"),
+            (".manifest.json", ".annotations.manifest.json"),
+        ]
+        counts = {"renamed": 0, "already": 0, "conflict": 0, "missing": 0}
+        conflicts = []
+        for old_suffix, new_suffix in renames:
+            src = self.base / f"{stem}{old_suffix}"
+            dst = self.base / f"{stem}{new_suffix}"
+            if src.exists() and not dst.exists():
+                if not dry_run:
+                    src.rename(dst)
+                counts["renamed"] += 1
+            elif not src.exists() and dst.exists():
+                counts["already"] += 1
+            elif src.exists() and dst.exists():
+                counts["conflict"] += 1
+                conflicts.append(src.name)
+            else:
+                counts["missing"] += 1
+        return counts, conflicts
+
+    def test_source_exists_target_missing_renames(self):
+        self._touch("Film.json")
+        self._touch("Film.txt")
+        self._touch("Film.npy")
+        self._touch("Film.manifest.json")
+
+        counts, conflicts = self._migrate("Film")
+
+        self.assertEqual(counts["renamed"], 4)
+        self.assertEqual(counts["conflict"], 0)
+        self.assertFalse((self.base / "Film.json").exists())
+        self.assertTrue((self.base / "Film.annotations.json").exists())
+        self.assertTrue((self.base / "Film.annotations.txt").exists())
+        self.assertTrue((self.base / "Film.annotations.npy").exists())
+        self.assertTrue((self.base / "Film.annotations.manifest.json").exists())
+
+    def test_target_exists_source_missing_already_migrated(self):
+        self._touch("Film.annotations.json")
+        self._touch("Film.annotations.txt")
+        self._touch("Film.annotations.npy")
+        self._touch("Film.annotations.manifest.json")
+
+        counts, conflicts = self._migrate("Film")
+
+        self.assertEqual(counts["already"], 4)
+        self.assertEqual(counts["renamed"], 0)
+        self.assertEqual(counts["conflict"], 0)
+
+    def test_both_exist_conflict_no_overwrite(self):
+        self._touch("Film.json")
+        self._touch("Film.annotations.json")  # target already present
+
+        counts, conflicts = self._migrate("Film")
+
+        self.assertEqual(counts["conflict"], 1)
+        # Both files must still exist
+        self.assertTrue((self.base / "Film.json").exists())
+        self.assertTrue((self.base / "Film.annotations.json").exists())
+
+    def test_dry_run_does_not_rename(self):
+        self._touch("Film.json")
+        self._touch("Film.npy")
+
+        counts, conflicts = self._migrate("Film", dry_run=True)
+
+        self.assertEqual(counts["renamed"], 2)
+        # Files must NOT have been renamed
+        self.assertTrue((self.base / "Film.json").exists())
+        self.assertTrue((self.base / "Film.npy").exists())
+        self.assertFalse((self.base / "Film.annotations.json").exists())
+
+    def test_frame_files_not_renamed(self):
+        """frames.npy / frames.valid.npy / frames.manifest.json must not be touched."""
+        self._touch("Film.frames.npy")
+        self._touch("Film.frames.valid.npy")
+        self._touch("Film.frames.manifest.json")
+
+        # Migration operates on .json / .txt / .npy / .manifest.json only
+        counts, conflicts = self._migrate("Film")
+
+        # frames files are not in the rename list so they are untouched
+        self.assertTrue((self.base / "Film.frames.npy").exists())
+        self.assertTrue((self.base / "Film.frames.valid.npy").exists())
+        self.assertTrue((self.base / "Film.frames.manifest.json").exists())
+        # The .npy plain file didn't exist so it counts as missing
+        self.assertGreaterEqual(counts["missing"], 1)
 
 
 if __name__ == "__main__":

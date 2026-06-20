@@ -1342,13 +1342,13 @@ def _load_existing_agg(project_path: str, filename: str, media_type: str) -> Dic
     """
     stem = Path(filename).stem
     agg_path = (
-        Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{stem}.json"
+        Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{stem}.annotations.json"
     )
     # Backward-compat: if canonical path doesn't exist and media_type is 'movie',
     # try the legacy 'movies/' folder.
     if not agg_path.exists() and media_type == "movie":
         agg_path = (
-            Path(project_path) / "data" / "annotations" / "shots" / "movies" / f"{stem}.json"
+            Path(project_path) / "data" / "annotations" / "shots" / "movies" / f"{stem}.annotations.json"
         )
     result: Dict[str, Any] = {}
     if not agg_path.exists():
@@ -1634,7 +1634,7 @@ def annotate_file_shots(
     if shot_index is not None:
         if shot_index < 0 or shot_index >= len(shots):
             raise IndexError(f"Shot index {shot_index} out of range (0-{len(shots)-1})")
-    aggregated = annotations_dir / f"{stem}.json"
+    aggregated = annotations_dir / f"{stem}.annotations.json"
     _existing_agg: Dict[str, Any] = {}
     if aggregated.exists():
         try:
@@ -2279,10 +2279,10 @@ def annotate_all_files(
 def get_annotation_json_path(project_path: str, filename: str, media_type: str) -> Path:
     """Return the canonical annotation JSON path.
 
-    ``<project>/data/annotations/shots/<media_type>/<stem>.json``
+    ``<project>/data/annotations/shots/<media_type>/<stem>.annotations.json``
     """
     stem = Path(filename).stem
-    return Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{stem}.json"
+    return Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{stem}.annotations.json"
 
 
 def _merge_annotation_dicts(prev_ann: Dict[str, Any], removed_ann: Dict[str, Any]) -> Dict[str, Any]:

@@ -195,7 +195,6 @@ def list_movies(
     try:
         from data.metadata import get_metadata
         from data.shotlist import get_shotlist_path
-        from data.motif import get_motif_path
 
         entries = get_metadata(project_path, media_type=media_type)
         ann_base = Path(project_path) / "data" / "annotations" / "shots" / media_type
@@ -204,6 +203,7 @@ def list_movies(
         for e in entries:
             filename = e.get("filename", "")
             stem = Path(filename).stem if filename else ""
+            has_ann = bool(stem and (ann_base / f"{stem}.annotations.json").exists())
             summary.append({
                 "title":       e.get("title", ""),
                 "year":        e.get("year", ""),
@@ -213,8 +213,8 @@ def list_movies(
                 "filename":    filename,
                 "media_id":    e.get("media_id", ""),
                 "has_shotlist": get_shotlist_path(project_path, filename, media_type).exists() if filename else False,
-                "has_annotations": (ann_base / f"{stem}.json").exists() if stem else False,
-                "has_motifs":  get_motif_path(project_path, filename, media_type).exists() if filename else False,
+                "has_annotations": has_ann,
+                "has_motifs":  has_ann,  # motifs live in annotation JSON
             })
 
         total = len(summary)
@@ -1522,7 +1522,7 @@ def generate_catalog(
             stem = Path(filename).stem if filename else ""
 
             shotlist_path = get_shotlist_path(project_path, filename, media_type) if filename else None
-            ann_path = ann_base / f"{stem}.json" if stem else None
+            ann_path = ann_base / f"{stem}.annotations.json" if stem else None
 
             record: dict = {
                 "title":      entry.get("title", ""),
@@ -1549,10 +1549,10 @@ def generate_catalog(
                     pass
 
             if include_motifs and filename:
-                from data.motif import load_motif_words, load_motif_doc
+                from data.motif import load_motif_words
+                from data.film_motif import load_film_motif
                 record["motifs"] = load_motif_words(project_path, filename, media_type)
-                motif_doc = load_motif_doc(project_path, filename, media_type)
-                film_title = motif_doc.get("title")
+                film_title = load_film_motif(project_path, filename, media_type)
                 if film_title:
                     record["film_motif_title"] = film_title.get("value", "")
 

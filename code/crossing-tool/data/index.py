@@ -260,13 +260,13 @@ def serialize_annotation_item(item: dict, mapping: dict) -> str:
 
 
 def get_text_path(project_path: str, filename: str, media_type: str) -> Path:
-    """Return the canonical path for the serialized `.txt` file.
+    """Return the canonical path for the serialized ``.annotations.txt`` file.
 
     Sits alongside the annotation JSON:
-    ``<project>/data/annotations/shots/<media_type>/<stem>.txt``
+    ``<project>/data/annotations/shots/<media_type>/<stem>.annotations.txt``
     """
     stem = Path(filename).stem
-    return Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{stem}.txt"
+    return Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{stem}.annotations.txt"
 
 
 def write_text_file(
@@ -334,17 +334,17 @@ def load_annotation_items(project_path: str, filename: str, media_type: str) -> 
 # ---------------------------------------------------------------------------
 
 def get_embeddings_path(project_path: str, filename: str, media_type: str) -> Path:
-    """Return the canonical path for the embeddings ``.npy`` file.
+    """Return the canonical path for the embeddings ``.annotations.npy`` file.
 
     Sits alongside the annotation JSON and serialized text:
-    ``<project>/data/annotations/shots/<media_type>/<stem>.npy``
+    ``<project>/data/annotations/shots/<media_type>/<stem>.annotations.npy``
 
     Row order in the array matches:
     - annotation JSON item order
     - serialized text line order
     """
     stem = Path(filename).stem
-    return Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{stem}.npy"
+    return Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{stem}.annotations.npy"
 
 
 def write_embeddings(
@@ -519,13 +519,13 @@ MANIFEST_VERSION = 1
 def get_manifest_path(project_path: str, filename: str, media_type: str) -> Path:
     """Return the canonical path for the sidecar manifest.
 
-    ``<project>/data/annotations/shots/<media_type>/<stem>.manifest.json``
+    ``<project>/data/annotations/shots/<media_type>/<stem>.annotations.manifest.json``
     """
     stem = Path(filename).stem
     return (
         Path(project_path)
         / "data" / "annotations" / "shots" / media_type
-        / f"{stem}.manifest.json"
+        / f"{stem}.annotations.manifest.json"
     )
 
 

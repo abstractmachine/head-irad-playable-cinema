@@ -67,7 +67,7 @@ class TestAuditMotifsForFile(unittest.TestCase):
         self._tmp.cleanup()
 
     def _ann_path(self, media_type: str, stem: str) -> Path:
-        return self.project / "data" / "annotations" / "shots" / media_type / f"{stem}.json"
+        return self.project / "data" / "annotations" / "shots" / media_type / f"{stem}.annotations.json"
 
     def test_all_present(self):
         _write_annotation(self._ann_path("movie", "film-a"), [
@@ -158,7 +158,7 @@ class TestAuditMotifsForAll(unittest.TestCase):
         self._tmp.cleanup()
 
     def _ann_path(self, media_type: str, stem: str) -> Path:
-        return self.project / "data" / "annotations" / "shots" / media_type / f"{stem}.json"
+        return self.project / "data" / "annotations" / "shots" / media_type / f"{stem}.annotations.json"
 
     def test_corpus_counts(self):
         _write_annotation(self._ann_path("movie", "film-a"), [
@@ -195,8 +195,10 @@ class TestAuditMotifsForAll(unittest.TestCase):
 
     def test_manifest_json_skipped(self):
         """*.manifest.json files must not be counted as annotation files."""
-        manifest = self._ann_path("movie", "film-a.manifest")
-        manifest.parent.mkdir(parents=True, exist_ok=True)
+        # Create a file with the new canonical manifest name
+        ann_dir = self.project / "data" / "annotations" / "shots" / "movie"
+        ann_dir.mkdir(parents=True, exist_ok=True)
+        manifest = ann_dir / "film-a.annotations.manifest.json"
         manifest.write_text(json.dumps({"index_type": "annotation-embeddings"}))
         _write_annotation(self._ann_path("movie", "film-a"), [
             _make_shot("s1", motif="riding"),

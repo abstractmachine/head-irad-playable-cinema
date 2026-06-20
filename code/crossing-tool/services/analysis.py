@@ -772,7 +772,6 @@ def get_archive_stats(
     """
     from data.metadata import get_metadata as _get_metadata
     from data.shotlist import get_shotlist_path
-    from data.motif import get_motif_path
     from data.palette import get_palette_path
     from data.subtitles import subtitle_exists
 
@@ -807,17 +806,21 @@ def get_archive_stats(
                 pass
 
         stem = Path(filename).stem
-        ann_path = ann_dir / f"{stem}.json"
+        ann_path = ann_dir / f"{stem}.annotations.json"
         if ann_path.exists():
             films_with_annotations += 1
             try:
                 data = json.loads(ann_path.read_text(encoding="utf-8"))
                 annotated_shots += len(data)
+                if any(
+                    isinstance(e.get("shot"), dict)
+                    and isinstance(e["shot"].get("motif"), str)
+                    and e["shot"]["motif"].strip()
+                    for e in data if isinstance(e, dict)
+                ):
+                    films_with_motifs += 1
             except Exception:
                 pass
-
-        if get_motif_path(project_path, filename, media_type).exists():
-            films_with_motifs += 1
 
         if get_palette_path(project_path, filename, media_type).exists():
             films_with_palettes += 1

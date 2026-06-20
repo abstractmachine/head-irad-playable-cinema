@@ -1944,7 +1944,7 @@ def _repair_annotation_file(project_path, filename, media_type, label_fields, *,
     """
     from data.annotate import normalize_label_list
 
-    ann_path = Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{Path(filename).stem}.json"
+    ann_path = Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{Path(filename).stem}.annotations.json"
     if not ann_path.exists():
         return 0, False
 
@@ -3365,7 +3365,7 @@ def _annotate_validate(args):
     invalid_files = 0
 
     for fn in filenames:
-        ann_path = Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{Path(fn).stem}.json"
+        ann_path = Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{Path(fn).stem}.annotations.json"
         if not ann_path.exists():
             print(f"  ?  {fn}  (no annotation file)")
             continue
@@ -3415,7 +3415,7 @@ def _annotate_audit(args):
         if not fn:
             continue
         stem = Path(fn).stem
-        ann_path = ann_dir / f"{stem}.json"
+        ann_path = ann_dir / f"{stem}.annotations.json"
 
         if not ann_path.exists():
             missing.append(fn)
@@ -4380,6 +4380,8 @@ def cmd_index(args):
         _index_update(args)
     elif sub == "frame-embeddings":
         _index_frame_embeddings(args)
+    elif sub == "annotations":
+        _index_annotations(args)
     elif sub == "audit":
         _index_audit(args)
     elif sub == "vocabulary":
@@ -4585,7 +4587,11 @@ def _resolve_all_annotation_filenames(project_path: str, media_type: str) -> lis
                     continue
         except Exception:
             pass
-        filenames.append(json_file.stem + ".mp4")
+        # Strip canonical .annotations suffix before adding .mp4 fallback
+        raw_stem = json_file.stem
+        if raw_stem.endswith(".annotations"):
+            raw_stem = raw_stem[: -len(".annotations")]
+        filenames.append(raw_stem + ".mp4")
     return filenames
 
 
@@ -5049,6 +5055,134 @@ def _index_vocabulary(args):
         print(f"Saved: {out_rel}")
 
 
+def _index_annotations(args):
+    """Dispatch ``crossing index annotations <subcommand>``."""
+    action = getattr(args, "annotations_action", None)
+    if action == "migrate-names":
+        _index_annotations_migrate_names(args)
+    else:
+        print("✗ index annotations: specify a subcommand (migrate-names)", file=sys.stderr)
+        sys.exit(1)
+
+
+def _index_annotations_migrate_names(args):
+    """Rename old ambiguous annotation artifact files to explicit .annotations.* names."""
+    project_path = prefs.get("path")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
+    do_all = getattr(args, "all", False)
+    dry_run = getattr(args, "dry_run", False)
+    verbose = getattr(args, "verbose", False)
+    query_str = getattr(args, "movie", None)
+    tmdb = getattr(args, "tmdb", None)
+
+    # Each annotation file stem may produce up to 4 renames:
+    _RENAMES = [
+        (".json",          ".annotations.json"),
+        (".txt",           ".annotations.txt"),
+        (".npy",           ".annotations.npy"),
+        (".manifest.json", ".annotations.manifest.json"),
+    ]
+
+    def _migrate_stem(base_dir: "Path", stem: str) -> dict:
+        """Attempt renames for one file stem. Returns counts."""
+        nonlocal dry_run, verbose
+        counts = {"renamed": 0, "already": 0, "conflict": 0, "missing": 0}
+        conflicts: list[str] = []
+
+        for old_suffix, new_suffix in _RENAMES:
+            src = base_dir / f"{stem}{old_suffix}"
+            dst = base_dir / f"{stem}{new_suffix}"
+
+            src_exists = src.exists()
+            dst_exists = dst.exists()
+
+            if src_exists and not dst_exists:
+                if dry_run:
+                    print(f"  [dry-run] {src.name}  →  {dst.name}")
+                else:
+                    src.rename(dst)
+                    if verbose:
+                        print(f"  ✓ {src.name}  →  {dst.name}")
+                counts["renamed"] += 1
+            elif not src_exists and dst_exists:
+                # Already migrated
+                if verbose:
+                    print(f"  — {dst.name}  (already migrated)")
+                counts["already"] += 1
+            elif src_exists and dst_exists:
+                print(
+                    f"  ✗ conflict: both exist — {src.name} and {dst.name}",
+                    file=sys.stderr,
+                )
+                conflicts.append(src.name)
+                counts["conflict"] += 1
+            else:
+                # Neither exists — skip silently unless verbose
+                if verbose:
+                    print(f"  ? {src.name}  (not found)")
+                counts["missing"] += 1
+
+        return counts, conflicts
+
+    from pathlib import Path as _Path
+
+    if do_all:
+        filenames = _resolve_all_annotation_filenames(project_path, media_type)
+        if not filenames:
+            print(f"No annotation files found under {media_type}.", file=sys.stderr)
+            sys.exit(1)
+
+        total_renamed = total_already = total_conflict = total_missing = 0
+        all_conflicts: list[str] = []
+
+        base_dir = _Path(project_path) / "data" / "annotations" / "shots" / media_type
+
+        for fn in filenames:
+            stem = _Path(fn).stem
+            counts, conflicts = _migrate_stem(base_dir, stem)
+            if not dry_run or verbose:
+                if counts["renamed"] or conflicts:
+                    prefix = "[dry-run] " if dry_run else ""
+                    miss = f"  missing={counts['missing']}" if verbose and counts["missing"] else ""
+                    print(f"  {prefix}{stem}  renamed={counts['renamed']} already={counts['already']} conflict={counts['conflict']}{miss}")
+            total_renamed += counts["renamed"]
+            total_already += counts["already"]
+            total_conflict += counts["conflict"]
+            total_missing += counts["missing"]
+            all_conflicts.extend(conflicts)
+
+        prefix = "[dry-run] " if dry_run else ""
+        print(
+            f"\n{prefix}renamed={total_renamed}  already={total_already}  "
+            f"conflict={total_conflict}  missing={total_missing}  "
+            f"—  {len(filenames)} files"
+        )
+        if all_conflicts:
+            sys.exit(1)
+    else:
+        if tmdb is None and not query_str:
+            print("✗ Provide --title <value>, --tmdb <id>, or --all.", file=sys.stderr)
+            sys.exit(1)
+        from data.shotlist import resolve_filename
+        try:
+            filename = resolve_filename(project_path, tmdb, query_str, media_type)
+        except ValueError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        from pathlib import Path as _Path
+        base_dir = _Path(project_path) / "data" / "annotations" / "shots" / media_type
+        stem = _Path(filename).stem
+        counts, conflicts = _migrate_stem(base_dir, stem)
+        prefix = "[dry-run] " if dry_run else ""
+        print(
+            f"\n{prefix}{stem}  renamed={counts['renamed']}  "
+            f"already={counts['already']}  conflict={counts['conflict']}"
+        )
+        if conflicts:
+            sys.exit(1)
+
+
 def _index_frame_embeddings(args):
     """Build frame-embedding index for one film or all films."""
     from data.shotlist import resolve_filename
@@ -5215,7 +5349,7 @@ def _index_stats(args):
     blank()
 
     # ── Embeddings ───────────────────────────────────────────────────────────
-    row("Annotation Embeddings (.npy)", stats["embeddings"])
+    row("Annotation Embeddings (.annotations.npy)", stats["embeddings"])
     for mt, n in sorted(stats.get("embeddings_by_type", {}).items()):
         row(f"  ↳ {mt.capitalize()}", n)
     blank()
@@ -6053,7 +6187,7 @@ def _index_motif(args):
     elif motif_action == "audit":
         _index_motif_audit(args)
     else:
-        print("✗ index motif: specify a subcommand (generate, attach, audit)", file=sys.stderr)
+        print("✗ index motif: specify a subcommand (generate, audit)", file=sys.stderr)
         sys.exit(1)
 
 
@@ -6174,124 +6308,16 @@ def _index_motif_generate(args):
 
 
 def _index_motif_attach(args):
-    """Attach motif values from data/motifs/ sidecars into annotation JSON as shot.motif."""
-    from data.motif import attach_motifs_to_annotation
-    from data.shotlist import resolve_filename
-    from data.annotate import get_annotation_json_path
-
-    project_path = prefs.get("path")
-    media_type   = normalize_media_type(getattr(args, "media", "movie"))
-    force        = getattr(args, "force",   False)
-    dry_run      = getattr(args, "dry_run", False)
-    verbose      = getattr(args, "verbose", False)
-    do_all       = getattr(args, "all",     False)
-    query_words  = getattr(args, "query", None) or []
-    movie_query  = getattr(args, "movie", None) or (" ".join(query_words).strip() or None)
-    tmdb         = getattr(args, "tmdb", None)
-
-    if dry_run:
-        print("(dry run — no files will be modified)")
-
-    if do_all:
-        # Resolve all files that have annotation JSON
-        from data.annotate import get_annotation_json_path
-        from data.metadata import get_metadata
-        meta_entries = get_metadata(project_path, media_type=media_type)
-        filenames = [
-            e["filename"] for e in meta_entries
-            if e.get("filename")
-            and get_annotation_json_path(project_path, e["filename"], media_type).exists()
-        ]
-        if not filenames:
-            print(f"No annotation JSON files found under {media_type}.", file=sys.stderr)
-            sys.exit(1)
-
-        total_files = 0
-        total_updated = 0
-        total_skipped = 0
-        total_conflicts = 0
-        total_missing_sidecars = 0
-        total_missing_shots = 0
-
-        for fn in filenames:
-            stem = Path(fn).stem
-            try:
-                r = attach_motifs_to_annotation(
-                    project_path, fn, media_type,
-                    force=force, dry_run=dry_run, verbose=False,
-                )
-            except FileNotFoundError as exc:
-                print(f"  ✗ {stem}: {exc}", file=sys.stderr)
-                continue
-
-            total_files += 1
-            # A file counts as "updated" when anything was added or force-overwritten
-            n_updated = r["added"] + (r["conflicts"] if force else 0)
-            if n_updated:
-                total_updated += 1
-            else:
-                total_skipped += 1
-
-            if r["missing"] and r["found"] == 0:
-                total_missing_sidecars += 1
-            total_conflicts  += (r["conflicts"] if not force else 0)
-            total_missing_shots += r["missing"]
-
-            if verbose:
-                tag = "(dry run) " if dry_run else ""
-                print(
-                    f"  {tag}{stem}: "
-                    f"shots={r['shots']}  found={r['found']}  "
-                    f"added={r['added']}  unchanged={r['unchanged']}  "
-                    f"conflicts={r['conflicts']}  missing={r['missing']}"
-                )
-
-        print(f"\nFiles processed:         {total_files}")
-        print(f"Updated:                 {total_updated}")
-        print(f"Skipped (up to date):    {total_skipped}")
-        print(f"Missing motif sidecars:  {total_missing_sidecars}")
-        print(f"Conflicts (not written): {total_conflicts}")
-        print(f"Missing shot motifs:     {total_missing_shots}")
-        return
-
-    if tmdb is None and not movie_query:
-        print("✗ Specify a target: --all, --title <value>, or --tmdb <id>.", file=sys.stderr)
-        sys.exit(1)
-
-    try:
-        filename = resolve_filename(project_path, tmdb, movie_query, media_type)
-    except ValueError as exc:
-        print(f"✗ {exc}", file=sys.stderr)
-        sys.exit(1)
-
-    try:
-        r = attach_motifs_to_annotation(
-            project_path, filename, media_type,
-            force=force, dry_run=dry_run, verbose=verbose,
-        )
-    except FileNotFoundError as exc:
-        print(f"✗ {exc}", file=sys.stderr)
-        sys.exit(1)
-
-    from data.metadata import get_metadata
-    meta_entries = get_metadata(project_path, media_type=media_type)
-    meta = next((e for e in meta_entries if e.get("filename") == filename), {})
-    title = meta.get("title") or Path(filename).stem
-
-    prefix = "(dry run) " if dry_run else ""
-    print(f"{title}")
-    print(f"  {prefix}shots:       {r['shots']}")
-    print(f"  {prefix}motifs found: {r['found']}")
-    print(f"  {prefix}added:        {r['added']}")
-    print(f"  {prefix}unchanged:    {r['unchanged']}")
-    print(f"  {prefix}conflicts:    {r['conflicts']}")
-    print(f"  {prefix}missing:      {r['missing']}")
-    if r["conflicts"] and not force:
-        print(
-            f"  ⚠  {r['conflicts']} conflict(s) — existing shot.motif differs from sidecar. "
-            f"Use --force to overwrite.",
-            file=sys.stderr,
-        )
+    """OBSOLETE — motifs are now stored directly in the annotation JSON."""
+    print(
+        "\u2717 crossing index motif attach is obsolete.\n"
+        "  Motifs are stored directly in .annotations.json at shot.motif.\n"
+        "  Use:\n"
+        "    crossing index motif audit  --media movie --all\n"
+        "    crossing index motif generate --media movie --title \"...\"",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 
 def _index_motif_audit(args):
@@ -8355,17 +8381,7 @@ def build_parser():
 
     p_index_motif_attach = motif_sub.add_parser(
         "attach",
-        help=(
-            "Copy motif values from data/motifs/ sidecars into annotation JSON "
-            "as shot.motif (required before annotation-embedding rebuild includes motif)"
-        ),
-        epilog=(
-            "Examples:\n"
-            "  crossing index motif attach --all\n"
-            "  crossing index motif attach --media gameplay --title ce5e0bba\n"
-            "  crossing index motif attach --all --force\n"
-            "  crossing index motif attach --all --dry-run --verbose"
-        ),
+        help=argparse.SUPPRESS,  # obsolete — hidden from help
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_index_motif_attach.set_defaults(func=cmd_index)
@@ -8433,6 +8449,56 @@ def build_parser():
         help="Limit the number of files listed",
     )
     _add_verbose_arg(p_index_motif_audit, help="Print the first missing shot_ids per file")
+
+    # index annotations
+    p_index_annotations = index_sub.add_parser(
+        "annotations",
+        help="Manage annotation artifact files (migration, naming)",
+        epilog=(
+            "Examples:\n"
+            "  crossing index annotations migrate-names --media movie --all --dry-run\n"
+            "  crossing index annotations migrate-names --media movie --all\n"
+            "  crossing index annotations migrate-names --media gameplay --all"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_index_annotations.set_defaults(func=cmd_index)
+    ann_sub = p_index_annotations.add_subparsers(dest="annotations_action", required=True)
+
+    p_ann_migrate = ann_sub.add_parser(
+        "migrate-names",
+        help=(
+            "Rename legacy annotation artifacts to explicit .annotations.* names. "
+            "Renames: .json → .annotations.json, .txt → .annotations.txt, "
+            ".npy → .annotations.npy, .manifest.json → .annotations.manifest.json. "
+            "Never renames .frames.* files."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  crossing index annotations migrate-names --media movie --all --dry-run\n"
+            "  crossing index annotations migrate-names --media movie --all\n"
+            "  crossing index annotations migrate-names --media gameplay --all --dry-run\n"
+            "  crossing index annotations migrate-names --media gameplay --all\n"
+            "  crossing index annotations migrate-names --media movie --title '3 10 To Yuma'"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_ann_migrate.set_defaults(func=cmd_index)
+    p_ann_migrate.add_argument(
+        "--title", dest="movie", default=None, metavar="TITLE",
+        help="Title, slug, or partial ID to migrate a single film",
+    )
+    _add_tmdb_arg(p_ann_migrate, help="TMDb ID of the film")
+    _add_media_arg(p_ann_migrate)
+    p_ann_migrate.add_argument(
+        "--all", action="store_true",
+        help="Migrate all films that have annotation files",
+    )
+    p_ann_migrate.add_argument(
+        "--dry-run", action="store_true",
+        help="Print what would be renamed without modifying any files",
+    )
+    _add_verbose_arg(p_ann_migrate, help="Print each file action (rename / already / missing)")
 
     # media command group
     p_media = sub.add_parser(

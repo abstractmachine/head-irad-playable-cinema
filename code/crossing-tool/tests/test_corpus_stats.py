@@ -84,11 +84,11 @@ class TestCorpusStats(unittest.TestCase):
             )
 
             _write_json(
-                project / "data" / "annotations" / "shots" / "movie" / "film-one.json",
+                project / "data" / "annotations" / "shots" / "movie" / "film-one.annotations.json",
                 [{"shot": 1}, {"shot": 2}],
             )
             _write_json(
-                project / "data" / "annotations" / "shots" / "movie" / "film-two.json",
+                project / "data" / "annotations" / "shots" / "movie" / "film-two.annotations.json",
                 [{"shot": 1}],
             )
 
@@ -147,7 +147,7 @@ class TestCorpusStats(unittest.TestCase):
 
             # Two movie shots with canonical shot.motif, one without
             _write_json(
-                project / "data" / "annotations" / "shots" / "movie" / "film-one.json",
+                project / "data" / "annotations" / "shots" / "movie" / "film-one.annotations.json",
                 [
                     {"shot": {"shot_id": "s1", "annotation": {}, "motif": "riding"}},
                     {"shot": {"shot_id": "s2", "annotation": {}, "motif": "duel"}},
@@ -158,7 +158,7 @@ class TestCorpusStats(unittest.TestCase):
             )
             # One gameplay shot with motif
             _write_json(
-                project / "data" / "annotations" / "shots" / "gameplay" / "game.json",
+                project / "data" / "annotations" / "shots" / "gameplay" / "game.annotations.json",
                 [
                     {"shot": {"shot_id": "g1", "annotation": {}, "motif": "snow"}},
                 ],
