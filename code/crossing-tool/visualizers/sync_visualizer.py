@@ -144,6 +144,64 @@ def _enumerate_video_devices() -> list:
     )
 
 
+def _find_alsa_source_for_video(video_device: str) -> str | None:
+    """Best-effort: return the PulseAudio source name for a V4L2 device.
+
+    Matches by the USB serial string embedded in both the udevadm output and
+    the ALSA source name (e.g. alsa_input.usb-VendorModel-00.analog-stereo).
+    Falls back to the first USB alsa_input found.
+    """
+    if not video_device:
+        return None
+    import subprocess as _sp
+    try:
+        info = _sp.check_output(
+            ["udevadm", "info", "--query=all", f"--name={video_device}"],
+            text=True, stderr=_sp.DEVNULL,
+        )
+        serial = None
+        for line in info.splitlines():
+            if line.startswith("E: ID_SERIAL="):
+                serial = line.split("=", 1)[1].strip().replace(" ", "_")
+                break
+        sources_out = _sp.check_output(
+            ["pactl", "list", "sources", "short"],
+            text=True, stderr=_sp.DEVNULL,
+        )
+        fallback = None
+        for line in sources_out.splitlines():
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            name = parts[1]
+            if not name.startswith("alsa_input"):
+                continue
+            if serial and serial in name:
+                return name
+            if "usb" in name.lower() and fallback is None:
+                fallback = name
+        return fallback
+    except Exception:
+        return None
+
+
+def _cleanup_audio_loopbacks() -> None:
+    """Unload ALL module-loopback instances (any process, any session).
+
+    Calling ``pactl unload-module module-loopback`` without an ID removes every
+    running instance at once, which cleans up stale loops from crashed or
+    previous runs of the Sync Visualizer.
+    """
+    import subprocess as _sp
+    try:
+        _sp.run(
+            ["pactl", "unload-module", "module-loopback"],
+            check=False, capture_output=True,
+        )
+    except Exception:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # _ResizeHandle — bottom-corner drag widget
 # ---------------------------------------------------------------------------
@@ -531,6 +589,22 @@ class LiveVideoNode(SyncNode):
         self._dev_name_btn.clicked.connect(self._show_device_menu)
         tb.insertWidget(1, self._dev_name_btn, 0, Qt.AlignVCenter)
 
+        # Sound button — inserted just before the close button (last item)
+        self._audio_module_id: int | None = None
+        self._snd_btn = QPushButton(self._title_bar)
+        self._snd_btn.setIcon(_svg_icon("sound-off", 14, theme.TEXT))
+        self._snd_btn.setIconSize(QSize(14, 14))
+        self._snd_btn.setFixedSize(22, 22)
+        self._snd_btn.setFlat(True)
+        self._snd_btn.setCursor(Qt.PointingHandCursor)
+        self._snd_btn.setStyleSheet(
+            "QPushButton { background: transparent; border: none; padding: 0; }"
+            "QPushButton:hover { background: rgba(255,255,255,30); border-radius: 3px; }"
+        )
+        self._snd_btn.clicked.connect(self._toggle_audio)
+        # tb already has: [cam, dev_name, stretch, close] — insert before close
+        tb.insertWidget(tb.count() - 1, self._snd_btn, 0, Qt.AlignVCenter)
+
         # ── Video widget (only if a device was given) ─────────────────────
         self._video = LiveVideoWidget(self._device, self) if self._device else None
         if self._video:
@@ -542,6 +616,7 @@ class LiveVideoNode(SyncNode):
     def state_dict(self) -> dict:
         d = super().state_dict()
         d["device"] = self._device  # may be None
+        d["audio"]  = self._audio_module_id is not None
         return d
 
     def _apply_title_chrome(self, show: bool) -> None:
@@ -551,6 +626,7 @@ class LiveVideoNode(SyncNode):
             self._title_bar.setStyleSheet("background: transparent;")
         self._close_btn.setVisible(show)
         self._cam_icon_btn.setVisible(show)
+        self._snd_btn.setVisible(show and bool(self._device))
         self._dev_name_btn.setVisible(show)
 
     def _show_device_menu(self) -> None:
@@ -580,18 +656,67 @@ class LiveVideoNode(SyncNode):
         if chosen and chosen.isEnabled() and not chosen.isChecked():
             self._switch_device(chosen.text())
 
+    def _toggle_audio(self) -> None:
+        import subprocess as _sp
+        if self._audio_module_id is not None:
+            try:
+                _sp.run(
+                    ["pactl", "unload-module", str(self._audio_module_id)],
+                    check=False, capture_output=True,
+                )
+            except Exception:
+                pass
+            self._audio_module_id = None
+            self._snd_btn.setIcon(_svg_icon("sound-off", 14, theme.TEXT))
+        else:
+            source = _find_alsa_source_for_video(self._device)
+            if not source:
+                return
+            try:
+                result = _sp.run(
+                    ["pactl", "load-module", "module-loopback",
+                     f"source={source}", "latency_msec=1"],
+                    capture_output=True, text=True, check=False,
+                )
+                self._audio_module_id = int(result.stdout.strip())
+                self._snd_btn.setIcon(_svg_icon("sound-high-solid", 14, theme.TEXT))
+            except Exception:
+                pass
+
     def _switch_device(self, device: str) -> None:
+        # Reset audio before switching
+        if self._audio_module_id is not None:
+            import subprocess as _sp
+            try:
+                _sp.run(
+                    ["pactl", "unload-module", str(self._audio_module_id)],
+                    check=False, capture_output=True,
+                )
+            except Exception:
+                pass
+            self._audio_module_id = None
+            self._snd_btn.setIcon(_svg_icon("sound-off", 14, theme.TEXT))
         if self._video is not None:
             self._video.stop()
             self.content_layout().removeWidget(self._video)
             self._video.deleteLater()
         self._device = device
         self._dev_name_btn.setText(device)
+        self._snd_btn.setVisible(True)
         self._video = LiveVideoWidget(device, self)
         self.content_layout().addWidget(self._video)
         self._video.show()
 
     def _on_close(self) -> None:
+        if self._audio_module_id is not None:
+            import subprocess as _sp
+            try:
+                _sp.run(
+                    ["pactl", "unload-module", str(self._audio_module_id)],
+                    check=False, capture_output=True,
+                )
+            except Exception:
+                pass
         if self._video is not None:
             self._video.stop()
         super()._on_close()
@@ -633,6 +758,8 @@ class SyncWorkspace(QWidget):
                 node = self._make_live_video_node(device)
                 node.setGeometry(int(s.get("x", 0)), int(s.get("y", 0)), w, h)
                 node.show()
+                if s.get("audio") and device:
+                    node._toggle_audio()
 
     def set_chrome_visible(self, visible: bool) -> None:
         self._chrome_visible = visible
@@ -928,6 +1055,7 @@ class SyncVisualizerWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self._save_state()
+        _cleanup_audio_loopbacks()
         if self._fs_active:
             self.setWindowFlag(Qt.FramelessWindowHint, False)
         super().closeEvent(event)
@@ -996,6 +1124,7 @@ def run_visualizer() -> None:
     from visualizers._window_helpers import raise_existing_window
     if raise_existing_window("sync"):
         return
+    _cleanup_audio_loopbacks()  # clear any stale loops from crashed/previous runs
     app = QApplication.instance() or QApplication(sys.argv)
     theme.apply_theme(app)
     win = SyncVisualizerWindow()
