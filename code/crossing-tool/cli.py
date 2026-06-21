@@ -6785,6 +6785,8 @@ def cmd_visualizer(args):
     elif sub == "book":
         _require_path()
         _book_visualizer(args)
+    elif sub == "sync":
+        _sync_visualizer(args)
 
 
 def _project_visualizer(args):
@@ -6820,6 +6822,13 @@ def _palette_visualizer(args):
         prefs.get("path"),
         media_type=normalize_media_type(getattr(args, "media", "movie")) or "movie",
     )
+
+
+def _sync_visualizer(args):
+    """Launch the sync patching workspace GUI."""
+    _require_visualizer_deps()
+    from visualizers.sync_visualizer import run_visualizer
+    run_visualizer()
 
 
 def _require_path():
@@ -6886,7 +6895,7 @@ def _backup_update(project_path: str, backup_path: str, dry_run: bool = False) -
     # Try rsync first
     rsync_available = shutil.which("rsync") is not None
     if rsync_available:
-        cmd = ["rsync", "-a", "--info=progress2", src, dst]
+        cmd = ["rsync", "-a", "--no-links", "--info=progress2", src, dst]
         if dry_run:
             cmd.insert(1, "--dry-run")
             print("  (dry run — no files will be written)")
@@ -9209,7 +9218,7 @@ def build_parser():
     # visualizer command group — shortcut to all visualizer GUIs
     p_visualizer = sub.add_parser(
         "visualizer",
-        help="Open a visualizer GUI (project, shotlist, composition, mosaic, cloud, silhouette)",
+        help="Open a visualizer GUI (project, shotlist, composition, mosaic, cloud, silhouette, sync)",
     )
     p_visualizer.set_defaults(func=cmd_visualizer, visualizer_subcommand="project")
     visualizer_sub = p_visualizer.add_subparsers(dest="visualizer_subcommand", required=False)
@@ -9306,6 +9315,11 @@ def build_parser():
     visualizer_sub.add_parser(
         "book",
         help="Browse imported books as page spreads",
+    )
+
+    visualizer_sub.add_parser(
+        "sync",
+        help="Open the sync patching workspace (live video input, drag-and-drop nodes)",
     )
 
     # ── engraving command ─────────────────────────────────────────────────────

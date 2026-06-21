@@ -84,6 +84,7 @@ _VISUALIZER_TITLE = {
     "silhouette":  "Silhouette Visualizer",
     "palette":     "Palette Visualizer",
     "flipbook":    "Flipbook Visualizer",
+    "sync":        "Sync Visualizer",
 }
 
 
@@ -438,8 +439,9 @@ class ProjectVisualizer(QMainWindow):
                 ("Silhouette",  "silhouette",  True),
                 ("Palette",     "palette",     True),
                 ("Flipbook",    "flipbook",    True),
+                ("Sync",        "sync",        True),
             ],
-            [(0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 1), (3, 0), (3, 1)],
+            [(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2), (2, 0), (2, 1), (2, 2)],
         ):
             btn = QPushButton(label)
             btn.setEnabled(enabled)
@@ -534,6 +536,9 @@ class ProjectVisualizer(QMainWindow):
             import visualizers.flipbook_visualizer as _fv
             _fv._FONT_FAMILY = _fv._load_flipbook_font()
             return _fv.FlipbookVisualizerWindow(project_path, media_type=media_type)
+        elif subcommand == "sync":
+            from visualizers.sync_visualizer import SyncVisualizerWindow
+            return SyncVisualizerWindow()
         return None  # caller falls through to subprocess
 
     # ------------------------------------------------------------------

@@ -66,7 +66,7 @@ $ sudo apt install pulseaudio-utils
 Turn on PS4 audio passthrough:
 
 ```
-$ (crossing) ~/playable/dead-crossing$ pactl load-module module-loopback source=alsa_input.usb-Cubeternet_eEver_USB_Device-00.analog-stereo latency_msec=1
+$ pactl load-module module-loopback source=alsa_input.usb-Cubeternet_eEver_USB_Device-00.analog-stereo latency_msec=1
 536870913
 ```
 

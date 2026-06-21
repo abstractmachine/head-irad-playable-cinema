@@ -15,6 +15,7 @@ _VISUALIZER_TITLE = {
     "palette":     "Palette Visualizer",
     "flipbook":    "Flipbook Visualizer",
     "book":        "Book Visualizer",
+    "sync":        "Sync Visualizer",
 }
 
 
