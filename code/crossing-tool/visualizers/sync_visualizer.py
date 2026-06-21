@@ -114,8 +114,9 @@ _STAR_COLOR_A    = QColor("#00ff00")    # inner-edge colour (low radius)
 _STAR_COLOR_B    = QColor("#ff0000")    # outer-edge colour (high radius)
 _NODE_TEXT_COLOR = "#ffffff"            # text colour inside module windows
 
-_VIDEO_DEVICE    = "/dev/video0"
-_VIDEO_FPS_MS    = 33    # ~30 fps timer interval
+_VIDEO_DEVICE        = "/dev/video0"
+_VIDEO_FAIL_LIMIT    = 5    # consecutive read() failures → declare device lost
+_VIDEO_RECONNECT_S   = 3    # seconds between reconnect probe attempts
 
 _MIME_TYPE       = "application/x-crossing-sync-palette-item"
 
@@ -404,27 +405,134 @@ class _EdgeResizeHandle(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# _VideoReaderThread — blocking cap.read() moved off the main thread
+# ---------------------------------------------------------------------------
+
+class _VideoReaderThread(QThread):
+    """Reads frames from a V4L2 device in a dedicated thread.
+
+    Emits `frame_ready` for each good frame and `device_lost` when the device
+    stops responding.  After losing the device it polls every
+    `_VIDEO_RECONNECT_S` seconds and emits `device_recovered` when the device
+    can be opened again.
+    """
+
+    frame_ready      = pyqtSignal(object)   # np.ndarray HxWx3 uint8 RGB
+    device_lost      = pyqtSignal()
+    device_recovered = pyqtSignal()
+
+    def __init__(self, device: str, parent: "QObject | None" = None) -> None:
+        super().__init__(parent)
+        self._device   = device
+        self._stopping = False
+        self._cap: "cv2.VideoCapture | None" = None
+        self._fails    = 0
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _open_device(self) -> bool:
+        """Try to open the device.  Returns True on success."""
+        if self._stopping:
+            return False
+        try:
+            import re as _re
+            m   = _re.search(r"(\d+)$", self._device)
+            dev = int(m.group(1)) if m else self._device
+            cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
+            if not cap.isOpened():
+                cap.release()
+                return False
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            self._cap   = cap
+            self._fails = 0
+            return True
+        except Exception:
+            return False
+
+    def _release(self) -> None:
+        if self._cap is not None:
+            try:
+                self._cap.release()
+            except Exception:
+                pass
+            self._cap = None
+
+    # ------------------------------------------------------------------
+    # Thread body
+    # ------------------------------------------------------------------
+
+    def run(self) -> None:
+        if not self._open_device():
+            # Start in "lost" state and immediately begin polling
+            self.device_lost.emit()
+
+        while not self._stopping:
+            if self._cap is None:
+                # Device is gone — wait in small chunks so we can be stopped
+                for _ in range(_VIDEO_RECONNECT_S * 10):
+                    if self._stopping:
+                        return
+                    QThread.msleep(100)
+                if self._open_device():
+                    self.device_recovered.emit()
+                continue
+
+            ret, frame = self._cap.read()   # may block ~10 s on V4L2 disconnect
+
+            if self._stopping:
+                break
+
+            if not ret:
+                self._fails += 1
+                if self._fails >= _VIDEO_FAIL_LIMIT:
+                    self._release()
+                    self.device_lost.emit()
+                continue
+
+            self._fails = 0
+            try:
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                self.frame_ready.emit(rgb)
+            except Exception:
+                pass
+
+        self._release()
+
+    # ------------------------------------------------------------------
+    # Public control
+    # ------------------------------------------------------------------
+
+    def request_stop(self) -> None:
+        """Signal the thread to exit and release the capture device."""
+        self._stopping = True
+        self._release()   # unblocks any pending cap.read()
+
+
+# ---------------------------------------------------------------------------
 # LiveVideoWidget — low-latency /dev/video0 preview
 # ---------------------------------------------------------------------------
 
 class LiveVideoWidget(QLabel):
-    """OpenCV + QTimer live preview.
+    """OpenCV live preview driven by a background reader thread.
 
-    Reads one frame per ~33 ms tick on the main thread.  Sets V4L2 buffer
-    size to 1 to minimise latency.  Scales the last captured frame to fill
-    the widget on every resize so the node can be freely resized.
+    Frames arrive via a signal from `_VideoReaderThread` so the main thread
+    is never blocked by V4L2 I/O.  When the device disappears the widget
+    shows a "reconnecting" message and automatically resumes once the device
+    comes back.
 
     Falls back to a "No live video signal" message when cv2 is unavailable
-    or the device cannot be opened.
+    or the device cannot be opened initially.
     """
 
     def __init__(self, device: str = _VIDEO_DEVICE, parent: QWidget = None) -> None:
         super().__init__(parent)
-        self._device          = device
-        self._cap             = None
-        self._timer           = None
+        self._device             = device
+        self._thread: _VideoReaderThread | None = None
         self._last_pixmap: QPixmap | None = None
-        self._last_frame_rgb  = None   # np.ndarray HxWx3 uint8, or None
+        self._last_frame_rgb     = None   # np.ndarray HxWx3 uint8, or None
 
         self.setAlignment(Qt.AlignCenter)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -437,36 +545,26 @@ class LiveVideoWidget(QLabel):
         if not _HAS_CV2:
             self.setText("No live video signal\n(cv2 not available)")
             return
-        try:
-            # V4L2 backend requires an integer index, not a string path.
-            # Parse "/dev/videoN" → N; fall back to the string for non-standard paths.
-            import re as _re
-            _m = _re.search(r"(\d+)$", self._device)
-            dev = int(_m.group(1)) if _m else self._device
-            cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
-            if not cap.isOpened():
-                raise RuntimeError("device not opened")
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            self._cap   = cap
-            self._timer = QTimer(self)
-            self._timer.setInterval(_VIDEO_FPS_MS)
-            self._timer.timeout.connect(self._read_frame)
-            self._timer.start()
-        except Exception:
-            self.setText("No live video signal")
+        self._thread = _VideoReaderThread(self._device, self)
+        self._thread.frame_ready.connect(self._on_frame_ready)
+        self._thread.device_lost.connect(self._on_device_lost)
+        self._thread.device_recovered.connect(self._on_device_recovered)
+        self._thread.start()
 
-    def _read_frame(self) -> None:
-        if self._cap is None:
-            return
-        ret, frame = self._cap.read()
-        if not ret:
-            return
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        self._last_frame_rgb = frame_rgb          # store for consumers
-        h, w, ch  = frame_rgb.shape
+    def _on_frame_ready(self, frame_rgb) -> None:
+        self._last_frame_rgb = frame_rgb
+        h, w, ch = frame_rgb.shape
         img = QImage(frame_rgb.data, w, h, ch * w, QImage.Format_RGB888)
         self._last_pixmap = QPixmap.fromImage(img)
         self._redisplay()
+
+    def _on_device_lost(self) -> None:
+        self._last_pixmap    = None
+        self._last_frame_rgb = None
+        self.setText(f"No signal on {self._device}\nReconnecting…")
+
+    def _on_device_recovered(self) -> None:
+        self.setText("")   # clear message; next frame_ready will paint over it
 
     def latest_frame_rgb(self):
         """Return the most recent captured frame as a HxWx3 uint8 numpy array.
@@ -489,12 +587,12 @@ class LiveVideoWidget(QLabel):
         self._redisplay()
 
     def stop(self) -> None:
-        if self._timer is not None:
-            self._timer.stop()
-            self._timer = None
-        if self._cap is not None:
-            self._cap.release()
-            self._cap = None
+        if self._thread is not None:
+            self._thread.request_stop()
+            self._thread.quit()
+            if not self._thread.wait(5000):   # 5 s — V4L2 select() may still be running
+                self._thread.terminate()
+            self._thread = None
 
 
 # ---------------------------------------------------------------------------
