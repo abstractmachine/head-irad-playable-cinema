@@ -34,6 +34,7 @@ from PyQt5.QtCore import (
     QMimeData,
     QObject,
     QPoint,
+    QPointF,
     QRect,
     QSize,
     Qt,
@@ -103,6 +104,10 @@ _NODE_MIN_W      = 240
 _NODE_MIN_H      = _NODE_TITLE_H + round(_NODE_MIN_W * 9 / 16)
 
 _HANDLE_SIZE     = 14   # px — corner resize hit zone
+_EDGE_THICKNESS  = 6    # px — edge resize hit zone for FrameVectorNode
+_FV_MIN_H        = _NODE_TITLE_H + 80   # minimum FrameVectorNode height
+_STAR_COLOR_A    = QColor("#00ff00")    # inner-edge colour (low radius)
+_STAR_COLOR_B    = QColor("#ff0000")    # outer-edge colour (high radius)
 
 _VIDEO_DEVICE    = "/dev/video0"
 _VIDEO_FPS_MS    = 33    # ~30 fps timer interval
@@ -345,6 +350,46 @@ class _ResizeHandle(QWidget):
         if self._press_x is not None:
             self.resize_released.emit(self._corner)
             self._press_x = None
+        super().mouseReleaseEvent(event)
+
+
+class _EdgeResizeHandle(QWidget):
+    """Thin transparent strip along one node edge for free (non-aspect-locked) resize.
+
+    Emits:
+      resize_started(edge)                — on mouse press
+      resize_dragged(edge, delta_x, delta_y) — on mouse move (delta from press)
+      resize_released(edge)               — on mouse release
+    """
+
+    resize_started  = pyqtSignal(str)
+    resize_dragged  = pyqtSignal(str, int, int)
+    resize_released = pyqtSignal(str)
+
+    def __init__(self, edge: str, parent: QWidget = None) -> None:
+        super().__init__(parent)
+        self._edge      = edge
+        self._press_pos = None
+        cursor = Qt.SizeVerCursor if edge in ("top", "bottom") else Qt.SizeHorCursor
+        self.setCursor(cursor)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self._press_pos = event.globalPos()
+            self.resize_started.emit(self._edge)
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if event.buttons() & Qt.LeftButton and self._press_pos is not None:
+            d = event.globalPos() - self._press_pos
+            self.resize_dragged.emit(self._edge, d.x(), d.y())
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if self._press_pos is not None:
+            self.resize_released.emit(self._edge)
+            self._press_pos = None
         super().mouseReleaseEvent(event)
 
 
@@ -924,6 +969,12 @@ class SyncWorkspace(QWidget):
                 node.setGeometry(int(s.get("x", 0)), int(s.get("y", 0)), w, h)
                 if "interval" in s:
                     node._set_interval(s["interval"])
+                if s.get("star"):
+                    node._toggle_star()
+                if s.get("info"):
+                    node._toggle_info()
+                if not s.get("display", True):
+                    node._toggle_display()
                 node.show()
 
     def restore_connections(self, states: list[dict]) -> None:
@@ -1311,6 +1362,113 @@ class _EmbedWorker(QObject):
 
 
 # ---------------------------------------------------------------------------
+class _VectorStarOverlay(QWidget):
+    """Transparent overlay that draws the vector as a radial polygon."""
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WA_NoSystemBackground)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self._vec = None  # np.ndarray or None
+
+    def set_vector(self, vec) -> None:
+        self._vec = vec
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        if self._vec is None or len(self._vec) < 3:
+            return
+        import math
+        import numpy as np
+        vec = np.asarray(self._vec, dtype=float)
+
+        max_abs = np.percentile(np.abs(vec), 99)
+        if max_abs < 1e-9:
+            return
+
+        w = self.width()
+        h = self.height()
+        content_top = _NODE_TITLE_H
+        content_h = h - content_top
+        cx = w / 2.0
+        cy = content_top + content_h / 2.0
+        max_r  = min(w, content_h) / 2.0 * 0.75
+        half_r = max_r * 0.5
+        n = len(vec)
+
+        # Pre-compute (point, radius) pairs
+        pts = []
+        radii = []
+        for i in range(n):
+            angle = 2 * math.pi * i / n - math.pi / 2
+            r = half_r + (vec[i] / max_abs) * half_r
+            r = max(0.0, r)
+            pts.append(QPointF(cx + r * math.cos(angle), cy + r * math.sin(angle)))
+            radii.append(r)
+
+        # Normalise saturation against the actual radius range so the
+        # innermost point is always pure white and the outermost pure red.
+        r_min = min(radii)
+        r_max = max(radii)
+        r_span = r_max - r_min if r_max > r_min else 1.0
+
+        # Pre-extract colour A/B components for fast lerp
+        ar, ag, ab = _STAR_COLOR_A.red(), _STAR_COLOR_A.green(), _STAR_COLOR_A.blue()
+        br, bg, bb = _STAR_COLOR_B.red(), _STAR_COLOR_B.green(), _STAR_COLOR_B.blue()
+
+        def _color(r: float, alpha: float = 1.0) -> QColor:
+            """Linear interpolation from _STAR_COLOR_A (inner) to _STAR_COLOR_B (outer)."""
+            t = (r - r_min) / r_span
+            return QColor(
+                int(ar + t * (br - ar)),
+                int(ag + t * (bg - ag)),
+                int(ab + t * (bb - ab)),
+                int(alpha * 255),
+            )
+
+        center = QPointF(cx, cy)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # ── Dominant colour fill (32-bin histogram on t) ─────────────────
+        _BINS = 32
+        bins = [0] * _BINS
+        for i in range(n):
+            j = (i + 1) % n
+            mean_r = (radii[i] + radii[j]) / 2.0
+            t = (mean_r - r_min) / r_span
+            b = min(_BINS - 1, int(t * _BINS))
+            bins[b] += 1
+        dominant_t = (bins.index(max(bins)) + 0.5) / _BINS
+        dominant_color = QColor(
+            int(ar + dominant_t * (br - ar)),
+            int(ag + dominant_t * (bg - ag)),
+            int(ab + dominant_t * (bb - ab)),
+            int(0.35 * 255),
+        )
+        poly_path = QPainterPath()
+        poly_path.moveTo(pts[0])
+        for i in range(1, n):
+            poly_path.lineTo(pts[i])
+        poly_path.closeSubpath()
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(dominant_color)
+        painter.drawPath(poly_path)
+
+        # ── Outline segments on top ───────────────────────────────────────
+        painter.setBrush(Qt.NoBrush)
+        for i in range(n):
+            j = (i + 1) % n
+            mean_r = (radii[i] + radii[j]) / 2.0
+            pen = QPen(_color(mean_r))
+            pen.setWidthF(0.75)
+            painter.setPen(pen)
+            painter.drawLine(pts[i], pts[j])
+
+        painter.end()
+
+
 # FrameVectorNode — embeds live video frames with CLIP
 # ---------------------------------------------------------------------------
 
@@ -1324,7 +1482,10 @@ class FrameVectorNode(SyncNode):
         super().__init__("", parent)
 
         self._interval_s: float | None = _FV_DEFAULT_INTERVAL
-        self._display_on: bool = True   # scanning icon toggles this
+        self._display_on: bool = True
+        self._star_on:    bool = False
+        self._info_on:    bool = False
+        self._status_msg: str  = "waiting for connection\u2026"
         self._source_node: "LiveVideoNode | None" = None
         self._embed_busy: bool = False
         self._model_name: str  = ""
@@ -1341,6 +1502,22 @@ class FrameVectorNode(SyncNode):
         self._scan_btn.clicked.connect(self._toggle_display)
         self._tb_layout.insertWidget(0, self._scan_btn, 0, Qt.AlignVCenter)
         self._update_scan_icon()
+
+        self._star_btn = _TbBtn(icon_name="star-dashed", icon_size=14,
+                                parent=self._title_bar)
+        self._star_btn.setFixedSize(22, 22)
+        self._star_btn.setStyleSheet(_TB_ICON_BTN_SS)
+        self._star_btn.clicked.connect(self._toggle_star)
+        self._tb_layout.insertWidget(1, self._star_btn, 0, Qt.AlignVCenter)
+        self._update_star_icon()
+
+        self._info_btn = _TbBtn(icon_name="info-circle", icon_size=14,
+                                parent=self._title_bar)
+        self._info_btn.setFixedSize(22, 22)
+        self._info_btn.setStyleSheet(_TB_ICON_BTN_SS)
+        self._info_btn.clicked.connect(self._toggle_info)
+        self._tb_layout.insertWidget(2, self._info_btn, 0, Qt.AlignVCenter)
+        self._update_info_icon()
 
         self._interval_btn = _TbBtn(icon_name="alarm-solid", text="off",
                                     icon_size=14, parent=self._title_bar)
@@ -1360,11 +1537,6 @@ class FrameVectorNode(SyncNode):
 
         lbl_style = "color: #999999; background: transparent; font-size: 11px;"
 
-        self._status_lbl = QLabel("status: waiting for connection…", body)
-        self._status_lbl.setStyleSheet(lbl_style)
-        self._status_lbl.setFont(theme.font_ui())
-        blay.addWidget(self._status_lbl)
-
         self._vec_text = QTextEdit(body)
         self._vec_text.setReadOnly(True)
         self._vec_text.setFont(theme.font_mono() if hasattr(theme, "font_mono") else theme.font_ui())
@@ -1372,11 +1544,41 @@ class FrameVectorNode(SyncNode):
             "background: transparent; color: #ffffff;"
             "border: none; font-size: 10px;"
         )
-        self._vec_text.setPlainText("vector: —")
+        self._vec_text.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._vec_text.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._vec_text.setPlainText("status: waiting for connection…")
         blay.addWidget(self._vec_text, 1)
 
         self.content_layout().addWidget(body)
         self.resize(300, 160)
+
+        # Transparent overlay for vector star drawing (always on top)
+        self._star_overlay = _VectorStarOverlay(self)
+        self._star_overlay.setVisible(False)
+
+        # Edge + corner resize handles — free per-edge/corner resize.
+        self._handle_bl.hide()
+        self._handle_br.hide()
+        self._edge_resize_geom = None
+        self._edge_handles: dict = {}
+        _edge_cursors = {
+            "top":    Qt.SizeVerCursor,
+            "bottom": Qt.SizeVerCursor,
+            "left":   Qt.SizeHorCursor,
+            "right":  Qt.SizeHorCursor,
+            "tl":     Qt.SizeFDiagCursor,
+            "tr":     Qt.SizeBDiagCursor,
+            "bl":     Qt.SizeBDiagCursor,
+            "br":     Qt.SizeFDiagCursor,
+        }
+        for _edge in _edge_cursors:
+            _eh = _EdgeResizeHandle(_edge, self)
+            _eh.setCursor(_edge_cursors[_edge])
+            _eh.resize_started.connect(self._on_edge_resize_start)
+            _eh.resize_dragged.connect(self._on_edge_resize_drag)
+            _eh.resize_released.connect(self._on_edge_resize_end)
+            self._edge_handles[_edge] = _eh
+        self._reposition_edge_handles()
 
         # Timer that fires the embedding loop
         self._timer = QTimer(self)
@@ -1400,13 +1602,106 @@ class FrameVectorNode(SyncNode):
     def input_ports(self) -> list[str]:
         return ["image"]
 
-    # ------------------------------------------------------------------
-    # Connection callbacks
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._star_overlay.setGeometry(0, 0, self.width(), self.height())
+        self._reposition_edge_handles()
+        self._update_vec_display()
+
+    def _count_displayable_values(self) -> int:
+        """Estimate how many vector values fit in the current text area."""
+        # Each formatted value is '+0.123' (6 chars) + ', ' (2) = 8 chars wide.
+        fm = self._vec_text.fontMetrics()
+        char_w = fm.horizontalAdvance("0")  # monospace — every char same width
+        line_h = fm.lineSpacing()
+        margins = self._body.layout().contentsMargins()
+        area_w = self.width()  - margins.left() - margins.right()  - 16
+        area_h = self.height() - _NODE_TITLE_H - margins.top() - margins.bottom() - 16
+        # Header: status + model + dims (3 lines) when info is on, 0 otherwise
+        header_lines = 3 if self._info_on else 0
+        avail_lines  = max(1, (area_h // max(1, line_h)) - header_lines)
+        # Each value: '+0.123' = 6 chars + ', ' = 8 chars total
+        value_chars  = 8
+        values_per_line = max(1, area_w // max(1, char_w * value_chars))
+        return avail_lines * values_per_line
+
+    def _set_status(self, msg: str) -> None:
+        """Update the status line and refresh the display."""
+        self._status_msg = msg
+        self._update_vec_display()
+
+    def _update_vec_display(self) -> None:
+        lines = []
+        # Status line visible whenever the body is visible (info or vectors on)
+        if self._info_on:
+            lines.append(f"status: {getattr(self, '_status_msg', 'waiting…')}")
+            lines.append(f"model: {self._model_name}" if self._model_name else "model: —")
+            lines.append(f"dims:  {self._vec_dim}" if self._vec_dim else "dims:  —")
+        # Vector values — only when display is ON and we have data
+        if self._display_on and self._last_vec is not None:
+            vec = self._last_vec
+            n = self._count_displayable_values()
+            preview = ", ".join(f"{v:+6.3f}" for v in vec[:n])
+            if len(vec) > n:
+                preview += ", …"
+            lines.append(f"vector:[{preview}]")
+        elif not self._info_on:
+            # Neither on — show bare status so the widget isn't blank if body is somehow visible
+            lines.append(f"status: {getattr(self, '_status_msg', 'waiting…')}")
+        self._vec_text.setPlainText("\n".join(lines))
+
+    def _reposition_edge_handles(self) -> None:
+        t = _EDGE_THICKNESS
+        w, h = self.width(), self.height()
+        eh = self._edge_handles
+        # Edges (corners cut out)
+        eh["top"].setGeometry(t, 0, w - 2 * t, t)
+        eh["bottom"].setGeometry(t, h - t, w - 2 * t, t)
+        eh["left"].setGeometry(0, t, t, h - 2 * t)
+        eh["right"].setGeometry(w - t, t, t, h - 2 * t)
+        # Corners
+        eh["tl"].setGeometry(0,     0,     t, t)
+        eh["tr"].setGeometry(w - t, 0,     t, t)
+        eh["bl"].setGeometry(0,     h - t, t, t)
+        eh["br"].setGeometry(w - t, h - t, t, t)
+        for handle in eh.values():
+            handle.raise_()
+        self._star_overlay.raise_()
+
+    def _on_edge_resize_start(self, edge: str) -> None:
+        self._edge_resize_geom = self.geometry()
+
+    def _on_edge_resize_drag(self, edge: str, dx: int, dy: int) -> None:
+        orig = self._edge_resize_geom
+        if orig is None:
+            return
+        # Compute new w/h/x/y per affected axis
+        new_x, new_y = orig.left(), orig.top()
+        new_w, new_h = orig.width(), orig.height()
+        if edge in ("right", "tr", "br"):
+            new_w = max(_NODE_MIN_W, orig.width() + dx)
+        if edge in ("left", "tl", "bl"):
+            new_w = max(_NODE_MIN_W, orig.width() - dx)
+            new_x = max(0, orig.right() - new_w + 1)
+        if edge in ("bottom", "bl", "br"):
+            new_h = max(_FV_MIN_H, orig.height() + dy)
+        if edge in ("top", "tl", "tr"):
+            new_h = max(_FV_MIN_H, orig.height() - dy)
+            new_y = max(0, orig.bottom() - new_h + 1)
+        self.setGeometry(new_x, new_y, new_w, new_h)
+
+    def _on_edge_resize_end(self, edge: str) -> None:
+        self._edge_resize_geom = None
+
+
     # ------------------------------------------------------------------
 
     def state_dict(self) -> dict:
         d = super().state_dict()
         d["interval"] = self._interval_s
+        d["star"]     = self._star_on
+        d["display"]  = self._display_on
+        d["info"]     = self._info_on
         return d
 
     def _apply_title_chrome(self, show: bool) -> None:
@@ -1414,17 +1709,49 @@ class FrameVectorNode(SyncNode):
         # Also hide/show the extra widgets unique to this node
         if hasattr(self, "_scan_btn"):
             self._scan_btn.setVisible(show)
+        if hasattr(self, "_star_btn"):
+            self._star_btn.setVisible(show)
+        if hasattr(self, "_info_btn"):
+            self._info_btn.setVisible(show)
         if hasattr(self, "_interval_btn"):
             self._interval_btn.setVisible(show)
 
     def _toggle_display(self) -> None:
         self._display_on = not self._display_on
         self._update_scan_icon()
-        self._body.setVisible(self._display_on)
+        self._refresh_body_visibility()
+        self._update_vec_display()
+
+    def _toggle_info(self) -> None:
+        self._info_on = not self._info_on
+        self._update_info_icon()
+        self._refresh_body_visibility()
+        self._update_vec_display()
+
+    def _refresh_body_visibility(self) -> None:
+        """Body (text area) is visible when either info or vectors are on."""
+        self._body.setVisible(self._display_on or self._info_on)
+
+    def _toggle_star(self) -> None:
+        self._star_on = not self._star_on
+        self._update_star_icon()
+        self._star_overlay.setVisible(self._star_on)
+        if self._star_on and self._last_vec is not None:
+            self._star_overlay.set_vector(self._last_vec)
 
     def _update_scan_icon(self) -> None:
         color = theme.TEXT if self._display_on else theme.TEXT_DIM
         self._scan_btn.set_icon("calculator", color)
+
+    def _update_star_icon(self) -> None:
+        color = theme.TEXT if self._star_on else theme.TEXT_DIM
+        self._star_btn.set_icon("star-dashed", color)
+
+    def _update_info_icon(self) -> None:
+        if self._info_on:
+            self._info_btn.set_icon("info-circle-solid", theme.TEXT)
+        else:
+            self._info_btn.set_icon("info-circle", theme.TEXT_DIM)
 
     def _show_interval_menu(self) -> None:
         menu = QMenu(self)
@@ -1464,7 +1791,7 @@ class FrameVectorNode(SyncNode):
 
     def on_connected(self, source_node: "LiveVideoNode") -> None:
         self._source_node = source_node
-        self._status_lbl.setText("status: connected, waiting for frame…")
+        self._set_status("connected, waiting for frame…")
         if self._interval_s is not None:
             self._timer.start()
 
@@ -1472,8 +1799,8 @@ class FrameVectorNode(SyncNode):
         self._source_node = None
         self._timer.stop()
         self._embed_busy = False
-        self._status_lbl.setText("status: waiting for connection…")
-        self._vec_text.setPlainText("vector: —")
+        self._set_status("waiting for connection…")
+        self._vec_text.setPlainText("status: waiting for connection…")
 
     # ------------------------------------------------------------------
     # Embedding loop
@@ -1484,10 +1811,10 @@ class FrameVectorNode(SyncNode):
             return
         frame = self._source_node.latest_frame_rgb()
         if frame is None:
-            self._status_lbl.setText("status: waiting for image…")
+            self._set_status("waiting for image…")
             return
         self._embed_busy = True
-        self._status_lbl.setText("status: embedding…")
+        self._set_status("embedding…")
 
         # Find project path (best-effort)
         try:
@@ -1518,20 +1845,13 @@ class FrameVectorNode(SyncNode):
         self._model_name = model_name
         self._last_vec   = vec
         self._vec_dim    = len(vec)
-        preview = ", ".join(f"{v:.3f}" for v in vec[:16])
-        if len(vec) > 16:
-            preview += ", …"
-        self._status_lbl.setText("status: ok")
-        self._vec_text.setPlainText(
-            f"model: {model_name}\n"
-            f"dims:  {self._vec_dim}\n"
-            f"vector: [{preview}]"
-        )
+        self._set_status("ok")
+        if self._star_on:
+            self._star_overlay.set_vector(vec)
 
     def _on_embed_error(self, msg: str) -> None:
         self._embed_busy = False
-        self._status_lbl.setText(f"status: error")
-        self._vec_text.setPlainText(f"error: {msg}")
+        self._set_status(f"error: {msg}")
 
     # ------------------------------------------------------------------
     # Clean up timer/thread on close
