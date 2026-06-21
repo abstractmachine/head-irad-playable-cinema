@@ -34,6 +34,7 @@ from PyQt5.QtCore import (
     QMimeData,
     QPoint,
     QRect,
+    QSize,
     Qt,
     QTimer,
     pyqtSignal,
@@ -54,6 +55,7 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -130,6 +132,16 @@ def _svg_icon(name: str, size: int = 16, color: str = "#ffffff") -> QIcon:
         painter.end()
         return QIcon(pix)
     return QIcon()
+
+
+def _enumerate_video_devices() -> list:
+    """Return sorted list of /dev/videoN paths present on the system."""
+    import glob as _glob
+    import re as _re
+    return sorted(
+        d for d in _glob.glob("/dev/video*")
+        if _re.match(r"/dev/video\d+$", d)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -300,13 +312,14 @@ class SyncNode(QWidget):
         tb = QHBoxLayout(self._title_bar)
         tb.setContentsMargins(6, 0, 4, 0)
         tb.setSpacing(0)
+        self._tb_layout = tb
 
         self._title_label = QLabel(title, self._title_bar)
         self._title_label.setStyleSheet(
             f"color: {theme.TEXT}; background: transparent;"
         )
         self._title_label.setFont(theme.font_ui())
-        tb.addWidget(self._title_label)
+        tb.addWidget(self._title_label, 0, Qt.AlignVCenter)
         tb.addStretch()
 
         self._close_btn = QPushButton("×", self._title_bar)
@@ -315,13 +328,12 @@ class SyncNode(QWidget):
         self._close_btn.setStyleSheet(
             f"QPushButton {{"
             f"  background: transparent; color: {theme.TEXT};"
-            f"  border: none; font-size: 14pt; padding: 0;"
-            f"  min-height: 0; max-height: 9999;"
+            f"  border: none; font-size: 14px; padding: 0;"
             f"}}"
             f"QPushButton:hover {{ color: {theme.ACCENT}; }}"
         )
         self._close_btn.clicked.connect(self._on_close)
-        tb.addWidget(self._close_btn)
+        tb.addWidget(self._close_btn, 0, Qt.AlignVCenter)
         outer.addWidget(self._title_bar)
 
         # ── Content area ──────────────────────────────────────────────────
@@ -482,21 +494,106 @@ class LiveVideoNode(SyncNode):
     """Workspace node with a resizable (16:9) live video preview."""
 
     def __init__(self, device: str = _VIDEO_DEVICE, parent: QWidget = None) -> None:
-        super().__init__(device or _VIDEO_DEVICE, parent)
-        self._device = device or _VIDEO_DEVICE
-        self._video  = LiveVideoWidget(self._device, self)
-        self.content_layout().addWidget(self._video)
+        # device=None means "unselected" — show placeholder, no capture
+        self._device = device  # may be None
+        super().__init__("", parent)
+
+        # ── Title bar: camera icon + clickable device name ────────────────
+        tb = self._tb_layout
+        # Remove the auto-created empty title label; replace with our widgets
+        tb.removeWidget(self._title_label)
+        self._title_label.hide()
+
+        cam_icon = _svg_icon("video-camera", 14, theme.TEXT)
+        self._cam_icon_btn = QPushButton(self._title_bar)
+        self._cam_icon_btn.setIcon(cam_icon)
+        self._cam_icon_btn.setIconSize(QSize(14, 14))
+        self._cam_icon_btn.setFixedSize(22, 22)
+        self._cam_icon_btn.setFlat(True)
+        self._cam_icon_btn.setCursor(Qt.PointingHandCursor)
+        self._cam_icon_btn.setStyleSheet(
+            "QPushButton { background: transparent; border: none; padding: 0; }"
+            "QPushButton:hover { background: rgba(255,255,255,30); border-radius: 3px; }"
+        )
+        self._cam_icon_btn.clicked.connect(self._show_device_menu)
+        tb.insertWidget(0, self._cam_icon_btn, 0, Qt.AlignVCenter)
+
+        label = self._device if self._device else "<select-input>"
+        self._dev_name_btn = QPushButton(label, self._title_bar)
+        self._dev_name_btn.setFlat(True)
+        self._dev_name_btn.setCursor(Qt.PointingHandCursor)
+        self._dev_name_btn.setFont(theme.font_ui())
+        self._dev_name_btn.setStyleSheet(
+            f"QPushButton {{ background: transparent; color: {theme.TEXT};"
+            f"  border: none; padding: 0 4px; text-align: left; }}"
+            f"QPushButton:hover {{ color: {theme.ACCENT}; }}"
+        )
+        self._dev_name_btn.clicked.connect(self._show_device_menu)
+        tb.insertWidget(1, self._dev_name_btn, 0, Qt.AlignVCenter)
+
+        # ── Video widget (only if a device was given) ─────────────────────
+        self._video = LiveVideoWidget(self._device, self) if self._device else None
+        if self._video:
+            self.content_layout().addWidget(self._video)
 
     def node_type(self) -> str:
         return "live_video"
 
     def state_dict(self) -> dict:
         d = super().state_dict()
-        d["device"] = self._device
+        d["device"] = self._device  # may be None
         return d
 
+    def _apply_title_chrome(self, show: bool) -> None:
+        if show:
+            self._title_bar.setStyleSheet(f"background: {_NODE_TITLE_BG};")
+        else:
+            self._title_bar.setStyleSheet("background: transparent;")
+        self._close_btn.setVisible(show)
+        self._cam_icon_btn.setVisible(show)
+        self._dev_name_btn.setVisible(show)
+
+    def _show_device_menu(self) -> None:
+        devices = _enumerate_video_devices()
+        used: set = set()
+        ws = self.parent()
+        if isinstance(ws, SyncWorkspace):
+            used = ws.used_devices()
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"QMenu {{ background: {theme.PANEL_BG}; color: {theme.TEXT};"
+            f"  border: 1px solid {theme.UI_BORDER}; padding: 2px; }}"
+            f"QMenu::item {{ padding: 4px 16px; }}"
+            f"QMenu::item:selected {{ background: {theme.ACCENT}; }}"
+            f"QMenu::item:disabled {{ color: {theme.TEXT_DIM}; }}"
+        )
+        for dev in devices:
+            action = menu.addAction(dev)
+            if dev == self._device:
+                action.setCheckable(True)
+                action.setChecked(True)
+            elif dev in used:
+                action.setEnabled(False)
+        btn = self._dev_name_btn
+        pos = btn.mapToGlobal(QPoint(0, btn.height()))
+        chosen = menu.exec_(pos)
+        if chosen and chosen.isEnabled() and not chosen.isChecked():
+            self._switch_device(chosen.text())
+
+    def _switch_device(self, device: str) -> None:
+        if self._video is not None:
+            self._video.stop()
+            self.content_layout().removeWidget(self._video)
+            self._video.deleteLater()
+        self._device = device
+        self._dev_name_btn.setText(device)
+        self._video = LiveVideoWidget(device, self)
+        self.content_layout().addWidget(self._video)
+        self._video.show()
+
     def _on_close(self) -> None:
-        self._video.stop()
+        if self._video is not None:
+            self._video.stop()
         super()._on_close()
 
 
@@ -542,6 +639,10 @@ class SyncWorkspace(QWidget):
         for node in self._nodes:
             node.set_chrome_visible(visible)
 
+    def used_devices(self) -> set:
+        """Return the set of device paths currently claimed by nodes (excludes unselected)."""
+        return {n._device for n in self._nodes if isinstance(n, LiveVideoNode) and n._device}
+
     # ------------------------------------------------------------------
     # Drag-and-drop
     # ------------------------------------------------------------------
@@ -565,7 +666,11 @@ class SyncWorkspace(QWidget):
         item_type = bytes(event.mimeData().data(_MIME_TYPE)).decode()
         pos = event.pos()
         if item_type == "live_video":
-            node = self._make_live_video_node(_VIDEO_DEVICE)
+            # Pick the first free device; fall back to None (shows <select-input>)
+            used = self.used_devices()
+            all_devs = _enumerate_video_devices()
+            free = next((d for d in all_devs if d not in used), None)
+            node = self._make_live_video_node(free)
             x = max(0, min(pos.x() - _NODE_DEFAULT_W // 2,
                            self.width()  - _NODE_DEFAULT_W))
             y = max(0, min(pos.y() - _NODE_TITLE_H,
