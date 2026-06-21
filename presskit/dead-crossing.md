@@ -149,22 +149,44 @@ A machine-learning system trained to navigate a visual encyclopedia of Western i
 
 Dead Crossing is powered by a bespoke software environment developed as part of the Playable Cinema research project.
 
+## MYTHOLOGY
+
+Western cinema is built from a shared vocabulary of recurring figures, objects, gestures, situations, and landscapes. Each film rearranges these elements into a new variation of a common mythology.
+
+## REAL-TIME SYNC
+
+In the exhibition, live gameplay is continuously analysed and synchronized with this archive. As visitors move through the game world, the system assembles new pathways through a century of Western cinema, allowing the archive to be explored as a dynamic and playable landscape.
+
+:::
+:::
+
+----
+
+::: {.page .imagepage}
+![](images/catalog-315-movies.png){.bg}
+
+::: {.overlay .wordcenter}
+# DATASET
+:::
+:::
+
+----
+
+::: {.page .textpage}
+::: {.overlay .textcopy}
+
 ## CORPUS
 
-- 314 Western films
+- 300+ Western films
 - 200+ hours of gameplay recordings
-- 8,000+ vocabulary terms
-- 250,000+ annotated shots
-- 28,000+ detected scenes
-- 500,000+ iconographic fragments
+- 8'000+ vocabulary terms
+- 250'000+ annotated shots
+- 28'000+ detected scenes
+- 500'000+ iconographic fragments
 
 ## ARCHIVE
 
 More than three hundred Western films were collected, segmented, annotated, indexed, and transformed into a traversable archive. This process involved custom tools for dataset construction, shot and scene detection, subtitle processing, image annotation, vector search, and real-time synchronization.
-
-## MYTHOLOGY
-
-Western cinema is built from a shared vocabulary of recurring figures, objects, gestures, situations, and landscapes. Each film rearranges these elements into a new variation of a common mythology.
 
 ## CATALOG
 
@@ -172,9 +194,6 @@ Rather than relying on fixed categories alone, the system combines human curatio
 
 The resulting archive functions simultaneously as a dataset, a visual encyclopedia of Western iconography, and a traversable landscape of cinema history.
 
-## REAL-TIME SYNC
-
-In the exhibition, live gameplay is continuously analysed and synchronized with this archive. As visitors move through the game world, the system assembles new pathways through a century of Western cinema, allowing the archive to be explored as a dynamic and playable landscape.
 :::
 :::
 
