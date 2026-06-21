@@ -118,12 +118,41 @@ _PREFS_CONNS     = "sync_visualizer_connections"    # list of dicts
 
 # Port geometry
 _PORT_SIZE       = 12   # px — triangle width/height
-_PORT_COLOR_IDLE = QColor("#222222")
-_PORT_COLOR_ACTIVE = QColor("#ff00ff")   # fuchsia while dragging
-_PORT_COLOR_CONN   = QColor("#000000")   # black when connected
+_PORT_COLOR_IDLE   = QColor(_NODE_BODY_BG)   # same as node content background
+_PORT_COLOR_ACTIVE = QColor("#ff00ff")        # fuchsia while dragging / hover target
+_PORT_COLOR_CONN   = QColor(_NODE_BODY_BG)   # same as node content background
 _CABLE_COLOR_DRAG  = QColor("#ff00ff")
-_CABLE_COLOR_CONN  = QColor("#000000")
+_CABLE_COLOR_CONN  = QColor(_NODE_BODY_BG)   # same as node content background
 _CABLE_WIDTH       = 2
+
+# Title-bar button styles — shared across all nodes
+_TB_ICON_BTN_SS = (
+    "QPushButton {"
+    "  background: transparent; border: none; padding: 0;"
+    "}"
+    "QPushButton:hover {"
+    "  background: rgba(40,40,40,200); border-radius: 3px;"
+    "}"
+)
+_TB_TEXT_BTN_SS = (
+    "QPushButton {"
+    "  background: transparent; color: #ffffff;"
+    "  border: none; padding: 0 4px;"
+    "}"
+    "QPushButton:hover {"
+    "  background: rgba(40,40,40,200); border-radius: 3px; color: #ff00ff;"
+    "}"
+)
+# Close button has an extra font-size rule
+_TB_CLOSE_BTN_SS = (
+    "QPushButton {"
+    "  background: transparent; color: #ffffff;"
+    "  border: none; font-size: 14px; padding: 0;"
+    "}"
+    "QPushButton:hover {"
+    "  background: rgba(40,40,40,200); border-radius: 3px; color: #ff00ff;"
+    "}"
+)
 
 # Node ID counter (session-scoped)
 _next_node_id: list[int] = [1]   # mutable singleton
@@ -140,7 +169,9 @@ def _new_node_id() -> int:
 # ---------------------------------------------------------------------------
 
 def _svg_icon(name: str, size: int = 16, color: str = "#ffffff") -> QIcon:
-    """Load an iconoir SVG, recolour strokes/fills to *color*, return QIcon."""
+    """Load an iconoir SVG, recolour strokes/fills to *color*, return QIcon.
+    All modes/states use the same pixmap so Qt never auto-tints it.
+    """
     icon_dir = Path(__file__).parent.parent / "styles" / "icons" / "iconoir"
     path = icon_dir / f"{name}.svg"
     if not path.exists():
@@ -154,8 +185,53 @@ def _svg_icon(name: str, size: int = 16, color: str = "#ffffff") -> QIcon:
         painter = QPainter(pix)
         renderer.render(painter)
         painter.end()
-        return QIcon(pix)
+        icon = QIcon()
+        for mode in (QIcon.Normal, QIcon.Active, QIcon.Selected, QIcon.Disabled):
+            icon.addPixmap(pix, mode, QIcon.Off)
+            icon.addPixmap(pix, mode, QIcon.On)
+        return icon
     return QIcon()
+
+
+class _TbBtn(QPushButton):
+    """Title-bar button that manually swaps its icon on enter/leave
+    so hover-fuchsia is driven by mouse proximity, not Qt focus state.
+    Call set_icon_name() once after construction.
+    """
+
+    def __init__(self, icon_name: str = "", text: str = "",
+                 icon_size: int = 14, parent=None) -> None:
+        super().__init__(text, parent)
+        self._icon_name  = icon_name
+        self._icon_size  = icon_size
+        self._icon_color = "#ffffff"   # updated by set_icon_color()
+        self.setFlat(True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.NoFocus)
+        self._refresh_icon(self._icon_color)
+
+    def set_icon_color(self, color: str) -> None:
+        self._icon_color = color
+        self._refresh_icon(color)
+
+    def set_icon(self, name: str, color: str | None = None) -> None:
+        self._icon_name = name
+        if color is not None:
+            self._icon_color = color
+        self._refresh_icon(self._icon_color)
+
+    def _refresh_icon(self, color: str) -> None:
+        if self._icon_name:
+            self.setIcon(_svg_icon(self._icon_name, self._icon_size, color))
+            self.setIconSize(QSize(self._icon_size, self._icon_size))
+
+    def enterEvent(self, event) -> None:
+        self._refresh_icon("#ff00ff")
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._refresh_icon(self._icon_color)
+        super().leaveEvent(event)
 
 
 def _enumerate_video_devices() -> list:
@@ -410,7 +486,7 @@ class SyncNode(QWidget):
 
         self._title_label = QLabel(title, self._title_bar)
         self._title_label.setStyleSheet(
-            f"color: {theme.TEXT}; background: transparent;"
+            "color: #ffffff; background: transparent;"
         )
         self._title_label.setFont(theme.font_ui())
         tb.addWidget(self._title_label, 0, Qt.AlignVCenter)
@@ -418,14 +494,10 @@ class SyncNode(QWidget):
 
         self._close_btn = QPushButton("×", self._title_bar)
         self._close_btn.setFixedSize(20, 20)
+        self._close_btn.setFlat(True)
         self._close_btn.setCursor(Qt.PointingHandCursor)
-        self._close_btn.setStyleSheet(
-            f"QPushButton {{"
-            f"  background: transparent; color: {theme.TEXT};"
-            f"  border: none; font-size: 14px; padding: 0;"
-            f"}}"
-            f"QPushButton:hover {{ color: {theme.ACCENT}; }}"
-        )
+        self._close_btn.setFocusPolicy(Qt.NoFocus)
+        self._close_btn.setStyleSheet(_TB_CLOSE_BTN_SS)
         self._close_btn.clicked.connect(self._on_close)
         tb.addWidget(self._close_btn, 0, Qt.AlignVCenter)
         outer.addWidget(self._title_bar)
@@ -483,11 +555,14 @@ class SyncNode(QWidget):
         return []
 
     def output_port_pos(self, port: str) -> QPoint:
-        """Return port centre in parent (workspace) coordinates."""
-        return self.mapToParent(QPoint(self.width(), self.height() // 2))
+        """Return the port TIP in parent (workspace) coordinates.
+        The triangle base sits at the node right edge; the tip extends outward."""
+        return self.mapToParent(QPoint(self.width() + _PORT_SIZE, self.height() // 2))
 
     def input_port_pos(self, port: str) -> QPoint:
-        return self.mapToParent(QPoint(0, self.height() // 2))
+        """Return the port TIP in parent (workspace) coordinates.
+        The triangle base sits at the node left edge; the tip extends outward."""
+        return self.mapToParent(QPoint(-_PORT_SIZE, self.height() // 2))
 
     def set_ports_visible(self, visible: bool) -> None:
         if self._ports_visible != visible:
@@ -503,35 +578,8 @@ class SyncNode(QWidget):
 
     def paintEvent(self, event) -> None:
         super().paintEvent(event)
-        if not self._ports_visible:
-            return
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        s  = _PORT_SIZE
-        cy = self.height() // 2
-        for port in self.output_ports():
-            connected = self._port_connected(port, True)
-            color = _PORT_COLOR_CONN if connected else _PORT_COLOR_IDLE
-            p.setBrush(color)
-            p.setPen(Qt.NoPen)
-            tri = QPolygon([
-                QPoint(self.width() - s, cy - s // 2),
-                QPoint(self.width(),     cy),
-                QPoint(self.width() - s, cy + s // 2),
-            ])
-            p.drawPolygon(tri)
-        for port in self.input_ports():
-            connected = self._port_connected(port, False)
-            color = _PORT_COLOR_CONN if connected else _PORT_COLOR_IDLE
-            p.setBrush(color)
-            p.setPen(Qt.NoPen)
-            tri = QPolygon([
-                QPoint(s, cy - s // 2),
-                QPoint(0, cy),
-                QPoint(s, cy + s // 2),
-            ])
-            p.drawPolygon(tri)
-        p.end()
+        # Port triangles are drawn by SyncWorkspace so they live outside node
+        # bounds and receive workspace-level mouse events correctly.
 
     def set_chrome_visible(self, visible: bool) -> None:
         """Set chrome visibility driven by the h-key panel toggle.
@@ -587,6 +635,9 @@ class SyncNode(QWidget):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._reposition_handles()
+        # Cables and port triangles are painted by the workspace — repaint it.
+        if isinstance(self.parent(), SyncWorkspace):
+            self.parent().update()
 
     def _reposition_handles(self) -> None:
         s = _HANDLE_SIZE
@@ -640,6 +691,8 @@ class SyncNode(QWidget):
                         ny = max(0, min(new_pos.y(), ph - self.height()))
                         new_pos = QPoint(nx, ny)
                     self.move(new_pos)
+                    if isinstance(self.parent(), SyncWorkspace):
+                        self.parent().update()
             elif t == QEvent.MouseButtonRelease:
                 self._drag_global_start = None
                 self._drag_node_start   = None
@@ -658,54 +711,27 @@ class LiveVideoNode(SyncNode):
         self._device = device  # may be None
         super().__init__("", parent)
 
-        # ── Title bar: camera icon + clickable device name ────────────────
+        # ── Title bar: single cam+device button + sound button ───────────
         tb = self._tb_layout
-        # Remove the auto-created empty title label; replace with our widgets
         tb.removeWidget(self._title_label)
         self._title_label.hide()
 
-        cam_icon = _svg_icon("video-camera", 14, theme.TEXT)
-        self._cam_icon_btn = QPushButton(self._title_bar)
-        self._cam_icon_btn.setIcon(cam_icon)
-        self._cam_icon_btn.setIconSize(QSize(14, 14))
-        self._cam_icon_btn.setFixedSize(22, 22)
-        self._cam_icon_btn.setFlat(True)
-        self._cam_icon_btn.setCursor(Qt.PointingHandCursor)
-        self._cam_icon_btn.setStyleSheet(
-            "QPushButton { background: transparent; border: none; padding: 0; }"
-            "QPushButton:hover { background: rgba(255,255,255,30); border-radius: 3px; }"
-        )
-        self._cam_icon_btn.clicked.connect(self._show_device_menu)
-        tb.insertWidget(0, self._cam_icon_btn, 0, Qt.AlignVCenter)
-
         label = self._device if self._device else "<select-input>"
-        self._dev_name_btn = QPushButton(label, self._title_bar)
-        self._dev_name_btn.setFlat(True)
-        self._dev_name_btn.setCursor(Qt.PointingHandCursor)
-        self._dev_name_btn.setFont(theme.font_ui())
-        self._dev_name_btn.setStyleSheet(
-            f"QPushButton {{ background: transparent; color: {theme.TEXT};"
-            f"  border: none; padding: 0 4px; text-align: left; }}"
-            f"QPushButton:hover {{ color: {theme.ACCENT}; }}"
-        )
-        self._dev_name_btn.clicked.connect(self._show_device_menu)
-        tb.insertWidget(1, self._dev_name_btn, 0, Qt.AlignVCenter)
+        self._cam_btn = _TbBtn(icon_name="video-camera", text=f"  {label}",
+                               icon_size=14, parent=self._title_bar)
+        self._cam_btn.setFont(theme.font_ui())
+        self._cam_btn.setStyleSheet(_TB_TEXT_BTN_SS)
+        self._cam_btn.clicked.connect(self._show_device_menu)
+        tb.insertWidget(0, self._cam_btn, 0, Qt.AlignVCenter)
 
-        # Sound button — inserted just before the close button (last item)
-        self._audio_module_id: int | None = None
-        self._snd_btn = QPushButton(self._title_bar)
-        self._snd_btn.setIcon(_svg_icon("sound-off", 14, theme.TEXT))
-        self._snd_btn.setIconSize(QSize(14, 14))
+        self._snd_btn = _TbBtn(icon_name="sound-off", icon_size=14,
+                               parent=self._title_bar)
         self._snd_btn.setFixedSize(22, 22)
-        self._snd_btn.setFlat(True)
-        self._snd_btn.setCursor(Qt.PointingHandCursor)
-        self._snd_btn.setStyleSheet(
-            "QPushButton { background: transparent; border: none; padding: 0; }"
-            "QPushButton:hover { background: rgba(255,255,255,30); border-radius: 3px; }"
-        )
+        self._snd_btn.setStyleSheet(_TB_ICON_BTN_SS)
         self._snd_btn.clicked.connect(self._toggle_audio)
-        # tb already has: [cam, dev_name, stretch, close] — insert before close
         tb.insertWidget(tb.count() - 1, self._snd_btn, 0, Qt.AlignVCenter)
+
+        self._audio_module_id: int | None = None
 
         # ── Video widget (only if a device was given) ─────────────────────
         self._video = LiveVideoWidget(self._device, self) if self._device else None
@@ -736,9 +762,8 @@ class LiveVideoNode(SyncNode):
         else:
             self._title_bar.setStyleSheet("background: transparent;")
         self._close_btn.setVisible(show)
-        self._cam_icon_btn.setVisible(show)
+        self._cam_btn.setVisible(show)
         self._snd_btn.setVisible(show and bool(self._device))
-        self._dev_name_btn.setVisible(show)
 
     def _show_device_menu(self) -> None:
         devices = _enumerate_video_devices()
@@ -761,7 +786,7 @@ class LiveVideoNode(SyncNode):
                 action.setChecked(True)
             elif dev in used:
                 action.setEnabled(False)
-        btn = self._dev_name_btn
+        btn = self._cam_btn
         pos = btn.mapToGlobal(QPoint(0, btn.height()))
         chosen = menu.exec_(pos)
         if chosen and chosen.isEnabled() and not chosen.isChecked():
@@ -778,7 +803,7 @@ class LiveVideoNode(SyncNode):
             except Exception:
                 pass
             self._audio_module_id = None
-            self._snd_btn.setIcon(_svg_icon("sound-off", 14, theme.TEXT))
+            self._snd_btn.set_icon("sound-off", theme.TEXT)
         else:
             source = _find_alsa_source_for_video(self._device)
             if not source:
@@ -790,7 +815,7 @@ class LiveVideoNode(SyncNode):
                     capture_output=True, text=True, check=False,
                 )
                 self._audio_module_id = int(result.stdout.strip())
-                self._snd_btn.setIcon(_svg_icon("sound-high-solid", 14, theme.TEXT))
+                self._snd_btn.set_icon("sound-high-solid", theme.TEXT)
             except Exception:
                 pass
 
@@ -806,13 +831,13 @@ class LiveVideoNode(SyncNode):
             except Exception:
                 pass
             self._audio_module_id = None
-            self._snd_btn.setIcon(_svg_icon("sound-off", 14, theme.TEXT))
+            self._snd_btn.set_icon("sound-off", theme.TEXT)
         if self._video is not None:
             self._video.stop()
             self.content_layout().removeWidget(self._video)
             self._video.deleteLater()
         self._device = device
-        self._dev_name_btn.setText(device)
+        self._cam_btn.setText(f"  {device}")
         self._snd_btn.setVisible(True)
         self._video = LiveVideoWidget(device, self)
         self.content_layout().addWidget(self._video)
@@ -860,6 +885,9 @@ class SyncWorkspace(QWidget):
         self._drag_src_port: str | None       = None
         self._drag_src_is_output: bool        = True
         self._drag_cur_pos: QPoint | None     = None
+        # Hover highlight during drag — compatible target port under cursor
+        self._drag_hover_node: SyncNode | None = None
+        self._drag_hover_port: str | None      = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -894,6 +922,8 @@ class SyncWorkspace(QWidget):
                 node = self._make_frame_vector_node()
                 node.node_id = int(s.get("node_id", node.node_id))
                 node.setGeometry(int(s.get("x", 0)), int(s.get("y", 0)), w, h)
+                if "interval" in s:
+                    node._set_interval(s["interval"])
                 node.show()
 
     def restore_connections(self, states: list[dict]) -> None:
@@ -908,6 +938,7 @@ class SyncWorkspace(QWidget):
         self._chrome_visible = visible
         for node in self._nodes:
             node.set_chrome_visible(visible)
+        self.update()
 
     def used_devices(self) -> set:
         """Return the set of device paths currently claimed by nodes (excludes unselected)."""
@@ -985,29 +1016,27 @@ class SyncWorkspace(QWidget):
         for node in self._nodes:
             if not node.isVisible():
                 continue
-            # Output port
+            # Output port — tip is PORT_SIZE beyond the node right edge
             for port in node.output_ports():
                 p = node.output_port_pos(port)
-                if (event.pos() - p).manhattanLength() <= _PORT_SIZE + 4:
+                if (event.pos() - p).manhattanLength() <= _PORT_SIZE + 8:
                     # Disconnect any existing cable from this output
                     self._remove_connections_for(node.node_id, port, is_output=True)
                     self._drag_src_node      = node
                     self._drag_src_port      = port
                     self._drag_src_is_output = True
                     self._drag_cur_pos       = event.pos()
-                    node.set_ports_visible(True)
                     self.update()
                     return
-            # Input port
+            # Input port — tip is PORT_SIZE beyond the node left edge
             for port in node.input_ports():
                 p = node.input_port_pos(port)
-                if (event.pos() - p).manhattanLength() <= _PORT_SIZE + 4:
+                if (event.pos() - p).manhattanLength() <= _PORT_SIZE + 8:
                     self._remove_connections_for(node.node_id, port, is_output=False)
                     self._drag_src_node      = node
                     self._drag_src_port      = port
                     self._drag_src_is_output = False
                     self._drag_cur_pos       = event.pos()
-                    node.set_ports_visible(True)
                     self.update()
                     return
         super().mousePressEvent(event)
@@ -1015,6 +1044,27 @@ class SyncWorkspace(QWidget):
     def mouseMoveEvent(self, event) -> None:
         if self._drag_src_node is not None:
             self._drag_cur_pos = event.pos()
+            # Find compatible target port under cursor for hover highlight
+            hover_node, hover_port = None, None
+            for node in self._nodes:
+                if node is self._drag_src_node or not node.isVisible():
+                    continue
+                if self._drag_src_is_output:
+                    for port in node.input_ports():
+                        pp = node.input_port_pos(port)
+                        if (event.pos() - pp).manhattanLength() <= _PORT_SIZE + 8:
+                            if self._types_compatible(
+                                    self._drag_src_node, self._drag_src_port, node, port):
+                                hover_node, hover_port = node, port
+                else:
+                    for port in node.output_ports():
+                        pp = node.output_port_pos(port)
+                        if (event.pos() - pp).manhattanLength() <= _PORT_SIZE + 8:
+                            if self._types_compatible(
+                                    node, port, self._drag_src_node, self._drag_src_port):
+                                hover_node, hover_port = node, port
+            self._drag_hover_node = hover_node
+            self._drag_hover_port = hover_port
             self.update()
         super().mouseMoveEvent(event)
 
@@ -1027,6 +1077,8 @@ class SyncWorkspace(QWidget):
         self._drag_src_node = None
         self._drag_src_port = None
         self._drag_cur_pos  = None
+        self._drag_hover_node = None
+        self._drag_hover_port = None
         self.update()
 
     def _try_complete_connection(self, pos: QPoint) -> None:
@@ -1095,6 +1147,8 @@ class SyncWorkspace(QWidget):
 
     def paintEvent(self, event) -> None:
         super().paintEvent(event)
+        if not self._chrome_visible:
+            return
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         pen_w = _CABLE_WIDTH
@@ -1121,16 +1175,74 @@ class SyncWorkspace(QWidget):
             p.setPen(QPen(_CABLE_COLOR_DRAG, pen_w))
             self._draw_cable(p, p1, p2)
 
+        # Draw port triangles for all nodes — always visible, positioned OUTSIDE
+        # node bounds so clicks on them reach this workspace mousePressEvent.
+        p.setPen(Qt.NoPen)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        s = _PORT_SIZE
+        for node in self._nodes:
+            if not node.isVisible():
+                continue
+            cy = node.y() + node.height() // 2
+            for port in node.output_ports():
+                bx = node.x() + node.width()   # base at right edge of node
+                tx = bx + s                     # tip extends right
+                if (self._drag_src_node is node
+                        and self._drag_src_port == port
+                        and self._drag_src_is_output):
+                    color = _PORT_COLOR_ACTIVE
+                elif (self._drag_hover_node is node and self._drag_hover_port == port):
+                    color = _PORT_COLOR_ACTIVE
+                elif self.is_port_connected(node.node_id, port, True):
+                    color = _PORT_COLOR_CONN
+                else:
+                    color = _PORT_COLOR_IDLE
+                p.setBrush(color)
+                p.drawPolygon(QPolygon([
+                    QPoint(bx, cy - s // 2),
+                    QPoint(tx, cy),
+                    QPoint(bx, cy + s // 2),
+                ]))
+            for port in node.input_ports():
+                bx = node.x()    # base at left edge of node
+                tx = bx - s      # tip extends left
+                if (self._drag_src_node is node
+                        and self._drag_src_port == port
+                        and not self._drag_src_is_output):
+                    color = _PORT_COLOR_ACTIVE
+                elif (self._drag_hover_node is node and self._drag_hover_port == port):
+                    color = _PORT_COLOR_ACTIVE
+                elif self.is_port_connected(node.node_id, port, False):
+                    color = _PORT_COLOR_CONN
+                else:
+                    color = _PORT_COLOR_IDLE
+                p.setBrush(color)
+                p.drawPolygon(QPolygon([
+                    QPoint(bx, cy - s // 2),
+                    QPoint(tx, cy),
+                    QPoint(bx, cy + s // 2),
+                ]))
+
         p.end()
 
     def _draw_cable(self, painter: QPainter, p1: QPoint, p2: QPoint) -> None:
-        """Draw a bezier cable from p1 (output) to p2 (input)."""
+        """Draw a bezier cable from p1 (output) to p2 (input).
+
+        Control points always exit/enter horizontally so the cable visibly
+        leaves the output port to the right and arrives at the input port
+        from the left.  When the input is to the left of the output the
+        tension is increased so the cable loops out before doubling back.
+        """
+        dx = p2.x() - p1.x()
+        # Minimum tension ensures a visible rightward exit even when looping back
+        tension = int(max(abs(dx) * 0.5, 80))
         path = QPainterPath()
         path.moveTo(p1)
-        cx = (p1.x() + p2.x()) / 2
-        path.cubicTo(QPoint(int(cx), p1.y()),
-                     QPoint(int(cx), p2.y()),
-                     p2)
+        path.cubicTo(
+            QPoint(p1.x() + tension, p1.y()),   # exits rightward from output
+            QPoint(p2.x() - tension, p2.y()),   # enters leftward into input
+            p2,
+        )
         painter.drawPath(path)
 
     # ------------------------------------------------------------------
@@ -1187,16 +1299,22 @@ class _EmbedWorker(QObject):
             bundle = load_frame_vector_model(self._project_path)
             vec = embed_rgb_frame(self._frame_rgb, bundle)
             model_name = bundle[3]
-            self.result.emit(vec, model_name)
+            try:
+                self.result.emit(vec, model_name)
+            except RuntimeError:
+                pass
         except Exception as exc:
-            self.error.emit(str(exc))
+            try:
+                self.error.emit(str(exc))
+            except RuntimeError:
+                pass
 
 
 # ---------------------------------------------------------------------------
 # FrameVectorNode — embeds live video frames with CLIP
 # ---------------------------------------------------------------------------
 
-_FV_INTERVALS = [0.1, 0.5, 1.0, 2.0, 5.0]   # seconds
+_FV_INTERVALS = [None, 0.1, 0.25, 0.5, 0.75, 1.0, 2.0, 5.0]   # None = off
 _FV_DEFAULT_INTERVAL = 2.0
 
 class FrameVectorNode(SyncNode):
@@ -1205,43 +1323,36 @@ class FrameVectorNode(SyncNode):
     def __init__(self, parent: QWidget = None) -> None:
         super().__init__("", parent)
 
-        self._interval_s: float = _FV_DEFAULT_INTERVAL
+        self._interval_s: float | None = _FV_DEFAULT_INTERVAL
+        self._display_on: bool = True   # scanning icon toggles this
         self._source_node: "LiveVideoNode | None" = None
         self._embed_busy: bool = False
         self._model_name: str  = ""
         self._vec_dim: int     = 0
         self._last_vec         = None   # np.ndarray or None
 
-        # ── Title bar: scanning icon + alarm icon + interval button ───────
+        # ── Title bar: scanning toggle + alarm icon + interval button ────
         self._title_label.hide()
 
-        scan_lbl = QLabel(self._title_bar)
-        self._scan_lbl = scan_lbl
-        scan_lbl.setFixedSize(16, 16)
-        scan_lbl.setStyleSheet("background: transparent;")
-        scan_icon = _svg_icon("scanning", 14, theme.TEXT)
-        if not scan_icon.isNull():
-            scan_lbl.setPixmap(scan_icon.pixmap(14, 14))
-        self._tb_layout.insertWidget(0, scan_lbl, 0, Qt.AlignVCenter)
+        self._scan_btn = _TbBtn(icon_name="calculator", icon_size=14,
+                                 parent=self._title_bar)
+        self._scan_btn.setFixedSize(22, 22)
+        self._scan_btn.setStyleSheet(_TB_ICON_BTN_SS)
+        self._scan_btn.clicked.connect(self._toggle_display)
+        self._tb_layout.insertWidget(0, self._scan_btn, 0, Qt.AlignVCenter)
+        self._update_scan_icon()
 
-        self._interval_btn = QPushButton(self._title_bar)
-        self._interval_btn.setFlat(True)
-        alarm_icon = _svg_icon("alarm-solid", 14, theme.TEXT)
-        self._interval_btn.setIcon(alarm_icon)
-        self._interval_btn.setIconSize(QSize(14, 14))
-        self._interval_btn.setText(f"{self._interval_s:.1f}s")
+        self._interval_btn = _TbBtn(icon_name="alarm-solid", text="off",
+                                    icon_size=14, parent=self._title_bar)
+        self._interval_btn.setText(f"{self._interval_s:.1f}s" if self._interval_s is not None else "off")
         self._interval_btn.setFont(theme.font_ui())
-        self._interval_btn.setStyleSheet(
-            f"QPushButton {{ background: transparent; color: {theme.TEXT};"
-            f" border: none; padding: 0 2px; }}"
-            f"QPushButton:hover {{ color: {theme.ACCENT}; }}"
-        )
-        self._interval_btn.setCursor(Qt.PointingHandCursor)
+        self._interval_btn.setStyleSheet(_TB_TEXT_BTN_SS)
         self._interval_btn.clicked.connect(self._show_interval_menu)
         self._tb_layout.insertWidget(1, self._interval_btn, 0, Qt.AlignVCenter)
 
         # ── Content ──────────────────────────────────────────────────────
-        body = QWidget(self)
+        self._body = QWidget(self)
+        body = self._body
         body.setStyleSheet("background: transparent;")
         blay = QVBoxLayout(body)
         blay.setContentsMargins(8, 6, 8, 6)
@@ -1271,6 +1382,13 @@ class FrameVectorNode(SyncNode):
         self._timer = QTimer(self)
         self._timer.setInterval(int(self._interval_s * 1000))
         self._timer.timeout.connect(self._on_tick)
+        self._thread: QThread | None = None
+        self._worker: _EmbedWorker | None = None
+
+        # Ensure cleanup if the whole application quits while we're running
+        app = QApplication.instance()
+        if app:
+            app.aboutToQuit.connect(self._cleanup_thread)
 
     # ------------------------------------------------------------------
     # Port API
@@ -1286,18 +1404,34 @@ class FrameVectorNode(SyncNode):
     # Connection callbacks
     # ------------------------------------------------------------------
 
+    def state_dict(self) -> dict:
+        d = super().state_dict()
+        d["interval"] = self._interval_s
+        return d
+
     def _apply_title_chrome(self, show: bool) -> None:
         super()._apply_title_chrome(show)
         # Also hide/show the extra widgets unique to this node
-        if hasattr(self, "_scan_lbl"):
-            self._scan_lbl.setVisible(show)
+        if hasattr(self, "_scan_btn"):
+            self._scan_btn.setVisible(show)
         if hasattr(self, "_interval_btn"):
             self._interval_btn.setVisible(show)
+
+    def _toggle_display(self) -> None:
+        self._display_on = not self._display_on
+        self._update_scan_icon()
+        self._body.setVisible(self._display_on)
+
+    def _update_scan_icon(self) -> None:
+        color = theme.TEXT if self._display_on else theme.TEXT_DIM
+        self._scan_btn.set_icon("calculator", color)
 
     def _show_interval_menu(self) -> None:
         menu = QMenu(self)
         for v in _FV_INTERVALS:
-            action = menu.addAction(f"{v:.1f}s")
+            label = "off" if v is None else f"{v:.2f}s".rstrip('0').rstrip('.')
+            label = label if not label.endswith('.') else label + '0'
+            action = menu.addAction(label)
             action.setData(v)
             if v == self._interval_s:
                 action.setCheckable(True)
@@ -1307,19 +1441,32 @@ class FrameVectorNode(SyncNode):
         if chosen is not None:
             self._set_interval(chosen.data())
 
-    def _set_interval(self, seconds: float) -> None:
+    def _set_interval(self, seconds) -> None:
         self._interval_s = seconds
-        self._interval_btn.setText(f"{seconds:.1f}s")
-        was_active = self._timer.isActive()
-        self._timer.stop()
-        self._timer.setInterval(int(seconds * 1000))
-        if was_active:
-            self._timer.start()
+        if seconds is None:
+            self._interval_btn.setText("off")
+            self._timer.stop()
+        else:
+            label = f"{seconds:.2f}s".rstrip('0').rstrip('.')
+            if label.endswith('.'):
+                label += '0'
+            self._interval_btn.setText(label)
+            was_active = self._timer.isActive()
+            self._timer.stop()
+            self._timer.setInterval(int(seconds * 1000))
+            if was_active:
+                self._timer.start()
+        ws = self.parent()
+        if isinstance(ws, SyncWorkspace):
+            main = ws.parent()
+            if hasattr(main, "_save_state"):
+                main._save_state()
 
     def on_connected(self, source_node: "LiveVideoNode") -> None:
         self._source_node = source_node
         self._status_lbl.setText("status: connected, waiting for frame…")
-        self._timer.start()
+        if self._interval_s is not None:
+            self._timer.start()
 
     def on_disconnected(self) -> None:
         self._source_node = None
@@ -1345,22 +1492,25 @@ class FrameVectorNode(SyncNode):
         # Find project path (best-effort)
         try:
             from tool import prefs as _p
-            project_path = _p.get("project_path", ".")
+            project_path = _p.get("path") or "."
         except Exception:
             project_path = "."
 
-        # Worker thread
+        # Worker thread — no parent so Qt won't destroy it under us
         import numpy as np
-        self._worker_frame = np.array(frame)   # snapshot, no reference to live buffer
-        self._thread = QThread(self)
-        self._worker = _EmbedWorker(self._worker_frame, project_path)
-        self._worker.moveToThread(self._thread)
-        self._thread.started.connect(self._worker.run)
-        self._worker.result.connect(self._on_embed_result)
-        self._worker.error.connect(self._on_embed_error)
-        self._worker.result.connect(self._thread.quit)
-        self._worker.error.connect(self._thread.quit)
-        self._thread.start()
+        self._worker_frame = np.array(frame)
+        thread = QThread()   # no parent — we manage lifetime explicitly
+        worker = _EmbedWorker(self._worker_frame, project_path)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.result.connect(self._on_embed_result)
+        worker.error.connect(self._on_embed_error)
+        worker.result.connect(thread.quit)
+        worker.error.connect(thread.quit)
+        thread.finished.connect(thread.deleteLater)
+        self._thread = thread
+        self._worker = worker
+        thread.start()
 
     def _on_embed_result(self, vec, model_name: str) -> None:
         import numpy as np
@@ -1387,8 +1537,23 @@ class FrameVectorNode(SyncNode):
     # Clean up timer/thread on close
     # ------------------------------------------------------------------
 
-    def _on_close(self) -> None:
+    def _cleanup_thread(self) -> None:
+        """Stop timer and wait for any running worker thread to finish."""
         self._timer.stop()
+        thread = self._thread
+        self._thread = None
+        self._worker = None
+        self._embed_busy = False
+        if thread is not None:
+            try:
+                if thread.isRunning():
+                    thread.quit()
+                    thread.wait(500)
+            except RuntimeError:
+                pass
+
+    def _on_close(self) -> None:
+        self._cleanup_thread()
         super()._on_close()
 
 
@@ -1441,13 +1606,15 @@ class ModuleItem(QWidget):
         layout.setSpacing(6)
 
         icon_color = _WORKSPACE_BG  # dark gray — reads as cut-out on white
-        icon_lbl = QLabel(self)
+        self._icon_lbl = QLabel(self)
+        icon_lbl = self._icon_lbl
         icon_lbl.setFixedSize(18, 18)
         icon_lbl.setStyleSheet("background: transparent;")
+        self._icon_name = icon_name
         if icon_name:
-            icon = _svg_icon(icon_name, 16, icon_color)
-            if not icon.isNull():
-                icon_lbl.setPixmap(icon.pixmap(16, 16))
+            pix = _svg_icon(icon_name, 16, icon_color).pixmap(16, 16)
+            if not pix.isNull():
+                icon_lbl.setPixmap(pix)
         layout.addWidget(icon_lbl)
 
         text_lbl = QLabel(label, self)
@@ -1518,6 +1685,18 @@ class ModuleItem(QWidget):
     # Drag
     # ------------------------------------------------------------------
 
+    def enterEvent(self, event) -> None:
+        if self._icon_name:
+            pix = _svg_icon(self._icon_name, 16, theme.ACCENT).pixmap(16, 16)
+            self._icon_lbl.setPixmap(pix)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        if self._icon_name:
+            pix = _svg_icon(self._icon_name, 16, _WORKSPACE_BG).pixmap(16, 16)
+            self._icon_lbl.setPixmap(pix)
+        super().leaveEvent(event)
+
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton:
             self._drag_start_pos = event.pos()
@@ -1579,7 +1758,7 @@ class SyncPalettePanel(QWidget):
             ModuleItem(
                 label="Frame Vector",
                 item_type="frame_vector",
-                icon_name="scanning",
+                icon_name="calculator",
                 has_input=True,
                 has_output=False,
                 parent=items_widget,
