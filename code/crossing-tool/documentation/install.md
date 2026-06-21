@@ -81,11 +81,32 @@ uv sync              # creates .venv, installs core deps
 uv run crossing --help
 ```
 
-Use `uv run crossing ...` instead of activating the venv. You can still activate manually if you prefer:
+Use `uv run crossing ...` instead of activating the venv.
+
+Or you can install a `.venv` command:
 
 ```bash
-source .venv/bin/activate
-crossing --help
+$ cd <project-folder>
+$ python3 -m venv --prompt crossing .venv
+$ source .venv/bin/activate
+$ pip install -e "$HOME/playable/head-irad-playable-cinema/code/crossing-tool[all]"
+```
+
+```bash
+$ source .venv/bin/activate
+$ crossing --help
+```
+
+You can also create an alias to automatically turn on the crossing tool:
+
+```bash
+$ alias name-of-alias='cd ~/location-of-folder/name-of-folder && source .venv/bin/activate'
+```
+
+To deactivate:
+
+```bash
+$ deactivate
 ```
 
 ## Installing optional extras (developer)

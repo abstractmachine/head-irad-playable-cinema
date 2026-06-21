@@ -6868,11 +6868,14 @@ def _backup_update(project_path: str, backup_path: str, dry_run: bool = False) -
     project = Path(project_path)
     backup = Path(backup_path)
 
-    # Estimate available disk space (non-fatal if it fails)
+    # Estimate available disk space and abort if essentially full
     try:
         usage = shutil.disk_usage(str(backup))
         free_gb = usage.free / (1024 ** 3)
         print(f"  Free space on backup volume: {free_gb:.1f} GB")
+        if not dry_run and usage.free < 100 * 1024 * 1024:  # less than 100 MB
+            print(f"✗ Backup volume is full ({free_gb:.1f} GB free) — aborting", file=sys.stderr)
+            sys.exit(1)
     except Exception:
         pass
 
