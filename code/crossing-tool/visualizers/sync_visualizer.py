@@ -55,7 +55,11 @@ from PyQt5.QtGui import (
 )
 from PyQt5.QtWidgets import (
     QApplication,
+    QColorDialog,
+    QDialog,
+    QDialogButtonBox,
     QFrame,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -108,6 +112,7 @@ _EDGE_THICKNESS  = 6    # px — edge resize hit zone for FrameVectorNode
 _FV_MIN_H        = _NODE_TITLE_H + 80   # minimum FrameVectorNode height
 _STAR_COLOR_A    = QColor("#00ff00")    # inner-edge colour (low radius)
 _STAR_COLOR_B    = QColor("#ff0000")    # outer-edge colour (high radius)
+_NODE_TEXT_COLOR = "#ffffff"            # text colour inside module windows
 
 _VIDEO_DEVICE    = "/dev/video0"
 _VIDEO_FPS_MS    = 33    # ~30 fps timer interval
@@ -120,6 +125,11 @@ _PREFS_FULLSCR   = "sync_visualizer_fullscreen"     # bool
 _PREFS_PANEL     = "sync_visualizer_panel_visible"  # bool
 _PREFS_NODES     = "sync_visualizer_nodes"          # list of dicts
 _PREFS_CONNS     = "sync_visualizer_connections"    # list of dicts
+_PREFS_WORKSPACE_BG = "sync_visualizer_workspace_bg"   # hex string
+_PREFS_NODE_BG      = "sync_visualizer_node_bg"        # hex string (with optional alpha)
+_PREFS_NODE_TEXT    = "sync_visualizer_node_text"      # hex string
+_PREFS_STAR_A       = "sync_visualizer_star_color_a"   # hex string
+_PREFS_STAR_B       = "sync_visualizer_star_color_b"   # hex string
 
 # Port geometry
 _PORT_SIZE       = 12   # px — triangle width/height
@@ -916,6 +926,7 @@ class SyncWorkspace(QWidget):
     def __init__(self, parent: QWidget = None) -> None:
         super().__init__(parent)
         self.setAcceptDrops(True)
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet(f"background: {_WORKSPACE_BG};")
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMouseTracking(True)
@@ -1541,7 +1552,7 @@ class FrameVectorNode(SyncNode):
         self._vec_text.setReadOnly(True)
         self._vec_text.setFont(theme.font_mono() if hasattr(theme, "font_mono") else theme.font_ui())
         self._vec_text.setStyleSheet(
-            "background: transparent; color: #ffffff;"
+            f"background: transparent; color: {_NODE_TEXT_COLOR};"
             "border: none; font-size: 10px;"
         )
         self._vec_text.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -1950,51 +1961,53 @@ class ModuleItem(QWidget):
     # ------------------------------------------------------------------
 
     def _build_path(self) -> QPainterPath:
-        """White core always spans x=0 … x=w-cw so all items share the same
-        left and right edges.  Output connector bumps right to x=w.
-        Input socket is painted separately as a dark overlay."""
+        """White shape with optional connector bumps.
+
+        Input:  positive triangle protruding LEFT  (tip at x=0, base at x=cw).
+        Output: positive triangle protruding RIGHT (tip at x=w, base at x=w-cw).
+        Core rect spans x=lx…rx where lx=cw if has_input else 0,
+        and rx=w-cw if has_output else w.
+        """
         w, h = self.width(), self.height()
         r  = _MODULE_CORNER
         cw = _CONNECTOR_W
         ch = _CONNECTOR_H
         cy = h / 2
-        rw = w - cw   # right boundary of the core rectangle
+
+        lx = cw      # always reserve bump space on the left
+        rx = w - cw  # always reserve bump space on the right
 
         path = QPainterPath()
-        path.moveTo(r, 0)
-        path.lineTo(rw - r, 0)
-        path.quadTo(rw, 0, rw, r)
+        path.moveTo(lx + r, 0)
+        path.lineTo(rx - r, 0)
+        path.quadTo(rx, 0, rx, r)
 
+        # Right output bump
         if self._has_output:
-            path.lineTo(rw, cy - ch / 2)
+            path.lineTo(rx, cy - ch / 2)
             path.lineTo(w,  cy)
-            path.lineTo(rw, cy + ch / 2)
+            path.lineTo(rx, cy + ch / 2)
 
-        path.lineTo(rw, h - r)
-        path.quadTo(rw, h, rw - r, h)
-        path.lineTo(r, h)
-        path.quadTo(0, h, 0, h - r)
-        path.lineTo(0, r)
-        path.quadTo(0, 0, r, 0)
+        path.lineTo(rx, h - r)
+        path.quadTo(rx, h, rx - r, h)
+        path.lineTo(lx + r, h)
+        path.quadTo(lx, h, lx, h - r)
+
+        # Left input bump — protrudes leftward
+        if self._has_input:
+            path.lineTo(lx, cy + ch / 2)
+            path.lineTo(0,  cy)
+            path.lineTo(lx, cy - ch / 2)
+
+        path.lineTo(lx, r)
+        path.quadTo(lx, 0, lx + r, 0)
         path.closeSubpath()
         return path
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        # White body — same core rect for every item
         painter.fillPath(self._build_path(), _MODULE_BG_COLOR)
-        # Input socket: dark triangle eating into the left edge of the white pill
-        if self._has_input:
-            cw = _CONNECTOR_W
-            ch = _CONNECTOR_H
-            cy = self.height() / 2
-            socket = QPainterPath()
-            socket.moveTo(0, cy - ch / 2)
-            socket.lineTo(cw, cy)
-            socket.lineTo(0, cy + ch / 2)
-            socket.closeSubpath()
-            painter.fillPath(socket, _MODULE_SOCKET_COLOR)
         painter.end()
 
     def resizeEvent(self, event) -> None:
@@ -2051,12 +2064,15 @@ class ModuleItem(QWidget):
 class SyncPalettePanel(QWidget):
     """Right-side panel with draggable module palette items."""
 
+    # signal emitted when user clicks the Preferences button
+    prefs_requested = pyqtSignal()
+
     def __init__(self, parent: QWidget = None) -> None:
         super().__init__(parent)
         self.setFixedWidth(_PANEL_W)
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(14, 12, 8, 12)
+        outer.setContentsMargins(8, 12, 8, 12)
         outer.setSpacing(8)
 
         items_widget = QWidget(self)
@@ -2088,12 +2104,230 @@ class SyncPalettePanel(QWidget):
         outer.addWidget(items_widget)
         outer.addStretch()
 
+        self._prefs_btn = QPushButton("Preferences", self)
+        self._prefs_btn.setFlat(True)
+        self._prefs_btn.setCursor(Qt.PointingHandCursor)
+        self._prefs_btn.setFocusPolicy(Qt.NoFocus)
+        self._prefs_btn.setFont(theme.font_ui())
+        self._prefs_btn.setFixedHeight(_MODULE_H)
+        # Equal 14px margin on both sides (outer 8 + inner items_widget 6).
+        _btn_w = _PANEL_W - 14 - 14
+        self._prefs_btn.setFixedWidth(_btn_w)
+        self._prefs_btn.setStyleSheet(
+            f"QPushButton {{"
+            f"  background: #111111; color: #ffffff;"
+            f"  border: none; border-radius: {_MODULE_CORNER}px;"
+            f"  padding: 0; text-align: center;"
+            f"}}"
+            f"QPushButton:hover {{"
+            f"  background: #ff00ff; color: #ffffff;"
+            f"}}"
+        )
+        self._prefs_btn.clicked.connect(self.prefs_requested)
+        # Wrap in row with 6px extra left indent so button starts at x=14 (= outer 8 + inner 6)
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(6, 0, 0, 0)
+        btn_row.setSpacing(0)
+        btn_row.addWidget(self._prefs_btn)
+        outer.addLayout(btn_row)
+
     _PANEL_COLOR = QColor("#404040")
 
     def paintEvent(self, event) -> None:
         p = QPainter(self)
         p.fillRect(self.rect(), self._PANEL_COLOR)
         p.end()
+
+
+# ---------------------------------------------------------------------------
+# SyncPreferencesDialog — editable colour swatches
+# ---------------------------------------------------------------------------
+
+class _ColorPickBtn(QPushButton):
+    """Plain button that shows a hex label and opens the standard QColorDialog."""
+    changed = pyqtSignal(QColor)
+
+    _SS = (
+        "QPushButton {"
+        "  background: transparent; color: #ffffff;"
+        "  border: 1px solid #666666; border-radius: 3px; padding: 1px 8px;"
+        "}"
+        "QPushButton:hover { border-color: #ffffff; color: #ff00ff; }"
+    )
+
+    def __init__(self, color: QColor, allow_alpha: bool = False,
+                 parent: QWidget = None) -> None:
+        super().__init__(parent)
+        self._color       = QColor(color)
+        self._allow_alpha = allow_alpha
+        self.setFixedHeight(22)
+        self.setMinimumWidth(90)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setStyleSheet(self._SS)
+        self._refresh()
+        self.clicked.connect(self._pick)
+
+    def color(self) -> QColor:
+        return QColor(self._color)
+
+    def set_color(self, c: QColor) -> None:
+        self._color = QColor(c)
+        self._refresh()
+
+    def _refresh(self) -> None:
+        if self._allow_alpha and self._color.alpha() < 255:
+            self.setText(self._color.name(QColor.HexArgb))
+        else:
+            self.setText(self._color.name())
+
+    def _pick(self) -> None:
+        opts = QColorDialog.ColorDialogOptions()
+        if self._allow_alpha:
+            opts |= QColorDialog.ShowAlphaChannel
+        c = QColorDialog.getColor(self._color, self, options=opts)
+        if c.isValid():
+            self._color = c
+            self._refresh()
+            self.changed.emit(c)
+
+
+# Default colour values (used by the Defaults button)
+_DEFAULT_WORKSPACE_BG = "#808080"
+_DEFAULT_NODE_BG      = "#404040"
+_DEFAULT_NODE_TEXT    = "#ffffff"
+_DEFAULT_STAR_A       = "#00ff00"
+_DEFAULT_STAR_B       = "#ff0000"
+
+
+class SyncPreferencesDialog(QDialog):
+    """Small modal dialog for editing Sync Visualizer colour preferences."""
+
+    def __init__(self, parent: QWidget = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Sync Visualizer \u2014 Preferences")
+        self.setModal(False)
+        self.setFixedSize(360, 240)
+        self.setStyleSheet(
+            f"QDialog {{ background: {theme.PANEL_BG}; }}"
+            f"QLabel   {{ color: {theme.TEXT}; background: transparent; }}"
+        )
+
+        _btn_ss = (
+            f"QPushButton {{"
+            f"  background: transparent; color: {theme.TEXT};"
+            f"  border: 1px solid {theme.UI_BORDER}; padding: 2px 12px; border-radius: 3px;"
+            f"}}"
+            f"QPushButton:hover {{"
+            f"  background: rgba(40,40,40,200); color: {theme.ACCENT};"
+            f"}}"
+        )
+
+        grid = QGridLayout(self)
+        grid.setContentsMargins(16, 16, 16, 16)
+        grid.setSpacing(10)
+        grid.setColumnStretch(1, 1)
+
+        def _row(row: int, label: str, btn: _ColorPickBtn) -> None:
+            lbl = QLabel(label, self)
+            lbl.setFont(theme.font_ui())
+            grid.addWidget(lbl, row, 0, Qt.AlignVCenter)
+            grid.addWidget(btn, row, 1, Qt.AlignLeft | Qt.AlignVCenter)
+
+        self._ws_btn = _ColorPickBtn(QColor(_WORKSPACE_BG), allow_alpha=False, parent=self)
+        self._nd_btn = _ColorPickBtn(QColor(_NODE_BODY_BG),  allow_alpha=True,  parent=self)
+        self._tx_btn = _ColorPickBtn(QColor(_NODE_TEXT_COLOR), allow_alpha=False, parent=self)
+        self._sa_btn = _ColorPickBtn(_STAR_COLOR_A,           allow_alpha=False, parent=self)
+        self._sb_btn = _ColorPickBtn(_STAR_COLOR_B,           allow_alpha=False, parent=self)
+
+        _row(0, "Workspace background",     self._ws_btn)
+        _row(1, "Module window background", self._nd_btn)
+        _row(2, "Module text colour",       self._tx_btn)
+        _row(3, "Star colour A (inner)",    self._sa_btn)
+        _row(4, "Star colour B (outer)",    self._sb_btn)
+
+        apply_btn    = QPushButton("Apply",    self)
+        defaults_btn = QPushButton("Defaults", self)
+        close_btn    = QPushButton("Close",    self)
+        for b in (apply_btn, defaults_btn, close_btn):
+            b.setStyleSheet(_btn_ss)
+            b.setFocusPolicy(Qt.NoFocus)
+        apply_btn.clicked.connect(self._apply)
+        defaults_btn.clicked.connect(self._reset_defaults)
+        close_btn.clicked.connect(self.close)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        btn_row.addStretch()
+        btn_row.addWidget(defaults_btn)
+        btn_row.addWidget(apply_btn)
+        btn_row.addWidget(close_btn)
+        grid.addLayout(btn_row, 5, 0, 1, 2)
+
+    def _apply(self) -> None:
+        from tool import prefs as _prefs
+        _prefs.set(_PREFS_WORKSPACE_BG, self._ws_btn.color().name())
+        _prefs.set(_PREFS_NODE_BG,      self._nd_btn.color().name(QColor.HexArgb))
+        _prefs.set(_PREFS_NODE_TEXT,    self._tx_btn.color().name())
+        _prefs.set(_PREFS_STAR_A,       self._sa_btn.color().name())
+        _prefs.set(_PREFS_STAR_B,       self._sb_btn.color().name())
+        _apply_color_prefs()
+
+    def _reset_defaults(self) -> None:
+        self._ws_btn.set_color(QColor(_DEFAULT_WORKSPACE_BG))
+        self._nd_btn.set_color(QColor(_DEFAULT_NODE_BG))
+        self._tx_btn.set_color(QColor(_DEFAULT_NODE_TEXT))
+        self._sa_btn.set_color(QColor(_DEFAULT_STAR_A))
+        self._sb_btn.set_color(QColor(_DEFAULT_STAR_B))
+
+    def load_current(self) -> None:
+        """Refresh buttons from current globals (call before showing)."""
+        self._ws_btn.set_color(QColor(_WORKSPACE_BG))
+        self._nd_btn.set_color(QColor(_NODE_BODY_BG))
+        self._tx_btn.set_color(QColor(_NODE_TEXT_COLOR))
+        self._sa_btn.set_color(QColor(_STAR_COLOR_A))
+        self._sb_btn.set_color(QColor(_STAR_COLOR_B))
+
+
+def _apply_color_prefs() -> None:
+    """Read saved colour prefs and update module-level globals + live widgets."""
+    global _WORKSPACE_BG, _NODE_BODY_BG, _NODE_TEXT_COLOR, _STAR_COLOR_A, _STAR_COLOR_B
+    from tool import prefs as _prefs
+    ws_bg = _prefs.get(_PREFS_WORKSPACE_BG)
+    nd_bg = _prefs.get(_PREFS_NODE_BG)
+    tx    = _prefs.get(_PREFS_NODE_TEXT)
+    sa    = _prefs.get(_PREFS_STAR_A)
+    sb    = _prefs.get(_PREFS_STAR_B)
+    if ws_bg and QColor(ws_bg).isValid():
+        _WORKSPACE_BG = ws_bg
+    if nd_bg and QColor(nd_bg).isValid():
+        _NODE_BODY_BG = nd_bg
+    if tx and QColor(tx).isValid():
+        _NODE_TEXT_COLOR = tx
+    if sa and QColor(sa).isValid():
+        _STAR_COLOR_A = QColor(sa)
+    if sb and QColor(sb).isValid():
+        _STAR_COLOR_B = QColor(sb)
+    # Apply to all live workspace/node widgets
+    app = QApplication.instance()
+    if app is None:
+        return
+    for win in app.topLevelWidgets():
+        if not hasattr(win, '_workspace'):
+            continue
+        ws = win._workspace
+        ws.setStyleSheet(f"background: {_WORKSPACE_BG};")
+        ws.update()
+        for node in ws.nodes():
+            if hasattr(node, '_content'):
+                node._content.setStyleSheet(f"background: {_NODE_BODY_BG};")
+                node._content.update()
+            # Update text colour in FrameVectorNode
+            if hasattr(node, '_vec_text'):
+                node._vec_text.setStyleSheet(
+                    f"background: transparent; color: {_NODE_TEXT_COLOR};"
+                    f"border: none; font-size: 10px;"
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -2143,6 +2377,8 @@ class SyncVisualizerWindow(QMainWindow):
 
         self._palette = SyncPalettePanel(central)
         hlayout.addWidget(self._palette)
+        self._palette.prefs_requested.connect(self._open_prefs)
+        self._prefs_dialog: SyncPreferencesDialog | None = None
 
         self.setCentralWidget(central)
         self._restore_state()
@@ -2176,6 +2412,7 @@ class SyncVisualizerWindow(QMainWindow):
 
     def _restore_state(self) -> None:
         from tool import prefs as _prefs
+        _apply_color_prefs()
 
         geom = _prefs.get(_PREFS_GEOM)
         if isinstance(geom, (list, tuple)) and len(geom) == 4:
@@ -2205,6 +2442,13 @@ class SyncVisualizerWindow(QMainWindow):
     def _apply_startup_fullscreen(self) -> None:
         if getattr(self, "_restore_fs", False):
             self._enter_fullscreen()
+
+    def _open_prefs(self) -> None:
+        if self._prefs_dialog is None:
+            self._prefs_dialog = SyncPreferencesDialog(self)
+        self._prefs_dialog.load_current()
+        self._prefs_dialog.show()
+        self._prefs_dialog.raise_()
 
     # ------------------------------------------------------------------
     # Close
