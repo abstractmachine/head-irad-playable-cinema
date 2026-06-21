@@ -32,10 +32,12 @@ from styles import theme
 from PyQt5.QtCore import (
     QEvent,
     QMimeData,
+    QObject,
     QPoint,
     QRect,
     QSize,
     Qt,
+    QThread,
     QTimer,
     pyqtSignal,
 )
@@ -45,6 +47,8 @@ from PyQt5.QtGui import (
     QIcon,
     QImage,
     QPainter,
+    QPainterPath,
+    QPen,
     QPixmap,
     QPolygon,
 )
@@ -58,6 +62,7 @@ from PyQt5.QtWidgets import (
     QMenu,
     QPushButton,
     QSizePolicy,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -88,8 +93,8 @@ _WINDOW_H        = 700
 _PANEL_W         = 220
 
 _WORKSPACE_BG    = "#808080"   # 50% gray workspace canvas
-_NODE_TITLE_BG   = "#404040"   # 25% gray node title bar
-_NODE_BODY_BG    = "#bfbfbf"   # 75% gray node content area
+_NODE_TITLE_BG   = "#666666"   # 40% gray node title bar
+_NODE_BODY_BG    = "#404040"   # 25% gray node content area
 
 _NODE_TITLE_H    = 26
 _NODE_DEFAULT_W  = 480
@@ -109,6 +114,25 @@ _PREFS_GEOM      = "sync_visualizer_geometry"       # [x, y, w, h]
 _PREFS_FULLSCR   = "sync_visualizer_fullscreen"     # bool
 _PREFS_PANEL     = "sync_visualizer_panel_visible"  # bool
 _PREFS_NODES     = "sync_visualizer_nodes"          # list of dicts
+_PREFS_CONNS     = "sync_visualizer_connections"    # list of dicts
+
+# Port geometry
+_PORT_SIZE       = 12   # px — triangle width/height
+_PORT_COLOR_IDLE = QColor("#222222")
+_PORT_COLOR_ACTIVE = QColor("#ff00ff")   # fuchsia while dragging
+_PORT_COLOR_CONN   = QColor("#000000")   # black when connected
+_CABLE_COLOR_DRAG  = QColor("#ff00ff")
+_CABLE_COLOR_CONN  = QColor("#000000")
+_CABLE_WIDTH       = 2
+
+# Node ID counter (session-scoped)
+_next_node_id: list[int] = [1]   # mutable singleton
+
+
+def _new_node_id() -> int:
+    nid = _next_node_id[0]
+    _next_node_id[0] += 1
+    return nid
 
 
 # ---------------------------------------------------------------------------
@@ -265,10 +289,11 @@ class LiveVideoWidget(QLabel):
 
     def __init__(self, device: str = _VIDEO_DEVICE, parent: QWidget = None) -> None:
         super().__init__(parent)
-        self._device        = device
-        self._cap           = None
-        self._timer         = None
+        self._device          = device
+        self._cap             = None
+        self._timer           = None
         self._last_pixmap: QPixmap | None = None
+        self._last_frame_rgb  = None   # np.ndarray HxWx3 uint8, or None
 
         self.setAlignment(Qt.AlignCenter)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -306,10 +331,19 @@ class LiveVideoWidget(QLabel):
         if not ret:
             return
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        self._last_frame_rgb = frame_rgb          # store for consumers
         h, w, ch  = frame_rgb.shape
         img = QImage(frame_rgb.data, w, h, ch * w, QImage.Format_RGB888)
         self._last_pixmap = QPixmap.fromImage(img)
         self._redisplay()
+
+    def latest_frame_rgb(self):
+        """Return the most recent captured frame as a HxWx3 uint8 numpy array.
+
+        Returns None if no frame has been captured yet.
+        Does NOT block waiting for a new frame.
+        """
+        return self._last_frame_rgb
 
     def _redisplay(self) -> None:
         if self._last_pixmap is None:
@@ -352,9 +386,11 @@ class SyncNode(QWidget):
     def __init__(self, title: str, parent: QWidget = None) -> None:
         super().__init__(parent)
 
+        self.node_id: int = _new_node_id()
         self._drag_global_start: QPoint | None = None
         self._drag_node_start:   QPoint | None = None
         self._resize_orig_geom                 = None   # QRect captured at drag start
+        self._ports_visible: bool              = False  # shown on hover
 
         # ── Outer layout ──────────────────────────────────────────────────
         outer = QVBoxLayout(self)
@@ -429,9 +465,73 @@ class SyncNode(QWidget):
     def state_dict(self) -> dict:
         return {
             "type": self.node_type(),
+            "node_id": self.node_id,
             "x": self.x(), "y": self.y(),
             "w": self.width(), "h": self.height(),
         }
+
+    # ------------------------------------------------------------------
+    # Port API — subclasses override to advertise ports
+    # ------------------------------------------------------------------
+
+    def output_ports(self) -> list[str]:
+        """Return list of output port names (e.g. ['image'])."""
+        return []
+
+    def input_ports(self) -> list[str]:
+        """Return list of input port names."""
+        return []
+
+    def output_port_pos(self, port: str) -> QPoint:
+        """Return port centre in parent (workspace) coordinates."""
+        return self.mapToParent(QPoint(self.width(), self.height() // 2))
+
+    def input_port_pos(self, port: str) -> QPoint:
+        return self.mapToParent(QPoint(0, self.height() // 2))
+
+    def set_ports_visible(self, visible: bool) -> None:
+        if self._ports_visible != visible:
+            self._ports_visible = visible
+            self.update()
+
+    def _port_connected(self, port: str, is_output: bool) -> bool:
+        """Ask the workspace whether this port has a live connection."""
+        ws = self.parent()
+        if isinstance(ws, SyncWorkspace):
+            return ws.is_port_connected(self.node_id, port, is_output)
+        return False
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if not self._ports_visible:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        s  = _PORT_SIZE
+        cy = self.height() // 2
+        for port in self.output_ports():
+            connected = self._port_connected(port, True)
+            color = _PORT_COLOR_CONN if connected else _PORT_COLOR_IDLE
+            p.setBrush(color)
+            p.setPen(Qt.NoPen)
+            tri = QPolygon([
+                QPoint(self.width() - s, cy - s // 2),
+                QPoint(self.width(),     cy),
+                QPoint(self.width() - s, cy + s // 2),
+            ])
+            p.drawPolygon(tri)
+        for port in self.input_ports():
+            connected = self._port_connected(port, False)
+            color = _PORT_COLOR_CONN if connected else _PORT_COLOR_IDLE
+            p.setBrush(color)
+            p.setPen(Qt.NoPen)
+            tri = QPolygon([
+                QPoint(s, cy - s // 2),
+                QPoint(0, cy),
+                QPoint(s, cy + s // 2),
+            ])
+            p.drawPolygon(tri)
+        p.end()
 
     def set_chrome_visible(self, visible: bool) -> None:
         """Set chrome visibility driven by the h-key panel toggle.
@@ -462,11 +562,13 @@ class SyncNode(QWidget):
     def enterEvent(self, event) -> None:
         if not self._chrome_globally_visible:
             self._apply_title_chrome(True)
+        self.set_ports_visible(True)
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:
         if not self._chrome_globally_visible and self._drag_global_start is None:
             self._apply_title_chrome(False)
+        self.set_ports_visible(False)
         super().leaveEvent(event)
 
     # ------------------------------------------------------------------
@@ -613,6 +715,15 @@ class LiveVideoNode(SyncNode):
     def node_type(self) -> str:
         return "live_video"
 
+    def output_ports(self) -> list[str]:
+        return ["image"]
+
+    def latest_frame_rgb(self):
+        """Return the most recent captured frame, or None."""
+        if self._video is not None:
+            return self._video.latest_frame_rgb()
+        return None
+
     def state_dict(self) -> dict:
         d = super().state_dict()
         d["device"] = self._device  # may be None
@@ -727,15 +838,28 @@ class LiveVideoNode(SyncNode):
 # ---------------------------------------------------------------------------
 
 class SyncWorkspace(QWidget):
-    """Absolute-positioned canvas that accepts dropped palette items as nodes."""
+    """Absolute-positioned canvas that accepts dropped palette items as nodes.
+
+    Also manages cable drawing between node ports.
+    """
 
     def __init__(self, parent: QWidget = None) -> None:
         super().__init__(parent)
         self.setAcceptDrops(True)
         self.setStyleSheet(f"background: {_WORKSPACE_BG};")
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMouseTracking(True)
         self._nodes: list[SyncNode] = []
         self._chrome_visible: bool  = True
+
+        # Connections: list of {source_node, source_port, target_node, target_port}
+        self._connections: list[dict] = []
+
+        # Cable drag state
+        self._drag_src_node: SyncNode | None  = None
+        self._drag_src_port: str | None       = None
+        self._drag_src_is_output: bool        = True
+        self._drag_cur_pos: QPoint | None     = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -747,6 +871,9 @@ class SyncWorkspace(QWidget):
     def nodes_state(self) -> list[dict]:
         return [n.state_dict() for n in self._nodes]
 
+    def connections_state(self) -> list[dict]:
+        return list(self._connections)
+
     def restore_nodes(self, states: list[dict]) -> None:
         for s in states:
             if not isinstance(s, dict):
@@ -756,10 +883,26 @@ class SyncWorkspace(QWidget):
                 w = max(_NODE_MIN_W, int(s.get("w", _NODE_DEFAULT_W)))
                 h = _NODE_TITLE_H + round(w * 9 / 16)
                 node = self._make_live_video_node(device)
+                node.node_id = int(s.get("node_id", node.node_id))
                 node.setGeometry(int(s.get("x", 0)), int(s.get("y", 0)), w, h)
                 node.show()
                 if s.get("audio") and device:
                     node._toggle_audio()
+            elif s.get("type") == "frame_vector":
+                w = max(_NODE_MIN_W, int(s.get("w", _NODE_DEFAULT_W)))
+                h = max(120, int(s.get("h", 160)))
+                node = self._make_frame_vector_node()
+                node.node_id = int(s.get("node_id", node.node_id))
+                node.setGeometry(int(s.get("x", 0)), int(s.get("y", 0)), w, h)
+                node.show()
+
+    def restore_connections(self, states: list[dict]) -> None:
+        id_map = {n.node_id: n for n in self._nodes}
+        for c in states:
+            src = id_map.get(c.get("source_node"))
+            tgt = id_map.get(c.get("target_node"))
+            if src and tgt:
+                self._add_connection(src, c["source_port"], tgt, c["target_port"])
 
     def set_chrome_visible(self, visible: bool) -> None:
         self._chrome_visible = visible
@@ -770,8 +913,26 @@ class SyncWorkspace(QWidget):
         """Return the set of device paths currently claimed by nodes (excludes unselected)."""
         return {n._device for n in self._nodes if isinstance(n, LiveVideoNode) and n._device}
 
+    def is_port_connected(self, node_id: int, port: str, is_output: bool) -> bool:
+        for c in self._connections:
+            if is_output:
+                if c["source_node"] == node_id and c["source_port"] == port:
+                    return True
+            else:
+                if c["target_node"] == node_id and c["target_port"] == port:
+                    return True
+        return False
+
+    def get_source_node_for_input(self, node_id: int, port: str) -> "SyncNode | None":
+        """Return the source node connected to a given input port, or None."""
+        id_map = {n.node_id: n for n in self._nodes}
+        for c in self._connections:
+            if c["target_node"] == node_id and c["target_port"] == port:
+                return id_map.get(c["source_node"])
+        return None
+
     # ------------------------------------------------------------------
-    # Drag-and-drop
+    # Drag-and-drop (palette → workspace)
     # ------------------------------------------------------------------
 
     def dragEnterEvent(self, event) -> None:
@@ -793,7 +954,6 @@ class SyncWorkspace(QWidget):
         item_type = bytes(event.mimeData().data(_MIME_TYPE)).decode()
         pos = event.pos()
         if item_type == "live_video":
-            # Pick the first free device; fall back to None (shows <select-input>)
             used = self.used_devices()
             all_devs = _enumerate_video_devices()
             free = next((d for d in all_devs if d not in used), None)
@@ -804,73 +964,559 @@ class SyncWorkspace(QWidget):
                            self.height() - _NODE_DEFAULT_H))
             node.move(x, y)
             node.show()
+        elif item_type == "frame_vector":
+            node = self._make_frame_vector_node()
+            nw, nh = 300, 160
+            x = max(0, min(pos.x() - nw // 2, self.width()  - nw))
+            y = max(0, min(pos.y() - _NODE_TITLE_H, self.height() - nh))
+            node.move(x, y)
+            node.show()
         event.acceptProposedAction()
 
     # ------------------------------------------------------------------
-    # Node factory
+    # Cable mouse events
     # ------------------------------------------------------------------
 
-    def _make_live_video_node(self, device: str) -> LiveVideoNode:
+    def mousePressEvent(self, event) -> None:
+        if event.button() != Qt.LeftButton:
+            super().mousePressEvent(event)
+            return
+        # Hit-test all node ports
+        for node in self._nodes:
+            if not node.isVisible():
+                continue
+            # Output port
+            for port in node.output_ports():
+                p = node.output_port_pos(port)
+                if (event.pos() - p).manhattanLength() <= _PORT_SIZE + 4:
+                    # Disconnect any existing cable from this output
+                    self._remove_connections_for(node.node_id, port, is_output=True)
+                    self._drag_src_node      = node
+                    self._drag_src_port      = port
+                    self._drag_src_is_output = True
+                    self._drag_cur_pos       = event.pos()
+                    node.set_ports_visible(True)
+                    self.update()
+                    return
+            # Input port
+            for port in node.input_ports():
+                p = node.input_port_pos(port)
+                if (event.pos() - p).manhattanLength() <= _PORT_SIZE + 4:
+                    self._remove_connections_for(node.node_id, port, is_output=False)
+                    self._drag_src_node      = node
+                    self._drag_src_port      = port
+                    self._drag_src_is_output = False
+                    self._drag_cur_pos       = event.pos()
+                    node.set_ports_visible(True)
+                    self.update()
+                    return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._drag_src_node is not None:
+            self._drag_cur_pos = event.pos()
+            self.update()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if self._drag_src_node is None:
+            super().mouseReleaseEvent(event)
+            return
+        if event.button() == Qt.LeftButton:
+            self._try_complete_connection(event.pos())
+        self._drag_src_node = None
+        self._drag_src_port = None
+        self._drag_cur_pos  = None
+        self.update()
+
+    def _try_complete_connection(self, pos: QPoint) -> None:
+        src = self._drag_src_node
+        src_port = self._drag_src_port
+        is_output = self._drag_src_is_output
+        for node in self._nodes:
+            if node is src or not node.isVisible():
+                continue
+            if is_output:
+                # src is output → look for compatible input
+                for port in node.input_ports():
+                    p = node.input_port_pos(port)
+                    if (pos - p).manhattanLength() <= _PORT_SIZE + 8:
+                        if self._types_compatible(src, src_port, node, port):
+                            self._remove_connections_for(node.node_id, port, False)
+                            self._add_connection(src, src_port, node, port)
+                        return
+            else:
+                # src is input → look for compatible output
+                for port in node.output_ports():
+                    p = node.output_port_pos(port)
+                    if (pos - p).manhattanLength() <= _PORT_SIZE + 8:
+                        if self._types_compatible(node, port, src, src_port):
+                            self._remove_connections_for(src.node_id, src_port, False)
+                            self._add_connection(node, port, src, src_port)
+                        return
+
+    def _types_compatible(self, src_node, src_port, tgt_node, tgt_port) -> bool:
+        # For now: image→image only
+        return src_port == "image" and tgt_port == "image"
+
+    def _add_connection(self, src: SyncNode, src_port: str,
+                        tgt: SyncNode, tgt_port: str) -> None:
+        self._connections.append({
+            "source_node": src.node_id, "source_port": src_port,
+            "target_node": tgt.node_id, "target_port": tgt_port,
+        })
+        # Notify FrameVectorNode it has a new source
+        if isinstance(tgt, FrameVectorNode):
+            tgt.on_connected(src)
+        src.update()
+        tgt.update()
+        self.update()
+
+    def _remove_connections_for(self, node_id: int, port: str, is_output: bool) -> None:
+        id_map = {n.node_id: n for n in self._nodes}
+        kept = []
+        for c in self._connections:
+            if is_output and c["source_node"] == node_id and c["source_port"] == port:
+                tgt = id_map.get(c["target_node"])
+                if isinstance(tgt, FrameVectorNode):
+                    tgt.on_disconnected()
+            elif not is_output and c["target_node"] == node_id and c["target_port"] == port:
+                tgt = id_map.get(c["target_node"])
+                if isinstance(tgt, FrameVectorNode):
+                    tgt.on_disconnected()
+            else:
+                kept.append(c)
+        self._connections = kept
+        self.update()
+
+    # ------------------------------------------------------------------
+    # Cable painting
+    # ------------------------------------------------------------------
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        pen_w = _CABLE_WIDTH
+
+        # Draw completed cables
+        id_map = {n.node_id: n for n in self._nodes}
+        for c in self._connections:
+            src_node = id_map.get(c["source_node"])
+            tgt_node = id_map.get(c["target_node"])
+            if src_node and tgt_node:
+                p1 = src_node.output_port_pos(c["source_port"])
+                p2 = tgt_node.input_port_pos(c["target_port"])
+                p.setPen(QPen(_CABLE_COLOR_CONN, pen_w))
+                self._draw_cable(p, p1, p2)
+
+        # Draw active drag cable
+        if self._drag_src_node and self._drag_cur_pos:
+            if self._drag_src_is_output:
+                p1 = self._drag_src_node.output_port_pos(self._drag_src_port)
+                p2 = self._drag_cur_pos
+            else:
+                p1 = self._drag_cur_pos
+                p2 = self._drag_src_node.input_port_pos(self._drag_src_port)
+            p.setPen(QPen(_CABLE_COLOR_DRAG, pen_w))
+            self._draw_cable(p, p1, p2)
+
+        p.end()
+
+    def _draw_cable(self, painter: QPainter, p1: QPoint, p2: QPoint) -> None:
+        """Draw a bezier cable from p1 (output) to p2 (input)."""
+        path = QPainterPath()
+        path.moveTo(p1)
+        cx = (p1.x() + p2.x()) / 2
+        path.cubicTo(QPoint(int(cx), p1.y()),
+                     QPoint(int(cx), p2.y()),
+                     p2)
+        painter.drawPath(path)
+
+    # ------------------------------------------------------------------
+    # Node factories
+    # ------------------------------------------------------------------
+
+    def _make_live_video_node(self, device: str) -> "LiveVideoNode":
         node = LiveVideoNode(device=device, parent=self)
         node.closed.connect(self._on_node_closed)
         node.set_chrome_visible(self._chrome_visible)
         self._nodes.append(node)
         return node
 
+    def _make_frame_vector_node(self) -> "FrameVectorNode":
+        node = FrameVectorNode(parent=self)
+        node.closed.connect(self._on_node_closed)
+        node.set_chrome_visible(self._chrome_visible)
+        self._nodes.append(node)
+        return node
+
     def _on_node_closed(self, node: SyncNode) -> None:
+        # Remove all connections involving this node
+        self._connections = [
+            c for c in self._connections
+            if c["source_node"] != node.node_id and c["target_node"] != node.node_id
+        ]
         if node in self._nodes:
             self._nodes.remove(node)
+        self.update()
 
 
 # ---------------------------------------------------------------------------
-# PaletteItem — draggable palette entry
+# _EmbedWorker — background thread for CLIP frame embedding
 # ---------------------------------------------------------------------------
 
-class PaletteItem(QWidget):
-    """One draggable item in the right-side palette panel."""
+class _EmbedWorker(QObject):
+    """Runs CLIP embedding on a single frame in a worker thread.
+
+    Signals:
+        result(np.ndarray, str)  — vector + model name on success
+        error(str)               — error message on failure
+    """
+    result = pyqtSignal(object, str)
+    error  = pyqtSignal(str)
+
+    def __init__(self, frame_rgb, project_path: str = ".") -> None:
+        super().__init__()
+        self._frame_rgb    = frame_rgb
+        self._project_path = project_path
+
+    def run(self) -> None:
+        try:
+            from services.frame_vector import load_frame_vector_model, embed_rgb_frame
+            bundle = load_frame_vector_model(self._project_path)
+            vec = embed_rgb_frame(self._frame_rgb, bundle)
+            model_name = bundle[3]
+            self.result.emit(vec, model_name)
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
+# ---------------------------------------------------------------------------
+# FrameVectorNode — embeds live video frames with CLIP
+# ---------------------------------------------------------------------------
+
+_FV_INTERVALS = [0.1, 0.5, 1.0, 2.0, 5.0]   # seconds
+_FV_DEFAULT_INTERVAL = 2.0
+
+class FrameVectorNode(SyncNode):
+    """Node that receives image frames and displays their embedding vector."""
+
+    def __init__(self, parent: QWidget = None) -> None:
+        super().__init__("", parent)
+
+        self._interval_s: float = _FV_DEFAULT_INTERVAL
+        self._source_node: "LiveVideoNode | None" = None
+        self._embed_busy: bool = False
+        self._model_name: str  = ""
+        self._vec_dim: int     = 0
+        self._last_vec         = None   # np.ndarray or None
+
+        # ── Title bar: scanning icon + alarm icon + interval button ───────
+        self._title_label.hide()
+
+        scan_lbl = QLabel(self._title_bar)
+        self._scan_lbl = scan_lbl
+        scan_lbl.setFixedSize(16, 16)
+        scan_lbl.setStyleSheet("background: transparent;")
+        scan_icon = _svg_icon("scanning", 14, theme.TEXT)
+        if not scan_icon.isNull():
+            scan_lbl.setPixmap(scan_icon.pixmap(14, 14))
+        self._tb_layout.insertWidget(0, scan_lbl, 0, Qt.AlignVCenter)
+
+        self._interval_btn = QPushButton(self._title_bar)
+        self._interval_btn.setFlat(True)
+        alarm_icon = _svg_icon("alarm-solid", 14, theme.TEXT)
+        self._interval_btn.setIcon(alarm_icon)
+        self._interval_btn.setIconSize(QSize(14, 14))
+        self._interval_btn.setText(f"{self._interval_s:.1f}s")
+        self._interval_btn.setFont(theme.font_ui())
+        self._interval_btn.setStyleSheet(
+            f"QPushButton {{ background: transparent; color: {theme.TEXT};"
+            f" border: none; padding: 0 2px; }}"
+            f"QPushButton:hover {{ color: {theme.ACCENT}; }}"
+        )
+        self._interval_btn.setCursor(Qt.PointingHandCursor)
+        self._interval_btn.clicked.connect(self._show_interval_menu)
+        self._tb_layout.insertWidget(1, self._interval_btn, 0, Qt.AlignVCenter)
+
+        # ── Content ──────────────────────────────────────────────────────
+        body = QWidget(self)
+        body.setStyleSheet("background: transparent;")
+        blay = QVBoxLayout(body)
+        blay.setContentsMargins(8, 6, 8, 6)
+        blay.setSpacing(4)
+
+        lbl_style = "color: #999999; background: transparent; font-size: 11px;"
+
+        self._status_lbl = QLabel("status: waiting for connection…", body)
+        self._status_lbl.setStyleSheet(lbl_style)
+        self._status_lbl.setFont(theme.font_ui())
+        blay.addWidget(self._status_lbl)
+
+        self._vec_text = QTextEdit(body)
+        self._vec_text.setReadOnly(True)
+        self._vec_text.setFont(theme.font_mono() if hasattr(theme, "font_mono") else theme.font_ui())
+        self._vec_text.setStyleSheet(
+            "background: transparent; color: #ffffff;"
+            "border: none; font-size: 10px;"
+        )
+        self._vec_text.setPlainText("vector: —")
+        blay.addWidget(self._vec_text, 1)
+
+        self.content_layout().addWidget(body)
+        self.resize(300, 160)
+
+        # Timer that fires the embedding loop
+        self._timer = QTimer(self)
+        self._timer.setInterval(int(self._interval_s * 1000))
+        self._timer.timeout.connect(self._on_tick)
+
+    # ------------------------------------------------------------------
+    # Port API
+    # ------------------------------------------------------------------
+
+    def node_type(self) -> str:
+        return "frame_vector"
+
+    def input_ports(self) -> list[str]:
+        return ["image"]
+
+    # ------------------------------------------------------------------
+    # Connection callbacks
+    # ------------------------------------------------------------------
+
+    def _apply_title_chrome(self, show: bool) -> None:
+        super()._apply_title_chrome(show)
+        # Also hide/show the extra widgets unique to this node
+        if hasattr(self, "_scan_lbl"):
+            self._scan_lbl.setVisible(show)
+        if hasattr(self, "_interval_btn"):
+            self._interval_btn.setVisible(show)
+
+    def _show_interval_menu(self) -> None:
+        menu = QMenu(self)
+        for v in _FV_INTERVALS:
+            action = menu.addAction(f"{v:.1f}s")
+            action.setData(v)
+            if v == self._interval_s:
+                action.setCheckable(True)
+                action.setChecked(True)
+        chosen = menu.exec_(self._interval_btn.mapToGlobal(
+            QPoint(0, self._interval_btn.height())))
+        if chosen is not None:
+            self._set_interval(chosen.data())
+
+    def _set_interval(self, seconds: float) -> None:
+        self._interval_s = seconds
+        self._interval_btn.setText(f"{seconds:.1f}s")
+        was_active = self._timer.isActive()
+        self._timer.stop()
+        self._timer.setInterval(int(seconds * 1000))
+        if was_active:
+            self._timer.start()
+
+    def on_connected(self, source_node: "LiveVideoNode") -> None:
+        self._source_node = source_node
+        self._status_lbl.setText("status: connected, waiting for frame…")
+        self._timer.start()
+
+    def on_disconnected(self) -> None:
+        self._source_node = None
+        self._timer.stop()
+        self._embed_busy = False
+        self._status_lbl.setText("status: waiting for connection…")
+        self._vec_text.setPlainText("vector: —")
+
+    # ------------------------------------------------------------------
+    # Embedding loop
+    # ------------------------------------------------------------------
+
+    def _on_tick(self) -> None:
+        if self._embed_busy or self._source_node is None:
+            return
+        frame = self._source_node.latest_frame_rgb()
+        if frame is None:
+            self._status_lbl.setText("status: waiting for image…")
+            return
+        self._embed_busy = True
+        self._status_lbl.setText("status: embedding…")
+
+        # Find project path (best-effort)
+        try:
+            from tool import prefs as _p
+            project_path = _p.get("project_path", ".")
+        except Exception:
+            project_path = "."
+
+        # Worker thread
+        import numpy as np
+        self._worker_frame = np.array(frame)   # snapshot, no reference to live buffer
+        self._thread = QThread(self)
+        self._worker = _EmbedWorker(self._worker_frame, project_path)
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.result.connect(self._on_embed_result)
+        self._worker.error.connect(self._on_embed_error)
+        self._worker.result.connect(self._thread.quit)
+        self._worker.error.connect(self._thread.quit)
+        self._thread.start()
+
+    def _on_embed_result(self, vec, model_name: str) -> None:
+        import numpy as np
+        self._embed_busy = False
+        self._model_name = model_name
+        self._last_vec   = vec
+        self._vec_dim    = len(vec)
+        preview = ", ".join(f"{v:.3f}" for v in vec[:16])
+        if len(vec) > 16:
+            preview += ", …"
+        self._status_lbl.setText("status: ok")
+        self._vec_text.setPlainText(
+            f"model: {model_name}\n"
+            f"dims:  {self._vec_dim}\n"
+            f"vector: [{preview}]"
+        )
+
+    def _on_embed_error(self, msg: str) -> None:
+        self._embed_busy = False
+        self._status_lbl.setText(f"status: error")
+        self._vec_text.setPlainText(f"error: {msg}")
+
+    # ------------------------------------------------------------------
+    # Clean up timer/thread on close
+    # ------------------------------------------------------------------
+
+    def _on_close(self) -> None:
+        self._timer.stop()
+        super()._on_close()
+
+
+# ---------------------------------------------------------------------------
+# ModuleItem — draggable palette entry with connector bumps
+# ---------------------------------------------------------------------------
+
+_MODULE_H           = 36
+_MODULE_CORNER      = 6    # border-radius
+_CONNECTOR_W        = 10   # horizontal extent of the triangle bump/socket
+_CONNECTOR_H        = 14   # height of the triangle
+_MODULE_BG          = "#ffffff"
+_MODULE_BG_COLOR    = QColor("#ffffff")
+_MODULE_SOCKET_COLOR = QColor("#404040")  # same as panel background
+
+
+class ModuleItem(QWidget):
+    """Draggable palette item drawn as a node-connector shape.
+
+    Left side: triangular indent if has_input=True.
+    Right side: triangular bump if has_output=True.
+    Background is white; icon and label use the workspace gray so they
+    read as 'cut out' of the white shape.
+    """
 
     def __init__(
         self,
-        label:     str,
-        item_type: str,
-        icon_name: str | None = None,
-        parent:    QWidget    = None,
+        label:      str,
+        item_type:  str,
+        icon_name:  str | None = None,
+        has_input:  bool = False,
+        has_output: bool = False,
+        parent:     QWidget = None,
     ) -> None:
         super().__init__(parent)
-        self._item_type = item_type
+        self._item_type       = item_type
+        self._has_input       = has_input
+        self._has_output      = has_output
         self._drag_start_pos: QPoint | None = None
 
+        self.setAttribute(Qt.WA_TranslucentBackground)
         self.setCursor(Qt.OpenHandCursor)
-        self.setFixedHeight(36)
-        self.setStyleSheet(
-            f"QWidget {{ background: {theme.INPUT_BG}; border-radius: 4px; }}"
-            f"QWidget:hover {{ background: {theme.BTN_HOVER}; }}"
-        )
+        self.setFixedHeight(_MODULE_H)
 
+        # Same content inset for every item so icons/labels always align.
+        # Triangle connectors are drawn outside this content region.
+        _pad = _CONNECTOR_W + 6
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 0, 8, 0)
+        layout.setContentsMargins(_pad, 0, _pad, 0)
         layout.setSpacing(6)
 
+        icon_color = _WORKSPACE_BG  # dark gray — reads as cut-out on white
         icon_lbl = QLabel(self)
         icon_lbl.setFixedSize(18, 18)
         icon_lbl.setStyleSheet("background: transparent;")
         if icon_name:
-            icon = _svg_icon(icon_name, 16, "#ffffff")
+            icon = _svg_icon(icon_name, 16, icon_color)
             if not icon.isNull():
                 icon_lbl.setPixmap(icon.pixmap(16, 16))
-            else:
-                icon_lbl.setText("▶")
-                icon_lbl.setAlignment(Qt.AlignCenter)
-        else:
-            icon_lbl.setText("▶")
-            icon_lbl.setAlignment(Qt.AlignCenter)
         layout.addWidget(icon_lbl)
 
         text_lbl = QLabel(label, self)
-        text_lbl.setStyleSheet(f"color: {theme.TEXT}; background: transparent;")
+        text_lbl.setStyleSheet(
+            f"color: {_WORKSPACE_BG}; background: transparent; font-weight: 600;"
+        )
         text_lbl.setFont(theme.font_ui())
         layout.addWidget(text_lbl)
         layout.addStretch()
+
+    # ------------------------------------------------------------------
+    # Custom shape drawing
+    # ------------------------------------------------------------------
+
+    def _build_path(self) -> QPainterPath:
+        """White core always spans x=0 … x=w-cw so all items share the same
+        left and right edges.  Output connector bumps right to x=w.
+        Input socket is painted separately as a dark overlay."""
+        w, h = self.width(), self.height()
+        r  = _MODULE_CORNER
+        cw = _CONNECTOR_W
+        ch = _CONNECTOR_H
+        cy = h / 2
+        rw = w - cw   # right boundary of the core rectangle
+
+        path = QPainterPath()
+        path.moveTo(r, 0)
+        path.lineTo(rw - r, 0)
+        path.quadTo(rw, 0, rw, r)
+
+        if self._has_output:
+            path.lineTo(rw, cy - ch / 2)
+            path.lineTo(w,  cy)
+            path.lineTo(rw, cy + ch / 2)
+
+        path.lineTo(rw, h - r)
+        path.quadTo(rw, h, rw - r, h)
+        path.lineTo(r, h)
+        path.quadTo(0, h, 0, h - r)
+        path.lineTo(0, r)
+        path.quadTo(0, 0, r, 0)
+        path.closeSubpath()
+        return path
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        # White body — same core rect for every item
+        painter.fillPath(self._build_path(), _MODULE_BG_COLOR)
+        # Input socket: dark triangle eating into the left edge of the white pill
+        if self._has_input:
+            cw = _CONNECTOR_W
+            ch = _CONNECTOR_H
+            cy = self.height() / 2
+            socket = QPainterPath()
+            socket.moveTo(0, cy - ch / 2)
+            socket.lineTo(cw, cy)
+            socket.lineTo(0, cy + ch / 2)
+            socket.closeSubpath()
+            painter.fillPath(socket, _MODULE_SOCKET_COLOR)
+        painter.end()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.update()
+
+    # ------------------------------------------------------------------
+    # Drag
+    # ------------------------------------------------------------------
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton:
@@ -904,44 +1550,51 @@ class PaletteItem(QWidget):
 # ---------------------------------------------------------------------------
 
 class SyncPalettePanel(QWidget):
-    """Right-side panel with draggable input palette items."""
+    """Right-side panel with draggable module palette items."""
 
     def __init__(self, parent: QWidget = None) -> None:
         super().__init__(parent)
         self.setFixedWidth(_PANEL_W)
-        self.setStyleSheet(f"background: {theme.PANEL_BG};")
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(8, 12, 8, 12)
+        outer.setContentsMargins(14, 12, 8, 12)
         outer.setSpacing(8)
 
-        inputs_group = QGroupBox("Inputs", self)
-        inputs_group.setStyleSheet(
-            f"QGroupBox {{"
-            f"  border: 1px solid {theme.UI_BORDER};"
-            f"  border-radius: 4px;"
-            f"  margin-top: 10px;"
-            f"  color: {theme.TEXT};"
-            f"  background: transparent;"
-            f"}}"
-            f"QGroupBox::title {{"
-            f"  subcontrol-origin: margin; left: 8px; padding: 0 4px;"
-            f"}}"
-        )
-        group_layout = QVBoxLayout(inputs_group)
+        items_widget = QWidget(self)
+        items_widget.setAttribute(Qt.WA_TranslucentBackground)
+        group_layout = QVBoxLayout(items_widget)
         group_layout.setContentsMargins(6, 6, 6, 6)
         group_layout.setSpacing(4)
         group_layout.addWidget(
-            PaletteItem(
+            ModuleItem(
                 label="Live Video",
                 item_type="live_video",
                 icon_name="video-camera",
-                parent=inputs_group,
+                has_input=False,
+                has_output=True,
+                parent=items_widget,
+            )
+        )
+        group_layout.addWidget(
+            ModuleItem(
+                label="Frame Vector",
+                item_type="frame_vector",
+                icon_name="scanning",
+                has_input=True,
+                has_output=False,
+                parent=items_widget,
             )
         )
 
-        outer.addWidget(inputs_group)
+        outer.addWidget(items_widget)
         outer.addStretch()
+
+    _PANEL_COLOR = QColor("#404040")
+
+    def paintEvent(self, event) -> None:
+        p = QPainter(self)
+        p.fillRect(self.rect(), self._PANEL_COLOR)
+        p.end()
 
 
 # ---------------------------------------------------------------------------
@@ -1020,6 +1673,7 @@ class SyncVisualizerWindow(QMainWindow):
         _prefs.set(_PREFS_FULLSCR, self._fs_active)
         _prefs.set(_PREFS_PANEL,   self._palette.isVisible())
         _prefs.set(_PREFS_NODES,   self._workspace.nodes_state())
+        _prefs.set(_PREFS_CONNS,   self._workspace.connections_state())
 
     def _restore_state(self) -> None:
         from tool import prefs as _prefs
@@ -1036,6 +1690,10 @@ class SyncVisualizerWindow(QMainWindow):
         nodes_state = _prefs.get(_PREFS_NODES)
         if isinstance(nodes_state, list):
             self._workspace.restore_nodes(nodes_state)
+
+        conns_state = _prefs.get(_PREFS_CONNS)
+        if isinstance(conns_state, list):
+            self._workspace.restore_connections(conns_state)
 
         if _prefs.get(_PREFS_PANEL) is False:
             self._palette.setVisible(False)
