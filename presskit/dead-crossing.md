@@ -311,7 +311,7 @@ Together these processes transform a film archive into a playable cinematic land
 
 ::: {.page .splash}
 
-![](images/cowpoke-dataset/butch-cassidy-train-face.png){.backdrop}
+![](images/cowpoke-dataset/rdr2-pipeline.png){.backdrop}
 
 ::: {.overlay .keyword}
 
