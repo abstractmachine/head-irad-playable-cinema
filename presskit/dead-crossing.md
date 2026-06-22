@@ -40,8 +40,9 @@ title: "Dead Crossing"
 
 ::: {.illustrations}
 
-![](images/empty.png){.row-count-5}
-![](images/cowpoke-cabin/cabin-player-side-view-lighter.jpg){.row-count-6}
+![](images/cowpoke-dataset/rdr2-ghost-train.jpg){.row-count-7}
+![](images/empty.png){.row-count-1}
+![](images/cowpoke-cabin/head-irad-dead-crossing-cabin-cube-vertical.jpg){.row-count-19}
 ![](images/empty.png){.row-count-1}
 
 :::
@@ -147,6 +148,8 @@ Dead Crossing transforms this open structure into an impossible machine for drea
 
 ::: {.overlay .copy .illustrated}
 
+## EXPERIENCE
+
 Visitors enter the cabin and navigate the virtual world of the popular Western video game *Red Dead Redemption 2* (2018) using a custom-built controller.
 
 As they travel through the landscape, their actions continuously activate new pathways through a century of Western cinema. Riding a horse, entering a saloon, crossing a river, or pausing before a distant horizon can reveal unexpected correspondences between video game imagery and film history.
@@ -214,7 +217,7 @@ Each selection becomes a new point of departure for traversing the installation'
 
 ::: {.page .splash}
 
-![](images/cowpoke-controller/head-irad-cowpoke-controller-front-2025-11-03.png){.backdrop}
+![](images/cowpoke-dataset/ghost-balad-cable-hogue.png){.backdrop}
 
 ::: {.overlay .slogan}
 
@@ -299,7 +302,8 @@ The resulting archive functions simultaneously as a dataset, a visual encycloped
 
 ::: {.page .splash}
 
-![](images/cowpoke-cabin/head-irad-dead-crossing-cabin-instllation-overhead-view-web.jpg){.backdrop}
+![](images/cowpoke-cabin/head-irad-dead-crossing-cabin-cube-assembly-ladder.jpg){.backdrop}
+
 
 ::: {.overlay .keyword}
 
