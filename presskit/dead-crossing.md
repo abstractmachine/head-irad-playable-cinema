@@ -241,7 +241,7 @@ Each selection becomes a new point of departure for traversing the installation'
 
 :::
 
-## AN ARTIFICIAL GHOST
+## HAUNTED LANDSCAPE
 
 Western cinema is haunted by its own images.
 
@@ -288,16 +288,18 @@ The result is neither database nor film, but a dynamic system for exploring the 
 
 ## REMIX ENGINE
 
-Dead Crossing is powered by a bespoke software environment developed within the Playable Cinema research project.
+Dead Crossing is powered by a bespoke software environment developed within the Playable Cinema research project. The goal of this research project is to build methodologies and tools to leverage machine learning in the curation, analysis, and recombination of cinema and videogame narratives.
 
-More than three hundred Western films were collected, segmented, annotated, indexed, and transformed into a traversable archive. Each film passes through a sequence of computational transformations:
+During the latest stage of this research, more than three hundred Western films were collected, segmented, annotated, indexed, and transformed into a traversable archive. Each film passes through a sequence of computational transformations:
 
 * Shot detection
 * Scene detection
 * Subtitle processing
 * Visual annotation
+* Colormetric analysis
 * Vocabulary extraction
 * Semantic indexing
+* Narratological descriptors
 * Real-time synchronization
 
 Together these processes transform a film archive into a playable cinematic landscape.
@@ -376,6 +378,9 @@ Each journey through the installation produces a different cinematic trajectory 
 ::: {.overlay .copy}
 
 ::: {.illustrations}
+
+![](images/crossing-tool/crossing-tool-stats.png){.row-count-32}
+
 :::
 
 ## COMPUTER VISION
