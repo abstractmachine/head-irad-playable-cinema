@@ -147,7 +147,7 @@ _TB_ICON_BTN_SS = (
     "  background: transparent; border: none; padding: 0;"
     "}"
     "QPushButton:hover {"
-    "  background: rgba(40,40,40,200); border-radius: 3px;"
+    "  background: #ff00ff; border-radius: 3px;"
     "}"
 )
 _TB_TEXT_BTN_SS = (
@@ -156,7 +156,7 @@ _TB_TEXT_BTN_SS = (
     "  border: none; padding: 0 4px;"
     "}"
     "QPushButton:hover {"
-    "  background: rgba(40,40,40,200); border-radius: 3px; color: #ff00ff;"
+    "  background: #ff00ff; border-radius: 3px; color: #ffffff;"
     "}"
 )
 # Close button has an extra font-size rule
@@ -166,7 +166,7 @@ _TB_CLOSE_BTN_SS = (
     "  border: none; font-size: 14px; padding: 0;"
     "}"
     "QPushButton:hover {"
-    "  background: rgba(40,40,40,200); border-radius: 3px; color: #ff00ff;"
+    "  background: #ff00ff; border-radius: 3px; color: #ffffff;"
     "}"
 )
 
@@ -242,7 +242,7 @@ class _TbBtn(QPushButton):
             self.setIconSize(QSize(self._icon_size, self._icon_size))
 
     def enterEvent(self, event) -> None:
-        self._refresh_icon("#ff00ff")
+        self._refresh_icon("#ffffff")
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:
@@ -870,7 +870,7 @@ class LiveVideoNode(SyncNode):
         self._title_label.hide()
 
         label = self._device if self._device else "<select-input>"
-        self._cam_btn = _TbBtn(icon_name="video-camera", text=f"  {label}",
+        self._cam_btn = _TbBtn(icon_name="video-camera-solid", text=f"  {label}",
                                icon_size=14, parent=self._title_bar)
         self._cam_btn.setFont(theme.font_ui())
         self._cam_btn.setStyleSheet(_TB_TEXT_BTN_SS)
@@ -882,7 +882,7 @@ class LiveVideoNode(SyncNode):
         self._snd_btn.setFixedSize(22, 22)
         self._snd_btn.setStyleSheet(_TB_ICON_BTN_SS)
         self._snd_btn.clicked.connect(self._toggle_audio)
-        tb.insertWidget(tb.count() - 1, self._snd_btn, 0, Qt.AlignVCenter)
+        tb.insertWidget(0, self._snd_btn, 0, Qt.AlignVCenter)
 
         self._audio_module_id: int | None = None
 
@@ -1604,7 +1604,7 @@ class FrameVectorNode(SyncNode):
         # ── Title bar: scanning toggle + alarm icon + interval button ────
         self._title_label.hide()
 
-        self._scan_btn = _TbBtn(icon_name="calculator", icon_size=14,
+        self._scan_btn = _TbBtn(icon_name="calculator-solid", icon_size=14,
                                  parent=self._title_bar)
         self._scan_btn.setFixedSize(22, 22)
         self._scan_btn.setStyleSheet(_TB_ICON_BTN_SS)
@@ -1634,7 +1634,7 @@ class FrameVectorNode(SyncNode):
         self._interval_btn.setFont(theme.font_ui())
         self._interval_btn.setStyleSheet(_TB_TEXT_BTN_SS)
         self._interval_btn.clicked.connect(self._show_interval_menu)
-        self._tb_layout.insertWidget(1, self._interval_btn, 0, Qt.AlignVCenter)
+        self._tb_layout.insertWidget(3, self._interval_btn, 0, Qt.AlignVCenter)
 
         # ── Content ──────────────────────────────────────────────────────
         self._body = QWidget(self)
@@ -1691,7 +1691,8 @@ class FrameVectorNode(SyncNode):
 
         # Timer that fires the embedding loop
         self._timer = QTimer(self)
-        self._timer.setInterval(int(self._interval_s * 1000))
+        if self._interval_s is not None:
+            self._timer.setInterval(int(self._interval_s * 1000))
         self._timer.timeout.connect(self._on_tick)
         self._thread: QThread | None = None
         self._worker: _EmbedWorker | None = None
@@ -1849,12 +1850,16 @@ class FrameVectorNode(SyncNode):
             self._star_overlay.set_vector(self._last_vec)
 
     def _update_scan_icon(self) -> None:
-        color = theme.TEXT if self._display_on else theme.TEXT_DIM
-        self._scan_btn.set_icon("calculator", color)
+        if self._display_on:
+            self._scan_btn.set_icon("calculator-solid", theme.TEXT)
+        else:
+            self._scan_btn.set_icon("calculator", theme.TEXT_DIM)
 
     def _update_star_icon(self) -> None:
-        color = theme.TEXT if self._star_on else theme.TEXT_DIM
-        self._star_btn.set_icon("star-dashed", color)
+        if self._star_on:
+            self._star_btn.set_icon("star-solid", theme.TEXT)
+        else:
+            self._star_btn.set_icon("star-dashed", theme.TEXT_DIM)
 
     def _update_info_icon(self) -> None:
         if self._info_on:
@@ -1879,18 +1884,20 @@ class FrameVectorNode(SyncNode):
 
     def _set_interval(self, seconds) -> None:
         self._interval_s = seconds
+        self._timer.stop()
         if seconds is None:
             self._interval_btn.setText("off")
-            self._timer.stop()
+            # Fire a single immediate tick if already connected
+            if self._source_node is not None:
+                QTimer.singleShot(0, self._on_tick)
         else:
             label = f"{seconds:.2f}s".rstrip('0').rstrip('.')
             if label.endswith('.'):
                 label += '0'
             self._interval_btn.setText(label)
-            was_active = self._timer.isActive()
-            self._timer.stop()
             self._timer.setInterval(int(seconds * 1000))
-            if was_active:
+            # Start the timer whenever a source is connected
+            if self._source_node is not None:
                 self._timer.start()
         ws = self.parent()
         if isinstance(ws, SyncWorkspace):
@@ -1902,7 +1909,11 @@ class FrameVectorNode(SyncNode):
         self._source_node = source_node
         self._set_status("connected, waiting for frame…")
         if self._interval_s is not None:
+            self._timer.setInterval(int(self._interval_s * 1000))
             self._timer.start()
+        else:
+            # "off" mode: fire once immediately on connect
+            QTimer.singleShot(0, self._on_tick)
 
     def on_disconnected(self) -> None:
         self._source_node = None
@@ -2034,7 +2045,7 @@ class ModuleItem(QWidget):
         layout.setContentsMargins(_pad, 0, _pad, 0)
         layout.setSpacing(6)
 
-        icon_color = _WORKSPACE_BG  # dark gray — reads as cut-out on white
+        icon_color = "#404040"  # panel bg — reads as cut-out on white
         self._icon_lbl = QLabel(self)
         icon_lbl = self._icon_lbl
         icon_lbl.setFixedSize(18, 18)
@@ -2124,7 +2135,7 @@ class ModuleItem(QWidget):
 
     def leaveEvent(self, event) -> None:
         if self._icon_name:
-            pix = _svg_icon(self._icon_name, 16, _WORKSPACE_BG).pixmap(16, 16)
+            pix = _svg_icon(self._icon_name, 16, "#404040").pixmap(16, 16)
             self._icon_lbl.setPixmap(pix)
         super().leaveEvent(event)
 
@@ -2182,9 +2193,8 @@ class SyncPalettePanel(QWidget):
             ModuleItem(
                 label="Live Video",
                 item_type="live_video",
-                icon_name="video-camera",
+                icon_name="video-camera-solid",
                 has_input=False,
-                has_output=True,
                 parent=items_widget,
             )
         )
@@ -2192,9 +2202,8 @@ class SyncPalettePanel(QWidget):
             ModuleItem(
                 label="Frame Vector",
                 item_type="frame_vector",
-                icon_name="calculator",
+                icon_name="calculator-solid",
                 has_input=True,
-                has_output=False,
                 parent=items_widget,
             )
         )
