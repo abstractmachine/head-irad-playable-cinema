@@ -483,7 +483,7 @@ The resulting archive functions simultaneously as a dataset, a visual encycloped
 
 ::: {.overlay .keyword}
 
-# HARDWARE
+# INSTALLATION
 
 :::
 
@@ -499,13 +499,9 @@ The resulting archive functions simultaneously as a dataset, a visual encycloped
 ::: {.illustrations}
 :::
 
-## INSTALLATION
+## SETUP
 
-Dead Crossing is a free-standing interactive installation composed of a custom-built timber cabin, integrated display system, bespoke controller, and software environment.
-
-Designed for galleries, museums, festivals, and exhibition spaces, the installation invites visitors to enter a frontier cabin and navigate a playable archive of Western cinema.
-
-The work is presented as a complete installation including cabin structure, controller, software environment, and media archive.
+Installation and calibration typically require one working day. Artist coordination during installation is required.
 
 ## DIMENSIONS
 
@@ -518,11 +514,6 @@ The work is presented as a complete installation including cabin structure, cont
 **Recommended exhibition area**
 
 Minimum 5 × 5 m
-
-**Visitor capacity**
-
-1 active participant
-Additional surrounding audience possible
 
 ## REQUIREMENTS
 
@@ -550,11 +541,11 @@ Not required
 * Media archive
 * Installation documentation
 
-## SETUP
+Dead Crossing is a free-standing interactive installation composed of a custom-built timber cabin, integrated display system, bespoke controller, and software environment.
 
-Installation and calibration typically require one working day.
+Designed for galleries, museums, festivals, and exhibition spaces, the installation invites visitors to enter a frontier cabin and navigate a playable archive of Western cinema.
 
-Artist participation during installation is recommended.
+The work is presented as a complete installation including cabin structure, controller, software environment, and media archive.
 
 :::
 

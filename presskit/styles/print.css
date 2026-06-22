@@ -52,6 +52,70 @@ hr {
   color: #171717;
 }
 
+/* Info pages: two equal text columns, no illustrations, h2 sidebar */
+.info {
+  break-before: right;
+  page-break-before: right;
+  background: #f7f2e8;
+  color: #171717;
+}
+
+.info .overlay {
+  position: relative;
+  width: 297mm;
+  height: 210mm;
+  padding: 16mm 18mm 16mm 62mm;
+  box-sizing: border-box;
+  column-count: 2;
+  column-gap: 5mm;
+  column-fill: auto;
+  color: #171717;
+}
+
+.info h2 {
+  float: left;
+  clear: left;
+  width: 39mm;
+  margin: 0 0 0 -44mm;
+  font-family: "Libre Clarendon", Georgia, serif;
+  font-size: 12pt;
+  line-height: 1.38;
+  font-weight: 800;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #171717;
+}
+
+.info p,
+.info blockquote,
+.info ul,
+.info ol {
+  margin: 0 0 1.38em 0;
+  font-family: "Libre Clarendon", Georgia, serif;
+  font-size: 12pt;
+  line-height: 1.38;
+  color: #171717;
+}
+
+.info blockquote {
+  padding-left: 4mm;
+  border-left: 1px solid rgba(23, 23, 23, 0.35);
+}
+
+.info ul {
+  margin-left: -8mm;
+  padding-left: 8mm;
+  list-style-type: none;
+}
+
+.info ul li::before {
+  content: "🖝";
+  font-size: 0.75em;
+  vertical-align: 0.1em;
+  margin-left: -8mm;
+  padding-right: 4mm;
+}
+
 /* Full-bleed background image */
 .page .backdrop {
   position: absolute;
