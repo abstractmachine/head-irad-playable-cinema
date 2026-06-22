@@ -42,6 +42,7 @@ from PyQt5.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -297,6 +298,8 @@ class CloudWorker(QThread):
         min_count: int,
         output_path: str,
         style: str = "default",
+        width: int = 1200,
+        height: int = 840,
         parent=None,
     ):
         super().__init__(parent)
@@ -308,6 +311,8 @@ class CloudWorker(QThread):
         self.min_count    = min_count
         self.output_path  = output_path
         self.style        = style
+        self.width        = width
+        self.height       = height
 
     def run(self) -> None:
         try:
@@ -321,6 +326,8 @@ class CloudWorker(QThread):
                 max_words=self.max_words,
                 min_count=self.min_count,
                 style=self.style,
+                width=self.width,
+                height=self.height,
             )
             self.result_ready.emit(canvas.convert("RGB"), str(out))
         except Exception as exc:
@@ -468,6 +475,39 @@ class CloudVisualizer(QMainWindow):
         self._update_edit_btn()
         rp.addWidget(opt_group)
 
+        # ── Page Ratio group ──────────────────────────────────────────
+        ratio_group = QGroupBox("Page Ratio")
+        ratio_layout = QVBoxLayout(ratio_group)
+        ratio_layout.setContentsMargins(8, 12, 8, 8)
+        ratio_layout.setSpacing(6)
+
+        self.ratio_combo = QComboBox()
+        self.ratio_combo.addItem("16:9",  userData=(16, 9))
+        self.ratio_combo.addItem("2:3",   userData=(2, 3))
+        self.ratio_combo.addItem("Custom", userData=None)
+        self.ratio_combo.currentIndexChanged.connect(self._on_ratio_changed)
+        ratio_layout.addWidget(self.ratio_combo)
+
+        custom_row = QHBoxLayout()
+        custom_row.setSpacing(4)
+        w_lbl = QLabel("W")
+        w_lbl.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt;")
+        custom_row.addWidget(w_lbl)
+        self.ratio_w_edit = QLineEdit("16")
+        self.ratio_w_edit.setFixedWidth(38)
+        custom_row.addWidget(self.ratio_w_edit)
+        h_lbl = QLabel("H")
+        h_lbl.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt;")
+        custom_row.addWidget(h_lbl)
+        self.ratio_h_edit = QLineEdit("9")
+        self.ratio_h_edit.setFixedWidth(38)
+        custom_row.addWidget(self.ratio_h_edit)
+        custom_row.addStretch(1)
+        ratio_layout.addLayout(custom_row)
+
+        self._on_ratio_changed(0)   # set initial enabled state
+        rp.addWidget(ratio_group)
+
         # ── Actions group ─────────────────────────────────────────────
         actions_group = QGroupBox("Actions")
         actions_layout = QVBoxLayout(actions_group)
@@ -508,6 +548,39 @@ class CloudVisualizer(QMainWindow):
 
     # ── Generate ─────────────────────────────────────────────────────────────
 
+    def _on_ratio_changed(self, _index: int) -> None:
+        """Enable/disable the custom W/H fields based on combo selection."""
+        is_custom = self.ratio_combo.currentData() is None
+        self.ratio_w_edit.setEnabled(is_custom)
+        self.ratio_h_edit.setEnabled(is_custom)
+
+    def _resolve_dimensions(self) -> tuple[int, int]:
+        """Return (width, height) in pixels for the selected page ratio.
+
+        The long side is always 1200 px; the short side is scaled accordingly.
+        For custom ratios the user-supplied W:H values are used directly.
+        """
+        ratio = self.ratio_combo.currentData()
+        if ratio is not None:
+            rw, rh = ratio
+        else:
+            try:
+                rw = max(1, int(self.ratio_w_edit.text()))
+            except ValueError:
+                rw = 16
+            try:
+                rh = max(1, int(self.ratio_h_edit.text()))
+            except ValueError:
+                rh = 9
+        # Keep long side at 1200 px
+        if rw >= rh:
+            w = 1200
+            h = round(1200 * rh / rw)
+        else:
+            h = 1200
+            w = round(1200 * rw / rh)
+        return w, h
+
     def _on_generate(self) -> None:
         if self._worker is not None and self._worker.isRunning():
             self._worker.terminate()
@@ -519,6 +592,7 @@ class CloudVisualizer(QMainWindow):
         max_words  = self.max_words_spin.value()
         min_count  = self.min_count_spin.value()
         style      = self.style_combo.currentData() or "default"
+        width, height = self._resolve_dimensions()
 
         # Generate into the project's output/clouds/ folder (temporary name)
         import datetime
@@ -548,6 +622,8 @@ class CloudVisualizer(QMainWindow):
             min_count,
             str(out_path),
             style,
+            width=width,
+            height=height,
         )
         self._worker.result_ready.connect(self._on_result_ready)
         self._worker.error.connect(self._on_error)
