@@ -181,11 +181,11 @@ The installation transforms gameplay into a form of cinematic exploration. The v
 
 ![](images/cowpoke-controller/cowpoke-controller-front-body_brass-stock_walnut-screws_brass+black.png){.row-count-6}
 ![](images/empty.png){.row-count-1}
-![](images/cowpoke-controller/double-derringer.jpg){.row-count-6}
-![](images/empty.png){.row-count-1}
-![](images/cowpoke-controller/cowpoke-controller-deringer-2026-02-17-gs-snapshot.png){.row-count-6}
+![](images/cowpoke-cabin/double-derringer-transaprent-background.png){.row-count-6}
 ![](images/empty.png){.row-count-1}
 ![](images/cowpoke-controller/cowpoke-controller-circuit.jpg){.row-count-6}
+![](images/empty.png){.row-count-1}
+![](images/cowpoke-controller/cowpoke-controller-deringer-2026-02-17-gs-snapshot.png){.row-count-6}
 ![](images/empty.png){.row-count-1}
 
 
