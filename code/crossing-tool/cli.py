@@ -6595,6 +6595,83 @@ def _engraving_smoke_test(args):
     print(f"  output : {result['output_png']}")
 
 
+def cmd_sync(args):
+    """Handler for `crossing sync` subcommands."""
+    sub = getattr(args, "sync_subcommand", None)
+    if sub == "audit":
+        _cmd_sync_audit(args)
+    elif sub == "frame-match":
+        _cmd_sync_frame_match(args)
+    else:
+        print("✗ sync: specify a subcommand (audit, frame-match).", file=sys.stderr)
+        sys.exit(1)
+
+
+def _cmd_sync_audit(args):
+    _require_path()
+    project_path = prefs.get("path")
+    from tool.helpers import normalize_media_type
+    media_type   = normalize_media_type(getattr(args, "media", "movie"))
+    from services.sync_frame_match import audit_catalog
+    rows = audit_catalog(project_path, media_type)
+    if not rows:
+        print(f"No frame-embedding indexes found for media_type={media_type!r}")
+        print(f"  Run: crossing index frame-embeddings build --media {media_type} --all")
+        return
+    print(f"Frame-embedding audit — {media_type} ({len(rows)} items)")
+    print(f"{'Filename':<60}  {'Vectors':>8}  {'Valid':>6}  {'Ann':>4}")
+    print("-" * 82)
+    for r in rows:
+        if "error" in r:
+            print(f"  {'ERROR':60}  {r['filename']:>8}")
+            continue
+        ann_ok = " ok" if not r["missing_annotation"] else "mis"
+        print(f"  {r['filename']:<58}  {r['vectors']:>8}  {r['valid_count']:>6}  {ann_ok:>4}")
+
+
+def _cmd_sync_frame_match(args):
+    _require_path()
+    project_path = prefs.get("path")
+    from tool.helpers import normalize_media_type
+    media_type   = normalize_media_type(getattr(args, "target_media", "movie"))
+    title        = getattr(args, "title", None)
+    do_all       = getattr(args, "all", False) or (title is None)
+    top          = getattr(args, "top", 5)
+    frame_path   = getattr(args, "frame", None)
+    vector_json  = getattr(args, "vector_json", None)
+
+    if not frame_path and not vector_json:
+        print("✗ Provide --frame <path> or --vector-json <path>", file=sys.stderr)
+        sys.exit(1)
+
+    import numpy as np
+
+    if vector_json:
+        with open(vector_json, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        vector = np.array(data, dtype="float32")
+        from services.sync_frame_match import load_frame_catalog, match_frame_vector
+        catalog = load_frame_catalog(project_path, media_type,
+                                     title=title, all_items=do_all)
+        results = match_frame_vector(vector, catalog, top=top)
+    else:
+        try:
+            import cv2 as _cv2
+            frame_bgr = _cv2.imread(frame_path)
+            if frame_bgr is None:
+                raise RuntimeError(f"Could not read image: {frame_path}")
+            frame_rgb = _cv2.cvtColor(frame_bgr, _cv2.COLOR_BGR2RGB)
+        except ImportError:
+            from PIL import Image
+            import numpy as _np
+            frame_rgb = _np.array(Image.open(frame_path).convert("RGB"))
+        from services.sync_frame_match import match_rgb_frame
+        results = match_rgb_frame(frame_rgb, project_path, media_type,
+                                  title=title, all_items=do_all, top=top)
+
+    print(json.dumps(results, indent=2, default=str))
+
+
 def cmd_book(args):
     sub = args.book_subcommand
     if sub == "new":
@@ -9387,6 +9464,62 @@ def build_parser():
     p_book_import.add_argument("pdf", help="Path to the PDF file to import")
     p_book_import.add_argument("--force", action="store_true", help="Overwrite existing PDF")
     p_book_import.set_defaults(func=cmd_book)
+
+    # sync command group — frame-match service and catalog tools
+    p_sync = sub.add_parser(
+        "sync",
+        help="Sync Visualizer service tools: audit indexes, test frame matching",
+    )
+    p_sync.set_defaults(func=cmd_sync, sync_subcommand=None)
+    sync_sub = p_sync.add_subparsers(dest="sync_subcommand", required=True)
+
+    # crossing sync audit
+    p_sync_audit = sync_sub.add_parser(
+        "audit",
+        help="List frame-embedding indexes for a media type",
+    )
+    p_sync_audit.add_argument(
+        "--media", dest="media", default="movie",
+        choices=["movie", "movies", "gameplay"],
+        help="Media type to audit (movie or gameplay)",
+    )
+    p_sync_audit.add_argument(
+        "--all", dest="all", action="store_true",
+        help="Audit all indexed items (required for now)",
+    )
+    p_sync_audit.set_defaults(func=cmd_sync)
+
+    # crossing sync frame-match
+    p_sync_fm = sync_sub.add_parser(
+        "frame-match",
+        help="Find the closest indexed shot frames to a query image or vector",
+    )
+    p_sync_fm.add_argument(
+        "--target-media", dest="target_media", default="movie",
+        choices=["movie", "movies", "gameplay"],
+        help="Which catalog to search (movie or gameplay)",
+    )
+    p_sync_fm.add_argument(
+        "--title", dest="title", default=None,
+        help="Restrict search to one title (substring match against filename)",
+    )
+    p_sync_fm.add_argument(
+        "--all", dest="all", action="store_true",
+        help="Search all indexed items of the target media type",
+    )
+    p_sync_fm.add_argument(
+        "--frame", dest="frame", default=None, metavar="PATH",
+        help="Path to a JPEG/PNG image to embed and match",
+    )
+    p_sync_fm.add_argument(
+        "--vector-json", dest="vector_json", default=None, metavar="PATH",
+        help="Path to a JSON file containing a pre-computed vector (list of floats)",
+    )
+    p_sync_fm.add_argument(
+        "--top", dest="top", type=int, default=5,
+        help="Number of results to return (default: 5)",
+    )
+    p_sync_fm.set_defaults(func=cmd_sync)
 
     return parser
 

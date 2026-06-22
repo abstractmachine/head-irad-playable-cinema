@@ -1085,6 +1085,28 @@ class SyncWorkspace(QWidget):
                 if not s.get("display", True):
                     node._toggle_display()
                 node.show()
+            elif s.get("type") == "frame_match":
+                w = max(_FM_MIN_W, int(s.get("w", _FM_DEFAULT_W)))
+                h = max(_NODE_TITLE_H + 80, int(s.get("h", _FM_DEFAULT_H)))
+                node = self._make_frame_match_node()
+                node.node_id = int(s.get("node_id", node.node_id))
+                node.setGeometry(int(s.get("x", 0)), int(s.get("y", 0)), w, h)
+                if "target_media" in s:
+                    mt = s["target_media"]
+                    if mt != node._media_type:
+                        node._media_type = mt
+                        node._media_btn.setText(f"  {mt}")
+                if "scope_all" in s:
+                    node._scope_all = bool(s["scope_all"])
+                if "scope_title" in s:
+                    node._scope_title = s["scope_title"]
+                    if node._scope_title:
+                        node._scope_btn.setText(f"  {node._scope_title}")
+                if "top" in s:
+                    node._top = int(s["top"])
+                if "interval" in s:
+                    node._set_interval(s["interval"])
+                node.show()
         # Advance the global ID counter past all restored IDs so new nodes
         # never collide with existing ones.
         if self._nodes:
@@ -1168,6 +1190,13 @@ class SyncWorkspace(QWidget):
             y = max(0, min(pos.y() - _NODE_TITLE_H, self.height() - nh))
             node.move(x, y)
             node.show()
+        elif item_type == "frame_match":
+            node = self._make_frame_match_node()
+            nw, nh = _FM_DEFAULT_W, _FM_DEFAULT_H
+            x = max(0, min(pos.x() - nw // 2, self.width()  - nw))
+            y = max(0, min(pos.y() - _NODE_TITLE_H, self.height() - nh))
+            node.move(x, y)
+            node.show()
         event.acceptProposedAction()
 
     # ------------------------------------------------------------------
@@ -1238,23 +1267,28 @@ class SyncWorkspace(QWidget):
             super().mouseReleaseEvent(event)
             return
         if event.button() == Qt.LeftButton:
-            # Only now remove the existing connection on the dragged port,
-            # then attempt to complete a new one.
-            if self._drag_src_is_output:
-                self._remove_connections_for(
-                    self._drag_src_node.node_id, self._drag_src_port, is_output=True)
-            else:
+            # For input-port drags: remove the existing incoming cable first,
+            # then attempt to connect to a new source.
+            # For output-port drags: only remove if a new target is found
+            # (fan-out — releasing into empty space keeps existing cables).
+            if not self._drag_src_is_output:
                 self._remove_connections_for(
                     self._drag_src_node.node_id, self._drag_src_port, is_output=False)
-            self._try_complete_connection(event.pos())
-        self._drag_src_node = None
-        self._drag_src_port = None
-        self._drag_cur_pos  = None
+            completed = self._try_complete_connection(event.pos())
+            if self._drag_src_is_output and completed:
+                # Output drag that successfully connected: the _add_connection
+                # call inside _try_complete_connection already handled the
+                # input side; nothing extra needed here.
+                pass
+        self._drag_src_node   = None
+        self._drag_src_port   = None
+        self._drag_cur_pos    = None
         self._drag_hover_node = None
         self._drag_hover_port = None
         self.update()
 
-    def _try_complete_connection(self, pos: QPoint) -> None:
+    def _try_complete_connection(self, pos: QPoint) -> bool:
+        """Try to snap the drag to a compatible port.  Returns True on success."""
         src = self._drag_src_node
         src_port = self._drag_src_port
         is_output = self._drag_src_is_output
@@ -1267,44 +1301,87 @@ class SyncWorkspace(QWidget):
                     if (pos - p).manhattanLength() <= _PORT_SIZE + 8:
                         if self._types_compatible(src, src_port, node, port):
                             self._add_connection(src, src_port, node, port)
-                        return
+                            return True
+                        return False
             else:
                 for port in node.output_ports():
                     p = node.output_port_pos(port)
                     if (pos - p).manhattanLength() <= _PORT_SIZE + 8:
                         if self._types_compatible(node, port, src, src_port):
                             self._add_connection(node, port, src, src_port)
-                        return
+                            return True
+                        return False
+        return False
 
     def _types_compatible(self, src_node, src_port, tgt_node, tgt_port) -> bool:
         # For now: image→image only
         return src_port == "image" and tgt_port == "image"
 
-    def _add_connection(self, src: SyncNode, src_port: str,
-                        tgt: SyncNode, tgt_port: str) -> None:
-        self._connections.append({
-            "source_node": src.node_id, "source_port": src_port,
-            "target_node": tgt.node_id, "target_port": tgt_port,
-        })
-        # Notify FrameVectorNode it has a new source
-        if isinstance(tgt, FrameVectorNode):
+    # ------------------------------------------------------------------
+    # Connection helpers (fan-out: one output → many inputs;
+    #                     one-to-one: each input has at most one source)
+    # ------------------------------------------------------------------
+
+    def _connection_exists(self, src_id: int, src_port: str,
+                           tgt_id: int, tgt_port: str) -> bool:
+        return any(
+            c["source_node"] == src_id and c["source_port"] == src_port
+            and c["target_node"] == tgt_id and c["target_port"] == tgt_port
+            for c in self._connections
+        )
+
+    def _remove_connection_to_input(self, tgt_id: int, tgt_port: str) -> None:
+        """Remove only the incoming cable on one input port."""
+        id_map = {n.node_id: n for n in self._nodes}
+        kept = []
+        for c in self._connections:
+            if c["target_node"] == tgt_id and c["target_port"] == tgt_port:
+                tgt = id_map.get(c["target_node"])
+                self._notify_disconnected(tgt)
+            else:
+                kept.append(c)
+        self._connections = kept
+
+    def _notify_connected(self, tgt: "SyncNode", src: "SyncNode") -> None:
+        if hasattr(tgt, "on_connected"):
             tgt.on_connected(src)
+
+    def _notify_disconnected(self, tgt: "SyncNode | None") -> None:
+        if tgt is not None and hasattr(tgt, "on_disconnected"):
+            tgt.on_disconnected()
+
+    def _add_connection(self, src: "SyncNode", src_port: str,
+                        tgt: "SyncNode", tgt_port: str) -> None:
+        # Enforce one-to-one on the input side: replace existing incoming cable
+        self._remove_connection_to_input(tgt.node_id, tgt_port)
+        # Guard against duplicates (shouldn't happen, but be safe)
+        if not self._connection_exists(src.node_id, src_port,
+                                       tgt.node_id, tgt_port):
+            self._connections.append({
+                "source_node": src.node_id, "source_port": src_port,
+                "target_node": tgt.node_id, "target_port": tgt_port,
+            })
+        self._notify_connected(tgt, src)
         src.update()
         tgt.update()
         self.update()
 
-    def _remove_connections_for(self, node_id: int, port: str, is_output: bool) -> None:
+    def _remove_connections_for(self, node_id: int, port: str,
+                                is_output: bool) -> None:
+        """Remove all connections touching a given port.
+
+        For input ports (is_output=False) this removes the single incoming
+        cable.  For output ports (is_output=True) this removes ALL outgoing
+        cables — used only when dragging from an output (mouseRelease into
+        empty space is a no-op for outputs per fan-out policy).
+        """
         id_map = {n.node_id: n for n in self._nodes}
         kept = []
         for c in self._connections:
             if is_output and c["source_node"] == node_id and c["source_port"] == port:
-                tgt = id_map.get(c["target_node"])
-                if isinstance(tgt, FrameVectorNode):
-                    tgt.on_disconnected()
+                self._notify_disconnected(id_map.get(c["target_node"]))
             elif not is_output and c["target_node"] == node_id and c["target_port"] == port:
-                tgt = id_map.get(c["target_node"])
-                if isinstance(tgt, FrameVectorNode):
-                    tgt.on_disconnected()
+                self._notify_disconnected(id_map.get(c["target_node"]))
             else:
                 kept.append(c)
         self._connections = kept
@@ -1427,6 +1504,13 @@ class SyncWorkspace(QWidget):
 
     def _make_frame_vector_node(self) -> "FrameVectorNode":
         node = FrameVectorNode(parent=self)
+        node.closed.connect(self._on_node_closed)
+        node.set_chrome_visible(self._chrome_visible)
+        self._nodes.append(node)
+        return node
+
+    def _make_frame_match_node(self) -> "FrameMatchNode":
+        node = FrameMatchNode(parent=self)
         node.closed.connect(self._on_node_closed)
         node.set_chrome_visible(self._chrome_visible)
         self._nodes.append(node)
@@ -2007,6 +2091,417 @@ class FrameVectorNode(SyncNode):
 
 
 # ---------------------------------------------------------------------------
+# _FrameMatchWorker — background CLIP embed + catalog search
+# ---------------------------------------------------------------------------
+
+class _FrameMatchWorker(QObject):
+    """Embed a frame and search the catalog in a worker thread.
+
+    Uses the module-level catalog cache in services.sync_frame_match so the
+    catalog is only loaded once per (project, media_type, scope).
+    """
+    results = pyqtSignal(object)   # list[dict]
+    error   = pyqtSignal(str)
+
+    def __init__(
+        self,
+        frame_rgb,
+        project_path: str,
+        media_type:   str,
+        title:        "str | None",
+        all_items:    bool,
+        top:          int,
+    ) -> None:
+        super().__init__()
+        self._frame_rgb   = frame_rgb
+        self._project_path = project_path
+        self._media_type   = media_type
+        self._title        = title
+        self._all_items    = all_items
+        self._top          = top
+
+    def run(self) -> None:
+        try:
+            from services.sync_frame_match import match_rgb_frame
+            hits = match_rgb_frame(
+                self._frame_rgb,
+                self._project_path,
+                self._media_type,
+                title=self._title,
+                all_items=self._all_items,
+                top=self._top,
+            )
+            try:
+                self.results.emit(hits)
+            except RuntimeError:
+                pass
+        except Exception as exc:
+            try:
+                self.error.emit(str(exc))
+            except RuntimeError:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# FrameMatchNode — finds closest indexed shot to the incoming live frame
+# ---------------------------------------------------------------------------
+
+_FM_DEFAULT_INTERVAL = 2.0
+_FM_DEFAULT_TOP      = 5
+_FM_MIN_W            = 260
+_FM_DEFAULT_W        = 380
+_FM_DEFAULT_H        = 240
+
+
+class FrameMatchNode(SyncNode):
+    """Workspace node that matches live video frames against indexed catalogs."""
+
+    def __init__(self, parent: QWidget = None) -> None:
+        super().__init__("", parent)
+        self._source_node:   "LiveVideoNode | None" = None
+        self._media_type:    str   = "movie"
+        self._scope_all:     bool  = True
+        self._scope_title:   "str | None" = None
+        self._top:           int   = _FM_DEFAULT_TOP
+        self._interval_s:    "float | None" = _FM_DEFAULT_INTERVAL
+        self._embed_busy:    bool  = False
+        self._last_results:  "list[dict]" = []
+        self._status_msg:    str   = "waiting for connection…"
+
+        # ── Title bar buttons ─────────────────────────────────────────
+        self._title_label.hide()
+
+        self._media_btn = _TbBtn(icon_name="video-camera-solid",
+                                 text="  movie", icon_size=14,
+                                 parent=self._title_bar)
+        self._media_btn.setFont(theme.font_ui())
+        self._media_btn.setStyleSheet(_TB_TEXT_BTN_SS)
+        self._media_btn.clicked.connect(self._toggle_media)
+        self._tb_layout.insertWidget(0, self._media_btn, 0, Qt.AlignVCenter)
+
+        self._scope_btn = _TbBtn(icon_name="search", text="  all",
+                                 icon_size=14, parent=self._title_bar)
+        self._scope_btn.setFont(theme.font_ui())
+        self._scope_btn.setStyleSheet(_TB_TEXT_BTN_SS)
+        self._scope_btn.clicked.connect(self._show_scope_menu)
+        self._tb_layout.insertWidget(1, self._scope_btn, 0, Qt.AlignVCenter)
+
+        self._interval_btn = _TbBtn(
+            icon_name="alarm-solid",
+            text=f"{_FM_DEFAULT_INTERVAL:.1f}s",
+            icon_size=14, parent=self._title_bar,
+        )
+        self._interval_btn.setFont(theme.font_ui())
+        self._interval_btn.setStyleSheet(_TB_TEXT_BTN_SS)
+        self._interval_btn.clicked.connect(self._show_interval_menu)
+        self._tb_layout.insertWidget(2, self._interval_btn, 0, Qt.AlignVCenter)
+
+        # ── Content text area ─────────────────────────────────────────
+        self._body = QWidget(self)
+        body = self._body
+        body.setStyleSheet("background: transparent;")
+        blay = QVBoxLayout(body)
+        blay.setContentsMargins(8, 6, 8, 6)
+        blay.setSpacing(0)
+
+        self._result_text = QTextEdit(body)
+        self._result_text.setReadOnly(True)
+        self._result_text.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._result_text.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._result_text.setStyleSheet(
+            f"background: transparent; color: {_NODE_TEXT_COLOR};"
+            "border: none; font-size: 10px; font-family: monospace;"
+        )
+        self._result_text.setFont(theme.font_mono() if hasattr(theme, "font_mono") else theme.font_ui())
+        blay.addWidget(self._result_text)
+        self.content_layout().addWidget(body)
+
+        # ── Timer + worker ────────────────────────────────────────────
+        self._timer = QTimer(self)
+        if self._interval_s is not None:
+            self._timer.setInterval(int(self._interval_s * 1000))
+        self._timer.timeout.connect(self._on_tick)
+        self._thread: "QThread | None" = None
+        self._worker: "_FrameMatchWorker | None" = None
+
+        # ── Edge resize (same as FrameVectorNode) ─────────────────────
+        self._edge_handles: dict[str, _EdgeResizeHandle] = {}
+        for edge in ("top", "bottom", "left", "right", "tl", "tr", "bl", "br"):
+            h = _EdgeResizeHandle(edge, self)
+            h.resize_dragged.connect(self._on_edge_resize_drag)
+            self._edge_handles[edge] = h
+        self._reposition_edge_handles()
+
+        app = QApplication.instance()
+        if app:
+            app.aboutToQuit.connect(self._cleanup_thread)
+
+        self._update_result_text()
+
+    # ------------------------------------------------------------------
+    # SyncNode API
+    # ------------------------------------------------------------------
+
+    def node_type(self) -> str:
+        return "frame_match"
+
+    def input_ports(self) -> list[str]:
+        return ["image"]
+
+    def output_ports(self) -> list[str]:
+        return []
+
+    def state_dict(self) -> dict:
+        d = super().state_dict()
+        d["target_media"] = self._media_type
+        d["scope_all"]    = self._scope_all
+        d["scope_title"]  = self._scope_title
+        d["interval"]     = self._interval_s
+        d["top"]          = self._top
+        return d
+
+    # ------------------------------------------------------------------
+    # Connection callbacks
+    # ------------------------------------------------------------------
+
+    def on_connected(self, source_node: "LiveVideoNode") -> None:
+        self._source_node = source_node
+        self._status_msg  = "connected, waiting for frame…"
+        self._update_result_text()
+        if self._interval_s is not None:
+            self._timer.setInterval(int(self._interval_s * 1000))
+            self._timer.start()
+        else:
+            QTimer.singleShot(0, self._on_tick)
+
+    def on_disconnected(self) -> None:
+        self._source_node = None
+        self._timer.stop()
+        self._embed_busy  = False
+        self._status_msg  = "waiting for connection…"
+        self._last_results = []
+        self._update_result_text()
+
+    # ------------------------------------------------------------------
+    # Title bar interactions
+    # ------------------------------------------------------------------
+
+    def _toggle_media(self) -> None:
+        self._media_type = "gameplay" if self._media_type == "movie" else "movie"
+        self._media_btn.setText(f"  {self._media_type}")
+        # Invalidate catalog cache for old scope
+        from services import sync_frame_match as _sfm
+        _sfm._catalog_cache.clear()
+        self._last_results = []
+        self._update_result_text()
+
+    def _show_scope_menu(self) -> None:
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"QMenu {{ background: {theme.PANEL_BG}; color: {theme.TEXT};"
+            f"  border: 1px solid {theme.UI_BORDER}; padding: 2px; }}"
+            f"QMenu::item {{ padding: 4px 16px; }}"
+            f"QMenu::item:selected {{ background: {theme.ACCENT}; }}"
+        )
+        act_all = menu.addAction("all")
+        act_all.setCheckable(True)
+        act_all.setChecked(self._scope_all)
+        btn = self._scope_btn
+        chosen = menu.exec_(btn.mapToGlobal(QPoint(0, btn.height())))
+        if chosen is act_all:
+            self._scope_all   = True
+            self._scope_title = None
+            self._scope_btn.setText("  all")
+            from services import sync_frame_match as _sfm
+            _sfm._catalog_cache.clear()
+
+    def _show_interval_menu(self) -> None:
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"QMenu {{ background: {theme.PANEL_BG}; color: {theme.TEXT};"
+            f"  border: 1px solid {theme.UI_BORDER}; padding: 2px; }}"
+            f"QMenu::item {{ padding: 4px 16px; }}"
+            f"QMenu::item:selected {{ background: {theme.ACCENT}; }}"
+        )
+        for label, val in [("off", None), ("0.25s", 0.25), ("0.5s", 0.5),
+                           ("1.0s", 1.0), ("2.0s", 2.0), ("5.0s", 5.0)]:
+            act = menu.addAction(label)
+            act.setData(val)
+            act.setCheckable(True)
+            act.setChecked(self._interval_s == val)
+        btn = self._interval_btn
+        chosen = menu.exec_(btn.mapToGlobal(QPoint(0, btn.height())))
+        if chosen:
+            self._set_interval(chosen.data())
+
+    def _set_interval(self, seconds) -> None:
+        self._interval_s = seconds
+        self._timer.stop()
+        if seconds is None:
+            self._interval_btn.setText("off")
+            if self._source_node is not None:
+                QTimer.singleShot(0, self._on_tick)
+        else:
+            label = f"{seconds:.2f}s".rstrip("0").rstrip(".")
+            if label.endswith("."):
+                label += "0"
+            self._interval_btn.setText(label)
+            self._timer.setInterval(int(seconds * 1000))
+            if self._source_node is not None:
+                self._timer.start()
+
+    # ------------------------------------------------------------------
+    # Matching loop
+    # ------------------------------------------------------------------
+
+    def _on_tick(self) -> None:
+        if self._embed_busy or self._source_node is None:
+            return
+        frame = self._source_node.latest_frame_rgb()
+        if frame is None:
+            self._status_msg = "waiting for image…"
+            self._update_result_text()
+            return
+        self._embed_busy = True
+        self._status_msg = "matching…"
+        self._update_result_text()
+
+        try:
+            from tool import prefs as _p
+            project_path = _p.get("path") or "."
+        except Exception:
+            project_path = "."
+
+        import numpy as np
+        frame_copy = np.array(frame)
+
+        thread = QThread()
+        worker = _FrameMatchWorker(
+            frame_copy, project_path,
+            self._media_type, self._scope_title, self._scope_all,
+            self._top,
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.results.connect(self._on_match_results)
+        worker.error.connect(self._on_match_error)
+        worker.results.connect(thread.quit)
+        worker.error.connect(thread.quit)
+        thread.finished.connect(thread.deleteLater)
+        self._thread = thread
+        self._worker = worker
+        thread.start()
+
+    def _on_match_results(self, hits: list) -> None:
+        self._embed_busy  = False
+        self._last_results = hits
+        self._status_msg  = "ok"
+        self._update_result_text()
+
+    def _on_match_error(self, msg: str) -> None:
+        self._embed_busy = False
+        self._status_msg = f"error: {msg}"
+        self._update_result_text()
+
+    # ------------------------------------------------------------------
+    # Display
+    # ------------------------------------------------------------------
+
+    def _update_result_text(self) -> None:
+        scope = self._scope_title or "all"
+        lines = [
+            f"status: {self._status_msg}",
+            f"target: {self._media_type} / {scope}",
+            f"top: {self._top}",
+            "",
+        ]
+        for hit in self._last_results:
+            rank  = hit.get("rank", "?")
+            score = hit.get("score", 0.0)
+            title = hit.get("title", hit.get("filename", "?"))
+            shot  = hit.get("shot_id", "")
+            motif = hit.get("motif") or ""
+            desc  = hit.get("description") or ""
+            lines.append(f"{rank}. {score:.3f}  {title}")
+            if shot:
+                lines.append(f"   shot: {shot}")
+            if motif:
+                lines.append(f"   motif: {motif}")
+            if desc:
+                # Truncate long descriptions
+                short = desc[:80] + ("…" if len(desc) > 80 else "")
+                lines.append(f"   {short}")
+            lines.append("")
+        self._result_text.setPlainText("\n".join(lines).rstrip())
+
+    # ------------------------------------------------------------------
+    # Chrome + resize
+    # ------------------------------------------------------------------
+
+    def _apply_title_chrome(self, show: bool) -> None:
+        super()._apply_title_chrome(show)
+        for btn in (self._media_btn, self._scope_btn, self._interval_btn):
+            btn.setVisible(show)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._reposition_edge_handles()
+
+    def _reposition_edge_handles(self) -> None:
+        w, h  = self.width(), self.height()
+        th    = _EDGE_THICKNESS
+        hs    = _HANDLE_SIZE
+        self._edge_handles["top"].setGeometry(hs, 0, w - 2 * hs, th)
+        self._edge_handles["bottom"].setGeometry(hs, h - th, w - 2 * hs, th)
+        self._edge_handles["left"].setGeometry(0, hs, th, h - 2 * hs)
+        self._edge_handles["right"].setGeometry(w - th, hs, th, h - 2 * hs)
+        self._edge_handles["tl"].setGeometry(0, 0, hs, hs)
+        self._edge_handles["tr"].setGeometry(w - hs, 0, hs, hs)
+        self._edge_handles["bl"].setGeometry(0, h - hs, hs, hs)
+        self._edge_handles["br"].setGeometry(w - hs, h - hs, hs, hs)
+
+    def _on_edge_resize_drag(self, edge: str, dx: int, dy: int) -> None:
+        geo = self.geometry()
+        x, y, w, h = geo.x(), geo.y(), geo.width(), geo.height()
+        min_w, min_h = _FM_MIN_W, _NODE_TITLE_H + 80
+        if "right" in edge:
+            w = max(min_w, w + dx)
+        if "left" in edge:
+            nw = max(min_w, w - dx)
+            x += w - nw
+            w  = nw
+        if "bottom" in edge:
+            h = max(min_h, h + dy)
+        if "top" in edge:
+            nh = max(min_h, h - dy)
+            y += h - nh
+            h  = nh
+        self.setGeometry(x, y, w, h)
+
+    # ------------------------------------------------------------------
+    # Cleanup
+    # ------------------------------------------------------------------
+
+    def _cleanup_thread(self) -> None:
+        self._timer.stop()
+        thread = self._thread
+        self._thread = None
+        self._worker = None
+        self._embed_busy = False
+        if thread is not None:
+            try:
+                if thread.isRunning():
+                    thread.quit()
+                    thread.wait(500)
+            except RuntimeError:
+                pass
+
+    def _on_close(self) -> None:
+        self._cleanup_thread()
+        super()._on_close()
+
+
+# ---------------------------------------------------------------------------
 # ModuleItem — draggable palette entry with connector bumps
 # ---------------------------------------------------------------------------
 
@@ -2212,6 +2707,15 @@ class SyncPalettePanel(QWidget):
                 label="Frame Vector",
                 item_type="frame_vector",
                 icon_name="calculator-solid",
+                has_input=True,
+                parent=items_widget,
+            )
+        )
+        group_layout.addWidget(
+            ModuleItem(
+                label="Frame Match",
+                item_type="frame_match",
+                icon_name="search",
                 has_input=True,
                 parent=items_widget,
             )

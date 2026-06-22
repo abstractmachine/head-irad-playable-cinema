@@ -377,6 +377,7 @@ class SearchWorker(QThread):
                 limit_per_item = limit_pi,
                 use_all        = use_all,
                 project_path   = self.project_path,
+                media_type     = self.media_type,
             )
             results = result.get("results", [])
 
@@ -1981,6 +1982,7 @@ class MosaicVisualizer(QMainWindow):
         """)
         self.vocab_list.itemClicked.connect(self._on_vocab_item_clicked)
         self.vocab_list.setVerticalScrollBar(JumpScrollBar())
+        self.vocab_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         vocab_layout.addWidget(self.vocab_list)
         layout.addWidget(vocab_group, 1)  # stretch=1 fills remaining space
         layout.addWidget(self.status)

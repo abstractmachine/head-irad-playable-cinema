@@ -93,10 +93,10 @@ def parse_shot_id(shot_id: str) -> tuple:
 
     Raises ValueError if the string does not match the expected format.
     """
-    m = re.match(r'^(.+)@f(\d{6})-f(\d{6})$', shot_id)
+    m = re.match(r'^(.+)@f(\d{6,})-f(\d{6,})$', shot_id)
     if not m:
         raise ValueError(
             f"Invalid shot_id: {shot_id!r}. "
-            "Expected '<media_id>@fSTART-fEND' with 6-digit zero-padded frames."
+            "Expected '<media_id>@fSTART-fEND' with 6+ digit zero-padded frames."
         )
     return m.group(1), int(m.group(2)), int(m.group(3))

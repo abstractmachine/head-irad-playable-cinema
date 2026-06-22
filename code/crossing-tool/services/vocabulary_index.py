@@ -67,6 +67,7 @@ import hashlib
 import json
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List
@@ -197,13 +198,41 @@ def _ann_dir(project_path: str, media_type: str) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# In-memory caches (process-lifetime)
+# ---------------------------------------------------------------------------
+
+# Parsed vocabulary JSON, keyed by (path_str, mtime_ns, size).  Self-invalidates
+# when the file is updated on disk (e.g. after ``crossing index vocabulary``).
+_vocab_index_cache: dict[tuple, dict] = {}
+
+# Source-hash results, keyed by (project_path, media_type).  Refreshed at most
+# once every _SOURCE_HASH_TTL seconds so switching annotation fields within a
+# session does not re-scan the annotation directory every time.
+_source_hash_cache: dict[tuple, tuple] = {}  # key → (hash_str, monotonic_ts)
+_SOURCE_HASH_TTL: float = 10.0  # seconds
+
+
+# ---------------------------------------------------------------------------
 # Source hash (cheap staleness check — no file content reads)
 # ---------------------------------------------------------------------------
 
 def _compute_source_hash(project_path: str, media_type: str) -> str:
-    """Return an MD5 hex digest based on the mtime+size of every annotation JSON."""
+    """Return an MD5 hex digest based on the mtime+size of every annotation JSON.
+
+    The result is cached for up to ``_SOURCE_HASH_TTL`` seconds so that
+    switching between annotation fields in a running visualizer does not
+    re-scan the annotation directory on every field change.
+    """
+    key = (project_path, media_type)
+    cached = _source_hash_cache.get(key)
+    if cached is not None:
+        result, ts = cached
+        if time.monotonic() - ts < _SOURCE_HASH_TTL:
+            return result
+
     ann = _ann_dir(project_path, media_type)
     if not ann.exists():
+        _source_hash_cache[key] = ("", time.monotonic())
         return ""
     h = hashlib.md5()
     for p in sorted(ann.glob("*.json")):
@@ -211,7 +240,9 @@ def _compute_source_hash(project_path: str, media_type: str) -> str:
             continue
         st = p.stat()
         h.update(f"{p.name}:{st.st_mtime_ns}:{st.st_size}\n".encode())
-    return h.hexdigest()
+    digest = h.hexdigest()
+    _source_hash_cache[key] = (digest, time.monotonic())
+    return digest
 
 
 # ---------------------------------------------------------------------------
@@ -223,13 +254,18 @@ def vocabulary_cache_is_stale(project_path: str, media_type: str = "movie") -> b
 
     Also returns True when the cache was built with an older canonicalization
     version (so a code upgrade automatically triggers a rebuild).
+
+    Uses the in-memory index cache so the vocabulary file is not re-read when
+    this is called immediately before ``load_vocabulary_index`` (as is the case
+    in ``_vocabulary_from_cache`` in ``services/search.py``).
     """
     path = _vocab_path(project_path, media_type)
     if not path.exists():
         return True
     try:
-        meta = json.loads(path.read_text(encoding="utf-8")).get("meta", {})
-    except (OSError, json.JSONDecodeError):
+        index = load_vocabulary_index(project_path, media_type)
+        meta = index.get("meta", {})
+    except (OSError, json.JSONDecodeError, FileNotFoundError):
         return True
     if meta.get("canonicalization") != CANONICALIZATION_VERSION:
         return True
@@ -419,6 +455,10 @@ def load_vocabulary_index(project_path: str, media_type: str = "movie") -> dict:
 
     Raises FileNotFoundError if the cache file is missing (stale is allowed —
     callers that need freshness should check ``vocabulary_cache_is_stale``).
+
+    The parsed index is kept in a process-level in-memory cache keyed by the
+    file's (path, mtime_ns, size).  Switching between annotation fields in a
+    running visualizer will therefore hit memory after the first load.
     """
     path = _vocab_path(project_path, media_type)
     if not path.exists():
@@ -426,7 +466,14 @@ def load_vocabulary_index(project_path: str, media_type: str = "movie") -> dict:
             f"Vocabulary index not found for '{media_type}'. "
             f"Run: crossing index vocabulary --media {media_type}"
         )
-    return json.loads(path.read_text(encoding="utf-8"))
+    st = path.stat()
+    cache_key = (str(path), st.st_mtime_ns, st.st_size)
+    cached = _vocab_index_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    data = json.loads(path.read_text(encoding="utf-8"))
+    _vocab_index_cache[cache_key] = data
+    return data
 
 
 # ---------------------------------------------------------------------------
