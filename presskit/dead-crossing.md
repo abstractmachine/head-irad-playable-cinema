@@ -241,7 +241,7 @@ Each selection becomes a new point of departure for traversing the installation'
 
 :::
 
-## HAUNTED LANDSCAPE
+## A HAUNTED LANDSCAPE
 
 Western cinema is haunted by its own images.
 
@@ -249,9 +249,11 @@ For more than a century, Western films have repeated and recombined a common rep
 
 Dead Crossing treats this accumulated history as a navigable territory.
 
-Rather than generating new images, the project uses machine learning to construct relationships between existing ones. An artificial intelligence wanders through a century of Western cinema, identifying recurring visual motifs and tracing unexpected pathways between films, videogames, and archives.
+Rather than generating new images, the project uses machine learning to construct relationships between existing ones. An artificial spirit wanders through a century of Western cinema, identifying recurring visual motifs and tracing unexpected pathways between films, videogames, and archives.
 
 The result is neither database nor film, but a dynamic system for exploring the mythology of the American West through interaction.
+
+This archive is not static. Interacting with the dataset allows visitors to not only remix the historical archive, but to construct their own bespoke narrative and thematic past that the system can then use to generate posters, mosaics, and even pulp Western novellas -- all based on user meanderings through the archive.
 
 :::
 
@@ -284,6 +286,7 @@ The result is neither database nor film, but a dynamic system for exploring the 
 ::: {.overlay .copy}
 
 ::: {.illustrations}
+![](images/cowpoke-dataset/crossing-flipbook-visualizer.png){.row-count-24}
 :::
 
 ## REMIX ENGINE
@@ -378,9 +381,7 @@ Each journey through the installation produces a different cinematic trajectory 
 ::: {.overlay .copy}
 
 ::: {.illustrations}
-
-![](images/crossing-tool/crossing-tool-stats.png){.row-count-32}
-
+![](images/crossing-tool/crossing-tool-stats.png){.row-count-30}
 :::
 
 ## COMPUTER VISION
@@ -401,7 +402,7 @@ Shot annotation, scene annotation, motif generation.
 
 ## EMBEDDING MODELS
 
-**BGE Small**
+**BGE**
 Semantic indexing, similarity search, scene clustering.
 
 ## MEDIA PROCESSING
@@ -414,7 +415,7 @@ Image analysis, visualization, real-time processing.
 
 ## SOFTWARE ARCHITECTURE
 
-The Crossing Tool software environment combines computer vision, large language models, semantic search, vector databases, and real-time synchronization into a unified platform for exploring relationships between cinema and videogames. No single model understands the archive. Dead Crossing emerges from the interaction between many specialized systems, each contributing a different way of seeing, describing, segmenting, indexing, or navigating moving images.
+The Crossing Tool software environment combines classical computer vision, large language models, semantic search, vector databases, and real-time synchronization into a unified platform for exploring relationships between cinema and videogames. No single model understands the archive. Dead Crossing emerges from the interaction between many specialized systems, each contributing a different way of seeing, describing, segmenting, indexing, or navigating moving images.
 
 :::
 
@@ -443,6 +444,8 @@ The Crossing Tool software environment combines computer vision, large language 
 ::: {.overlay .copy}
 
 ::: {.illustrations}
+![](images/cowpoke-dataset/crossing-silhouette-flags-brokeback.png){.row-count-30}
+
 :::
 
 ## CORPUS
