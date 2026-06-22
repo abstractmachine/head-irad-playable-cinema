@@ -153,7 +153,7 @@ hr {
   width: 39mm;
   margin: 0 0 0 -44mm;
   font-family: "Libre Clarendon", Georgia, serif;
-  font-size: 10.6pt;
+  font-size: 12pt;
   line-height: 1.38;
   font-weight: 800;
   text-transform: none;
@@ -167,7 +167,7 @@ hr {
 .text ol {
   margin: 0 0 1.38em 0;
   font-family: "Libre Clarendon", Georgia, serif;
-  font-size: 10.6pt;
+  font-size: 12pt;
   line-height: 1.38;
   color: #171717;
 }
@@ -269,7 +269,7 @@ a {
 }
 
 /* Row-snapping for .illustrations images.
-   One row = 10.6pt × 1.38 ≈ 5.16mm.  34 rows fill the full content height.
+   One row = 178mm ÷ 32 = 5.5625mm.  32 rows fill the full content height.
    Usage in markdown:  ![](images/foo.png){.row-count-10}
                        ![](images/empty.png){.row-count-4}
    Row-sized images set margin-bottom: 0 — all vertical spacing is
@@ -285,44 +285,53 @@ a {
 .illustrations img.row-count-25, .illustrations img.row-count-26, .illustrations img.row-count-27,
 .illustrations img.row-count-28, .illustrations img.row-count-29, .illustrations img.row-count-30,
 .illustrations img.row-count-31, .illustrations img.row-count-32, .illustrations img.row-count-33,
-.illustrations img.row-count-34 {
+img.row-count-34 {
   width: 100%;
   object-fit: contain;
   object-position: top left;
   margin-bottom: 0;
 }
 
-.illustrations img.row-count-1  { height: calc(1  * var(--row)); }
-.illustrations img.row-count-2  { height: calc(2  * var(--row)); }
-.illustrations img.row-count-3  { height: calc(3  * var(--row)); }
-.illustrations img.row-count-4  { height: calc(4  * var(--row)); }
-.illustrations img.row-count-5  { height: calc(5  * var(--row)); }
-.illustrations img.row-count-6  { height: calc(6  * var(--row)); }
-.illustrations img.row-count-7  { height: calc(7  * var(--row)); }
-.illustrations img.row-count-8  { height: calc(8  * var(--row)); }
-.illustrations img.row-count-9  { height: calc(9  * var(--row)); }
-.illustrations img.row-count-10 { height: calc(10 * var(--row)); }
-.illustrations img.row-count-11 { height: calc(11 * var(--row)); }
-.illustrations img.row-count-12 { height: calc(12 * var(--row)); }
-.illustrations img.row-count-13 { height: calc(13 * var(--row)); }
-.illustrations img.row-count-14 { height: calc(14 * var(--row)); }
-.illustrations img.row-count-15 { height: calc(15 * var(--row)); }
-.illustrations img.row-count-16 { height: calc(16 * var(--row)); }
-.illustrations img.row-count-17 { height: calc(17 * var(--row)); }
-.illustrations img.row-count-18 { height: calc(18 * var(--row)); }
-.illustrations img.row-count-19 { height: calc(19 * var(--row)); }
-.illustrations img.row-count-20 { height: calc(20 * var(--row)); }
-.illustrations img.row-count-21 { height: calc(21 * var(--row)); }
-.illustrations img.row-count-22 { height: calc(22 * var(--row)); }
-.illustrations img.row-count-23 { height: calc(23 * var(--row)); }
-.illustrations img.row-count-24 { height: calc(24 * var(--row)); }
-.illustrations img.row-count-25 { height: calc(25 * var(--row)); }
-.illustrations img.row-count-26 { height: calc(26 * var(--row)); }
-.illustrations img.row-count-27 { height: calc(27 * var(--row)); }
-.illustrations img.row-count-28 { height: calc(28 * var(--row)); }
-.illustrations img.row-count-29 { height: calc(29 * var(--row)); }
-.illustrations img.row-count-30 { height: calc(30 * var(--row)); }
-.illustrations img.row-count-31 { height: calc(31 * var(--row)); }
-.illustrations img.row-count-32 { height: calc(32 * var(--row)); }
-.illustrations img.row-count-33 { height: calc(33 * var(--row)); }
-.illustrations img.row-count-34 { height: calc(34 * var(--row)); }
+/* Inline row-sized images within copy text (not in .illustrations column).
+   width: auto preserves aspect ratio at the given row height. */
+.copy > img[class*="row-count-"],
+.copy p > img[class*="row-count-"] {
+  display: block;
+  width: auto;
+  max-width: 100%;
+}
+
+img.row-count-1  { height: calc(1  * var(--row)); }
+img.row-count-2  { height: calc(2  * var(--row)); }
+img.row-count-3  { height: calc(3  * var(--row)); }
+img.row-count-4  { height: calc(4  * var(--row)); }
+img.row-count-5  { height: calc(5  * var(--row)); }
+img.row-count-6  { height: calc(6  * var(--row)); }
+img.row-count-7  { height: calc(7  * var(--row)); }
+img.row-count-8  { height: calc(8  * var(--row)); }
+img.row-count-9  { height: calc(9  * var(--row)); }
+img.row-count-10 { height: calc(10 * var(--row)); }
+img.row-count-11 { height: calc(11 * var(--row)); }
+img.row-count-12 { height: calc(12 * var(--row)); }
+img.row-count-13 { height: calc(13 * var(--row)); }
+img.row-count-14 { height: calc(14 * var(--row)); }
+img.row-count-15 { height: calc(15 * var(--row)); }
+img.row-count-16 { height: calc(16 * var(--row)); }
+img.row-count-17 { height: calc(17 * var(--row)); }
+img.row-count-18 { height: calc(18 * var(--row)); }
+img.row-count-19 { height: calc(19 * var(--row)); }
+img.row-count-20 { height: calc(20 * var(--row)); }
+img.row-count-21 { height: calc(21 * var(--row)); }
+img.row-count-22 { height: calc(22 * var(--row)); }
+img.row-count-23 { height: calc(23 * var(--row)); }
+img.row-count-24 { height: calc(24 * var(--row)); }
+img.row-count-25 { height: calc(25 * var(--row)); }
+img.row-count-26 { height: calc(26 * var(--row)); }
+img.row-count-27 { height: calc(27 * var(--row)); }
+img.row-count-28 { height: calc(28 * var(--row)); }
+img.row-count-29 { height: calc(29 * var(--row)); }
+img.row-count-30 { height: calc(30 * var(--row)); }
+img.row-count-31 { height: calc(31 * var(--row)); }
+img.row-count-32 { height: calc(32 * var(--row)); }
+img.row-count-33 { height: calc(33 * var(--row)); }
+img.row-count-34 { height: calc(34 * var(--row)); }

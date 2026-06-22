@@ -9,14 +9,14 @@
 
   --cover-size: 30pt;
   --chapter-size: 18pt;
-  --body-size: 10.6pt;
+  --body-size: 12pt;
   --body-leading: 1.38;
   --small-size: 8.6pt;
 
-  /* One baseline row = body-size × body-leading = 10.6pt × 1.38 = 14.628pt = 5.161mm.
-     Content height = 210mm − 16mm top − 16mm bottom = 178mm → 34 rows.
+  /* Image grid row = 178mm ÷ 32 = 5.5625mm.
+     Content height = 210mm − 16mm top − 16mm bottom = 178mm → 32 rows.
      Use .row-count-N on any .illustrations img to snap image height to N rows. */
-  --row: 5.161mm;
+  --row: 5.5625mm;
 }
 
 html {
