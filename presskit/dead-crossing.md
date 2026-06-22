@@ -583,7 +583,8 @@ The work is presented as a complete installation including cabin structure, cont
 ## TEAM
 
 Concept, artistic direction, software development, installation design and production  
-**Douglas Edric Stanley**
+[**Douglas Edric Stanley**](https://abstractmachine.net/biography)
+`douglas@abstractmachine.net`
 
 Research assistance, annotation, documentation and production  
 **Faust Perillaud**
