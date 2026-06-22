@@ -79,8 +79,10 @@ def _game_slug(text: str) -> str:
 def build_shot_id(media_id: str, start_frame: int, end_frame: int) -> str:
     """Return the canonical stable shot identifier.
 
-    Format:  <media_id>@fSTART-fEND   (6-digit zero-padded frame numbers)
+    Format:  <media_id>@fSTART-fEND   (minimum 6-digit zero-padded frame numbers;
+                                        expands beyond 6 digits for long clips)
     Example: tmdb_39435@f000234-f000398
+    Example: game_rdr2_ce5e0bba@f1012726-f1013511  (7-digit, long gameplay clip)
 
     This is the ONLY place that defines this format.  Frames are inclusive
     at both boundaries:  previous shot ends at f000233, next starts at f000234.
