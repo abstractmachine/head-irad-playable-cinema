@@ -334,9 +334,9 @@ Together these processes transform a film archive into a playable cinematic land
 ::: {.overlay .copy}
 
 ::: {.illustrations}
-![](images/cowpoke-dataset/crossing-flipbook-visualizer.png){.row-count-15}
+![](images/cowpoke-dataset/movie-motif-cloud-2026-06-22-20-46-41.jpg){.row-count-15}
 ![](images/empty.png){.row-count-1}
-![](images/cowpoke-dataset/crossing-flipbook-visualizer.png){.row-count-15}
+![](images/cowpoke-dataset/movie-wearing-cloud-2026-06-22-20-43-31.jpg){.row-count-15}
 :::
 
 ## PIPELINE
@@ -469,6 +469,92 @@ More than three hundred Western films were collected, segmented, annotated, inde
 Rather than relying on fixed categories alone, the system combines human curation with machine learning to construct a vocabulary of recurring Western motifs: characters, objects, actions, locations, situations, and archetypes.
 
 The resulting archive functions simultaneously as a dataset, a visual encyclopedia of Western iconography, and a traversable landscape of cinema history.
+
+:::
+
+:::
+
+
+
+
+::: {.page .splash}
+
+![](images/cowpoke-dataset/rdr2-pipeline.png){.backdrop}
+
+::: {.overlay .keyword}
+
+# HARDWARE
+
+:::
+
+:::
+
+
+
+
+::: {.page .text}
+
+::: {.overlay .copy}
+
+::: {.illustrations}
+:::
+
+## INSTALLATION
+
+Dead Crossing is a free-standing interactive installation composed of a custom-built timber cabin, integrated display system, bespoke controller, and software environment.
+
+Designed for galleries, museums, festivals, and exhibition spaces, the installation invites visitors to enter a frontier cabin and navigate a playable archive of Western cinema.
+
+The work is presented as a complete installation including cabin structure, controller, software environment, and media archive.
+
+## DIMENSIONS
+
+**Installation extents**
+
+* Width: 2500 mm
+* Length: 3750 mm
+* Height: 3450 mm
+
+**Recommended exhibition area**
+
+Minimum 5 × 5 m
+
+**Visitor capacity**
+
+1 active participant
+Additional surrounding audience possible
+
+## REQUIREMENTS
+
+**Power**
+
+110V / 230V AC
+
+**Network**
+
+Not required
+
+**Venue requirements**
+
+* Standard electrical connection
+* Access during installation and deinstallation
+* Basic exhibition supervision
+
+**Provided by the artist**
+
+* Cabin structure
+* Cowpoke Controller
+* Display system
+* Computing hardware
+* Software environment
+* Media archive
+* Installation documentation
+
+## SETUP
+
+Installation and calibration typically require one working day.
+
+Artist participation during installation is recommended.
 
 :::
 
