@@ -41,7 +41,7 @@ title: "Dead Crossing"
 ::: {.illustrations}
 
 ![](images/empty.png){.row-count-5}
-![](images/cowpoke-cabin/cabin-player-side-view.png){.row-count-6}
+![](images/cowpoke-cabin/cabin-player-side-view-lighter.jpg){.row-count-6}
 ![](images/empty.png){.row-count-1}
 
 :::
@@ -130,7 +130,7 @@ Dead Crossing transforms this open structure into an impossible machine for drea
 
 ::: {.page .splash}
 
-![](images/cowpoke-cabin/cabin-player-side-view.png){.backdrop}
+![](images/cowpoke-cabin/cabin-player-side-view-lighter.jpg){.backdrop}
 
 ::: {.overlay .keyword}
 
