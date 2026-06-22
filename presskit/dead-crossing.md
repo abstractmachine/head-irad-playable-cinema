@@ -479,7 +479,7 @@ The resulting archive functions simultaneously as a dataset, a visual encycloped
 
 ::: {.page .splash}
 
-![](images/cowpoke-dataset/rdr2-pipeline.png){.backdrop}
+![](images/cowpoke-cabin/head-irad-playable-cinema-cabin-extents-2025-11-03.png){.backdrop}
 
 ::: {.overlay .keyword}
 
@@ -492,7 +492,7 @@ The resulting archive functions simultaneously as a dataset, a visual encycloped
 
 
 
-::: {.page .text}
+::: {.page .info}
 
 ::: {.overlay .copy}
 
