@@ -334,6 +334,9 @@ Together these processes transform a film archive into a playable cinematic land
 ::: {.overlay .copy}
 
 ::: {.illustrations}
+![](images/cowpoke-dataset/crossing-flipbook-visualizer.png){.row-count-15}
+![](images/empty.png){.row-count-1}
+![](images/cowpoke-dataset/crossing-flipbook-visualizer.png){.row-count-15}
 :::
 
 ## PIPELINE
