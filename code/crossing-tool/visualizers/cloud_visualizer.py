@@ -424,7 +424,7 @@ class CloudVisualizer(QMainWindow):
         self.field_combo.addItem("all fields", userData=None)
         for f in (
             "setting", "description", "objects", "action",
-            "humans", "wearing", "animals", "text",
+            "humans", "wearing", "animals", "text", "motif",
         ):
             self.field_combo.addItem(f, userData=f)
         self.field_combo.installEventFilter(self)

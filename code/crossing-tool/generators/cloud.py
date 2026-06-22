@@ -230,6 +230,9 @@ def _iter_annotation_text(entries: list, field: str | None):
 
     *field* restricts extraction to one annotation field; ``None`` reads all
     fields whose values are strings or lists.
+
+    Special case: ``field='motif'`` reads ``shot['motif']`` (a top-level shot
+    key) rather than a key inside ``shot['annotation']``.
     """
     for entry in entries:
         if not isinstance(entry, dict):
@@ -237,6 +240,14 @@ def _iter_annotation_text(entries: list, field: str | None):
         shot = entry.get("shot")
         if not isinstance(shot, dict):
             continue
+
+        # 'motif' is stored directly on the shot dict, not in annotation
+        if field == "motif":
+            val = shot.get("motif")
+            if isinstance(val, str) and val.strip():
+                yield val
+            continue
+
         ann = shot.get("annotation")
         if not isinstance(ann, dict):
             continue
@@ -248,6 +259,10 @@ def _iter_annotation_text(entries: list, field: str | None):
             elif isinstance(val, list):
                 yield " ".join(str(v) for v in val)
         else:
+            # Include motif alongside annotation fields when aggregating all
+            motif_val = shot.get("motif")
+            if isinstance(motif_val, str) and motif_val.strip():
+                yield motif_val
             for v in ann.values():
                 if isinstance(v, str):
                     yield v
