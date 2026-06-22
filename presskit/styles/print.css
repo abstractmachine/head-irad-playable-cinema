@@ -39,13 +39,13 @@ hr {
    text pages on right/odd pages
 */
 .cover,
-.imagepage {
+.splash {
   break-before: left;
   page-break-before: left;
   background: #000;
 }
 
-.textpage {
+.text {
   break-before: right;
   page-break-before: right;
   background: #f7f2e8;
@@ -53,7 +53,7 @@ hr {
 }
 
 /* Full-bleed background image */
-.page .bg {
+.page .backdrop {
   position: absolute;
   inset: 0;
   width: 297mm;
@@ -65,7 +65,7 @@ hr {
 
 /* Dark overlay only for image pages / cover */
 .cover::before,
-.imagepage::before {
+.splash::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -89,7 +89,7 @@ hr {
 }
 
 /* Image pages: single huge centered word / phrase */
-.imagepage .overlay {
+.splash .overlay {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -97,7 +97,7 @@ hr {
   color: #f7f2e8;
 }
 
-.imagepage h1 {
+.splash h1 {
   margin: 0;
   font-family: "Libre Clarendon", Georgia, serif;
   font-size: 92pt;
@@ -108,13 +108,13 @@ hr {
   color: #f7f2e8;
 }
 
-.imagepage h1.long,
-.imagepage .long h1 {
+.splash h1.long,
+.splash .long h1 {
   font-size: clamp(24pt, 5.5vw, 58pt);
   line-height: 0.92;
 }
 
-.overlay .wordcenter h1 {
+.overlay .keyword h1 {
   font-family: "Libre Clarendon Wide", "Libre Clarendon", Georgia, serif;
   font-weight: 300;
   font-size: clamp(68pt, 16vw, 164pt);
@@ -122,20 +122,23 @@ hr {
 }
 
 /* Text pages: 6-column Müller-Brockmann grid
-   Col 1 (39mm) reserved for captions later.
-   Cols 2+3 and 4+5 carry the two text flows.
-   Col 6 (39mm) reserved / right margin.
+   Col 1 (39mm) reserved for h2 sidebar labels.
+   Cols 2–6 carry the text (non-illustrated) or cols 2–4 + illus at cols 5–6.
    Outer margins: 18mm. Gutter: 5mm.
    left padding  = 18 + 39.3 + 5 = 62mm
-   right padding = 18 + 39.3 + 5 = 62mm
-   text area     = 261 - 88 = 173mm → 2 cols × 84mm + 5mm gap
+   right padding = 18mm (outer margin only; col 6 is now part of text area)
+   text area     = 297 - 62 - 18 = 217mm → 2 cols × 106mm + 5mm gap
+   Illustrated:
+   right padding = 18 + 84 (cols 5+6) + 5 = 107mm
+   text area     = 297 - 62 - 107 = 128mm (cols 2+3+4)
+   illustrations = right: 18mm, width: 84mm (cols 5+6)
 */
 
-.textpage .overlay {
+.text .overlay {
   position: static;
   width: 297mm;
   height: 210mm;
-  padding: 16mm 62mm 16mm 62mm;
+  padding: 16mm 18mm 16mm 62mm;
   box-sizing: border-box;
   display: block;
   color: #171717;
@@ -144,7 +147,7 @@ hr {
   column-fill: auto;
 }
 
-.textpage h2 {
+.text h2 {
   float: left;
   clear: left;
   width: 39mm;
@@ -158,10 +161,10 @@ hr {
   color: #171717;
 }
 
-.textpage p,
-.textpage blockquote,
-.textpage ul,
-.textpage ol {
+.text p,
+.text blockquote,
+.text ul,
+.text ol {
   margin: 0 0 1.38em 0;
   font-family: "Libre Clarendon", Georgia, serif;
   font-size: 10.6pt;
@@ -169,13 +172,23 @@ hr {
   color: #171717;
 }
 
-.textpage blockquote {
+.text blockquote {
   padding-left: 4mm;
   border-left: 1px solid rgba(23, 23, 23, 0.35);
 }
 
-.textpage ul {
-  margin-left: 4mm;
+.text ul {
+  margin-left: -8mm;
+  padding-left: 8mm;
+  list-style-type: none;
+}
+
+.text ul li::before {
+  content: "🖝";
+  font-size: 0.75em;
+  vertical-align: 0.25em;
+  margin-left: -8mm;
+  padding-right: 4mm;
 }
 
 /* Credits page can be image-backed or plain, but keep the typography lighter */
@@ -205,3 +218,111 @@ a {
     text-decoration: none;
   }
 }
+
+/* --- Image-right layout variant -----------------------------------
+   Usage: add .illustrated to the .overlay.copy div.
+   Place an .illustrations div FIRST inside the overlay (before any h2/p),
+   then write h2s and paragraphs as normal direct children.
+
+   The .illustrations floats right (84mm = one text column).
+   Remaining content width: 173 - 84 - 5mm gap = 84mm — exactly one
+   normal column. h2s still float left with the standard -44mm margin
+   because they remain direct children of .overlay (not wrapped in a
+   grid item), so the float still reaches the overlay's padding area.
+*/
+.overlay.illustrated {
+  column-count: 1;
+  position: relative;
+  /* Reserve cols 5+6 for images: 18mm margin + 84mm (2 cols) + 5mm gutter = 107mm */
+  padding-right: 107mm;
+}
+
+.overlay.illustrated .illustrations {
+  position: absolute;
+  top: 16mm;
+  right: 18mm;
+  width: 84mm;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Strip all wrapper margins inside .illustrations so they don't eat into the
+   row budget. Pandoc wraps same-paragraph images in a single <p>;
+   figures get default browser margins too.
+   The <br> pandoc emits between images in the same paragraph creates an
+   anonymous block of ~1 row; suppress it entirely. */
+.illustrations p,
+.illustrations figure {
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.illustrations br {
+  display: none;
+}
+
+.overlay.illustrated .illustrations img {
+  width: 100%;
+  display: block;
+}
+
+/* Row-snapping for .illustrations images.
+   One row = 10.6pt × 1.38 ≈ 5.16mm.  34 rows fill the full content height.
+   Usage in markdown:  ![](images/foo.png){.row-count-10}
+                       ![](images/empty.png){.row-count-4}
+   Row-sized images set margin-bottom: 0 — all vertical spacing is
+   controlled by the row counts themselves (use empty.png spacers). */
+.illustrations img.row-count-1,  .illustrations img.row-count-2,  .illustrations img.row-count-3,
+.illustrations img.row-count-4,  .illustrations img.row-count-5,  .illustrations img.row-count-6,
+.illustrations img.row-count-7,  .illustrations img.row-count-8,  .illustrations img.row-count-9,
+.illustrations img.row-count-10, .illustrations img.row-count-11, .illustrations img.row-count-12,
+.illustrations img.row-count-13, .illustrations img.row-count-14, .illustrations img.row-count-15,
+.illustrations img.row-count-16, .illustrations img.row-count-17, .illustrations img.row-count-18,
+.illustrations img.row-count-19, .illustrations img.row-count-20, .illustrations img.row-count-21,
+.illustrations img.row-count-22, .illustrations img.row-count-23, .illustrations img.row-count-24,
+.illustrations img.row-count-25, .illustrations img.row-count-26, .illustrations img.row-count-27,
+.illustrations img.row-count-28, .illustrations img.row-count-29, .illustrations img.row-count-30,
+.illustrations img.row-count-31, .illustrations img.row-count-32, .illustrations img.row-count-33,
+.illustrations img.row-count-34 {
+  width: 100%;
+  object-fit: contain;
+  object-position: top left;
+  margin-bottom: 0;
+}
+
+.illustrations img.row-count-1  { height: calc(1  * var(--row)); }
+.illustrations img.row-count-2  { height: calc(2  * var(--row)); }
+.illustrations img.row-count-3  { height: calc(3  * var(--row)); }
+.illustrations img.row-count-4  { height: calc(4  * var(--row)); }
+.illustrations img.row-count-5  { height: calc(5  * var(--row)); }
+.illustrations img.row-count-6  { height: calc(6  * var(--row)); }
+.illustrations img.row-count-7  { height: calc(7  * var(--row)); }
+.illustrations img.row-count-8  { height: calc(8  * var(--row)); }
+.illustrations img.row-count-9  { height: calc(9  * var(--row)); }
+.illustrations img.row-count-10 { height: calc(10 * var(--row)); }
+.illustrations img.row-count-11 { height: calc(11 * var(--row)); }
+.illustrations img.row-count-12 { height: calc(12 * var(--row)); }
+.illustrations img.row-count-13 { height: calc(13 * var(--row)); }
+.illustrations img.row-count-14 { height: calc(14 * var(--row)); }
+.illustrations img.row-count-15 { height: calc(15 * var(--row)); }
+.illustrations img.row-count-16 { height: calc(16 * var(--row)); }
+.illustrations img.row-count-17 { height: calc(17 * var(--row)); }
+.illustrations img.row-count-18 { height: calc(18 * var(--row)); }
+.illustrations img.row-count-19 { height: calc(19 * var(--row)); }
+.illustrations img.row-count-20 { height: calc(20 * var(--row)); }
+.illustrations img.row-count-21 { height: calc(21 * var(--row)); }
+.illustrations img.row-count-22 { height: calc(22 * var(--row)); }
+.illustrations img.row-count-23 { height: calc(23 * var(--row)); }
+.illustrations img.row-count-24 { height: calc(24 * var(--row)); }
+.illustrations img.row-count-25 { height: calc(25 * var(--row)); }
+.illustrations img.row-count-26 { height: calc(26 * var(--row)); }
+.illustrations img.row-count-27 { height: calc(27 * var(--row)); }
+.illustrations img.row-count-28 { height: calc(28 * var(--row)); }
+.illustrations img.row-count-29 { height: calc(29 * var(--row)); }
+.illustrations img.row-count-30 { height: calc(30 * var(--row)); }
+.illustrations img.row-count-31 { height: calc(31 * var(--row)); }
+.illustrations img.row-count-32 { height: calc(32 * var(--row)); }
+.illustrations img.row-count-33 { height: calc(33 * var(--row)); }
+.illustrations img.row-count-34 { height: calc(34 * var(--row)); }

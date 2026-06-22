@@ -18,7 +18,7 @@
 */
 
 .cover .overlay,
-.covertext {
+.headline {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   grid-template-rows: 18pt repeat(17, 1fr);
@@ -65,6 +65,21 @@
   line-height: 1.0;
   font-weight: 400;
   letter-spacing: 0.02em;
+  color: #f7f2e8;
+}
+
+.cover h3 {
+  grid-column: 1;
+  grid-row: 2;
+  align-self: start;
+  margin: 0;
+  padding: 0;
+  font-family: "Libre Clarendon", Georgia, serif;
+  font-size: 18pt;
+  line-height: 1.0;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
   color: #f7f2e8;
 }
 
