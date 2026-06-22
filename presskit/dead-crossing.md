@@ -69,7 +69,7 @@ Riding across a prairie, entering a saloon, boarding a train, or simply pausing 
 
 ::: {.inline}
 
-![](images/QR-Code-Dead-Crossing-Cabin-Demo.png){.row-count-6}
+![](images/cabin-demo-qr-code.png){.row-count-6}
 
 :::
 
@@ -101,9 +101,13 @@ Riding across a prairie, entering a saloon, boarding a train, or simply pausing 
 
 ::: {.illustrations}
 
-![](images/Cabin-Walden.jpg){.row-count-8}
+![](images/Cabin-Walden.jpg){.row-count-6}
 ![](images/empty.png){.row-count-1}
 ![](images/unabomber-cabin-barnes.jpg){.row-count-6}
+![](images/empty.png){.row-count-1}
+![](images/cabin-dogville-set.jpeg){.row-count-6}
+![](images/empty.png){.row-count-1}
+![](images/Cowpoke-Cabin-Blueprint-Named.png){.row-count-6}
 
 :::
 
