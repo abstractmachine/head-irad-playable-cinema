@@ -1085,6 +1085,12 @@ class SyncWorkspace(QWidget):
                 if not s.get("display", True):
                     node._toggle_display()
                 node.show()
+        # Advance the global ID counter past all restored IDs so new nodes
+        # never collide with existing ones.
+        if self._nodes:
+            max_id = max(n.node_id for n in self._nodes)
+            if max_id >= _next_node_id[0]:
+                _next_node_id[0] = max_id + 1
 
     def restore_connections(self, states: list[dict]) -> None:
         id_map = {n.node_id: n for n in self._nodes}
@@ -1180,8 +1186,7 @@ class SyncWorkspace(QWidget):
             for port in node.output_ports():
                 p = node.output_port_pos(port)
                 if (event.pos() - p).manhattanLength() <= _PORT_SIZE + 8:
-                    # Disconnect any existing cable from this output
-                    self._remove_connections_for(node.node_id, port, is_output=True)
+                    # Don't remove existing connection yet — wait for release
                     self._drag_src_node      = node
                     self._drag_src_port      = port
                     self._drag_src_is_output = True
@@ -1192,7 +1197,7 @@ class SyncWorkspace(QWidget):
             for port in node.input_ports():
                 p = node.input_port_pos(port)
                 if (event.pos() - p).manhattanLength() <= _PORT_SIZE + 8:
-                    self._remove_connections_for(node.node_id, port, is_output=False)
+                    # Don't remove existing connection yet — wait for release
                     self._drag_src_node      = node
                     self._drag_src_port      = port
                     self._drag_src_is_output = False
@@ -1233,6 +1238,14 @@ class SyncWorkspace(QWidget):
             super().mouseReleaseEvent(event)
             return
         if event.button() == Qt.LeftButton:
+            # Only now remove the existing connection on the dragged port,
+            # then attempt to complete a new one.
+            if self._drag_src_is_output:
+                self._remove_connections_for(
+                    self._drag_src_node.node_id, self._drag_src_port, is_output=True)
+            else:
+                self._remove_connections_for(
+                    self._drag_src_node.node_id, self._drag_src_port, is_output=False)
             self._try_complete_connection(event.pos())
         self._drag_src_node = None
         self._drag_src_port = None
@@ -1249,21 +1262,17 @@ class SyncWorkspace(QWidget):
             if node is src or not node.isVisible():
                 continue
             if is_output:
-                # src is output → look for compatible input
                 for port in node.input_ports():
                     p = node.input_port_pos(port)
                     if (pos - p).manhattanLength() <= _PORT_SIZE + 8:
                         if self._types_compatible(src, src_port, node, port):
-                            self._remove_connections_for(node.node_id, port, False)
                             self._add_connection(src, src_port, node, port)
                         return
             else:
-                # src is input → look for compatible output
                 for port in node.output_ports():
                     p = node.output_port_pos(port)
                     if (pos - p).manhattanLength() <= _PORT_SIZE + 8:
                         if self._types_compatible(node, port, src, src_port):
-                            self._remove_connections_for(src.node_id, src_port, False)
                             self._add_connection(node, port, src, src_port)
                         return
 
@@ -2629,6 +2638,10 @@ class SyncVisualizerWindow(QMainWindow):
 
 def run_visualizer() -> None:
     """Create QApplication (if needed) and open the Sync Visualizer."""
+    import os as _os
+    # Suppress OpenCV WARN-level stderr noise (V4L2 timeouts, metadata-node
+    # open failures, etc.) — real errors still appear at ERROR level.
+    _os.environ.setdefault("OPENCV_LOG_LEVEL", "ERROR")
     from visualizers._window_helpers import raise_existing_window
     if raise_existing_window("sync"):
         return
