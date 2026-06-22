@@ -40,9 +40,10 @@ title: "Dead Crossing"
 
 ::: {.illustrations}
 
+![](images/empty.png){.row-count-5}
 ![](images/cabin-player-side-view.png){.row-count-8}
-![](images/empty.png){.row-count-2}
-![](images/QR-Code-Dead-Crossing-Cabin-Demo.png){.row-count-8}
+![](images/empty.png){.row-count-1}
+![](images/QR-Code-Dead-Crossing-Cabin-Demo.png){.row-count-5}
 
 :::
 
@@ -64,6 +65,8 @@ The video game becomes a real-time editing instrument. Each movement through the
 ## [DEMO](https://bit.ly/dead-crossing-cabin-demo)
 
 Riding across a prairie, entering a saloon, boarding a train, or simply pausing before a distant horizon continuously generates new associations between video game imagery and cinema history. As visitors navigate the game world, they simultaneously navigate an archive of Western cinema, transforming gameplay into a form of live remix cinema.
+
+- [youtu.be/L5ZbJvyN9hc](https://youtu.be/L5ZbJvyN9hc)
 
 :::
 
@@ -93,7 +96,9 @@ Riding across a prairie, entering a saloon, boarding a train, or simply pausing 
 
 ::: {.illustrations}
 
-![](images/walden_thoreau.png){.row-count-8}
+![](images/Cabin-Walden.jpg){.row-count-8}
+![](images/empty.png){.row-count-1}
+![](images/unabomber-cabin-barnes.jpg){.row-count-4}
 
 :::
 
