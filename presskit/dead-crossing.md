@@ -4,7 +4,7 @@ title: "Dead Crossing"
 
 ::: {.page .cover}
 
-![](images/cowpoke-cabin/head-irad-dead-crossing-cabin-cube-video.png){.backdrop}
+![](images/cowpoke-cabin/head-irad-dead-crossing-cabin-cube-video-lighter.jpg){.backdrop}
 
 ::: {.overlay .headline}
 
@@ -179,7 +179,15 @@ The installation transforms gameplay into a form of cinematic exploration. The v
 
 ::: {.illustrations}
 
-![](images/cowpoke-controller/head-irad-cowpoke-controller-front-2025-11-03.png){.row-count-12}
+![](images/cowpoke-controller/cowpoke-controller-front-body_brass-stock_walnut-screws_brass+black.png){.row-count-6}
+![](images/empty.png){.row-count-1}
+![](images/cowpoke-controller/double-derringer.jpg){.row-count-6}
+![](images/empty.png){.row-count-1}
+![](images/cowpoke-controller/cowpoke-controller-deringer-2026-02-17-gs-snapshot.png){.row-count-6}
+![](images/empty.png){.row-count-1}
+![](images/cowpoke-controller/cowpoke-controller-circuit.jpg){.row-count-6}
+![](images/empty.png){.row-count-1}
+
 
 :::
 
