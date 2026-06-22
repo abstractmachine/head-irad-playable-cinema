@@ -106,8 +106,8 @@ Riding across a prairie, entering a saloon, boarding a train, or simply pausing 
 ![](images/unabomber-cabin-barnes.jpg){.row-count-6}
 ![](images/empty.png){.row-count-1}
 ![](images/cabin-dogville-set.jpeg){.row-count-6}
-![](images/empty.png){.row-count-1}
-![](images/Cowpoke-Cabin-Blueprint-Named.png){.row-count-6}
+
+
 
 :::
 
@@ -130,7 +130,7 @@ Dead Crossing transforms this open structure into an impossible machine for drea
 
 ::: {.page .splash}
 
-![](images/playable-cinema-cowpoke-cabin-back-view.jpg){.backdrop}
+![](images/cabin-player-side-view.png){.backdrop}
 
 ::: {.overlay .keyword}
 
