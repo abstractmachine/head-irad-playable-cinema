@@ -4,7 +4,7 @@ title: "Dead Crossing"
 
 ::: {.page .cover}
 
-![](images/head-irad-dead-crossing-cabin-cube-video.png){.backdrop}
+![](images/cowpoke-cabin/head-irad-dead-crossing-cabin-cube-video.png){.backdrop}
 
 ::: {.overlay .headline}
 
@@ -21,7 +21,7 @@ title: "Dead Crossing"
 
 ::: {.page .splash}
 
-![](images/standoff.jpg){.backdrop}
+![](images/cowpoke-sync/standoff.jpg){.backdrop}
 
 ::: {.overlay .keyword}
 
@@ -41,7 +41,7 @@ title: "Dead Crossing"
 ::: {.illustrations}
 
 ![](images/empty.png){.row-count-5}
-![](images/cabin-player-side-view.png){.row-count-6}
+![](images/cowpoke-cabin/cabin-player-side-view.png){.row-count-6}
 ![](images/empty.png){.row-count-1}
 
 :::
@@ -69,7 +69,7 @@ Riding across a prairie, entering a saloon, boarding a train, or simply pausing 
 
 ::: {.inline}
 
-![](images/cabin-demo-qr-code.png){.row-count-6}
+![](images/cowpoke-cabin/cabin-demo-qr-code.png){.row-count-6}
 
 :::
 
@@ -82,7 +82,7 @@ Riding across a prairie, entering a saloon, boarding a train, or simply pausing 
 
 ::: {.page .splash}
 
-![](images/Cabin-Naked.png){.backdrop}
+![](images/cowpoke-cabin/Cabin-Naked.png){.backdrop}
 
 ::: {.overlay .keyword}
 
@@ -101,11 +101,11 @@ Riding across a prairie, entering a saloon, boarding a train, or simply pausing 
 
 ::: {.illustrations}
 
-![](images/Cabin-Walden.jpg){.row-count-6}
+![](images/cowpoke-cabin/Cabin-Walden.jpg){.row-count-6}
 ![](images/empty.png){.row-count-1}
-![](images/unabomber-cabin-barnes.jpg){.row-count-6}
+![](images/cowpoke-cabin/unabomber-cabin-barnes.jpg){.row-count-6}
 ![](images/empty.png){.row-count-1}
-![](images/cabin-dogville-set.jpeg){.row-count-6}
+![](images/cowpoke-cabin/cabin-dogville-set.jpeg){.row-count-6}
 
 
 
@@ -130,7 +130,7 @@ Dead Crossing transforms this open structure into an impossible machine for drea
 
 ::: {.page .splash}
 
-![](images/cabin-player-side-view.png){.backdrop}
+![](images/cowpoke-cabin/cabin-player-side-view.png){.backdrop}
 
 ::: {.overlay .keyword}
 
@@ -160,7 +160,7 @@ The installation transforms gameplay into a form of cinematic exploration. The v
 
 ::: {.page .splash}
 
-![](images/playable-cinema-cowpoke-controller-bar.jpg){.backdrop}
+![](images/cowpoke-controller/playable-cinema-cowpoke-controller-bar.jpg){.backdrop}
 
 ::: {.overlay .keyword}
 
@@ -179,7 +179,7 @@ The installation transforms gameplay into a form of cinematic exploration. The v
 
 ::: {.illustrations}
 
-![](images/head-irad-cowpoke-controller-front-2025-11-03.png){.row-count-12}
+![](images/cowpoke-controller/head-irad-cowpoke-controller-front-2025-11-03.png){.row-count-12}
 
 :::
 
@@ -206,7 +206,7 @@ Each selection becomes a new point of departure for traversing the installation'
 
 ::: {.page .splash}
 
-![](images/head-irad-cowpoke-controller-front-2025-11-03.png){.backdrop}
+![](images/cowpoke-controller/head-irad-cowpoke-controller-front-2025-11-03.png){.backdrop}
 
 ::: {.overlay .slogan}
 
@@ -246,7 +246,7 @@ In the exhibition, live gameplay is continuously analysed and synchronized with 
 
 ::: {.page .splash}
 
-![](images/catalog-315-movies.png){.backdrop}
+![](images/cowpoke-dataset/catalog-315-movies.png){.backdrop}
 
 ::: {.overlay .keyword}
 
@@ -291,7 +291,7 @@ The resulting archive functions simultaneously as a dataset, a visual encycloped
 
 ::: {.page .splash}
 
-![](images/head-irad-dead-crossing-cabin-instllation-overhead-view-web.jpg){.backdrop}
+![](images/cowpoke-cabin/head-irad-dead-crossing-cabin-instllation-overhead-view-web.jpg){.backdrop}
 
 ::: {.overlay .keyword}
 

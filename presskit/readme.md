@@ -39,6 +39,13 @@ This presskit is built from the following files:
 - `dead-crossing.md` — presskit source in Markdown
 - `styles/` — CSS files for Pandoc and print layout
 - `images/` — images used by the presskit
+  - `cowpoke-books/` — book and publication images
+  - `cowpoke-cabin/` — cabin installation photography and diagrams
+  - `cowpoke-controller/` — Cowpoke Controller photography and renders
+  - `cowpoke-dataset/` — dataset and catalog images
+  - `cowpoke-slides/` — presentation slide assets
+  - `cowpoke-sync/` — sync test and gameplay screenshots
+  - `inside-inside/` — Inside/Inside project documentation
 - `build.sh` — build script for generating the PDF
 
 ## Install
