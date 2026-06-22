@@ -186,7 +186,7 @@ hr {
 .text ul li::before {
   content: "🖝";
   font-size: 0.75em;
-  vertical-align: 0.25em;
+  vertical-align: 0.1em;
   margin-left: -8mm;
   padding-right: 4mm;
 }
@@ -295,7 +295,8 @@ img.row-count-34 {
 /* Inline row-sized images within copy text (not in .illustrations column).
    width: auto preserves aspect ratio at the given row height. */
 .copy > img[class*="row-count-"],
-.copy p > img[class*="row-count-"] {
+.copy p > img[class*="row-count-"],
+.inline img[class*="row-count-"] {
   display: block;
   width: auto;
   max-width: 100%;

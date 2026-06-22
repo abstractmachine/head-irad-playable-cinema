@@ -41,7 +41,7 @@ title: "Dead Crossing"
 ::: {.illustrations}
 
 ![](images/empty.png){.row-count-5}
-![](images/cabin-player-side-view.png){.row-count-8}
+![](images/cabin-player-side-view.png){.row-count-6}
 ![](images/empty.png){.row-count-1}
 
 :::
@@ -69,7 +69,7 @@ Riding across a prairie, entering a saloon, boarding a train, or simply pausing 
 
 ::: {.inline}
 
-![](images/QR-Code-Dead-Crossing-Cabin-Demo.png){.row-count-8}
+![](images/QR-Code-Dead-Crossing-Cabin-Demo.png){.row-count-6}
 
 :::
 
@@ -103,7 +103,7 @@ Riding across a prairie, entering a saloon, boarding a train, or simply pausing 
 
 ![](images/Cabin-Walden.jpg){.row-count-8}
 ![](images/empty.png){.row-count-1}
-![](images/unabomber-cabin-barnes.jpg){.row-count-4}
+![](images/unabomber-cabin-barnes.jpg){.row-count-6}
 
 :::
 
@@ -113,7 +113,7 @@ Reframing the imaginary landscapes of the West. The structure resembles a physic
 
 Drawing on a lineage of autonomous architectures—the resistance architecture of Walden Pond, the frontier cabin of the American West, the paranoiac cabin of Theodore Kaczynski—it operates simultaneously as stage, viewing device, diagram, and shelter.
 
-Entering the cabin, visitors find themselves suspended between two frontiers. One is the historical frontier of the American West: a landscape of cowboys, outlaws, deserts, railroads, and frontier mythology. The other is a computational frontier assembled from cinema, video games, archives, and machine intelligence.
+Entering the cabin, visitors find themselves suspended between two frontiers. One is the historical frontier of the American West: a landscape of cowpoke, outlaws, deserts, railroads, and frontier mythology. The other is a computational frontier assembled from cinema, video games, archives, and machine intelligence.
 
 Dead Crossing transforms this open structure into an impossible machine for dreaming the West: a device through which visitors can wander an ever-expanding landscape assembled from a century of Western mythology.
 
@@ -323,9 +323,8 @@ Cabin construction consulting and production
 
 ## FINANCING
 
-Developed within the framework of the Playable Cinema research project.
-**Douglas Edric Stanley**
-Research Lead, HEAD – Genève, HES-SO
+Funded by the HES-SO Research Programme
+**Réseau de Compétences Design et Arts visuels** | **RCDAV**
 
 Research leadership and institutional support  
 **Anthony Masure**  
@@ -334,9 +333,6 @@ Dean of Research, IRAD, HEAD – Genève, HES-SO
 Research administration and coordination  
 **Christelle Granite-Noble**  
 IRAD, HEAD – Genève, HES-SO
-
-Funded by the HES-SO Research Programme
-**Réseau de Compétences Design et Arts visuels** | **RCDAV**
 
 :::
 
