@@ -444,7 +444,7 @@ The Crossing Tool software environment combines classical computer vision, large
 ::: {.overlay .copy}
 
 ::: {.illustrations}
-![](images/cowpoke-dataset/crossing-silhouette-flags-brokeback.png){.row-count-30}
+![](images/cowpoke-dataset/crossing-silhouette-flags-brokeback-transparent.png){.row-count-30}
 
 :::
 
