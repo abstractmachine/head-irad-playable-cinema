@@ -36,13 +36,13 @@ title: "Dead Crossing"
 
 ::: {.page .text}
 
-::: {.overlay .copy .illustrated}
+::: {.overlay .copy}
 
 ::: {.illustrations}
 
-![](images/cowpoke-dataset/rdr2-ghost-train.jpg){.row-count-7}
+![](images/cowpoke-dataset/rdr2-ghost-train.jpg){.row-count-6}
 ![](images/empty.png){.row-count-1}
-![](images/cowpoke-cabin/head-irad-dead-crossing-cabin-cube-vertical.jpg){.row-count-19}
+![](images/cowpoke-cabin/head-irad-dead-crossing-cabin-cube-vertical.jpg){.row-count-16}
 ![](images/empty.png){.row-count-1}
 
 :::
@@ -98,7 +98,7 @@ Riding across a prairie, entering a saloon, boarding a train, or simply pausing 
 
 ::: {.page .text}
 
-::: {.overlay .copy .illustrated}
+::: {.overlay .copy}
 
 ::: {.illustrations}
 
@@ -146,7 +146,10 @@ Dead Crossing transforms this open structure into an impossible machine for drea
 
 ::: {.page .text}
 
-::: {.overlay .copy .illustrated}
+::: {.overlay .copy}
+
+::: {.illustrations}
+:::
 
 ## EXPERIENCE
 
@@ -178,7 +181,7 @@ The installation transforms gameplay into a form of cinematic exploration. The v
 
 ::: {.page .text}
 
-::: {.overlay .copy .illustrated}
+::: {.overlay .copy}
 
 ::: {.illustrations}
 
@@ -196,13 +199,9 @@ The installation transforms gameplay into a form of cinematic exploration. The v
 
 ## Instrument
 
-A curious curatorial instrument disguised as a nineteenth-century firearm mechanism.
+A curious curatorial instrument disguised as a nineteenth-century firearm mechanism. The Cowpoke Controller is a custom interface developed specifically for *Dead Crossing*. Part video game controller, part cinematic editing device, part sculptural object, it invites visitors to physically navigate the landscapes and myths of Western cinema.
 
-The Cowpoke Controller is a custom interface developed specifically for *Dead Crossing*.
-
-Part video game controller, part cinematic editing device, part sculptural object, it invites visitors to physically navigate the landscapes and myths of Western cinema.
-
-Designed using the mechanical vocabulary of nineteenth-century gunsmithing, the controller transforms gameplay into an act of navigation through cinema history.
+Designed using the mechanical vocabulary of nineteenth-century gunsmithing, the controller transforms gameplay into an act of navigation through cinema history. It combines design and material constraints of the period -- bronze, walnut -- with the precision machined milling, circuitboards, and pick-in-place industrial circuitboard manufacturing.
 
 The rotating cylinder allows visitors to select from a carefully curated collection of iconic moments drawn from *Red Dead Redemption 2*: train robberies, frontier towns, hunting expeditions, campfires, saloons, duels, wilderness journeys, and other recurring figures of Western mythology.
 
@@ -232,7 +231,10 @@ Each selection becomes a new point of departure for traversing the installation'
 
 ::: {.page .text}
 
-::: {.overlay .copy .illustrated}
+::: {.overlay .copy}
+
+::: {.illustrations}
+:::
 
 ## SOFTWARE
 
@@ -272,7 +274,10 @@ In the exhibition, live gameplay is continuously analysed and synchronized with 
 
 ::: {.page .text}
 
-::: {.overlay .copy .illustrated}
+::: {.overlay .copy}
+
+::: {.illustrations}
+:::
 
 ## CORPUS
 
@@ -318,7 +323,10 @@ The resulting archive functions simultaneously as a dataset, a visual encycloped
 
 ::: {.page .text}
 
-::: {.overlay .copy .illustrated}
+::: {.overlay .copy}
+
+::: {.illustrations}
+:::
 
 **Dead Crossing**  
 2026

@@ -123,27 +123,23 @@ hr {
 
 /* Text pages: 6-column Müller-Brockmann grid
    Col 1 (39mm) reserved for h2 sidebar labels.
-   Cols 2–6 carry the text (non-illustrated) or cols 2–4 + illus at cols 5–6.
+   Cols 2–4 carry the text; cols 5–6 (84mm) reserved for the .illustrations column.
    Outer margins: 18mm. Gutter: 5mm.
    left padding  = 18 + 39.3 + 5 = 62mm
-   right padding = 18mm (outer margin only; col 6 is now part of text area)
-   text area     = 297 - 62 - 18 = 217mm → 2 cols × 106mm + 5mm gap
-   Illustrated:
    right padding = 18 + 84 (cols 5+6) + 5 = 107mm
    text area     = 297 - 62 - 107 = 128mm (cols 2+3+4)
    illustrations = right: 18mm, width: 84mm (cols 5+6)
 */
 
 .text .overlay {
-  position: static;
+  position: relative;
   width: 297mm;
   height: 210mm;
-  padding: 16mm 18mm 16mm 62mm;
+  padding: 16mm 107mm 16mm 62mm;
   box-sizing: border-box;
   display: block;
   color: #171717;
-  column-count: 2;
-  column-gap: 5mm;
+  column-count: 1;
   column-fill: auto;
 }
 
@@ -219,25 +215,13 @@ a {
   }
 }
 
-/* --- Image-right layout variant -----------------------------------
-   Usage: add .illustrated to the .overlay.copy div.
-   Place an .illustrations div FIRST inside the overlay (before any h2/p),
-   then write h2s and paragraphs as normal direct children.
-
-   The .illustrations floats right (84mm = one text column).
-   Remaining content width: 173 - 84 - 5mm gap = 84mm — exactly one
-   normal column. h2s still float left with the standard -44mm margin
-   because they remain direct children of .overlay (not wrapped in a
-   grid item), so the float still reaches the overlay's padding area.
+/* --- Image-right column -------------------------------------------
+   Place an .illustrations div FIRST inside any .overlay.copy
+   before any h2/p content. The column is absolutely positioned at
+   cols 5+6 (right: 18mm, width: 84mm). h2 sidebar labels still
+   float into col 1 via the standard -44mm left margin.
 */
-.overlay.illustrated {
-  column-count: 1;
-  position: relative;
-  /* Reserve cols 5+6 for images: 18mm margin + 84mm (2 cols) + 5mm gutter = 107mm */
-  padding-right: 107mm;
-}
-
-.overlay.illustrated .illustrations {
+.text .overlay .illustrations {
   position: absolute;
   top: 16mm;
   right: 18mm;
