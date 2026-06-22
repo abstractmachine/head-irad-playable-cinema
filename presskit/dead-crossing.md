@@ -197,7 +197,7 @@ The installation transforms gameplay into a form of cinematic exploration. The v
 
 :::
 
-## Instrument
+## INSTRUMENT
 
 A curious curatorial instrument disguised as a nineteenth-century firearm mechanism. The Cowpoke Controller is a custom interface developed specifically for *Dead Crossing*. Part video game controller, part cinematic editing device, part sculptural object, it invites visitors to physically navigate the landscapes and myths of Western cinema.
 
@@ -234,21 +234,182 @@ Each selection becomes a new point of departure for traversing the installation'
 ::: {.overlay .copy}
 
 ::: {.illustrations}
+
+![](images/cowpoke-dataset/ghost-hell-bent-intertitle.png){.row-count-9}
+![](images/empty.png){.row-count-1}
+![](images/cowpoke-dataset/mosaic-search-buffalo.png){.row-count-17}
+
 :::
 
-## SOFTWARE
+## AN ARTIFICIAL GHOST
 
-A machine-learning system trained to navigate a visual encyclopedia of Western iconography.
+Western cinema is haunted by its own images.
 
-Dead Crossing is powered by a bespoke software environment developed as part of the Playable Cinema research project.
+For more than a century, Western films have repeated and recombined a common repertoire of landscapes, characters, gestures, objects, and situations. Horses cross rivers. Trains arrive in frontier towns. Outlaws wait in saloons. Sheriffs confront strangers beneath wooden awnings.
 
-## MYTHOLOGY
+Dead Crossing treats this accumulated history as a navigable territory.
 
-Western cinema is built from a shared vocabulary of recurring figures, objects, gestures, situations, and landscapes. Each film rearranges these elements into a new variation of a common mythology.
+Rather than generating new images, the project uses machine learning to construct relationships between existing ones. An artificial intelligence wanders through a century of Western cinema, identifying recurring visual motifs and tracing unexpected pathways between films, videogames, and archives.
 
-## REAL-TIME SYNC
+The result is neither database nor film, but a dynamic system for exploring the mythology of the American West through interaction.
 
-In the exhibition, live gameplay is continuously analysed and synchronized with this archive. As visitors move through the game world, the system assembles new pathways through a century of Western cinema, allowing the archive to be explored as a dynamic and playable landscape.
+:::
+
+:::
+
+
+
+
+::: {.page .splash}
+
+![](images/cowpoke-dataset/butch-cassidy-train-face.png){.backdrop}
+
+::: {.overlay .keyword}
+
+# ENGINE
+
+:::
+
+:::
+
+
+
+
+
+
+
+
+::: {.page .text}
+
+::: {.overlay .copy}
+
+::: {.illustrations}
+:::
+
+## REMIX ENGINE
+
+Dead Crossing is powered by a bespoke software environment developed within the Playable Cinema research project.
+
+More than three hundred Western films were collected, segmented, annotated, indexed, and transformed into a traversable archive. Each film passes through a sequence of computational transformations:
+
+* Shot detection
+* Scene detection
+* Subtitle processing
+* Visual annotation
+* Vocabulary extraction
+* Semantic indexing
+* Real-time synchronization
+
+Together these processes transform a film archive into a playable cinematic landscape.
+
+:::
+
+:::
+
+
+
+
+::: {.page .splash}
+
+![](images/cowpoke-dataset/butch-cassidy-train-face.png){.backdrop}
+
+::: {.overlay .keyword}
+
+# PIPELINE
+
+:::
+
+:::
+
+
+
+
+::: {.page .text}
+
+::: {.overlay .copy}
+
+::: {.illustrations}
+:::
+
+## PIPELINE
+
+The archive is constructed through a multi-stage machine-learning pipeline specifically designed for moving-image analysis.
+
+Films are first segmented into individual shots and scenes. Subtitles are synchronized and linked to image sequences. Vision-language models generate structured annotations describing actions, objects, characters, locations, and events.
+
+These annotations are converted into vector embeddings, allowing visual and semantic relationships to be discovered across the entire corpus.
+
+The resulting archive can be searched, navigated, clustered, recomposed, and synchronized with live gameplay in real time.
+
+## REAL-TIME SYSTEM
+
+During exhibition, gameplay footage is continuously analysed and compared against the archive.
+
+As visitors move through the virtual landscape, the system identifies correspondences between gameplay situations and cinematic fragments drawn from hundreds of Western films.
+
+Each journey through the installation produces a different cinematic trajectory through the archive.
+
+:::
+
+:::
+
+
+
+
+::: {.page .splash}
+
+![](images/crossing-tool/crossing-tool-models.png){.backdrop}
+
+::: {.overlay .keyword}
+
+# MODELS
+
+:::
+
+:::
+
+
+
+
+::: {.page .text}
+
+::: {.overlay .copy}
+
+::: {.illustrations}
+:::
+
+## COMPUTER VISION
+
+**TransNetV2**
+Automatic shot-boundary detection.
+
+**SAM (Segment Anything)**
+Object segmentation and silhouette extraction.
+
+**CLIP**
+Image-text similarity, frame retrieval, visual synchronization.
+
+## LANGUAGE MODELS
+
+**Qwen**
+Shot annotation, scene annotation, motif generation.
+
+## EMBEDDING MODELS
+
+**BGE Small**
+Semantic indexing, similarity search, scene clustering.
+
+## MEDIA PROCESSING
+
+**FFmpeg**
+Video transcoding, frame extraction, subtitle synchronization.
+
+**OpenCV**
+Image analysis, visualization, real-time processing.
+
+## SOFTWARE ARCHITECTURE
+
+The Crossing Tool software environment combines computer vision, large language models, semantic search, vector databases, and real-time synchronization into a unified platform for exploring relationships between cinema and videogames. No single model understands the archive. Dead Crossing emerges from the interaction between many specialized systems, each contributing a different way of seeing, describing, segmenting, indexing, or navigating moving images.
 
 :::
 
