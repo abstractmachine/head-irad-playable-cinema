@@ -81,53 +81,6 @@ Riding across a prairie, entering a saloon, boarding a train, or simply pausing 
 
 
 
-::: {.page .splash}
-
-![](images/cowpoke-cabin/Cabin-Naked.png){.backdrop}
-
-::: {.overlay .keyword}
-
-# CABIN
-
-:::
-
-:::
-
-
-
-
-::: {.page .text}
-
-::: {.overlay .copy}
-
-::: {.illustrations}
-
-![](images/cowpoke-cabin/Cabin-Walden.jpg){.row-count-6}
-![](images/empty.png){.row-count-1}
-![](images/cowpoke-cabin/unabomber-cabin-barnes.jpg){.row-count-6}
-![](images/empty.png){.row-count-1}
-![](images/cowpoke-cabin/cabin-dogville-set.jpeg){.row-count-6}
-
-
-
-:::
-
-## THE FRAME
-
-Reframing the imaginary landscapes of the West. The structure resembles a physicalized wireframe model: a cabin stripped of its protections, exposed from all sides.
-
-Drawing on a lineage of autonomous architectures—the resistance architecture of Walden Pond, the frontier cabin of the American West, the paranoiac cabin of Theodore Kaczynski—it operates simultaneously as stage, viewing device, diagram, and shelter.
-
-Entering the cabin, visitors find themselves suspended between two frontiers. One is the historical frontier of the American West: a landscape of cowpoke, outlaws, deserts, railroads, and frontier mythology. The other is a computational frontier assembled from cinema, video games, archives, and machine intelligence.
-
-Dead Crossing transforms this open structure into an impossible machine for dreaming the West: a device through which visitors can wander an ever-expanding landscape assembled from a century of Western mythology.
-
-:::
-
-:::
-
-
-
 
 ::: {.page .splash}
 
@@ -149,7 +102,9 @@ Dead Crossing transforms this open structure into an impossible machine for drea
 ::: {.overlay .copy}
 
 ::: {.illustrations}
-![](images/cowpoke-controller/cowpoke-controller-front-body_brass-stock_walnut-screws_brass+black.png){.row-count-6}
+![](images/cowpoke-dataset/rdr2-pipeline.png){.row-count-6}
+![](images/empty.png){.row-count-1}
+![](images/cowpoke-sync/head-irad-playable-cinema-sync-test-train-robbery-web.jpg){.row-count-6}
 ![](images/empty.png){.row-count-1}
 :::
 
@@ -160,6 +115,53 @@ Visitors enter the cabin and navigate the virtual world of the popular Western v
 As they travel through the landscape, their actions continuously activate new pathways through a century of Western cinema. Riding a horse, entering a saloon, crossing a river, or pausing before a distant horizon can reveal unexpected correspondences between video game imagery and film history.
 
 The installation transforms gameplay into a form of cinematic exploration. The visitor becomes simultaneously player, spectator, editor, and explorer.
+
+:::
+
+:::
+
+
+
+
+::: {.page .splash}
+
+![](images/cowpoke-cabin/Cabin-Naked.png){.backdrop}
+
+::: {.overlay .keyword}
+
+# CABIN
+
+:::
+
+:::
+
+
+
+
+::: {.page .text}
+
+::: {.overlay .copy}
+
+::: {.illustrations}
+![](images/cowpoke-cabin/Cabin-Walden.jpg){.row-count-6}
+![](images/empty.png){.row-count-1}
+![](images/cowpoke-cabin/unabomber-cabin-barnes.jpg){.row-count-6}
+![](images/empty.png){.row-count-1}
+![](images/cowpoke-cabin/cabin-dogville-set.jpeg){.row-count-6}
+
+
+
+:::
+
+## THE FRAME
+
+Reframing the imaginary landscapes of the West. The structure resembles a physicalized wireframe model: a cabin stripped of its protections, exposed from all sides.
+
+Drawing on a lineage of autonomous architectures—the resistance architecture of Walden Pond, the frontier cabin of the American West, the paranoiac cabin of Theodore Kaczynski—it operates simultaneously as stage, viewing device, diagram, and shelter.
+
+Entering the cabin, visitors find themselves suspended between two frontiers. One is the historical frontier of the American West: a landscape of cowpoke, outlaws, deserts, railroads, and frontier mythology. The other is a computational frontier assembled from cinema, video games, archives, and machine intelligence.
+
+Dead Crossing transforms this open structure into an impossible machine for dreaming the West: a device through which visitors can wander an ever-expanding landscape assembled from a century of Western mythology.
 
 :::
 
@@ -192,8 +194,7 @@ The installation transforms gameplay into a form of cinematic exploration. The v
 ![](images/empty.png){.row-count-1}
 ![](images/cowpoke-controller/cowpoke-controller-deringer-2026-02-17-gs-snapshot.png){.row-count-6}
 ![](images/empty.png){.row-count-1}
-
-
+![](images/cowpoke-controller/cowpoke-controller-front-body_brass-stock_walnut-screws_brass+black.png){.row-count-6}
 :::
 
 ## INSTRUMENT
@@ -315,7 +316,7 @@ Together these processes transform a film archive into a playable cinematic land
 
 ::: {.page .splash}
 
-![](images/cowpoke-dataset/rdr2-pipeline.png){.backdrop}
+![](images/crossing-tool/crossing-tool-models.png){.backdrop}
 
 ::: {.overlay .keyword}
 
