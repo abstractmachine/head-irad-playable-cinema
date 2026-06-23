@@ -149,6 +149,8 @@ Dead Crossing transforms this open structure into an impossible machine for drea
 ::: {.overlay .copy}
 
 ::: {.illustrations}
+![](images/cowpoke-controller/cowpoke-controller-front-body_brass-stock_walnut-screws_brass+black.png){.row-count-6}
+![](images/empty.png){.row-count-1}
 :::
 
 ## EXPERIENCE
@@ -184,9 +186,6 @@ The installation transforms gameplay into a form of cinematic exploration. The v
 ::: {.overlay .copy}
 
 ::: {.illustrations}
-
-![](images/cowpoke-controller/cowpoke-controller-front-body_brass-stock_walnut-screws_brass+black.png){.row-count-6}
-![](images/empty.png){.row-count-1}
 ![](images/cowpoke-cabin/double-derringer-transaprent-background.png){.row-count-6}
 ![](images/empty.png){.row-count-1}
 ![](images/cowpoke-controller/cowpoke-controller-circuit.jpg){.row-count-6}
@@ -286,7 +285,7 @@ This archive is not static. Interacting with the dataset allows visitors to not 
 ::: {.overlay .copy}
 
 ::: {.illustrations}
-![](images/cowpoke-dataset/crossing-flipbook-visualizer.png){.row-count-24}
+![](images/cowpoke-dataset/crossing-flipbook-visualizer-out-west.png){.row-count-24}
 :::
 
 ## REMIX ENGINE
@@ -335,8 +334,6 @@ Together these processes transform a film archive into a playable cinematic land
 
 ::: {.illustrations}
 ![](images/cowpoke-dataset/movie-motif-cloud-2026-06-22-20-46-41.jpg){.row-count-15}
-![](images/empty.png){.row-count-1}
-![](images/cowpoke-dataset/movie-wearing-cloud-2026-06-22-20-43-31.jpg){.row-count-15}
 :::
 
 ## PIPELINE
@@ -361,68 +358,6 @@ Each journey through the installation produces a different cinematic trajectory 
 
 :::
 
-
-
-
-::: {.page .splash}
-
-![](images/crossing-tool/crossing-tool-models.png){.backdrop}
-
-::: {.overlay .keyword}
-
-# MODELS
-
-:::
-
-:::
-
-
-
-
-::: {.page .text}
-
-::: {.overlay .copy}
-
-::: {.illustrations}
-![](images/crossing-tool/crossing-tool-stats.png){.row-count-30}
-:::
-
-## COMPUTER VISION
-
-**TransNetV2**
-Automatic shot-boundary detection.
-
-**SAM (Segment Anything)**
-Object segmentation and silhouette extraction.
-
-**CLIP**
-Image-text similarity, frame retrieval, visual synchronization.
-
-## LANGUAGE MODELS
-
-**Qwen**
-Shot annotation, scene annotation, motif generation.
-
-## EMBEDDING MODELS
-
-**BGE**
-Semantic indexing, similarity search, scene clustering.
-
-## MEDIA PROCESSING
-
-**FFmpeg**
-Video transcoding, frame extraction, subtitle synchronization.
-
-**OpenCV**
-Image analysis, visualization, real-time processing.
-
-## SOFTWARE ARCHITECTURE
-
-The Crossing Tool software environment combines classical computer vision, large language models, semantic search, vector databases, and real-time synchronization into a unified platform for exploring relationships between cinema and videogames. No single model understands the archive. Dead Crossing emerges from the interaction between many specialized systems, each contributing a different way of seeing, describing, segmenting, indexing, or navigating moving images.
-
-:::
-
-:::
 
 
 
