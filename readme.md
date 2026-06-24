@@ -24,7 +24,7 @@ In this current form, the project explores how hybrid strategies can emerge new 
 
 ![Playable Cinema Research Project, IRAD, HEAD – Genève](./presskit/images/cowpoke-controller/playable-cinema-cowpoke-controller-drunkard.jpg)
 
-## Exhibition
+## Installation
 
 A exhibition document explaining the installation Dead Crossing can be found here: [dead-crossing-exhibition-document](https://github.com/abstractmachine/head-irad-playable-cinema/releases/tag/dead-crossing-exhibition-document)
 
