@@ -196,8 +196,8 @@ Machine learning allows these different historical moments to be traversed as th
 ::: {.overlay .copy}
 
 ::: {.illustrations}
-![](images/cowpoke-controller/cowpoke-controller-circuit.jpg){.row-count-5}
 ![](images/cowpoke-controller/cowpoke-controller-front-body_brass-stock_walnut-screws_brass+black.png){.row-count-6}
+![](images/cowpoke-controller/cowpoke-controller-circuit.jpg){.row-count-5}
 ![](images/empty.png){.row-count-1}
 ![](images/cowpoke-controller/cowpoke-controller-deringer-2026-02-17-gs-snapshot.png){.row-count-6}
 ![](images/empty.png){.row-count-1}
