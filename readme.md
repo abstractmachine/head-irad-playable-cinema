@@ -1,28 +1,28 @@
 # Playable Cinema
-![Playable Cinema Research Project, IRAD, HEAD – Genève](./presskit/images/playable-cinema-cowpoke-controller-widow.jpg)
+![Playable Cinema Research Project, IRAD, HEAD – Genève](./presskit/images/cowpoke-controller/playable-cinema-cowpoke-controller-widow.jpg)
 
 ## Project
 Cowpokes riding through the ghost town of an abandoned Western. Isolated cabin, solitary frames, staring out onto the flickering plains of a mythology fading to red. A crossroads. Two mediums, revolvers drawn, caught in a deadly standoff.
 
-[![Cowpoke Cabin - Side View](./presskit/images/head-irad-dead-crossing-cabin-cube-video.png)](https://youtu.be/FBftxKD_kOU)
+[![Cowpoke Cabin - Side View](./presskit/images/cowpoke-cabin/head-irad-dead-crossing-cabin-cube-video.png)](https://youtu.be/FBftxKD_kOU)
 
 Cf. [Dead Crossing](https://youtu.be/FBftxKD_kOU) installation (YouTube). Camera: Faust Perillaud. Edit: Douglas Edric Stanley
 
 Playable Cinema is a research project exploring how artificial intelligence can ride the invisible frontier between cinema history and interactive gameplay. By using machine learning to analyze classical western cinema, the project constructs a generative database where fragments of film history and the streams of live gameplay bleed into one another; where the joystick becomes an editing tool for an infinite fever dream looping through the ghosts of cinematic history.
 
-![Inside Inside, Douglas Edric Stanley, installation view](./presskit/images/insideinside-DouglasEdricStanley-Installation.jpg)
+![Inside Inside, Douglas Edric Stanley, installation view](./presskit/images/inside-inside/insideinside-DouglasEdricStanley-Installation.jpg)
 
 The project began by building a dataset that connects patterns between dystopian cinema and the award-winning indie game *Inside* (Playdead, 2016). This installation has been exibited in various locations and contexts (San Francisco, Lausanne, Marseille, Genève, …). This testbed served as a prototype for a larger-scale dataset comparing Western films and the iconic western video game, *Red Dead Redemption 2*.
 
-![Playable Cinema Research Project, IRAD, HEAD – Genève](./presskit/images/playable-cinema-cowpoke-controller-bar.jpg)
+![Playable Cinema Research Project, IRAD, HEAD – Genève](./presskit/images/cowpoke-controller/playable-cinema-cowpoke-controller-bar.jpg)
 
 Dead Crossing is the latest physical manifestation of the Playable Cinema research project. Inside of an unfinished wooden cabin, visitors explore the video game world of Red Dead Redemption 2. As they move through its three-dimensional virtual terrain, AI models synchronize their movements with shots echoing from the history of Western cinema.
 
 In this current form, the project explores how hybrid strategies can emerge new curatorial methodologies as generative tools collaborate with humans in assembling the haunted archive of our shared hallucinations of the West.
 
-![Playable Cinema Research Project, IRAD, HEAD – Genève](./presskit/images/playable-cinema-cowpoke-controller-cheat.jpg)
+![Playable Cinema Research Project, IRAD, HEAD – Genève](./presskit/images/cowpoke-controller/playable-cinema-cowpoke-controller-cheat.jpg)
 
-![Playable Cinema Research Project, IRAD, HEAD – Genève](./presskit/images/playable-cinema-cowpoke-controller-drunkard.jpg)
+![Playable Cinema Research Project, IRAD, HEAD – Genève](./presskit/images/cowpoke-controller/playable-cinema-cowpoke-controller-drunkard.jpg)
 
 ## Team
 - [Douglas Edric Stanley](https://abstractmachine.net), Project Lead, concept, design, development, production, documentation
@@ -47,7 +47,7 @@ You can watch a short excerpt of the software synchronizing in real-time images 
 ## Cabin
 A [cabin](./hardware/cowpoke-cabin/readme.md) has been constructed that integrates all the parts of the project.
 
-![Cowpoke Cabin - Side View](./presskit/images/head-irad-dead-crossing-cabin-cube.jpg)
+![Cowpoke Cabin - Side View](./presskit/images/cowpoke-cabin/head-irad-dead-crossing-cabin-cube.jpg)
 
 Photo by Faust Perillaud.
 
@@ -87,4 +87,4 @@ There is a [list of the western films](./cineclub/README.md) we are using to tra
 ## Financing
 This project was financed with a research grant from the [Network of Expertise in Design and Visual Arts](https://www.hesge.ch/head/en/programs-research/research) / [Réseau de compétences Design et Arts visuels](https://www.hesge.ch/head/formations-recherche/recherche).
 
-![Playable Cinema Research Project, IRAD, HEAD – Genève](./presskit/images/playable-cinema-cowpoke-controller-bath.jpg)
+![Playable Cinema Research Project, IRAD, HEAD – Genève](./presskit/images/cowpoke-controller/playable-cinema-cowpoke-controller-bath.jpg)
