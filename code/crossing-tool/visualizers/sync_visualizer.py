@@ -22,7 +22,11 @@ State is persisted to prefs across sessions:
 from __future__ import annotations
 
 import os
+import select as _select_mod
+import subprocess as _subprocess
 import sys
+import threading as _threading
+import time as _time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -114,9 +118,12 @@ _STAR_COLOR_A    = QColor("#00ff00")    # inner-edge colour (low radius)
 _STAR_COLOR_B    = QColor("#ff0000")    # outer-edge colour (high radius)
 _NODE_TEXT_COLOR = "#ffffff"            # text colour inside module windows
 
-_VIDEO_DEVICE        = "/dev/video0"
-_VIDEO_FAIL_LIMIT    = 5    # consecutive read() failures → declare device lost
-_VIDEO_RECONNECT_S   = 3    # seconds between reconnect probe attempts
+_VIDEO_DEVICE        = "/dev/video0"   # Elgato Cam Link 4K
+_VIDEO_WIDTH         = 1920
+_VIDEO_HEIGHT        = 1080
+_VIDEO_FPS           = 30             # 30fps MJPEG ≈ 10 MB/s; CLIP runs at 4–10 Hz so 60fps is wasted work
+_VIDEO_INPUT_FORMAT  = "mjpeg"        # prefer MJPEG; set "" to let ffmpeg auto-negotiate
+_VIDEO_RECONNECT_S   = 2    # seconds between reconnect probe attempts
 
 _MIME_TYPE       = "application/x-crossing-sync-palette-item"
 
@@ -405,110 +412,182 @@ class _EdgeResizeHandle(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# _VideoReaderThread — ffmpeg subprocess capture, off the main thread
 # ---------------------------------------------------------------------------
-# _VideoReaderThread — blocking cap.read() moved off the main thread
-# ---------------------------------------------------------------------------
 
-class _VideoReaderThread(QThread):
-    """Reads frames from a V4L2 device in a dedicated thread.
-
-    Emits `frame_ready` for each good frame and `device_lost` when the device
-    stops responding.  After losing the device it polls every
-    `_VIDEO_RECONNECT_S` seconds and emits `device_recovered` when the device
-    can be opened again.
-    """
-
+class _VideoReaderSignals(QObject):
+    """QObject signal carrier for _VideoReaderThread."""
     frame_ready      = pyqtSignal(object)   # np.ndarray HxWx3 uint8 RGB
     device_lost      = pyqtSignal()
     device_recovered = pyqtSignal()
 
+
+class _VideoReaderThread:
+    """Background daemon thread that captures from a V4L2 device via ffmpeg.
+
+    Uses ffmpeg (subprocess) instead of OpenCV's native V4L2 backend.
+    Rationale:
+    - OpenCV's V4L2 backend can throw unrecoverable C++ exceptions after
+      repeated select() timeouts, crashing the whole process.
+    - ffmpeg runs in a child process: any crash is isolated; our thread
+      just sees the pipe close and restarts.
+    - select() on the pipe fd gives a clean 2-second timeout per read so
+      a stalled device is detected quickly without blocking indefinitely.
+
+    Uses Python threading.Thread(daemon=True) so the process exits cleanly
+    even if a read is in progress at shutdown.
+    Signals are delivered to the Qt main thread via queued connections.
+    """
+
+    _FRAME_SIZE = _VIDEO_WIDTH * _VIDEO_HEIGHT * 3   # RGB24 bytes per frame
+
     def __init__(self, device: str, parent: "QObject | None" = None) -> None:
-        super().__init__(parent)
-        self._device   = device
+        self._device  = device
         self._stopping = False
-        self._cap: "cv2.VideoCapture | None" = None
-        self._fails    = 0
+        self._signals = _VideoReaderSignals(parent)
+        self._thread  = _threading.Thread(
+            target=self._run, daemon=True, name="VideoReader")
 
     # ------------------------------------------------------------------
-    # Internal helpers
+    # Public signal proxies (same interface as the old QThread version)
     # ------------------------------------------------------------------
 
-    def _open_device(self) -> bool:
-        """Try to open the device.  Returns True on success."""
-        if self._stopping:
-            return False
-        try:
-            import re as _re
-            m   = _re.search(r"(\d+)$", self._device)
-            dev = int(m.group(1)) if m else self._device
-            cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
-            if not cap.isOpened():
-                cap.release()
-                return False
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            self._cap   = cap
-            self._fails = 0
-            return True
-        except Exception:
-            return False
+    @property
+    def frame_ready(self):
+        return self._signals.frame_ready
 
-    def _release(self) -> None:
-        if self._cap is not None:
-            try:
-                self._cap.release()
-            except Exception:
-                pass
-            self._cap = None
+    @property
+    def device_lost(self):
+        return self._signals.device_lost
+
+    @property
+    def device_recovered(self):
+        return self._signals.device_recovered
+
+    # ------------------------------------------------------------------
+    # QThread-compatible control API
+    # ------------------------------------------------------------------
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def isRunning(self) -> bool:
+        return self._thread.is_alive()
+
+    def quit(self) -> None:
+        """No-op: provided for QThread-compatible callers."""
+
+    def terminate(self) -> None:
+        """No-op: daemon threads are abandoned on process exit."""
+
+    def wait(self, msecs: "int | None" = None) -> bool:
+        """Join the background thread; optional timeout in milliseconds."""
+        timeout = (msecs / 1000.0) if msecs is not None else None
+        self._thread.join(timeout)
+        return not self._thread.is_alive()
+
+    def request_stop(self) -> None:
+        self._stopping = True
 
     # ------------------------------------------------------------------
     # Thread body
     # ------------------------------------------------------------------
 
-    def run(self) -> None:
-        if not self._open_device():
-            # Start in "lost" state and immediately begin polling
-            self.device_lost.emit()
+    def _run(self) -> None:
+        ever_connected = False
 
         while not self._stopping:
-            if self._cap is None:
-                # Device is gone — wait in small chunks so we can be stopped
-                for _ in range(_VIDEO_RECONNECT_S * 10):
-                    if self._stopping:
-                        return
-                    QThread.msleep(100)
-                if self._open_device():
-                    self.device_recovered.emit()
+            proc = self._launch_ffmpeg()
+            if proc is None:
+                # ffmpeg not installed or device path is wrong
+                if not ever_connected:
+                    self._signals.device_lost.emit()
+                    ever_connected = True
+                self._sleep_reconnect()
                 continue
 
-            ret, frame = self._cap.read()   # may block ~10 s on V4L2 disconnect
+            got_frame = False
+            buf = bytearray()
+            fd  = proc.stdout.fileno()
 
-            if self._stopping:
-                break
+            while not self._stopping:
+                # 2-second deadline: if ffmpeg goes quiet the device stalled
+                try:
+                    ready = _select_mod.select([proc.stdout], [], [], 2.0)[0]
+                except Exception:
+                    break
+                if not ready:
+                    break   # stall — kill and restart ffmpeg
 
-            if not ret:
-                self._fails += 1
-                if self._fails >= _VIDEO_FAIL_LIMIT:
-                    self._release()
-                    self.device_lost.emit()
-                continue
+                try:
+                    chunk = os.read(fd, 65536)
+                except OSError:
+                    break
+                if not chunk:
+                    break   # ffmpeg exited
 
-            self._fails = 0
+                buf.extend(chunk)
+
+                # drain all complete frames from the buffer
+                while len(buf) >= self._FRAME_SIZE:
+                    raw   = bytes(buf[:self._FRAME_SIZE])
+                    del buf[:self._FRAME_SIZE]
+                    frame = np.frombuffer(raw, dtype=np.uint8).reshape(
+                        (_VIDEO_HEIGHT, _VIDEO_WIDTH, 3))
+                    if not got_frame:
+                        got_frame = True
+                        if ever_connected:
+                            self._signals.device_recovered.emit()
+                        ever_connected = True
+                    self._signals.frame_ready.emit(frame.copy())
+
+            # ---- teardown ------------------------------------------------
             try:
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                self.frame_ready.emit(rgb)
+                proc.kill()
+                proc.wait(timeout=2)
             except Exception:
                 pass
 
-        self._release()
+            if self._stopping:
+                return
 
-    # ------------------------------------------------------------------
-    # Public control
-    # ------------------------------------------------------------------
+            if ever_connected and got_frame:
+                self._signals.device_lost.emit()
+            elif not ever_connected:
+                self._signals.device_lost.emit()
+                ever_connected = True
 
-    def request_stop(self) -> None:
-        """Signal the thread to exit and release the capture device."""
-        self._stopping = True
-        self._release()   # unblocks any pending cap.read()
+            self._sleep_reconnect()
+
+    def _launch_ffmpeg(self) -> "_subprocess.Popen | None":
+        """Start an ffmpeg process that writes raw RGB24 frames to stdout."""
+        try:
+            cmd = ["ffmpeg", "-loglevel", "quiet", "-f", "v4l2"]
+            if _VIDEO_INPUT_FORMAT:
+                cmd += ["-input_format", _VIDEO_INPUT_FORMAT]
+            cmd += [
+                "-framerate", str(_VIDEO_FPS),
+                "-video_size", f"{_VIDEO_WIDTH}x{_VIDEO_HEIGHT}",
+                "-i", self._device,
+                "-f", "rawvideo",
+                "-pix_fmt", "rgb24",
+                "pipe:1",
+            ]
+            return _subprocess.Popen(
+                cmd,
+                stdout=_subprocess.PIPE,
+                stderr=_subprocess.DEVNULL,
+                bufsize=0,
+            )
+        except (OSError, FileNotFoundError):
+            return None
+
+    def _sleep_reconnect(self) -> None:
+        """Sleep _VIDEO_RECONNECT_S seconds in interruptible 100 ms steps."""
+        for _ in range(_VIDEO_RECONNECT_S * 10):
+            if self._stopping:
+                return
+            _time.sleep(0.1)
 
 
 # ---------------------------------------------------------------------------
@@ -516,14 +595,14 @@ class _VideoReaderThread(QThread):
 # ---------------------------------------------------------------------------
 
 class LiveVideoWidget(QLabel):
-    """OpenCV live preview driven by a background reader thread.
+    """Live video preview driven by a background ffmpeg capture thread.
 
     Frames arrive via a signal from `_VideoReaderThread` so the main thread
     is never blocked by V4L2 I/O.  When the device disappears the widget
     shows a "reconnecting" message and automatically resumes once the device
     comes back.
 
-    Falls back to a "No live video signal" message when cv2 is unavailable
+    Falls back to a "No live video signal" message when ffmpeg is unavailable
     or the device cannot be opened initially.
     """
 
@@ -542,9 +621,6 @@ class LiveVideoWidget(QLabel):
         self._try_open()
 
     def _try_open(self) -> None:
-        if not _HAS_CV2:
-            self.setText("No live video signal\n(cv2 not available)")
-            return
         self._thread = _VideoReaderThread(self._device, self)
         self._thread.frame_ready.connect(self._on_frame_ready)
         self._thread.device_lost.connect(self._on_device_lost)
@@ -589,9 +665,11 @@ class LiveVideoWidget(QLabel):
     def stop(self) -> None:
         if self._thread is not None:
             self._thread.request_stop()
-            self._thread.quit()
-            if not self._thread.wait(5000):   # 5 s — V4L2 select() may still be running
-                self._thread.terminate()
+            # Daemon thread: the process exits cleanly even if cap.read() is
+            # still blocking.  Give it up to 3 s to finish voluntarily so the
+            # V4L2 device is released before the widget is torn down, but do
+            # not block indefinitely.
+            self._thread.wait(3000)
             self._thread = None
 
 
