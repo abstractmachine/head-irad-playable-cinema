@@ -39,11 +39,9 @@ title: "Dead Crossing"
 ::: {.overlay .copy}
 
 ::: {.illustrations}
-
-![](images/cowpoke-dataset/rdr2-ghost-train.jpg){.row-count-5}
+![](images/cowpoke-cabin/head-irad-dead-crossing-cabin-cube-vertical.jpg){.row-count-15}
 ![](images/empty.png){.row-count-1}
-![](images/cowpoke-cabin/head-irad-dead-crossing-cabin-cube-vertical.jpg){.row-count-16}
-![](images/empty.png){.row-count-1}
+![](images/cowpoke-dataset/rdr2-ghost-train.jpg){.row-count-6}
 
 :::
 
@@ -98,19 +96,22 @@ Riding across a prairie, entering a saloon, boarding a train, or simply pausing 
 ::: {.overlay .copy}
 
 ::: {.illustrations}
-![](images/cowpoke-dataset/rdr2-pipeline.png){.row-count-6}
+![](images/cowpoke-dataset/devils-doorway-cabin.png){.row-count-6}
 ![](images/empty.png){.row-count-1}
-![](images/cowpoke-sync/head-irad-playable-cinema-sync-test-train-robbery-web.jpg){.row-count-6}
+![](images/cowpoke-dataset/rdr2-cabin.png){.row-count-5}
 ![](images/empty.png){.row-count-1}
+![](images/cowpoke-dataset/johnny-guitar-cave.png){.row-count-5}
+![](images/empty.png){.row-count-1}
+![](images/cowpoke-dataset/rdr2-cave.png){.row-count-4}
 :::
 
 ## EXPERIENCE
 
-A visitor enters the cabin. Two screens open onto two mythological landscapes: on the left, a famous video game simulating the lawless West; on the right, fragments drawn from the history of Western cinema. Both screens seem to depict the same world — the same themes, objects, characters, and settings — but through the language of different media.
+A visitor enters the cabin. Two screens open onto two mythological landscapes: on the left, a famous video game simulating the lawless West; on the right, fragments drawn from the history of Western cinema. Both screens seem to depict the same world — the same themes, objects, characters, and settings — but through the language of their respective medium.
 
-The visitor takes the custom-built controller from the wall and begins to play *Red Dead Redemption 2* (2018). Riding a horse, entering a saloon, crossing a river, or pausing before a distant horizon, their actions on the left-hand screen are mirrored by cinematic correspondences on the right.
+The visitor takes the custom-built controller from the wall and begins to play *Red Dead Redemption 2* (2018). Riding a horse, entering a saloon, crossing a river, pausing before a distant horizon -- each action on the left-hand screen is mirrored by a cinematic correspondence on the right.
 
-Entering a cave in the game may trigger a cave sequence from the spaghetti western *10 000 Dollari Per Un Massacro* (1967). Emerging beside a waterfall may reveal a matching scene from *Johnny Guitar* (1954), where riders cross a pond beneath a cascading cliff.
+Entering a cave in the game may trigger a cave sequence from the spaghetti western *10 000 Dollari Per Un Massacro* (1967). Emerging beside a waterfall may reveal a matching scene from *Johnny Guitar* (1954), where the protagonists use a cave hidden behind a waterfall to escape from their pursuers.
 
 Back and forth, the two screens remain in dialogue. As the player explores the virtual landscape, the system identifies motifs, settings, and situations -- displaying new pathways pulled from a century of Western cinema.
 
@@ -141,11 +142,11 @@ Back and forth, the two screens remain in dialogue. As the player explores the v
 ::: {.overlay .copy}
 
 ::: {.illustrations}
-![](images/cowpoke-cabin/Cabin-Walden.jpg){.row-count-5}
+![](images/cowpoke-cabin/Cabin-Walden.jpg){.row-count-6}
 ![](images/empty.png){.row-count-1}
-![](images/cowpoke-cabin/unabomber-cabin-barnes.jpg){.row-count-5}
+![](images/cowpoke-cabin/unabomber-cabin-barnes.jpg){.row-count-6}
 ![](images/empty.png){.row-count-1}
-![](images/cowpoke-cabin/cabin-dogville-set.jpeg){.row-count-5}
+![](images/cowpoke-cabin/cabin-dogville-set.jpeg){.row-count-6}
 
 
 
@@ -153,19 +154,17 @@ Back and forth, the two screens remain in dialogue. As the player explores the v
 
 ## THE FRAME
 
-Reframing the imaginary landscapes of the West. The structure resembles a physicalized wireframe model: a cabin stripped of its protective shell, exposed to the elements.
+The cabin reframes the imaginary landscapes of the West. Its structure resembles a physicalized wireframe model: a cabin stripped of its protective shell, exposed to the elements.
 
 Drawing on a lineage of autonomous architectures — the resistance architecture of Walden Pond, the frontier cabin of the Far West, the paranoiac cabin of Theodore Kaczynski — it operates simultaneously as stage, viewing device, diagram, and shelter.
 
 Entering the cabin, visitors find themselves suspended between several overlapping frontiers.
 
-## FAR WEST
+## FRONTIER TERRITORY
 
-One frontier belongs to the mythico-historical geography of the Far West: a landscape of cowpokes, outlaws, deserts, railroads, mountain passes, and lawless settlements.
+One frontier belongs to the mythico-historical geography of the Far West: a territory of cowpokes, outlaws, deserts, railroads, mountain passes, and lawless settlements. This frontier is an imaginary world beyond civilization, where ethics, laws, and society remain open to interpretation.
 
-This frontier is an imaginary world beyond civilization, where ethics, laws, and society remain open to interpretation.
-
-## TEMPORAL CROSSOVER
+## TEMPORAL FRONTIER
 
 Another frontier is temporal rather than geographical. More than three hundred Western films, produced across a century of cinema history, coexist with a contemporary videogame simulation of the American West.
 
@@ -196,17 +195,18 @@ Machine learning allows these different historical moments to be traversed as th
 ::: {.overlay .copy}
 
 ::: {.illustrations}
+![](images/cowpoke-cabin/double-derringer-transaprent-background.png){.row-count-5}
+![](images/empty.png){.row-count-1}
 ![](images/cowpoke-controller/cowpoke-controller-front-body_brass-stock_walnut-screws_brass+black.png){.row-count-6}
+![](images/empty.png){.row-count-1}
+![](images/cowpoke-controller/cowpoke-controller-deringer-2026-02-17-gs-snapshot.png){.row-count-5}
+![](images/empty.png){.row-count-1}
 ![](images/cowpoke-controller/cowpoke-controller-circuit.jpg){.row-count-5}
-![](images/empty.png){.row-count-1}
-![](images/cowpoke-controller/cowpoke-controller-deringer-2026-02-17-gs-snapshot.png){.row-count-6}
-![](images/empty.png){.row-count-1}
-![](images/cowpoke-cabin/double-derringer-transaprent-background.png){.row-count-6}
 :::
 
 ## INSTRUMENT
 
-A curious curatorial instrument disguised as a nineteenth-century firearm mechanism. Designed using the mechanical vocabulary of nineteenth-century gunsmithing, it combines bronze, walnut, springs, rotating chambers, contemporary circuitboards, and precision-machined components.
+A curious curatorial instrument disguised as a nineteenth-century firearm mechanism. Designed using the mechanical vocabulary of nineteenth-century gunsmithing, it combines bronze, walnut, magnets, rotating chambers, contemporary circuitboards, and precision-machined components.
 
 The Cowpoke Controller is a custom interface developed specifically for *Dead Crossing*. Part video game controller, part cinematic editing device, part sculptural object, it invites visitors to physically navigate the landscapes and myths of Western cinema while directly controlling a popular Western videogame.
 
@@ -252,11 +252,11 @@ Each chamber corresponds to a carefully curated game save: train robberies, fron
 
 A specter haunts cinema, the specter of neural networks.
 
-Artificial intelligence now occupies a central place in the cultural imagination, as algorithms set fire to longstanding notions of authorship, iconography, labour, memory, and the future of cinema as an industry. *Dead Crossing* begins from this anxiety, but moves in a resolutely different direction. It does not ask machines to dream new images from prompts. It asks what machine learning can reveal about images situated in their historical and cultural contexts.
+Artificial intelligence now occupies a central place in the cultural imagination, as algorithms set fire to longstanding notions of authorship, iconography, labour, memory, and the future of the cinema industry. *Dead Crossing* begins from this anxiety, but moves in a resolutely different direction. It does not ask machines to dream new images from prompts. It asks what machine learning can reveal from images situated in their historical and cultural contexts.
 
 For more than a century, Western films have repeated and recombined a shared repertoire of landscapes, characters, gestures, objects, and situations. Horses cross rivers. Trains arrive in frontier towns. Outlaws wait in saloons. Sheriffs confront strangers beneath wooden awnings. In this sense, the Western already behaves like a proto-latent narrative engine: a modular system of recurring icons, settings, conflicts, and archetypes.
 
-The Playable Cinema research project (RCDAV, HES-SO) enters this modular space not to replace cinema with synthetic images, but to construct new relationships within an existing cultural archive. Machine learning is used to identify motifs, trace correspondences, and open pathways between films, videogames, and their shared mythologies.
+The stated goals of the Playable Cinema research project are to explore this modular space -- not to replace cinema with synthetic images, but to identify motifs, trace correspondences, and open pathways between films, videogames, and their shared mythologies.
 
 This archive is not static. As visitors move through the dataset, they construct their own narrative and thematic trajectory — a path that can later generate posters, mosaics, and pulp Western novellas based on their meanderings through the archive.
 
@@ -303,11 +303,11 @@ This archive is not static. As visitors move through the dataset, they construct
 
 ## ARCHIVE
 
-More than three hundred Western films were collected, segmented, annotated, indexed, and transformed into a traversable archive. This process involved custom tools for dataset construction, shot and scene detection, subtitle processing, image annotation, vector search, and real-time synchronization.
+More than three hundred Western films have been collected, segmented, annotated, indexed, and transformed into a traversable archive. This process involved custom tools for dataset construction, shot and scene detection, subtitle processing, image annotation, vector search, and real-time synchronization.
 
 ## CATALOG
 
-Rather than relying on fixed categories alone, the system combines human curation with machine learning to construct a vocabulary of recurring Western motifs: characters, objects, actions, locations, situations, and archetypes.
+Rather than relying on fixed categories alone, the system combines human curation with machine learning to construct a vocabulary of recurring Western motifs: characters, objects, actions, settings, situations, and archetypes.
 
 The resulting archive functions simultaneously as a dataset, a visual encyclopedia of Western iconography, and a traversable landscape of cinema history.
 
@@ -409,7 +409,7 @@ The archive is constructed through a multi-stage machine-learning pipeline speci
 
 Films are first segmented into individual shots and scenes. Subtitles are synchronized and linked to image sequences. Vision-language models generate structured annotations describing actions, objects, characters, locations, and events.
 
-These annotations are converted into vector embeddings, allowing visual and semantic relationships to be discovered across the entire corpus. These embeddings also allow the system to run locally, using far less ressources that cloud-based machine learning systems. The resulting archive can be locally searched, navigated, clustered, recomposed, and synchronized with live gameplay in real time, far from any ressource-dependant datacenters.
+These annotations are converted into vector representations (embeddings), allowing visual, semantic, and narratological relationships to be mapped across the entire corpus. These vector representations also allow the system to run locally, using far less ressources that cloud-based machine learning systems. The resulting archive can be locally searched, navigated, clustered, recomposed, and synchronized with live gameplay in real time, far from any ressource-dependant datacenters.
 
 :::
 
