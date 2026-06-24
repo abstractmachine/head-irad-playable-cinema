@@ -40,7 +40,7 @@ title: "Dead Crossing"
 
 ::: {.illustrations}
 
-![](images/cowpoke-dataset/rdr2-ghost-train.jpg){.row-count-6}
+![](images/cowpoke-dataset/rdr2-ghost-train.jpg){.row-count-5}
 ![](images/empty.png){.row-count-1}
 ![](images/cowpoke-cabin/head-irad-dead-crossing-cabin-cube-vertical.jpg){.row-count-16}
 ![](images/empty.png){.row-count-1}
@@ -54,17 +54,13 @@ A cabin.
 A crossroads.
 Two mediums, revolvers drawn, caught in a deadly standoff.
 
-## INSTALLATION
-
 Dead Crossing is an interactive installation where visitors explore the landscapes of an iconic popular Western video game, their movements triggering encounters with fragments drawn from more than three hundred Western films.
-
-## PLAYING THE EDIT
 
 The video game becomes a real-time editing instrument. Each movement through the landscape generates new pathways through cinema history, assembling an endless film from the recurring images, gestures, characters, and myths of the American West.
 
-## [DEMO](https://bit.ly/dead-crossing-cabin-demo)
-
 Riding across a prairie, entering a saloon, boarding a train, or simply pausing before a distant horizon continuously generates new associations between video game imagery and cinema history. As visitors navigate the game world, they simultaneously navigate an archive of Western cinema, transforming gameplay into a form of live remix cinema.
+
+## [DEMO](https://bit.ly/dead-crossing-cabin-demo)
 
 - [youtu.be/L5ZbJvyN9hc](https://youtu.be/L5ZbJvyN9hc)
 
@@ -110,11 +106,13 @@ Riding across a prairie, entering a saloon, boarding a train, or simply pausing 
 
 ## EXPERIENCE
 
-Visitors enter the cabin and navigate the virtual world of the popular Western video game *Red Dead Redemption 2* (2018) using a custom-built controller.
+A visitor enters the cabin. Two screens open onto two mythological landscapes: on the left, a famous video game simulating the lawless West; on the right, fragments drawn from the history of Western cinema. Both screens seem to depict the same world — the same themes, objects, characters, and settings — but through the language of different media.
 
-As they travel through the landscape, their actions continuously activate new pathways through a century of Western cinema. Riding a horse, entering a saloon, crossing a river, or pausing before a distant horizon can reveal unexpected correspondences between video game imagery and film history.
+The visitor takes the custom-built controller from the wall and begins to play *Red Dead Redemption 2* (2018). Riding a horse, entering a saloon, crossing a river, or pausing before a distant horizon, their actions on the left-hand screen are mirrored by cinematic correspondences on the right.
 
-The installation transforms gameplay into a form of cinematic exploration. The visitor becomes simultaneously player, spectator, editor, and explorer.
+Entering a cave in the game may trigger a cave sequence from the spaghetti western *10 000 Dollari Per Un Massacro* (1967). Emerging beside a waterfall may reveal a matching scene from *Johnny Guitar* (1954), where riders cross a pond beneath a cascading cliff.
+
+Back and forth, the two screens remain in dialogue. As the player explores the virtual landscape, the system identifies motifs, settings, and situations -- displaying new pathways pulled from a century of Western cinema.
 
 :::
 
@@ -143,11 +141,11 @@ The installation transforms gameplay into a form of cinematic exploration. The v
 ::: {.overlay .copy}
 
 ::: {.illustrations}
-![](images/cowpoke-cabin/Cabin-Walden.jpg){.row-count-6}
+![](images/cowpoke-cabin/Cabin-Walden.jpg){.row-count-5}
 ![](images/empty.png){.row-count-1}
-![](images/cowpoke-cabin/unabomber-cabin-barnes.jpg){.row-count-6}
+![](images/cowpoke-cabin/unabomber-cabin-barnes.jpg){.row-count-5}
 ![](images/empty.png){.row-count-1}
-![](images/cowpoke-cabin/cabin-dogville-set.jpeg){.row-count-6}
+![](images/cowpoke-cabin/cabin-dogville-set.jpeg){.row-count-5}
 
 
 
@@ -155,13 +153,21 @@ The installation transforms gameplay into a form of cinematic exploration. The v
 
 ## THE FRAME
 
-Reframing the imaginary landscapes of the West. The structure resembles a physicalized wireframe model: a cabin stripped of its protections, exposed from all sides.
+Reframing the imaginary landscapes of the West. The structure resembles a physicalized wireframe model: a cabin stripped of its protective shell, exposed to the elements.
 
-Drawing on a lineage of autonomous architectures—the resistance architecture of Walden Pond, the frontier cabin of the American West, the paranoiac cabin of Theodore Kaczynski—it operates simultaneously as stage, viewing device, diagram, and shelter.
+Drawing on a lineage of autonomous architectures — the resistance architecture of Walden Pond, the frontier cabin of the Far West, the paranoiac cabin of the Unabomber Theodore Kaczynski — the cabin operates simultaneously as stage, viewing device, diagram, and shelter.
 
-Entering the cabin, visitors find themselves suspended between two frontiers. One is the historical frontier of the American West: a landscape of cowpoke, outlaws, deserts, railroads, and frontier mythology. The other is a computational frontier assembled from cinema, video games, archives, and machine intelligence.
+Entering the cabin, visitors find themselves suspended between several overlapping frontiers:
 
-Dead Crossing transforms this open structure into an impossible machine for dreaming the West: a device through which visitors can wander an ever-expanding landscape assembled from a century of Western mythology.
+## FAR WEST
+
+One frontier is the historical frontier of the "Far West": an iconographic landscape of cowpokes, outlaws, deserts, railroads, and the mythological iconography of desert and mountain landscapes. This frontier is an imaginary world-beyond-civilization, where ethics, laws, and society are open to interpretation.
+
+## MEDIA CROSSINGS
+
+Another frontier is a computationally enabled frontier, where one medium crosses the technical and aesthetic borders of another. This is frontier crossing: passing from one medium to another -- classical Hollywood cinema and contemporay interactive video games -- mediated by machine intelligence.
+
+Dead Crossing transforms this open structure of superimposed frontiers into an impossible machine for dreaming the West: a device through which visitors can wander an ever-expanding landscape assembled from a century of Western mythology.
 
 :::
 
@@ -188,13 +194,13 @@ Dead Crossing transforms this open structure into an impossible machine for drea
 ::: {.overlay .copy}
 
 ::: {.illustrations}
+![](images/cowpoke-controller/cowpoke-controller-front-body_brass-stock_walnut-screws_brass+black.png){.row-count-5}
+![](images/empty.png){.row-count-1}
 ![](images/cowpoke-cabin/double-derringer-transaprent-background.png){.row-count-6}
 ![](images/empty.png){.row-count-1}
-![](images/cowpoke-controller/cowpoke-controller-circuit.jpg){.row-count-6}
+![](images/cowpoke-controller/cowpoke-controller-deringer-2026-02-17-gs-snapshot.png){.row-count-5}
 ![](images/empty.png){.row-count-1}
-![](images/cowpoke-controller/cowpoke-controller-deringer-2026-02-17-gs-snapshot.png){.row-count-6}
-![](images/empty.png){.row-count-1}
-![](images/cowpoke-controller/cowpoke-controller-front-body_brass-stock_walnut-screws_brass+black.png){.row-count-6}
+![](images/cowpoke-controller/cowpoke-controller-circuit.jpg){.row-count-5}
 :::
 
 ## INSTRUMENT
@@ -243,117 +249,13 @@ Each selection becomes a new point of departure for traversing the installation'
 
 ## A HAUNTED LANDSCAPE
 
-Western cinema is haunted by its own images.
+A specter haunts cinema, the spector of neural networks.
 
-For more than a century, Western films have repeated and recombined a common repertoire of landscapes, characters, gestures, objects, and situations. Horses cross rivers. Trains arrive in frontier towns. Outlaws wait in saloons. Sheriffs confront strangers beneath wooden awnings.
+For more than a century, Western films have repeated and recombined a common repertoire of landscapes, characters, gestures, objects, and situations. Horses cross rivers. Trains arrive in frontier towns. Outlaws wait in saloons. Sheriffs confront strangers beneath wooden awnings. It is, in a sense, one of the pre-eminent examples of a proto-latent narrative engine, an active frontierland, well before the advent of AI.
 
-Dead Crossing treats this accumulated history as a navigable territory.
-
-Rather than generating new images, the project uses machine learning to construct relationships between existing ones. An artificial spirit wanders through a century of Western cinema, identifying recurring visual motifs and tracing unexpected pathways between films, videogames, and archives.
-
-The result is neither database nor film, but a dynamic system for exploring the mythology of the American West through interaction.
+The goal of the Playable Cinema research project is to tap into this modular space where icons can remix semantically and formally with other icons. Remix Cinema. But rather than tripping down the endless rabbit holes of generative AI slop, the project instead treates its foundational dataset with great respect. Here, machine learning is used to construct new relationships withing well-honed media formats. Inside of this latent and proto-latent space of Western iconograpy, an artificial spirit wanders through a century of iconography, identifying recurring visual motifs and tracing unexpected new pathways between films, videogames, and their common narratives.
 
 This archive is not static. Interacting with the dataset allows visitors to not only remix the historical archive, but to construct their own bespoke narrative and thematic past that the system can then use to generate posters, mosaics, and even pulp Western novellas -- all based on user meanderings through the archive.
-
-:::
-
-:::
-
-
-
-
-::: {.page .splash}
-
-![](images/cowpoke-dataset/butch-cassidy-train-face.png){.backdrop}
-
-::: {.overlay .keyword}
-
-# ENGINE
-
-:::
-
-:::
-
-
-
-
-
-
-
-
-::: {.page .text}
-
-::: {.overlay .copy}
-
-::: {.illustrations}
-![](images/cowpoke-dataset/crossing-flipbook-visualizer-out-west.png){.row-count-24}
-:::
-
-## REMIX ENGINE
-
-Dead Crossing is powered by a bespoke software environment developed within the Playable Cinema research project. The goal of this research project is to build methodologies and tools to leverage machine learning in the curation, analysis, and recombination of cinema and videogame narratives.
-
-During the latest stage of this research, more than three hundred Western films were collected, segmented, annotated, indexed, and transformed into a traversable archive. Each film passes through a sequence of computational transformations:
-
-* Shot detection
-* Scene detection
-* Subtitle processing
-* Visual annotation
-* Colormetric analysis
-* Vocabulary extraction
-* Semantic indexing
-* Narratological descriptors
-* Real-time synchronization
-
-Together these processes transform a film archive into a playable cinematic landscape.
-
-:::
-
-:::
-
-
-
-
-::: {.page .splash}
-
-![](images/crossing-tool/crossing-tool-models.png){.backdrop}
-
-::: {.overlay .keyword}
-
-# PIPELINE
-
-:::
-
-:::
-
-
-
-
-::: {.page .text}
-
-::: {.overlay .copy}
-
-::: {.illustrations}
-![](images/cowpoke-dataset/movie-motif-cloud-2026-06-22-20-46-41.jpg){.row-count-15}
-:::
-
-## PIPELINE
-
-The archive is constructed through a multi-stage machine-learning pipeline specifically designed for moving-image analysis.
-
-Films are first segmented into individual shots and scenes. Subtitles are synchronized and linked to image sequences. Vision-language models generate structured annotations describing actions, objects, characters, locations, and events.
-
-These annotations are converted into vector embeddings, allowing visual and semantic relationships to be discovered across the entire corpus.
-
-The resulting archive can be searched, navigated, clustered, recomposed, and synchronized with live gameplay in real time.
-
-## REAL-TIME SYSTEM
-
-During exhibition, gameplay footage is continuously analysed and compared against the archive.
-
-As visitors move through the virtual landscape, the system identifies correspondences between gameplay situations and cinematic fragments drawn from hundreds of Western films.
-
-Each journey through the installation produces a different cinematic trajectory through the archive.
 
 :::
 
@@ -405,6 +307,106 @@ More than three hundred Western films were collected, segmented, annotated, inde
 Rather than relying on fixed categories alone, the system combines human curation with machine learning to construct a vocabulary of recurring Western motifs: characters, objects, actions, locations, situations, and archetypes.
 
 The resulting archive functions simultaneously as a dataset, a visual encyclopedia of Western iconography, and a traversable landscape of cinema history.
+
+:::
+
+:::
+
+
+
+
+::: {.page .splash}
+
+![](images/cowpoke-dataset/butch-cassidy-train-face.png){.backdrop}
+
+::: {.overlay .keyword}
+
+# ENGINE
+
+:::
+
+:::
+
+
+
+
+
+
+
+
+::: {.page .text}
+
+::: {.overlay .copy}
+
+::: {.illustrations}
+![](images/cowpoke-dataset/crossing-flipbook-visualizer-out-west.png){.row-count-24}
+:::
+
+## REMIX ENGINE
+
+Dead Crossing is powered by a bespoke software environment developed within the Playable Cinema research project. The goal of this research project is to build methodologies and tools to leverage machine learning in the curation, analysis, and recombination of cinema and videogame narratives.
+
+During the latest stage of this research, more than three hundred Western films were collected, segmented, annotated, indexed, and transformed into a traversable archive.
+
+## REAL-TIME SYSTEM
+
+As visitors play the game inside the cabin, the gameplay footage is continuously analysed and compared against the archive. As they move through the virtual landscape, the system identifies correspondences between gameplay situations and cinematic fragments drawn from hundreds of Western films.
+
+Each journey through the installation produces a different cinematic trajectory through the archive.
+
+## OPEN-SOURCE
+
+The source code, documentation, and development notes of this software package can be downloaded at:
+
+- [github.com/abstractmachine/head-irad-playable-cinema](https:/github.com/abstractmachine/head-irad-playable-cinema)
+
+:::
+
+:::
+
+
+
+
+::: {.page .splash}
+
+![](images/crossing-tool/crossing-tool-models.png){.backdrop}
+
+::: {.overlay .keyword}
+
+# PIPELINE
+
+:::
+
+:::
+
+
+
+
+::: {.page .text}
+
+::: {.overlay .copy}
+
+::: {.illustrations}
+![](images/cowpoke-dataset/movie-motif-cloud-2026-06-22-20-46-41.jpg){.row-count-15}
+:::
+
+## PIPELINE
+
+The archive is constructed through a multi-stage machine-learning pipeline specifically designed for moving-image analysis. Each film passes through a sequence of computational transformations:
+
+- Shot detection
+- Scene detection
+- Subtitle processing
+- Visual annotation
+- Colormetric analysis
+- Vocabulary extraction
+- Semantic indexing
+- Narratological descriptors
+- Real-time synchronization
+
+Films are first segmented into individual shots and scenes. Subtitles are synchronized and linked to image sequences. Vision-language models generate structured annotations describing actions, objects, characters, locations, and events.
+
+These annotations are converted into vector embeddings, allowing visual and semantic relationships to be discovered across the entire corpus. These embeddings also allow the system to run locally, using far less ressources that cloud-based machine learning systems. The resulting archive can be locally searched, navigated, clustered, recomposed, and synchronized with live gameplay in real time, far from any ressource-dependant datacenters.
 
 :::
 
