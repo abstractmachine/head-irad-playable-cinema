@@ -26,7 +26,7 @@ In this current form, the project explores how hybrid strategies can emerge new 
 
 ## Installation
 
-A exhibition document explaining the installation Dead Crossing can be found here: [dead-crossing-exhibition-document](https://github.com/abstractmachine/head-irad-playable-cinema/releases/tag/dead-crossing-exhibition-document)
+A exhibition document explaining the installation Dead Crossing can be found here: [dead-crossing-exhibition-document](https://github.com/abstractmachine/head-irad-playable-cinema/releases/tag/dead-crossing-exhibition-document) (PDF)
 
 ## Team
 - [Douglas Edric Stanley](https://abstractmachine.net), Project Lead, concept, design, development, production, documentation
