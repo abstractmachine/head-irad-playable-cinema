@@ -155,19 +155,21 @@ Back and forth, the two screens remain in dialogue. As the player explores the v
 
 Reframing the imaginary landscapes of the West. The structure resembles a physicalized wireframe model: a cabin stripped of its protective shell, exposed to the elements.
 
-Drawing on a lineage of autonomous architectures — the resistance architecture of Walden Pond, the frontier cabin of the Far West, the paranoiac cabin of the Unabomber Theodore Kaczynski — the cabin operates simultaneously as stage, viewing device, diagram, and shelter.
+Drawing on a lineage of autonomous architectures — the resistance architecture of Walden Pond, the frontier cabin of the Far West, the paranoiac cabin of Theodore Kaczynski — it operates simultaneously as stage, viewing device, diagram, and shelter.
 
-Entering the cabin, visitors find themselves suspended between several overlapping frontiers:
+Entering the cabin, visitors find themselves suspended between several overlapping frontiers.
 
 ## FAR WEST
 
-One frontier is the historical frontier of the "Far West": an iconographic landscape of cowpokes, outlaws, deserts, railroads, and the mythological iconography of desert and mountain landscapes. This frontier is an imaginary world-beyond-civilization, where ethics, laws, and society are open to interpretation.
+One frontier belongs to the mythico-historical geography of the Far West: a landscape of cowpokes, outlaws, deserts, railroads, mountain passes, and lawless settlements.
 
-## MEDIA CROSSINGS
+This frontier is an imaginary world beyond civilization, where ethics, laws, and society remain open to interpretation.
 
-Another frontier is a computationally enabled frontier, where one medium crosses the technical and aesthetic borders of another. This is frontier crossing: passing from one medium to another -- classical Hollywood cinema and contemporay interactive video games -- mediated by machine intelligence.
+## TEMPORAL CROSSOVER
 
-Dead Crossing transforms this open structure of superimposed frontiers into an impossible machine for dreaming the West: a device through which visitors can wander an ever-expanding landscape assembled from a century of Western mythology.
+Another frontier is temporal rather than geographical. More than three hundred Western films, produced across a century of cinema history, coexist with a contemporary videogame simulation of the American West.
+
+Machine learning allows these different historical moments to be traversed as though they occupied the same landscape. The cabin becomes a frame in which past and present, cinema and simulation, mythology and computation cross paths.
 
 :::
 
@@ -194,24 +196,23 @@ Dead Crossing transforms this open structure of superimposed frontiers into an i
 ::: {.overlay .copy}
 
 ::: {.illustrations}
-![](images/cowpoke-controller/cowpoke-controller-front-body_brass-stock_walnut-screws_brass+black.png){.row-count-5}
+![](images/cowpoke-controller/cowpoke-controller-circuit.jpg){.row-count-5}
+![](images/cowpoke-controller/cowpoke-controller-front-body_brass-stock_walnut-screws_brass+black.png){.row-count-6}
+![](images/empty.png){.row-count-1}
+![](images/cowpoke-controller/cowpoke-controller-deringer-2026-02-17-gs-snapshot.png){.row-count-6}
 ![](images/empty.png){.row-count-1}
 ![](images/cowpoke-cabin/double-derringer-transaprent-background.png){.row-count-6}
-![](images/empty.png){.row-count-1}
-![](images/cowpoke-controller/cowpoke-controller-deringer-2026-02-17-gs-snapshot.png){.row-count-5}
-![](images/empty.png){.row-count-1}
-![](images/cowpoke-controller/cowpoke-controller-circuit.jpg){.row-count-5}
 :::
 
 ## INSTRUMENT
 
-A curious curatorial instrument disguised as a nineteenth-century firearm mechanism. The Cowpoke Controller is a custom interface developed specifically for *Dead Crossing*. Part video game controller, part cinematic editing device, part sculptural object, it invites visitors to physically navigate the landscapes and myths of Western cinema.
+A curious curatorial instrument disguised as a nineteenth-century firearm mechanism. Designed using the mechanical vocabulary of nineteenth-century gunsmithing, it combines bronze, walnut, springs, rotating chambers, contemporary circuitboards, and precision-machined components.
 
-Designed using the mechanical vocabulary of nineteenth-century gunsmithing, the controller transforms gameplay into an act of navigation through cinema history. It combines design and material constraints of the period -- bronze, walnut -- with the precision machined milling, circuitboards, and pick-in-place industrial circuitboard manufacturing.
+The Cowpoke Controller is a custom interface developed specifically for *Dead Crossing*. Part video game controller, part cinematic editing device, part sculptural object, it invites visitors to physically navigate the landscapes and myths of Western cinema while directly controlling a popular Western videogame.
 
-The rotating cylinder allows visitors to select from a carefully curated collection of iconic moments drawn from *Red Dead Redemption 2*: train robberies, frontier towns, hunting expeditions, campfires, saloons, duels, wilderness journeys, and other recurring figures of Western mythology.
+The controller physically stages the crossing at the heart of the installation. Two barrels point toward one another, holding cinema and videogame in a suspended standoff. Between them, the rotating cylinder becomes an instrument for choosing how one medium enters the path of the other.
 
-Each selection becomes a new point of departure for traversing the installation's cross-indexed archive of cinema and gameplay. The controller functions simultaneously as a navigation device, a curatorial tool, and a mechanism for wandering through this latent landscape of the American West.
+Each chamber corresponds to a carefully curated game save: train robberies, frontier towns, hunting expeditions, campfires, saloons, duels, wilderness journeys, and other recurring situations from Western mythology. Each save opens a different region of the videogame world, and with it a different pathway through the installation’s cross-indexed archive of Western cinema.
 
 :::
 
@@ -249,13 +250,15 @@ Each selection becomes a new point of departure for traversing the installation'
 
 ## A HAUNTED LANDSCAPE
 
-A specter haunts cinema, the spector of neural networks.
+A specter haunts cinema, the specter of neural networks.
 
-For more than a century, Western films have repeated and recombined a common repertoire of landscapes, characters, gestures, objects, and situations. Horses cross rivers. Trains arrive in frontier towns. Outlaws wait in saloons. Sheriffs confront strangers beneath wooden awnings. It is, in a sense, one of the pre-eminent examples of a proto-latent narrative engine, an active frontierland, well before the advent of AI.
+Artificial intelligence now occupies a central place in the cultural imagination, as algorithms set fire to longstanding notions of authorship, iconography, labour, memory, and the future of cinema as an industry. *Dead Crossing* begins from this anxiety, but moves in a resolutely different direction. It does not ask machines to dream new images from prompts. It asks what machine learning can reveal about images situated in their historical and cultural contexts.
 
-The goal of the Playable Cinema research project is to tap into this modular space where icons can remix semantically and formally with other icons. Remix Cinema. But rather than tripping down the endless rabbit holes of generative AI slop, the project instead treates its foundational dataset with great respect. Here, machine learning is used to construct new relationships withing well-honed media formats. Inside of this latent and proto-latent space of Western iconograpy, an artificial spirit wanders through a century of iconography, identifying recurring visual motifs and tracing unexpected new pathways between films, videogames, and their common narratives.
+For more than a century, Western films have repeated and recombined a shared repertoire of landscapes, characters, gestures, objects, and situations. Horses cross rivers. Trains arrive in frontier towns. Outlaws wait in saloons. Sheriffs confront strangers beneath wooden awnings. In this sense, the Western already behaves like a proto-latent narrative engine: a modular system of recurring icons, settings, conflicts, and archetypes.
 
-This archive is not static. Interacting with the dataset allows visitors to not only remix the historical archive, but to construct their own bespoke narrative and thematic past that the system can then use to generate posters, mosaics, and even pulp Western novellas -- all based on user meanderings through the archive.
+The Playable Cinema research project (RCDAV, HES-SO) enters this modular space not to replace cinema with synthetic images, but to construct new relationships within an existing cultural archive. Machine learning is used to identify motifs, trace correspondences, and open pathways between films, videogames, and their shared mythologies.
+
+This archive is not static. As visitors move through the dataset, they construct their own narrative and thematic trajectory — a path that can later generate posters, mosaics, and pulp Western novellas based on their meanderings through the archive.
 
 :::
 
@@ -387,7 +390,7 @@ The source code, documentation, and development notes of this software package c
 ::: {.overlay .copy}
 
 ::: {.illustrations}
-![](images/cowpoke-dataset/movie-motif-cloud-2026-06-22-20-46-41.jpg){.row-count-15}
+![](images/crossing-tool/crossing-tool-pipeline-shotlist.png){.row-count-29}
 :::
 
 ## PIPELINE
