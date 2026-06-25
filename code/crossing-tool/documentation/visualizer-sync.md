@@ -24,9 +24,34 @@ Vendor ID:                   AuthenticAMD
 
 - NVIDIA RTX PRO 4500 Blackwell 32 Gb VRAM
 
+### Game Console
+
+- Sony PS4 Pro
+- Samsung MZ-77E500B - 870 EVO SATA III 2.5" SSD 500 GB 560MB/530MB R/W
+
+### HDCP
+
+The Sony had High-bandwidth Digital Content Protection enabled by default. This needs to be disabled:
+
+```
+Settings → System → Enable HDCP → Off
+```
+
 ### Capture
 
-- PureTools `PT-C-HBUSB` USB-3 Capture Card
+- HDMI Splitter 1 in > 2 out
+- ~~PureTools `PT-C-HBUSB` USB-3 Capture Card~~ (Junk)
+- Elgato Cam Link 4k
+
+As it turns out, Cam Link 4K works fine on our Ubuntu install, contrary to some online info.
+
+### STTY
+
+A weird but happens after some `ffmpeg` commands where my commandline keeps dissapearing. I fixed it with:
+
+```
+$ stty sane
+```
 
 ### Install
 

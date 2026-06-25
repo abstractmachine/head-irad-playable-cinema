@@ -29,6 +29,8 @@ import threading as _threading
 import time as _time
 from pathlib import Path
 
+import numpy as np
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from styles import theme
@@ -117,6 +119,7 @@ _FV_MIN_H        = _NODE_TITLE_H + 80   # minimum FrameVectorNode height
 _STAR_COLOR_A    = QColor("#00ff00")    # inner-edge colour (low radius)
 _STAR_COLOR_B    = QColor("#ff0000")    # outer-edge colour (high radius)
 _NODE_TEXT_COLOR = "#ffffff"            # text colour inside module windows
+_PEN_WIDTH       = 2
 
 _VIDEO_DEVICE        = "/dev/video0"   # Elgato Cam Link 4K
 _VIDEO_WIDTH         = 1920
@@ -511,9 +514,16 @@ class _VideoReaderThread:
             fd  = proc.stdout.fileno()
 
             while not self._stopping:
-                # 2-second deadline: if ffmpeg goes quiet the device stalled
+                # 5-second deadline per read attempt.  After a forced
+                # teardown (SIGKILL via fuser -k) the V4L2 driver needs
+                # ~15-20 s to reset; short retries poll every 5 s and pick
+                # up the signal as soon as the driver is ready, rather than
+                # blocking for 30 s before the first retry.
+                # Once streaming is established tighten to 3 s for stall
+                # detection.
+                timeout = 5.0 if not got_frame else 3.0
                 try:
-                    ready = _select_mod.select([proc.stdout], [], [], 2.0)[0]
+                    ready = _select_mod.select([proc.stdout], [], [], timeout)[0]
                 except Exception:
                     break
                 if not ready:
@@ -542,9 +552,26 @@ class _VideoReaderThread:
                     self._signals.frame_ready.emit(frame.copy())
 
             # ---- teardown ------------------------------------------------
+            # SIGTERM first: lets ffmpeg call ioctl(VIDIOC_STREAMOFF) and
+            # release DMA buffers cleanly.  If we SIGKILL immediately the
+            # kernel has to do the cleanup itself, which can take 10-20 s
+            # and blocks the next ffmpeg open from receiving frames.
             try:
-                proc.kill()
-                proc.wait(timeout=2)
+                proc.terminate()
+                proc.wait(timeout=3)
+            except Exception:
+                try:
+                    proc.kill()
+                    proc.wait(timeout=2)
+                except Exception:
+                    pass
+
+            # Log any ffmpeg error output so failures are visible in console
+            try:
+                err = proc.stderr.read().decode(errors="replace").strip()
+                if err:
+                    import sys as _sys
+                    print(f"[VideoReader] ffmpeg: {err}", file=_sys.stderr)
             except Exception:
                 pass
 
@@ -557,18 +584,32 @@ class _VideoReaderThread:
                 self._signals.device_lost.emit()
                 ever_connected = True
 
-            self._sleep_reconnect()
+            # Fast retry if we never got a frame this session (device still
+            # resetting); normal delay after a real signal loss.
+            if got_frame:
+                self._sleep_reconnect()
+            else:
+                for _ in range(5):   # 0.5 s fast retry
+                    if self._stopping:
+                        return
+                    _time.sleep(0.1)
 
     def _launch_ffmpeg(self) -> "_subprocess.Popen | None":
-        """Start an ffmpeg process that writes raw RGB24 frames to stdout."""
+        """Start an ffmpeg process that writes raw RGB24 frames to stdout.
+
+        No input format constraints: let ffmpeg and the V4L2 driver negotiate
+        whatever the HDMI source is sending (the Cam Link 4K locks its output
+        format to the incoming HDMI signal, so forcing a framerate or pixel
+        format often causes an immediate failure).  A scale filter guarantees
+        the output is always _VIDEO_WIDTH x _VIDEO_HEIGHT regardless of what
+        the PS4 / HDMI source negotiated.
+        """
         try:
-            cmd = ["ffmpeg", "-loglevel", "quiet", "-f", "v4l2"]
-            if _VIDEO_INPUT_FORMAT:
-                cmd += ["-input_format", _VIDEO_INPUT_FORMAT]
-            cmd += [
-                "-framerate", str(_VIDEO_FPS),
-                "-video_size", f"{_VIDEO_WIDTH}x{_VIDEO_HEIGHT}",
+            cmd = [
+                "ffmpeg", "-loglevel", "warning",
+                "-f", "v4l2",
                 "-i", self._device,
+                "-vf", f"scale={_VIDEO_WIDTH}:{_VIDEO_HEIGHT}",
                 "-f", "rawvideo",
                 "-pix_fmt", "rgb24",
                 "pipe:1",
@@ -576,7 +617,7 @@ class _VideoReaderThread:
             return _subprocess.Popen(
                 cmd,
                 stdout=_subprocess.PIPE,
-                stderr=_subprocess.DEVNULL,
+                stderr=_subprocess.PIPE,   # captured; logged if ffmpeg exits early
                 bufsize=0,
             )
         except (OSError, FileNotFoundError):
@@ -1742,7 +1783,7 @@ class _VectorStarOverlay(QWidget):
             j = (i + 1) % n
             mean_r = (radii[i] + radii[j]) / 2.0
             pen = QPen(_color(mean_r))
-            pen.setWidthF(0.75)
+            pen.setWidthF(_PEN_WIDTH)
             painter.setPen(pen)
             painter.drawLine(pts[i], pts[j])
 
