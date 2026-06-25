@@ -47,11 +47,13 @@ As it turns out, Cam Link 4K works fine on our Ubuntu install, contrary to some 
 
 ### STTY
 
-A weird but happens after some `ffmpeg` commands where my commandline keeps dissapearing. I fixed it with:
+A weird bug happens after some `ffmpeg` commands where my commandline keeps dissapearing. I fixed it with:
 
 ```
 $ stty sane
 ```
+
+This command has to be written in the bling though.
 
 ### Install
 

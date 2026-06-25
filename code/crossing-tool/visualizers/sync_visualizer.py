@@ -42,6 +42,7 @@ from PyQt5.QtCore import (
     QPoint,
     QPointF,
     QRect,
+    QRectF,
     QSize,
     Qt,
     QThread,
@@ -69,6 +70,9 @@ from PyQt5.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMenu,
     QPushButton,
@@ -818,13 +822,39 @@ class SyncNode(QWidget):
     # Port API — subclasses override to advertise ports
     # ------------------------------------------------------------------
 
+    # Each spec entry:  {"type": "image"|"vector", "shape": "half_circle"|"triangle",
+    #                    "dimension": int|None, "label": str|None}
+
+    def output_specs(self) -> dict:
+        """Return output port specs keyed by port name."""
+        return {}
+
+    def input_specs(self) -> dict:
+        """Return input port specs keyed by port name."""
+        return {}
+
     def output_ports(self) -> list[str]:
-        """Return list of output port names (e.g. ['image'])."""
-        return []
+        """Derived from output_specs() — subclasses should not override this."""
+        return list(self.output_specs().keys())
 
     def input_ports(self) -> list[str]:
-        """Return list of input port names."""
-        return []
+        """Derived from input_specs() — subclasses should not override this."""
+        return list(self.input_specs().keys())
+
+    # ------------------------------------------------------------------
+    # Event-driven dispatch API
+    # ------------------------------------------------------------------
+
+    def emit_output(self, port_name: str, value, meta: dict | None = None) -> None:
+        """Push *value* through output port *port_name* to all connected nodes."""
+        ws = self.parent()
+        if isinstance(ws, SyncWorkspace):
+            ws.dispatch_output(self, port_name, value, meta or {})
+
+    def receive_input(self, port_name: str, value, meta: dict | None = None) -> None:
+        """Called by SyncWorkspace.dispatch_output when data arrives on an input port.
+        Subclasses override this to handle incoming values."""
+        pass
 
     def output_port_pos(self, port: str) -> QPoint:
         """Return the port TIP in parent (workspace) coordinates.
@@ -1013,8 +1043,10 @@ class LiveVideoNode(SyncNode):
     def node_type(self) -> str:
         return "live_video"
 
-    def output_ports(self) -> list[str]:
-        return ["image"]
+    def output_specs(self) -> dict:
+        return {
+            "image": {"type": "image", "shape": "half_circle", "dimension": None, "label": None},
+        }
 
     def latest_frame_rgb(self):
         """Return the most recent captured frame, or None."""
@@ -1223,8 +1255,6 @@ class SyncWorkspace(QWidget):
                         node._scope_btn.setText(f"  {node._scope_title}")
                 if "top" in s:
                     node._top = int(s["top"])
-                if "interval" in s:
-                    node._set_interval(s["interval"])
                 node.show()
         # Advance the global ID counter past all restored IDs so new nodes
         # never collide with existing ones.
@@ -1268,6 +1298,17 @@ class SyncWorkspace(QWidget):
             if c["target_node"] == node_id and c["target_port"] == port:
                 return id_map.get(c["source_node"])
         return None
+
+    def dispatch_output(self, source_node: "SyncNode", source_port: str,
+                        value, meta: dict) -> None:
+        """Fan-out a value from source_node.source_port to all connected inputs."""
+        id_map = {n.node_id: n for n in self._nodes}
+        for c in self._connections:
+            if (c["source_node"] == source_node.node_id
+                    and c["source_port"] == source_port):
+                target = id_map.get(c["target_node"])
+                if target is not None:
+                    target.receive_input(c["target_port"], value, meta)
 
     # ------------------------------------------------------------------
     # Drag-and-drop (palette → workspace)
@@ -1433,8 +1474,24 @@ class SyncWorkspace(QWidget):
         return False
 
     def _types_compatible(self, src_node, src_port, tgt_node, tgt_port) -> bool:
-        # For now: image→image only
-        return src_port == "image" and tgt_port == "image"
+        # No self-connections
+        if src_node is tgt_node:
+            return False
+        src_specs = src_node.output_specs()
+        tgt_specs = tgt_node.input_specs()
+        if src_port not in src_specs or tgt_port not in tgt_specs:
+            return False
+        src_spec = src_specs[src_port]
+        tgt_spec = tgt_specs[tgt_port]
+        # Types must match
+        if src_spec["type"] != tgt_spec["type"]:
+            return False
+        # Dimensions must match if both specified
+        src_dim = src_spec.get("dimension")
+        tgt_dim = tgt_spec.get("dimension")
+        if src_dim is not None and tgt_dim is not None and src_dim != tgt_dim:
+            return False
+        return True
 
     # ------------------------------------------------------------------
     # Connection helpers (fan-out: one output → many inputs;
@@ -1540,7 +1597,7 @@ class SyncWorkspace(QWidget):
             p.setPen(QPen(_CABLE_COLOR_DRAG, pen_w))
             self._draw_cable(p, p1, p2)
 
-        # Draw port triangles for all nodes — always visible, positioned OUTSIDE
+        # Draw port shapes for all nodes — always visible, positioned OUTSIDE
         # node bounds so clicks on them reach this workspace mousePressEvent.
         p.setPen(Qt.NoPen)
         p.setRenderHint(QPainter.Antialiasing, True)
@@ -1549,8 +1606,9 @@ class SyncWorkspace(QWidget):
             if not node.isVisible():
                 continue
             cy = node.y() + node.height() // 2
+            out_specs = node.output_specs()
             for port in node.output_ports():
-                bx = node.x() + node.width()   # base at right edge of node
+                bx = node.x() + node.width()   # base/center at right edge
                 tx = bx + s                     # tip extends right
                 if (self._drag_src_node is node
                         and self._drag_src_port == port
@@ -1563,13 +1621,34 @@ class SyncWorkspace(QWidget):
                 else:
                     color = _PORT_COLOR_IDLE
                 p.setBrush(color)
-                p.drawPolygon(QPolygon([
-                    QPoint(bx, cy - s // 2),
-                    QPoint(tx, cy),
-                    QPoint(bx, cy + s // 2),
-                ]))
+                spec = out_specs.get(port, {})
+                if spec.get("shape") == "half_circle":
+                    # Right-facing semicircle: flat edge at node right, dome extends right
+                    path = QPainterPath()
+                    path.moveTo(bx, cy - s)
+                    path.arcTo(QRectF(bx - s, cy - s, 2 * s, 2 * s), 90, -180)
+                    path.closeSubpath()
+                    p.drawPath(path)
+                else:
+                    # Default: right-pointing triangle
+                    p.drawPolygon(QPolygon([
+                        QPoint(bx, cy - s // 2),
+                        QPoint(tx, cy),
+                        QPoint(bx, cy + s // 2),
+                    ]))
+                label = spec.get("label")
+                if label:
+                    p.setPen(color)
+                    p.setFont(self.font())
+                    fm = p.fontMetrics()
+                    lw = fm.horizontalAdvance(label)
+                    # Draw just outside node.right(), above the port shape
+                    p.drawText(bx + 2, cy - s // 2 - 2, label)
+                    p.setPen(Qt.NoPen)
+
+            in_specs = node.input_specs()
             for port in node.input_ports():
-                bx = node.x()    # base at left edge of node
+                bx = node.x()    # base/center at left edge
                 tx = bx - s      # tip extends left
                 if (self._drag_src_node is node
                         and self._drag_src_port == port
@@ -1582,11 +1661,30 @@ class SyncWorkspace(QWidget):
                 else:
                     color = _PORT_COLOR_IDLE
                 p.setBrush(color)
-                p.drawPolygon(QPolygon([
-                    QPoint(bx, cy - s // 2),
-                    QPoint(tx, cy),
-                    QPoint(bx, cy + s // 2),
-                ]))
+                spec = in_specs.get(port, {})
+                if spec.get("shape") == "half_circle":
+                    # Left-facing semicircle: flat edge at node left, dome extends left
+                    path = QPainterPath()
+                    path.moveTo(bx, cy - s)
+                    path.arcTo(QRectF(bx - s, cy - s, 2 * s, 2 * s), 90, 180)
+                    path.closeSubpath()
+                    p.drawPath(path)
+                else:
+                    # Default: left-pointing triangle
+                    p.drawPolygon(QPolygon([
+                        QPoint(bx, cy - s // 2),
+                        QPoint(tx, cy),
+                        QPoint(bx, cy + s // 2),
+                    ]))
+                label = spec.get("label")
+                if label:
+                    p.setPen(color)
+                    p.setFont(self.font())
+                    fm = p.fontMetrics()
+                    lw = fm.horizontalAdvance(label)
+                    # Draw just outside node.left(), above the port shape
+                    p.drawText(bx - lw - 2, cy - s // 2 - 2, label)
+                    p.setPen(Qt.NoPen)
 
         p.end()
 
@@ -1595,12 +1693,22 @@ class SyncWorkspace(QWidget):
 
         Control points always exit/enter horizontally so the cable visibly
         leaves the output port to the right and arrives at the input port
-        from the left.  When the input is to the left of the output the
-        tension is increased so the cable loops out before doubling back.
+        from the left.
+
+        Forward connections (input to the right of output, dx >= 0):
+          tension is proportional to the vertical offset only, so cables that
+          are nearly level (small dy) flatten to a straight line.
+
+        Backward connections (input to the left of output, dx < 0):
+          tension uses horizontal span with a floor so the cable arcs
+          visibly outward before doubling back.
         """
         dx = p2.x() - p1.x()
-        # Minimum tension ensures a visible rightward exit even when looping back
-        tension = int(max(abs(dx) * 0.5, 80))
+        dy = p2.y() - p1.y()
+        if dx >= 0:
+            tension = int(abs(dy) * 0.5)
+        else:
+            tension = int(max(abs(dx) * 0.5, 80))
         path = QPainterPath()
         path.moveTo(p1)
         path.cubicTo(
@@ -1921,8 +2029,15 @@ class FrameVectorNode(SyncNode):
     def node_type(self) -> str:
         return "frame_vector"
 
-    def input_ports(self) -> list[str]:
-        return ["image"]
+    def input_specs(self) -> dict:
+        return {
+            "image": {"type": "image", "shape": "half_circle", "dimension": None, "label": None},
+        }
+
+    def output_specs(self) -> dict:
+        return {
+            "vector": {"type": "vector", "shape": "triangle", "dimension": 512, "label": "512"},
+        }
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -2173,6 +2288,7 @@ class FrameVectorNode(SyncNode):
 
     def _on_embed_result(self, vec, model_name: str) -> None:
         import numpy as np
+        import time as _time
         self._embed_busy = False
         self._model_name = model_name
         self._last_vec   = vec
@@ -2180,6 +2296,14 @@ class FrameVectorNode(SyncNode):
         self._set_status("ok")
         if self._star_on:
             self._star_overlay.set_vector(vec)
+        # Push vector to all connected downstream nodes
+        self.emit_output("vector", vec, {
+            "type": "vector",
+            "dimension": int(len(vec)),
+            "model": model_name,
+            "source_node": self.node_id,
+            "timestamp": _time.time(),
+        })
 
     def _on_embed_error(self, msg: str) -> None:
         self._embed_busy = False
@@ -2282,7 +2406,6 @@ class FrameMatchNode(SyncNode):
         self._scope_all:     bool  = True
         self._scope_title:   "str | None" = None
         self._top:           int   = _FM_DEFAULT_TOP
-        self._interval_s:    "float | None" = _FM_DEFAULT_INTERVAL
         self._embed_busy:    bool  = False
         self._last_results:  "list[dict]" = []
         self._status_msg:    str   = "waiting for connection…"
@@ -2295,25 +2418,15 @@ class FrameMatchNode(SyncNode):
                                  parent=self._title_bar)
         self._media_btn.setFont(theme.font_ui())
         self._media_btn.setStyleSheet(_TB_TEXT_BTN_SS)
-        self._media_btn.clicked.connect(self._toggle_media)
+        self._media_btn.clicked.connect(self._show_media_menu)
         self._tb_layout.insertWidget(0, self._media_btn, 0, Qt.AlignVCenter)
 
-        self._scope_btn = _TbBtn(icon_name="search", text="  all",
+        self._scope_btn = _TbBtn(icon_name="search", text="  -- all",
                                  icon_size=14, parent=self._title_bar)
         self._scope_btn.setFont(theme.font_ui())
         self._scope_btn.setStyleSheet(_TB_TEXT_BTN_SS)
         self._scope_btn.clicked.connect(self._show_scope_menu)
         self._tb_layout.insertWidget(1, self._scope_btn, 0, Qt.AlignVCenter)
-
-        self._interval_btn = _TbBtn(
-            icon_name="alarm-solid",
-            text=f"{_FM_DEFAULT_INTERVAL:.1f}s",
-            icon_size=14, parent=self._title_bar,
-        )
-        self._interval_btn.setFont(theme.font_ui())
-        self._interval_btn.setStyleSheet(_TB_TEXT_BTN_SS)
-        self._interval_btn.clicked.connect(self._show_interval_menu)
-        self._tb_layout.insertWidget(2, self._interval_btn, 0, Qt.AlignVCenter)
 
         # ── Content text area ─────────────────────────────────────────
         self._body = QWidget(self)
@@ -2335,19 +2448,17 @@ class FrameMatchNode(SyncNode):
         blay.addWidget(self._result_text)
         self.content_layout().addWidget(body)
 
-        # ── Timer + worker ────────────────────────────────────────────
-        self._timer = QTimer(self)
-        if self._interval_s is not None:
-            self._timer.setInterval(int(self._interval_s * 1000))
-        self._timer.timeout.connect(self._on_tick)
         self._thread: "QThread | None" = None
         self._worker: "_FrameMatchWorker | None" = None
 
         # ── Edge resize (same as FrameVectorNode) ─────────────────────
         self._edge_handles: dict[str, _EdgeResizeHandle] = {}
+        self._edge_resize_geom = None
         for edge in ("top", "bottom", "left", "right", "tl", "tr", "bl", "br"):
             h = _EdgeResizeHandle(edge, self)
+            h.resize_started.connect(self._on_edge_resize_start)
             h.resize_dragged.connect(self._on_edge_resize_drag)
+            h.resize_released.connect(self._on_edge_resize_end)
             self._edge_handles[edge] = h
         self._reposition_edge_handles()
 
@@ -2364,18 +2475,16 @@ class FrameMatchNode(SyncNode):
     def node_type(self) -> str:
         return "frame_match"
 
-    def input_ports(self) -> list[str]:
-        return ["image"]
-
-    def output_ports(self) -> list[str]:
-        return []
+    def input_specs(self) -> dict:
+        return {
+            "vector": {"type": "vector", "shape": "triangle", "dimension": 512, "label": "512"},
+        }
 
     def state_dict(self) -> dict:
         d = super().state_dict()
         d["target_media"] = self._media_type
         d["scope_all"]    = self._scope_all
         d["scope_title"]  = self._scope_title
-        d["interval"]     = self._interval_s
         d["top"]          = self._top
         return d
 
@@ -2383,19 +2492,13 @@ class FrameMatchNode(SyncNode):
     # Connection callbacks
     # ------------------------------------------------------------------
 
-    def on_connected(self, source_node: "LiveVideoNode") -> None:
+    def on_connected(self, source_node) -> None:
         self._source_node = source_node
-        self._status_msg  = "connected, waiting for frame…"
+        self._status_msg  = "connected, waiting for vector…"
         self._update_result_text()
-        if self._interval_s is not None:
-            self._timer.setInterval(int(self._interval_s * 1000))
-            self._timer.start()
-        else:
-            QTimer.singleShot(0, self._on_tick)
 
     def on_disconnected(self) -> None:
         self._source_node = None
-        self._timer.stop()
         self._embed_busy  = False
         self._status_msg  = "waiting for connection…"
         self._last_results = []
@@ -2405,16 +2508,7 @@ class FrameMatchNode(SyncNode):
     # Title bar interactions
     # ------------------------------------------------------------------
 
-    def _toggle_media(self) -> None:
-        self._media_type = "gameplay" if self._media_type == "movie" else "movie"
-        self._media_btn.setText(f"  {self._media_type}")
-        # Invalidate catalog cache for old scope
-        from services import sync_frame_match as _sfm
-        _sfm._catalog_cache.clear()
-        self._last_results = []
-        self._update_result_text()
-
-    def _show_scope_menu(self) -> None:
+    def _show_media_menu(self) -> None:
         menu = QMenu(self)
         menu.setStyleSheet(
             f"QMenu {{ background: {theme.PANEL_BG}; color: {theme.TEXT};"
@@ -2422,104 +2516,193 @@ class FrameMatchNode(SyncNode):
             f"QMenu::item {{ padding: 4px 16px; }}"
             f"QMenu::item:selected {{ background: {theme.ACCENT}; }}"
         )
-        act_all = menu.addAction("all")
-        act_all.setCheckable(True)
-        act_all.setChecked(self._scope_all)
-        btn = self._scope_btn
+        for mt in ("movie", "gameplay"):
+            act = menu.addAction(mt)
+            act.setCheckable(True)
+            act.setChecked(self._media_type == mt)
+            act.setData(mt)
+        btn = self._media_btn
         chosen = menu.exec_(btn.mapToGlobal(QPoint(0, btn.height())))
-        if chosen is act_all:
+        if chosen and chosen.data() and chosen.data() != self._media_type:
+            self._media_type  = chosen.data()
+            self._media_btn.setText(f"  {self._media_type}")
+            # Reset scope when media type changes
             self._scope_all   = True
             self._scope_title = None
-            self._scope_btn.setText("  all")
+            self._scope_btn.setText("  -- all")
             from services import sync_frame_match as _sfm
             _sfm._catalog_cache.clear()
-
-    def _show_interval_menu(self) -> None:
-        menu = QMenu(self)
-        menu.setStyleSheet(
-            f"QMenu {{ background: {theme.PANEL_BG}; color: {theme.TEXT};"
-            f"  border: 1px solid {theme.UI_BORDER}; padding: 2px; }}"
-            f"QMenu::item {{ padding: 4px 16px; }}"
-            f"QMenu::item:selected {{ background: {theme.ACCENT}; }}"
-        )
-        for label, val in [("off", None), ("0.25s", 0.25), ("0.5s", 0.5),
-                           ("1.0s", 1.0), ("2.0s", 2.0), ("5.0s", 5.0)]:
-            act = menu.addAction(label)
-            act.setData(val)
-            act.setCheckable(True)
-            act.setChecked(self._interval_s == val)
-        btn = self._interval_btn
-        chosen = menu.exec_(btn.mapToGlobal(QPoint(0, btn.height())))
-        if chosen:
-            self._set_interval(chosen.data())
-
-    def _set_interval(self, seconds) -> None:
-        self._interval_s = seconds
-        self._timer.stop()
-        if seconds is None:
-            self._interval_btn.setText("off")
-            if self._source_node is not None:
-                QTimer.singleShot(0, self._on_tick)
-        else:
-            label = f"{seconds:.2f}s".rstrip("0").rstrip(".")
-            if label.endswith("."):
-                label += "0"
-            self._interval_btn.setText(label)
-            self._timer.setInterval(int(seconds * 1000))
-            if self._source_node is not None:
-                self._timer.start()
-
-    # ------------------------------------------------------------------
-    # Matching loop
-    # ------------------------------------------------------------------
-
-    def _on_tick(self) -> None:
-        if self._embed_busy or self._source_node is None:
-            return
-        frame = self._source_node.latest_frame_rgb()
-        if frame is None:
-            self._status_msg = "waiting for image…"
+            self._last_results = []
             self._update_result_text()
-            return
-        self._embed_busy = True
-        self._status_msg = "matching…"
-        self._update_result_text()
 
+    def _show_scope_menu(self) -> None:
+        # ── Fetch titles ──────────────────────────────────────────────
         try:
             from tool import prefs as _p
             project_path = _p.get("path") or "."
         except Exception:
             project_path = "."
-
-        import numpy as np
-        frame_copy = np.array(frame)
-
-        thread = QThread()
-        worker = _FrameMatchWorker(
-            frame_copy, project_path,
-            self._media_type, self._scope_title, self._scope_all,
-            self._top,
+        try:
+            from data.metadata import get_metadata
+            entries = get_metadata(project_path, media_type=self._media_type)
+        except Exception:
+            entries = []
+        sorted_entries = sorted(
+            entries,
+            key=lambda e: (e.get("title") or e.get("filename", "")).lower(),
         )
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.results.connect(self._on_match_results)
-        worker.error.connect(self._on_match_error)
-        worker.results.connect(thread.quit)
-        worker.error.connect(thread.quit)
-        thread.finished.connect(thread.deleteLater)
-        self._thread = thread
-        self._worker = worker
-        thread.start()
 
-    def _on_match_results(self, hits: list) -> None:
-        self._embed_busy  = False
-        self._last_results = hits
-        self._status_msg  = "ok"
-        self._update_result_text()
+        # ── Styles ────────────────────────────────────────────────────
+        _ss_frame  = (
+            f"QFrame {{ background: {theme.PANEL_BG};"
+            f"  border: 1px solid {theme.UI_BORDER}; }}"
+        )
+        _ss_filter = (
+            f"QLineEdit {{ background: {theme.PANEL_BG}; color: {theme.TEXT};"
+            f"  border: none; border-bottom: 1px solid {theme.UI_BORDER};"
+            f"  padding: 4px 6px; font-size: 11px; }}"
+        )
+        _ss_list = (
+            f"QListWidget {{ background: {theme.PANEL_BG}; color: {theme.TEXT};"
+            f"  border: none; font-size: 11px; outline: none; }}"
+            f"QListWidget::item {{ padding: 3px 8px; }}"
+            f"QListWidget::item:selected, QListWidget::item:hover"
+            f"  {{ background: {theme.ACCENT}; color: #ffffff; }}"
+            f"QScrollBar:vertical {{ width: 8px; background: transparent; margin: 0; }}"
+            f"QScrollBar::handle:vertical {{ background: {theme.UI_BORDER};"
+            f"  border-radius: 3px; min-height: 20px; }}"
+            f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical"
+            f"  {{ height: 0; }}"
+        )
 
-    def _on_match_error(self, msg: str) -> None:
-        self._embed_busy = False
-        self._status_msg = f"error: {msg}"
+        # ── Build popup ───────────────────────────────────────────────
+        popup = QFrame(None, Qt.Popup | Qt.FramelessWindowHint)
+        popup.setStyleSheet(_ss_frame)
+        popup.setAttribute(Qt.WA_DeleteOnClose)
+        popup.setFixedWidth(260)
+
+        vlay = QVBoxLayout(popup)
+        vlay.setContentsMargins(0, 0, 0, 0)
+        vlay.setSpacing(0)
+
+        filter_edit = QLineEdit(popup)
+        filter_edit.setPlaceholderText("filter\u2026")
+        filter_edit.setStyleSheet(_ss_filter)
+        filter_edit.setFixedHeight(28)
+        vlay.addWidget(filter_edit)
+
+        lst = QListWidget(popup)
+        lst.setStyleSheet(_ss_list)
+        lst.setFrameShape(QFrame.NoFrame)
+        lst.setUniformItemSizes(True)
+        lst.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        vlay.addWidget(lst)
+
+        # ── Populate ──────────────────────────────────────────────────
+        all_item = QListWidgetItem("\u2014\u2014  all  \u2014\u2014")
+        all_item.setData(Qt.UserRole, None)
+        lst.addItem(all_item)
+        for entry in sorted_entries:
+            label    = entry.get("title") or entry.get("filename", "?")
+            filename = entry.get("filename") or label
+            it = QListWidgetItem(label)
+            it.setData(Qt.UserRole, filename)
+            lst.addItem(it)
+
+        # Pre-select current value
+        for i in range(lst.count()):
+            it = lst.item(i)
+            d  = it.data(Qt.UserRole)
+            if (self._scope_all and d is None) or (
+                    not self._scope_all and d == self._scope_title):
+                lst.setCurrentItem(it)
+                lst.scrollToItem(it)
+                break
+
+        # Constrain height to MAX_VISIBLE rows
+        MAX_VISIBLE = 25
+        row_h   = max(lst.sizeHintForRow(0), 22) if lst.count() else 22
+        visible = min(lst.count(), MAX_VISIBLE)
+        lst.setFixedHeight(visible * row_h)
+
+        # ── Filter ────────────────────────────────────────────────────
+        def _apply_filter(text: str) -> None:
+            q = text.strip().lower()
+            for i in range(lst.count()):
+                it = lst.item(i)
+                if it.data(Qt.UserRole) is None:   # "all" always visible
+                    it.setHidden(False)
+                    continue
+                it.setHidden(bool(q) and q not in it.text().lower())
+        filter_edit.textChanged.connect(_apply_filter)
+
+        # ── Pick ──────────────────────────────────────────────────────
+        def _pick(item: QListWidgetItem) -> None:
+            data = item.data(Qt.UserRole)
+            if data is None:
+                self._scope_all   = True
+                self._scope_title = None
+                self._scope_btn.setText("  -- all")
+            else:
+                self._scope_all   = False
+                self._scope_title = data
+                short = item.text()
+                if len(short) > 22:
+                    short = short[:20] + "\u2026"
+                self._scope_btn.setText(f"  {short}")
+            from services import sync_frame_match as _sfm
+            _sfm._catalog_cache.clear()
+            popup.close()
+        lst.itemClicked.connect(_pick)
+
+        # ── Key handling in filter field ──────────────────────────────
+        def _filter_key(event) -> None:
+            if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+                for i in range(lst.count()):
+                    it = lst.item(i)
+                    if not it.isHidden():
+                        _pick(it)
+                        return
+            elif event.key() == Qt.Key_Escape:
+                popup.close()
+            elif event.key() == Qt.Key_Down:
+                lst.setFocus()
+                if lst.currentRow() < lst.count() - 1:
+                    lst.setCurrentRow(lst.currentRow() + 1)
+            else:
+                QLineEdit.keyPressEvent(filter_edit, event)
+        filter_edit.keyPressEvent = _filter_key
+
+        # ── Position below scope button ───────────────────────────────
+        btn = self._scope_btn
+        popup.move(btn.mapToGlobal(QPoint(0, btn.height())))
+        popup.show()
+        filter_edit.setFocus()
+
+    # ------------------------------------------------------------------
+    # Event-driven vector input
+    # ------------------------------------------------------------------
+
+    def receive_input(self, port_name: str, value, meta: dict | None = None) -> None:
+        """Called when a connected FrameVectorNode emits a new vector."""
+        if port_name != "vector":
+            return
+        import numpy as np
+        vec  = value
+        meta = meta or {}
+        dim  = int(meta.get("dimension", len(vec) if vec is not None else 0))
+        model = meta.get("model", "unknown")
+        first_n = min(8, dim)
+        first_vals = vec[:first_n].tolist() if vec is not None and len(vec) > 0 else []
+        first_str  = ", ".join(f"{v:+.3f}" for v in first_vals)
+        if dim > first_n:
+            first_str += ", …"
+        self._status_msg  = "received vector"
+        self._last_results = [{
+            "dims":         dim,
+            "model":        model,
+            "first_values": first_str,
+        }]
         self._update_result_text()
 
     # ------------------------------------------------------------------
@@ -2527,29 +2710,22 @@ class FrameMatchNode(SyncNode):
     # ------------------------------------------------------------------
 
     def _update_result_text(self) -> None:
-        scope = self._scope_title or "all"
-        lines = [
-            f"status: {self._status_msg}",
-            f"target: {self._media_type} / {scope}",
-            f"top: {self._top}",
-            "",
-        ]
-        for hit in self._last_results:
-            rank  = hit.get("rank", "?")
-            score = hit.get("score", 0.0)
-            title = hit.get("title", hit.get("filename", "?"))
-            shot  = hit.get("shot_id", "")
-            motif = hit.get("motif") or ""
-            desc  = hit.get("description") or ""
-            lines.append(f"{rank}. {score:.3f}  {title}")
-            if shot:
-                lines.append(f"   shot: {shot}")
-            if motif:
-                lines.append(f"   motif: {motif}")
-            if desc:
-                # Truncate long descriptions
-                short = desc[:80] + ("…" if len(desc) > 80 else "")
-                lines.append(f"   {short}")
+        lines = [f"status: {self._status_msg}", ""]
+        for item in self._last_results:
+            if "dims" in item:
+                # Vector info from dispatch
+                lines.append(f"dims:         {item['dims']}")
+                lines.append(f"model:        {item['model']}")
+                lines.append(f"first values: [{item['first_values']}]")
+            else:
+                # Catalog match result
+                rank  = item.get("rank", "?")
+                score = item.get("score", 0.0)
+                title = item.get("title", item.get("filename", "?"))
+                shot  = item.get("shot_id", "")
+                lines.append(f"{rank}. {score:.3f}  {title}")
+                if shot:
+                    lines.append(f"   shot: {shot}")
             lines.append("")
         self._result_text.setPlainText("\n".join(lines).rstrip())
 
@@ -2559,7 +2735,7 @@ class FrameMatchNode(SyncNode):
 
     def _apply_title_chrome(self, show: bool) -> None:
         super()._apply_title_chrome(show)
-        for btn in (self._media_btn, self._scope_btn, self._interval_btn):
+        for btn in (self._media_btn, self._scope_btn):
             btn.setVisible(show)
 
     def resizeEvent(self, event) -> None:
@@ -2579,21 +2755,30 @@ class FrameMatchNode(SyncNode):
         self._edge_handles["bl"].setGeometry(0, h - hs, hs, hs)
         self._edge_handles["br"].setGeometry(w - hs, h - hs, hs, hs)
 
+    def _on_edge_resize_start(self, edge: str) -> None:
+        self._edge_resize_geom = self.geometry()
+
+    def _on_edge_resize_end(self, edge: str) -> None:
+        self._edge_resize_geom = None
+
     def _on_edge_resize_drag(self, edge: str, dx: int, dy: int) -> None:
-        geo = self.geometry()
-        x, y, w, h = geo.x(), geo.y(), geo.width(), geo.height()
+        orig = self._edge_resize_geom
+        if orig is None:
+            return
+        x, y = orig.left(), orig.top()
+        w, h = orig.width(), orig.height()
         min_w, min_h = _FM_MIN_W, _NODE_TITLE_H + 80
         if "right" in edge:
-            w = max(min_w, w + dx)
+            w = max(min_w, orig.width() + dx)
         if "left" in edge:
-            nw = max(min_w, w - dx)
-            x += w - nw
+            nw = max(min_w, orig.width() - dx)
+            x  = orig.right() - nw + 1
             w  = nw
         if "bottom" in edge:
-            h = max(min_h, h + dy)
+            h = max(min_h, orig.height() + dy)
         if "top" in edge:
-            nh = max(min_h, h - dy)
-            y += h - nh
+            nh = max(min_h, orig.height() - dy)
+            y  = orig.bottom() - nh + 1
             h  = nh
         self.setGeometry(x, y, w, h)
 
@@ -2602,7 +2787,6 @@ class FrameMatchNode(SyncNode):
     # ------------------------------------------------------------------
 
     def _cleanup_thread(self) -> None:
-        self._timer.stop()
         thread = self._thread
         self._thread = None
         self._worker = None
@@ -2636,25 +2820,28 @@ _MODULE_SOCKET_COLOR = QColor("#404040")  # same as panel background
 class ModuleItem(QWidget):
     """Draggable palette item drawn as a node-connector shape.
 
-    Left side: triangular indent if has_input=True.
-    Right side: triangular bump if has_output=True.
+    Left side connector controlled by *input_shape*:
+      None          — no connector
+      "half_circle" — semicircle dome protruding left (image port)
+      "triangle"    — triangular indent protruding left (vector port)
+    Right side connector controlled by *output_shape* (same options, right).
     Background is white; icon and label use the workspace gray so they
     read as 'cut out' of the white shape.
     """
 
     def __init__(
         self,
-        label:      str,
-        item_type:  str,
-        icon_name:  str | None = None,
-        has_input:  bool = False,
-        has_output: bool = False,
-        parent:     QWidget = None,
+        label:        str,
+        item_type:    str,
+        icon_name:    str | None = None,
+        input_shape:  str | None = None,
+        output_shape: str | None = None,
+        parent:       QWidget = None,
     ) -> None:
         super().__init__(parent)
         self._item_type       = item_type
-        self._has_input       = has_input
-        self._has_output      = has_output
+        self._input_shape     = input_shape
+        self._output_shape    = output_shape
         self._drag_start_pos: QPoint | None = None
 
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -2693,12 +2880,10 @@ class ModuleItem(QWidget):
     # ------------------------------------------------------------------
 
     def _build_path(self) -> QPainterPath:
-        """White shape with optional connector bumps.
+        """White shape with shaped connector bumps determined by input_shape / output_shape.
 
-        Input:  positive triangle protruding LEFT  (tip at x=0, base at x=cw).
-        Output: positive triangle protruding RIGHT (tip at x=w, base at x=w-cw).
-        Core rect spans x=lx…rx where lx=cw if has_input else 0,
-        and rx=w-cw if has_output else w.
+        Connector space (cw px) is always reserved on both sides so that items
+        without a connector still indent their text the same amount.
         """
         w, h = self.width(), self.height()
         r  = _MODULE_CORNER
@@ -2706,16 +2891,19 @@ class ModuleItem(QWidget):
         ch = _CONNECTOR_H
         cy = h / 2
 
-        lx = cw      # always reserve bump space on the left
-        rx = w - cw  # always reserve bump space on the right
+        lx = cw      # core left edge (connector space reserved)
+        rx = w - cw  # core right edge
 
         path = QPainterPath()
         path.moveTo(lx + r, 0)
         path.lineTo(rx - r, 0)
         path.quadTo(rx, 0, rx, r)
 
-        # Right output bump
-        if self._has_output:
+        # ── Right output connector ────────────────────────────────────
+        if self._output_shape == "half_circle":
+            # Dome pointing right; Qt auto-lines from current pos to arc start
+            path.arcTo(QRectF(rx - cw, cy - cw, 2 * cw, 2 * cw), 90, -180)
+        elif self._output_shape == "triangle":
             path.lineTo(rx, cy - ch / 2)
             path.lineTo(w,  cy)
             path.lineTo(rx, cy + ch / 2)
@@ -2725,8 +2913,11 @@ class ModuleItem(QWidget):
         path.lineTo(lx + r, h)
         path.quadTo(lx, h, lx, h - r)
 
-        # Left input bump — protrudes leftward
-        if self._has_input:
+        # ── Left input connector ──────────────────────────────────────
+        if self._input_shape == "half_circle":
+            # Dome pointing left; draw from bottom to top via left side
+            path.arcTo(QRectF(lx - cw, cy - cw, 2 * cw, 2 * cw), 270, -180)
+        elif self._input_shape == "triangle":
             path.lineTo(lx, cy + ch / 2)
             path.lineTo(0,  cy)
             path.lineTo(lx, cy - ch / 2)
@@ -2817,7 +3008,8 @@ class SyncPalettePanel(QWidget):
                 label="Live Video",
                 item_type="live_video",
                 icon_name="video-camera-solid",
-                has_input=False,
+                input_shape=None,
+                output_shape="half_circle",
                 parent=items_widget,
             )
         )
@@ -2826,7 +3018,8 @@ class SyncPalettePanel(QWidget):
                 label="Frame Vector",
                 item_type="frame_vector",
                 icon_name="calculator-solid",
-                has_input=True,
+                input_shape="half_circle",
+                output_shape="triangle",
                 parent=items_widget,
             )
         )
@@ -2835,7 +3028,8 @@ class SyncPalettePanel(QWidget):
                 label="Frame Match",
                 item_type="frame_match",
                 icon_name="search",
-                has_input=True,
+                input_shape="triangle",
+                output_shape=None,
                 parent=items_widget,
             )
         )
