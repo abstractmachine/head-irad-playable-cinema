@@ -301,5 +301,116 @@ class TestConnectionFanOut(unittest.TestCase):
         self.assertEqual(ws._connections[0]["target_node"], 2)
 
 
+# ---------------------------------------------------------------------------
+# audit_catalog
+# ---------------------------------------------------------------------------
+
+class TestAuditCatalog(unittest.TestCase):
+
+    def test_empty_when_no_files(self):
+        from services.sync_frame_match import audit_catalog
+        with tempfile.TemporaryDirectory() as tmp:
+            rows = audit_catalog(tmp, "movie")
+            self.assertEqual(rows, [])
+
+    def test_reports_vectors_and_valid_count(self):
+        from services.sync_frame_match import audit_catalog
+        with tempfile.TemporaryDirectory() as tmp:
+            _make_catalog_files(tmp, "movie", "Film", 8, dim=8, n_invalid=3)
+            rows = audit_catalog(tmp, "movie")
+            self.assertEqual(len(rows), 1)
+            r = rows[0]
+            self.assertIn("filename", r)
+            self.assertEqual(r["vectors"], 8)
+            self.assertEqual(r["valid_count"], 5)
+
+    def test_missing_annotation_flagged(self):
+        from services.sync_frame_match import audit_catalog
+        with tempfile.TemporaryDirectory() as tmp:
+            sd = _shots_dir(tmp, "movie")
+            vecs = np.ones((4, 8), dtype="float32")
+            _write_npy(sd / "NoAnn.frames.npy", vecs)
+            # No .annotations.json written
+            rows = audit_catalog(tmp, "movie")
+            self.assertEqual(len(rows), 1)
+            self.assertTrue(rows[0]["missing_annotation"])
+
+    def test_annotation_present_flagged_ok(self):
+        from services.sync_frame_match import audit_catalog
+        with tempfile.TemporaryDirectory() as tmp:
+            _make_catalog_files(tmp, "movie", "FilmWithAnn", 3, dim=8)
+            rows = audit_catalog(tmp, "movie")
+            self.assertEqual(len(rows), 1)
+            self.assertFalse(rows[0]["missing_annotation"])
+
+    def test_movies_alias_accepted(self):
+        from services.sync_frame_match import audit_catalog
+        with tempfile.TemporaryDirectory() as tmp:
+            _make_catalog_files(tmp, "movie", "Film", 4, dim=8)
+            rows = audit_catalog(tmp, "movies")
+            self.assertEqual(len(rows), 1)
+
+    def test_gameplay_media_type(self):
+        from services.sync_frame_match import audit_catalog
+        with tempfile.TemporaryDirectory() as tmp:
+            _make_catalog_files(tmp, "gameplay", "rdr2", 6, dim=8)
+            _make_catalog_files(tmp, "movie", "SomeFilm", 3, dim=8)
+            rows = audit_catalog(tmp, "gameplay")
+            self.assertEqual(len(rows), 1)
+            self.assertIn("rdr2", rows[0]["filename"])
+
+
+# ---------------------------------------------------------------------------
+# match_image_path (integration test — uses a tiny synthetic image,
+# bypasses CLIP by mocking embed_rgb_frame)
+# ---------------------------------------------------------------------------
+
+class TestMatchImagePath(unittest.TestCase):
+
+    def _write_png(self, path: Path, w: int = 8, h: int = 8) -> None:
+        """Write a tiny solid-colour PNG."""
+        from PIL import Image
+        img = Image.new("RGB", (w, h), color=(128, 64, 32))
+        img.save(str(path))
+
+    def test_match_image_path_calls_service(self):
+        """match_image_path should return a list of dicts with rank/score."""
+        import unittest.mock as mock
+        from services import sync_frame_match as sfm
+
+        rng  = np.random.default_rng(0)
+        dim  = 8
+        query_vec = rng.standard_normal(dim).astype("float32")
+        query_vec /= np.linalg.norm(query_vec) + 1e-9
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _make_catalog_files(tmp, "movie", "TestFilm", 5, dim=dim)
+
+            img_path = Path(tmp) / "frame.png"
+            self._write_png(img_path)
+
+            # Patch embed_rgb_frame so no CLIP model is needed
+            with mock.patch(
+                "services.frame_vector.embed_rgb_frame",
+                return_value=query_vec,
+            ), mock.patch(
+                "services.frame_vector.load_frame_vector_model",
+                return_value=(None, None, None, "clip-vit-base-patch32"),
+            ):
+                from services.sync_frame_match import _catalog_cache
+                _catalog_cache.clear()
+                results = sfm.match_image_path(
+                    img_path, tmp, "movie", all_items=True,
+                )
+
+            # Basic structure checks
+            self.assertIsInstance(results, list)
+            self.assertGreater(len(results), 0)
+            r = results[0]
+            self.assertIn("rank",  r)
+            self.assertIn("score", r)
+            self.assertIn("title", r)
+
+
 if __name__ == "__main__":
     unittest.main()

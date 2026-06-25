@@ -6602,8 +6602,10 @@ def cmd_sync(args):
         _cmd_sync_audit(args)
     elif sub == "frame-match":
         _cmd_sync_frame_match(args)
+    elif sub == "frame-vector":
+        _cmd_sync_frame_vector(args)
     else:
-        print("✗ sync: specify a subcommand (audit, frame-match).", file=sys.stderr)
+        print("✗ sync: specify a subcommand (audit, frame-match, frame-vector).", file=sys.stderr)
         sys.exit(1)
 
 
@@ -6644,32 +6646,57 @@ def _cmd_sync_frame_match(args):
         print("✗ Provide --frame <path> or --vector-json <path>", file=sys.stderr)
         sys.exit(1)
 
-    import numpy as np
-
     if vector_json:
-        with open(vector_json, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        vector = np.array(data, dtype="float32")
+        vector = _load_vector_json(vector_json)
         from services.sync_frame_match import load_frame_catalog, match_frame_vector
         catalog = load_frame_catalog(project_path, media_type,
                                      title=title, all_items=do_all)
         results = match_frame_vector(vector, catalog, top=top)
     else:
-        try:
-            import cv2 as _cv2
-            frame_bgr = _cv2.imread(frame_path)
-            if frame_bgr is None:
-                raise RuntimeError(f"Could not read image: {frame_path}")
-            frame_rgb = _cv2.cvtColor(frame_bgr, _cv2.COLOR_BGR2RGB)
-        except ImportError:
-            from PIL import Image
-            import numpy as _np
-            frame_rgb = _np.array(Image.open(frame_path).convert("RGB"))
-        from services.sync_frame_match import match_rgb_frame
-        results = match_rgb_frame(frame_rgb, project_path, media_type,
-                                  title=title, all_items=do_all, top=top)
+        from services.sync_frame_match import match_image_path
+        results = match_image_path(frame_path, project_path, media_type,
+                                   title=title, all_items=do_all, top=top)
 
     print(json.dumps(results, indent=2, default=str))
+
+
+def _cmd_sync_frame_vector(args):
+    _require_path()
+    project_path = prefs.get("path")
+    frame_path   = args.frame
+    output       = getattr(args, "output", None)
+
+    from services.frame_vector import embed_image_path
+    result = embed_image_path(frame_path, project_path)
+
+    out = json.dumps(result, indent=2)
+    if output:
+        with open(output, "w", encoding="utf-8") as fh:
+            fh.write(out)
+        print(f"✓ Vector written to {output}", file=sys.stderr)
+        print(f"  model={result['model']}  dimension={result['dimension']}", file=sys.stderr)
+    else:
+        print(out)
+
+
+def _load_vector_json(path: str) -> "np.ndarray":
+    """Load a CLIP vector from a JSON file.
+
+    Accepts two formats:
+    - A bare list of floats:  ``[0.1, 0.2, ...]``
+    - An object with a "vector" key:  ``{"model": "...", "vector": [...]}``
+    """
+    import numpy as np
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    if isinstance(data, list):
+        return np.array(data, dtype="float32")
+    if isinstance(data, dict) and "vector" in data:
+        return np.array(data["vector"], dtype="float32")
+    raise ValueError(
+        f"Unrecognised vector JSON format in {path!r}: "
+        "expected a list of floats or an object with a 'vector' key."
+    )
 
 
 def cmd_book(args):
@@ -9520,6 +9547,21 @@ def build_parser():
         help="Number of results to return (default: 5)",
     )
     p_sync_fm.set_defaults(func=cmd_sync)
+
+    # crossing sync frame-vector
+    p_sync_fv = sync_sub.add_parser(
+        "frame-vector",
+        help="Embed a single image file and output the CLIP vector as JSON",
+    )
+    p_sync_fv.add_argument(
+        "--frame", dest="frame", required=True, metavar="PATH",
+        help="Path to a JPEG/PNG image to embed",
+    )
+    p_sync_fv.add_argument(
+        "--output", dest="output", default=None, metavar="PATH",
+        help="Write JSON to this file instead of stdout",
+    )
+    p_sync_fv.set_defaults(func=cmd_sync)
 
     return parser
 

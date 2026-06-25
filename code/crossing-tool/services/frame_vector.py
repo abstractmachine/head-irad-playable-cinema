@@ -65,3 +65,33 @@ def embed_rgb_frame(
     pil_img = Image.fromarray(frame_rgb)
     vectors = embed_frame_images([pil_img], model, processor, device)
     return vectors[0]  # shape (dim,)
+
+
+def embed_image_path(
+    image_path: "str | Path",
+    project_path: str = ".",
+    model_name: "str | None" = None,
+) -> dict:
+    """Embed a single image file using the CLIP image encoder.
+
+    Args:
+        image_path:   Path to a JPEG, PNG, or other PIL-readable image.
+        project_path: Root project directory (used for model cache key).
+        model_name:   CLIP model name; defaults to ``clip-vit-base-patch32``.
+
+    Returns:
+        JSON-friendly dict::
+
+            {"model": "clip-vit-base-patch32", "dimension": 512, "vector": [...]}
+    """
+    from pathlib import Path
+    from PIL import Image
+
+    img = Image.open(Path(image_path)).convert("RGB")
+    bundle = load_frame_vector_model(project_path, model_name)
+    vec = embed_rgb_frame(np.array(img), bundle)
+    return {
+        "model":     bundle[3],
+        "dimension": int(len(vec)),
+        "vector":    vec.tolist(),
+    }

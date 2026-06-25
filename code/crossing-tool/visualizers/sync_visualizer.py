@@ -76,6 +76,7 @@ from PyQt5.QtWidgets import (
     QMainWindow,
     QMenu,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QTextEdit,
     QVBoxLayout,
@@ -395,7 +396,14 @@ class _EdgeResizeHandle(QWidget):
         super().__init__(parent)
         self._edge      = edge
         self._press_pos = None
-        cursor = Qt.SizeVerCursor if edge in ("top", "bottom") else Qt.SizeHorCursor
+        if edge in ("top", "bottom"):
+            cursor = Qt.SizeVerCursor
+        elif edge in ("left", "right"):
+            cursor = Qt.SizeHorCursor
+        elif edge in ("tl", "br"):
+            cursor = Qt.SizeFDiagCursor
+        else:  # "tr", "bl"
+            cursor = Qt.SizeBDiagCursor
         self.setCursor(cursor)
         self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
 
@@ -895,15 +903,20 @@ class SyncNode(QWidget):
         self._handle_br.setVisible(visible)
 
     def _apply_title_chrome(self, show: bool) -> None:
-        """Show or hide the title bar chrome (bg, label, close button)."""
+        """Show or hide the title bar chrome (bg, label, close button).
+
+        Iterates every widget in the title-bar layout so subclass buttons
+        are hidden automatically — no per-subclass override needed for
+        hide/show logic.
+        """
         if show:
             self._title_bar.setStyleSheet(f"background: {_NODE_TITLE_BG};")
-            self._title_label.setVisible(True)
-            self._close_btn.setVisible(True)
         else:
             self._title_bar.setStyleSheet("background: transparent;")
-            self._title_label.setVisible(False)
-            self._close_btn.setVisible(False)
+        for i in range(self._tb_layout.count()):
+            item = self._tb_layout.itemAt(i)
+            if item and item.widget():
+                item.widget().setVisible(show)
 
     # ------------------------------------------------------------------
     # Hover reveals title bar only in h-key hidden mode
@@ -1255,6 +1268,22 @@ class SyncWorkspace(QWidget):
                         node._scope_btn.setText(f"  {node._scope_title}")
                 if "top" in s:
                     node._top = int(s["top"])
+                    node._top_btn.setText(f"  {{{node._top}}}")
+                if s.get("info"):
+                    node._toggle_info()
+                node.show()
+            elif s.get("type") == "frames_viewer":
+                w = max(_FV2_MIN_W, int(s.get("w", _FV2_DEFAULT_W)))
+                h = max(_NODE_TITLE_H + 80, int(s.get("h", _FV2_DEFAULT_H)))
+                node = self._make_frames_viewer_node()
+                node.node_id = int(s.get("node_id", node.node_id))
+                node.setGeometry(int(s.get("x", 0)), int(s.get("y", 0)), w, h)
+                if "zoom" in s:
+                    node._zoom = float(s["zoom"])
+                    node._zoom_btn.setText(f"  {int(node._zoom * 100)}%")
+                if "mode" in s and s["mode"] in ("best", "loop"):
+                    node._mode = s["mode"]
+                    node._mode_btn.setText(f"  {node._mode}")
                 node.show()
         # Advance the global ID counter past all restored IDs so new nodes
         # never collide with existing ones.
@@ -1353,6 +1382,13 @@ class SyncWorkspace(QWidget):
         elif item_type == "frame_match":
             node = self._make_frame_match_node()
             nw, nh = _FM_DEFAULT_W, _FM_DEFAULT_H
+            x = max(0, min(pos.x() - nw // 2, self.width()  - nw))
+            y = max(0, min(pos.y() - _NODE_TITLE_H, self.height() - nh))
+            node.move(x, y)
+            node.show()
+        elif item_type == "frames_viewer":
+            node = self._make_frames_viewer_node()
+            nw, nh = _FV2_DEFAULT_W, _FV2_DEFAULT_H
             x = max(0, min(pos.x() - nw // 2, self.width()  - nw))
             y = max(0, min(pos.y() - _NODE_TITLE_H, self.height() - nh))
             node.move(x, y)
@@ -1629,6 +1665,20 @@ class SyncWorkspace(QWidget):
                     path.arcTo(QRectF(bx - s, cy - s, 2 * s, 2 * s), 90, -180)
                     path.closeSubpath()
                     p.drawPath(path)
+                elif spec.get("shape") == "object":
+                    # Filled } shape: rectangle tab with V-notch on left (opening) side
+                    half  = s
+                    notch = int(s * 0.45)
+                    obj_path = QPainterPath()
+                    obj_path.moveTo(bx,         cy - half)
+                    obj_path.lineTo(bx + half,  cy - half)
+                    obj_path.lineTo(bx + half,  cy + half)
+                    obj_path.lineTo(bx,         cy + half)
+                    obj_path.lineTo(bx,         cy + notch)
+                    obj_path.lineTo(bx + notch, cy)           # notch tip pointing right
+                    obj_path.lineTo(bx,         cy - notch)
+                    obj_path.closeSubpath()
+                    p.drawPath(obj_path)
                 else:
                     # Default: right-pointing triangle
                     p.drawPolygon(QPolygon([
@@ -1669,6 +1719,20 @@ class SyncWorkspace(QWidget):
                     path.arcTo(QRectF(bx - s, cy - s, 2 * s, 2 * s), 90, 180)
                     path.closeSubpath()
                     p.drawPath(path)
+                elif spec.get("shape") == "object":
+                    # Filled { shape: rectangle tab with V-notch on right (opening) side
+                    half  = s
+                    notch = int(s * 0.45)
+                    obj_path = QPainterPath()
+                    obj_path.moveTo(bx,          cy - half)
+                    obj_path.lineTo(bx,          cy - notch)
+                    obj_path.lineTo(bx - notch,  cy)           # notch tip pointing left
+                    obj_path.lineTo(bx,          cy + notch)
+                    obj_path.lineTo(bx,          cy + half)
+                    obj_path.lineTo(bx - half,   cy + half)
+                    obj_path.lineTo(bx - half,   cy - half)
+                    obj_path.closeSubpath()
+                    p.drawPath(obj_path)
                 else:
                     # Default: left-pointing triangle
                     p.drawPolygon(QPolygon([
@@ -1738,6 +1802,13 @@ class SyncWorkspace(QWidget):
 
     def _make_frame_match_node(self) -> "FrameMatchNode":
         node = FrameMatchNode(parent=self)
+        node.closed.connect(self._on_node_closed)
+        node.set_chrome_visible(self._chrome_visible)
+        self._nodes.append(node)
+        return node
+
+    def _make_frames_viewer_node(self) -> "FramesViewerNode":
+        node = FramesViewerNode(parent=self)
         node.closed.connect(self._on_node_closed)
         node.set_chrome_visible(self._chrome_visible)
         self._nodes.append(node)
@@ -2036,7 +2107,7 @@ class FrameVectorNode(SyncNode):
 
     def output_specs(self) -> dict:
         return {
-            "vector": {"type": "vector", "shape": "triangle", "dimension": 512, "label": "512"},
+            "vector": {"type": "vector", "shape": "triangle", "dimension": 512, "label": "[512]"},
         }
 
     def resizeEvent(self, event) -> None:
@@ -2044,6 +2115,11 @@ class FrameVectorNode(SyncNode):
         self._star_overlay.setGeometry(0, 0, self.width(), self.height())
         self._reposition_edge_handles()
         self._update_vec_display()
+
+    def _reposition_handles(self) -> None:
+        """Override base: keep the 16:9-enforcing corner handles permanently hidden."""
+        self._handle_bl.hide()
+        self._handle_br.hide()
 
     def _count_displayable_values(self) -> int:
         """Estimate how many vector values fit in the current text area."""
@@ -2386,6 +2462,55 @@ class _FrameMatchWorker(QObject):
 
 
 # ---------------------------------------------------------------------------
+# _CatalogSearchWorker — catalog-only search (no embedding)
+# ---------------------------------------------------------------------------
+
+class _CatalogSearchWorker(QObject):
+    """Search the frame catalog for a pre-computed vector in a worker thread.
+
+    The catalog cache in services.sync_frame_match means the catalog is only
+    loaded from disk once per (project, media_type, scope) key.
+    """
+    results = pyqtSignal(object)   # list[dict]
+    error   = pyqtSignal(str)
+
+    def __init__(
+        self,
+        vector,
+        project_path: str,
+        media_type:   str,
+        title:        "str | None",
+        all_items:    bool,
+        top:          int,
+    ) -> None:
+        super().__init__()
+        self._vector       = vector
+        self._project_path = project_path
+        self._media_type   = media_type
+        self._title        = title
+        self._all_items    = all_items
+        self._top          = top
+
+    def run(self) -> None:
+        try:
+            from services.sync_frame_match import load_frame_catalog, match_frame_vector
+            catalog = load_frame_catalog(
+                self._project_path, self._media_type,
+                title=self._title, all_items=self._all_items,
+            )
+            hits = match_frame_vector(self._vector, catalog, top=self._top)
+            try:
+                self.results.emit(hits)
+            except RuntimeError:
+                pass
+        except Exception as exc:
+            try:
+                self.error.emit(str(exc))
+            except RuntimeError:
+                pass
+
+
+# ---------------------------------------------------------------------------
 # FrameMatchNode — finds closest indexed shot to the incoming live frame
 # ---------------------------------------------------------------------------
 
@@ -2394,6 +2519,13 @@ _FM_DEFAULT_TOP      = 5
 _FM_MIN_W            = 260
 _FM_DEFAULT_W        = 380
 _FM_DEFAULT_H        = 240
+
+# FramesViewerNode defaults
+_FV2_DEFAULT_W       = 520
+_FV2_DEFAULT_H       = 300
+_FV2_MIN_W           = 260
+_FM_TOP_OPTIONS      = (5, 3, 1)
+_FRAME_NATURAL_W     = 1920   # reference pixel width for zoom % calculations
 
 
 class FrameMatchNode(SyncNode):
@@ -2406,6 +2538,7 @@ class FrameMatchNode(SyncNode):
         self._scope_all:     bool  = True
         self._scope_title:   "str | None" = None
         self._top:           int   = _FM_DEFAULT_TOP
+        self._info_on:       bool  = False
         self._embed_busy:    bool  = False
         self._last_results:  "list[dict]" = []
         self._status_msg:    str   = "waiting for connection…"
@@ -2427,6 +2560,21 @@ class FrameMatchNode(SyncNode):
         self._scope_btn.setStyleSheet(_TB_TEXT_BTN_SS)
         self._scope_btn.clicked.connect(self._show_scope_menu)
         self._tb_layout.insertWidget(1, self._scope_btn, 0, Qt.AlignVCenter)
+
+        self._top_btn = _TbBtn(text=f"  {{{self._top}}}", icon_size=14,
+                               parent=self._title_bar)
+        self._top_btn.setFont(theme.font_ui())
+        self._top_btn.setStyleSheet(_TB_TEXT_BTN_SS)
+        self._top_btn.clicked.connect(self._show_top_menu)
+        self._tb_layout.insertWidget(2, self._top_btn, 0, Qt.AlignVCenter)
+
+        self._info_btn = _TbBtn(icon_name="info-circle", icon_size=14,
+                                parent=self._title_bar)
+        self._info_btn.setFixedSize(22, 22)
+        self._info_btn.setStyleSheet(_TB_ICON_BTN_SS)
+        self._info_btn.clicked.connect(self._toggle_info)
+        self._tb_layout.insertWidget(3, self._info_btn, 0, Qt.AlignVCenter)
+        self._update_info_icon()
 
         # ── Content text area ─────────────────────────────────────────
         self._body = QWidget(self)
@@ -2452,6 +2600,8 @@ class FrameMatchNode(SyncNode):
         self._worker: "_FrameMatchWorker | None" = None
 
         # ── Edge resize (same as FrameVectorNode) ─────────────────────
+        self._handle_bl.hide()
+        self._handle_br.hide()
         self._edge_handles: dict[str, _EdgeResizeHandle] = {}
         self._edge_resize_geom = None
         for edge in ("top", "bottom", "left", "right", "tl", "tr", "bl", "br"):
@@ -2477,7 +2627,18 @@ class FrameMatchNode(SyncNode):
 
     def input_specs(self) -> dict:
         return {
-            "vector": {"type": "vector", "shape": "triangle", "dimension": 512, "label": "512"},
+            "vector": {"type": "vector", "shape": "triangle", "dimension": 512, "label": "[512]"},
+        }
+
+    def output_specs(self) -> dict:
+        return {
+            "matches": {
+                "type":      "matches",
+                "shape":     "object",
+                "dimension": None,
+                "count":     self._top,
+                "label":     f"{{{self._top}}}",
+            },
         }
 
     def state_dict(self) -> dict:
@@ -2486,6 +2647,7 @@ class FrameMatchNode(SyncNode):
         d["scope_all"]    = self._scope_all
         d["scope_title"]  = self._scope_title
         d["top"]          = self._top
+        d["info"]         = self._info_on
         return d
 
     # ------------------------------------------------------------------
@@ -2507,6 +2669,17 @@ class FrameMatchNode(SyncNode):
     # ------------------------------------------------------------------
     # Title bar interactions
     # ------------------------------------------------------------------
+
+    def _toggle_info(self) -> None:
+        self._info_on = not self._info_on
+        self._update_info_icon()
+        self._update_result_text()
+
+    def _update_info_icon(self) -> None:
+        if self._info_on:
+            self._info_btn.set_icon("info-circle-solid", theme.TEXT)
+        else:
+            self._info_btn.set_icon("info-circle", theme.TEXT_DIM)
 
     def _show_media_menu(self) -> None:
         menu = QMenu(self)
@@ -2534,6 +2707,29 @@ class FrameMatchNode(SyncNode):
             _sfm._catalog_cache.clear()
             self._last_results = []
             self._update_result_text()
+
+    def _show_top_menu(self) -> None:
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"QMenu {{ background: {theme.PANEL_BG}; color: {theme.TEXT};"
+            f"  border: 1px solid {theme.UI_BORDER}; padding: 2px; }}"
+            f"QMenu::item {{ padding: 4px 16px; }}"
+            f"QMenu::item:selected {{ background: {theme.ACCENT}; }}"
+        )
+        for n in _FM_TOP_OPTIONS:
+            act = menu.addAction(f"{{{n}}}")
+            act.setCheckable(True)
+            act.setChecked(self._top == n)
+            act.setData(n)
+        btn = self._top_btn
+        chosen = menu.exec_(btn.mapToGlobal(QPoint(0, btn.height())))
+        if chosen and chosen.data() is not None and chosen.data() != self._top:
+            self._top = int(chosen.data())
+            self._top_btn.setText(f"  {{{self._top}}}")
+            # Repaint workspace so port label updates
+            ws = self.parent()
+            if hasattr(ws, "update"):
+                ws.update()
 
     def _show_scope_menu(self) -> None:
         # ── Fetch titles ──────────────────────────────────────────────
@@ -2687,22 +2883,55 @@ class FrameMatchNode(SyncNode):
         """Called when a connected FrameVectorNode emits a new vector."""
         if port_name != "vector":
             return
-        import numpy as np
+        if self._embed_busy:
+            return  # drop while search is in progress
         vec  = value
         meta = meta or {}
-        dim  = int(meta.get("dimension", len(vec) if vec is not None else 0))
-        model = meta.get("model", "unknown")
-        first_n = min(8, dim)
-        first_vals = vec[:first_n].tolist() if vec is not None and len(vec) > 0 else []
-        first_str  = ", ".join(f"{v:+.3f}" for v in first_vals)
-        if dim > first_n:
-            first_str += ", …"
-        self._status_msg  = "received vector"
-        self._last_results = [{
-            "dims":         dim,
-            "model":        model,
-            "first_values": first_str,
-        }]
+        self._embed_busy = True
+        self._status_msg = "matching…"
+        self._update_result_text()
+
+        try:
+            from tool import prefs as _p
+            project_path = _p.get("path") or "."
+        except Exception:
+            project_path = "."
+
+        thread = QThread()
+        worker = _CatalogSearchWorker(
+            vec, project_path, self._media_type,
+            self._scope_title, self._scope_all, self._top,
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.results.connect(self._on_match_results)
+        worker.error.connect(self._on_match_error)
+        worker.results.connect(thread.quit)
+        worker.error.connect(thread.quit)
+        thread.finished.connect(thread.deleteLater)
+        self._thread = thread
+        self._worker = worker
+        thread.start()
+
+    def _on_match_results(self, hits: list) -> None:
+        self._embed_busy  = False
+        self._status_msg  = f"matched — {len(hits)} results"
+        self._last_results = hits
+        self._update_result_text()
+        if hits:
+            self.emit_output("matches", hits, {
+                "type":         "matches",
+                "count":        len(hits),
+                "target_media": self._media_type,
+                "scope":        self._scope_title or "all",
+                "top":          self._top,
+                "timestamp":    _time.time(),
+            })
+
+    def _on_match_error(self, msg: str) -> None:
+        self._embed_busy = False
+        self._status_msg = f"error: {msg}"
+        self._last_results = []
         self._update_result_text()
 
     # ------------------------------------------------------------------
@@ -2710,23 +2939,22 @@ class FrameMatchNode(SyncNode):
     # ------------------------------------------------------------------
 
     def _update_result_text(self) -> None:
-        lines = [f"status: {self._status_msg}", ""]
-        for item in self._last_results:
-            if "dims" in item:
-                # Vector info from dispatch
-                lines.append(f"dims:         {item['dims']}")
-                lines.append(f"model:        {item['model']}")
-                lines.append(f"first values: [{item['first_values']}]")
-            else:
-                # Catalog match result
-                rank  = item.get("rank", "?")
-                score = item.get("score", 0.0)
-                title = item.get("title", item.get("filename", "?"))
-                shot  = item.get("shot_id", "")
-                lines.append(f"{rank}. {score:.3f}  {title}")
-                if shot:
-                    lines.append(f"   shot: {shot}")
+        lines = []
+        if self._info_on:
+            lines.append(f"status: {self._status_msg}")
             lines.append("")
+        for item in self._last_results:
+            rank  = item.get("rank", "?")
+            score = item.get("score", 0.0)
+            title = item.get("title", item.get("filename", "?"))
+            shot  = item.get("shot_id", "")
+            lines.append(f"{rank}. {score:.3f}  {title}")
+            if shot:
+                lines.append(f"   shot: {shot}")
+            lines.append("")
+        if not lines:
+            # Nothing to show — at least give a bare status so the area isn't blank
+            lines.append(f"status: {self._status_msg}")
         self._result_text.setPlainText("\n".join(lines).rstrip())
 
     # ------------------------------------------------------------------
@@ -2735,12 +2963,17 @@ class FrameMatchNode(SyncNode):
 
     def _apply_title_chrome(self, show: bool) -> None:
         super()._apply_title_chrome(show)
-        for btn in (self._media_btn, self._scope_btn):
+        for btn in (self._media_btn, self._scope_btn, self._top_btn, self._info_btn):
             btn.setVisible(show)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._reposition_edge_handles()
+
+    def _reposition_handles(self) -> None:
+        """Override base: keep the 16:9-enforcing corner handles permanently hidden."""
+        self._handle_bl.hide()
+        self._handle_br.hide()
 
     def _reposition_edge_handles(self) -> None:
         w, h  = self.width(), self.height()
@@ -2768,15 +3001,15 @@ class FrameMatchNode(SyncNode):
         x, y = orig.left(), orig.top()
         w, h = orig.width(), orig.height()
         min_w, min_h = _FM_MIN_W, _NODE_TITLE_H + 80
-        if "right" in edge:
+        if edge in ("right", "tr", "br"):
             w = max(min_w, orig.width() + dx)
-        if "left" in edge:
+        if edge in ("left", "tl", "bl"):
             nw = max(min_w, orig.width() - dx)
             x  = orig.right() - nw + 1
             w  = nw
-        if "bottom" in edge:
+        if edge in ("bottom", "bl", "br"):
             h = max(min_h, orig.height() + dy)
-        if "top" in edge:
+        if edge in ("top", "tl", "tr"):
             nh = max(min_h, orig.height() - dy)
             y  = orig.bottom() - nh + 1
             h  = nh
@@ -2802,6 +3035,628 @@ class FrameMatchNode(SyncNode):
     def _on_close(self) -> None:
         self._cleanup_thread()
         super()._on_close()
+
+
+# ---------------------------------------------------------------------------
+# FramesViewerNode — helper: timecode → seconds
+# ---------------------------------------------------------------------------
+
+def _fv2_tc_to_seconds(tc: str) -> float:
+    """Convert 'HH:MM:SS.mmm' (or MM:SS or bare seconds) to float seconds."""
+    if not tc:
+        return 0.0
+    try:
+        parts = tc.replace(",", ".").split(":")
+        if len(parts) == 3:
+            return float(parts[0]) * 3600.0 + float(parts[1]) * 60.0 + float(parts[2])
+        if len(parts) == 2:
+            return float(parts[0]) * 60.0 + float(parts[1])
+        return float(parts[0])
+    except (ValueError, IndexError):
+        return 0.0
+
+
+def _fv2_resolve_video(project_path: str, media_type: str, filename_or_stem: str) -> "Path | None":
+    """Return the video Path for a given filename or bare stem, or None.
+
+    The frame-matching catalog stores filenames without extensions (bare
+    stems).  The metadata JSON stores full filenames including extension.
+    This function:
+      1. Tries ``filename_or_stem`` as a direct path (handles already-complete names).
+      2. Looks up the stem in the project metadata to find the real filename.
+      3. Falls back to scanning the video directory by stem if metadata has no match.
+    """
+    video_dir = Path(project_path) / "media" / "videos" / media_type
+    stem = Path(filename_or_stem).stem   # no-op if already a stem; strips ext if present
+
+    # 1. Direct path (exact filename including extension)
+    direct = video_dir / filename_or_stem
+    if direct.exists():
+        return direct
+
+    # 2. Metadata lookup — metadata stores full filenames with extension
+    try:
+        from data.metadata import load_json_metadata as _load_meta
+        records = _load_meta(project_path, media_type)
+        for r in records:
+            fn = r.get("filename", "")
+            if fn and Path(fn).stem == stem:
+                candidate = video_dir / fn
+                if candidate.exists():
+                    return candidate
+    except Exception:
+        pass
+
+    # 3. Fallback: scan video dir for any file whose stem matches
+    if video_dir.exists():
+        _VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
+        for p in video_dir.iterdir():
+            if p.is_file() and p.stem == stem and p.suffix.lower() in _VIDEO_EXTS:
+                return p
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# FramesViewerNode — loop-mode single-shot video player
+# ---------------------------------------------------------------------------
+
+class _ShotLoopPlayer(QWidget):
+    """Looping video player for one shot — used by FramesViewerNode loop mode.
+
+    Plays the shot from ``start_time`` to ``end_time`` in a tight loop using
+    ``cv2.VideoCapture`` + ``QTimer``, identical in pattern to
+    ``ShotlistVisualizer``.  No audio, no background thread.
+    """
+
+    _INTERVAL_MS = 33   # ~30 fps tick
+
+    def __init__(
+        self,
+        result:       dict,
+        project_path: str,
+        img_w:        int,
+        img_h:        int,
+        show_info:    bool,
+        parent:       QWidget = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setFixedWidth(img_w + 4)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setStyleSheet("background: transparent;")
+
+        vlay = QVBoxLayout(self)
+        vlay.setContentsMargins(0, 0, 0, 0)
+        vlay.setSpacing(3)
+
+        self._img_lbl = QLabel(self)
+        self._img_lbl.setFixedSize(img_w, img_h)
+        self._img_lbl.setAlignment(Qt.AlignCenter)
+        self._img_lbl.setStyleSheet(
+            "background: #1a1a1a; color: #444444;"
+            "border: 1px solid #333333; font-size: 9px;"
+        )
+        self._img_lbl.setText("…")
+        vlay.addWidget(self._img_lbl)
+
+        if show_info:
+            title = result.get("title") or result.get("filename") or ""
+            if title:
+                cap_lbl = QLabel(title, self)
+                cap_lbl.setWordWrap(True)
+                cap_lbl.setStyleSheet(
+                    f"color: {_NODE_TEXT_COLOR}; background: transparent; font-size: 9px;"
+                )
+                cap_lbl.setFont(theme.font_ui())
+                cap_lbl.setFixedWidth(img_w + 4)
+                vlay.addWidget(cap_lbl)
+
+        self._cap:         "object" = None   # cv2.VideoCapture or None
+        self._start_frame: int      = 0
+        self._dur_frames:  int      = 1
+        self._fps:         float    = 30.0
+        self._play_start:  float    = 0.0
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(self._INTERVAL_MS)
+        self._timer.timeout.connect(self._tick)
+
+        if not _HAS_CV2:
+            self._img_lbl.setText("cv2 unavailable")
+            return
+
+        import cv2 as _cv2
+        media_type  = result.get("media_type", "movie")
+        filename    = result.get("filename",   "")
+        if not filename:
+            self._img_lbl.setText("no filename")
+            return
+
+        video_path = _fv2_resolve_video(project_path, media_type, filename)
+        if video_path is None:
+            print(f"[FramesViewer] video not found: {filename!r} in {project_path}/media/videos/{media_type}/")
+            self._img_lbl.setText("file not found")
+            return
+
+        cap = _cv2.VideoCapture(str(video_path))
+        if not cap.isOpened():
+            self._img_lbl.setText("can't open")
+            return
+
+        fps   = cap.get(_cv2.CAP_PROP_FPS) or 30.0
+        total = int(cap.get(_cv2.CAP_PROP_FRAME_COUNT))
+
+        # Primary: parse start/end frames from the shot_id  (format: "<media_id>@fSTART-fEND")
+        # This is the authoritative source — the catalog always stores a shot_id
+        # even when start_frame/end_frame/start_time/end_time fields are None.
+        start_frame: int | None = None
+        end_frame:   int | None = None
+        shot_id = result.get("shot_id") or ""
+        if shot_id:
+            try:
+                from data.media_id import parse_shot_id as _parse_shot_id
+                _, start_frame, end_frame = _parse_shot_id(shot_id)
+            except Exception:
+                pass
+
+        # Fallback 1: integer fields in the result dict
+        if start_frame is None:
+            try:
+                v = result.get("start_frame")
+                if v is not None:
+                    start_frame = int(v)
+            except (TypeError, ValueError):
+                pass
+        if end_frame is None:
+            try:
+                v = result.get("end_frame")
+                if v is not None:
+                    end_frame = int(v)
+            except (TypeError, ValueError):
+                pass
+
+        # Fallback 2: timecode strings
+        if start_frame is None:
+            start_s     = _fv2_tc_to_seconds(result.get("start_time") or "")
+            start_frame = max(0, int(start_s * fps))
+        if end_frame is None or end_frame <= start_frame:
+            end_s     = _fv2_tc_to_seconds(result.get("end_time") or "")
+            end_frame = int(end_s * fps) if end_s > 0 else start_frame + int(3.0 * fps)
+
+        if total > 0:
+            end_frame = min(end_frame, total - 1)
+        dur_frames = max(1, end_frame - start_frame)
+
+        self._cap         = cap
+        self._fps         = fps
+        self._start_frame = start_frame
+        self._dur_frames  = dur_frames
+
+        # Show the first frame immediately using frame-accurate seeking
+        cap.set(_cv2.CAP_PROP_POS_FRAMES, start_frame)
+        ok, bgr = cap.read()
+        if ok:
+            self._show_bgr(bgr)
+
+        self._play_start = _time.perf_counter()
+        self._timer.start()
+
+    # ------------------------------------------------------------------
+
+    def _tick(self) -> None:
+        if self._cap is None:
+            return
+        import cv2 as _cv2
+        elapsed      = _time.perf_counter() - self._play_start
+        offset       = int(elapsed * self._fps) % self._dur_frames
+        target_frame = self._start_frame + offset
+        self._cap.set(_cv2.CAP_PROP_POS_FRAMES, target_frame)
+        ok, bgr = self._cap.read()
+        if ok:
+            self._show_bgr(bgr)
+
+    def _show_bgr(self, bgr) -> None:
+        import cv2 as _cv2
+        rgb = _cv2.cvtColor(bgr, _cv2.COLOR_BGR2RGB)
+        h, w = rgb.shape[:2]
+        img  = QImage(rgb.tobytes(), w, h, rgb.strides[0], QImage.Format_RGB888)
+        pix  = QPixmap.fromImage(img).scaled(
+            self._img_lbl.width(), self._img_lbl.height(),
+            Qt.KeepAspectRatio, Qt.SmoothTransformation,
+        )
+        self._img_lbl.setPixmap(pix)
+
+    def stop(self) -> None:
+        """Stop playback and release the VideoCapture handle."""
+        self._timer.stop()
+        if self._cap is not None:
+            import cv2 as _cv2
+            self._cap.release()
+            self._cap = None
+
+
+
+# ---------------------------------------------------------------------------
+# FramesViewerNode — displays best-frame images from a match list
+# ---------------------------------------------------------------------------
+
+class FramesViewerNode(SyncNode):
+    """Workspace node that renders best-frame images for received match results."""
+
+    def __init__(self, parent: QWidget = None) -> None:
+        super().__init__("Frames Viewer", parent)
+        self._results:    list  = []
+        self._meta:       dict  = {}
+        self._status_msg: str   = "waiting for matches…"
+        self._zoom:       float = 0.2   # tile width as fraction of native frame width
+        self._input_count: int  = 0     # tracks live item count for port label
+        self._info_on:    bool  = True  # when True, show movie titles below frames
+        self._mode:       str   = "best"  # "best" | "loop"
+
+        # ── Title bar buttons ─────────────────────────────────────────
+        self._mode_btn = _TbBtn(
+            text="  best", icon_size=14, parent=self._title_bar,
+        )
+        self._mode_btn.setFont(theme.font_ui())
+        self._mode_btn.setStyleSheet(_TB_TEXT_BTN_SS)
+        self._mode_btn.clicked.connect(self._toggle_mode)
+        self._tb_layout.insertWidget(0, self._mode_btn, 0, Qt.AlignVCenter)
+
+        self._zoom_btn = _TbBtn(
+            text=f"  {int(self._zoom * 100)}%", icon_size=14,
+            parent=self._title_bar,
+        )
+        self._zoom_btn.setFont(theme.font_ui())
+        self._zoom_btn.setStyleSheet(_TB_TEXT_BTN_SS)
+        self._zoom_btn.clicked.connect(self._show_zoom_menu)
+        self._tb_layout.insertWidget(1, self._zoom_btn, 0, Qt.AlignVCenter)
+
+        self._info_btn = _TbBtn(icon_name="info-circle", icon_size=14,
+                                parent=self._title_bar)
+        self._info_btn.setFixedSize(22, 22)
+        self._info_btn.setStyleSheet(_TB_ICON_BTN_SS)
+        self._info_btn.clicked.connect(self._toggle_info)
+        self._tb_layout.insertWidget(2, self._info_btn, 0, Qt.AlignVCenter)
+        self._update_info_icon()
+
+        # ── Scroll area containing image tiles ────────────────────────
+        self._scroll = QScrollArea(self)
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._scroll.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }"
+            "QScrollBar:vertical { width: 6px; background: #303030; }"
+            "QScrollBar::handle:vertical { background: #606060; border-radius: 3px; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+        )
+
+        self._tiles_container = QWidget()
+        self._tiles_container.setAttribute(Qt.WA_TranslucentBackground)
+        self._tiles_container.setStyleSheet("background: transparent;")
+        self._tiles_layout = QVBoxLayout(self._tiles_container)
+        self._tiles_layout.setContentsMargins(0, 0, 0, 0)
+        self._tiles_layout.setSpacing(6)
+        self._tiles_layout.setAlignment(Qt.AlignTop)
+        self._scroll.setWidget(self._tiles_container)
+        self.content_layout().addWidget(self._scroll)
+
+        # ── Edge resize handles ───────────────────────────────────────
+        self._handle_bl.hide()
+        self._handle_br.hide()
+        self._edge_handles: dict[str, _EdgeResizeHandle] = {}
+        self._edge_resize_geom = None
+        for edge in ("top", "bottom", "left", "right", "tl", "tr", "bl", "br"):
+            h = _EdgeResizeHandle(edge, self)
+            h.resize_started.connect(self._on_edge_resize_start)
+            h.resize_dragged.connect(self._on_edge_resize_drag)
+            h.resize_released.connect(self._on_edge_resize_end)
+            self._edge_handles[edge] = h
+        self._reposition_edge_handles()
+
+        self.resize(_FV2_DEFAULT_W, _FV2_DEFAULT_H)
+        self._render_results()
+
+    # ------------------------------------------------------------------
+    # SyncNode API
+    # ------------------------------------------------------------------
+
+    def node_type(self) -> str:
+        return "frames_viewer"
+
+    def input_specs(self) -> dict:
+        label = f"{{{self._input_count}}}" if self._input_count else "{}"
+        return {
+            "matches": {
+                "type":      "matches",
+                "shape":     "object",
+                "dimension": None,
+                "label":     label,
+            },
+        }
+
+    def output_specs(self) -> dict:
+        return {}
+
+    def state_dict(self) -> dict:
+        d = super().state_dict()
+        d["zoom"] = self._zoom
+        d["mode"] = self._mode
+        return d
+
+    def _toggle_mode(self) -> None:
+        self._mode = "loop" if self._mode == "best" else "best"
+        self._mode_btn.setText(f"  {self._mode}")
+        self._render_results()
+
+    def _show_zoom_menu(self) -> None:
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"QMenu {{ background: {theme.PANEL_BG}; color: {theme.TEXT};"
+            f"  border: 1px solid {theme.UI_BORDER}; padding: 2px; }}"
+            f"QMenu::item {{ padding: 4px 16px; }}"
+            f"QMenu::item:selected {{ background: {theme.ACCENT}; }}"
+        )
+        for z in (0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5):
+            label = f"{int(z * 100)}%"
+            act = menu.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(abs(self._zoom - z) < 0.001)
+            act.setData(z)
+        btn = self._zoom_btn
+        chosen = menu.exec_(btn.mapToGlobal(QPoint(0, btn.height())))
+        if chosen and chosen.data() is not None:
+            self._zoom = float(chosen.data())
+            self._zoom_btn.setText(f"  {int(self._zoom * 100)}%")
+            self._render_results()
+
+    def _toggle_info(self) -> None:
+        self._info_on = not self._info_on
+        self._update_info_icon()
+        self._render_results()
+
+    def _update_info_icon(self) -> None:
+        if self._info_on:
+            self._info_btn.set_icon("info-circle-solid", theme.TEXT)
+        else:
+            self._info_btn.set_icon("info-circle", theme.TEXT_DIM)
+
+    def _apply_title_chrome(self, show: bool) -> None:
+        # Base class now iterates the full title-bar layout, so this is handled
+        # automatically.  Keep override only to ensure _mode_btn is included
+        # even if someone calls super() without the layout iteration.
+        super()._apply_title_chrome(show)
+
+    # ------------------------------------------------------------------
+    # Connection callbacks
+    # ------------------------------------------------------------------
+
+    def on_connected(self, source_node) -> None:
+        self._status_msg = "connected, waiting for match results…"
+        self._render_results()
+
+    def on_disconnected(self) -> None:
+        self._results    = []
+        self._meta       = {}
+        self._status_msg = "waiting for matches…"
+        self._render_results()
+
+    # ------------------------------------------------------------------
+    # Input handling
+    # ------------------------------------------------------------------
+
+    def receive_input(self, port_name: str, value, meta: dict | None = None) -> None:
+        if port_name != "matches":
+            return
+        self._results    = value or []
+        self._meta       = meta or {}
+        self._input_count = len(self._results)
+        self._status_msg = f"showing {self._input_count} matches"
+        self._render_results()
+        # Ask workspace to repaint so port label refreshes
+        if isinstance(self.parent(), SyncWorkspace):
+            self.parent().update()
+
+    # ------------------------------------------------------------------
+    # Rendering
+    # ------------------------------------------------------------------
+
+    def _render_results(self) -> None:
+        """Rebuild the tile list from current _results (single-column vertical stack)."""
+        # Stop any running animations before clearing
+        self._stop_anim_tiles()
+        # Remove all existing tile widgets
+        while self._tiles_layout.count():
+            item = self._tiles_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
+        if not self._results:
+            lbl = QLabel(f"  {self._status_msg}", self._tiles_container)
+            lbl.setStyleSheet(
+                f"color: {_NODE_TEXT_COLOR}; background: transparent; font-size: 10px;"
+            )
+            lbl.setFont(theme.font_ui())
+            self._tiles_layout.addWidget(lbl)
+            return
+
+        try:
+            from tool import prefs as _p
+            project_path = _p.get("path") or "."
+        except Exception:
+            project_path = "."
+
+        img_w, img_h = self._tile_image_size()
+
+        if self._mode == "loop":
+            # First result → looping shot video; rest → static best-frame tiles
+            player = _ShotLoopPlayer(
+                self._results[0], project_path, img_w, img_h,
+                show_info=self._info_on,
+                parent=self._tiles_container,
+            )
+            self._tiles_layout.addWidget(player)
+            for result in self._results[1:]:
+                tile = self._make_tile(result, project_path, img_w, img_h)
+                self._tiles_layout.addWidget(tile)
+        else:
+            for result in self._results:
+                tile = self._make_tile(result, project_path, img_w, img_h)
+                self._tiles_layout.addWidget(tile)
+        self._tiles_layout.addStretch()
+
+    def _tile_image_size(self) -> tuple:
+        """Compute tile size based on zoom % of native frame width (1920px reference)."""
+        content_h = max(60, self.height() - _NODE_TITLE_H - 48)
+        # tile width = zoom % of native frame width, capped at node width
+        tile_w = int(_FRAME_NATURAL_W * self._zoom)
+        tile_w = min(tile_w, max(60, self.width()))
+        # height: maintain 16:9, capped at content height
+        tile_h = int(tile_w * 9 / 16)
+        if tile_h > content_h:
+            tile_h = content_h
+            tile_w = int(tile_h * 16 / 9)
+        return tile_w, tile_h
+
+    def _stop_anim_tiles(self) -> None:
+        """Stop any running _ShotLoopPlayer instances before clearing tiles."""
+        for i in range(self._tiles_layout.count()):
+            item = self._tiles_layout.itemAt(i)
+            if item and isinstance(item.widget(), _ShotLoopPlayer):
+                item.widget().stop()
+
+    def _make_tile(self, result: dict, project_path: str, img_w: int, img_h: int) -> QWidget:
+        """Return a static best-frame tile widget."""
+        tile = QWidget(self._tiles_container)
+        tile.setFixedWidth(img_w + 4)
+        tile.setAttribute(Qt.WA_TranslucentBackground)
+        tile.setStyleSheet("background: transparent;")
+
+        vlay = QVBoxLayout(tile)
+        vlay.setContentsMargins(0, 0, 0, 0)
+        vlay.setSpacing(3)
+
+        # ── Image label ───────────────────────────────────────────────
+        img_lbl = QLabel(tile)
+        img_lbl.setFixedSize(img_w, img_h)
+        img_lbl.setAlignment(Qt.AlignCenter)
+        img_lbl.setStyleSheet(
+            "background: #1a1a1a; color: #666666;"
+            "border: 1px solid #333333; font-size: 9px;"
+        )
+
+        path = self._resolve_frame_path(result, project_path)
+        if path is not None:
+            pix = QPixmap(str(path))
+            if not pix.isNull():
+                scaled = pix.scaled(
+                    img_w, img_h,
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation,
+                )
+                img_lbl.setPixmap(scaled)
+            else:
+                img_lbl.setText("missing frame")
+        else:
+            img_lbl.setText("missing frame")
+        vlay.addWidget(img_lbl)
+
+        # ── Title label (only when info is on) ────────────────────────
+        if self._info_on:
+            title = result.get("title") or result.get("filename") or ""
+            if title:
+                cap_lbl = QLabel(title, tile)
+                cap_lbl.setWordWrap(True)
+                cap_lbl.setStyleSheet(
+                    f"color: {_NODE_TEXT_COLOR}; background: transparent; font-size: 9px;"
+                )
+                cap_lbl.setFont(theme.font_ui())
+                cap_lbl.setFixedWidth(img_w + 4)
+                vlay.addWidget(cap_lbl)
+
+        return tile
+
+    def _resolve_frame_path(self, result: dict, project_path: str) -> "Path | None":
+        """Resolve a best-frame PNG path from match result fields."""
+        # 1. Explicit frame_path field (absolute or project-relative)
+        fp = result.get("frame_path")
+        if fp:
+            p = Path(fp)
+            if p.is_absolute() and p.exists():
+                return p
+            rp = Path(project_path) / p
+            if rp.exists():
+                return rp
+        # 2. Derive from best_frame_path(project_path, media_type, filename, shot_id)
+        media_type = result.get("media_type", "movie")
+        filename   = result.get("filename",   "")
+        shot_id    = result.get("shot_id",    "")
+        if filename and shot_id and project_path:
+            try:
+                from services.frame_match import best_frame_path as _bfp
+                p = _bfp(project_path, media_type, filename, shot_id)
+                if p.exists():
+                    return p
+            except Exception:
+                pass
+        return None
+
+    # ------------------------------------------------------------------
+    # Resize
+    # ------------------------------------------------------------------
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._reposition_edge_handles()
+        if self._results:
+            self._render_results()
+
+    def _reposition_handles(self) -> None:
+        """Override base: keep the 16:9-enforcing corner handles permanently hidden."""
+        self._handle_bl.hide()
+        self._handle_br.hide()
+
+    def _reposition_edge_handles(self) -> None:
+        w, h  = self.width(), self.height()
+        th    = _EDGE_THICKNESS
+        hs    = _HANDLE_SIZE
+        self._edge_handles["top"].setGeometry(hs, 0, w - 2 * hs, th)
+        self._edge_handles["bottom"].setGeometry(hs, h - th, w - 2 * hs, th)
+        self._edge_handles["left"].setGeometry(0, hs, th, h - 2 * hs)
+        self._edge_handles["right"].setGeometry(w - th, hs, th, h - 2 * hs)
+        self._edge_handles["tl"].setGeometry(0, 0, hs, hs)
+        self._edge_handles["tr"].setGeometry(w - hs, 0, hs, hs)
+        self._edge_handles["bl"].setGeometry(0, h - hs, hs, hs)
+        self._edge_handles["br"].setGeometry(w - hs, h - hs, hs, hs)
+
+    def _on_edge_resize_start(self, edge: str) -> None:
+        self._edge_resize_geom = self.geometry()
+
+    def _on_edge_resize_end(self, edge: str) -> None:
+        self._edge_resize_geom = None
+
+    def _on_edge_resize_drag(self, edge: str, dx: int, dy: int) -> None:
+        orig = self._edge_resize_geom
+        if orig is None:
+            return
+        x, y = orig.left(), orig.top()
+        w, h = orig.width(), orig.height()
+        min_w, min_h = _FV2_MIN_W, _NODE_TITLE_H + 80
+        if edge in ("right", "tr", "br"):
+            w = max(min_w, orig.width() + dx)
+        if edge in ("left", "tl", "bl"):
+            nw = max(min_w, orig.width() - dx)
+            x  = orig.right() - nw + 1
+            w  = nw
+        if edge in ("bottom", "bl", "br"):
+            h = max(min_h, orig.height() + dy)
+        if edge in ("top", "tl", "tr"):
+            nh = max(min_h, orig.height() - dy)
+            y  = orig.bottom() - nh + 1
+            h  = nh
+        self.setGeometry(x, y, w, h)
 
 
 # ---------------------------------------------------------------------------
@@ -2907,6 +3762,13 @@ class ModuleItem(QWidget):
             path.lineTo(rx, cy - ch / 2)
             path.lineTo(w,  cy)
             path.lineTo(rx, cy + ch / 2)
+        elif self._output_shape == "object":
+            # Small square tab protruding right
+            half = ch / 2 * 0.6
+            path.lineTo(rx, cy - half)
+            path.lineTo(w,  cy - half)
+            path.lineTo(w,  cy + half)
+            path.lineTo(rx, cy + half)
 
         path.lineTo(rx, h - r)
         path.quadTo(rx, h, rx - r, h)
@@ -2921,6 +3783,13 @@ class ModuleItem(QWidget):
             path.lineTo(lx, cy + ch / 2)
             path.lineTo(0,  cy)
             path.lineTo(lx, cy - ch / 2)
+        elif self._input_shape == "object":
+            # Small square indent on left side
+            half = ch / 2 * 0.6
+            path.lineTo(lx, cy + half)
+            path.lineTo(0,  cy + half)
+            path.lineTo(0,  cy - half)
+            path.lineTo(lx, cy - half)
 
         path.lineTo(lx, r)
         path.quadTo(lx, 0, lx + r, 0)
@@ -2931,6 +3800,30 @@ class ModuleItem(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.fillPath(self._build_path(), _MODULE_BG_COLOR)
+        # For object-shaped connectors, cut a V-notch to make } / { silhouette
+        if self._output_shape == "object" or self._input_shape == "object":
+            cy    = self.height() / 2
+            half  = _CONNECTOR_H * 0.5
+            notch = half * 0.6
+            painter.setCompositionMode(QPainter.CompositionMode_Clear)
+            painter.setPen(Qt.NoPen)
+            if self._output_shape == "object":
+                rx = self.width() - _CONNECTOR_W
+                n_path = QPainterPath()
+                n_path.moveTo(rx,          cy - notch)
+                n_path.lineTo(rx + notch,  cy)
+                n_path.lineTo(rx,          cy + notch)
+                n_path.closeSubpath()
+                painter.fillPath(n_path, QColor(0, 0, 0))
+            if self._input_shape == "object":
+                lx = _CONNECTOR_W
+                n_path = QPainterPath()
+                n_path.moveTo(lx,          cy - notch)
+                n_path.lineTo(lx - notch,  cy)
+                n_path.lineTo(lx,          cy + notch)
+                n_path.closeSubpath()
+                painter.fillPath(n_path, QColor(0, 0, 0))
+            painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
         painter.end()
 
     def resizeEvent(self, event) -> None:
@@ -3029,6 +3922,16 @@ class SyncPalettePanel(QWidget):
                 item_type="frame_match",
                 icon_name="search",
                 input_shape="triangle",
+                output_shape="object",
+                parent=items_widget,
+            )
+        )
+        group_layout.addWidget(
+            ModuleItem(
+                label="Frames Viewer",
+                item_type="frames_viewer",
+                icon_name="media-image",
+                input_shape="object",
                 output_shape=None,
                 parent=items_widget,
             )

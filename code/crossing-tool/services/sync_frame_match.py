@@ -409,6 +409,41 @@ def match_rgb_frame(
     return match_frame_vector(vector, catalog, top=top)
 
 
+def match_image_path(
+    image_path:   "str | Path",
+    project_path: str,
+    media_type:   str,
+    *,
+    title:     "str | None" = None,
+    all_items: bool = False,
+    top:       int = 5,
+) -> list[dict]:
+    """Load an image file, embed it with CLIP, then search the catalog.
+
+    Convenience wrapper around :func:`match_rgb_frame` that accepts a file
+    path instead of a pre-loaded numpy array.
+
+    Args:
+        image_path:   Path to a PIL-readable image (JPEG, PNG, …).
+        project_path: Root project directory.
+        media_type:   ``"movie"`` or ``"gameplay"``.
+        title:        Restrict to one title (substring match).
+        all_items:    Search all indexed items of the media type.
+        top:          Number of results to return.
+
+    Returns:
+        Same list-of-dicts as :func:`match_frame_vector`.
+    """
+    from pathlib import Path
+    from PIL import Image
+    import numpy as _np
+
+    img = Image.open(Path(image_path)).convert("RGB")
+    frame_rgb = _np.array(img)
+    return match_rgb_frame(frame_rgb, project_path, media_type,
+                           title=title, all_items=all_items, top=top)
+
+
 # ---------------------------------------------------------------------------
 # Public: audit helper
 # ---------------------------------------------------------------------------
