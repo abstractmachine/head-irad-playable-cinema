@@ -2773,7 +2773,7 @@ def _shot_visualizer(args):
 # api_key command
 # ---------------------------------------------------------------------------
 
-_API_KEY_SERVICES = ("discord", "opensubtitles", "tmdb")
+_API_KEY_SERVICES = ("discord", "openai", "opensubtitles", "tmdb")
 
 
 def cmd_api_key(args):
@@ -5520,8 +5520,10 @@ def _index_silhouette(args):
         print(f"Scoring summary: processed={summary.get('processed', 0)} skipped={summary.get('skipped',0)} errors={summary.get('errors',0)}")
     elif silhouette_action == "backfill-scanned":
         _silhouette_backfill_scanned(args)
+    elif silhouette_action == "enrich":
+        _silhouette_enrich(args)
     else:
-        print("✗ index silhouette: specify a subcommand (extract, audit, clear, backfill-scanned)", file=sys.stderr)
+        print("✗ index silhouette: specify a subcommand (extract, audit, clear, score, enrich, backfill-scanned)", file=sys.stderr)
         sys.exit(1)
 
 
@@ -6010,6 +6012,54 @@ def _silhouette_backfill_scanned(args):
             "  Labels with no catalog entries (scanned but found nothing) will be\n"
             "  re-run on the next extract pass — this is fast (text search only, no GPU)."
         )
+
+
+def _silhouette_enrich(args):
+    """Enrich catalog JSON files with semantic metadata using CLIP classification."""
+    from services.silhouette_semantics import enrich_catalog
+    from services.silhouette_catalog import scan_catalog
+
+    project_path = prefs.get("path")
+    media_type   = normalize_media_type(getattr(args, "media", "movie"))
+    label        = getattr(args, "label",   None)
+    field        = getattr(args, "field",   None)
+    rebuild      = getattr(args, "rebuild", False)
+    verbose      = getattr(args, "verbose", False)
+    dry_run      = getattr(args, "dry_run", False)
+    model_name   = getattr(args, "model",   None)
+
+    if dry_run:
+        records = scan_catalog(project_path, media_type=media_type, label=label)
+        if field is not None:
+            records = [r for r in records if (r.get("field") or "") == field]
+        import json as _json
+        pending = [
+            r for r in records
+            if rebuild or _json.loads(
+                open(str(r["path"])).read()
+            ).get("semantic_version") is None
+        ]
+        print(
+            f"Dry run: {len(pending)} of {len(records)} catalog entries "
+            f"would be enriched."
+        )
+        return
+
+    summary = enrich_catalog(
+        project_path=project_path,
+        media_type=media_type,
+        label=label,
+        field=field,
+        rebuild=rebuild,
+        verbose=verbose,
+        model_name=model_name,
+    )
+    print(
+        f"Enrich summary: "
+        f"processed={summary.get('processed', 0)}  "
+        f"skipped={summary.get('skipped', 0)}  "
+        f"errors={summary.get('errors', 0)}"
+    )
 
 
 def _silhouette_catalog_audit(args):
@@ -8560,6 +8610,43 @@ def build_parser():
     )
     _add_media_arg(p_sil_score)
     _add_verbose_arg(p_sil_score, help="Print per-object scoring progress")
+
+    # ── enrich ────────────────────────────────────────────────────────────
+    p_sil_enrich = silhouette_sub.add_parser(
+        "enrich",
+        help="Enrich catalog JSON files with semantic metadata (viewpoint, completeness, engraving_score …)",
+        epilog=(
+            "Reads the latest prompt file from <project>/prompts/silhouettes/*.txt and uses\n"
+            "CLIP zero-shot classification to infer semantic labels for each silhouette.\n"
+            "Never touches PNG files and never reruns SAM segmentation.\n\n"
+            "Examples:\n"
+            "  crossing index silhouette enrich\n"
+            "  crossing index silhouette enrich --label horse\n"
+            "  crossing index silhouette enrich --field animals --rebuild\n"
+            "  crossing index silhouette enrich --label horse --dry-run"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_sil_enrich.set_defaults(func=cmd_index)
+    p_sil_enrich.add_argument(
+        "--label", default=None, metavar="LABEL",
+        help="Restrict enrichment to a specific label (e.g. horse)",
+    )
+    p_sil_enrich.add_argument(
+        "--field", default=None, metavar="FIELD",
+        help="Restrict enrichment to a specific annotation field (e.g. animals)",
+    )
+    p_sil_enrich.add_argument(
+        "--rebuild", action="store_true",
+        help="Re-enrich entries that already carry semantic_version",
+    )
+    p_sil_enrich.add_argument(
+        "--model", default=None, metavar="NAME",
+        help="CLIP model name for classification (default: frame_match model role)",
+    )
+    _add_media_arg(p_sil_enrich)
+    _add_dry_run_arg(p_sil_enrich, help="Report how many entries would be enriched without writing files")
+    _add_verbose_arg(p_sil_enrich, help="Print per-object enrichment progress")
 
     # index palette
     p_index_palette = index_sub.add_parser(

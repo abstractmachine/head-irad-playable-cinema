@@ -319,3 +319,238 @@ def generate_engraving(
         "output_png": str(output_png_path),
         "metadata":   meta,
     }
+
+
+# ===========================================================================
+# OpenAI engraving provider
+# ===========================================================================
+
+OPENAI_GENERATOR_TAG = "openai_engraving_v1"
+OPENAI_DEFAULT_MODEL = "gpt-image-1"
+OPENAI_DEFAULT_SIZE  = "1024x1024"
+
+
+def get_openai_api_key(project_path: str) -> str:
+    """Return the OpenAI API key for *project_path*.
+
+    Resolution order
+    ----------------
+    1. ``<project>/preferences/keys/openai_api_key.txt`` (project-level key)
+    2. ``OPENAI_API_KEY`` environment variable
+
+    Raises ``RuntimeError`` with actionable help text if neither is set.
+    """
+    import os
+    key_file = Path(project_path) / "preferences" / "keys" / "openai_api_key.txt"
+    if key_file.exists():
+        key = key_file.read_text(encoding="utf-8").strip()
+        if key:
+            return key
+    env_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if env_key:
+        return env_key
+    raise RuntimeError(
+        "No OpenAI API key configured.\n"
+        "  Save it with: crossing tool api_key set openai <your-key>\n"
+        "  Or set the OPENAI_API_KEY environment variable."
+    )
+
+
+def generate_openai_engraving(
+    *,
+    project_path: str,
+    silhouette_png_path: str,
+    source_frame_path: "str | None" = None,
+    silhouette_meta: "dict | str | None" = None,
+    engraving_id: str,
+    cache_dir: "Path | str",
+    model: str = OPENAI_DEFAULT_MODEL,
+    context: "dict | None" = None,
+    binary_threshold: int = DEFAULT_THRESHOLD,
+) -> dict:
+    """Generate an engraving using the OpenAI Images API.
+
+    Reads the silhouette PNG (RGBA), composites it onto white, and sends it
+    to ``openai.images.edit()``.  When the model supports multiple input images
+    and a *source_frame_path* is provided, the frame is included as a second
+    reference so the model can use scene context.
+
+    Pipeline
+    --------
+    1. Composite silhouette RGBA → RGB on white background.
+    2. Optionally load source frame as a second reference image.
+    3. Load engraving prompt template; expand ``$variable`` placeholders from
+       *silhouette_meta* and *context* using ``string.Template.safe_substitute``.
+    4. Call ``openai.images.edit()``; retry with silhouette-only if multi-image
+       is rejected by the model.
+    5. Decode response (``b64_json`` or URL fallback) → write ``{id}_raw.png``.
+    6. Apply binary threshold → write ``{id}_output.png``
+       (strict B&W: black = line, white = paper).
+    7. Write ``{id}_generation.json`` with full provenance.
+
+    Returns
+    -------
+    dict with keys: ``raw_png``, ``output_png``, ``metadata``
+
+    Raises
+    ------
+    RuntimeError
+        Missing API key, ``openai`` package not installed, or API failure.
+    FileNotFoundError
+        ``silhouette_png_path`` does not exist.
+    """
+    try:
+        import openai as _openai
+    except ImportError:
+        raise RuntimeError(
+            "The 'openai' package is required for OpenAI engraving generation.\n"
+            "Install with:  uv add openai   (or pip install openai)"
+        )
+
+    import io as _io
+    import base64 as _b64
+    from PIL import Image as _PIL
+
+    sil_path = Path(silhouette_png_path)
+    if not sil_path.exists():
+        raise FileNotFoundError(f"Silhouette PNG not found: {sil_path}")
+
+    # Resolve silhouette_meta from path or dict
+    if isinstance(silhouette_meta, (str, Path)):
+        meta_path = Path(silhouette_meta)
+        silhouette_meta = (
+            json.loads(meta_path.read_text(encoding="utf-8"))
+            if meta_path.exists() else {}
+        )
+    silhouette_meta = dict(silhouette_meta or {})
+
+    # Build context for prompt template
+    merged_ctx: dict = {
+        "label":       silhouette_meta.get("label") or silhouette_meta.get("word", ""),
+        "field":       silhouette_meta.get("field", ""),
+        "movie":       silhouette_meta.get("film_title", "") or silhouette_meta.get("movie", ""),
+        "shot_id":     silhouette_meta.get("shot_id", ""),
+        "description": silhouette_meta.get("description", ""),
+    }
+    if context:
+        merged_ctx.update(context)
+
+    # Load and expand prompt template
+    from services.engraving_prompt import load_engraving_prompt
+    prompt_filename, prompt_template = load_engraving_prompt(project_path)
+    prompt_text = _expand_prompt(prompt_template, merged_ctx)
+
+    print(f"\n[openai-engraving] model       : {model}")
+    print(f"[openai-engraving] prompt file : {prompt_filename}")
+    print(f"[openai-engraving] context     : {merged_ctx}")
+    print(f"[openai-engraving] compiled prompt:\n{'-'*60}\n{prompt_text}\n{'-'*60}\n")
+
+    cache_dir = Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    raw_png_path    = cache_dir / f"{engraving_id}_raw.png"
+    output_png_path = cache_dir / f"{engraving_id}_output.png"
+
+    # Composite silhouette RGBA → RGB on white
+    sil_pil = _PIL.open(sil_path).convert("RGBA")
+    sil_bg  = _PIL.new("RGB", sil_pil.size, (255, 255, 255))
+    sil_bg.paste(sil_pil, mask=sil_pil.split()[3])
+    sil_buf = _io.BytesIO()
+    sil_bg.save(sil_buf, format="PNG")
+    sil_buf.seek(0)
+
+    # Build API image list: silhouette always first, frame optionally second
+    api_images: list = [("silhouette.png", sil_buf, "image/png")]
+    if source_frame_path:
+        frame_path = Path(source_frame_path)
+        if frame_path.exists():
+            try:
+                frame_pil = _PIL.open(frame_path).convert("RGB")
+                frame_buf = _io.BytesIO()
+                frame_pil.save(frame_buf, format="PNG")
+                frame_buf.seek(0)
+                api_images.append(("frame.png", frame_buf, "image/png"))
+            except Exception as _exc:
+                import sys as _sys
+                print(
+                    f"[openai-engraving] Warning: could not load source frame: {_exc}",
+                    file=_sys.stderr,
+                )
+        else:
+            import sys as _sys
+            print(
+                f"[openai-engraving] Warning: source frame not found: {frame_path}",
+                file=_sys.stderr,
+            )
+
+    api_key = get_openai_api_key(project_path)
+    client  = _openai.OpenAI(api_key=api_key)
+
+    def _call_edit(images: list) -> object:
+        """Call images.edit; unwrap list for single-image compat."""
+        img_arg = images if len(images) > 1 else images[0]
+        return client.images.edit(
+            model=model,
+            image=img_arg,
+            prompt=prompt_text,
+            n=1,
+            size=OPENAI_DEFAULT_SIZE,
+        )
+
+    # Primary call; fall back to silhouette-only if multi-image is rejected
+    try:
+        response = _call_edit(api_images)
+    except _openai.BadRequestError as _exc:
+        if len(api_images) > 1:
+            print(
+                f"[openai-engraving] Multi-image rejected ({_exc}); "
+                "retrying with silhouette only."
+            )
+            api_images[0][1].seek(0)  # rewind sil_buf
+            response = _call_edit(api_images[:1])
+        else:
+            raise
+
+    # Decode response: gpt-image-1 → b64_json; DALL-E 2 → url
+    img_obj = response.data[0]
+    b64 = getattr(img_obj, "b64_json", None)
+    if b64:
+        raw_bytes = _b64.b64decode(b64)
+    else:
+        url = getattr(img_obj, "url", None)
+        if not url:
+            raise RuntimeError(
+                "OpenAI response contained neither b64_json nor url."
+            )
+        import urllib.request as _ureq  # nosec B310
+        with _ureq.urlopen(url) as _resp:  # noqa: S310
+            raw_bytes = _resp.read()
+
+    raw_image = _PIL.open(_io.BytesIO(raw_bytes)).convert("RGB")
+    raw_image.save(str(raw_png_path))
+
+    # Strict B&W binary conversion (black = line, white = paper, no greys)
+    grey = raw_image.convert("L")
+    bw   = grey.point(lambda p: 0 if p < binary_threshold else 255)
+    bw.convert("RGB").save(str(output_png_path))
+
+    meta = {
+        "generator":           OPENAI_GENERATOR_TAG,
+        "model":               model,
+        "binary_threshold":    binary_threshold,
+        "prompt_filename":     prompt_filename,
+        "prompt":              prompt_text,
+        "context":             merged_ctx,
+        "silhouette_png_path": str(sil_path),
+        "source_frame_path":   str(source_frame_path) if source_frame_path else None,
+        "raw_png":             str(raw_png_path),
+        "output_png":          str(output_png_path),
+    }
+    (cache_dir / f"{engraving_id}_generation.json").write_text(
+        json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    return {
+        "raw_png":    str(raw_png_path),
+        "output_png": str(output_png_path),
+        "metadata":   meta,
+    }

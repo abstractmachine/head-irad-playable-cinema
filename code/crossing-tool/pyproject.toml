@@ -45,8 +45,11 @@ silhouette = [
   "transformers>=5.0.0",
   "safetensors",
 ]
+engraving = [
+  "openai>=1.0.0",
+]
 all = [
-  "crossing[annotate,visualizer,shot-detection,silhouette]",
+  "crossing[annotate,visualizer,shot-detection,silhouette,engraving]",
 ]
 
 [project.scripts]
