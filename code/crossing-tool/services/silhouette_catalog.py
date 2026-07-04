@@ -680,6 +680,18 @@ def extract_catalog_for_movie(
     if verbose:
         print(f"  [{filename}] {len(candidates)} candidate shot(s) for '{label}'.")
 
+    # Pre-load CLIP once if not already provided, so all shots share one load
+    if clip_model is None:
+        from services.frame_match import _load_clip_model
+        if verbose:
+            print(f"  Loading CLIP model '{frame_model_name}'…")
+        try:
+            clip_model, clip_processor, clip_device = _load_clip_model(
+                project_path, frame_model_name
+            )
+        except (ImportError, RuntimeError) as exc:
+            raise RuntimeError(f"CLIP model load failed: {exc}") from exc
+
     total_saved  = 0
     shots_saved  = 0
     total_skipped = 0

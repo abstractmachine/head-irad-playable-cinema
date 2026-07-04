@@ -151,6 +151,129 @@ def _claude_dir(project_path: str) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# Silhouette catalog helpers (private)
+# ---------------------------------------------------------------------------
+
+def _silhouette_catalog_dir(project_path: str, media_type: str) -> Path:
+    """Return the catalog root directory for the PNG-pipeline silhouettes."""
+    return Path(project_path) / "data" / "silhouettes" / "catalog" / media_type
+
+
+def _metadata_by_stem(project_path: str, media_type: str) -> dict:
+    """Return ``{filename_stem: metadata_entry}`` for quick lookups."""
+    try:
+        from data.metadata import get_metadata as _gm
+        entries = _gm(project_path, media_type=media_type)
+        return {Path(e.get("filename", "")).stem: e for e in entries if e.get("filename")}
+    except Exception:
+        return {}
+
+
+def _load_catalog_entries_for_word(
+    project_path: str,
+    media_type: str,
+    word: str,
+    field: str,
+    scope: str,
+) -> list[dict]:
+    """Scan the silhouette catalog for all PNG-pipeline entries matching *word*.
+
+    Supports ``scope="all"`` or ``scope="movie-<media_id>"``.
+    Filters by *field* when *field* is non-empty.
+    """
+    import re as _re
+
+    catalog_root = _silhouette_catalog_dir(project_path, media_type)
+    if not catalog_root.exists():
+        return []
+
+    safe_label = _re.sub(r"[^a-z0-9_]", "_", word.lower().strip())
+    meta_map = _metadata_by_stem(project_path, media_type)
+
+    # Build scope filter (None = allow all)
+    scope_stems: set | None = None
+    if scope != "all" and scope.startswith("movie-"):
+        target_media_id = scope[6:]
+        scope_stems = {
+            stem for stem, e in meta_map.items()
+            if e.get("media_id") == target_media_id
+        }
+
+    entries: list[dict] = []
+    for stem_dir in sorted(catalog_root.iterdir()):
+        if not stem_dir.is_dir():
+            continue
+        filename_stem = stem_dir.name
+        if scope_stems is not None and filename_stem not in scope_stems:
+            continue
+
+        label_dir = stem_dir / safe_label
+        if not label_dir.exists():
+            continue
+
+        film_meta  = meta_map.get(filename_stem, {})
+        film_title = film_meta.get("title", filename_stem)
+
+        for json_file in sorted(label_dir.glob("object_????.json")):
+            try:
+                meta = json.loads(json_file.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            # Filter by field when specified
+            if field and meta.get("field") and meta["field"] != field:
+                continue
+
+            png_name = meta.get("png", "")
+            png_path = (label_dir / png_name) if png_name else None
+
+            entries.append({
+                "cache_path":    str(json_file),
+                "png_path":      str(png_path) if (png_path and png_path.exists()) else None,
+                "media_id":      meta.get("media_id", ""),
+                "film_title":    film_title,
+                "shot_id":       meta.get("shot_id", ""),
+                "frame_index":   meta.get("frame"),
+                "score":         meta.get("confidence"),
+                "pixel_area":    meta.get("mask_area"),
+                "bbox":          meta.get("bbox"),
+                "polygon_points": None,
+                "source_frame":  meta.get("source_frame"),
+                "filename":      meta.get("filename", ""),
+            })
+
+    return entries
+
+
+def _pick_largest_silhouette(entries: list[dict]) -> "dict | None":
+    """Return the entry with the greatest *pixel_area* (mask_area)."""
+    if not entries:
+        return None
+    valid = [e for e in entries if e.get("pixel_area") is not None]
+    pool  = valid if valid else entries
+    return max(pool, key=lambda e: e.get("pixel_area") or 0)
+
+
+def _render_silhouette_png_bytes(png_path: str, width: int) -> "bytes | None":
+    """Load a silhouette RGBA PNG and return PNG bytes, optionally resized."""
+    try:
+        import io as _io
+        from PIL import Image as _PIL
+        img = _PIL.open(png_path)
+        w, h = img.size
+        if width > 0 and w > width:
+            scale = width / w
+            img = img.resize(
+                (max(1, int(w * scale)), max(1, int(h * scale))),
+                _PIL.LANCZOS,
+            )
+        buf = _io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # MCP server
 # ---------------------------------------------------------------------------
 
@@ -610,6 +733,70 @@ def list_silhouettes(
 
 
 @mcp.tool()
+def list_silhouette_candidates(
+    word: str,
+    field: str = "objects",
+    scope: str = "all",
+    media_type: str = "movie",
+) -> str:
+    """List all cached silhouette candidates for a vocabulary term (catalog pipeline).
+
+    Scans the PNG-pipeline silhouette catalog for every extracted object
+    matching *word*, returning metadata without loading any images.
+    Use get_best_silhouette to retrieve the actual PNG and source frame.
+
+    Each entry reports: cache path, PNG path, media_id, film title, shot_id,
+    frame index, CLIP confidence score, pixel area (mask_area), bounding box.
+
+    Args:
+        word:       Vocabulary term to look up (e.g. "horse", "gun").
+        field:      Annotation field filter (e.g. "objects", "animals").
+                    Pass an empty string to accept entries from any field.
+        scope:      "all" (full corpus) or "movie-<media_id>" for one film.
+        media_type: "movie" (default) or "gameplay".
+
+    Read-only. Reads: data/silhouettes/catalog/<media_type>/
+    """
+    result = _ctx()
+    if isinstance(result, str):
+        return result
+    project_path, _ = result
+
+    try:
+        entries = _load_catalog_entries_for_word(
+            project_path, media_type, word, field, scope
+        )
+
+        public = [
+            {
+                "cache_path":    e["cache_path"],
+                "png_path":      e["png_path"],
+                "media_id":      e["media_id"],
+                "film_title":    e["film_title"],
+                "shot_id":       e["shot_id"],
+                "frame_index":   e["frame_index"],
+                "score":         e["score"],
+                "pixel_area":    e["pixel_area"],
+                "bbox":          e["bbox"],
+                "polygon_points": e["polygon_points"],
+            }
+            for e in entries
+        ]
+
+        return _ok(
+            word=word,
+            field=field,
+            scope=scope,
+            found=len(public) > 0,
+            count=len(public),
+            entries=public,
+        )
+
+    except Exception as exc:
+        return _err(str(exc), traceback.format_exc())
+
+
+@mcp.tool()
 def search_shots(
     query: str,
     films: list[str] | None = None,
@@ -670,6 +857,7 @@ def search_shots(
 @mcp.tool()
 def search_vocabulary(
     field: str,
+    query: str = "",
     top: int = 50,
     sort: str = "count",
     media_type: str = "movie",
@@ -677,11 +865,13 @@ def search_vocabulary(
     """Query the vocabulary index for a given annotation field.
 
     Returns canonicalized terms sorted by frequency or alphabetically.
-    Useful for exploring what words appear most often in a given field.
+    Suitable for both targeted lookup and general browsing.
 
     Args:
         field:      Annotation field: "setting", "objects", "animals",
                     "humans", "wearing".
+        query:      Optional filter string (case-insensitive substring).
+                    If empty, returns top terms without filtering.
         top:        Number of terms to return (default 50, 0 = all).
         sort:       "count" (most frequent first) or "alphabetical".
         media_type: "movie" (default) or "gameplay".
@@ -704,14 +894,22 @@ def search_vocabulary(
             )
 
         items = get_vocabulary(field, project_path, media_type=media_type, sort=sort)
+
+        # Filter by query substring when provided
+        if query:
+            q_lower = query.lower()
+            items = [it for it in items if q_lower in it["value"].lower()]
+
+        total_terms = len(items)
         if top and top < len(items):
             items = items[:top]
 
         return _ok(
             field=field,
+            query=query or None,
             sort=sort,
             media_type=media_type,
-            total_terms=len(items),
+            total_terms=total_terms,
             vocabulary=items,
         )
 
@@ -1205,6 +1403,117 @@ def get_context_frames(
         return [_err(str(exc), traceback.format_exc())]
 
 
+@mcp.tool()
+def get_best_silhouette(
+    word: str,
+    field: str = "objects",
+    scope: str = "all",
+    media_type: str = "movie",
+    width: int = 400,
+) -> list:
+    """Return the best silhouette for a vocabulary term, plus its source frame.
+
+    Selects the catalog entry with the greatest pixel area, then returns
+    both the transparent silhouette PNG and the original source frame as
+    inline images — mirroring the image-return pattern of get_best_frames.
+
+    Return value: [metadata_json_str, silhouette_png, source_frame_jpeg]
+    The silhouette is a transparent RGBA PNG; the frame is a JPEG thumbnail.
+
+    Args:
+        word:       Vocabulary term to look up (e.g. "horse", "gun").
+        field:      Annotation field the term belongs to (e.g. "objects",
+                    "animals"). Pass empty string to search all fields.
+        scope:      "all" (full corpus) or "movie-<media_id>" for one film.
+        media_type: "movie" (default) or "gameplay".
+        width:      Thumbnail width in pixels (default 400).
+
+    Read-only. Reads: data/silhouettes/catalog/, media/frames/best/
+    """
+    result = _ctx()
+    if isinstance(result, str):
+        return [result]
+    project_path, _ = result
+
+    try:
+        entries = _load_catalog_entries_for_word(
+            project_path, media_type, word, field, scope
+        )
+        if not entries:
+            return [_err(
+                f"No silhouette candidates found for {word!r} "
+                f"(field={field!r}, scope={scope!r}).",
+                "Run: crossing silhouette catalog scan  to populate the catalog.",
+            )]
+
+        best = _pick_largest_silhouette(entries)
+        if best is None:
+            return [_err(f"Could not select a best silhouette for {word!r}.")]
+
+        # --- Load silhouette PNG ---
+        sil_bytes: bytes | None = None
+        if best.get("png_path"):
+            sil_bytes = _render_silhouette_png_bytes(best["png_path"], width)
+
+        # --- Load source frame ---
+        frame_bytes: bytes | None = None
+        source_frame = best.get("source_frame", "")
+        if source_frame and not source_frame.startswith("frame:"):
+            src_path = Path(source_frame)
+            if not src_path.is_absolute():
+                src_path = Path(project_path) / source_frame
+            if src_path.exists():
+                try:
+                    import io as _io
+                    from PIL import Image as _PIL
+                    from services.frame_retrieval import _resize_pil, _pil_to_jpeg_bytes
+                    img = _PIL.open(src_path).convert("RGB")
+                    img = _resize_pil(img, width)
+                    frame_bytes = _pil_to_jpeg_bytes(img)
+                except Exception:
+                    pass
+
+        # Fallback: frame retrieval service
+        if frame_bytes is None and best.get("shot_id") and best.get("filename"):
+            try:
+                from services.frame_retrieval import retrieve_single_frame
+                fr = retrieve_single_frame(
+                    project_path,
+                    best["filename"],
+                    best["shot_id"],
+                    media_type,
+                    width=width,
+                )
+                frame_bytes = fr.get("image_data")
+            except Exception:
+                pass
+
+        metadata = _ok(
+            word=word,
+            field=field,
+            scope=scope,
+            film_title=best.get("film_title", ""),
+            shot_id=best.get("shot_id", ""),
+            frame_index=best.get("frame_index"),
+            pixel_area=best.get("pixel_area"),
+            score=best.get("score"),
+            bbox=best.get("bbox"),
+            source_cache_path=best.get("cache_path"),
+            has_silhouette_png=sil_bytes is not None,
+            has_source_frame=frame_bytes is not None,
+        )
+
+        out: list = [metadata]
+        if sil_bytes:
+            out.append(_MCPImage(data=sil_bytes, format="png"))
+        if frame_bytes:
+            out.append(_MCPImage(data=frame_bytes, format="jpeg"))
+        return out
+
+    except Exception as exc:
+        return [_err(str(exc), traceback.format_exc())]
+
+
 # ===========================================================================
 # TIER 2 — GENERATION TOOLS (write to output/ only)
 # ===========================================================================
@@ -1581,6 +1890,213 @@ def generate_catalog(
         return _err(str(exc), traceback.format_exc())
 
 
+@mcp.tool()
+def generate_silhouette_booklet(
+    words: list[str] | None = None,
+    films: list[str] | None = None,
+    limit: int = 20,
+    output_format: str = "pdf",
+    media_type: str = "movie",
+) -> str:
+    """Generate a multi-page booklet from vocabulary silhouette / frame pairs.
+
+    For each word in *words*, looks up the best cached silhouette (by pixel
+    area) and its original source frame, then assembles one page per word
+    in A5-landscape format (1754 × 1240 px at 150 DPI).
+
+    Each page shows:
+      • word label + film title at the top
+      • silhouette PNG (transparent, on white) on the left panel
+      • original source frame on the right panel
+
+    The booklet is written to ``output/booklets/`` and the output path is
+    returned in the response.
+
+    OpenAI engraving integration is not yet implemented. The page structure
+    is designed to accept an engraving layer as a third panel in a future pass.
+
+    Args:
+        words:         Vocabulary terms to include (required — at least one).
+        films:         Restrict silhouette lookup to these film titles.
+                       None → search the full corpus.
+        limit:         Max words / pages to include (default 20).
+        output_format: "pdf" (default).
+        media_type:    "movie" (default) or "gameplay".
+
+    Output-writing. Reads: data/silhouettes/catalog/, media/frames/best/
+                   Writes: output/booklets/
+    """
+    if not words:
+        return _err("words must be a non-empty list of vocabulary terms.")
+
+    result = _ctx()
+    if isinstance(result, str):
+        return result
+    project_path, _ = result
+
+    try:
+        import io as _io
+        from PIL import Image as _PIL, ImageDraw as _Draw, ImageFont as _Font
+
+        # --- Font setup ---
+        _font_dir = _SCRIPT_DIR / "styles" / "fonts" / "libre_clarendon" / "fonts"
+
+        def _try_font(name: str, size: int):
+            try:
+                return _Font.truetype(str(_font_dir / name), size)
+            except Exception:
+                return _Font.load_default()
+
+        font_word = _try_font("LibreClarendonNormal-110Medium.otf", 72)
+        font_sub  = _try_font("LibreClarendonNormal-42Light.otf",   28)
+
+        # --- Page dimensions: A5 landscape @ 150 DPI ---
+        PAGE_W, PAGE_H = 1754, 1240
+        MARGIN  = 80
+        LABEL_H = 140
+
+        # --- Film filter (media_id set) ---
+        film_media_ids: set | None = None
+        if films:
+            meta_map = _metadata_by_stem(project_path, media_type)
+            film_media_ids = set()
+            for f in films:
+                fl = f.lower()
+                for stem, e in meta_map.items():
+                    if fl in e.get("title", "").lower() or fl in stem.lower():
+                        film_media_ids.add(e.get("media_id", ""))
+
+        words_to_use = words[:limit]
+        pages: list  = []
+        summary: list[dict] = []
+
+        for word in words_to_use:
+            entries = _load_catalog_entries_for_word(
+                project_path, media_type, word, "", "all"
+            )
+            if film_media_ids is not None:
+                entries = [e for e in entries if e.get("media_id") in film_media_ids]
+
+            best = _pick_largest_silhouette(entries)
+            if best is None:
+                summary.append({"word": word, "status": "no_silhouette"})
+                continue
+
+            # Load silhouette image
+            sil_img: object | None = None
+            if best.get("png_path"):
+                try:
+                    sil_img = _PIL.open(best["png_path"]).convert("RGBA")
+                except Exception:
+                    pass
+
+            # Load source frame
+            frame_img: object | None = None
+            source_frame = best.get("source_frame", "")
+            if source_frame and not source_frame.startswith("frame:"):
+                src_path = Path(source_frame)
+                if not src_path.is_absolute():
+                    src_path = Path(project_path) / source_frame
+                if src_path.exists():
+                    try:
+                        frame_img = _PIL.open(src_path).convert("RGB")
+                    except Exception:
+                        pass
+            if frame_img is None and best.get("shot_id") and best.get("filename"):
+                try:
+                    from services.frame_retrieval import retrieve_single_frame
+                    fr = retrieve_single_frame(
+                        project_path, best["filename"], best["shot_id"],
+                        media_type, width=900,
+                    )
+                    if fr.get("image_data"):
+                        frame_img = _PIL.open(_io.BytesIO(fr["image_data"])).convert("RGB")
+                except Exception:
+                    pass
+
+            # --- Build page ---
+            page = _PIL.new("RGB", (PAGE_W, PAGE_H), (255, 255, 255))
+            draw = _Draw.Draw(page)
+
+            draw.text((MARGIN, MARGIN), word.upper(), fill=(0, 0, 0), font=font_word)
+            subtitle = best.get("film_title", "")
+            if subtitle:
+                draw.text((MARGIN, MARGIN + 90), subtitle, fill=(100, 100, 100), font=font_sub)
+
+            content_top = MARGIN + LABEL_H
+            content_h   = PAGE_H - content_top - MARGIN
+            half_w      = (PAGE_W - 3 * MARGIN) // 2
+
+            # Left panel: silhouette on white
+            if sil_img is not None:
+                s = sil_img.copy()
+                s.thumbnail((half_w, content_h), _PIL.LANCZOS)
+                bg = _PIL.new("RGB", s.size, (255, 255, 255))
+                if s.mode == "RGBA":
+                    bg.paste(s, mask=s.split()[3])
+                else:
+                    bg.paste(s)
+                x_sil = MARGIN + (half_w - bg.width) // 2
+                y_sil = content_top + (content_h - bg.height) // 2
+                page.paste(bg, (x_sil, y_sil))
+
+            # Divider line
+            lx = MARGIN + half_w + MARGIN // 2
+            draw.line([(lx, content_top), (lx, content_top + content_h)],
+                      fill=(220, 220, 220), width=2)
+
+            # Right panel: source frame
+            if frame_img is not None:
+                frm = frame_img.copy()
+                frm.thumbnail((half_w, content_h), _PIL.LANCZOS)
+                x_frm = PAGE_W - MARGIN - half_w + (half_w - frm.width) // 2
+                y_frm = content_top + (content_h - frm.height) // 2
+                page.paste(frm, (x_frm, y_frm))
+
+            pages.append(page)
+            summary.append({
+                "word":       word,
+                "status":     "ok",
+                "film_title": best.get("film_title", ""),
+                "shot_id":    best.get("shot_id", ""),
+                "pixel_area": best.get("pixel_area"),
+            })
+
+        if not pages:
+            return _err(
+                "No pages generated — no silhouette catalog entries found for "
+                "the given words.",
+                "Run: crossing silhouette catalog scan  to populate the catalog.",
+            )
+
+        out_dir   = _output_dir(project_path, "booklets")
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H%M%S")
+        safe_slug = "_".join(w.replace(" ", "_") for w in words_to_use[:3])
+        out_path  = out_dir / f"booklet-{safe_slug}-{timestamp}.pdf"
+
+        pages[0].save(
+            str(out_path),
+            format="PDF",
+            save_all=True,
+            append_images=pages[1:],
+            resolution=150,
+        )
+
+        return _ok(
+            words=words_to_use,
+            page_count=len(pages),
+            output_path=str(out_path),
+            summary=summary,
+            notes=[
+                "Engraving layer not yet implemented. "
+                "Structure is ready for a future OpenAI engraving pass.",
+            ],
+        )
+
+    except Exception as exc:
+        return _err(str(exc), traceback.format_exc())
+
+
 # ===========================================================================
 # Tier 3 — Analysis tools (read-only archive analysis)
 # ===========================================================================
@@ -1908,6 +2424,126 @@ def get_archive_stats(
         from services.analysis import get_archive_stats as _get_archive_stats
         data = _get_archive_stats(project_path=project_path, media_type=media_type)
         return _ok(**data)
+    except Exception as exc:
+        return _err(str(exc), traceback.format_exc())
+
+
+# ===========================================================================
+# Tier 4 — Audit and discovery tools
+# ===========================================================================
+
+@mcp.tool()
+def crossing_about(media_type: str = "movie") -> str:
+    """Return a high-level summary of what is available in this archive.
+
+    Designed as a first-call orientation tool for agents and assistants.
+    Reports inventory counts, capability flags, and output directory layout.
+    Does not expose internal implementation details.
+
+    Args:
+        media_type: "movie" (default) or "gameplay".
+
+    Read-only. Uses file-presence checks only — no heavy scanning.
+    """
+    if media_type not in ("movie", "gameplay"):
+        return _err(f"Invalid media_type {media_type!r}. Must be 'movie' or 'gameplay'.")
+
+    result = _ctx()
+    if isinstance(result, str):
+        return result
+    project_path, _ = result
+
+    try:
+        from data.metadata import get_metadata
+
+        movies    = get_metadata(project_path, media_type="movie")
+        gameplays = get_metadata(project_path, media_type="gameplay")
+
+        pp = Path(project_path)
+
+        def _has_files(d: Path, pattern: str) -> bool:
+            return d.exists() and bool(next(d.glob(pattern), None))
+
+        ann_dir      = pp / "data" / "annotations" / "shots" / media_type
+        shotlist_dir = pp / "data" / "shotlists" / media_type
+        subtitle_dir = pp / "media" / "subtitles" / media_type
+        palette_dir  = pp / "data" / "palettes" / media_type
+        frames_dir   = pp / "media" / "frames" / "best" / media_type
+
+        frame_retrieval_ok = False
+        if frames_dir.exists():
+            try:
+                frame_retrieval_ok = bool(next(frames_dir.iterdir(), None))
+            except Exception:
+                pass
+
+        capabilities = {
+            "metadata":        bool(movies or gameplays),
+            "shotlists":       _has_files(shotlist_dir, "*.csv"),
+            "subtitles":       _has_files(subtitle_dir, "*.srt"),
+            "motifs":          _has_files(ann_dir, "*.json"),
+            "palettes":        _has_files(palette_dir, "*.json"),
+            "frame_retrieval": frame_retrieval_ok,
+            "analysis":        ann_dir.exists(),
+            "generation":      True,
+        }
+
+        archive_ready = bool(movies) and ann_dir.exists()
+
+        return _ok(
+            project_path=project_path,
+            media_type=media_type,
+            archive_ready=archive_ready,
+            inventory={
+                "movies":    len(movies),
+                "gameplays": len(gameplays),
+            },
+            capabilities=capabilities,
+            output_dirs=[
+                "output/flipbooks",
+                "output/mosaics",
+                "output/clouds",
+                "output/compositions",
+                "output/catalogs",
+                "output/booklets",
+            ],
+            notes=[
+                "Use list_movies, search_shots, get_best_frames, and "
+                "generate_catalog for normal work.",
+            ],
+        )
+
+    except Exception as exc:
+        return _err(str(exc), traceback.format_exc())
+
+
+@mcp.tool()
+def list_vocabulary_fields(media_type: str = "movie") -> str:
+    """Return the annotation fields available in the vocabulary index.
+
+    Use this before calling search_vocabulary or list_silhouette_candidates
+    to discover which field names are valid.
+
+    Args:
+        media_type: "movie" (default) or "gameplay".
+
+    Read-only. Reads: data/vocabulary/vocabulary_<media_type>.json
+    """
+    if media_type not in ("movie", "gameplay"):
+        return _err(f"Invalid media_type {media_type!r}. Must be 'movie' or 'gameplay'.")
+
+    result = _ctx()
+    if isinstance(result, str):
+        return result
+    project_path, _ = result
+
+    try:
+        from services.vocabulary_index import get_vocabulary_fields
+        fields = get_vocabulary_fields(project_path, media_type)
+        return _ok(media_type=media_type, fields=fields)
+
+    except FileNotFoundError as exc:
+        return _err(str(exc), "Build the vocabulary index: crossing index vocabulary")
     except Exception as exc:
         return _err(str(exc), traceback.format_exc())
 

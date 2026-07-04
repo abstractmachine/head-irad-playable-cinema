@@ -3491,16 +3491,13 @@ class FramesViewerNode(SyncNode):
         img_w, img_h = self._tile_image_size()
 
         if self._mode == "loop":
-            # First result → looping shot video; rest → static best-frame tiles
-            player = _ShotLoopPlayer(
-                self._results[0], project_path, img_w, img_h,
-                show_info=self._info_on,
-                parent=self._tiles_container,
-            )
-            self._tiles_layout.addWidget(player)
-            for result in self._results[1:]:
-                tile = self._make_tile(result, project_path, img_w, img_h)
-                self._tiles_layout.addWidget(tile)
+            for result in self._results:
+                player = _ShotLoopPlayer(
+                    result, project_path, img_w, img_h,
+                    show_info=self._info_on,
+                    parent=self._tiles_container,
+                )
+                self._tiles_layout.addWidget(player)
         else:
             for result in self._results:
                 tile = self._make_tile(result, project_path, img_w, img_h)

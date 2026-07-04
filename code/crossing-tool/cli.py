@@ -5541,6 +5541,7 @@ def _silhouette_catalog_extract(args):
     label        = args.label
     field        = getattr(args, "field",  None)  # None → search across all annotation fields
     fields_multi = getattr(args, "fields", None)  # --fields: multi-field expansion mode
+    all_fields   = getattr(args, "all_fields", False)  # --all-fields: auto-expand all vocab fields
     media_type   = normalize_media_type(getattr(args, "media", "movie"))
     force        = getattr(args, "force", False)
     verbose      = getattr(args, "verbose", False)
@@ -5557,10 +5558,35 @@ def _silhouette_catalog_extract(args):
         or prefs.get(_MODEL_KEYS["frame_match"], _MODEL_DEFAULTS["frame_match"])
     )
 
+    # --all-fields: resolve vocabulary fields and treat as --fields
+    if all_fields:
+        if label:
+            print(
+                "✗ Cannot combine a positional LABEL with --all-fields.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if fields_multi:
+            print(
+                "✗ Cannot combine --fields with --all-fields; use one or the other.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        from services.vocabulary_index import get_vocabulary_fields
+        try:
+            fields_multi = get_vocabulary_fields(project_path, media_type)
+        except FileNotFoundError as exc:
+            print(f"✗ Could not load vocabulary fields: {exc}", file=sys.stderr)
+            sys.exit(1)
+        if not fields_multi:
+            print("✗ No vocabulary fields found for this project.", file=sys.stderr)
+            sys.exit(1)
+        print(f"  (--all-fields: {len(fields_multi)} field(s): {', '.join(fields_multi)})")
+
     # Validate: exactly one of label or --fields must be given
     if not label and not fields_multi:
         print(
-            "✗ Specify a positional LABEL or --fields FIELD [FIELD …]",
+            "✗ Specify a positional LABEL, --fields FIELD [FIELD …], or --all-fields",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -5614,7 +5640,10 @@ def _silhouette_catalog_extract(args):
         # first_field is the one where --start-from-label applies (if set)
         first_field = active_fields[0] if active_fields else None
 
+        _clip_unavailable = False
         for fld in active_fields:
+            if _clip_unavailable:
+                break
             try:
                 vocab = get_vocabulary(fld, project_path, media_type)
             except (FileNotFoundError, KeyError) as exc:
@@ -5716,6 +5745,9 @@ def _silhouette_catalog_extract(args):
                     errors.append(msg)
                     fld_totals["failed"] += 1
                     print(f"     ✗ {exc}", file=sys.stderr)
+                    if "CLIP model load failed" in str(exc) or "CLIP load failed" in str(exc):
+                        _clip_unavailable = True
+                        break
 
             # Accumulate into grand totals
             for k in grand:
@@ -8359,6 +8391,14 @@ def build_parser():
             "Cannot be combined with a positional LABEL. Requires --all or --title/--tmdb scope. "
             "Example: crossing index silhouette extract "
             "--fields setting objects wearing action humans animals --all"
+        ),
+    )
+    p_sil_extract.add_argument(
+        "--all-fields", action="store_true", default=False, dest="all_fields",
+        help=(
+            "Expand every configured vocabulary field automatically. "
+            "Equivalent to --fields <all fields> but without having to list them. "
+            "Cannot be combined with a positional LABEL or --fields."
         ),
     )
     p_sil_extract.add_argument(

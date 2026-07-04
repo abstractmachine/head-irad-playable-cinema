@@ -120,7 +120,7 @@ def _load_clip_model(project_path: str, model_name: str):
         from transformers import CLIPModel, CLIPProcessor
     except ImportError as exc:
         raise ImportError(
-            "transformers and torch are required for frame matching.\n"
+            "transformers and torch are required for frame matching. "
             "Install them with:  pip install transformers torch"
         ) from exc
 
