@@ -526,6 +526,15 @@ def extract_objects_for_shot(
     next_idx = _next_object_index(label_dir)
     timestamp = datetime.now(timezone.utc).isoformat()
 
+    # Load semantic analysis prompts once for this shot (best-effort).
+    # A missing or malformed prompt file must never block extraction.
+    _sem_prompts = None
+    try:
+        from services.silhouette_prompt import load_silhouette_prompts
+        _, _sem_prompts = load_silhouette_prompts(project_path)
+    except Exception:
+        pass
+
     for mask_dict, tight_score in deduped:
         # Find broad score for this mask
         broad_score = next(
@@ -576,6 +585,29 @@ def extract_objects_for_shot(
             json.dumps(meta, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
+
+        # Inline semantic enrichment — uses the already-loaded CLIP model so
+        # there is no extra model load.  Best-effort: any failure is logged
+        # (when --verbose) but never prevents the PNG from being saved.
+        try:
+            from services.silhouette_semantics import analyze_silhouette_semantics
+            sem = analyze_silhouette_semantics(
+                png_path,
+                meta,
+                clip_model=clip_model,
+                clip_processor=clip_processor,
+                clip_device=clip_device,
+                prompts=_sem_prompts,
+                project_path=project_path,
+            )
+            meta.update(sem)
+            json_path.write_text(
+                json.dumps(meta, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception as _sem_exc:
+            if verbose:
+                print(f"    (semantic enrichment skipped: {_sem_exc})")
 
         saved_paths.append(str(png_path))
         if verbose:
