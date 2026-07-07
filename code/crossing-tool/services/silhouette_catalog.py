@@ -125,6 +125,15 @@ def unmark_label_scanned(
         p.unlink()
 
 
+def sort_labels(labels: "list[str]") -> "list[str]":
+    """Return *labels* sorted case-insensitively (A and a interleaved, not separated).
+
+    Use this wherever a label list is displayed to users — CLI, MCP, and
+    visualizers — so the sort order is consistent across all surfaces.
+    """
+    return sorted(labels, key=str.casefold)
+
+
 # ---------------------------------------------------------------------------
 # Path helpers
 # ---------------------------------------------------------------------------

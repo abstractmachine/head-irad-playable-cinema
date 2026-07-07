@@ -6,16 +6,17 @@ from PyQt5.QtWidgets import QApplication
 
 
 _VISUALIZER_TITLE = {
-    "shotlist":    "Shotlist Visualizer",
-    "mosaic":      "Mosaic Visualizer",
-    "composition": "Composition Visualizer",
-    "metadata":    "Metadata Visualizer",
-    "cloud":       "Cloud Visualizer",
-    "silhouette":  "Silhouette Visualizer",
-    "palette":     "Palette Visualizer",
-    "flipbook":    "Flipbook Visualizer",
-    "book":        "Book Visualizer",
-    "sync":        "Sync Visualizer",
+    "shotlist":     "Shotlist Visualizer",
+    "mosaic":       "Mosaic Visualizer",
+    "composition":  "Composition Visualizer",
+    "metadata":     "Metadata Visualizer",
+    "cloud":        "Cloud Visualizer",
+    "silhouette":   "Silhouette Visualizer",
+    "palette":      "Palette Visualizer",
+    "flipbook":     "Flipbook Visualizer",
+    "book":         "Book Visualizer",
+    "sync":         "Sync Visualizer",
+    "segmentation": "Segmentation Visualizer",
 }
 
 

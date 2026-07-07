@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Silhouette Visualizer — catalog browser + SAM-3 shot explorer.
+"""Silhouette Visualizer — catalog browser + segmentation explorer.
 
 Two tabs in one window:
 
@@ -10,9 +10,9 @@ Two tabs in one window:
     Right panel: thumbnail grid of all objects for the selected entry.
     Clicking a thumbnail shows the full object and its metadata.
 
-  **SAM-3 Explorer**
+  **Segmentation Visualizer**
     Interactive shot inspection.  Browse movies → scenes → shots,
-    enter a concept, click Run SAM-3 to see masks on the best frame.
+    enter a concept, click Run Segmentation to see masks on the best frame.
 
 Keyboard shortcuts (Catalog tab):
   Up / Down    — previous / next label
@@ -62,16 +62,24 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from PyQt5.QtWidgets import QSlider  # kept for any future use; not used in Catalog panel
 from PyQt5.QtGui import (
     QBrush,
     QColor,
     QFont,
+    QIcon,
     QImage,
     QPainter,
     QPen,
     QPixmap,
     QPolygon,
 )
+
+try:
+    from PyQt5.QtSvg import QSvgRenderer as _QSvgRenderer
+    _HAS_SVG = True
+except ImportError:
+    _HAS_SVG = False
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +88,44 @@ from PyQt5.QtGui import (
 
 _PANEL_W = 310
 _DEFAULT_MODEL = "sam3.pt"
+
+
+def _svg_icon(name: str, size: int = 16, color: str = "#ffffff") -> QIcon:
+    """Load an iconoir SVG, recolour strokes to *color*, return QIcon."""
+    icon_dir = Path(__file__).parent.parent / "styles" / "icons" / "iconoir"
+    path = icon_dir / f"{name}.svg"
+    if not path.exists():
+        return QIcon()
+    coloured = path.read_bytes().replace(b"#000000", color.encode())
+    if _HAS_SVG:
+        renderer = _QSvgRenderer(coloured)
+        pix = QPixmap(size, size)
+        pix.fill(Qt.transparent)
+        painter = QPainter(pix)
+        renderer.render(painter)
+        painter.end()
+        icon = QIcon()
+        for mode in (QIcon.Normal, QIcon.Active, QIcon.Selected, QIcon.Disabled):
+            icon.addPixmap(pix, mode, QIcon.Off)
+            icon.addPixmap(pix, mode, QIcon.On)
+        return icon
+    return QIcon()
+
+# (display label, data key) pairs for the cascading sort dropdowns.
+# Data keys map to  <key>_score  or  <key>  fields in catalog JSON records.
+# "alphabetical" is a special case: sorts by label name (case-insensitive).
+_SORT_OPTS: list[tuple[str, str]] = [
+    ("confidence",     "confidence"),
+    ("usefulness",     "usefulness"),
+    ("engraving",      "engraving"),
+    ("fullness",       "fullness"),
+    ("size",           "size"),
+    ("completeness",   "completeness"),
+    ("isolation",      "isolation"),
+    ("semantic label", "semantic_label"),
+    ("semantic field", "semantic_field"),
+    ("alphabetical",   "alphabetical"),
+]
 
 # 24 visually distinct blob overlay colours (R, G, B)
 _BLOB_COLORS: list[tuple[int, int, int]] = [
@@ -380,11 +426,11 @@ class _CanvasWidget(QLabel):
 
 
 # ---------------------------------------------------------------------------
-# SAM background worker
+# Background segmentation worker
 # ---------------------------------------------------------------------------
 
-class _SAMWorker(QThread):
-    """Run SAM-3 concept segmentation in a background thread."""
+class _SegmentationWorker(QThread):
+    """Run concept segmentation in a background thread."""
 
     masks_ready = pyqtSignal(list, str)   # (raw_masks, effective_model_name)
     error = pyqtSignal(str)
@@ -412,7 +458,7 @@ class _SAMWorker(QThread):
             segmenter, effective_name, device = load_sam_model(
                 self._project_path, self._model_name
             )
-            self.progress.emit(f"Running SAM-3 segmentation for '{self._concept}'…")
+            self.progress.emit(f"Running segmentation for '{self._concept}'…")
             rgb = cv2.cvtColor(self._bgr, cv2.COLOR_BGR2RGB)
             image_pil = Image.fromarray(rgb)
             masks = segmenter.segment_concept(image_pil, self._concept)
@@ -484,9 +530,9 @@ class _InfoBlock(QWidget):
 # ---------------------------------------------------------------------------
 
 class SAMExplorer(QMainWindow):
-    """SAM-3 shot exploration visualizer.
+    """Segmentation visualizer.
 
-    Browse movies → scenes → shots, see each shot's best frame, run SAM-3
+    Browse movies → scenes → shots, see each shot's best frame, run segmentation
     concept segmentation on it, and inspect every mask returned.
     """
 
@@ -497,7 +543,7 @@ class SAMExplorer(QMainWindow):
         model_name: str = _DEFAULT_MODEL,
     ) -> None:
         super().__init__()
-        self.setWindowTitle("Crossing — SAM-3 Explorer")
+        self.setWindowTitle("Crossing — Segmentation Visualizer")
 
         self._project_path = project_path
         self._media_type = media_type
@@ -514,15 +560,17 @@ class SAMExplorer(QMainWindow):
         self._scene_idx: int = 0
         self._shot_idx: int = 0
 
-        # Frame + SAM state
+        # Frame + segmentation state
         self._bgr: Optional[np.ndarray] = None
         self._frame_source: str = ""
+        self._current_frame_num: int = 0
+        self._video_fps: float = 0.0
         self._masks: list[dict] = []
         self._blobs: list[dict] = []
         self._effective_model: str = ""
-        self._sam_worker: Optional[_SAMWorker] = None
+        self._seg_worker: Optional[_SegmentationWorker] = None
 
-        # Concept input for SAM-3
+        # Concept input
         self._concept: str = ""
 
         # Guard against recursive combo signal handling
@@ -533,9 +581,9 @@ class SAMExplorer(QMainWindow):
         self._load_films()
 
     def closeEvent(self, event) -> None:
-        if self._sam_worker and self._sam_worker.isRunning():
-            self._sam_worker.terminate()
-            self._sam_worker.wait(2000)
+        if self._seg_worker and self._seg_worker.isRunning():
+            self._seg_worker.terminate()
+            self._seg_worker.wait(2000)
         save_window_geometry(self, "window_sam_explorer")
         super().closeEvent(event)
 
@@ -612,7 +660,7 @@ class SAMExplorer(QMainWindow):
 
         panel_layout.addWidget(nav_group)
 
-        # Concept input for SAM-3
+        # Concept input
         concept_lbl = QLabel("Concept")
         concept_lbl.setStyleSheet(
             f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt;"
@@ -628,9 +676,9 @@ class SAMExplorer(QMainWindow):
         panel_layout.addWidget(self._concept_edit)
 
         # SAM run button
-        self._sam_btn = QPushButton("▶  Run SAM-3")
-        self._sam_btn.setFixedHeight(32)
-        self._sam_btn.setStyleSheet(
+        self._run_btn = QPushButton("▶  Run Segmentation")
+        self._run_btn.setFixedHeight(32)
+        self._run_btn.setStyleSheet(
             f"QPushButton {{"
             f"  background: {theme.ACCENT};"
             f"  color: #000000;"
@@ -646,9 +694,9 @@ class SAMExplorer(QMainWindow):
             f"  background: {theme.BTN_BG}; color: {theme.TEXT_DIM};"
             f"}}"
         )
-        self._sam_btn.setFocusPolicy(Qt.NoFocus)
-        self._sam_btn.clicked.connect(self._run_sam)
-        panel_layout.addWidget(self._sam_btn)
+        self._run_btn.setFocusPolicy(Qt.NoFocus)
+        self._run_btn.clicked.connect(self._run_segmentation)
+        panel_layout.addWidget(self._run_btn)
 
         # Status / progress label
         self._status_lbl = QLabel("")
@@ -676,8 +724,8 @@ class SAMExplorer(QMainWindow):
 
         # Keyboard hint
         hint = QLabel(
-            "↑ ↓ shot   PgUp / PgDn scene\n"
-            "Home / End movie   s = SAM-3"
+            "↑ ↓ shot   PgUp / PgDn scene   Home / End movie\n"
+            "← → frame   Shift+←→ 1 second   s = segment"
         )
         hint.setStyleSheet(
             f"color: {theme.TEXT_DIM};"
@@ -692,6 +740,12 @@ class SAMExplorer(QMainWindow):
 
         self.setMinimumSize(780, 480)
         self.resize(1200, 700)
+        for _w in (
+            self._media_type_combo, self._movie_combo,
+            self._scene_combo, self._shot_combo,
+            self._concept_edit,
+        ):
+            _w.installEventFilter(self)
         self._canvas.setFocus()
 
     # ------------------------------------------------------------------
@@ -731,6 +785,7 @@ class SAMExplorer(QMainWindow):
             return
         self._film_idx = idx
         self._filename = self._films[idx].get("filename", "")
+        self._video_fps = 0.0
         self._load_shots()
 
     def _load_shots(self) -> None:
@@ -836,9 +891,31 @@ class SAMExplorer(QMainWindow):
         self._updating = False
 
         if seen_scenes:
-            self._scene_idx = 0
-            self._scene_combo.setCurrentIndex(0)
-            self._on_scene_changed(0)
+            # Navigate to the shot with the highest best_frame.score; fall
+            # back to scene 0 / shot 0 when no scored best-frames exist.
+            best_shot = max(
+                self._shots,
+                key=lambda s: (s.get("best_frame") or {}).get("score") or 0.0,
+            )
+            bf_score = (best_shot.get("best_frame") or {}).get("score") or 0.0
+            if bf_score > 0.0:
+                target_scene = str(best_shot.get("Scene", "0") or "0")
+                scene_idx = (
+                    self._scene_nums.index(target_scene)
+                    if target_scene in self._scene_nums else 0
+                )
+            else:
+                target_scene = seen_scenes[0]
+                scene_idx = 0
+            self._scene_idx = scene_idx
+            self._scene_combo.setCurrentIndex(scene_idx)
+            # _on_scene_changed already loaded shot 0; override if best shot differs
+            if bf_score > 0.0:
+                scene_shots = self._shots_by_scene.get(target_scene, [])
+                for i, shot in enumerate(scene_shots):
+                    if shot is best_shot and i != self._shot_idx:
+                        self._shot_combo.setCurrentIndex(i)
+                        break
 
     def _on_scene_changed(self, idx: int) -> None:
         if self._updating or idx < 0 or idx >= len(self._scene_nums):
@@ -901,15 +978,19 @@ class SAMExplorer(QMainWindow):
         bf_png = best_frame_path(
             self._project_path, self._media_type, self._filename, shot_id
         )
+        start = int(shot.get("start_frame") or 0)
+        end   = int(shot.get("end_frame") or start)
+        mid   = (start + end) // 2
         if bgr is not None and bf_png.exists():
             bf = shot.get("best_frame", {}) or {}
-            frame_num = bf.get("frame", "?")
-            self._frame_source = f"cached f{frame_num}"
+            fn = bf.get("frame")
+            self._current_frame_num = int(fn) if fn is not None else mid
+            self._frame_source = f"cached f{self._current_frame_num}"
         elif bgr is not None:
-            start = int(shot.get("start_frame") or 0)
-            end = int(shot.get("end_frame") or start)
-            self._frame_source = f"midpoint f{(start + end) // 2}"
+            self._current_frame_num = mid
+            self._frame_source = f"midpoint f{mid}"
         else:
+            self._current_frame_num = mid
             self._frame_source = "not found"
 
         self._refresh_frame_info()
@@ -939,37 +1020,37 @@ class SAMExplorer(QMainWindow):
         self._frame_info.set("blobs", blob_lbl)
 
     # ------------------------------------------------------------------
-    # SAM-3 execution
+    # Segmentation execution
 
     def _on_concept_changed(self, text: str) -> None:
         self._concept = text.strip()
 
-    def _run_sam(self) -> None:
+    def _run_segmentation(self) -> None:
         if self._bgr is None:
             self._status_lbl.setText("No frame loaded — select a shot first.")
             return
         if not self._concept:
             self._status_lbl.setText("Enter a concept before running SAM-3.")
             return
-        if self._sam_worker and self._sam_worker.isRunning():
+        if self._seg_worker and self._seg_worker.isRunning():
             return
 
-        self._sam_btn.setEnabled(False)
-        self._status_lbl.setText(f"Starting SAM-3 for '{self._concept}'…")
+        self._run_btn.setEnabled(False)
+        self._status_lbl.setText(f"Starting segmentation for '{self._concept}'…")
         self._masks = []
         self._blobs = []
         self._canvas.clear_blobs()
 
-        self._sam_worker = _SAMWorker(
+        self._seg_worker = _SegmentationWorker(
             self._project_path, self._model_name, self._bgr, self._concept
         )
-        self._sam_worker.progress.connect(self._status_lbl.setText)
-        self._sam_worker.masks_ready.connect(self._on_masks_ready)
-        self._sam_worker.error.connect(self._on_sam_error)
-        self._sam_worker.start()
+        self._seg_worker.progress.connect(self._status_lbl.setText)
+        self._seg_worker.masks_ready.connect(self._on_masks_ready)
+        self._seg_worker.error.connect(self._on_seg_error)
+        self._seg_worker.start()
 
     def _on_masks_ready(self, raw_masks: list, effective_model: str) -> None:
-        self._sam_btn.setEnabled(True)
+        self._run_btn.setEnabled(True)
         self._effective_model = effective_model
         self._masks = raw_masks
 
@@ -1004,8 +1085,8 @@ class SAMExplorer(QMainWindow):
         self._status_lbl.setText(f"{len(blobs)} blob(s) found.")
         self._refresh_frame_info()
 
-    def _on_sam_error(self, msg: str) -> None:
-        self._sam_btn.setEnabled(True)
+    def _on_seg_error(self, msg: str) -> None:
+        self._run_btn.setEnabled(True)
         self._status_lbl.setText(f"SAM error: {msg}")
 
     # ------------------------------------------------------------------
@@ -1043,7 +1124,15 @@ class SAMExplorer(QMainWindow):
             self.close()
             return
         if key == Qt.Key_S:
-            self._run_sam()
+            self._run_segmentation()
+            return
+        if key == Qt.Key_Left:
+            fps = self._video_fps if self._video_fps > 0 else 25.0
+            self._navigate_frame(-int(round(fps)) if mod & Qt.ShiftModifier else -1)
+            return
+        if key == Qt.Key_Right:
+            fps = self._video_fps if self._video_fps > 0 else 25.0
+            self._navigate_frame(int(round(fps)) if mod & Qt.ShiftModifier else 1)
             return
         if key == Qt.Key_Up:
             self._navigate_shot(-1)
@@ -1065,6 +1154,117 @@ class SAMExplorer(QMainWindow):
             return
 
         super().keyPressEvent(event)
+
+    def eventFilter(self, obj, event) -> bool:
+        if event.type() == QEvent.KeyPress:
+            key = event.key()
+            mod = event.modifiers()
+            ctrl_meta = bool(mod & (Qt.ControlModifier | Qt.MetaModifier))
+            if obj is self._concept_edit:
+                # Inside the text field: pass cursor keys through, but steal
+                # shot/scene/movie nav and Shift+arrows for frame-second jump.
+                if key in (Qt.Key_Up, Qt.Key_Down, Qt.Key_PageUp, Qt.Key_PageDown):
+                    self.keyPressEvent(event)
+                    return True
+                if key in (Qt.Key_Left, Qt.Key_Right) and (mod & Qt.ShiftModifier):
+                    self.keyPressEvent(event)
+                    return True
+            else:
+                # Combo boxes: steal all navigation keys.
+                if key in (
+                    Qt.Key_Up, Qt.Key_Down, Qt.Key_Left, Qt.Key_Right,
+                    Qt.Key_PageUp, Qt.Key_PageDown, Qt.Key_Home, Qt.Key_End,
+                ) and not ctrl_meta:
+                    self.keyPressEvent(event)
+                    return True
+                if key == Qt.Key_S and not ctrl_meta:
+                    self.keyPressEvent(event)
+                    return True
+        return super().eventFilter(obj, event)
+
+    def _load_frame_at(self, frame_num: int) -> None:
+        """Load *frame_num* from the current film's video and update the canvas."""
+        if not self._filename:
+            return
+        video_path = (
+            Path(self._project_path) / "media" / "videos"
+            / self._media_type / self._filename
+        )
+        if not video_path.exists():
+            return
+        cap = cv2.VideoCapture(str(video_path))
+        if not cap.isOpened():
+            cap.release()
+            return
+        if self._video_fps <= 0:
+            self._video_fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+        ret, bgr = cap.read()
+        cap.release()
+        if not ret:
+            return
+        self._bgr = bgr
+        self._current_frame_num = frame_num
+        self._frame_source = f"f{frame_num}"
+        self._canvas.set_frame(bgr)
+        self._masks = []
+        self._blobs = []
+        self._canvas.clear_blobs()
+        self._blob_info.clear()
+        self._refresh_frame_info()
+
+    def _navigate_frame(self, delta: int) -> None:
+        """Move +/-delta frames within the current shot's start/end range."""
+        scene = self._scene_nums[self._scene_idx] if self._scene_nums else ""
+        scene_shots = self._shots_by_scene.get(scene, [])
+        if self._shot_idx >= len(scene_shots):
+            return
+        shot = scene_shots[self._shot_idx]
+        start = int(shot.get("start_frame") or 0)
+        end   = int(shot.get("end_frame") or start)
+        new_frame = max(start, min(end, self._current_frame_num + delta))
+        if new_frame != self._current_frame_num:
+            self._load_frame_at(new_frame)
+
+    def navigate_to(self, filename: str, shot_id: str, concept: str = "") -> None:
+        """Navigate to the given film and shot, optionally pre-filling the concept."""
+        target_film_idx = None
+        for i, entry in enumerate(self._films):
+            if entry.get("filename") == filename:
+                target_film_idx = i
+                break
+        if target_film_idx is None:
+            return
+
+        if concept:
+            self._concept_edit.setText(concept)
+
+        if self._movie_combo.currentIndex() != target_film_idx:
+            self._movie_combo.setCurrentIndex(target_film_idx)
+        else:
+            self._on_movie_changed(target_film_idx)
+
+        shot_id_str = str(shot_id)
+        target_scene: str | None = None
+        for shot in self._shots:
+            if str(shot.get("shot_id", "")) == shot_id_str:
+                target_scene = str(shot.get("Scene", "0") or "0")
+                break
+        if target_scene is None:
+            return
+
+        if target_scene in self._scene_nums:
+            scene_idx = self._scene_nums.index(target_scene)
+            if self._scene_combo.currentIndex() != scene_idx:
+                self._scene_combo.setCurrentIndex(scene_idx)
+            else:
+                self._on_scene_changed(scene_idx)
+
+        scene_shots = self._shots_by_scene.get(target_scene, [])
+        for i, shot in enumerate(scene_shots):
+            if str(shot.get("shot_id", "")) == shot_id_str:
+                self._shot_combo.setCurrentIndex(i)
+                break
 
     def _navigate_shot(self, delta: int) -> None:
         scene = self._scene_nums[self._scene_idx] if self._scene_nums else ""
@@ -1430,54 +1630,22 @@ class CatalogBrowser(QWidget):
         fieldg.addWidget(self._field_combo)
         pv.addWidget(field_group)
 
-        # Label (third)
+        # Label (third): A-Z letter filter + label list
         label_group = QGroupBox("Label")
         lg = QVBoxLayout(label_group)
         lg.setContentsMargins(8, 12, 8, 8)
+        lg.setSpacing(4)
+        self._letter_combo = QComboBox()
+        self._letter_combo.setFocusPolicy(Qt.NoFocus)
+        self._letter_combo.currentIndexChanged.connect(self._on_letter_changed)
+        self._letter_combo.installEventFilter(self)
+        lg.addWidget(self._letter_combo)
         self._label_combo = QComboBox()
         self._label_combo.setFocusPolicy(Qt.NoFocus)
         self._label_combo.currentIndexChanged.connect(self._on_label_changed)
         self._label_combo.installEventFilter(self)
         lg.addWidget(self._label_combo)
         pv.addWidget(label_group)
-
-        # Quality Filters
-        q_group = QGroupBox("Quality Filters")
-        ql = QVBoxLayout(q_group)
-        ql.setContentsMargins(8, 8, 8, 8)
-        # Helper to add a slider row: <filter name> + <value> + <slider>
-        def _add_slider_row(parent_layout, label_text, default=0):
-            row = QWidget()
-            rl = QHBoxLayout(row)
-            rl.setContentsMargins(0, 0, 0, 0)
-            rl.setSpacing(6)
-            lbl = QLabel(label_text)
-            lbl.setFixedWidth(110)
-            val_lbl = QLabel(f"{default}")
-            val_lbl.setFixedWidth(36)
-            s = QSlider(Qt.Horizontal)
-            s.setRange(0, 100)
-            s.setValue(int(default))
-            s.setSingleStep(1)
-            s.setPageStep(5)
-            # Only allow mouse interaction (no keyboard focus)
-            s.setFocusPolicy(Qt.NoFocus)
-            # Update numeric label and reapply filters when changed
-            s.valueChanged.connect(lambda v, l=val_lbl: l.setText(str(v)))
-            s.valueChanged.connect(lambda _v: self._on_quality_changed())
-            rl.addWidget(lbl)
-            rl.addWidget(val_lbl)
-            rl.addWidget(s, 1)
-            parent_layout.addWidget(row)
-            return s, val_lbl
-
-        self._s_usefulness, self._s_usefulness_val = _add_slider_row(ql, "Min usefulness", 0)
-        self._s_fullness, self._s_fullness_val = _add_slider_row(ql, "Min fullness", 0)
-        self._s_size, self._s_size_val = _add_slider_row(ql, "Min size", 0)
-        self._s_max_overlap, self._s_max_overlap_val = _add_slider_row(ql, "Max overlap (%)", 100)
-        self._s_slabel, self._s_slabel_val = _add_slider_row(ql, "Min semantic label", 0)
-        self._s_sfield, self._s_sfield_val = _add_slider_row(ql, "Min semantic field", 0)
-        pv.addWidget(q_group)
 
         self._status_lbl = QLabel("—")
         self._status_lbl.setWordWrap(True)
@@ -1486,22 +1654,39 @@ class CatalogBrowser(QWidget):
         )
         pv.addWidget(self._status_lbl)
 
-        # Sort selector
-        sort_row = QWidget()
-        sort_layout = QHBoxLayout(sort_row)
-        sort_layout.setContentsMargins(0, 0, 0, 0)
-        sort_layout.setSpacing(6)
-        sort_lbl = QLabel("Sort by")
-        sort_lbl.setFixedWidth(64)
-        self._sort_combo = QComboBox()
-        for k in ("usefulness", "fullness", "size", "semantic_label", "semantic_field", "confidence"):
-            self._sort_combo.addItem(k, userData=k)
-        # Make sort combo mouse-only so it does not capture global nav keys
-        self._sort_combo.setFocusPolicy(Qt.NoFocus)
-        self._sort_combo.currentIndexChanged.connect(self._on_sort_changed)
-        sort_layout.addWidget(sort_lbl)
-        sort_layout.addWidget(self._sort_combo, 1)
-        pv.addWidget(sort_row)
+        # Cascading sort (three rows; first is required, 2nd and 3rd optional)
+        sort_group = QGroupBox("Sort")
+        sort_gv = QVBoxLayout(sort_group)
+        sort_gv.setContentsMargins(8, 8, 8, 8)
+        sort_gv.setSpacing(4)
+
+        def _make_sort_combo(include_none: bool = False) -> QComboBox:
+            c = QComboBox()
+            c.setFocusPolicy(Qt.NoFocus)
+            if include_none:
+                c.addItem("—", userData=None)
+            for disp, key in _SORT_OPTS:
+                c.addItem(disp, userData=key)
+            c.currentIndexChanged.connect(self._on_sort_changed)
+            return c
+
+        for _row_lbl, _attr, _none in (
+            ("Sort by", "_sort_combo_1", False),
+            ("then by", "_sort_combo_2", True),
+            ("then by", "_sort_combo_3", True),
+        ):
+            _sort_row = QWidget()
+            _sort_rl = QHBoxLayout(_sort_row)
+            _sort_rl.setContentsMargins(0, 0, 0, 0)
+            _sort_rl.setSpacing(6)
+            _lbl = QLabel(_row_lbl)
+            _lbl.setFixedWidth(54)
+            _combo = _make_sort_combo(include_none=_none)
+            setattr(self, _attr, _combo)
+            _sort_rl.addWidget(_lbl)
+            _sort_rl.addWidget(_combo, 1)
+            sort_gv.addWidget(_sort_row)
+        pv.addWidget(sort_group)
 
         self._more_btn = QPushButton(f"Load {_PAGE_SIZE} more  ↓")
         self._more_btn.setFocusPolicy(Qt.NoFocus)
@@ -1533,11 +1718,21 @@ class CatalogBrowser(QWidget):
             ov.addWidget(row)
             self._meta_rows[key] = vl
 
-        self._shotlist_btn = QPushButton("Open in Shotlist  →")
+        _open_icon = _svg_icon("open-in-window", 16, theme.TEXT)
+
+        self._shotlist_btn = QPushButton("  Shotlist Visualizer")
+        self._shotlist_btn.setIcon(_open_icon)
         self._shotlist_btn.setFocusPolicy(Qt.NoFocus)
         self._shotlist_btn.setEnabled(False)
         self._shotlist_btn.clicked.connect(self._open_in_shotlist)
         ov.addWidget(self._shotlist_btn)
+
+        self._sam_btn = QPushButton("  Segmentation Visualizer")
+        self._sam_btn.setIcon(_open_icon)
+        self._sam_btn.setFocusPolicy(Qt.NoFocus)
+        self._sam_btn.setEnabled(False)
+        self._sam_btn.clicked.connect(self._open_sam_explorer)
+        ov.addWidget(self._sam_btn)
 
         pv.addWidget(obj_group)
         pv.addStretch()
@@ -1548,11 +1743,6 @@ class CatalogBrowser(QWidget):
             f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT - 1}pt;"
         )
         pv.addWidget(hint)
-
-        self._sam_btn = QPushButton("SAM-3 Explorer →")
-        self._sam_btn.setFocusPolicy(Qt.NoFocus)
-        self._sam_btn.clicked.connect(self._open_sam_explorer)
-        pv.addWidget(self._sam_btn)
 
         panel_scroll.setWidget(panel)
         splitter.addWidget(panel_scroll)
@@ -1638,15 +1828,60 @@ class CatalogBrowser(QWidget):
         self._load_catalog()
 
     def _on_field_changed(self, _idx: int) -> None:
-        """Rebuild the label combo for the newly selected field."""
+        """Rebuild the letter and label combos for the newly selected field."""
         field = self._field_combo.currentData() or "--all"
         label_counts = self._field_map.get(field, {})
+        self._populate_letter_combo(label_counts)
+
+    def _populate_letter_combo(self, label_counts: dict) -> None:
+        """Rebuild the A-Z letter-filter combo then cascade to the label combo."""
+        bucket_counts: dict[str, int] = {}
+        for lbl in label_counts:
+            if not lbl:
+                continue
+            first = lbl[0].upper()
+            key = first if first.isalpha() else "#"
+            bucket_counts[key] = bucket_counts.get(key, 0) + 1
+
+        letters = sorted(k for k in bucket_counts if k != "#")
+        if "#" in bucket_counts:
+            letters = ["#"] + letters
+
+        total = len(label_counts)
+
+        self._letter_combo.blockSignals(True)
+        self._letter_combo.clear()
+        self._letter_combo.addItem(f"— all  ({total})", userData=None)
+        for letter in letters:
+            n = bucket_counts[letter]
+            self._letter_combo.addItem(f"{letter}  ({n})", userData=letter)
+        self._letter_combo.blockSignals(False)
+
+        self._letter_combo.setCurrentIndex(0)
+        self._on_letter_changed(0)
+
+    def _on_letter_changed(self, _idx: int) -> None:
+        """Filter the label combo to labels starting with the selected letter."""
+        field = self._field_combo.currentData() or "--all"
+        label_counts = self._field_map.get(field, {})
+        letter = self._letter_combo.currentData()  # None means show all
+
+        from services.silhouette_catalog import sort_labels
+
+        if letter is None:
+            filtered = list(label_counts.keys())
+        elif letter == "#":
+            filtered = [l for l in label_counts if l and not l[0].isalpha()]
+        else:
+            filtered = [l for l in label_counts if l and l[0].upper() == letter]
+
         self._label_combo.blockSignals(True)
         self._label_combo.clear()
-        for label in sorted(label_counts.keys()):
-            count = len(label_counts[label])
-            self._label_combo.addItem(f"{label}  ({count})", userData=label)
+        for lbl in sort_labels(filtered):
+            count = len(label_counts[lbl])
+            self._label_combo.addItem(f"{lbl}  ({count})", userData=lbl)
         self._label_combo.blockSignals(False)
+
         self._page_offset = 0
         if self._label_combo.count() > 0:
             self._label_combo.setCurrentIndex(0)
@@ -1671,66 +1906,33 @@ class CatalogBrowser(QWidget):
                 if (r.get("filename_stem") or r.get("filename") or "") == film
             ]
 
-        # Apply quality filters (values are 0-100 in the UI widgets)
-        def _get_score(rec, key, default=0.0):
-            # scores are saved as top-level fields by the indexer
-            return float(rec.get(f"{key}_score", rec.get(key) or default))
-
-        min_use = (self._s_usefulness.value() / 100.0) if hasattr(self, '_s_usefulness') else 0.0
-        min_full = (self._s_fullness.value() / 100.0) if hasattr(self, '_s_fullness') else 0.0
-        min_size = (self._s_size.value() / 100.0) if hasattr(self, '_s_size') else 0.0
-        max_overlap_pct = int(self._s_max_overlap.value()) if hasattr(self, '_s_max_overlap') else 100
-        max_intrusion = max(0.0, min(1.0, (100 - max_overlap_pct) / 100.0))
-        min_slabel = (self._s_slabel.value() / 100.0) if hasattr(self, '_s_slabel') else 0.0
-        min_sfield = (self._s_sfield.value() / 100.0) if hasattr(self, '_s_sfield') else 0.0
-
-        def _passes_quality(r):
-            use = _get_score(r, 'usefulness', 0.0)
-            if use < min_use:
-                return False
-            if _get_score(r, 'fullness', 0.0) < min_full:
-                return False
-            if _get_score(r, 'size', 0.0) < min_size:
-                return False
-            # intrusion ~= 1 - overlap_score
-            overlap = _get_score(r, 'overlap', 1.0)
-            intrusion = 1.0 - overlap
-            if intrusion > max_intrusion:
-                return False
-            if _get_score(r, 'semantic_label', 0.0) < min_slabel:
-                return False
-            if _get_score(r, 'semantic_field', 0.0) < min_sfield:
-                return False
-            return True
-
-        records = [r for r in records if _passes_quality(r)]
-
-        # Sort
-        sort_key = self._sort_combo.currentData() if hasattr(self, '_sort_combo') else 'usefulness'
-        def _sort_val(r):
-            if sort_key == 'confidence':
-                return float(r.get('confidence', 0.0))
-            # try *_score fields first
-            v = r.get(f"{sort_key}_score")
+        # Multi-key stable sort — apply keys in reverse order so primary key wins
+        def _numeric_score(r, key):
+            if key == "confidence":
+                return float(r.get("confidence") or 0.0)
+            v = r.get(f"{key}_score")
             if v is None:
-                # fallback to similar key names
-                v = r.get(sort_key) or 0.0
+                v = r.get(key) or 0.0
             try:
                 return float(v)
             except Exception:
                 return 0.0
 
-        records.sort(key=_sort_val, reverse=True)
+        sort_keys = [
+            combo.currentData()
+            for combo in (self._sort_combo_1, self._sort_combo_2, self._sort_combo_3)
+            if combo.currentData()
+        ] or ["confidence"]
+
+        for k in reversed(sort_keys):
+            if k == "alphabetical":
+                records.sort(key=lambda r: str.casefold(r.get("label") or ""))
+            else:
+                records.sort(key=lambda r, _k=k: _numeric_score(r, _k), reverse=True)
         self._current_records = records
         self._selected_idx = -1
         self._clear_meta()
         self._show_page(0)
-
-    def _on_quality_changed(self) -> None:
-        # Re-apply filters when sliders change. Numeric labels are updated
-        # directly by each slider's valueChanged signal handler.
-        self._page_offset = 0
-        self._apply_filters()
 
     def _on_sort_changed(self, _idx: int) -> None:
         self._page_offset = 0
@@ -1852,6 +2054,7 @@ class CatalogBrowser(QWidget):
             lbl.setText("—")
         self._current_rec = None
         self._shotlist_btn.setEnabled(False)
+        self._sam_btn.setEnabled(False)
 
     def _show_object_meta(self, rec: dict) -> None:
         shot_id = str(rec.get("shot_id", "—"))
@@ -1869,24 +2072,48 @@ class CatalogBrowser(QWidget):
         self._meta_rows["confidence"].setText(f"{conf:.3f}")
         self._meta_rows["model"].setText(rec.get("sam_model", "—"))
 
-        def _get_score_val(r, key):
-            # accept either top-level '<key>_score' or legacy '<key>'
-            v = r.get(f"{key}_score")
+        def _stored(key):
+            """Return stored float from '<key>_score' or '<key>', or None if absent."""
+            v = rec.get(f"{key}_score")
             if v is None:
-                v = r.get(key)
+                v = rec.get(key)
             try:
-                return float(v) if v is not None else 0.0
+                return float(v) if v is not None else None
             except Exception:
-                return 0.0
+                return None
 
-        self._meta_rows["usefulness"].setText(f"{_get_score_val(rec, 'usefulness'):.3f}")
-        self._meta_rows["fullness"].setText(f"{_get_score_val(rec, 'fullness'):.3f}")
-        self._meta_rows["size"].setText(f"{_get_score_val(rec, 'size'):.3f}")
-        self._meta_rows["overlap"].setText(f"{_get_score_val(rec, 'overlap'):.3f}")
-        self._meta_rows["semantic_label"].setText(f"{_get_score_val(rec, 'semantic_label'):.3f}")
-        self._meta_rows["semantic_field"].setText(f"{_get_score_val(rec, 'semantic_field'):.3f}")
+        def _fmt(v: "float | None") -> str:
+            return f"{v:.3f}" if v is not None else "—"
+
+        # size: derive from mask_area + frame_size when not yet scored
+        size_val = _stored("size")
+        if size_val is None:
+            mask_area = rec.get("mask_area")
+            frame_size = rec.get("frame_size") or []
+            if mask_area is not None and len(frame_size) >= 2:
+                frame_area = float(max(1, frame_size[0] * frame_size[1]))
+                area_frac = float(mask_area) / frame_area
+                size_val = max(0.0, min(1.0, (area_frac - 0.002) / max(1e-9, 0.298)))
+
+        # fullness: derive from mask_area + bbox when not yet scored
+        fullness_val = _stored("fullness")
+        if fullness_val is None:
+            mask_area = rec.get("mask_area")
+            bbox = rec.get("bbox") or []
+            if mask_area is not None and len(bbox) >= 4:
+                bbox_area = float(max(1, bbox[2] * bbox[3]))
+                fullness_val = max(0.0, min(1.0, float(mask_area) / bbox_area))
+
+        self._meta_rows["usefulness"].setText(_fmt(_stored("usefulness")))
+        self._meta_rows["fullness"].setText(_fmt(fullness_val))
+        self._meta_rows["size"].setText(_fmt(size_val))
+        self._meta_rows["overlap"].setText(_fmt(_stored("overlap")))
+        self._meta_rows["semantic_label"].setText(_fmt(_stored("semantic_label")))
+        self._meta_rows["semantic_field"].setText(_fmt(_stored("semantic_field")))
         self._current_rec = rec
-        self._shotlist_btn.setEnabled(bool(rec.get("filename") and rec.get("shot_id")))
+        _can_open = bool(rec.get("filename") and rec.get("shot_id"))
+        self._shotlist_btn.setEnabled(_can_open)
+        self._sam_btn.setEnabled(_can_open)
 
     def _open_in_shotlist(self) -> None:
         rec = self._current_rec
@@ -1981,12 +2208,20 @@ class CatalogBrowser(QWidget):
         self._panel_splitter.setSizes([max(1, total - needed), needed])
 
     def _open_sam_explorer(self) -> None:
+        rec = self._current_rec
+        if not rec:
+            return
         from tool import prefs as _prefs
         model_name = _prefs.get("model_segmentation", _DEFAULT_MODEL) or _DEFAULT_MODEL
         self._sam_explorer_win = SAMExplorer(
             self._project_path, media_type=self._media_type, model_name=model_name
         )
         self._sam_explorer_win.show()
+        filename = rec.get("filename") or ""
+        shot_id = str(rec.get("shot_id") or "")
+        concept = rec.get("label") or ""
+        if filename and shot_id:
+            self._sam_explorer_win.navigate_to(filename, shot_id, concept=concept)
 
     def navigate_to(
         self,
@@ -2042,7 +2277,7 @@ class SilhouetteWindow(QMainWindow):
         initial_shot: Optional[str] = None,
     ) -> None:
         super().__init__()
-        self.setWindowTitle("Crossing — Silhouette")
+        self.setWindowTitle("Crossing — Silhouette Visualizer")
         self._project_path = project_path
 
         self._catalog = CatalogBrowser(project_path, media_type=media_type)

@@ -431,17 +431,18 @@ class ProjectVisualizer(QMainWindow):
 
         for (label, sub, enabled), (row, col) in zip(
             [
-                ("Metadata",    "metadata",    True),
-                ("Shotlist",    "shotlist",    True),
-                ("Mosaic",      "mosaic",      True),
-                ("Cloud",       "cloud",       True),
-                ("Book",        "book",        True),
-                ("Silhouette",  "silhouette",  True),
-                ("Palette",     "palette",     True),
-                ("Flipbook",    "flipbook",    True),
-                ("Sync",        "sync",        True),
+                ("Metadata",     "metadata",     True),
+                ("Shotlist",     "shotlist",     True),
+                ("Mosaic",       "mosaic",       True),
+                ("Cloud",        "cloud",        True),
+                ("Book",         "book",         True),
+                ("Silhouette",   "silhouette",   True),
+                ("Palette",      "palette",      True),
+                ("Flipbook",     "flipbook",     True),
+                ("Sync",         "sync",         True),
+                ("Segmentation", "segmentation", True),
             ],
-            [(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2), (2, 0), (2, 1), (2, 2)],
+            [(0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 1), (3, 0), (3, 1), (4, 0), (4, 1)],
         ):
             btn = QPushButton(label)
             btn.setEnabled(enabled)
@@ -539,6 +540,10 @@ class ProjectVisualizer(QMainWindow):
         elif subcommand == "sync":
             from visualizers.sync_visualizer import SyncVisualizerWindow
             return SyncVisualizerWindow()
+        elif subcommand == "segmentation":
+            model_name = _prefs.get("model_segmentation", "sam3.pt") or "sam3.pt"
+            from visualizers.silhouette_visualizer import SAMExplorer
+            return SAMExplorer(project_path, model_name=model_name)
         return None  # caller falls through to subprocess
 
     # ------------------------------------------------------------------
