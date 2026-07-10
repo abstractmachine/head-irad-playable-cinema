@@ -3,6 +3,7 @@ import os
 import argparse
 import json
 from pathlib import Path
+import argcomplete
 
 # Ensure the project root is importable so generators/ and visualizers/ are found
 # regardless of the cwd when the installed `crossing` entry-point is invoked.
@@ -2781,11 +2782,11 @@ def cmd_api_key(args):
     _require_path()
     service = args.service
     key_file = Path(prefs.get("path")) / "preferences" / "keys" / f"{service}_api_key.txt"
-    if args.api_key_subcommand == "set":
+    if args.key_subcommand == "set":
         key_file.parent.mkdir(parents=True, exist_ok=True)
         key_file.write_text(args.value.strip())
         print(f"{service} API key saved.")
-    elif args.api_key_subcommand == "get":
+    elif args.key_subcommand == "get":
         if not key_file.exists():
             print(f"(not set)")
         else:
@@ -2801,7 +2802,7 @@ def cmd_tool(args):
         cmd_path(args)
     elif sub == "name":
         cmd_name(args)
-    elif sub == "api_key":
+    elif sub == "key":
         cmd_api_key(args)
     elif sub == "notify":
         cmd_notify(args)
@@ -9304,7 +9305,7 @@ def build_parser():
     p_subtitles_align.add_argument("--json", action="store_true", help="Output raw JSON")
     _add_media_arg(p_subtitles_align)
 
-    # tool command group (version, path, name, api_key)
+    # tool command group (version, path, name, key)
     p_tool = sub.add_parser("tool", help="Tool settings: version, path, name, models, API keys")
     p_tool.set_defaults(func=cmd_tool)
     tool_sub = p_tool.add_subparsers(dest="tool_subcommand", required=True)
@@ -9318,8 +9319,8 @@ def build_parser():
     p_tool_name = tool_sub.add_parser("name", help="Get or set the project name")
     p_tool_name.add_argument("project_name", nargs="?")
 
-    p_tool_api_key = tool_sub.add_parser("api_key", help="Get or set API keys")
-    tool_api_key_sub = p_tool_api_key.add_subparsers(dest="api_key_subcommand", required=True)
+    p_tool_api_key = tool_sub.add_parser("key", help="Get or set API keys")
+    tool_api_key_sub = p_tool_api_key.add_subparsers(dest="key_subcommand", required=True)
 
     p_tool_api_key_get = tool_api_key_sub.add_parser("get", help="Print a stored API key")
     p_tool_api_key_get.add_argument("service", choices=_API_KEY_SERVICES)
@@ -9695,6 +9696,7 @@ def build_parser():
 
 def main():
     parser = build_parser()
+    argcomplete.autocomplete(parser)
     if len(sys.argv) == 1:
         parser.print_help()
         return

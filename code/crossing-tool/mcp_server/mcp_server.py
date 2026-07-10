@@ -150,18 +150,6 @@ def _claude_dir(project_path: str) -> Path:
     return d
 
 
-def _normalize_width(value: "int | str | None") -> "int | None":
-    """Normalize a width argument to an integer or None.
-
-    Returns ``None`` when the caller wants the original / full resolution:
-      ``None``, ``0``, ``"full"``, ``"original"``
-    Returns ``int`` for any other value (cast via int()).
-    """
-    if value in (None, 0, "full", "original"):
-        return None
-    return int(value)
-
-
 # ---------------------------------------------------------------------------
 # Silhouette catalog helpers (private)
 # ---------------------------------------------------------------------------
@@ -251,107 +239,33 @@ def _load_catalog_entries_for_word(
                 "polygon_points": None,
                 "source_frame":  meta.get("source_frame"),
                 "filename":      meta.get("filename", ""),
-                "field":         meta.get("field", ""),
-                # Semantic enrichment fields (present after `enrich` has run)
-                "engraving_score":     meta.get("engraving_score"),
-                "usefulness_score":    meta.get("usefulness_score"),
-                "viewpoint":           meta.get("viewpoint"),
-                "completeness":        meta.get("completeness"),
-                "occlusion":           meta.get("occlusion"),
-                "isolation":           meta.get("isolation"),
-                "completeness_score":  meta.get("completeness_score"),
-                "occlusion_score":     meta.get("occlusion_score"),
-                "viewpoint_score_sem": meta.get("viewpoint_score_sem"),
-                "isolation_score":     meta.get("isolation_score"),
-                "touches_frame":       meta.get("touches_frame"),
-                "edge_touch":          meta.get("edge_touch"),
-                "semantic_confidence": meta.get("semantic_confidence"),
-                "semantic_version":    meta.get("semantic_version"),
             })
 
     return entries
 
 
-def _pick_best_silhouette(entries: list[dict]) -> "dict | None":
-    """Return the best entry by semantic usefulness.
-
-    Priority:
-    1. ``engraving_score``  — present when ``enrich`` has run
-    2. ``usefulness_score`` — present when ``score`` has run
-    3. ``pixel_area``       — always present (original fallback)
-    """
+def _pick_largest_silhouette(entries: list[dict]) -> "dict | None":
+    """Return the entry with the greatest *pixel_area* (mask_area)."""
     if not entries:
         return None
-
-    def _sort_key(e: dict):
-        return (
-            float(e.get("engraving_score")  or 0),
-            float(e.get("usefulness_score") or 0),
-            float(e.get("pixel_area")       or 0),
-        )
-
-    return max(entries, key=_sort_key)
+    valid = [e for e in entries if e.get("pixel_area") is not None]
+    pool  = valid if valid else entries
+    return max(pool, key=lambda e: e.get("pixel_area") or 0)
 
 
-# Keep legacy name as an alias so any external code is not broken.
-_pick_largest_silhouette = _pick_best_silhouette
-
-
-def _vocab_matches_for_word(project_path: str, media_type: str, word: str) -> list[dict]:
-    """Return ``[{field, terms, count}]`` for every vocabulary field.
-
-    Each entry covers one annotation field; ``terms`` lists canonical terms
-    containing *word* as a case-insensitive substring.  ``count`` is the sum
-    of shot counts for all matching terms.  Fields with no match are included
-    with ``count=0`` so the full field set is always visible.  Results are
-    sorted by ``count`` descending.
-
-    Raises ``FileNotFoundError`` when the vocabulary index is absent.
-    """
-    from services.vocabulary_index import get_vocabulary_fields, get_vocabulary
-
-    fields = get_vocabulary_fields(project_path, media_type)
-    q = word.lower().strip()
-    results: list[dict] = []
-
-    for fld in fields:
-        try:
-            items = get_vocabulary(fld, project_path, media_type=media_type, sort="count")
-        except Exception:
-            results.append({"field": fld, "terms": [], "count": 0})
-            continue
-        matching = [it for it in items if q in it["value"].lower()]
-        total = sum(it["count"] for it in matching)
-        results.append({
-            "field": fld,
-            "terms": [it["value"] for it in matching],
-            "count": total,
-        })
-
-    results.sort(key=lambda r: r["count"], reverse=True)
-    return results
-
-
-def _render_silhouette_png_bytes(png_path: str, width: "int | str | None") -> "bytes | None":
-    """Load a silhouette RGBA PNG and return PNG bytes, optionally resized.
-
-    *width* is passed through ``_normalize_width``:
-    ``None`` / ``0`` / ``"full"`` / ``"original"`` → return at original size.
-    Any positive integer → resize so the longest side equals *width*.
-    """
+def _render_silhouette_png_bytes(png_path: str, width: int) -> "bytes | None":
+    """Load a silhouette RGBA PNG and return PNG bytes, optionally resized."""
     try:
         import io as _io
         from PIL import Image as _PIL
         img = _PIL.open(png_path)
-        norm_w = _normalize_width(width)
-        if norm_w is not None:
-            w, h = img.size
-            if w > norm_w:
-                scale = norm_w / w
-                img = img.resize(
-                    (max(1, int(w * scale)), max(1, int(h * scale))),
-                    _PIL.LANCZOS,
-                )
+        w, h = img.size
+        if width > 0 and w > width:
+            scale = width / w
+            img = img.resize(
+                (max(1, int(w * scale)), max(1, int(h * scale))),
+                _PIL.LANCZOS,
+            )
         buf = _io.BytesIO()
         img.save(buf, format="PNG")
         return buf.getvalue()
@@ -821,33 +735,23 @@ def list_silhouettes(
 @mcp.tool()
 def list_silhouette_candidates(
     word: str,
-    field: str = "",
+    field: str = "objects",
     scope: str = "all",
     media_type: str = "movie",
 ) -> str:
-    """Discover cached silhouette candidates for a vocabulary term (catalog pipeline).
+    """List all cached silhouette candidates for a vocabulary term (catalog pipeline).
 
     Scans the PNG-pipeline silhouette catalog for every extracted object
     matching *word*, returning metadata without loading any images.
-    Use get_best_silhouette to retrieve and inspect the actual PNG and source frame.
-
-    When *field* is empty (default), candidates from **all** annotation fields
-    are returned and a ``field_distribution`` summary shows how many candidates
-    exist per field.  If *field* is specified but no candidates are found there,
-    the response includes ``suggested_fields`` pointing to fields that do have
-    matching vocabulary — so you never need to guess the right field.
+    Use get_best_silhouette to retrieve the actual PNG and source frame.
 
     Each entry reports: cache path, PNG path, media_id, film title, shot_id,
-    frame index, CLIP confidence score, pixel area (mask_area), bounding box,
-    annotation field, and — when semantic enrichment has run — engraving_score,
-    usefulness_score, viewpoint, completeness, occlusion, isolation, and the
-    individual dimension scores.  Use engraving_score as the primary ranking
-    signal; fall back to usefulness_score or pixel_area for un-enriched entries.
+    frame index, CLIP confidence score, pixel area (mask_area), bounding box.
 
     Args:
         word:       Vocabulary term to look up (e.g. "horse", "gun").
         field:      Annotation field filter (e.g. "objects", "animals").
-                    Empty string (default) returns candidates from all fields.
+                    Pass an empty string to accept entries from any field.
         scope:      "all" (full corpus) or "movie-<media_id>" for one film.
         media_type: "movie" (default) or "gameplay".
 
@@ -875,68 +779,17 @@ def list_silhouette_candidates(
                 "pixel_area":    e["pixel_area"],
                 "bbox":          e["bbox"],
                 "polygon_points": e["polygon_points"],
-                "field":         e.get("field", ""),
-                # Semantic fields — None when enrich has not yet run
-                "engraving_score":     e.get("engraving_score"),
-                "usefulness_score":    e.get("usefulness_score"),
-                "viewpoint":           e.get("viewpoint"),
-                "completeness":        e.get("completeness"),
-                "occlusion":           e.get("occlusion"),
-                "isolation":           e.get("isolation"),
-                "completeness_score":  e.get("completeness_score"),
-                "occlusion_score":     e.get("occlusion_score"),
-                "viewpoint_score_sem": e.get("viewpoint_score_sem"),
-                "isolation_score":     e.get("isolation_score"),
-                "touches_frame":       e.get("touches_frame"),
-                "edge_touch":          e.get("edge_touch"),
-                "semantic_confidence": e.get("semantic_confidence"),
             }
             for e in entries
         ]
 
-        if public:
-            # Summarise how many candidates exist per field.
-            field_dist: dict[str, int] = {}
-            for e in public:
-                f = e.get("field") or "unknown"
-                field_dist[f] = field_dist.get(f, 0) + 1
-
-            return _ok(
-                word=word,
-                field=field or None,
-                scope=scope,
-                found=True,
-                count=len(public),
-                field_distribution=field_dist,
-                entries=public,
-            )
-
-        # No results — provide discovery hints from the vocabulary index.
-        try:
-            vocab_matches = _vocab_matches_for_word(project_path, media_type, word)
-            suggested = [m["field"] for m in vocab_matches if m["count"] > 0]
-        except Exception:
-            vocab_matches, suggested = [], []
-
-        msg = (
-            f"No silhouette candidates found for {word!r} in the catalog"
-            + (f" (field={field!r})" if field else "")
-            + "."
-        )
-        if suggested and field and field not in suggested:
-            msg += f" Matching vocabulary exists in: {suggested}. Try one of those fields."
-        elif suggested and not field:
-            msg += f" Matching vocabulary exists in: {suggested}, but no catalog entries have been indexed yet."
-
         return _ok(
             word=word,
-            field=field or None,
+            field=field,
             scope=scope,
-            found=False,
-            count=0,
-            suggested_fields=suggested,
-            message=msg,
-            entries=[],
+            found=len(public) > 0,
+            count=len(public),
+            entries=public,
         )
 
     except Exception as exc:
@@ -1065,57 +918,6 @@ def search_vocabulary(
             str(exc),
             "Build the vocabulary index first: crossing vocabulary build",
         )
-    except Exception as exc:
-        return _err(str(exc), traceback.format_exc())
-
-
-@mcp.tool()
-def find_vocabulary_matches(
-    query: str,
-    media_type: str = "movie",
-    top: int = 10,
-) -> str:
-    """Discover which vocabulary fields contain a given term.
-
-    Searches every annotation field in the vocabulary index for canonical terms
-    that match *query* as a case-insensitive substring.  Use this before calling
-    list_silhouette_candidates or get_best_silhouette to confirm the correct
-    field — e.g. to discover that "horse" lives in "animals", not "objects".
-
-    Returns a ``matches`` list sorted by total hit count descending so the most
-    populated field appears first.  Fields with no matching terms are still
-    included (``count: 0``) so the full field set is always visible.
-
-    Args:
-        query:      Term to look up (e.g. "horse", "gun", "desert").
-        media_type: "movie" (default) or "gameplay".
-        top:        Max matching terms to list per field (default 10).
-
-    Read-only. Reads: data/index/vocabulary_<media_type>.json
-    """
-    result = _ctx()
-    if isinstance(result, str):
-        return result
-    project_path, _ = result
-
-    try:
-        matches = _vocab_matches_for_word(project_path, media_type, query)
-
-        # Cap the terms list per field.
-        for m in matches:
-            m["terms"] = m["terms"][:top]
-
-        best_fields = [m["field"] for m in matches if m["count"] > 0]
-
-        return _ok(
-            query=query,
-            media_type=media_type,
-            best_fields=best_fields,
-            matches=matches,
-        )
-
-    except FileNotFoundError as exc:
-        return _err(str(exc), "Build the vocabulary index: crossing index vocabulary")
     except Exception as exc:
         return _err(str(exc), traceback.format_exc())
 
@@ -1351,7 +1153,7 @@ def get_best_frame(
     film: str,
     shot_id: str,
     media_type: str = "movie",
-    width: "int | str" = "full",
+    width: int = 400,
 ) -> list:
     """Retrieve a single frame thumbnail for a specific shot.
 
@@ -1363,9 +1165,7 @@ def get_best_frame(
         film:       Title substring, filename, or TMDb ID of the film.
         shot_id:    Canonical shot identifier (e.g. "tmdb_4638@f001234-f001456").
         media_type: "movie" (default) or "gameplay".
-        width:      Pixel width for the returned frame, or ``"full"`` /
-                    ``"original"`` to return at the original resolution
-                    (default ``"full"``).  ``0`` also means original size.
+        width:      Thumbnail width in pixels (default 400; max recommended 800).
 
     Read-only. Reads: media/frames/best/ and/or media/videos/
     """
@@ -1376,12 +1176,9 @@ def get_best_frame(
 
     try:
         from services.frame_retrieval import retrieve_single_frame
-        # _normalize_width returns None for full/original; retrieve_single_frame
-        # passes it to _resize_pil which treats 0 as no-resize.
-        norm_w = _normalize_width(width)
         frame = retrieve_single_frame(
             project_path, film, shot_id, media_type,
-            width=norm_w if norm_w is not None else 0,
+            width=width,
         )
         return _frames_to_mcp([frame])
 
@@ -1609,51 +1406,30 @@ def get_context_frames(
 @mcp.tool()
 def get_best_silhouette(
     word: str,
-    field: str = "",
+    field: str = "objects",
     scope: str = "all",
     media_type: str = "movie",
-    silhouette_width: "int | str" = "full",
-    frame_width: "int | str" = "full",
-    width: "int | str | None" = None,
+    width: int = 400,
 ) -> list:
-    """Retrieve the best silhouette for a vocabulary term, plus its source frame.
+    """Return the best silhouette for a vocabulary term, plus its source frame.
 
-    Inspects the silhouette catalog, selects the entry with the greatest pixel
-    area, and returns both the transparent silhouette PNG and the original
-    source frame as inline images.
+    Selects the catalog entry with the greatest pixel area, then returns
+    both the transparent silhouette PNG and the original source frame as
+    inline images — mirroring the image-return pattern of get_best_frames.
 
     Return value: [metadata_json_str, silhouette_png, source_frame_jpeg]
     The silhouette is a transparent RGBA PNG; the frame is a JPEG thumbnail.
 
-    When *field* is empty (default), all annotation fields are searched so you
-    never need to guess whether a term lives in "animals", "objects", or
-    another field.  The ``matched_field`` key in the returned metadata tells
-    you which field the winning entry came from.  If no catalog entries exist
-    for the term, the response includes ``suggested_fields`` from the
-    vocabulary index rather than implying that new silhouettes must be created.
-
-    Width arguments accept an integer pixel width or the strings ``"full"`` /
-    ``"original"`` to return at the original resolution.  ``None`` and ``0``
-    also mean original size.  ``width`` is a backward-compatible alias that
-    overrides both ``silhouette_width`` and ``frame_width`` when provided.
-
     Args:
-        word:             Vocabulary term to look up (e.g. "horse", "gun").
-        field:            Annotation field filter (e.g. "objects", "animals").
-                          Empty string (default) searches all fields.
-        scope:            "all" (full corpus) or "movie-<media_id>" for one film.
-        media_type:       "movie" (default) or "gameplay".
-        silhouette_width: Width for the silhouette PNG (default "full" = original).
-        frame_width:      Width for the source frame JPEG (default "full" = original).
-        width:            Backward-compat alias — overrides both width params.
+        word:       Vocabulary term to look up (e.g. "horse", "gun").
+        field:      Annotation field the term belongs to (e.g. "objects",
+                    "animals"). Pass empty string to search all fields.
+        scope:      "all" (full corpus) or "movie-<media_id>" for one film.
+        media_type: "movie" (default) or "gameplay".
+        width:      Thumbnail width in pixels (default 400).
 
     Read-only. Reads: data/silhouettes/catalog/, media/frames/best/
     """
-    # Backward-compat: plain ``width`` overrides the new per-image params.
-    if width is not None:
-        silhouette_width = width
-        frame_width = width
-
     result = _ctx()
     if isinstance(result, str):
         return [result]
@@ -1664,38 +1440,20 @@ def get_best_silhouette(
             project_path, media_type, word, field, scope
         )
         if not entries:
-            # Provide vocabulary-based discovery hints instead of a creation prompt.
-            try:
-                vocab_matches = _vocab_matches_for_word(project_path, media_type, word)
-                suggested = [m["field"] for m in vocab_matches if m["count"] > 0]
-            except Exception:
-                suggested = []
-
-            msg = (
-                f"No silhouette candidates found for {word!r}"
-                + (f" in field {field!r}" if field else "")
-                + "."
-            )
-            if suggested and field and field not in suggested:
-                msg += f" Matching vocabulary exists in: {suggested}. Try one of those fields."
-            elif suggested and not field:
-                msg += (
-                    f" Vocabulary matches found in {suggested}, but no catalog "
-                    "entries have been indexed yet for this term."
-                )
-            return [_err(msg, f"suggested_fields={suggested}")]
+            return [_err(
+                f"No silhouette candidates found for {word!r} "
+                f"(field={field!r}, scope={scope!r}).",
+                "Run: crossing silhouette catalog scan  to populate the catalog.",
+            )]
 
         best = _pick_largest_silhouette(entries)
         if best is None:
             return [_err(f"Could not select a best silhouette for {word!r}.")]
 
-        norm_sw = _normalize_width(silhouette_width)
-        norm_fw = _normalize_width(frame_width)
-
         # --- Load silhouette PNG ---
         sil_bytes: bytes | None = None
         if best.get("png_path"):
-            sil_bytes = _render_silhouette_png_bytes(best["png_path"], norm_sw)
+            sil_bytes = _render_silhouette_png_bytes(best["png_path"], width)
 
         # --- Load source frame ---
         frame_bytes: bytes | None = None
@@ -1710,14 +1468,12 @@ def get_best_silhouette(
                     from PIL import Image as _PIL
                     from services.frame_retrieval import _resize_pil, _pil_to_jpeg_bytes
                     img = _PIL.open(src_path).convert("RGB")
-                    if norm_fw is not None:
-                        img = _resize_pil(img, norm_fw)
+                    img = _resize_pil(img, width)
                     frame_bytes = _pil_to_jpeg_bytes(img)
                 except Exception:
                     pass
 
         # Fallback: frame retrieval service
-        # Pass 0 when full-res is requested — _resize_pil treats 0 as no-resize.
         if frame_bytes is None and best.get("shot_id") and best.get("filename"):
             try:
                 from services.frame_retrieval import retrieve_single_frame
@@ -1726,7 +1482,7 @@ def get_best_silhouette(
                     best["filename"],
                     best["shot_id"],
                     media_type,
-                    width=norm_fw if norm_fw is not None else 0,
+                    width=width,
                 )
                 frame_bytes = fr.get("image_data")
             except Exception:
@@ -1734,8 +1490,7 @@ def get_best_silhouette(
 
         metadata = _ok(
             word=word,
-            field=field or None,
-            matched_field=best.get("field", ""),
+            field=field,
             scope=scope,
             film_title=best.get("film_title", ""),
             shot_id=best.get("shot_id", ""),
@@ -1744,8 +1499,6 @@ def get_best_silhouette(
             score=best.get("score"),
             bbox=best.get("bbox"),
             source_cache_path=best.get("cache_path"),
-            silhouette_width=silhouette_width,
-            frame_width=frame_width,
             has_silhouette_png=sil_bytes is not None,
             has_source_frame=frame_bytes is not None,
         )
@@ -2340,136 +2093,6 @@ def generate_silhouette_booklet(
             ],
         )
 
-    except Exception as exc:
-        return _err(str(exc), traceback.format_exc())
-
-
-@mcp.tool()
-def generate_engraving_openai(
-    word: str,
-    field: str = "",
-    scope: str = "all",
-    media_type: str = "movie",
-    model: str = "gpt-image-1",
-) -> str:
-    """Generate an engraving from a silhouette catalog entry using the OpenAI Images API.
-
-    Discovers the best cached silhouette for *word* by pixel area, composites
-    it onto white, and sends it to ``openai.images.edit()`` along with the
-    original source frame when available.  The model output is converted to
-    strict black-and-white (black = line, white = paper) and saved to disk.
-
-    This tool reads existing silhouette catalog data — it never extracts new
-    silhouettes.  Call ``list_silhouette_candidates`` or
-    ``find_vocabulary_matches`` first to confirm that catalog entries exist
-    for the requested term.
-
-    Requires an OpenAI API key::
-
-        crossing tool api_key set openai <your-key>
-
-    Or set the ``OPENAI_API_KEY`` environment variable.
-
-    Output::
-
-        output/engravings/openai/<word>/<id>_raw.png      — model output
-        output/engravings/openai/<word>/<id>_output.png   — strict B&W engraving
-        output/engravings/openai/<word>/<id>_generation.json
-
-    Args:
-        word:       Vocabulary term to engrave (e.g. "horse", "gun").
-        field:      Annotation field filter. Empty string = all fields (default).
-        scope:      "all" (full corpus) or "movie-<media_id>" for one film.
-        media_type: "movie" (default) or "gameplay".
-        model:      OpenAI model name (default "gpt-image-1").
-
-    Output-writing. Reads: data/silhouettes/catalog/, media/frames/best/
-                   Writes: output/engravings/openai/
-    """
-    result = _ctx()
-    if isinstance(result, str):
-        return result
-    project_path, _ = result
-
-    try:
-        entries = _load_catalog_entries_for_word(
-            project_path, media_type, word, field, scope
-        )
-        if not entries:
-            try:
-                vocab_matches = _vocab_matches_for_word(project_path, media_type, word)
-                suggested = [m["field"] for m in vocab_matches if m["count"] > 0]
-            except Exception:
-                suggested = []
-            msg = (
-                f"No silhouette candidates found for {word!r}"
-                + (f" in field {field!r}" if field else "")
-                + "."
-            )
-            if suggested and field and field not in suggested:
-                msg += f" Matching vocabulary exists in: {suggested}."
-            return _err(msg, f"suggested_fields={suggested}")
-
-        best = _pick_largest_silhouette(entries)
-        if best is None or not best.get("png_path"):
-            return _err(
-                f"Best candidate for {word!r} has no PNG on disk.",
-                "Ensure catalog PNG files are present in data/silhouettes/catalog/.",
-            )
-
-        # Resolve optional source frame
-        frame_path: str | None = None
-        source_frame = best.get("source_frame", "")
-        if source_frame and not source_frame.startswith("frame:"):
-            src = Path(source_frame)
-            if not src.is_absolute():
-                src = Path(project_path) / source_frame
-            if src.exists():
-                frame_path = str(src)
-
-        # Build prompt context from catalog entry
-        engraving_ctx = {
-            "label":   word,
-            "field":   best.get("field", "") or field,
-            "movie":   best.get("film_title", ""),
-            "shot_id": best.get("shot_id", ""),
-        }
-
-        timestamp    = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H%M%S")
-        safe_word    = word.replace(" ", "_")
-        engraving_id = f"{safe_word}_{timestamp}"
-        cache_dir    = _output_dir(project_path, f"engravings/openai/{safe_word}")
-
-        from services.engraving_generate import generate_openai_engraving as _gen_openai
-        gen_result = _gen_openai(
-            project_path=project_path,
-            silhouette_png_path=best["png_path"],
-            source_frame_path=frame_path,
-            silhouette_meta=engraving_ctx,
-            engraving_id=engraving_id,
-            cache_dir=cache_dir,
-            model=model,
-            context=engraving_ctx,
-        )
-
-        return _ok(
-            word=word,
-            field=field or None,
-            matched_field=best.get("field", ""),
-            film_title=best.get("film_title", ""),
-            shot_id=best.get("shot_id", ""),
-            pixel_area=best.get("pixel_area"),
-            engraving_id=engraving_id,
-            model=model,
-            raw_png=gen_result["raw_png"],
-            output_png=gen_result["output_png"],
-            cache_dir=str(cache_dir),
-        )
-
-    except RuntimeError as exc:
-        return _err(str(exc))
-    except FileNotFoundError as exc:
-        return _err(str(exc))
     except Exception as exc:
         return _err(str(exc), traceback.format_exc())
 

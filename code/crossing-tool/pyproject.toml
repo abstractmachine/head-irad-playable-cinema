@@ -19,6 +19,7 @@ dependencies = [
     "gdown",
     "tensorboard",
     "mcp[cli]>=1.27.0",
+    "argcomplete>=3.0",
 ]
 
 [project.optional-dependencies]
