@@ -6593,8 +6593,82 @@ def cmd_engraving(args):
     sub = args.engraving_subcommand
     if sub == "smoke-test":
         _engraving_smoke_test(args)
+    elif sub == "generate":
+        _engraving_generate(args)
     else:
         print("✗ engraving: specify a subcommand.", file=sys.stderr)
+        sys.exit(1)
+
+
+def _engraving_generate(args):
+    """Prepare or generate the canonical engraving folder."""
+    _require_path()
+    project_path = prefs.get("path")
+    provider = getattr(args, "provider", "prepare") or "prepare"
+    force = getattr(args, "force", False)
+
+    def _rel(p, project):
+        try:
+            return str(Path(p).relative_to(project))
+        except (ValueError, TypeError):
+            return str(p)
+
+    if provider == "prepare":
+        from services.engraving_smoke import prepare_engraving_from_source
+        from services.engraving_prompt import EngravingPromptError
+        try:
+            result = prepare_engraving_from_source(project_path, args.source, force=force)
+        except FileNotFoundError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            sys.exit(1)
+        except FileExistsError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            sys.exit(1)
+        except EngravingPromptError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            sys.exit(1)
+        project = result["project"]
+        print("✓ Engraving prepared")
+        print(f"  Source:   {_rel(result['source_json'], project)}")
+        print(f"  Folder:   {_rel(result['dir'], project)}")
+        print(f"  Metadata: {_rel(result['metadata'], project)}")
+
+    elif provider == "openai":
+        from services.engraving_generate_openai import generate_engraving_openai
+        from services.keys import MissingKeyError
+        model = getattr(args, "model", None) or "gpt-image-2"
+        size = getattr(args, "size", None) or "1024x1024"
+        try:
+            result = generate_engraving_openai(
+                project_path, args.source,
+                model=model, size=size, force=force,
+            )
+        except MissingKeyError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            sys.exit(1)
+        except FileExistsError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            sys.exit(1)
+        except FileNotFoundError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            sys.exit(1)
+        except ImportError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            sys.exit(1)
+        except Exception as exc:
+            print(f"✗ OpenAI generation failed: {exc}", file=sys.stderr)
+            sys.exit(1)
+        project = result["project"]
+        print("✓ Engraving generated")
+        print(f"  Source:       {args.source}")
+        print(f"  Folder:       {_rel(result['dir'], project)}")
+        print(f"  raw.png:      {_rel(result['raw_png'], project)}")
+        print(f"  engraving.png:{_rel(result['engraving_png'], project)}")
+        print(f"  Metadata:     {_rel(result['metadata'], project)}")
+        print(f"  Model:        {result['model']}  size={result['size']}")
+
+    else:
+        print(f"✗ Unknown provider: {provider!r}  (choose: prepare, openai)", file=sys.stderr)
         sys.exit(1)
 
 
@@ -9590,6 +9664,46 @@ def build_parser():
              " — used for {variable} substitution in the engraving prompt",
     )
     p_eng_smoke.set_defaults(func=cmd_engraving)
+
+    p_eng_generate = engraving_sub.add_parser(
+        "generate",
+        help="Prepare or generate an engraving from a silhouette object JSON",
+    )
+    p_eng_generate.add_argument(
+        "--source",
+        dest="source",
+        required=True,
+        metavar="OBJECT_JSON",
+        help="Path to the silhouette object_NNNN.json to engrave",
+    )
+    p_eng_generate.add_argument(
+        "--provider",
+        dest="provider",
+        choices=["prepare", "openai"],
+        default="prepare",
+        help="Generation provider: 'prepare' (default, no API calls) or 'openai'",
+    )
+    p_eng_generate.add_argument(
+        "--model",
+        dest="model",
+        default=None,
+        metavar="MODEL",
+        help="Model name for the provider (default: gpt-image-2 for openai)",
+    )
+    p_eng_generate.add_argument(
+        "--size",
+        dest="size",
+        choices=["1024x1024", "1024x1792", "1792x1024"],
+        default="1024x1024",
+        help="Output image size (default: 1024x1024)",
+    )
+    p_eng_generate.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="Overwrite existing engraving files if already prepared/generated",
+    )
+    p_eng_generate.set_defaults(func=cmd_engraving)
 
     # ── book command ─────────────────────────────────────────────────────────
     p_book = sub.add_parser("book", help="Manage books (create, delete, list, import PDF)")
