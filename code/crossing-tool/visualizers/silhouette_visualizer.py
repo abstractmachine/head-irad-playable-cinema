@@ -1372,6 +1372,7 @@ class _ThumbnailCell(QLabel):
         super().__init__(parent)
         self._index = index
         self._selected = False
+        self._is_best = False
         self.setFixedSize(_THUMB_SIZE, _THUMB_SIZE)
         self.setAlignment(Qt.AlignCenter)
         self.setCursor(Qt.PointingHandCursor)
@@ -1389,10 +1390,19 @@ class _ThumbnailCell(QLabel):
         self._selected = selected
         self._apply_style()
 
+    def set_best(self, is_best: bool) -> None:
+        """Toggle fuchsia best-selection border (thicker than regular selection)."""
+        self._is_best = is_best
+        self._apply_style()
+
     def _apply_style(self) -> None:
-        border = f"2px solid {theme.ACCENT}" if self._selected else "none"
+        # best  → fuchsia border (regardless of selection state)
+        # selected only → light-grey background, no border
+        # normal → dark canvas background, no border
+        bg = theme.BTN_BG if self._selected else theme.CANVAS_BG
+        border = f"2px solid {theme.ACCENT}" if self._is_best else "none"
         self.setStyleSheet(
-            f"background: {theme.CANVAS_BG}; border: {border};"
+            f"background: {bg}; border: {border};"
             f" color: {theme.TEXT_DIM};"
             f" font-family: '{theme.FAMILY_MONO}'; font-size: {theme.BASE_PT}pt;"
         )
@@ -1535,6 +1545,7 @@ class CatalogBrowser(QWidget):
         self._cells: list[_ThumbnailCell] = []
         self._selected_idx: int = -1
         self._loader: Optional[_ThumbLoader] = None
+        self._grid_cols: int = 1  # tracked after every reflow; used by _navigate_grid
         self._build_ui()
         self._load_catalog()
         # Reflow grid once Qt has finalised the window/splitter geometry
@@ -1590,6 +1601,8 @@ class CatalogBrowser(QWidget):
         panel_scroll.setMinimumWidth(_PANEL_W)
         panel_scroll.setWidgetResizable(True)
         panel_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        panel_scroll.setFocusPolicy(Qt.NoFocus)
+        panel_scroll.viewport().setFocusPolicy(Qt.NoFocus)
         panel_scroll.setFrameShape(QFrame.NoFrame)
         panel_scroll.setStyleSheet(
             f"QScrollArea {{ background: {theme.PANEL_BG}; border: none; }}"
@@ -1614,6 +1627,7 @@ class CatalogBrowser(QWidget):
         mg.addWidget(self._catalog_media_type_combo)
         self._film_combo = QComboBox()
         self._film_combo.setFocusPolicy(Qt.NoFocus)
+        self._film_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self._film_combo.currentIndexChanged.connect(self._on_film_changed)
         self._film_combo.installEventFilter(self)
         mg.addWidget(self._film_combo)
@@ -1625,6 +1639,7 @@ class CatalogBrowser(QWidget):
         fieldg.setContentsMargins(8, 12, 8, 8)
         self._field_combo = QComboBox()
         self._field_combo.setFocusPolicy(Qt.NoFocus)
+        self._field_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self._field_combo.currentIndexChanged.connect(self._on_field_changed)
         self._field_combo.installEventFilter(self)
         fieldg.addWidget(self._field_combo)
@@ -1637,11 +1652,13 @@ class CatalogBrowser(QWidget):
         lg.setSpacing(4)
         self._letter_combo = QComboBox()
         self._letter_combo.setFocusPolicy(Qt.NoFocus)
+        self._letter_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self._letter_combo.currentIndexChanged.connect(self._on_letter_changed)
         self._letter_combo.installEventFilter(self)
         lg.addWidget(self._letter_combo)
         self._label_combo = QComboBox()
         self._label_combo.setFocusPolicy(Qt.NoFocus)
+        self._label_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self._label_combo.currentIndexChanged.connect(self._on_label_changed)
         self._label_combo.installEventFilter(self)
         lg.addWidget(self._label_combo)
@@ -1735,9 +1752,32 @@ class CatalogBrowser(QWidget):
         ov.addWidget(self._sam_btn)
 
         pv.addWidget(obj_group)
+
+        self._best_btn = QPushButton("Best")
+        self._best_btn.setCheckable(True)
+        self._best_btn.setFocusPolicy(Qt.NoFocus)
+        self._best_btn.setEnabled(False)
+        self._best_btn.setFixedHeight(theme.BTN_H)
+        self._best_btn.setStyleSheet(
+            f"QPushButton {{"
+            f"  background-color: {theme.BTN_BG};"
+            f"  color: {theme.TEXT};"
+            f"  border: none; border-radius: 3px;"
+            f"  font-family: '{theme.FAMILY_UI}';"
+            f"  font-size: {theme.BASE_PT + 1}pt; font-weight: bold;"
+            f"}}"
+            f"QPushButton:hover    {{ background-color: {theme.BTN_HOVER}; }}"
+            f"QPushButton:pressed  {{ background-color: {theme.BTN_PRESSED}; }}"
+            f"QPushButton:checked  {{ background-color: {theme.ACCENT}; color: {theme.TEXT}; }}"
+            f"QPushButton:disabled {{ color: {theme.TEXT_DIM};"
+            f" background-color: {theme.BTN_BG}; }}"
+        )
+        self._best_btn.clicked.connect(self._on_best_btn_clicked)
+        pv.addWidget(self._best_btn)
+
         pv.addStretch()
 
-        hint = QLabel("Home/End  movie    PgUp/PgDn  field\n↑ ↓  label    ← →  page")
+        hint = QLabel("Home/End  movie    PgUp/PgDn  field\n← ↑ → ↓  navigate grid    a-z / #  bucket\nEnter  toggle best")
         hint.setAlignment(Qt.AlignCenter)
         hint.setStyleSheet(
             f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT - 1}pt;"
@@ -1974,6 +2014,7 @@ class CatalogBrowser(QWidget):
     def _rebuild_grid(self) -> None:
         self._clear_grid()
         cols = self._cols()
+        self._grid_cols = cols
         for i, rec in enumerate(self._page_records):
             stem = rec.get("filename_stem") or rec.get("filename") or ""
             shot = rec.get("shot_id", "")
@@ -1982,6 +2023,8 @@ class CatalogBrowser(QWidget):
             tip = f"#{self._page_offset + i + 1}  {stem}  shot:{shot}  f:{frame}  conf:{conf:.3f}"
             cell = _ThumbnailCell(i, tooltip=tip)
             cell.clicked.connect(self._on_cell_clicked)
+            if rec.get("human_best"):
+                cell.set_best(True)
             self._grid_layout.addWidget(cell, i // cols, i % cols)
             self._cells.append(cell)
 
@@ -1996,6 +2039,7 @@ class CatalogBrowser(QWidget):
         if not self._cells:
             return
         cols = self._cols()
+        self._grid_cols = cols
         for i, cell in enumerate(self._cells):
             self._grid_layout.addWidget(cell, i // cols, i % cols)
 
@@ -2048,6 +2092,26 @@ class CatalogBrowser(QWidget):
             self._cells[idx].set_selected(True)
         if idx < len(self._page_records):
             self._show_object_meta(self._page_records[idx])
+        self._update_best_btn()
+
+    def _on_best_btn_clicked(self, checked: bool) -> None:
+        """Sync button click to mark/unmark best on the selected record."""
+        if checked:
+            self._mark_best()
+        else:
+            self._unmark_best()
+    def _update_best_btn(self) -> None:
+        """Reflect selection + best state in the Best button."""
+        if self._selected_idx < 0 or self._selected_idx >= len(self._page_records):
+            self._best_btn.setEnabled(False)
+            self._best_btn.setChecked(False)
+            return
+        self._best_btn.setEnabled(True)
+        is_best = bool(self._page_records[self._selected_idx].get("human_best"))
+        # Block signals so programmatic setChecked doesn't re-trigger _on_best_btn_clicked
+        self._best_btn.blockSignals(True)
+        self._best_btn.setChecked(is_best)
+        self._best_btn.blockSignals(False)
 
     def _clear_meta(self) -> None:
         for lbl in self._meta_rows.values():
@@ -2055,6 +2119,10 @@ class CatalogBrowser(QWidget):
         self._current_rec = None
         self._shotlist_btn.setEnabled(False)
         self._sam_btn.setEnabled(False)
+        self._best_btn.setEnabled(False)
+        self._best_btn.blockSignals(True)
+        self._best_btn.setChecked(False)
+        self._best_btn.blockSignals(False)
 
     def _show_object_meta(self, rec: dict) -> None:
         shot_id = str(rec.get("shot_id", "—"))
@@ -2131,9 +2199,28 @@ class CatalogBrowser(QWidget):
     # Keyboard handling — event filter intercepts keys stolen by child widgets
 
     def eventFilter(self, obj, event) -> bool:
+        if event.type() == QEvent.Resize and obj is self._scroll:
+            # Reflow when the left scroll area resizes (e.g. splitter moved)
+            if self._cells:
+                new_cols = self._cols()
+                if new_cols != self._grid_cols:
+                    self._grid_cols = new_cols
+                    for i, cell in enumerate(self._cells):
+                        self._grid_layout.addWidget(cell, i // new_cols, i % new_cols)
+            return False  # let the scroll area handle its own resize
         if event.type() == QEvent.KeyPress:
             key = event.key()
             mod = event.modifiers()
+            # a-z / # — jump to alphabetical bucket
+            if not (mod & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier)):
+                ch = event.text().upper()
+                if len(ch) == 1 and (ch.isalpha() or ch == "#"):
+                    self._handle_letter_key(ch)
+                    return True
+            # Enter — toggle best
+            if key in (Qt.Key_Return, Qt.Key_Enter) and not (mod & Qt.ShiftModifier):
+                self._toggle_best()
+                return True
             if key in (Qt.Key_Home, Qt.Key_End,
                        Qt.Key_PageUp, Qt.Key_PageDown,
                        Qt.Key_Up, Qt.Key_Down,
@@ -2148,6 +2235,16 @@ class CatalogBrowser(QWidget):
     def keyPressEvent(self, event) -> None:
         key = event.key()
         mod = event.modifiers()
+        # a-z / # — jump to alphabetical bucket (no Ctrl/Meta/Alt)
+        if not (mod & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier)):
+            ch = event.text().upper()
+            if len(ch) == 1 and (ch.isalpha() or ch == "#"):
+                self._handle_letter_key(ch)
+                return
+        # Enter — toggle best
+        if key in (Qt.Key_Return, Qt.Key_Enter) and not (mod & Qt.ShiftModifier):
+            self._toggle_best()
+            return
         if key in (Qt.Key_Home, Qt.Key_End,
                    Qt.Key_PageUp, Qt.Key_PageDown,
                    Qt.Key_Up, Qt.Key_Down,
@@ -2174,20 +2271,90 @@ class CatalogBrowser(QWidget):
             if idx < self._field_combo.count() - 1:
                 self._field_combo.setCurrentIndex(idx + 1)
         elif key == Qt.Key_Up:
-            idx = self._label_combo.currentIndex()
-            if idx > 0:
-                self._label_combo.setCurrentIndex(idx - 1)
+            self._navigate_grid(0, -1)
         elif key == Qt.Key_Down:
-            idx = self._label_combo.currentIndex()
-            if idx < self._label_combo.count() - 1:
-                self._label_combo.setCurrentIndex(idx + 1)
+            self._navigate_grid(0, 1)
         elif key == Qt.Key_Left:
-            if self._page_offset > 0:
-                self._show_page(max(0, self._page_offset - _PAGE_SIZE))
+            self._navigate_grid(-1, 0)
         elif key == Qt.Key_Right:
-            next_off = self._page_offset + _PAGE_SIZE
-            if next_off < len(self._current_records):
-                self._show_page(next_off)
+            self._navigate_grid(1, 0)
+
+    def _navigate_grid(self, delta_col: int, delta_row: int) -> None:
+        """Move the grid selection by (*delta_col*, *delta_row*).
+
+        If nothing is selected, selects item 0 regardless of direction.
+        """
+        n = len(self._cells)
+        if n == 0:
+            return
+
+        # No selection — jump to first item
+        if self._selected_idx < 0:
+            self._on_cell_clicked(0)
+            if self._cells:
+                self._scroll.ensureWidgetVisible(self._cells[0])
+            return
+
+        cols = max(1, self._grid_cols)
+        cur = self._selected_idx
+        row, col = divmod(cur, cols)
+        total_rows = (n - 1) // cols + 1
+
+        new_row = max(0, min(total_rows - 1, row + delta_row))
+        new_col = max(0, min(cols - 1, col + delta_col))
+        new_idx = min(new_row * cols + new_col, n - 1)
+
+        if new_idx == cur:
+            return
+        self._on_cell_clicked(new_idx)
+        if 0 <= new_idx < len(self._cells):
+            self._scroll.ensureWidgetVisible(self._cells[new_idx])
+
+    def _handle_letter_key(self, letter: str) -> None:
+        """Jump to the alphabetical bucket *letter* in the letter combo.
+
+        *letter* should be an uppercase letter ``'A'``–``'Z'`` or ``'#'``.
+        """
+        for i in range(self._letter_combo.count()):
+            if self._letter_combo.itemData(i) == letter:
+                self._letter_combo.setCurrentIndex(i)
+                return
+
+    def _toggle_best(self) -> None:
+        """Toggle human_best on the selected object (mark if off, unmark if on)."""
+        if self._selected_idx < 0 or self._selected_idx >= len(self._page_records):
+            return
+        if self._page_records[self._selected_idx].get("human_best"):
+            self._unmark_best()
+        else:
+            self._mark_best()
+
+    def _mark_best(self) -> None:
+        """Mark the selected object as human-best for its label; write to JSON."""
+        from services.silhouette_curation import mark_best
+        if self._selected_idx < 0 or self._selected_idx >= len(self._page_records):
+            return
+        target_rec = self._page_records[self._selected_idx]
+        label = self._label_combo.currentData()
+        field = self._field_combo.currentData() or "--all"
+        all_label_recs = self._field_map.get(field, {}).get(label, [])
+        mark_best(target_rec, all_label_recs)
+        self._refresh_best_highlights()
+
+    def _unmark_best(self) -> None:
+        """Remove the human_best marker from the selected object; write to JSON."""
+        from services.silhouette_curation import unmark_best
+        if self._selected_idx < 0 or self._selected_idx >= len(self._page_records):
+            return
+        unmark_best(self._page_records[self._selected_idx])
+        self._refresh_best_highlights()
+
+    def _refresh_best_highlights(self) -> None:
+        """Repaint fuchsia-border state on all page cells from their record flags."""
+        for i, cell in enumerate(self._cells):
+            if i < len(self._page_records):
+                cell.set_best(bool(self._page_records[i].get("human_best")))
+        self._update_best_btn()
 
     def _fit_panel_width(self) -> None:
         """Resize the right panel to its natural layout width."""
@@ -2328,6 +2495,12 @@ class SilhouetteWindow(QMainWindow):
                      Qt.Key_Up, Qt.Key_Down,
                      Qt.Key_Left, Qt.Key_Right):
             self._catalog._handle_nav_key(key, mod)
+        elif key in (Qt.Key_Return, Qt.Key_Enter) and not (mod & Qt.ShiftModifier):
+            self._catalog._toggle_best()
+        elif not (mod & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier)):
+            ch = event.text().upper()
+            if len(ch) == 1 and (ch.isalpha() or ch == "#"):
+                self._catalog._handle_letter_key(ch)
         else:
             super().keyPressEvent(event)
 
