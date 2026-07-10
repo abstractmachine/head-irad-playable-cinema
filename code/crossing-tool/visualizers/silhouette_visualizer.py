@@ -1705,11 +1705,21 @@ class CatalogBrowser(QWidget):
             sort_gv.addWidget(_sort_row)
         pv.addWidget(sort_group)
 
-        self._more_btn = QPushButton(f"Load {_PAGE_SIZE} more  ↓")
-        self._more_btn.setFocusPolicy(Qt.NoFocus)
-        self._more_btn.setVisible(False)
-        self._more_btn.clicked.connect(self._load_more)
-        pv.addWidget(self._more_btn)
+        _page_row = QWidget()
+        _page_rl = QHBoxLayout(_page_row)
+        _page_rl.setContentsMargins(0, 0, 0, 0)
+        _page_rl.setSpacing(6)
+        self._prev_btn = QPushButton("← Previous")
+        self._prev_btn.setFocusPolicy(Qt.NoFocus)
+        self._prev_btn.setEnabled(False)
+        self._prev_btn.clicked.connect(self._load_prev_page)
+        self._next_btn = QPushButton("Next →")
+        self._next_btn.setFocusPolicy(Qt.NoFocus)
+        self._next_btn.setEnabled(False)
+        self._next_btn.clicked.connect(self._load_next_page)
+        _page_rl.addWidget(self._prev_btn, 1)
+        _page_rl.addWidget(self._next_btn, 1)
+        pv.addWidget(_page_row)
 
         # Selected object
         obj_group = QGroupBox("Object")
@@ -1777,7 +1787,7 @@ class CatalogBrowser(QWidget):
 
         pv.addStretch()
 
-        hint = QLabel("Home/End  movie    PgUp/PgDn  field\n← ↑ → ↓  navigate grid    a-z / #  bucket\nEnter  toggle best")
+        hint = QLabel("Home/End  movie    PgUp/PgDn  field\n← ↑ → ↓  navigate grid    a-z / #  bucket\nShift+↑↓  label    Shift+←→  prev/next page\nEnter  toggle best    Shift+Enter  shotlist")
         hint.setAlignment(Qt.AlignCenter)
         hint.setStyleSheet(
             f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT - 1}pt;"
@@ -1990,11 +2000,21 @@ class CatalogBrowser(QWidget):
         else:
             self._status_lbl.setText(f"{offset + 1}–{end} of {total}   loading…")
 
-        self._more_btn.setVisible(end < total)
+        prev_count = offset
+        next_count = max(0, total - end)
+        self._prev_btn.setEnabled(prev_count > 0)
+        self._prev_btn.setText(f"← Previous ({prev_count})" if prev_count > 0 else "← Previous")
+        self._next_btn.setEnabled(next_count > 0)
+        self._next_btn.setText(f"Next ({next_count}) →" if next_count > 0 else "Next →")
         self._rebuild_grid()
         self._start_loader()
 
-    def _load_more(self) -> None:
+    def _load_prev_page(self) -> None:
+        new_off = max(0, self._page_offset - _PAGE_SIZE)
+        if new_off < self._page_offset:
+            self._show_page(new_off)
+
+    def _load_next_page(self) -> None:
         new_off = self._page_offset + _PAGE_SIZE
         if new_off < len(self._current_records):
             self._show_page(new_off)
@@ -2218,8 +2238,11 @@ class CatalogBrowser(QWidget):
                     self._handle_letter_key(ch)
                     return True
             # Enter — toggle best
-            if key in (Qt.Key_Return, Qt.Key_Enter) and not (mod & Qt.ShiftModifier):
-                self._toggle_best()
+            if key in (Qt.Key_Return, Qt.Key_Enter):
+                if mod & Qt.ShiftModifier:
+                    self._open_in_shotlist()
+                else:
+                    self._toggle_best()
                 return True
             if key in (Qt.Key_Home, Qt.Key_End,
                        Qt.Key_PageUp, Qt.Key_PageDown,
@@ -2242,8 +2265,11 @@ class CatalogBrowser(QWidget):
                 self._handle_letter_key(ch)
                 return
         # Enter — toggle best
-        if key in (Qt.Key_Return, Qt.Key_Enter) and not (mod & Qt.ShiftModifier):
-            self._toggle_best()
+        if key in (Qt.Key_Return, Qt.Key_Enter):
+            if mod & Qt.ShiftModifier:
+                self._open_in_shotlist()
+            else:
+                self._toggle_best()
             return
         if key in (Qt.Key_Home, Qt.Key_End,
                    Qt.Key_PageUp, Qt.Key_PageDown,
@@ -2271,13 +2297,29 @@ class CatalogBrowser(QWidget):
             if idx < self._field_combo.count() - 1:
                 self._field_combo.setCurrentIndex(idx + 1)
         elif key == Qt.Key_Up:
-            self._navigate_grid(0, -1)
+            if mod & Qt.ShiftModifier:
+                idx = self._label_combo.currentIndex()
+                if idx > 0:
+                    self._label_combo.setCurrentIndex(idx - 1)
+            else:
+                self._navigate_grid(0, -1)
         elif key == Qt.Key_Down:
-            self._navigate_grid(0, 1)
+            if mod & Qt.ShiftModifier:
+                idx = self._label_combo.currentIndex()
+                if idx < self._label_combo.count() - 1:
+                    self._label_combo.setCurrentIndex(idx + 1)
+            else:
+                self._navigate_grid(0, 1)
         elif key == Qt.Key_Left:
-            self._navigate_grid(-1, 0)
+            if mod & Qt.ShiftModifier:
+                self._load_prev_page()
+            else:
+                self._navigate_grid(-1, 0)
         elif key == Qt.Key_Right:
-            self._navigate_grid(1, 0)
+            if mod & Qt.ShiftModifier:
+                self._load_next_page()
+            else:
+                self._navigate_grid(1, 0)
 
     def _navigate_grid(self, delta_col: int, delta_row: int) -> None:
         """Move the grid selection by (*delta_col*, *delta_row*).
@@ -2495,8 +2537,11 @@ class SilhouetteWindow(QMainWindow):
                      Qt.Key_Up, Qt.Key_Down,
                      Qt.Key_Left, Qt.Key_Right):
             self._catalog._handle_nav_key(key, mod)
-        elif key in (Qt.Key_Return, Qt.Key_Enter) and not (mod & Qt.ShiftModifier):
-            self._catalog._toggle_best()
+        elif key in (Qt.Key_Return, Qt.Key_Enter):
+            if mod & Qt.ShiftModifier:
+                self._catalog._open_in_shotlist()
+            else:
+                self._catalog._toggle_best()
         elif not (mod & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier)):
             ch = event.text().upper()
             if len(ch) == 1 and (ch.isalpha() or ch == "#"):
