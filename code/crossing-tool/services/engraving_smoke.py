@@ -10,6 +10,7 @@ Usage::
     result = prepare_engraving_from_source(
         project_path="/path/to/project",
         source_json="/path/to/data/silhouettes/catalog/movie/.../horse/object_0007.json",
+        mode="silhouette",  # or "full"
     )
 """
 
@@ -45,6 +46,7 @@ def prepare_engraving_from_source(
     project_path: str,
     source_json: str | Path,
     *,
+    mode: str = "silhouette",
     force: bool = False,
 ) -> dict:
     """Prepare the canonical engraving folder from a silhouette object JSON.
@@ -55,6 +57,9 @@ def prepare_engraving_from_source(
         Absolute path to the crossing project directory.
     source_json:
         Path to an ``object_NNNN.json`` file inside the silhouette catalog.
+    mode:
+        ``"silhouette"`` or ``"full"``.  Selects the engraving mode and the
+        corresponding prompt file set.
     force:
         Overwrite existing ``engraving.json`` if present.
 
@@ -62,7 +67,7 @@ def prepare_engraving_from_source(
     -------
     dict
         Summary with keys ``source_json``, ``silhouette_png``, ``dir``,
-        ``metadata``, ``project``.
+        ``metadata``, ``project``, ``mode``.
 
     Raises
     ------
@@ -79,7 +84,7 @@ def prepare_engraving_from_source(
     meta = json.loads(source_json.read_text(encoding="utf-8"))
     sil_png = resolve_silhouette_png(source_json, meta)
 
-    paths = engraving_paths(str(project), source_json, meta)
+    paths = engraving_paths(str(project), source_json, meta, mode)
     eng_json_path = paths["metadata"]
 
     if eng_json_path.exists() and not force:
@@ -88,7 +93,7 @@ def prepare_engraving_from_source(
             "Pass force=True (or --force on the CLI) to overwrite."
         )
 
-    prompt_filename, prompt_text = load_engraving_prompt(str(project))
+    prompt_filename, prompt_text = load_engraving_prompt(str(project), mode)
     prompt_sha256 = hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()
     prompt_path_rel = _project_rel(
         str(project),
@@ -100,6 +105,7 @@ def prepare_engraving_from_source(
     # ── request.json  (stub — no API call yet) ────────────────────────────────
     request_stub = {
         "status": "pending",
+        "mode": mode,
         "service": None,
         "model": None,
         "prompt_file": prompt_filename,
@@ -118,6 +124,7 @@ def prepare_engraving_from_source(
     engraving_meta = {
         "schema_version": ENGRAVING_SCHEMA_VERSION,
         "status": "prepared",
+        "mode": mode,
         "source": {
             "silhouette_json": _project_rel(str(project), source_json),
             "silhouette_png": _project_rel(str(project), sil_png),
@@ -136,6 +143,8 @@ def prepare_engraving_from_source(
             "bbox": meta.get("bbox"),
             "mask_area": meta.get("mask_area"),
             "frame_size": meta.get("frame_size"),
+            "human_best": meta.get("human_best", False),
+            "motif": meta.get("motif"),
         },
         "generation": {
             "service": None,
@@ -150,7 +159,7 @@ def prepare_engraving_from_source(
         },
         "outputs": {
             "raw_png": "raw.png",
-            "engraving_png": "engraving.png",
+            "engraving_png": paths["engraving_png"].name,
         },
     }
     paths["metadata"].write_text(
@@ -164,4 +173,5 @@ def prepare_engraving_from_source(
         "dir": paths["dir"],
         "metadata": paths["metadata"],
         "project": project,
+        "mode": mode,
     }

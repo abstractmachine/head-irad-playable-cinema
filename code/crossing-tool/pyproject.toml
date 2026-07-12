@@ -20,6 +20,7 @@ dependencies = [
     "tensorboard",
     "mcp[cli]>=1.27.0",
     "argcomplete>=3.0",
+    "openai>=1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -46,11 +47,8 @@ silhouette = [
   "transformers>=5.0.0",
   "safetensors",
 ]
-engraving = [
-  "openai>=1.0.0",
-]
 all = [
-  "crossing[annotate,visualizer,shot-detection,silhouette,engraving]",
+  "crossing[annotate,visualizer,shot-detection,silhouette]",
 ]
 
 [project.scripts]

@@ -229,7 +229,8 @@ class TestEngravingDirForSource(unittest.TestCase):
         self.assertIn("catalog", parts)
         self.assertIn("movie", parts)
         self.assertIn("horse", parts)
-        self.assertEqual(d.name, "object_0001")
+        # The mode ("silhouette") is the final path component; object_id is its parent
+        self.assertEqual(d.parent.name, "object_0001")
 
     def test_label_folder_mirrors_silhouette_dir(self):
         """The label folder in the engraving path must match the silhouette parent dir name."""
@@ -237,8 +238,9 @@ class TestEngravingDirForSource(unittest.TestCase):
         json_path = _make_silhouette(label_dir)
         meta = json.loads(json_path.read_text())
         d = engraving_dir_for_source(str(self.project), json_path, meta)
-        # Parent of object_id folder is the label folder
-        self.assertEqual(d.parent.name, "fire_tools")
+        # Path layout: .../label/object_id/mode/
+        # d.parent.parent is the label folder
+        self.assertEqual(d.parent.parent.name, "fire_tools")
         self.assertNotIn("fire tools", str(d))
 
     def test_no_provider_in_path(self):

@@ -6595,6 +6595,8 @@ def cmd_engraving(args):
         _engraving_smoke_test(args)
     elif sub == "generate":
         _engraving_generate(args)
+    elif sub == "batch":
+        _engraving_batch(args)
     else:
         print("✗ engraving: specify a subcommand.", file=sys.stderr)
         sys.exit(1)
@@ -6606,6 +6608,7 @@ def _engraving_generate(args):
     project_path = prefs.get("path")
     provider = getattr(args, "provider", "prepare") or "prepare"
     force = getattr(args, "force", False)
+    mode = getattr(args, "mode", "silhouette") or "silhouette"
 
     def _rel(p, project):
         try:
@@ -6617,7 +6620,9 @@ def _engraving_generate(args):
         from services.engraving_smoke import prepare_engraving_from_source
         from services.engraving_prompt import EngravingPromptError
         try:
-            result = prepare_engraving_from_source(project_path, args.source, force=force)
+            result = prepare_engraving_from_source(
+                project_path, args.source, mode=mode, force=force
+            )
         except FileNotFoundError as exc:
             print(f"✗ {exc}", file=sys.stderr)
             sys.exit(1)
@@ -6628,7 +6633,7 @@ def _engraving_generate(args):
             print(f"✗ {exc}", file=sys.stderr)
             sys.exit(1)
         project = result["project"]
-        print("✓ Engraving prepared")
+        print(f"✓ Engraving prepared  (mode={mode})")
         print(f"  Source:   {_rel(result['source_json'], project)}")
         print(f"  Folder:   {_rel(result['dir'], project)}")
         print(f"  Metadata: {_rel(result['metadata'], project)}")
@@ -6641,7 +6646,7 @@ def _engraving_generate(args):
         try:
             result = generate_engraving_openai(
                 project_path, args.source,
-                model=model, size=size, force=force,
+                mode=mode, model=model, size=size, force=force,
             )
         except MissingKeyError as exc:
             print(f"✗ {exc}", file=sys.stderr)
@@ -6658,17 +6663,120 @@ def _engraving_generate(args):
         except Exception as exc:
             print(f"✗ OpenAI generation failed: {exc}", file=sys.stderr)
             sys.exit(1)
-        project = result["project"]
-        print("✓ Engraving generated")
-        print(f"  Source:       {args.source}")
-        print(f"  Folder:       {_rel(result['dir'], project)}")
-        print(f"  raw.png:      {_rel(result['raw_png'], project)}")
-        print(f"  engraving.png:{_rel(result['engraving_png'], project)}")
-        print(f"  Metadata:     {_rel(result['metadata'], project)}")
-        print(f"  Model:        {result['model']}  size={result['size']}")
+
+        # mode="both" returns a list; print a summary for each
+        if isinstance(result, list):
+            for r in result:
+                project = r["project"]
+                print(f"✓ Engraving generated  (mode={r['mode']})")
+                print(f"  Folder:       {_rel(r['dir'], project)}")
+                print(f"  raw.png:      {_rel(r['raw_png'], project)}")
+                print(f"  engraving:    {_rel(r['engraving_png'], project)}")
+                print(f"  Model:        {r['model']}  size={r['size']}")
+        else:
+            project = result["project"]
+            print(f"✓ Engraving generated  (mode={result['mode']})")
+            print(f"  Source:       {args.source}")
+            print(f"  Folder:       {_rel(result['dir'], project)}")
+            print(f"  raw.png:      {_rel(result['raw_png'], project)}")
+            print(f"  engraving:    {_rel(result['engraving_png'], project)}")
+            print(f"  Metadata:     {_rel(result['metadata'], project)}")
+            print(f"  Model:        {result['model']}  size={result['size']}")
 
     else:
         print(f"✗ Unknown provider: {provider!r}  (choose: prepare, openai)", file=sys.stderr)
+        sys.exit(1)
+
+
+def _engraving_batch(args):
+    """Batch-generate engravings for all human-best silhouettes not yet generated."""
+    _require_path()
+    project_path = prefs.get("path")
+    mode = getattr(args, "mode", "silhouette") or "silhouette"
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
+    label = getattr(args, "label", None)
+    model = getattr(args, "model", None) or "gpt-image-2"
+    size = getattr(args, "size", None) or "1024x1024"
+    force = getattr(args, "force", False)
+    verbose = getattr(args, "verbose", False)
+    notify_each = getattr(args, "notify_items", False)
+    notify = getattr(args, "notify", False) or notify_each
+
+    from services.engraving_batch import scan_best_silhouettes, batch_generate_engravings
+    from services.keys import MissingKeyError
+
+    targets = scan_best_silhouettes(project_path, media_type=media_type, label=label)
+    if not targets:
+        label_note = f" (label={label!r})" if label else ""
+        print(f"No human-best silhouettes found for {media_type}{label_note}.")
+        return
+
+    modes_info = f"silhouette+full" if mode == "both" else mode
+    print(
+        f"Batch engraving: {len(targets)} human-best silhouette(s)  "
+        f"mode={modes_info}  media={media_type}"
+        + (f"  label={label}" if label else "")
+    )
+    print()
+
+    def _on_item(target, result, exc):
+        if not notify_each:
+            return
+        from services.notify import discord_notify
+        obj_id = target["path"].stem
+        lbl = target.get("label", "?")
+        if exc is None:
+            mode_info = mode
+            discord_notify(
+                f"✓ Engraving: {obj_id} [{lbl}]  mode={mode_info}",
+                project_path,
+            )
+        else:
+            discord_notify(
+                f"✗ Engraving failed: {obj_id} [{lbl}]  — {exc}",
+                project_path,
+            )
+
+    try:
+        summary = batch_generate_engravings(
+            project_path,
+            targets,
+            mode=mode,
+            model=model,
+            size=size,
+            force=force,
+            verbose=True,  # always show per-item progress for batch
+            on_item_done=_on_item if notify_each else None,
+        )
+    except MissingKeyError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        print(f"✗ Batch failed: {exc}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+    print()
+    print(
+        f"✓ Batch complete:  "
+        f"generated={summary['generated']}  "
+        f"skipped={summary['skipped']}  "
+        f"failed={summary['failed']}  "
+        f"total={summary['total']}"
+    )
+
+    if notify:
+        from services.notify import discord_notify
+        discord_notify(
+            f"✓ Engraving batch complete ({modes_info}):\n"
+            f"generated={summary['generated']}  "
+            f"skipped={summary['skipped']}  "
+            f"failed={summary['failed']}",
+            project_path,
+        )
+
+    if summary["failed"]:
         sys.exit(1)
 
 
@@ -9684,6 +9792,13 @@ def build_parser():
         help="Generation provider: 'prepare' (default, no API calls) or 'openai'",
     )
     p_eng_generate.add_argument(
+        "--mode",
+        dest="mode",
+        choices=["silhouette", "full", "both"],
+        default="silhouette",
+        help="Engraving mode: silhouette (default), full, or both",
+    )
+    p_eng_generate.add_argument(
         "--model",
         dest="model",
         default=None,
@@ -9704,6 +9819,72 @@ def build_parser():
         help="Overwrite existing engraving files if already prepared/generated",
     )
     p_eng_generate.set_defaults(func=cmd_engraving)
+
+    p_eng_batch = engraving_sub.add_parser(
+        "batch",
+        help="Generate missing engravings for all human-best silhouettes",
+    )
+    p_eng_batch.add_argument(
+        "--mode",
+        dest="mode",
+        choices=["silhouette", "full", "both"],
+        default="silhouette",
+        help="Engraving mode: silhouette (default), full, or both",
+    )
+    p_eng_batch.add_argument(
+        "--media",
+        dest="media",
+        default="movie",
+        metavar="MEDIA_TYPE",
+        help="Media type to scan (default: movie)",
+    )
+    p_eng_batch.add_argument(
+        "--label",
+        dest="label",
+        default=None,
+        metavar="LABEL",
+        help="Restrict to a specific silhouette label (e.g. horse)",
+    )
+    p_eng_batch.add_argument(
+        "--model",
+        dest="model",
+        default=None,
+        metavar="MODEL",
+        help="OpenAI model name (default: gpt-image-2)",
+    )
+    p_eng_batch.add_argument(
+        "--size",
+        dest="size",
+        choices=["1024x1024", "1024x1792", "1792x1024"],
+        default="1024x1024",
+        help="Output image size (default: 1024x1024)",
+    )
+    p_eng_batch.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="Regenerate even if already done",
+    )
+    p_eng_batch.add_argument(
+        "--verbose",
+        action="store_true",
+        default=False,
+        help="Print per-item progress",
+    )
+    p_eng_batch.add_argument(
+        "--notify",
+        action="store_true",
+        default=False,
+        help="Send a Discord notification on batch completion",
+    )
+    p_eng_batch.add_argument(
+        "--notify-each",
+        dest="notify_items",
+        action="store_true",
+        default=False,
+        help="Send a Discord notification after each engraving",
+    )
+    p_eng_batch.set_defaults(func=cmd_engraving)
 
     # ── book command ─────────────────────────────────────────────────────────
     p_book = sub.add_parser("book", help="Manage books (create, delete, list, import PDF)")
