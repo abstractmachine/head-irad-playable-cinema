@@ -42,6 +42,7 @@ UI_BORDER    = "#404040"   # structural chrome borders (group boxes, frames) —
 SPLITTER     = "#737373"   # splitter drag handles — 45% grey (barely visible on BG)
 ACCENT       = "#ff00ff"   # fuchsia — selections, active, checked states
 CANVAS_BG    = "#3a3a3a"   # video / image display areas (dark so content pops)
+TAB_BG       = "#545454"   # tab labels + pane content — 10 % lighter than CANVAS_BG
 # ---------------------------------------------------------------------------
 # Typography
 # ---------------------------------------------------------------------------
@@ -330,10 +331,23 @@ def apply_theme(app) -> None:
     Call once from the visualizer's launcher function, immediately after
     creating the QApplication instance.
     """
+    # Force Fusion so palette and stylesheet rules are honoured for combo
+    # popups instead of being overridden by the native GTK/platform style.
+    from PyQt5.QtWidgets import QStyleFactory
+    app.setStyle(QStyleFactory.create("Fusion"))
     _register_fonts()
     app.setStyleSheet(_STYLESHEET)
-    from PyQt5.QtGui import QFont
+    from PyQt5.QtGui import QFont, QPalette, QColor
     app.setFont(QFont(FAMILY_UI, BASE_PT))
+    # Set Highlight/HighlightedText for ALL three color groups (Active,
+    # Inactive, Disabled).  Qt's Fusion style reads QPalette when drawing
+    # combo-popup items, and popup windows use the Inactive group because
+    # keyboard focus stays on the parent window.  Without setting All, only
+    # the Active group is fuchsia and the popup still shows the system default.
+    _pal = app.palette()
+    _pal.setColor(QPalette.All, QPalette.Highlight,       QColor(ACCENT))
+    _pal.setColor(QPalette.All, QPalette.HighlightedText, QColor(TEXT))
+    app.setPalette(_pal)
 
 
 # ---------------------------------------------------------------------------
@@ -346,17 +360,25 @@ from PyQt5.QtGui import QPainter, QColor                # noqa: E402
 
 
 class _GripHandle(QSplitterHandle):
-    """Splitter handle drawn as a short column of grip dots."""
+    """Splitter handle drawn as a short column of grip dots.
 
-    _DOT_COLOUR   = QColor("#666666")
-    _HOVER_COLOUR = QColor("#ff00ff")
-    _DOT_R   = 2   # dot radius (px)
-    _DOT_GAP = 6   # centre-to-centre spacing (px)
-    _N_DOTS  = 5   # number of dots
+    A plain click (press + release without dragging) toggles the pane on
+    the *right* side of this handle between collapsed (0) and its previous
+    width.  Drag behaviour is unchanged.
+    """
+
+    _DOT_COLOUR      = QColor("#666666")
+    _HOVER_COLOUR    = QColor("#ff00ff")
+    _DOT_R           = 2   # dot radius (px)
+    _DOT_GAP         = 6   # centre-to-centre spacing (px)
+    _N_DOTS          = 5   # number of dots
+    _CLICK_THRESHOLD = 4   # manhattanLength below which a release = click
 
     def __init__(self, orientation, parent):
         super().__init__(orientation, parent)
-        self._hovered = False
+        self._hovered    = False
+        self._press_pos  = None   # set on mouse-down; cleared on release
+        self._saved_size = 0      # remembered size of right pane before collapse
 
     def enterEvent(self, event):
         self._hovered = True
@@ -368,9 +390,75 @@ class _GripHandle(QSplitterHandle):
         self.update()
         super().leaveEvent(event)
 
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._press_pos = event.pos()
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self._press_pos is not None:
+            if (event.pos() - self._press_pos).manhattanLength() <= self._CLICK_THRESHOLD:
+                self._toggle_right_pane()
+        self._press_pos = None
+        super().mouseReleaseEvent(event)
+
+    # ------------------------------------------------------------------
+    # Toggle logic
+
+    def _handle_index(self) -> int:
+        """Return this handle's position index in the parent splitter."""
+        sp = self.splitter()
+        for i in range(1, sp.count()):
+            if sp.handle(i) is self:
+                return i
+        return -1
+
+    def _toggle_right_pane(self) -> None:
+        """Collapse or expand the pane immediately to the right of this handle.
+
+        Space is always exchanged with the nearest non-collapsed pane to the
+        left so that already-collapsed neighbours are not accidentally opened.
+        """
+        sp  = self.splitter()
+        idx = self._handle_index()
+        if idx < 0:
+            return
+        sizes      = list(sp.sizes())
+        right_size = sizes[idx]
+
+        # Find the nearest left pane that is currently visible (size > 0).
+        left_idx = idx - 1
+        while left_idx >= 0 and sizes[left_idx] == 0:
+            left_idx -= 1
+
+        if left_idx < 0:
+            return   # nothing visible to exchange space with
+
+        if right_size == 0:
+            # Expand — take space from the leftmost visible neighbour
+            w_min  = getattr(sp.widget(idx), "minimumWidth", lambda: 160)()
+            target = self._saved_size if self._saved_size > 0 else max(w_min, 160)
+            target = min(target, sizes[left_idx] - 1)
+            if target <= 0:
+                return
+            sizes[idx]      = target
+            sizes[left_idx] -= target
+        else:
+            # Collapse — give space to the leftmost visible neighbour
+            self._saved_size = right_size
+            sizes[left_idx] += right_size
+            sizes[idx]       = 0
+
+        # Block splitterMoved so that any connected handler (e.g. CatalogBrowser's
+        # _on_splitter_moved) does not override the sizes we just computed.
+        # The handler is for interactive drag resizing only.
+        sp.blockSignals(True)
+        sp.setSizes(sizes)
+        sp.blockSignals(False)
+
     def paintEvent(self, event):
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor(PANEL_BG))
+        p.fillRect(self.rect(), QColor(CANVAS_BG))
         p.setRenderHint(QPainter.Antialiasing)
         colour = self._HOVER_COLOUR if self._hovered else self._DOT_COLOUR
         p.setBrush(colour)
@@ -412,7 +500,7 @@ class JumpScrollBar(QScrollBar):
     """
 
     _STYLE_IDLE = (
-        "QScrollBar:vertical { background: transparent; width: 16px; }"
+        f"QScrollBar:vertical {{ background: {CANVAS_BG}; width: 16px; }}"
         "QScrollBar::handle:vertical {"
         "    background: transparent;"
         f"   border-left: 2px solid {ACCENT};"
@@ -421,7 +509,7 @@ class JumpScrollBar(QScrollBar):
         "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }"
     )
     _STYLE_HOVER = (
-        "QScrollBar:vertical { background: transparent; width: 16px; }"
+        f"QScrollBar:vertical {{ background: {CANVAS_BG}; width: 16px; }}"
         "QScrollBar::handle:vertical {"
         f"   background: {ACCENT};"
         f"   border-left: 2px solid {ACCENT};"
@@ -530,3 +618,63 @@ def restore_window_geometry(win, key: str) -> None:
     x = max(screen.left(), min(x, screen.right()  - 100))
     y = max(screen.top(),  min(y, screen.bottom() - 100))
     win.setGeometry(x, y, w, h)
+
+
+# ---------------------------------------------------------------------------
+# SVG icon helper
+# ---------------------------------------------------------------------------
+
+try:
+    from PyQt5.QtSvg import QSvgRenderer as _QSvgRenderer
+    _SVG_AVAILABLE = True
+except ImportError:
+    _SVG_AVAILABLE = False
+
+
+def svg_icon(name: str, size: int = 16, color: str = "#ffffff"):
+    """Load an Iconoir SVG, recolour strokes to *color*, return a QIcon.
+
+    This is the canonical icon-loading function for all Crossing Tool
+    visualizers.  Both ``book_visualizer`` and ``silhouette_visualizer``
+    delegate here instead of maintaining their own local copies.
+
+    Parameters
+    ----------
+    name:
+        Icon filename stem (without ``.svg`` extension), e.g. ``"trash"``.
+    size:
+        Rendered pixel size (square).  All four icon mode/state combinations
+        are set to the same pixmap so Qt always finds a match.
+    color:
+        Hex colour string used to replace the canonical ``#000000`` stroke
+        colour in the SVG source.  Defaults to white (``"#ffffff"``).
+
+    Returns
+    -------
+    QIcon
+        A QIcon with the recoloured SVG rendered at *size* × *size* pixels,
+        or an empty QIcon when the SVG file does not exist or QtSvg is not
+        available.
+    """
+    from PyQt5.QtGui import QIcon, QPixmap
+    from PyQt5.QtCore import Qt
+    from PyQt5.QtGui import QPainter
+
+    icon_dir = Path(__file__).parent / "icons" / "iconoir"
+    path = icon_dir / f"{name}.svg"
+    if not path.exists():
+        return QIcon()
+    coloured = path.read_bytes().replace(b"#000000", color.encode())
+    if _SVG_AVAILABLE:
+        renderer = _QSvgRenderer(coloured)
+        pix = QPixmap(size, size)
+        pix.fill(Qt.transparent)
+        painter = QPainter(pix)
+        renderer.render(painter)
+        painter.end()
+        icon = QIcon()
+        for mode in (QIcon.Normal, QIcon.Active, QIcon.Selected, QIcon.Disabled):
+            icon.addPixmap(pix, mode, QIcon.Off)
+            icon.addPixmap(pix, mode, QIcon.On)
+        return icon
+    return QIcon()

@@ -52,6 +52,7 @@ from PyQt5.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QListView,
     QSlider,
     QLineEdit,
     QMainWindow,
@@ -59,6 +60,7 @@ from PyQt5.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSplitter,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -70,46 +72,28 @@ from PyQt5.QtGui import (
     QIcon,
     QImage,
     QPainter,
+    QPalette,
     QPen,
     QPixmap,
     QPolygon,
 )
 
-try:
-    from PyQt5.QtSvg import QSvgRenderer as _QSvgRenderer
-    _HAS_SVG = True
-except ImportError:
-    _HAS_SVG = False
+from styles.theme import svg_icon as _svg_icon
+
+# Framework components
+from tool.shortcuts import VisualizerWindow
+from visualizers.components.collapsible_section import CollapsibleSection
+from visualizers.components.illustration_browser import IllustrationBrowser
+from visualizers.components.illustration_source import SilhouetteSource
 
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-_PANEL_W = 310
+_PANEL_W    = 310
+_SIDE_PANE_W = 230   # combined inspector + filter side pane
 _DEFAULT_MODEL = "sam3.pt"
-
-
-def _svg_icon(name: str, size: int = 16, color: str = "#ffffff") -> QIcon:
-    """Load an iconoir SVG, recolour strokes to *color*, return QIcon."""
-    icon_dir = Path(__file__).parent.parent / "styles" / "icons" / "iconoir"
-    path = icon_dir / f"{name}.svg"
-    if not path.exists():
-        return QIcon()
-    coloured = path.read_bytes().replace(b"#000000", color.encode())
-    if _HAS_SVG:
-        renderer = _QSvgRenderer(coloured)
-        pix = QPixmap(size, size)
-        pix.fill(Qt.transparent)
-        painter = QPainter(pix)
-        renderer.render(painter)
-        painter.end()
-        icon = QIcon()
-        for mode in (QIcon.Normal, QIcon.Active, QIcon.Selected, QIcon.Disabled):
-            icon.addPixmap(pix, mode, QIcon.Off)
-            icon.addPixmap(pix, mode, QIcon.On)
-        return icon
-    return QIcon()
 
 # (display label, data key) pairs for the cascading sort dropdowns.
 # Data keys map to  <key>_score  or  <key>  fields in catalog JSON records.
@@ -474,55 +458,8 @@ class _SegmentationWorker(QThread):
             self.error.emit(str(exc))
 
 
-# ---------------------------------------------------------------------------
-# Info block widget
-# ---------------------------------------------------------------------------
-
-class _InfoBlock(QWidget):
-    """Fixed grid of key–value label pairs for the right-hand info panel."""
-
-    def __init__(self, rows: list[str], parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
-
-        self._labels: dict[str, QLabel] = {}
-        for key in rows:
-            row_widget = QWidget()
-            row_layout = QHBoxLayout(row_widget)
-            row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setSpacing(4)
-
-            key_lbl = QLabel(f"{key}:")
-            key_lbl.setStyleSheet(
-                f"color: {theme.TEXT_DIM};"
-                f" font-family: '{theme.FAMILY_MONO}';"
-                f" font-size: {theme.BASE_PT}pt;"
-            )
-            key_lbl.setFixedWidth(72)
-            key_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            row_layout.addWidget(key_lbl)
-
-            val_lbl = QLabel("—")
-            val_lbl.setStyleSheet(
-                f"color: {theme.TEXT};"
-                f" font-family: '{theme.FAMILY_MONO}';"
-                f" font-size: {theme.BASE_PT}pt;"
-            )
-            val_lbl.setWordWrap(True)
-            row_layout.addWidget(val_lbl, 1)
-
-            layout.addWidget(row_widget)
-            self._labels[key] = val_lbl
-
-    def set(self, key: str, value: str) -> None:
-        if key in self._labels:
-            self._labels[key].setText(value)
-
-    def clear(self) -> None:
-        for lbl in self._labels.values():
-            lbl.setText("—")
+from visualizers.components.metadata_block import MetadataBlock
+_InfoBlock = MetadataBlock   # backwards-compat alias — remove once all call sites updated
 
 
 # ---------------------------------------------------------------------------
@@ -710,7 +647,7 @@ class SAMExplorer(QMainWindow):
         frame_group = QGroupBox("Current Shot")
         frame_layout = QVBoxLayout(frame_group)
         frame_layout.setContentsMargins(8, 10, 8, 8)
-        self._frame_info = _InfoBlock(["film", "scene", "shot", "frame", "model", "blobs"])
+        self._frame_info = MetadataBlock(["film", "scene", "shot", "frame", "model", "blobs"])
         frame_layout.addWidget(self._frame_info)
         panel_layout.addWidget(frame_group)
 
@@ -718,7 +655,7 @@ class SAMExplorer(QMainWindow):
         blob_group = QGroupBox("Hovered Blob")
         blob_layout = QVBoxLayout(blob_group)
         blob_layout.setContentsMargins(8, 10, 8, 8)
-        self._blob_info = _InfoBlock(["#", "area", "bbox", "iou", "stability"])
+        self._blob_info = MetadataBlock(["#", "area", "bbox", "iou", "stability"])
         blob_layout.addWidget(self._blob_info)
         panel_layout.addWidget(blob_group)
 
@@ -1306,111 +1243,7 @@ class SAMExplorer(QMainWindow):
 # Catalog browser
 # ---------------------------------------------------------------------------
 
-_THUMB_SIZE  = 120   # px per thumbnail cell
-_THUMB_GAP   = 8    # px gap between cells
-_PAGE_SIZE   = 100  # max thumbnails shown at once
-_LOAD_BATCH  = 20   # loader yields UI thread every N images
-
-
-# ---------------------------------------------------------------------------
-# Lazy thumbnail loader
-# ---------------------------------------------------------------------------
-
-class _ThumbLoader(QThread):
-    """Background thread: loads PNG thumbnails and emits QImages to the UI thread.
-
-    QImage is safe to construct off-thread; QPixmap conversion happens in the
-    receiving slot (GUI thread).
-    """
-
-    thumb_ready = pyqtSignal(int, QImage)   # (page index, image)
-    load_finished = pyqtSignal(int)          # total loaded count
-
-    def __init__(self, records: list[dict], size: int, parent=None) -> None:
-        super().__init__(parent)
-        self._records = records
-        self._size = size
-        self._cancelled = False
-
-    def cancel(self) -> None:
-        self._cancelled = True
-
-    def run(self) -> None:
-        from PIL import Image as _PIL
-
-        loaded = 0
-        for i, rec in enumerate(self._records):
-            if self._cancelled:
-                break
-            json_path = rec.get("path")
-            if not json_path:
-                continue
-            png_path = Path(str(json_path)).with_suffix(".png")
-            try:
-                img = _PIL.open(str(png_path)).convert("RGBA")
-                img.thumbnail((self._size, self._size), _PIL.LANCZOS)
-                w, h = img.size
-                data = img.tobytes("raw", "RGBA")
-                qimg = QImage(data, w, h, 4 * w, QImage.Format_RGBA8888)
-                self.thumb_ready.emit(i, qimg.copy())
-                loaded += 1
-            except Exception:
-                pass
-            if (i + 1) % _LOAD_BATCH == 0:
-                self.msleep(2)   # yield so UI stays responsive
-        self.load_finished.emit(loaded)
-
-
-# ---------------------------------------------------------------------------
-
-class _ThumbnailCell(QLabel):
-    """Single grid cell — shows a grey placeholder until the loader fills it."""
-
-    clicked = pyqtSignal(int)
-
-    def __init__(self, index: int, tooltip: str = "", parent=None) -> None:
-        super().__init__(parent)
-        self._index = index
-        self._selected = False
-        self._is_best = False
-        self.setFixedSize(_THUMB_SIZE, _THUMB_SIZE)
-        self.setAlignment(Qt.AlignCenter)
-        self.setCursor(Qt.PointingHandCursor)
-        if tooltip:
-            self.setToolTip(tooltip)
-        self._apply_style()
-        self.setText("·")   # placeholder until image loads
-
-    def set_image(self, qimg: QImage) -> None:
-        """Called from the GUI thread when the loader delivers a QImage."""
-        self.setPixmap(QPixmap.fromImage(qimg))
-        self.setText("")
-
-    def set_selected(self, selected: bool) -> None:
-        self._selected = selected
-        self._apply_style()
-
-    def set_best(self, is_best: bool) -> None:
-        """Toggle fuchsia best-selection border (thicker than regular selection)."""
-        self._is_best = is_best
-        self._apply_style()
-
-    def _apply_style(self) -> None:
-        # best  → fuchsia border (regardless of selection state)
-        # selected only → light-grey background, no border
-        # normal → dark canvas background, no border
-        bg = theme.BTN_BG if self._selected else theme.CANVAS_BG
-        border = f"2px solid {theme.ACCENT}" if self._is_best else "none"
-        self.setStyleSheet(
-            f"background: {bg}; border: {border};"
-            f" color: {theme.TEXT_DIM};"
-            f" font-family: '{theme.FAMILY_MONO}'; font-size: {theme.BASE_PT}pt;"
-        )
-
-    def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton:
-            self.clicked.emit(self._index)
-        super().mousePressEvent(event)
+_THUMB_SIZE  = 120   # px per thumbnail cell — passed to IllustrationBrowser
 
 
 # ---------------------------------------------------------------------------
@@ -1519,37 +1352,38 @@ def _sil_ipc_send_navigate(
 # ---------------------------------------------------------------------------
 
 class CatalogBrowser(QWidget):
-    """Browse the silhouette catalog — mosaic-style layout.
+    """Silhouette catalog browser built on the Visualizer Framework.
 
-    LEFT  — full-bleed scrollable thumbnail grid (content area)
-    RIGHT — fixed panel: movie scope, field, label, object metadata
+    Uses ``IllustrationBrowser`` for the LEFT content area (thumbnails,
+    filter cascade, pagination) and hosts silhouette-specific controls on
+    the RIGHT panel: sort, object inspector, best-selection workflow, and
+    action buttons.
     """
 
-    # Standard annotation field order (same as Cloud/Mosaic visualizers)
-    _FIELD_ORDER = [
-        "--all", "setting", "description", "objects",
-        "action", "humans", "wearing", "animals", "text",
-    ]
-
-    def __init__(self, project_path: str, media_type: str = "movie", parent=None) -> None:
+    def __init__(self, project_path: str, media_type: Optional[str] = None, parent=None) -> None:
         super().__init__(parent)
         self._project_path = project_path
-        self._media_type = media_type
-        # _field_map[field][label] = [records]
-        # field "--all" covers every record regardless of field
-        self._field_map: dict[str, dict[str, list[dict]]] = {}
-        self._film_list: list[str] = []
-        self._current_records: list[dict] = []  # after label + film filter
-        self._page_records: list[dict] = []     # slice shown in grid
-        self._page_offset: int = 0
-        self._cells: list[_ThumbnailCell] = []
-        self._selected_idx: int = -1
-        self._loader: Optional[_ThumbLoader] = None
-        self._grid_cols: int = 1  # tracked after every reflow; used by _navigate_grid
+        self._current_rec: Optional[dict] = None
+
+        # Data source — owns catalog loading and sort
+        self._source = SilhouetteSource(project_path)
+
+        # Framework browser — detach_controls=True so it shows only the
+        # thumbnail grid; filter_panel / status_bar / pagination_panel are
+        # placed in the Inspector pane by _build_ui().
+        self._browser = IllustrationBrowser(
+            source=self._source,
+            media_type=media_type,
+            thumb_size=_THUMB_SIZE,
+            detach_controls=True,
+        )
+        self._browser.selectionChanged.connect(self._on_selection_changed)
+        # Side-panel toggle state (Tab key)
+        self._panels_hidden: bool = False
+        self._saved_panel_sizes: list = []   # remembered when panels are hidden
+
         self._build_ui()
-        self._load_catalog()
-        # Reflow grid once Qt has finalised the window/splitter geometry
-        QTimer.singleShot(0, self._reflow_grid)
+        QTimer.singleShot(0, self._fit_panel_width)
 
     # ------------------------------------------------------------------
     # UI construction
@@ -1559,35 +1393,67 @@ class CatalogBrowser(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        splitter = GripSplitter(Qt.Horizontal)
-        self._panel_splitter = splitter
+        self._panel_splitter = GripSplitter(Qt.Horizontal)
 
-        # ── LEFT: thumbnail scroll area (content / canvas area) ───────────
-        self._scroll = QScrollArea()
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._scroll.setVerticalScrollBar(JumpScrollBar())
-        self._scroll.setStyleSheet(
-            f"QScrollArea {{ background: {theme.CANVAS_BG}; border: none; }}"
+        # ── Pane 0: Browser (pure thumbnail grid) ─────────────────────────
+        self._panel_splitter.addWidget(self._browser)
+
+        # ── Pane 1: Filter — cascade combos + pagination + sort ───────────
+
+        self._panel_splitter.addWidget(self._build_inspector_pane())
+
+        self._panel_splitter.setStretchFactor(0, 1)
+        self._panel_splitter.setStretchFactor(1, 0)
+        self._panel_splitter.setCollapsible(0, False)
+
+
+        root.addWidget(self._panel_splitter)
+
+    # --
+
+    def _make_pane(self, tab_label: str, min_width: int = _PANEL_W) -> tuple:
+        """Return (QTabWidget, inner QWidget, QVBoxLayout) for a side pane."""
+        _TAB_ACTIVE = theme.TAB_BG   # 10 % lighter than CANVAS_BG
+
+        tabs = QTabWidget()
+        tabs.setMinimumWidth(min_width)
+        tabs.setDocumentMode(True)
+        tabs.tabBar().setDrawBase(False)
+        # Prevent QTabWidget/QTabBar from consuming Left/Right key events for
+        # tab switching — they must propagate to SilhouetteWindow.keyPressEvent.
+        tabs.setFocusPolicy(Qt.NoFocus)
+        tabs.tabBar().setFocusPolicy(Qt.NoFocus)
+        tabs.setStyleSheet(
+            f"QTabWidget           {{ background: {theme.CANVAS_BG}; border: none; }}"
+            f"QTabWidget::pane     {{ border: none; background: {_TAB_ACTIVE}; top: -1px; }}"
+            f"QTabBar              {{ background: {theme.CANVAS_BG}; border: none; }}"
+            f"QTabBar::tab {{"
+            f"  background: {theme.CANVAS_BG}; color: {theme.TEXT_DIM};"
+            f"  padding: 4px 12px; border: none; margin-bottom: 0;"
+            f"  font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
+            f"}}"
+            f"QTabBar::tab:selected {{ background: {_TAB_ACTIVE}; color: {theme.TEXT}; }}"
+            f"QTabBar::tab:hover    {{ background: {_TAB_ACTIVE}; color: {theme.TEXT}; }}"
         )
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setFocusPolicy(Qt.NoFocus)
+        scroll.viewport().setFocusPolicy(Qt.NoFocus)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet(f"QScrollArea {{ background: {_TAB_ACTIVE}; border: none; }}")
 
-        self._grid_widget = QWidget()
-        self._grid_widget.setStyleSheet(f"background: {theme.CANVAS_BG};")
-        self._grid_layout = QGridLayout(self._grid_widget)
-        self._grid_layout.setContentsMargins(_THUMB_GAP, _THUMB_GAP, _THUMB_GAP, _THUMB_GAP)
-        self._grid_layout.setSpacing(_THUMB_GAP)
-        self._grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        self._scroll.setWidget(self._grid_widget)
-        self._scroll.setFocusPolicy(Qt.NoFocus)
-        self._scroll.viewport().setFocusPolicy(Qt.NoFocus)
-        self._scroll.installEventFilter(self)
-        self._scroll.viewport().installEventFilter(self)
-        splitter.addWidget(self._scroll)
-
-        # ── RIGHT: control panel in a vertical-only scroll area ─────────
-        _panel_style = (
-            f"QWidget {{ background: {theme.PANEL_BG}; }}"
-            f" QComboBox {{ background-color: {theme.INPUT_BG}; }}"
+        _content_style = (
+            f"QWidget {{ background: {_TAB_ACTIVE}; }}"
+            f" QComboBox {{ background-color: {theme.INPUT_BG}; color: {theme.TEXT}; }}"
+            f" QComboBox::drop-down {{ border: none; }}"
+            f" QComboBox QAbstractItemView, QComboBox QListView {{"
+            f"   background: {theme.INPUT_BG}; color: {theme.TEXT};"
+            f"   border: 0px; margin: 0px; padding: 0px; outline: 0px;"
+            f"   selection-background-color: {theme.ACCENT};"
+            f"   selection-color: {theme.TEXT}; }}"
+            f" QComboBox QAbstractItemView::item, QComboBox QListView::item {{"
+            f"   padding: 3px 8px; border: 0px; }}"
             f" QPushButton {{ background-color: {theme.BTN_BG}; border: none;"
             f" padding: 0 10px; border-radius: 3px;"
             f" min-height: {theme.BTN_H}px; max-height: {theme.BTN_H}px; }}"
@@ -1597,541 +1463,226 @@ class CatalogBrowser(QWidget):
             f" QPushButton:disabled {{ color: {theme.TEXT_DIM};"
             f" background-color: {theme.BTN_BG}; }}"
         )
-        panel_scroll = QScrollArea()
-        panel_scroll.setMinimumWidth(_PANEL_W)
-        panel_scroll.setWidgetResizable(True)
-        panel_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        panel_scroll.setFocusPolicy(Qt.NoFocus)
-        panel_scroll.viewport().setFocusPolicy(Qt.NoFocus)
-        panel_scroll.setFrameShape(QFrame.NoFrame)
-        panel_scroll.setStyleSheet(
-            f"QScrollArea {{ background: {theme.PANEL_BG}; border: none; }}"
-        )
-        self._panel_scroll = panel_scroll
-
         panel = QWidget()
-        panel.setStyleSheet(_panel_style)
-        pv = QVBoxLayout(panel)
-        pv.setContentsMargins(14, 14, 14, 14)
-        pv.setSpacing(14)
+        panel.setStyleSheet(_content_style)
+        panel.setMinimumWidth(min_width)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+        scroll.setWidget(panel)
+        tabs.addTab(scroll, tab_label)
+        return tabs, panel, layout
+    def _build_inspector_pane(self) -> QTabWidget:
+        """Right pane: filter cascade + sort + metadata + actions."""
+        tabs, panel, pv = self._make_pane("Inspector", min_width=_SIDE_PANE_W)
+        self._side_scroll = tabs
 
-        # Scope (top)
-        movie_group = QGroupBox("Scope")
-        mg = QVBoxLayout(movie_group)
-        mg.setContentsMargins(8, 12, 8, 8)
-        self._catalog_media_type_combo = QComboBox()
-        self._catalog_media_type_combo.setFocusPolicy(Qt.NoFocus)
-        self._catalog_media_type_combo.addItems(["movie", "gameplay"])
-        self._catalog_media_type_combo.setCurrentText(self._media_type)
-        self._catalog_media_type_combo.currentTextChanged.connect(self._on_catalog_media_type_changed)
-        mg.addWidget(self._catalog_media_type_combo)
-        self._film_combo = QComboBox()
-        self._film_combo.setFocusPolicy(Qt.NoFocus)
-        self._film_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
-        self._film_combo.currentIndexChanged.connect(self._on_film_changed)
-        self._film_combo.installEventFilter(self)
-        mg.addWidget(self._film_combo)
-        pv.addWidget(movie_group)
-
-        # Field (second)
-        field_group = QGroupBox("Field")
-        fieldg = QVBoxLayout(field_group)
-        fieldg.setContentsMargins(8, 12, 8, 8)
-        self._field_combo = QComboBox()
-        self._field_combo.setFocusPolicy(Qt.NoFocus)
-        self._field_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
-        self._field_combo.currentIndexChanged.connect(self._on_field_changed)
-        self._field_combo.installEventFilter(self)
-        fieldg.addWidget(self._field_combo)
-        pv.addWidget(field_group)
-
-        # Label (third): A-Z letter filter + label list
-        label_group = QGroupBox("Label")
-        lg = QVBoxLayout(label_group)
-        lg.setContentsMargins(8, 12, 8, 8)
-        lg.setSpacing(4)
-        self._letter_combo = QComboBox()
-        self._letter_combo.setFocusPolicy(Qt.NoFocus)
-        self._letter_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
-        self._letter_combo.currentIndexChanged.connect(self._on_letter_changed)
-        self._letter_combo.installEventFilter(self)
-        lg.addWidget(self._letter_combo)
-        self._label_combo = QComboBox()
-        self._label_combo.setFocusPolicy(Qt.NoFocus)
-        self._label_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
-        self._label_combo.currentIndexChanged.connect(self._on_label_changed)
-        self._label_combo.installEventFilter(self)
-        lg.addWidget(self._label_combo)
-        pv.addWidget(label_group)
-
-        self._status_lbl = QLabel("—")
-        self._status_lbl.setWordWrap(True)
-        self._status_lbl.setStyleSheet(
-            f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT - 1}pt;"
+        # ── Filter section (cascade drop-downs + status + pagination) ──────────
+        self._filter_sec = CollapsibleSection("Filter", pref_key="sil_section_filter")
+        # Wrap the three detached browser widgets into one zero-gap container
+        # so there is no visible separator between the combos, status bar, and
+        # pagination bar.
+        _filter_block = QWidget()
+        _fb_lay = QVBoxLayout(_filter_block)
+        _fb_lay.setContentsMargins(0, 0, 0, 0)
+        _fb_lay.setSpacing(0)
+        _fb_lay.addWidget(self._browser.filter_panel)
+        _fb_lay.addWidget(self._browser.status_bar)
+        _fb_lay.addWidget(self._browser.pagination_panel)
+        self._filter_sec.add_widget(_filter_block)
+        self._browser.keywordChanged.connect(
+            lambda kw: self._filter_sec.set_subtitle(kw.capitalize() if kw else "")
         )
-        pv.addWidget(self._status_lbl)
+        pv.addWidget(self._filter_sec)
 
-        # Cascading sort (three rows; first is required, 2nd and 3rd optional)
-        sort_group = QGroupBox("Sort")
-        sort_gv = QVBoxLayout(sort_group)
-        sort_gv.setContentsMargins(8, 8, 8, 8)
-        sort_gv.setSpacing(4)
+        # ── Sort section ─────────────────────────────────────────────────────────
+        self._sort_sec = CollapsibleSection("Sort", pref_key="sil_section_sort")
+        self._sort_combo = QComboBox()
+        self._sort_combo.setFocusPolicy(Qt.NoFocus)
+        self._sort_combo.setMaxVisibleItems(10)
+        self._sort_combo.setSizeAdjustPolicy(QComboBox.AdjustToContentsOnFirstShow)
+        _sv = QListView(self._sort_combo)
+        _sv.setUniformItemSizes(True)
+        _sv.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        _sv.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        _sv.setFrameShape(QFrame.NoFrame)
+        _sv.setLineWidth(0)
+        _sv.setMidLineWidth(0)
+        _sv.setContentsMargins(0, 0, 0, 0)
+        _sv.setStyleSheet(
+            f"QListView {{"
+            f" background: {theme.INPUT_BG}; color: {theme.TEXT};"
+            f" border: 0px; margin: 0px; padding: 0px; outline: 0px; }}"
+            f"QListView::item {{ padding: 3px 8px; border: 0px; }}"
+            f"QListView::item:selected {{"
+            f" background: {theme.ACCENT}; color: {theme.TEXT}; }}"
+        )
+        self._sort_combo.setView(_sv)
+        _sc = _sv.parentWidget()
+        if _sc is not None:
+            _sc.setFrameStyle(QFrame.NoFrame)
+            _sc.setLineWidth(0)
+            _sc.setMidLineWidth(0)
+            _sc.setStyleSheet(
+                "QFrame { border: 0px; margin: 0px; padding: 0px; }"
+            )
+        self._sort_combo.addItem("-----", userData=None)
+        for disp, key in _SORT_OPTS:
+            self._sort_combo.addItem(disp, userData=key)
+        self._sort_combo.currentIndexChanged.connect(self._on_sort_changed)
+        self._sort_sec.add_widget(self._sort_combo)
+        pv.addWidget(self._sort_sec)
 
-        def _make_sort_combo(include_none: bool = False) -> QComboBox:
-            c = QComboBox()
-            c.setFocusPolicy(Qt.NoFocus)
-            if include_none:
-                c.addItem("—", userData=None)
-            for disp, key in _SORT_OPTS:
-                c.addItem(disp, userData=key)
-            c.currentIndexChanged.connect(self._on_sort_changed)
-            return c
-
-        for _row_lbl, _attr, _none in (
-            ("Sort by", "_sort_combo_1", False),
-            ("then by", "_sort_combo_2", True),
-            ("then by", "_sort_combo_3", True),
-        ):
-            _sort_row = QWidget()
-            _sort_rl = QHBoxLayout(_sort_row)
-            _sort_rl.setContentsMargins(0, 0, 0, 0)
-            _sort_rl.setSpacing(6)
-            _lbl = QLabel(_row_lbl)
-            _lbl.setFixedWidth(54)
-            _combo = _make_sort_combo(include_none=_none)
-            setattr(self, _attr, _combo)
-            _sort_rl.addWidget(_lbl)
-            _sort_rl.addWidget(_combo, 1)
-            sort_gv.addWidget(_sort_row)
-        pv.addWidget(sort_group)
-
-        _page_row = QWidget()
-        _page_rl = QHBoxLayout(_page_row)
-        _page_rl.setContentsMargins(0, 0, 0, 0)
-        _page_rl.setSpacing(6)
-        self._prev_btn = QPushButton("← Previous")
-        self._prev_btn.setFocusPolicy(Qt.NoFocus)
-        self._prev_btn.setEnabled(False)
-        self._prev_btn.clicked.connect(self._load_prev_page)
-        self._next_btn = QPushButton("Next →")
-        self._next_btn.setFocusPolicy(Qt.NoFocus)
-        self._next_btn.setEnabled(False)
-        self._next_btn.clicked.connect(self._load_next_page)
-        _page_rl.addWidget(self._prev_btn, 1)
-        _page_rl.addWidget(self._next_btn, 1)
-        pv.addWidget(_page_row)
-
-        # Selected object
-        obj_group = QGroupBox("Object")
-        ov = QVBoxLayout(obj_group)
-        ov.setContentsMargins(8, 12, 8, 8)
-        ov.setSpacing(4)
-
+        # ── Object section ───────────────────────────────────────────────────────
+        info_sec = CollapsibleSection("Info", pref_key="sil_section_object")
+        _info_widget = QWidget()
+        _info_grid = QGridLayout(_info_widget)
+        _info_grid.setContentsMargins(0, 0, 0, 0)
+        _info_grid.setHorizontalSpacing(0)
+        _info_grid.setVerticalSpacing(0)
+        _info_grid.setColumnStretch(0, 0)
+        _info_grid.setColumnStretch(1, 1)
         self._meta_rows: dict[str, QLabel] = {}
-        self._current_rec: dict | None = None
-        for key in ("label", "film", "shot", "frame", "confidence", "usefulness", "fullness", "size", "overlap", "semantic_label", "semantic_field", "model"):
-            row = QWidget()
-            rl = QHBoxLayout(row)
-            rl.setContentsMargins(0, 0, 0, 0)
-            rl.setSpacing(4)
-            kl = QLabel(f"{key}:")
-            kl.setFixedWidth(64)
-            kl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            kl.setStyleSheet(f"color: {theme.TEXT_DIM};")
-            rl.addWidget(kl)
-            vl = QLabel("—")
+        _INFO_KEYS = (
+            "label", "film", "shot", "frame", "confidence",
+            "usefulness", "fullness", "size", "overlap",
+            "semantic_label", "semantic_field", "model",
+        )
+        _LAST_INFO_IDX = len(_INFO_KEYS) - 1
+        for _row_idx, key in enumerate(_INFO_KEYS):
+            _top    = f" border-top: 2px solid {theme.TAB_BG};"    if _row_idx == 0            else ""
+            _bottom = f" border-bottom: 2px solid {theme.TAB_BG};" if _row_idx < _LAST_INFO_IDX else ""
+            kl = QLabel(key)
+            kl.setAlignment(Qt.AlignTop | Qt.AlignRight)
+            kl.setStyleSheet(
+                f"color: {theme.TEXT_DIM};"
+                f"{_top}"
+                f" border-right: 2px solid {theme.TAB_BG};"
+                f"{_bottom}"
+                f" padding: 0px 4px 2px 2px;"
+            )
+            _info_grid.addWidget(kl, _row_idx, 0)
+            vl = QLabel("\u2014")
             vl.setWordWrap(True)
-            rl.addWidget(vl, 1)
-            ov.addWidget(row)
+            vl.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+            vl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            vl.setStyleSheet(
+                f"{_top}{_bottom}"
+                f" padding: 0px 2px 2px 3px;"
+            )
+            _info_grid.addWidget(vl, _row_idx, 1)
             self._meta_rows[key] = vl
+        info_sec.add_widget(_info_widget)
+        # Remove the body's bottom margin so the last row touches the section edge.
+        info_sec._body_layout.setContentsMargins(0, 0, 0, 0)
+        pv.addWidget(info_sec)
 
-        _open_icon = _svg_icon("open-in-window", 16, theme.TEXT)
+        action_sec = CollapsibleSection("Actions", pref_key="sil_section_actions")
+        _icon_sz   = QSize(14, 14)
+        # Build an icon with two modes: normal (white) and disabled (dim grey)
+        # so the icon fades to match the barely-visible disabled text.
+        _pix_normal   = _svg_icon("open-in-window", 14, theme.TEXT).pixmap(14, 14)
+        _pix_disabled = _svg_icon("open-in-window", 14, "#7f7f7f").pixmap(14, 14)
+        _open_icon = QIcon()
+        _open_icon.addPixmap(_pix_normal)
+        _open_icon.addPixmap(_pix_disabled, QIcon.Disabled)
 
-        self._shotlist_btn = QPushButton("  Shotlist Visualizer")
+        # Shared style for all three action buttons:
+        # • normal   — dark button background, bright text
+        # • hover    — fuchsia background, white text
+        # • checked  — fuchsia background (Best button when marked)
+        # • disabled — same dark background, barely-visible text
+        _abtn = (
+            f"QPushButton {{"
+            f"  background-color: {theme.BTN_BG}; color: {theme.TEXT};"
+            f"  border: none; border-radius: 3px;"
+            f"  padding: 0 8px;"
+            f"  min-height: {theme.BTN_H}px; max-height: {theme.BTN_H}px;"
+            f"}}"
+            f"QPushButton:hover   {{ background-color: {theme.ACCENT}; color: {theme.TEXT}; }}"
+            f"QPushButton:pressed {{ background-color: {theme.BTN_PRESSED}; }}"
+            f"QPushButton:checked {{ background-color: {theme.ACCENT}; color: {theme.TEXT}; }}"
+            f"QPushButton:disabled {{ background-color: {theme.BTN_BG};"
+            f" color: rgba(255,255,255,0.15); }}"
+        )
+
+        _action_row = QWidget()
+        _action_rl  = QHBoxLayout(_action_row)
+        _action_rl.setContentsMargins(0, 0, 0, 0)
+        _action_rl.setSpacing(4)
+
+        self._shotlist_btn = QPushButton("Shotlist")
         self._shotlist_btn.setIcon(_open_icon)
+        self._shotlist_btn.setIconSize(_icon_sz)
         self._shotlist_btn.setFocusPolicy(Qt.NoFocus)
         self._shotlist_btn.setEnabled(False)
+        self._shotlist_btn.setStyleSheet(_abtn)
         self._shotlist_btn.clicked.connect(self._open_in_shotlist)
-        ov.addWidget(self._shotlist_btn)
+        _action_rl.addWidget(self._shotlist_btn, 1)
 
-        self._sam_btn = QPushButton("  Segmentation Visualizer")
+        self._sam_btn = QPushButton("Segmentation")
         self._sam_btn.setIcon(_open_icon)
+        self._sam_btn.setIconSize(_icon_sz)
         self._sam_btn.setFocusPolicy(Qt.NoFocus)
         self._sam_btn.setEnabled(False)
+        self._sam_btn.setStyleSheet(_abtn)
         self._sam_btn.clicked.connect(self._open_sam_explorer)
-        ov.addWidget(self._sam_btn)
+        _action_rl.addWidget(self._sam_btn, 1)
 
-        pv.addWidget(obj_group)
+        action_sec.add_widget(_action_row)
 
         self._best_btn = QPushButton("Best")
         self._best_btn.setCheckable(True)
         self._best_btn.setFocusPolicy(Qt.NoFocus)
         self._best_btn.setEnabled(False)
         self._best_btn.setFixedHeight(theme.BTN_H)
-        self._best_btn.setStyleSheet(
-            f"QPushButton {{"
-            f"  background-color: {theme.BTN_BG};"
-            f"  color: {theme.TEXT};"
-            f"  border: none; border-radius: 3px;"
-            f"  font-family: '{theme.FAMILY_UI}';"
-            f"  font-size: {theme.BASE_PT + 1}pt; font-weight: bold;"
-            f"}}"
-            f"QPushButton:hover    {{ background-color: {theme.BTN_HOVER}; }}"
-            f"QPushButton:pressed  {{ background-color: {theme.BTN_PRESSED}; }}"
-            f"QPushButton:checked  {{ background-color: {theme.ACCENT}; color: {theme.TEXT}; }}"
-            f"QPushButton:disabled {{ color: {theme.TEXT_DIM};"
-            f" background-color: {theme.BTN_BG}; }}"
-        )
+        self._best_btn.setStyleSheet(_abtn)
         self._best_btn.clicked.connect(self._on_best_btn_clicked)
-        pv.addWidget(self._best_btn)
+        action_sec.add_widget(self._best_btn)
+        pv.addWidget(action_sec)
 
         pv.addStretch()
 
-        hint = QLabel("Home/End  movie    PgUp/PgDn  field\n← ↑ → ↓  navigate grid    a-z / #  bucket\nShift+↑↓  label    Shift+←→  prev/next page\nEnter  toggle best    Shift+Enter  shotlist")
+        hint = QLabel(
+            "Home/End  film    PgUp/PgDn  field\n"
+            "\u2190 \u2191 \u2192 \u2193  grid    a\u2013z / #  letter\n"
+            "Shift+\u2191\u2193  keyword    Shift+\u2190\u2192  page\n"
+            "Enter  toggle best    Shift+Enter  shotlist"
+        )
         hint.setAlignment(Qt.AlignCenter)
         hint.setStyleSheet(
             f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT - 1}pt;"
         )
         pv.addWidget(hint)
 
-        panel_scroll.setWidget(panel)
-        splitter.addWidget(panel_scroll)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 0)
-        splitter.setSizes([10000, _PANEL_W])
-        root.addWidget(splitter)
+        return tabs
+    def _on_splitter_moved(self, pos: int, index: int) -> None:
+        pass  # two-pane — no locking needed
 
     # ------------------------------------------------------------------
-    # Catalog loading
-
-    def _load_catalog(self) -> None:
-        self._stop_loader()
-        from services.silhouette_catalog import scan_catalog
-
-        all_records = scan_catalog(self._project_path, media_type=self._media_type)
-
-        # Build field_map[field][label] = [records]
-        # Also maintain an "--all" key that aggregates across all fields
-        field_map: dict[str, dict[str, list[dict]]] = {"--all": {}}
-        film_set: set[str] = set()
-        for rec in all_records:
-            if "error" in rec:
-                continue
-            label = rec.get("label") or ""
-            field = rec.get("field") or "--all"
-            if not label:
-                continue
-            # per-field bucket
-            field_map.setdefault(field, {}).setdefault(label, []).append(rec)
-            # --all bucket
-            field_map["--all"].setdefault(label, []).append(rec)
-            stem = rec.get("filename_stem") or rec.get("filename") or ""
-            if stem:
-                film_set.add(stem)
-
-        self._field_map = field_map
-        self._film_list = sorted(film_set)
-
-        # Populate film combo
-        self._film_combo.blockSignals(True)
-        self._film_combo.clear()
-        _all_label = "All films" if self._media_type == "movie" else "All gameplay"
-        self._film_combo.addItem(_all_label, userData=None)
-        for stem in self._film_list:
-            self._film_combo.addItem(stem, userData=stem)
-        self._film_combo.blockSignals(False)
-
-        # Populate field combo (standard order, only fields with data)
-        present_fields = set(field_map.keys())
-        self._field_combo.blockSignals(True)
-        self._field_combo.clear()
-        for f in self._FIELD_ORDER:
-            if f in present_fields:
-                self._field_combo.addItem(f, userData=f)
-        # Any fields not in the standard order go at the end
-        for f in sorted(present_fields - set(self._FIELD_ORDER)):
-            self._field_combo.addItem(f, userData=f)
-        self._field_combo.blockSignals(False)
-
-        if not field_map.get("--all"):
-            self._status_lbl.setText(
-                "Catalog empty.\n\ncrossing index silhouette\nextract <label>"
-            )
-            self._label_combo.clear()
-            self._clear_grid()
-            return
-
-        # Trigger field→label cascade from the first field entry
-        self._field_combo.setCurrentIndex(0)
-        self._on_field_changed(0)
-        # Auto-fit panel width to the longest film title
-        QTimer.singleShot(0, self._fit_panel_width)
-
-    # ------------------------------------------------------------------
-    # Filtering
-
-    def _on_catalog_media_type_changed(self, media_type: str) -> None:
-        """Switch the catalog to a different media type and reload."""
-        if media_type == self._media_type:
-            return
-        self._media_type = media_type
-        self._load_catalog()
-
-    def _on_field_changed(self, _idx: int) -> None:
-        """Rebuild the letter and label combos for the newly selected field."""
-        field = self._field_combo.currentData() or "--all"
-        label_counts = self._field_map.get(field, {})
-        self._populate_letter_combo(label_counts)
-
-    def _populate_letter_combo(self, label_counts: dict) -> None:
-        """Rebuild the A-Z letter-filter combo then cascade to the label combo."""
-        bucket_counts: dict[str, int] = {}
-        for lbl in label_counts:
-            if not lbl:
-                continue
-            first = lbl[0].upper()
-            key = first if first.isalpha() else "#"
-            bucket_counts[key] = bucket_counts.get(key, 0) + 1
-
-        letters = sorted(k for k in bucket_counts if k != "#")
-        if "#" in bucket_counts:
-            letters = ["#"] + letters
-
-        total = len(label_counts)
-
-        self._letter_combo.blockSignals(True)
-        self._letter_combo.clear()
-        self._letter_combo.addItem(f"— all  ({total})", userData=None)
-        for letter in letters:
-            n = bucket_counts[letter]
-            self._letter_combo.addItem(f"{letter}  ({n})", userData=letter)
-        self._letter_combo.blockSignals(False)
-
-        self._letter_combo.setCurrentIndex(0)
-        self._on_letter_changed(0)
-
-    def _on_letter_changed(self, _idx: int) -> None:
-        """Filter the label combo to labels starting with the selected letter."""
-        field = self._field_combo.currentData() or "--all"
-        label_counts = self._field_map.get(field, {})
-        letter = self._letter_combo.currentData()  # None means show all
-
-        from services.silhouette_catalog import sort_labels
-
-        if letter is None:
-            filtered = list(label_counts.keys())
-        elif letter == "#":
-            filtered = [l for l in label_counts if l and not l[0].isalpha()]
-        else:
-            filtered = [l for l in label_counts if l and l[0].upper() == letter]
-
-        self._label_combo.blockSignals(True)
-        self._label_combo.clear()
-        for lbl in sort_labels(filtered):
-            count = len(label_counts[lbl])
-            self._label_combo.addItem(f"{lbl}  ({count})", userData=lbl)
-        self._label_combo.blockSignals(False)
-
-        self._page_offset = 0
-        if self._label_combo.count() > 0:
-            self._label_combo.setCurrentIndex(0)
-        self._apply_filters()
-
-    def _on_label_changed(self, _idx: int) -> None:
-        self._page_offset = 0
-        self._apply_filters()
-
-    def _on_film_changed(self, _idx: int) -> None:
-        self._page_offset = 0
-        self._apply_filters()
-
-    def _apply_filters(self) -> None:
-        field = self._field_combo.currentData() or "--all"
-        label = self._label_combo.currentData()
-        film  = self._film_combo.currentData()
-        records = self._field_map.get(field, {}).get(label, []) if label else []
-        if film:
-            records = [
-                r for r in records
-                if (r.get("filename_stem") or r.get("filename") or "") == film
-            ]
-
-        # Multi-key stable sort — apply keys in reverse order so primary key wins
-        def _numeric_score(r, key):
-            if key == "confidence":
-                return float(r.get("confidence") or 0.0)
-            v = r.get(f"{key}_score")
-            if v is None:
-                v = r.get(key) or 0.0
-            try:
-                return float(v)
-            except Exception:
-                return 0.0
-
-        sort_keys = [
-            combo.currentData()
-            for combo in (self._sort_combo_1, self._sort_combo_2, self._sort_combo_3)
-            if combo.currentData()
-        ] or ["confidence"]
-
-        for k in reversed(sort_keys):
-            if k == "alphabetical":
-                records.sort(key=lambda r: str.casefold(r.get("label") or ""))
-            else:
-                records.sort(key=lambda r, _k=k: _numeric_score(r, _k), reverse=True)
-        self._current_records = records
-        self._selected_idx = -1
-        self._clear_meta()
-        self._show_page(0)
+    # Sort controls
 
     def _on_sort_changed(self, _idx: int) -> None:
-        self._page_offset = 0
-        self._apply_filters()
-
-    def _show_page(self, offset: int) -> None:
-        self._stop_loader()
-        self._page_offset = offset
-        total = len(self._current_records)
-        end = min(offset + _PAGE_SIZE, total)
-        self._page_records = self._current_records[offset:end]
-
-        if total == 0:
-            self._status_lbl.setText("No objects found")
-        else:
-            self._status_lbl.setText(f"{offset + 1}–{end} of {total}   loading…")
-
-        prev_count = offset
-        next_count = max(0, total - end)
-        self._prev_btn.setEnabled(prev_count > 0)
-        self._prev_btn.setText(f"← Previous ({prev_count})" if prev_count > 0 else "← Previous")
-        self._next_btn.setEnabled(next_count > 0)
-        self._next_btn.setText(f"Next ({next_count}) →" if next_count > 0 else "Next →")
-        self._rebuild_grid()
-        self._start_loader()
-
-    def _load_prev_page(self) -> None:
-        new_off = max(0, self._page_offset - _PAGE_SIZE)
-        if new_off < self._page_offset:
-            self._show_page(new_off)
-
-    def _load_next_page(self) -> None:
-        new_off = self._page_offset + _PAGE_SIZE
-        if new_off < len(self._current_records):
-            self._show_page(new_off)
+        """Update the source sort order, refresh the browser, and show the
+        active sort key in the Sort section title."""
+        key  = self._sort_combo.currentData()   # None when '-----' selected
+        keys = [key] if key else []
+        self._source.set_sort_keys(keys)
+        self._browser.refresh()
+        # Reflect active sort in the section header
+        disp = self._sort_combo.currentText() if key else ""
+        self._sort_sec.set_subtitle(disp)
 
     # ------------------------------------------------------------------
-    # Grid management
+    # Selection
 
-    def _clear_grid(self) -> None:
-        self._stop_loader()
-        self._cells = []
-        while self._grid_layout.count():
-            item = self._grid_layout.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
-
-    def _rebuild_grid(self) -> None:
-        self._clear_grid()
-        cols = self._cols()
-        self._grid_cols = cols
-        for i, rec in enumerate(self._page_records):
-            stem = rec.get("filename_stem") or rec.get("filename") or ""
-            shot = rec.get("shot_id", "")
-            frame = rec.get("frame", "")
-            conf = rec.get("confidence", 0)
-            tip = f"#{self._page_offset + i + 1}  {stem}  shot:{shot}  f:{frame}  conf:{conf:.3f}"
-            cell = _ThumbnailCell(i, tooltip=tip)
-            cell.clicked.connect(self._on_cell_clicked)
-            if rec.get("human_best"):
-                cell.set_best(True)
-            self._grid_layout.addWidget(cell, i // cols, i % cols)
-            self._cells.append(cell)
-
-    def _cols(self) -> int:
-        vw = self._scroll.viewport().width()
-        if vw <= 0:
-            vw = 800
-        return max(1, (vw - _THUMB_GAP) // (_THUMB_SIZE + _THUMB_GAP))
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        if not self._cells:
-            return
-        cols = self._cols()
-        self._grid_cols = cols
-        for i, cell in enumerate(self._cells):
-            self._grid_layout.addWidget(cell, i // cols, i % cols)
-
-    def _reflow_grid(self) -> None:
-        """Reflow after Qt has committed the first layout pass."""
-        if self._cells:
-            self.resizeEvent(None)
-        else:
-            # No cells yet means the loader hasn't fired — rebuild from scratch
-            # so column count is correct for the actual viewport width.
-            if self._page_records:
-                self._rebuild_grid()
-                self._start_loader()
-
-    # ------------------------------------------------------------------
-    # Background loader
-
-    def _start_loader(self) -> None:
-        self._loader = _ThumbLoader(self._page_records, _THUMB_SIZE)
-        self._loader.thumb_ready.connect(self._on_thumb_ready)
-        self._loader.load_finished.connect(self._on_load_finished)
-        self._loader.start()
-
-    def _stop_loader(self) -> None:
-        if self._loader and self._loader.isRunning():
-            self._loader.cancel()
-            self._loader.wait(500)
-        self._loader = None
-
-    def _on_thumb_ready(self, idx: int, qimg: QImage) -> None:
-        if 0 <= idx < len(self._cells):
-            self._cells[idx].set_image(qimg)
-
-    def _on_load_finished(self, loaded: int) -> None:
-        total = len(self._current_records)
-        off = self._page_offset
-        end = min(off + _PAGE_SIZE, total)
-        self._status_lbl.setText(f"{off + 1}–{end} of {total}  ·  {loaded} loaded")
-
-    # ------------------------------------------------------------------
-    # Object selection
-
-    def _on_cell_clicked(self, idx: int) -> None:
-        if self._selected_idx == idx:
-            return
-        if 0 <= self._selected_idx < len(self._cells):
-            self._cells[self._selected_idx].set_selected(False)
-        self._selected_idx = idx
-        if 0 <= idx < len(self._cells):
-            self._cells[idx].set_selected(True)
-        if idx < len(self._page_records):
-            self._show_object_meta(self._page_records[idx])
+    def _on_selection_changed(self, rec: dict) -> None:
+        """Update the inspector panel when the browser selection changes."""
+        self._show_object_meta(rec)
         self._update_best_btn()
 
-    def _on_best_btn_clicked(self, checked: bool) -> None:
-        """Sync button click to mark/unmark best on the selected record."""
-        if checked:
-            self._mark_best()
-        else:
-            self._unmark_best()
-    def _update_best_btn(self) -> None:
-        """Reflect selection + best state in the Best button."""
-        if self._selected_idx < 0 or self._selected_idx >= len(self._page_records):
-            self._best_btn.setEnabled(False)
-            self._best_btn.setChecked(False)
-            return
-        self._best_btn.setEnabled(True)
-        is_best = bool(self._page_records[self._selected_idx].get("human_best"))
-        # Block signals so programmatic setChecked doesn't re-trigger _on_best_btn_clicked
-        self._best_btn.blockSignals(True)
-        self._best_btn.setChecked(is_best)
-        self._best_btn.blockSignals(False)
+    # ------------------------------------------------------------------
+    # Object inspector
 
     def _clear_meta(self) -> None:
         for lbl in self._meta_rows.values():
@@ -2161,7 +1712,6 @@ class CatalogBrowser(QWidget):
         self._meta_rows["model"].setText(rec.get("sam_model", "—"))
 
         def _stored(key):
-            """Return stored float from '<key>_score' or '<key>', or None if absent."""
             v = rec.get(f"{key}_score")
             if v is None:
                 v = rec.get(key)
@@ -2170,7 +1720,7 @@ class CatalogBrowser(QWidget):
             except Exception:
                 return None
 
-        def _fmt(v: "float | None") -> str:
+        def _fmt(v):
             return f"{v:.3f}" if v is not None else "—"
 
         # size: derive from mask_area + frame_size when not yet scored
@@ -2203,6 +1753,64 @@ class CatalogBrowser(QWidget):
         self._shotlist_btn.setEnabled(_can_open)
         self._sam_btn.setEnabled(_can_open)
 
+    # ------------------------------------------------------------------
+    # Best-selection workflow
+
+    def _update_best_btn(self) -> None:
+        rec = self._browser.currentItem()
+        if rec is None:
+            self._best_btn.setEnabled(False)
+            self._best_btn.blockSignals(True)
+            self._best_btn.setChecked(False)
+            self._best_btn.blockSignals(False)
+            return
+        self._best_btn.setEnabled(True)
+        self._best_btn.blockSignals(True)
+        self._best_btn.setChecked(bool(rec.get("human_best")))
+        self._best_btn.blockSignals(False)
+
+    def _on_best_btn_clicked(self, checked: bool) -> None:
+        if checked:
+            self._mark_best()
+        else:
+            self._unmark_best()
+
+    def _toggle_best(self) -> None:
+        rec = self._browser.currentItem()
+        if rec is None:
+            return
+        if rec.get("human_best"):
+            self._unmark_best()
+        else:
+            self._mark_best()
+
+    def _mark_best(self) -> None:
+        from services.silhouette_curation import mark_best
+        rec = self._browser.currentItem()
+        if rec is None:
+            return
+        # Collect all records for the same label (from the filtered list)
+        label = rec.get("label", "")
+        all_label_recs = [
+            r for r in self._browser._filtered_items
+            if r.get("label") == label
+        ]
+        mark_best(rec, all_label_recs)
+        self._browser.refresh_highlights()
+        self._update_best_btn()
+
+    def _unmark_best(self) -> None:
+        from services.silhouette_curation import unmark_best
+        rec = self._browser.currentItem()
+        if rec is None:
+            return
+        unmark_best(rec)
+        self._browser.refresh_highlights()
+        self._update_best_btn()
+
+    # ------------------------------------------------------------------
+    # Action buttons
+
     def _open_in_shotlist(self) -> None:
         rec = self._current_rec
         if not rec:
@@ -2212,59 +1820,39 @@ class CatalogBrowser(QWidget):
         if not filename:
             return
         from visualizers.shot_visualizer import open_at_shot
-        open_at_shot(self._project_path, filename, self._media_type, shot_id=shot_id,
+        open_at_shot(self._project_path, filename,
+                     self._browser._media_type or "movie", shot_id=shot_id,
                      loop=True, no_continue=True, play=True)
 
-    # ------------------------------------------------------------------
-    # Keyboard handling — event filter intercepts keys stolen by child widgets
+    def _open_sam_explorer(self) -> None:
+        rec = self._current_rec
+        if not rec:
+            return
+        from tool import prefs as _prefs
+        model_name = _prefs.get("model_segmentation", _DEFAULT_MODEL) or _DEFAULT_MODEL
+        self._sam_explorer_win = SAMExplorer(
+            self._project_path,
+            media_type=self._browser._media_type,
+            model_name=model_name,
+        )
+        self._sam_explorer_win.show()
+        filename = rec.get("filename") or ""
+        shot_id  = str(rec.get("shot_id") or "")
+        concept  = rec.get("label") or ""
+        if filename and shot_id:
+            self._sam_explorer_win.navigate_to(filename, shot_id, concept=concept)
 
-    def eventFilter(self, obj, event) -> bool:
-        if event.type() == QEvent.Resize and obj is self._scroll:
-            # Reflow when the left scroll area resizes (e.g. splitter moved)
-            if self._cells:
-                new_cols = self._cols()
-                if new_cols != self._grid_cols:
-                    self._grid_cols = new_cols
-                    for i, cell in enumerate(self._cells):
-                        self._grid_layout.addWidget(cell, i // new_cols, i % new_cols)
-            return False  # let the scroll area handle its own resize
-        if event.type() == QEvent.KeyPress:
-            key = event.key()
-            mod = event.modifiers()
-            # a-z / # — jump to alphabetical bucket
-            if not (mod & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier)):
-                ch = event.text().upper()
-                if len(ch) == 1 and (ch.isalpha() or ch == "#"):
-                    self._handle_letter_key(ch)
-                    return True
-            # Enter — toggle best
-            if key in (Qt.Key_Return, Qt.Key_Enter):
-                if mod & Qt.ShiftModifier:
-                    self._open_in_shotlist()
-                else:
-                    self._toggle_best()
-                return True
-            if key in (Qt.Key_Home, Qt.Key_End,
-                       Qt.Key_PageUp, Qt.Key_PageDown,
-                       Qt.Key_Up, Qt.Key_Down,
-                       Qt.Key_Left, Qt.Key_Right):
-                self._handle_nav_key(key, mod)
-                return True
-            if key == Qt.Key_Escape:
-                # bubble up to the window
-                return False
-        return super().eventFilter(obj, event)
+    # ------------------------------------------------------------------
+    # Keyboard handling
 
     def keyPressEvent(self, event) -> None:
         key = event.key()
         mod = event.modifiers()
-        # a-z / # — jump to alphabetical bucket (no Ctrl/Meta/Alt)
         if not (mod & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier)):
             ch = event.text().upper()
             if len(ch) == 1 and (ch.isalpha() or ch == "#"):
                 self._handle_letter_key(ch)
                 return
-        # Enter — toggle best
         if key in (Qt.Key_Return, Qt.Key_Enter):
             if mod & Qt.ShiftModifier:
                 self._open_in_shotlist()
@@ -2281,156 +1869,40 @@ class CatalogBrowser(QWidget):
 
     def _handle_nav_key(self, key: int, mod) -> None:
         if key == Qt.Key_Home:
-            idx = self._film_combo.currentIndex()
-            if idx > 0:
-                self._film_combo.setCurrentIndex(idx - 1)
+            self._browser.stepItem(-1)
         elif key == Qt.Key_End:
-            idx = self._film_combo.currentIndex()
-            if idx < self._film_combo.count() - 1:
-                self._film_combo.setCurrentIndex(idx + 1)
+            self._browser.stepItem(1)
         elif key == Qt.Key_PageUp:
-            idx = self._field_combo.currentIndex()
-            if idx > 0:
-                self._field_combo.setCurrentIndex(idx - 1)
+            self._browser.stepField(-1)
         elif key == Qt.Key_PageDown:
-            idx = self._field_combo.currentIndex()
-            if idx < self._field_combo.count() - 1:
-                self._field_combo.setCurrentIndex(idx + 1)
+            self._browser.stepField(1)
         elif key == Qt.Key_Up:
             if mod & Qt.ShiftModifier:
-                idx = self._label_combo.currentIndex()
-                if idx > 0:
-                    self._label_combo.setCurrentIndex(idx - 1)
+                self._browser.stepKeyword(-1)
             else:
-                self._navigate_grid(0, -1)
+                self._browser.navigate_grid(0, -1)
         elif key == Qt.Key_Down:
             if mod & Qt.ShiftModifier:
-                idx = self._label_combo.currentIndex()
-                if idx < self._label_combo.count() - 1:
-                    self._label_combo.setCurrentIndex(idx + 1)
+                self._browser.stepKeyword(1)
             else:
-                self._navigate_grid(0, 1)
+                self._browser.navigate_grid(0, 1)
         elif key == Qt.Key_Left:
             if mod & Qt.ShiftModifier:
-                self._load_prev_page()
+                self._browser._on_prev_page()
             else:
-                self._navigate_grid(-1, 0)
+                self._browser.navigate_grid(-1, 0)
         elif key == Qt.Key_Right:
             if mod & Qt.ShiftModifier:
-                self._load_next_page()
+                self._browser._on_next_page()
             else:
-                self._navigate_grid(1, 0)
-
-    def _navigate_grid(self, delta_col: int, delta_row: int) -> None:
-        """Move the grid selection by (*delta_col*, *delta_row*).
-
-        If nothing is selected, selects item 0 regardless of direction.
-        """
-        n = len(self._cells)
-        if n == 0:
-            return
-
-        # No selection — jump to first item
-        if self._selected_idx < 0:
-            self._on_cell_clicked(0)
-            if self._cells:
-                self._scroll.ensureWidgetVisible(self._cells[0])
-            return
-
-        cols = max(1, self._grid_cols)
-        cur = self._selected_idx
-        row, col = divmod(cur, cols)
-        total_rows = (n - 1) // cols + 1
-
-        new_row = max(0, min(total_rows - 1, row + delta_row))
-        new_col = max(0, min(cols - 1, col + delta_col))
-        new_idx = min(new_row * cols + new_col, n - 1)
-
-        if new_idx == cur:
-            return
-        self._on_cell_clicked(new_idx)
-        if 0 <= new_idx < len(self._cells):
-            self._scroll.ensureWidgetVisible(self._cells[new_idx])
+                self._browser.navigate_grid(1, 0)
 
     def _handle_letter_key(self, letter: str) -> None:
-        """Jump to the alphabetical bucket *letter* in the letter combo.
+        """Jump to the alphabetical bucket *letter* in the browser's letter combo."""
+        self._browser.navigate_to_filters(letter=letter)
 
-        *letter* should be an uppercase letter ``'A'``–``'Z'`` or ``'#'``.
-        """
-        for i in range(self._letter_combo.count()):
-            if self._letter_combo.itemData(i) == letter:
-                self._letter_combo.setCurrentIndex(i)
-                return
-
-    def _toggle_best(self) -> None:
-        """Toggle human_best on the selected object (mark if off, unmark if on)."""
-        if self._selected_idx < 0 or self._selected_idx >= len(self._page_records):
-            return
-        if self._page_records[self._selected_idx].get("human_best"):
-            self._unmark_best()
-        else:
-            self._mark_best()
-
-    def _mark_best(self) -> None:
-        """Mark the selected object as human-best for its label; write to JSON."""
-        from services.silhouette_curation import mark_best
-        if self._selected_idx < 0 or self._selected_idx >= len(self._page_records):
-            return
-        target_rec = self._page_records[self._selected_idx]
-        label = self._label_combo.currentData()
-        field = self._field_combo.currentData() or "--all"
-        all_label_recs = self._field_map.get(field, {}).get(label, [])
-        mark_best(target_rec, all_label_recs)
-        self._refresh_best_highlights()
-
-    def _unmark_best(self) -> None:
-        """Remove the human_best marker from the selected object; write to JSON."""
-        from services.silhouette_curation import unmark_best
-        if self._selected_idx < 0 or self._selected_idx >= len(self._page_records):
-            return
-        unmark_best(self._page_records[self._selected_idx])
-        self._refresh_best_highlights()
-
-    def _refresh_best_highlights(self) -> None:
-        """Repaint fuchsia-border state on all page cells from their record flags."""
-        for i, cell in enumerate(self._cells):
-            if i < len(self._page_records):
-                cell.set_best(bool(self._page_records[i].get("human_best")))
-        self._update_best_btn()
-
-    def _fit_panel_width(self) -> None:
-        """Resize the right panel to its natural layout width."""
-        panel = self._panel_scroll.widget()
-        if panel is None:
-            return
-        total = self._panel_splitter.width()
-        if total <= 0:
-            QTimer.singleShot(100, self._fit_panel_width)
-            return
-        # Use the layout's own sizeHint — this accounts for all combo chrome,
-        # group-box insets, margins, and label widths exactly.
-        needed = panel.sizeHint().width()
-        # Reserve space for the vertical scrollbar even when it's hidden.
-        sb = self._panel_scroll.verticalScrollBar()
-        needed += sb.sizeHint().width() if sb else 16
-        needed = max(needed, _PANEL_W)
-        self._panel_splitter.setSizes([max(1, total - needed), needed])
-
-    def _open_sam_explorer(self) -> None:
-        rec = self._current_rec
-        if not rec:
-            return
-        from tool import prefs as _prefs
-        model_name = _prefs.get("model_segmentation", _DEFAULT_MODEL) or _DEFAULT_MODEL
-        self._sam_explorer_win = SAMExplorer(
-            self._project_path, media_type=self._media_type, model_name=model_name
-        )
-        self._sam_explorer_win.show()
-        filename = rec.get("filename") or ""
-        shot_id = str(rec.get("shot_id") or "")
-        concept = rec.get("label") or ""
-        if filename and shot_id:
-            self._sam_explorer_win.navigate_to(filename, shot_id, concept=concept)
+    # ------------------------------------------------------------------
+    # IPC navigation
 
     def navigate_to(
         self,
@@ -2439,46 +1911,64 @@ class CatalogBrowser(QWidget):
         label: Optional[str] = None,
         shot_id: Optional[str] = None,
     ) -> None:
-        """Select *field*, *film* and *label* in the filter combos and apply filters.
+        """Select *field*, *film*, and *label* in the filter combos.
 
-        If *shot_id* is given, the matching record's thumbnail is also selected.
+        If *shot_id* is given the matching thumbnail is also selected.
         """
-        if field:
-            for i in range(self._field_combo.count()):
-                if self._field_combo.itemData(i) == field:
-                    self._field_combo.setCurrentIndex(i)
-                    break
-        if label:
-            for i in range(self._label_combo.count()):
-                if self._label_combo.itemData(i) == label:
-                    self._label_combo.setCurrentIndex(i)
-                    break
-        if film:
-            for i in range(self._film_combo.count()):
-                if self._film_combo.itemData(i) == film:
-                    self._film_combo.setCurrentIndex(i)
-                    break
+        self._browser.navigate_to_filters(
+            item=film,
+            field=field,
+            keyword=label,
+        )
         if shot_id:
-            for idx, rec in enumerate(self._page_records):
+            for abs_idx, rec in enumerate(self._browser._filtered_items):
                 if str(rec.get("shot_id", "")) == str(shot_id):
-                    self._on_cell_clicked(idx)
-                    if 0 <= idx < len(self._cells):
-                        cell = self._cells[idx]
-                        QTimer.singleShot(0, lambda c=cell: self._scroll.ensureWidgetVisible(c))
+                    self._browser.select_index(abs_idx)
                     break
 
+    # ------------------------------------------------------------------
+    # Layout helpers
 
-# ---------------------------------------------------------------------------
+    def _fit_panel_width(self) -> None:
+        """Set the Inspector pane to its opening minimum width."""
+        total = self._panel_splitter.width()
+        if total <= 0:
+            QTimer.singleShot(100, self._fit_panel_width)
+            return
+        pw = _SIDE_PANE_W
+        bw = max(1, total - pw)
+        self._panel_splitter.setSizes([bw, pw])
+
+    def _toggle_panels(self) -> None:
+        """Toggle between BROWSER mode (panels hidden) and TOOLS mode (panels visible).
+
+        TAB key binding.  In BROWSER mode the Filter and Inspector widgets are
+        invisible so the Browser fills the entire window.  In TOOLS mode they
+        reappear at exactly the widths and collapse state they had before.
+        The state (mode + sizes) is persisted to prefs so it survives restarts.
+        """
+        if self._panels_hidden:
+            # ── Restore TOOLS mode ──────────────────────────────────────────
+            self._side_scroll.setVisible(True)
+            if self._saved_panel_sizes and len(self._saved_panel_sizes) == 2:
+                self._panel_splitter.setSizes(self._saved_panel_sizes)
+            else:
+                QTimer.singleShot(0, self._fit_panel_width)
+            self._panels_hidden = False
+        else:
+            self._saved_panel_sizes = list(self._panel_splitter.sizes())
+            self._side_scroll.setVisible(False)
+            self._panels_hidden = True
 # Main window
 # ---------------------------------------------------------------------------
 
-class SilhouetteWindow(QMainWindow):
+class SilhouetteWindow(VisualizerWindow):
     """Top-level window: Silhouette catalog browser."""
 
     def __init__(
         self,
         project_path: str,
-        media_type: str = "movie",
+        media_type: Optional[str] = None,
         model_name: str = _DEFAULT_MODEL,
         initial_film: Optional[str] = None,
         initial_field: Optional[str] = None,
@@ -2498,6 +1988,8 @@ class SilhouetteWindow(QMainWindow):
         self.setMinimumSize(900, 560)
         self.resize(1300, 760)
         restore_window_geometry(self, "window_silhouette")
+        # Reopen in fullscreen if that was the state when the app was last closed
+        QTimer.singleShot(0, self._restore_saved_state)
 
         # IPC server — lets open_at_silhouette navigate an existing instance
         self._ipc_server = _SilIpcServer(project_path, parent=self)
@@ -2519,7 +2011,47 @@ class SilhouetteWindow(QMainWindow):
             shot_id or None,
         )
 
+    def _restore_saved_state(self) -> None:
+        """Restore panel mode, splitter sizes and fullscreen state from prefs.
+
+        Deferred to a single-shot timer so it runs after the initial layout
+        pass (_fit_panel_width) has already set default pane widths.
+        """
+        from tool import prefs as _prefs
+
+        # ── Panel sizes ──────────────────────────────────────────────────────
+        saved_sizes = _prefs.get("window_silhouette_panel_sizes")
+        if saved_sizes and len(saved_sizes) == 2:
+            self._catalog._saved_panel_sizes = [int(v) for v in saved_sizes]
+
+        # ── Mode (BROWSER / TOOLS) ───────────────────────────────────────────
+        in_browser_mode = bool(_prefs.get("window_silhouette_browser_mode"))
+        if in_browser_mode:
+            self._catalog._panels_hidden = True
+            self._catalog._side_scroll.setVisible(False)
+            # Browser fills the window; no setSizes needed
+        else:
+            if self._catalog._saved_panel_sizes:
+                self._catalog._panel_splitter.setSizes(self._catalog._saved_panel_sizes)
+            else:
+                self._catalog._fit_panel_width()
+
+        # ── Fullscreen ───────────────────────────────────────────────────────
+        if _prefs.get("window_silhouette_fullscreen"):
+            self.showFullScreen()
+
     def closeEvent(self, event) -> None:
+        from tool import prefs as _prefs
+        _prefs.set("window_silhouette_fullscreen", self.isFullScreen())
+        _prefs.set("window_silhouette_browser_mode", self._catalog._panels_hidden)
+        # Save the TOOLS-mode panel sizes.  When in BROWSER mode the splitter
+        # sizes are meaningless (panels are invisible), so save the pre-browser
+        # sizes that _toggle_panels stored in _saved_panel_sizes instead.
+        if self._catalog._panels_hidden and self._catalog._saved_panel_sizes:
+            panel_sizes = self._catalog._saved_panel_sizes
+        else:
+            panel_sizes = list(self._catalog._panel_splitter.sizes())
+        _prefs.set("window_silhouette_panel_sizes", panel_sizes)
         self._ipc_server.stop()
         self._ipc_server.wait(1000)
         save_window_geometry(self, "window_silhouette")
@@ -2532,6 +2064,15 @@ class SilhouetteWindow(QMainWindow):
             self.close()
         elif key in (Qt.Key_Q, Qt.Key_W) and mod & Qt.ControlModifier:
             self.close()
+        elif key in (Qt.Key_Backtab, Qt.Key_Tab) and mod & Qt.ShiftModifier:
+            # Shift+Tab — toggle true fullscreen
+            if self.isFullScreen():
+                self.showNormal()
+            else:
+                self.showFullScreen()
+        elif key == Qt.Key_Tab and not (mod & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier)):
+            # Tab — toggle Filter + Inspector panes
+            self._catalog._toggle_panels()
         elif key in (Qt.Key_Home, Qt.Key_End,
                      Qt.Key_PageUp, Qt.Key_PageDown,
                      Qt.Key_Up, Qt.Key_Down,
@@ -2553,7 +2094,7 @@ class SilhouetteWindow(QMainWindow):
 
 def run_visualizer(
     project_path: str,
-    media_type: str = "movie",
+    media_type: Optional[str] = None,
     field: Optional[str] = None,
     initial_film: Optional[str] = None,
     initial_field: Optional[str] = None,

@@ -7176,9 +7176,10 @@ def _silhouette_visualizer(args):
     """Launch the silhouette polygon browser GUI."""
     _require_visualizer_deps()
     from visualizers.silhouette_visualizer import run_visualizer
+    raw_media = getattr(args, "media", None)
     run_visualizer(
         prefs.get("path"),
-        media_type=normalize_media_type(getattr(args, "media", "movie")) or "movie",
+        media_type=normalize_media_type(raw_media) if raw_media else None,
         field=getattr(args, "field", None),
     )
 
@@ -9706,7 +9707,7 @@ def build_parser():
         "silhouette",
         help="Browse cached silhouette polygons (from crossing index silhouette)",
     )
-    _add_media_arg(p_vis_silhouette)
+    _add_media_arg(p_vis_silhouette, default=None)  # no default: user picks at runtime
     p_vis_silhouette.add_argument(
         "--field",
         metavar="NAME",

@@ -81,11 +81,6 @@ from PyQt5.QtGui import (
     QPolygonF,
     QTransform,
 )
-try:
-    from PyQt5.QtSvg import QSvgRenderer
-    _HAS_SVG = True
-except ImportError:
-    _HAS_SVG = False
 
 if "QT_QPA_PLATFORM_PLUGIN_PATH" in os.environ:
     del os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"]
@@ -150,26 +145,10 @@ _PANEL_STYLESHEET = (
 
 
 # ---------------------------------------------------------------------------
-# SVG icon helper
+# SVG icon helper (canonical implementation lives in styles.theme)
 # ---------------------------------------------------------------------------
 
-def _svg_icon(name: str, size: int = 18, color: str = "#ffffff") -> QIcon:
-    """Load an iconoir SVG, recolour strokes/fills to *color*, return QIcon."""
-    icon_dir = Path(__file__).parent.parent / "styles" / "icons" / "iconoir"
-    path = icon_dir / f"{name}.svg"
-    if not path.exists():
-        return QIcon()
-    raw = path.read_bytes()
-    coloured = raw.replace(b"#000000", color.encode())
-    if _HAS_SVG:
-        renderer = QSvgRenderer(coloured)
-        pix = QPixmap(size, size)
-        pix.fill(Qt.transparent)
-        painter = QPainter(pix)
-        renderer.render(painter)
-        painter.end()
-        return QIcon(pix)
-    return QIcon()
+from styles.theme import svg_icon as _svg_icon  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
