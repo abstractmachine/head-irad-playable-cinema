@@ -372,7 +372,13 @@ class IllustrationBrowser(QWidget):
         # set_sort_keys() (called by sort controls) see the loaded data.
         # _CatalogLoader._load() is a pure read and does NOT update _records,
         # so we must push the result back here.
-        self._source._records = list(items)
+        # Allow sources to post-process freshly loaded records (e.g. apply an
+        # in-memory mode filter) before _all_items is updated.
+        if hasattr(self._source, "_on_records_loaded"):
+            self._source._on_records_loaded(items)
+            items = self._source.items()  # get post-processed items
+        else:
+            self._source._records = list(items)
         self._all_items      = items
         self._filter_cache   = cache  # pre-computed in background thread
         self._selected_index = -1
@@ -708,6 +714,7 @@ class IllustrationBrowser(QWidget):
         self._scroll.setVerticalScrollBar(theme.JumpScrollBar())
         self._scroll.setWidgetResizable(True)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._scroll.setFrameShape(QFrame.NoFrame)
         self._scroll.setFocusPolicy(Qt.NoFocus)
         self._scroll.setStyleSheet(

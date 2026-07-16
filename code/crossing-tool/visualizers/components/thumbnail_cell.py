@@ -153,21 +153,29 @@ class ThumbnailCell(QLabel):
     # ------------------------------------------------------------------ private
 
     def _apply_style(self) -> None:
-        # highlighted (human_best) → fuchsia border, always
-        # selected only            → lighter background, no fuchsia border
-        # both                     → fuchsia border AND lighter background
-        if self._highlighted:
-            border = f"2px solid {theme.ACCENT}"
-            bg     = theme.BTN_BG if self._selected else theme.CANVAS_BG
+        # selected + best  → grey outer border, ACCENT inner ring (via bg fill)
+        # best only        → ACCENT border with dark inner gap
+        # selected only    → grey border with dark inner gap
+        # neither          → no visible border, no padding
+        if self._highlighted and self._selected:
+            border  = "2px solid #808080"
+            bg      = theme.ACCENT
+            padding = "4px"
+        elif self._highlighted:
+            border  = f"2px solid {theme.ACCENT}"
+            bg      = theme.CANVAS_BG
+            padding = "2px"
         elif self._selected:
-            border = "1px solid transparent"
-            bg     = theme.BTN_BG
+            border  = "2px solid #808080"
+            bg      = theme.CANVAS_BG
+            padding = "4px"
         else:
-            border = "1px solid transparent"
-            bg     = theme.CANVAS_BG
+            border  = "1px solid transparent"
+            bg      = theme.CANVAS_BG
+            padding = "0px"
 
         self.setStyleSheet(
-            f"background: {bg}; border: {border};"
+            f"background: {bg}; border: {border}; padding: {padding};"
             f" color: {theme.TEXT_DIM};"
             f" font-family: '{theme.FAMILY_MONO}';"
             f" font-size: {theme.BASE_PT}pt;"

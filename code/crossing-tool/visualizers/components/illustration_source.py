@@ -246,6 +246,42 @@ class EngravingSource(IllustrationSource):
         Absolute path to the Crossing project directory.
     """
 
+    def __init__(self, project_path: str) -> None:
+        super().__init__(project_path)
+        self._mode_filter: Optional[str] = None
+        self._all_eng_records: list[dict] = []
+
+    # ------------------------------------------------------------------ mode filter
+
+    def reload(self, media_type: str = "movie") -> None:
+        """Reload from disk then re-apply the current mode filter."""
+        self._all_eng_records = self._load(media_type)
+        self._apply_mode_filter()
+
+    def set_mode_filter(self, mode: Optional[str]) -> None:
+        """Show only records whose ``mode`` field matches *mode*.
+
+        Pass ``None`` or ``""`` to show all modes.
+        """
+        self._mode_filter = mode or None
+        self._apply_mode_filter()
+
+    def _apply_mode_filter(self) -> None:
+        if self._mode_filter:
+            self._records = [
+                r for r in self._all_eng_records
+                if r.get("mode") == self._mode_filter
+            ]
+        else:
+            self._records = list(self._all_eng_records)
+
+    def _on_records_loaded(self, items: list) -> None:
+        """Called by IllustrationBrowser._on_catalog_loaded() after a background
+        scan so the mode filter is applied before the browser updates _all_items.
+        """
+        self._all_eng_records = list(items)
+        self._apply_mode_filter()
+
     def _load(self, media_type: str) -> list[dict]:
         import json as _json
 
