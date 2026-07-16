@@ -72,52 +72,50 @@ crossing tool version
 
 # Developer Setup
 
-To work on the source code directly rather than installing as a tool:
+Clone the repo and enter the project:
 
 ```bash
 git clone https://github.com/abstractmachine/head-irad-playable-cinema.git
 cd head-irad-playable-cinema/code/crossing-tool
-uv sync              # creates .venv, installs core deps
+```
+
+## Global `crossing` command (recommended)
+
+Install as a uv-managed tool with all extras. This gives you a `crossing` command that works from any directory, survives `uv sync`, and reflects source edits immediately:
+
+```bash
+uv tool install --editable ".[all]"
+```
+
+To update after adding dependencies to `pyproject.toml`:
+
+```bash
+cd head-irad-playable-cinema/code/crossing-tool
+uv tool install --force --editable ".[all]"
+```
+
+## Dev environment only (no global command)
+
+If you only need to run crossing inside the project venv:
+
+```bash
+uv sync              # must be run from crossing-tool directory
 uv run crossing --help
 ```
 
-Use `uv run crossing ...` instead of activating the venv.
-
-Or you can install a `.venv` command:
+`uv sync` only installs base dependencies. To also get optional extras in the dev venv:
 
 ```bash
-$ cd <project-folder>
-$ python3 -m venv --prompt crossing .venv
-$ source .venv/bin/activate
-$ pip install -e "$HOME/playable/head-irad-playable-cinema/code/crossing-tool[all]"
+# Run from the crossing-tool directory
+uv sync --extra annotate --extra silhouette --extra visualizer
 ```
 
-```bash
-$ source .venv/bin/activate
-$ crossing --help
-```
-
-You can also create an alias to automatically turn on the crossing tool:
-
-```bash
-$ alias name-of-alias='cd ~/location-of-folder/name-of-folder && source .venv/bin/activate'
-```
-
-To deactivate:
-
-```bash
-$ deactivate
-```
-
-## Installing optional extras (developer)
-
-Optional features require their extra to be synced into the dev environment. If you run a command and see a missing-module error, install the relevant extra:
-
-| Command that fails | Fix |
-|---|---|
-| `crossing annotate` | `uv sync --extra annotate` |
-| `crossing ... --visualizer` | `uv sync --extra visualizer` |
-| `crossing shotlist shot detect` | `uv sync --extra shot-detection` |
+| Extra | What it adds | Required for |
+|---|---|---|
+| `annotate` | transformers, huggingface-hub | CLIP / frame matching |
+| `visualizer` | PyQt5, opencv | `--visualizer` flag |
+| `shot-detection` | TransNetV2, TensorFlow | `crossing shotlist shot detect` |
+| `silhouette` | sam2, opencv | `crossing index silhouette` |
 | `crossing index silhouette` | `uv sync --extra silhouette` |
 
 ```bash

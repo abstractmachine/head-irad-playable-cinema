@@ -581,7 +581,7 @@ class IllustrationBrowser(QWidget):
 
         def _combo(combo: QComboBox) -> None:
             def _refresh_color(_idx: int = 0, _c=combo) -> None:
-                _col = theme.TEXT_DIM if _c.currentData() is None else theme.TEXT
+                _col = theme.TEXT_DIM if _c.currentData() in (None, "--all") else theme.TEXT
                 _c.setStyleSheet(
                     f"QComboBox {{ background: {theme.BTN_BG}; color: {_col};"
                     f" font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
@@ -838,6 +838,7 @@ class IllustrationBrowser(QWidget):
         idx = self._item_combo.findData(prev)
         self._item_combo.setCurrentIndex(max(0, idx))
         self._item_combo.blockSignals(False)
+        self._item_combo.currentIndexChanged.emit(self._item_combo.currentIndex())
         QTimer.singleShot(0, lambda: self._rebuild_field_combo() if self._cascade_id == _cid else None)
 
     def _rebuild_field_combo(self) -> None:
@@ -870,6 +871,7 @@ class IllustrationBrowser(QWidget):
         idx = self._field_combo.findData(prev)
         self._field_combo.setCurrentIndex(max(0, idx))
         self._field_combo.blockSignals(False)
+        self._field_combo.currentIndexChanged.emit(self._field_combo.currentIndex())
         QTimer.singleShot(0, lambda: self._rebuild_letter_combo() if self._cascade_id == _cid else None)
 
     def _rebuild_letter_combo(self) -> None:
@@ -911,6 +913,7 @@ class IllustrationBrowser(QWidget):
         idx = self._letter_combo.findData(prev)
         self._letter_combo.setCurrentIndex(max(0, idx))
         self._letter_combo.blockSignals(False)
+        self._letter_combo.currentIndexChanged.emit(self._letter_combo.currentIndex())
         QTimer.singleShot(0, lambda: self._rebuild_keyword_combo() if self._cascade_id == _cid else None)
 
     def _rebuild_keyword_combo(self) -> None:
@@ -971,6 +974,7 @@ class IllustrationBrowser(QWidget):
         idx = self._keyword_combo.findData(prev)
         self._keyword_combo.setCurrentIndex(max(0, idx))
         self._keyword_combo.blockSignals(False)
+        self._keyword_combo.currentIndexChanged.emit(self._keyword_combo.currentIndex())
         QTimer.singleShot(0, lambda: self._apply_filters() if self._cascade_id == _cid else None)
 
     def _apply_filters(self) -> None:

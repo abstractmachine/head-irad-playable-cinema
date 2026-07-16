@@ -1403,6 +1403,20 @@ class CatalogBrowser(QWidget):
         self._project_path = project_path
         self._current_rec: Optional[dict] = None
 
+        # Restore last-used media type; fall back to "movie" on first launch.
+        if media_type is None:
+            try:
+                from tool import prefs as _prefs
+                _saved = _prefs.get("sil_media_type")
+                if _saved is None:
+                    media_type = "movie"   # first launch — sensible default
+                elif _saved == "":
+                    media_type = None     # user explicitly left it at <Media>
+                else:
+                    media_type = _saved
+            except Exception:
+                media_type = "movie"
+
         # Data source — owns catalog loading and sort
         self._source = SilhouetteSource(project_path)
 
@@ -1416,6 +1430,10 @@ class CatalogBrowser(QWidget):
             detach_controls=True,
         )
         self._browser.selectionChanged.connect(self._on_selection_changed)
+        # Persist media-type selection across restarts.
+        self._browser._media_combo.currentIndexChanged.connect(
+            self._on_media_type_pref_changed
+        )
         # Side-panel toggle state (Tab key)
         self._panels_hidden: bool = False
         self._saved_panel_sizes: list = []   # remembered when panels are hidden
@@ -1515,6 +1533,12 @@ class CatalogBrowser(QWidget):
         """Right pane: filter cascade + sort + metadata + actions."""
         tabs, panel, pv = self._make_pane("Silhouettes", min_width=_SIDE_PANE_W)
         self._side_scroll = tabs
+        # Track vertical scrollbar visibility so we can widen/narrow the pane.
+        self._inspector_sb_visible = False
+        self._inspector_scroll = tabs.widget(0)  # QScrollArea
+        self._inspector_scroll.verticalScrollBar().rangeChanged.connect(
+            self._on_inspector_sb_range
+        )
 
         # ── Filter section (cascade drop-downs + status + pagination) ──────────
         self._filter_sec = CollapsibleSection("Filter", pref_key="sil_section_filter")
@@ -1733,6 +1757,29 @@ class CatalogBrowser(QWidget):
         return tabs
     def _on_splitter_moved(self, pos: int, index: int) -> None:
         pass  # two-pane — no locking needed
+
+    def _on_media_type_pref_changed(self, _idx: int) -> None:
+        """Persist the selected media type so it is restored on next launch."""
+        val = self._browser._media_combo.currentData()
+        try:
+            from tool import prefs as _prefs
+            _prefs.set("sil_media_type", val if val is not None else "")
+        except Exception:
+            pass
+
+    def _on_inspector_sb_range(self, _min: int, max_val: int) -> None:
+        """Widen the inspector splitter pane when the scrollbar appears, shrink when it hides."""
+        from PyQt5.QtWidgets import QStyle
+        sb_w = self._inspector_scroll.style().pixelMetric(QStyle.PM_ScrollBarExtent)
+        sizes = self._panel_splitter.sizes()
+        if max_val > 0 and not self._inspector_sb_visible:
+            self._inspector_sb_visible = True
+            sizes[-1] += sb_w
+            self._panel_splitter.setSizes(sizes)
+        elif max_val == 0 and self._inspector_sb_visible:
+            self._inspector_sb_visible = False
+            sizes[-1] = max(0, sizes[-1] - sb_w)
+            self._panel_splitter.setSizes(sizes)
 
     # ------------------------------------------------------------------
     # Sort controls

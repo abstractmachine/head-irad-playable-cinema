@@ -216,8 +216,8 @@ QSlider::sub-page:horizontal {{
 
 /* ── Scroll bars ───────────────────────────────────────────── */
 QScrollBar:vertical {{
-    background: transparent;
-    width: 16px;
+    background: {CANVAS_BG};
+    width: 8px;
 }}
 QScrollBar::handle:vertical {{
     background: transparent;
@@ -234,8 +234,8 @@ QScrollBar::handle:vertical:hover, QScrollBar::handle:vertical:pressed {{
 }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
 QScrollBar:horizontal {{
-    background: transparent;
-    height: 16px;
+    background: {CANVAS_BG};
+    height: 8px;
 }}
 QScrollBar::handle:horizontal {{
     background: transparent;
