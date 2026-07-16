@@ -31,27 +31,32 @@ from pathlib import Path
 BG           = "#808080"   # 50% grey — main window / widget background
 PANEL_BG     = "#6e6e6e"   # slightly darker for control-panel areas
 INPUT_BG     = "#606060"   # input fields, list backgrounds
-BTN_BG       = "#686868"   # button face
+TITLE_BG     = "#4d4d4d"   # section titlebar backgrounds (slightly darker than TAB_BG)
+CELL_BG      = "#606060"   # table cell backgrounds (same as TITLE_BG for now)
+BTN_BG       = "#606060"   # button face
 BTN_HOVER    = "#8d8d8d"   # button hover (lighter than BG)
 BTN_PRESSED  = "#565656"   # button pressed (darker)
-BTN_H        = 26          # fixed height for all buttons (px)
+BTN_H        = 24          # fixed height for all buttons (px))
 TEXT         = "#ffffff"   # primary text — white
-TEXT_DIM     = "#c0c0c0"   # secondary / hint text
+TEXT_DIM     = "#909090"   # secondary / hint text
 BORDER       = "#ffffff"   # interactive element borders (buttons, inputs) — white
 UI_BORDER    = "#404040"   # structural chrome borders (group boxes, frames) — 25% grey
 SPLITTER     = "#737373"   # splitter drag handles — 45% grey (barely visible on BG)
-ACCENT       = "#ff00ff"   # fuchsia — selections, active, checked states
+ACCENT       = "#ffff00"   # selections, active, checked states
+ACCENT_TEXT  = "#000000"   # text on ACCENT background (black on yellow; use #ffffff for dark accents)
 CANVAS_BG    = "#3a3a3a"   # video / image display areas (dark so content pops)
 TAB_BG       = "#545454"   # tab labels + pane content — 10 % lighter than CANVAS_BG
 # ---------------------------------------------------------------------------
 # Typography
 # ---------------------------------------------------------------------------
 
-BASE_PT      = 9           # single base point size for all UI elements
+BASE_PT      = 8           # single base point size for all UI elements
 SUBTITLE_PT  = 12          # subtitle overlay — larger for readability
 
-FAMILY_UI    = "Hanken Grotesk"  # buttons, labels, combos, window chrome
-FAMILY_MONO  = "Roboto Mono"     # lists, text areas, info / data labels
+FAMILY_UI    = "Geist"       # buttons, labels, combos, window chrome
+FAMILY_MONO  = "Geist Mono"  # lists, text areas, info / data labels
+WEIGHT_UI    = 500           # font-weight for UI chrome (100–900)
+WEIGHT_MONO  = 500           # font-weight for monospaced data fields
 
 # ---------------------------------------------------------------------------
 # Font registration
@@ -60,10 +65,26 @@ FAMILY_MONO  = "Roboto Mono"     # lists, text areas, info / data labels
 _FONTS_DIR   = Path(__file__).parent / "fonts"
 
 _FONT_FILES  = [
-    _FONTS_DIR / "Hanken_Grotesk" / "HankenGrotesk-VariableFont_wght.ttf",
-    _FONTS_DIR / "Hanken_Grotesk" / "HankenGrotesk-Italic-VariableFont_wght.ttf",
-    _FONTS_DIR / "Roboto_Mono"    / "RobotoMono-VariableFont_wght.ttf",
-    _FONTS_DIR / "Roboto_Mono"    / "RobotoMono-Italic-VariableFont_wght.ttf",
+    # Geist (UI)
+    _FONTS_DIR / "Geist"      / "static" / "Geist-Regular.ttf",
+    _FONTS_DIR / "Geist"      / "static" / "Geist-Italic.ttf",
+    _FONTS_DIR / "Geist"      / "static" / "Geist-Light.ttf",
+    _FONTS_DIR / "Geist"      / "static" / "Geist-LightItalic.ttf",
+    _FONTS_DIR / "Geist"      / "static" / "Geist-Medium.ttf",
+    _FONTS_DIR / "Geist"      / "static" / "Geist-MediumItalic.ttf",
+    _FONTS_DIR / "Geist"      / "static" / "Geist-SemiBold.ttf",
+    _FONTS_DIR / "Geist"      / "static" / "Geist-Bold.ttf",
+    _FONTS_DIR / "Geist"      / "static" / "Geist-BoldItalic.ttf",
+    # Geist Mono
+    _FONTS_DIR / "Geist_Mono" / "static" / "GeistMono-Regular.ttf",
+    _FONTS_DIR / "Geist_Mono" / "static" / "GeistMono-Italic.ttf",
+    _FONTS_DIR / "Geist_Mono" / "static" / "GeistMono-Light.ttf",
+    _FONTS_DIR / "Geist_Mono" / "static" / "GeistMono-LightItalic.ttf",
+    _FONTS_DIR / "Geist_Mono" / "static" / "GeistMono-Medium.ttf",
+    _FONTS_DIR / "Geist_Mono" / "static" / "GeistMono-MediumItalic.ttf",
+    _FONTS_DIR / "Geist_Mono" / "static" / "GeistMono-SemiBold.ttf",
+    _FONTS_DIR / "Geist_Mono" / "static" / "GeistMono-Bold.ttf",
+    _FONTS_DIR / "Geist_Mono" / "static" / "GeistMono-BoldItalic.ttf",
 ]
 
 
@@ -135,7 +156,7 @@ QPushButton {{
 }}
 QPushButton:hover    {{ background-color: {BTN_HOVER}; }}
 QPushButton:pressed  {{ background-color: {BTN_PRESSED}; }}
-QPushButton:checked  {{ background-color: {ACCENT}; color: {TEXT}; }}
+QPushButton:checked  {{ background-color: {ACCENT}; color: {ACCENT_TEXT}; }}
 QPushButton:disabled {{ color: {TEXT_DIM}; }}
 
 /* ── Combo boxes & line edits ──────────────────────────────── */
@@ -151,7 +172,7 @@ QComboBox QAbstractItemView {{
     background-color: {INPUT_BG};
     color: {TEXT};
     selection-background-color: {ACCENT};
-    selection-color: {TEXT};
+    selection-color: {ACCENT_TEXT};
 }}
 
 /* ── List widgets ──────────────────────────────────────────── */
@@ -162,9 +183,9 @@ QListWidget {{
     font-family: "{FAMILY_MONO}";
     font-size: {BASE_PT}pt;
 }}
-QListWidget::item:selected       {{ background-color: {ACCENT}; color: {TEXT}; }}
+QListWidget::item:selected       {{ background-color: {ACCENT}; color: {ACCENT_TEXT}; }}
 QListWidget::item:hover          {{ background-color: {BTN_HOVER}; }}
-QListWidget::item:selected:hover {{ background-color: {ACCENT}; color: {TEXT}; }}
+QListWidget::item:selected:hover {{ background-color: {ACCENT}; color: {ACCENT_TEXT}; }}
 
 /* ── Text areas ────────────────────────────────────────────── */
 QTextEdit {{
@@ -202,14 +223,14 @@ QScrollBar::handle:vertical {{
     background: transparent;
     border-top: none;
     border-bottom: none;
-    border-left: 2px solid #ff00ff;
+    border-left: 2px solid {ACCENT};
     border-right: none;
     border-radius: 0;
     min-height: 20px;
 }}
 QScrollBar::handle:vertical:hover, QScrollBar::handle:vertical:pressed {{
-    background: #ff00ff;
-    border-left: 2px solid #ff00ff;
+    background: {ACCENT};
+    border-left: 2px solid {ACCENT};
 }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
 QScrollBar:horizontal {{
@@ -220,14 +241,14 @@ QScrollBar::handle:horizontal {{
     background: transparent;
     border-left: none;
     border-right: none;
-    border-top: 2px solid #ff00ff;
+    border-top: 2px solid {ACCENT};
     border-bottom: none;
     border-radius: 0;
     min-width: 20px;
 }}
 QScrollBar::handle:horizontal:hover, QScrollBar::handle:horizontal:pressed {{
-    background: #ff00ff;
-    border-top: 2px solid #ff00ff;
+    background: {ACCENT};
+    border-top: 2px solid {ACCENT};
 }}
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
 
@@ -309,7 +330,7 @@ def table_stylesheet() -> str:
         }}
         QTableWidget::item:selected {{
             background: {ACCENT};
-            color: {TEXT};
+            color: {ACCENT_TEXT};
         }}
         QHeaderView::section {{
             background: {PANEL_BG};
@@ -346,7 +367,7 @@ def apply_theme(app) -> None:
     # the Active group is fuchsia and the popup still shows the system default.
     _pal = app.palette()
     _pal.setColor(QPalette.All, QPalette.Highlight,       QColor(ACCENT))
-    _pal.setColor(QPalette.All, QPalette.HighlightedText, QColor(TEXT))
+    _pal.setColor(QPalette.All, QPalette.HighlightedText, QColor(ACCENT_TEXT))
     app.setPalette(_pal)
 
 
@@ -368,7 +389,7 @@ class _GripHandle(QSplitterHandle):
     """
 
     _DOT_COLOUR      = QColor("#666666")
-    _HOVER_COLOUR    = QColor("#ff00ff")
+    _HOVER_COLOUR    = QColor(ACCENT)
     _DOT_R           = 2   # dot radius (px)
     _DOT_GAP         = 6   # centre-to-centre spacing (px)
     _N_DOTS          = 5   # number of dots

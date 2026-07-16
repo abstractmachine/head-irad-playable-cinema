@@ -625,8 +625,8 @@ class SAMExplorer(QMainWindow):
             f"  border: none;"
             f"  border-radius: 3px;"
             f"}}"
-            f"QPushButton:hover {{ background: #ff55ff; }}"
-            f"QPushButton:pressed {{ background: #cc00cc; }}"
+            f"QPushButton:hover {{ background: {theme.ACCENT}; color: {theme.ACCENT_TEXT}; }}"
+            f"QPushButton:pressed {{ background: {theme.BTN_PRESSED}; }}"
             f"QPushButton:disabled {{"
             f"  background: {theme.BTN_BG}; color: {theme.TEXT_DIM};"
             f"}}"
@@ -1351,6 +1351,44 @@ def _sil_ipc_send_navigate(
 
 # ---------------------------------------------------------------------------
 
+class _HoverIconButton(QPushButton):
+    """QPushButton that swaps its icon to an accent-coloured version on hover."""
+
+    def __init__(self, text: str = "", normal_icon=None, hover_icon=None, parent=None):
+        super().__init__(text, parent)
+        self._normal_icon = normal_icon
+        self._hover_icon  = hover_icon
+        if normal_icon:
+            self.setIcon(normal_icon)
+
+    def enterEvent(self, event):
+        if self._hover_icon:
+            self.setIcon(self._hover_icon)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        if self._normal_icon:
+            self.setIcon(self._normal_icon)
+        super().leaveEvent(event)
+
+
+class _WrapLabel(QLabel):
+    """QLabel that self-corrects its minimum height on every resize.
+
+    Standard word-wrap QLabels inside QGridLayout / QScrollArea often report
+    a stale sizeHint because heightForWidth() is not reliably called by the
+    layout engine once the widget is already sized.  This subclass forces a
+    recalculation in resizeEvent so the grid row is always tall enough.
+    """
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.wordWrap():
+            needed = self.heightForWidth(event.size().width())
+            if needed > 0:
+                self.setMinimumHeight(needed)
+
+
 class CatalogBrowser(QWidget):
     """Silhouette catalog browser built on the Visualizer Framework.
 
@@ -1425,12 +1463,13 @@ class CatalogBrowser(QWidget):
         tabs.tabBar().setFocusPolicy(Qt.NoFocus)
         tabs.setStyleSheet(
             f"QTabWidget           {{ background: {theme.CANVAS_BG}; border: none; }}"
-            f"QTabWidget::pane     {{ border: none; background: {_TAB_ACTIVE}; top: -1px; }}"
+            f"QTabWidget::pane     {{ border: none; background: {_TAB_ACTIVE}; }}"
             f"QTabBar              {{ background: {theme.CANVAS_BG}; border: none; }}"
             f"QTabBar::tab {{"
             f"  background: {theme.CANVAS_BG}; color: {theme.TEXT_DIM};"
             f"  padding: 4px 12px; border: none; margin-bottom: 0;"
             f"  font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
+            f"  font-weight: {theme.WEIGHT_UI};"
             f"}}"
             f"QTabBar::tab:selected {{ background: {_TAB_ACTIVE}; color: {theme.TEXT}; }}"
             f"QTabBar::tab:hover    {{ background: {_TAB_ACTIVE}; color: {theme.TEXT}; }}"
@@ -1445,7 +1484,7 @@ class CatalogBrowser(QWidget):
 
         _content_style = (
             f"QWidget {{ background: {_TAB_ACTIVE}; }}"
-            f" QComboBox {{ background-color: {theme.INPUT_BG}; color: {theme.TEXT}; }}"
+            f" QComboBox {{ background-color: {theme.BTN_BG}; color: {theme.TEXT}; }}"
             f" QComboBox::drop-down {{ border: none; }}"
             f" QComboBox QAbstractItemView, QComboBox QListView {{"
             f"   background: {theme.INPUT_BG}; color: {theme.TEXT};"
@@ -1453,13 +1492,13 @@ class CatalogBrowser(QWidget):
             f"   selection-background-color: {theme.ACCENT};"
             f"   selection-color: {theme.TEXT}; }}"
             f" QComboBox QAbstractItemView::item, QComboBox QListView::item {{"
-            f"   padding: 3px 8px; border: 0px; }}"
+            f"   padding: 0px 8px; min-height: 24px; border: 0px; }}"
             f" QPushButton {{ background-color: {theme.BTN_BG}; border: none;"
             f" padding: 0 10px; border-radius: 3px;"
             f" min-height: {theme.BTN_H}px; max-height: {theme.BTN_H}px; }}"
             f" QPushButton:hover    {{ background-color: {theme.BTN_HOVER}; }}"
             f" QPushButton:pressed  {{ background-color: {theme.BTN_PRESSED}; }}"
-            f" QPushButton:checked  {{ background-color: {theme.ACCENT}; color: {theme.TEXT}; }}"
+            f" QPushButton:checked  {{ background-color: {theme.ACCENT}; color: {theme.ACCENT_TEXT}; }}"
             f" QPushButton:disabled {{ color: {theme.TEXT_DIM};"
             f" background-color: {theme.BTN_BG}; }}"
         )
@@ -1467,14 +1506,14 @@ class CatalogBrowser(QWidget):
         panel.setStyleSheet(_content_style)
         panel.setMinimumWidth(min_width)
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(2)
         scroll.setWidget(panel)
         tabs.addTab(scroll, tab_label)
         return tabs, panel, layout
     def _build_inspector_pane(self) -> QTabWidget:
         """Right pane: filter cascade + sort + metadata + actions."""
-        tabs, panel, pv = self._make_pane("Inspector", min_width=_SIDE_PANE_W)
+        tabs, panel, pv = self._make_pane("Silhouettes", min_width=_SIDE_PANE_W)
         self._side_scroll = tabs
 
         # ── Filter section (cascade drop-downs + status + pagination) ──────────
@@ -1494,10 +1533,22 @@ class CatalogBrowser(QWidget):
             lambda kw: self._filter_sec.set_subtitle(kw.capitalize() if kw else "")
         )
         pv.addWidget(self._filter_sec)
+        # Place the loading bar between the Filter header and its body so it
+        # is visible when loading even if the Filter section is collapsed.
+        self._filter_sec.set_subbar(self._browser._loading_bar)
+        # Loading bar is 2px (matches universal gap); remove body top so the
+        # bar itself is the 2px separator between header and first combo.
+        self._filter_sec._body_layout.setContentsMargins(0, 0, 0, 0)
 
         # ── Sort section ─────────────────────────────────────────────────────────
         self._sort_sec = CollapsibleSection("Sort", pref_key="sil_section_sort")
         self._sort_combo = QComboBox()
+        self._sort_combo.setStyleSheet(
+            f"QComboBox {{ background: {theme.BTN_BG}; color: {theme.TEXT};"
+            f" border: none; border-radius: 3px; padding: 0px 6px;"
+            f" min-height: 24px; max-height: 24px; }}"
+            f"QComboBox::drop-down {{ border: none; }}"
+        )
         self._sort_combo.setFocusPolicy(Qt.NoFocus)
         self._sort_combo.setMaxVisibleItems(10)
         self._sort_combo.setSizeAdjustPolicy(QComboBox.AdjustToContentsOnFirstShow)
@@ -1513,23 +1564,39 @@ class CatalogBrowser(QWidget):
             f"QListView {{"
             f" background: {theme.INPUT_BG}; color: {theme.TEXT};"
             f" border: 0px; margin: 0px; padding: 0px; outline: 0px; }}"
-            f"QListView::item {{ padding: 3px 8px; border: 0px; }}"
+            f"QListView::item {{ background: {theme.INPUT_BG}; padding: 0px 8px; min-height: 24px; border: 0px; }}"
             f"QListView::item:selected {{"
-            f" background: {theme.ACCENT}; color: {theme.TEXT}; }}"
+            f" background: {theme.ACCENT}; color: {theme.ACCENT_TEXT}; }}"
         )
         self._sort_combo.setView(_sv)
+        _sv.setViewportMargins(0, 0, 0, 0)
         _sc = _sv.parentWidget()
         if _sc is not None:
             _sc.setFrameStyle(QFrame.NoFrame)
             _sc.setLineWidth(0)
             _sc.setMidLineWidth(0)
             _sc.setStyleSheet(
-                "QFrame { border: 0px; margin: 0px; padding: 0px; }"
+                f"QFrame {{ background: {theme.INPUT_BG};"
+                f" border: 0px; margin: 0px; padding: 0px; }}"
             )
+            if _sc.layout():
+                _sc.layout().setContentsMargins(0, 0, 0, 0)
+                _sc.layout().setSpacing(0)
         self._sort_combo.addItem("-----", userData=None)
         for disp, key in _SORT_OPTS:
             self._sort_combo.addItem(disp, userData=key)
         self._sort_combo.currentIndexChanged.connect(self._on_sort_changed)
+
+        def _refresh_sort_color(_idx: int = 0) -> None:
+            _col = theme.TEXT_DIM if self._sort_combo.currentData() is None else theme.TEXT
+            self._sort_combo.setStyleSheet(
+                f"QComboBox {{ background: {theme.BTN_BG}; color: {_col};"
+                f" border: none; border-radius: 3px; padding: 0px 6px;"
+                f" min-height: 24px; max-height: 24px; }}"
+                f"QComboBox::drop-down {{ border: none; }}"
+            )
+        self._sort_combo.currentIndexChanged.connect(_refresh_sort_color)
+        _refresh_sort_color()
         self._sort_sec.add_widget(self._sort_combo)
         pv.addWidget(self._sort_sec)
 
@@ -1550,42 +1617,52 @@ class CatalogBrowser(QWidget):
         )
         _LAST_INFO_IDX = len(_INFO_KEYS) - 1
         for _row_idx, key in enumerate(_INFO_KEYS):
-            _top    = f" border-top: 2px solid {theme.TAB_BG};"    if _row_idx == 0            else ""
+            _top    = f" border-top: 2px solid {theme.TAB_BG};" if _row_idx == 0 else ""
             _bottom = f" border-bottom: 2px solid {theme.TAB_BG};" if _row_idx < _LAST_INFO_IDX else ""
             kl = QLabel(key)
-            kl.setAlignment(Qt.AlignTop | Qt.AlignRight)
+            kl.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
             kl.setStyleSheet(
-                f"color: {theme.TEXT_DIM};"
+                f"background: {theme.CELL_BG}; color: {theme.TEXT_DIM};"
+                f" font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
+                f" font-weight: {theme.WEIGHT_UI};"
                 f"{_top}"
                 f" border-right: 2px solid {theme.TAB_BG};"
                 f"{_bottom}"
-                f" padding: 0px 4px 2px 2px;"
+                f" min-height: 24px; padding: 0px 4px 0px 2px;"
             )
             _info_grid.addWidget(kl, _row_idx, 0)
-            vl = QLabel("\u2014")
+            vl = _WrapLabel("\u2014")
             vl.setWordWrap(True)
             vl.setAlignment(Qt.AlignTop | Qt.AlignLeft)
             vl.setTextInteractionFlags(Qt.TextSelectableByMouse)
             vl.setStyleSheet(
+                f"background: {theme.CELL_BG}; color: {theme.TEXT};"
+                f" font-family: '{theme.FAMILY_MONO}'; font-size: {theme.BASE_PT}pt;"
+                f" font-weight: {theme.WEIGHT_MONO};"
                 f"{_top}{_bottom}"
-                f" padding: 0px 2px 2px 3px;"
+                f" padding: 0px 2px 0px 3px;"
             )
             _info_grid.addWidget(vl, _row_idx, 1)
             self._meta_rows[key] = vl
         info_sec.add_widget(_info_widget)
+        self._info_widget = _info_widget
         # Remove the body's bottom margin so the last row touches the section edge.
         info_sec._body_layout.setContentsMargins(0, 0, 0, 0)
         pv.addWidget(info_sec)
 
-        action_sec = CollapsibleSection("Actions", pref_key="sil_section_actions")
+        tools_sec = CollapsibleSection("Tools", pref_key="sil_section_tools")
         _icon_sz   = QSize(14, 14)
         # Build an icon with two modes: normal (white) and disabled (dim grey)
         # so the icon fades to match the barely-visible disabled text.
         _pix_normal   = _svg_icon("open-in-window", 14, theme.TEXT).pixmap(14, 14)
+        _pix_hover    = _svg_icon("open-in-window", 14, theme.ACCENT_TEXT).pixmap(14, 14)
         _pix_disabled = _svg_icon("open-in-window", 14, "#7f7f7f").pixmap(14, 14)
         _open_icon = QIcon()
         _open_icon.addPixmap(_pix_normal)
         _open_icon.addPixmap(_pix_disabled, QIcon.Disabled)
+        _open_icon_hover = QIcon()
+        _open_icon_hover.addPixmap(_pix_hover)
+        _open_icon_hover.addPixmap(_pix_disabled, QIcon.Disabled)
 
         # Shared style for all three action buttons:
         # • normal   — dark button background, bright text
@@ -1599,9 +1676,11 @@ class CatalogBrowser(QWidget):
             f"  padding: 0 8px;"
             f"  min-height: {theme.BTN_H}px; max-height: {theme.BTN_H}px;"
             f"}}"
-            f"QPushButton:hover   {{ background-color: {theme.ACCENT}; color: {theme.TEXT}; }}"
+            f"QPushButton:hover   {{ background-color: {theme.ACCENT}; color: {theme.ACCENT_TEXT}; }}"
             f"QPushButton:pressed {{ background-color: {theme.BTN_PRESSED}; }}"
-            f"QPushButton:checked {{ background-color: {theme.ACCENT}; color: {theme.TEXT}; }}"
+            f"QPushButton:checked {{ background-color: {theme.ACCENT}; color: {theme.ACCENT_TEXT}; }}"
+            f"QPushButton[accent_text='true']:checked"
+            f" {{ background-color: {theme.BTN_BG}; color: {theme.ACCENT}; }}"
             f"QPushButton:disabled {{ background-color: {theme.BTN_BG};"
             f" color: rgba(255,255,255,0.15); }}"
         )
@@ -1609,10 +1688,9 @@ class CatalogBrowser(QWidget):
         _action_row = QWidget()
         _action_rl  = QHBoxLayout(_action_row)
         _action_rl.setContentsMargins(0, 0, 0, 0)
-        _action_rl.setSpacing(4)
+        _action_rl.setSpacing(2)
 
-        self._shotlist_btn = QPushButton("Shotlist")
-        self._shotlist_btn.setIcon(_open_icon)
+        self._shotlist_btn = _HoverIconButton("Shotlist", _open_icon, _open_icon_hover)
         self._shotlist_btn.setIconSize(_icon_sz)
         self._shotlist_btn.setFocusPolicy(Qt.NoFocus)
         self._shotlist_btn.setEnabled(False)
@@ -1620,8 +1698,7 @@ class CatalogBrowser(QWidget):
         self._shotlist_btn.clicked.connect(self._open_in_shotlist)
         _action_rl.addWidget(self._shotlist_btn, 1)
 
-        self._sam_btn = QPushButton("Segmentation")
-        self._sam_btn.setIcon(_open_icon)
+        self._sam_btn = _HoverIconButton("Segmentation", _open_icon, _open_icon_hover)
         self._sam_btn.setIconSize(_icon_sz)
         self._sam_btn.setFocusPolicy(Qt.NoFocus)
         self._sam_btn.setEnabled(False)
@@ -1629,7 +1706,7 @@ class CatalogBrowser(QWidget):
         self._sam_btn.clicked.connect(self._open_sam_explorer)
         _action_rl.addWidget(self._sam_btn, 1)
 
-        action_sec.add_widget(_action_row)
+        tools_sec.add_widget(_action_row)
 
         self._best_btn = QPushButton("Best")
         self._best_btn.setCheckable(True)
@@ -1638,22 +1715,20 @@ class CatalogBrowser(QWidget):
         self._best_btn.setFixedHeight(theme.BTN_H)
         self._best_btn.setStyleSheet(_abtn)
         self._best_btn.clicked.connect(self._on_best_btn_clicked)
-        action_sec.add_widget(self._best_btn)
-        pv.addWidget(action_sec)
-
-        pv.addStretch()
-
-        hint = QLabel(
-            "Home/End  film    PgUp/PgDn  field\n"
-            "\u2190 \u2191 \u2192 \u2193  grid    a\u2013z / #  letter\n"
-            "Shift+\u2191\u2193  keyword    Shift+\u2190\u2192  page\n"
-            "Enter  toggle best    Shift+Enter  shotlist"
+        tools_sec.add_widget(self._best_btn)
+        tools_sec._header.setToolTip(
+            "Home / End — film\n"
+            "PgUp / PgDn — field\n"
+            "← ↑ → ↓ — grid\n"
+            "a–z / # — letter\n"
+            "Shift+↑↓ — keyword\n"
+            "Shift+←→ — page\n"
+            "Enter — toggle best\n"
+            "Shift+Enter — shotlist"
         )
-        hint.setAlignment(Qt.AlignCenter)
-        hint.setStyleSheet(
-            f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT - 1}pt;"
-        )
-        pv.addWidget(hint)
+        # Insert Tools at the top of the pane (above Filter/Sort/Info).
+        pv.insertWidget(0, tools_sec)
+        pv.addStretch()   # push all sections to the top; remaining space below
 
         return tabs
     def _on_splitter_moved(self, pos: int, index: int) -> None:
@@ -1700,8 +1775,6 @@ class CatalogBrowser(QWidget):
         if len(shot_id) > 28:
             shot_id = "…" + shot_id[-26:]
         film = rec.get("filename_stem") or rec.get("filename") or "—"
-        if len(film) > 26:
-            film = film[:24] + "…"
         conf = rec.get("confidence", 0)
 
         self._meta_rows["label"].setText(rec.get("label", "—"))

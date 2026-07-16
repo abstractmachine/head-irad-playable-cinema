@@ -563,22 +563,35 @@ class IllustrationBrowser(QWidget):
         # No explicit background — inherits from parent (CollapsibleSection body)
         # so it matches the Sort and Info sections visually.
         layout = QVBoxLayout(widget)
-        layout.setContentsMargins(8, 8, 8, 1)   # bottom=1: bar below is always 3px, together = 4px gap
-        layout.setSpacing(3)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
 
         combo_style = (
-            f"QComboBox {{ background: {theme.INPUT_BG}; color: {theme.TEXT};"
-            f" font-size: {theme.BASE_PT}pt; border: none;"
-            f" border-radius: 3px; padding: 2px 6px; }}"
+            f"QComboBox {{ background: {theme.BTN_BG}; color: {theme.TEXT};"
+            f" font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
+            f" font-weight: {theme.WEIGHT_UI}; border: none;"
+            f" border-radius: 3px; padding: 0px 6px;"
+            f" min-height: 24px; max-height: 24px; }}"
             f"QComboBox::drop-down {{ border: none; }}"
         )
         lbl_style = (
-            f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt;"
-            f" background: transparent;"
+            f"color: {theme.TEXT_DIM}; font-family: '{theme.FAMILY_UI}';"
+            f" font-size: {theme.BASE_PT}pt; font-weight: {theme.WEIGHT_UI}; background: transparent;"
         )
 
         def _combo(combo: QComboBox) -> None:
-            combo.setStyleSheet(combo_style)
+            def _refresh_color(_idx: int = 0, _c=combo) -> None:
+                _col = theme.TEXT_DIM if _c.currentData() is None else theme.TEXT
+                _c.setStyleSheet(
+                    f"QComboBox {{ background: {theme.BTN_BG}; color: {_col};"
+                    f" font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
+                    f" font-weight: {theme.WEIGHT_UI}; border: none;"
+                    f" border-radius: 3px; padding: 0px 6px;"
+                    f" min-height: 24px; max-height: 24px; }}"
+                    f"QComboBox::drop-down {{ border: none; }}"
+                )
+            combo.currentIndexChanged.connect(_refresh_color)
+            _refresh_color()
             combo.setFocusPolicy(Qt.NoFocus)
             combo.setMaxVisibleItems(6)
             combo.setSizeAdjustPolicy(QComboBox.AdjustToContentsOnFirstShow)
@@ -598,19 +611,24 @@ class IllustrationBrowser(QWidget):
                 f" background: {theme.INPUT_BG}; color: {theme.TEXT};"
                 f" border: 0px; margin: 0px; padding: 0px; outline: 0px; }}"
                 f"QListView::item {{"
-                f" padding: 3px 8px; border: 0px; }}"
+                f" background: {theme.INPUT_BG}; padding: 0px 8px; min-height: 24px; border: 0px; }}"
                 f"QListView::item:selected {{"
-                f" background: {theme.ACCENT}; color: {theme.TEXT}; }}"
+                f" background: {theme.ACCENT}; color: {theme.ACCENT_TEXT}; }}"
             )
             combo.setView(_view)
+            _view.setViewportMargins(0, 0, 0, 0)
             _container = _view.parentWidget()
             if _container is not None:
                 _container.setFrameStyle(QFrame.NoFrame)
                 _container.setLineWidth(0)
                 _container.setMidLineWidth(0)
                 _container.setStyleSheet(
-                    "QFrame { border: 0px; margin: 0px; padding: 0px; }"
+                    f"QFrame {{ background: {theme.INPUT_BG};"
+                    f" border: 0px; margin: 0px; padding: 0px; }}"
                 )
+                if _container.layout():
+                    _container.layout().setContentsMargins(0, 0, 0, 0)
+                    _container.layout().setSpacing(0)
             layout.addWidget(combo)
 
         # Media — <Media> means "nothing selected" (fast empty-browser start)
@@ -666,7 +684,7 @@ class IllustrationBrowser(QWidget):
         self._loading_bar = QProgressBar()
         self._loading_bar.setRange(0, 1)   # idle: invisible chunk
         self._loading_bar.setValue(0)
-        self._loading_bar.setFixedHeight(3)
+        self._loading_bar.setFixedHeight(2)
         self._loading_bar.setTextVisible(False)
         self._loading_bar.setFocusPolicy(Qt.NoFocus)
         self._loading_bar.setStyleSheet(
@@ -676,19 +694,13 @@ class IllustrationBrowser(QWidget):
         )
         self._loading_bar.setRange(0, 1)   # determinate at 0% — invisible chunk, no animation
         self._loading_bar.setValue(0)
-        lay.addWidget(self._loading_bar)
+        # NOTE: loading bar is NOT added to this layout; the caller (CatalogBrowser)
+        # inserts it into the Filter section header via set_subbar() so it is
+        # visible even when the Filter section is collapsed.
 
-        # Status text row (item count, —, No items …)
-        _text_row = QWidget()
-        _tl = QHBoxLayout(_text_row)
-        _tl.setContentsMargins(8, 4, 8, 4)   # symmetric: 4px above and below count text
-        self._status_lbl = QLabel("—")
-        self._status_lbl.setWordWrap(True)
-        self._status_lbl.setStyleSheet(
-            f"color: {theme.TEXT_DIM}; font-size: {max(7, theme.BASE_PT - 1)}pt;"
-        )
-        _tl.addWidget(self._status_lbl)
-        lay.addWidget(_text_row)
+        # Status label — kept as an attribute but NOT added to the layout;
+        # 'No items' is now shown inside the pagination bar between the arrows.
+        self._status_lbl = QLabel("")
         return bar
 
     def _build_grid_area(self) -> QScrollArea:
@@ -717,20 +729,21 @@ class IllustrationBrowser(QWidget):
     def _build_pagination_bar(self) -> QWidget:
         bar = QWidget()
         lay = QHBoxLayout(bar)
-        lay.setContentsMargins(8, 4, 8, 4)
+        lay.setContentsMargins(0, 2, 0, 0)
         lay.setSpacing(4)
 
         # Explicit disabled style so inactive buttons are visibly much darker.
         _page_btn_style = (
             f"QPushButton {{ background: {theme.BTN_BG}; border: none;"
-            f" border-radius: 3px; color: {theme.TEXT}; }}"
+            f" border-radius: 3px; color: {theme.TEXT};"
+            f" font-size: {theme.BASE_PT}pt; padding: 0; }}"
             f"QPushButton:hover    {{ background: {theme.BTN_HOVER}; }}"
             f"QPushButton:pressed  {{ background: {theme.BTN_PRESSED}; }}"
             f"QPushButton:disabled {{ color: rgba(255,255,255,40); background: {theme.BTN_BG}; }}"
         )
 
         self._prev_btn = QPushButton("◀")
-        self._prev_btn.setFixedSize(28, 24)
+        self._prev_btn.setFixedSize(24, 24)
         self._prev_btn.setFocusPolicy(Qt.NoFocus)
         self._prev_btn.setStyleSheet(_page_btn_style)
         self._prev_btn.clicked.connect(self._on_prev_page)
@@ -739,12 +752,13 @@ class IllustrationBrowser(QWidget):
         self._page_lbl = QLabel("—")
         self._page_lbl.setAlignment(Qt.AlignCenter)
         self._page_lbl.setStyleSheet(
-            f"color: {theme.TEXT}; font-size: {max(7, theme.BASE_PT - 1)}pt;"
+            f"color: {theme.TEXT}; font-family: '{theme.FAMILY_MONO}';"
+            f" font-size: {theme.BASE_PT}pt; font-weight: {theme.WEIGHT_MONO};"
         )
         lay.addWidget(self._page_lbl, 1)
 
         self._next_btn = QPushButton("▶")
-        self._next_btn.setFixedSize(28, 24)
+        self._next_btn.setFixedSize(24, 24)
         self._next_btn.setFocusPolicy(Qt.NoFocus)
         self._next_btn.setStyleSheet(_page_btn_style)
         self._next_btn.clicked.connect(self._on_next_page)
@@ -818,7 +832,7 @@ class IllustrationBrowser(QWidget):
         prev = self._item_combo.currentData()
         self._item_combo.blockSignals(True)
         self._item_combo.clear()
-        self._item_combo.addItem("<Item>", userData=None)
+        self._item_combo.addItem("<Title>", userData=None)
         for stem in films:
             self._item_combo.addItem(stem, userData=stem)
         idx = self._item_combo.findData(prev)
@@ -1113,21 +1127,21 @@ class IllustrationBrowser(QWidget):
             self._cells[idx].set_image(qimg)
 
     def _update_status(self) -> None:
-        total = len(self._filtered_items)
-        start = self._page_index * self._page_size
-        end   = min(start + self._page_size, total)
-        if total == 0:
-            self._status_lbl.setText("No items")
-        else:
-            self._status_lbl.setText(f"{start + 1}–{end} of {total}")
+        pass  # 'No items' is now shown in the pagination bar via _update_pagination
 
     def _update_pagination(self) -> None:
-        page_count = max(
-            1, math.ceil(len(self._filtered_items) / self._page_size)
-        )
-        self._page_lbl.setText(f"{self._page_index + 1} / {page_count}")
-        self._prev_btn.setEnabled(self._page_index > 0)
-        self._next_btn.setEnabled(self._page_index < page_count - 1)
+        total      = len(self._filtered_items)
+        page_count = max(1, math.ceil(total / self._page_size))
+        if total == 0:
+            self._page_lbl.setText("No items")
+            self._prev_btn.setEnabled(False)
+            self._next_btn.setEnabled(False)
+        else:
+            self._page_lbl.setText(
+                f"{self._page_index + 1} / {page_count} ({total})"
+            )
+            self._prev_btn.setEnabled(self._page_index > 0)
+            self._next_btn.setEnabled(self._page_index < page_count - 1)
 
     # ------------------------------------------------------------------ selection
 

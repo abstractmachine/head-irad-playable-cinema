@@ -30,7 +30,7 @@ from styles import theme
 # separation while keeping the interface quiet and low-contrast.
 _HEADER_BG       = "#5c5c5c"
 _HEADER_BG_HOVER = "#686868"
-_HEADER_H        = 22   # px
+_HEADER_H        = 24   # px
 
 
 class CollapsibleSection(QWidget):
@@ -71,6 +71,7 @@ class CollapsibleSection(QWidget):
             except Exception:
                 pass
         self._expanded = expanded
+        self._subbar: Optional[QWidget] = None
         self._build_ui()
 
     # ------------------------------------------------------------------ build
@@ -88,7 +89,7 @@ class CollapsibleSection(QWidget):
         self._header.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._header.setStyleSheet(
             f"QPushButton {{"
-            f"  background: {_HEADER_BG};"
+            f"  background: {theme.TITLE_BG};"
             f"  color: {theme.TEXT};"
             f"  border: none;"
             f"  border-radius: 2px;"
@@ -96,8 +97,9 @@ class CollapsibleSection(QWidget):
             f"  padding: 0 8px;"
             f"  font-family: '{theme.FAMILY_UI}';"
             f"  font-size: {theme.BASE_PT}pt;"
+            f"  font-weight: {theme.WEIGHT_UI};"
             f"}}"
-            f"QPushButton:hover {{ background: {_HEADER_BG_HOVER}; }}"
+            f"QPushButton:hover {{ background: {theme.ACCENT}; color: {theme.ACCENT_TEXT}; }}"
         )
         self._header.clicked.connect(self._toggle)
         self._refresh_header()
@@ -105,11 +107,11 @@ class CollapsibleSection(QWidget):
 
         # ── Content area ─────────────────────────────────────────────────
         self._body = QWidget()
-        self._body.setStyleSheet(f"background: {_HEADER_BG};")
+        self._body.setStyleSheet(f"background: {theme.TAB_BG};")
         self._body.setVisible(self._expanded)
         self._body_layout = QVBoxLayout(self._body)
-        self._body_layout.setContentsMargins(0, 4, 0, 4)
-        self._body_layout.setSpacing(4)
+        self._body_layout.setContentsMargins(0, 2, 0, 0)
+        self._body_layout.setSpacing(2)
         outer.addWidget(self._body)
 
     # ------------------------------------------------------------------ private
@@ -126,6 +128,8 @@ class CollapsibleSection(QWidget):
         self._expanded = not self._expanded
         self._refresh_header()
         self._body.setVisible(self._expanded)
+        if self._subbar is not None:
+            self._subbar.setVisible(self._expanded)
         # Persist the new state immediately
         if self._pref_key is not None:
             try:
@@ -139,6 +143,19 @@ class CollapsibleSection(QWidget):
     def add_widget(self, widget: QWidget) -> None:
         """Append *widget* to the content area."""
         self._body_layout.addWidget(widget)
+
+    def set_subbar(self, widget: QWidget) -> None:
+        """Insert *widget* between the header and the body.
+
+        The widget is placed in the outer layout (not inside the collapsible
+        body) so it remains visible even when the section is collapsed.
+        Intended for the fuchsia loading bar so it shows during loading
+        regardless of whether the Filter section is open or closed.
+        """
+        self._subbar = widget
+        widget.setParent(self)
+        widget.setVisible(self._expanded)
+        self.layout().insertWidget(1, widget)
 
     def set_subtitle(self, subtitle: str) -> None:
         """Set a subtitle shown after the title (e.g. the active keyword).
