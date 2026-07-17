@@ -3,9 +3,9 @@
 Scans the silhouette catalog for objects marked ``human_best=true`` and
 generates missing engravings for them.  Supports three modes:
 
-- ``"silhouette"`` — generate the silhouette engraving only.
-- ``"full"``       — generate the full-frame engraving only.
-- ``"both"``       — generate silhouette first, then full, for each target.
+- ``"isolated"`` — generate the isolated engraving only.
+- ``"frame"``     — generate the full-frame engraving only.
+- ``"both"``      — generate isolated first, then frame, for each target.
 
 Usage::
 
@@ -100,7 +100,7 @@ def batch_generate_engravings(
     project_path: str,
     targets: list[dict],
     *,
-    mode: str = "silhouette",
+    mode: str = "isolated",
     model: str = "gpt-image-2",
     size: str = "1024x1024",
     force: bool = False,
@@ -117,7 +117,7 @@ def batch_generate_engravings(
         Output of :func:`scan_best_silhouettes` — list of dicts with ``path``
         and ``meta`` keys.
     mode:
-        ``"silhouette"``, ``"full"``, or ``"both"``.
+        ``"isolated"``, ``"frame"``, or ``"both"``.
     model:
         OpenAI model name.
     size:
@@ -142,7 +142,7 @@ def batch_generate_engravings(
     skipped = 0
     failed = 0
 
-    modes_to_check = ("silhouette", "full") if mode == "both" else (mode,)
+    modes_to_check = ("isolated", "frame") if mode == "both" else (mode,)
 
     for target in targets:
         source_json = target["path"]

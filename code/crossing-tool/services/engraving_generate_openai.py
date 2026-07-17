@@ -2,22 +2,22 @@
 
 Workflow (per mode)
 -------------------
-**silhouette mode** (default)
+**isolated mode** (default)
 1. Check raw.png — bail early if already generated and force=False.
 2. (Re-)prepare the canonical folder via ``prepare_engraving_from_source``.
-3. Load the silhouette PNG and the silhouette prompt template.
+3. Load the silhouette PNG and the isolated prompt template.
 4. Expand the template with silhouette + annotation context.
 5. Call ``openai.images.edit()`` with the silhouette PNG as the reference.
 6. Write ``raw.png``; copy to ``<named-output>.png``.
 7. Update ``engraving.json`` and ``request.json``.
 
-**full mode**
+**frame mode**
 Same as above but uses the full-source-frame as the primary reference and
 the silhouette PNG as a secondary guidance image.  Both are passed to the
 API.  Requires ``meta["source_frame"]`` to resolve to an existing PNG.
 
 **both mode** (dispatch helper)
-Generates silhouette first, then full, in sequence.
+Generates isolated first, then frame, in sequence.
 
 The actual OpenAI network call is isolated in ``_call_openai_api()`` so tests
 can patch it without needing the ``openai`` package installed.
@@ -121,7 +121,7 @@ def _call_openai_api_dual(
     model: str,
     size: str,
 ) -> bytes:
-    """Call ``openai.images.edit()`` with two images (full mode) and return raw PNG bytes.
+    """Call ``openai.images.edit()`` with two images (frame mode) and return raw PNG bytes.
 
     The primary image is the full source frame; the silhouette is passed as a
     second reference image when the API supports it.  Falls back gracefully to
@@ -226,6 +226,35 @@ def _resolve_source_frame_png(
 
 
 # ---------------------------------------------------------------------------
+# Post-processing
+# ---------------------------------------------------------------------------
+
+def _remove_white_background(image_bytes: bytes) -> bytes:
+    """Convert a white-background engraving PNG to RGBA with transparent background.
+
+    Maps inverted max-channel brightness to alpha so that:
+    - Pure white  (255, 255, 255) → alpha = 0   (fully transparent)
+    - Pure black  (0,   0,   0)   → alpha = 255  (fully opaque ink)
+    - Mid-greys                   → proportionally semi-transparent
+
+    The RGB channels are preserved so ink colour stays black.
+    """
+    import io
+    import numpy as np
+    from PIL import Image
+
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+    data = np.array(img, dtype=np.uint8)
+    # alpha = 255 − max(R, G, B)  →  white→0, black→255
+    brightness = data[:, :, :3].max(axis=2)
+    data[:, :, 3] = 255 - brightness
+    result = Image.fromarray(data, "RGBA")
+    buf = io.BytesIO()
+    result.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -233,7 +262,7 @@ def generate_engraving_openai(
     project_path: str,
     source_json: str | Path,
     *,
-    mode: str = "silhouette",
+    mode: str = "isolated",
     model: str = DEFAULT_MODEL,
     size: str = DEFAULT_SIZE,
     force: bool = False,
@@ -247,9 +276,9 @@ def generate_engraving_openai(
     source_json:
         Path to an ``object_NNNN.json`` file inside the silhouette catalog.
     mode:
-        ``"silhouette"`` — use silhouette PNG as reference.
-        ``"full"``       — use full source frame + silhouette as references.
-        ``"both"``       — generate silhouette first, then full.
+        ``"isolated"`` — use silhouette PNG as reference.
+        ``"frame"``    — use full source frame + silhouette as references.
+        ``"both"``     — generate isolated first, then frame.
     model:
         OpenAI model to use (default: ``gpt-image-2``).
     size:
@@ -278,7 +307,7 @@ def generate_engraving_openai(
     """
     if mode == "both":
         results = []
-        for m in ("silhouette", "full"):
+        for m in ("isolated", "frame"):
             r = generate_engraving_openai(
                 project_path, source_json,
                 mode=m, model=model, size=size, force=force,
@@ -318,7 +347,7 @@ def generate_engraving_openai(
 
     try:
         # ── Step 4: call the API ──────────────────────────────────────────────────
-        if mode == "full":
+        if mode == "frame":
             frame_png = _resolve_source_frame_png(source_json, meta, str(project))
             image_bytes = _call_openai_api_dual(
                 api_key, expanded_prompt, frame_png, sil_png, model, size
@@ -332,6 +361,11 @@ def generate_engraving_openai(
         raise
 
     # ── Step 5: write raw.png → copy to named engraving output ───────────────
+    # For isolated mode, strip the white background so output is RGBA with
+    # transparent surroundings: alpha = inverted max-channel brightness so that
+    # pure-white areas become fully transparent and black ink stays fully opaque.
+    if mode == "isolated":
+        image_bytes = _remove_white_background(image_bytes)
     paths["raw_png"].write_bytes(image_bytes)
     shutil.copy2(paths["raw_png"], paths["engraving_png"])
 
@@ -353,7 +387,7 @@ def generate_engraving_openai(
         "silhouette_png": _project_rel(str(project), sil_png),
         "source_frame_png": (
             _project_rel(str(project), _resolve_source_frame_png(source_json, meta, str(project)))
-            if mode == "full" and meta.get("source_frame")
+            if mode == "frame" and meta.get("source_frame")
             else None
         ),
     }

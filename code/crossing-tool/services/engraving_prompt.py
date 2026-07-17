@@ -5,8 +5,8 @@ under ``<project>/prompts/engravings/``.
 
 Naming convention
 -----------------
-- ``engravings-silhouette-YYYY-MM-DD-vN.txt``  — silhouette mode
-- ``engravings-full-YYYY-MM-DD-vN.txt``        — full mode
+- ``engravings-isolated-YYYY-MM-DD-vN.txt``  — isolated mode
+- ``engravings-frame-YYYY-MM-DD-vN.txt``     — frame mode
 
 The loader filters candidates by the ``<mode>`` prefix segment so each mode
 always resolves its own prompt file and the two sets are never mixed.
@@ -35,7 +35,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-ENGRAVING_MODES = ("silhouette", "full")
+ENGRAVING_MODES = ("isolated", "frame")
 
 
 class EngravingPromptError(RuntimeError):
@@ -44,7 +44,7 @@ class EngravingPromptError(RuntimeError):
 
 def load_engraving_prompt(
     project_path: str,
-    mode: str = "silhouette",
+    mode: str = "isolated",
 ) -> tuple[str, str]:
     """Return *(prompt_filename, prompt_template)* for the given *mode*.
 
@@ -53,7 +53,7 @@ def load_engraving_prompt(
     project_path:
         Absolute path to the crossing project directory.
     mode:
-        ``"silhouette"`` or ``"full"``.  Selects the set of prompt files
+        ``"isolated"`` or ``"frame"``.  Selects the set of prompt files
         whose filename contains ``-<mode>-`` as a segment.  Falls back to the
         alphabetically-last ``.txt`` in the directory when no mode-prefixed
         file is found.

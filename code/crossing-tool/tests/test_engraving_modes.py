@@ -52,19 +52,19 @@ _FAKE_PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_project(tmp: Path, *, with_silhouette_prompt=True, with_full_prompt=True) -> Path:
+def _make_project(tmp: Path, *, with_isolated_prompt=True, with_frame_prompt=True) -> Path:
     """Minimal project with mode-specific prompt files and an OpenAI key."""
     project = tmp / "project"
     prompts_dir = project / "prompts" / "engravings"
     prompts_dir.mkdir(parents=True)
-    if with_silhouette_prompt:
-        (prompts_dir / "engravings-silhouette-2026-01-01-v1.txt").write_text(
-            "Silhouette engraving: $label ($field) motif=$motif",
+    if with_isolated_prompt:
+        (prompts_dir / "engravings-isolated-2026-01-01-v1.txt").write_text(
+            "Isolated engraving: $label ($field) motif=$motif",
             encoding="utf-8",
         )
-    if with_full_prompt:
-        (prompts_dir / "engravings-full-2026-01-01-v1.txt").write_text(
-            "Full engraving: $label from $filename_stem motif=$motif",
+    if with_frame_prompt:
+        (prompts_dir / "engravings-frame-2026-01-01-v1.txt").write_text(
+            "Frame engraving: $label from $filename_stem motif=$motif",
             encoding="utf-8",
         )
     key_dir = project / "preferences" / "keys"
@@ -137,28 +137,28 @@ class TestLoadEngravingPromptModeAware(unittest.TestCase):
 
     def test_silhouette_mode_picks_silhouette_file(self):
         project = _make_project(self.tmp)
-        name, text = load_engraving_prompt(str(project), mode="silhouette")
-        self.assertIn("silhouette", name)
-        self.assertIn("Silhouette engraving", text)
+        name, text = load_engraving_prompt(str(project), mode="isolated")
+        self.assertIn("isolated", name)
+        self.assertIn("Isolated engraving", text)
 
     def test_full_mode_picks_full_file(self):
         project = _make_project(self.tmp)
-        name, text = load_engraving_prompt(str(project), mode="full")
-        self.assertIn("full", name)
-        self.assertIn("Full engraving", text)
+        name, text = load_engraving_prompt(str(project), mode="frame")
+        self.assertIn("frame", name)
+        self.assertIn("Frame engraving", text)
 
     def test_silhouette_and_full_use_different_files(self):
         project = _make_project(self.tmp)
-        sil_name, _ = load_engraving_prompt(str(project), mode="silhouette")
-        full_name, _ = load_engraving_prompt(str(project), mode="full")
+        sil_name, _ = load_engraving_prompt(str(project), mode="isolated")
+        full_name, _ = load_engraving_prompt(str(project), mode="frame")
         self.assertNotEqual(sil_name, full_name)
 
     def test_fallback_to_last_file_when_no_mode_prefix(self):
         """When no mode-prefixed file exists, falls back to alphabetically last."""
-        project = _make_project(self.tmp, with_silhouette_prompt=False, with_full_prompt=False)
+        project = _make_project(self.tmp, with_isolated_prompt=False, with_frame_prompt=False)
         prompts_dir = project / "prompts" / "engravings"
         (prompts_dir / "engravings-2026-01-01-v1.txt").write_text("Generic prompt", encoding="utf-8")
-        name, text = load_engraving_prompt(str(project), mode="silhouette")
+        name, text = load_engraving_prompt(str(project), mode="isolated")
         self.assertEqual(text, "Generic prompt")
 
     def test_unknown_mode_raises_value_error(self):
@@ -170,18 +170,18 @@ class TestLoadEngravingPromptModeAware(unittest.TestCase):
         project = self.tmp / "empty_project"
         project.mkdir()
         with self.assertRaises(EngravingPromptError):
-            load_engraving_prompt(str(project), mode="silhouette")
+            load_engraving_prompt(str(project), mode="isolated")
 
     def test_latest_version_selected_when_multiple(self):
         """Alphabetically last versioned file within a mode is selected."""
         project = _make_project(self.tmp)
         prompts_dir = project / "prompts" / "engravings"
-        (prompts_dir / "engravings-silhouette-2026-07-01-v2.txt").write_text(
-            "Newer silhouette prompt", encoding="utf-8"
+        (prompts_dir / "engravings-isolated-2026-07-01-v2.txt").write_text(
+            "Newer isolated prompt", encoding="utf-8"
         )
-        name, text = load_engraving_prompt(str(project), mode="silhouette")
+        name, text = load_engraving_prompt(str(project), mode="isolated")
         self.assertIn("v2", name)
-        self.assertEqual(text, "Newer silhouette prompt")
+        self.assertEqual(text, "Newer isolated prompt")
 
 
 # ---------------------------------------------------------------------------
@@ -209,33 +209,33 @@ class TestEngravingOutputFilename(unittest.TestCase):
 
     def test_contains_movie_stub(self):
         json_path, meta = self._make_json(self.tmp)
-        name = engraving_output_filename(json_path, meta, "silhouette")
+        name = engraving_output_filename(json_path, meta, "isolated")
         self.assertIn("django", name.lower())
 
     def test_contains_frame_id(self):
         json_path, meta = self._make_json(self.tmp)
-        name = engraving_output_filename(json_path, meta, "silhouette")
+        name = engraving_output_filename(json_path, meta, "isolated")
         self.assertIn("f001275", name)
 
     def test_contains_object_id(self):
         json_path, meta = self._make_json(self.tmp)
-        name = engraving_output_filename(json_path, meta, "silhouette")
+        name = engraving_output_filename(json_path, meta, "isolated")
         self.assertIn("object_0007", name)
 
     def test_contains_mode_silhouette(self):
         json_path, meta = self._make_json(self.tmp)
-        name = engraving_output_filename(json_path, meta, "silhouette")
-        self.assertTrue(name.endswith("-silhouette.png"))
+        name = engraving_output_filename(json_path, meta, "isolated")
+        self.assertTrue(name.endswith("-isolated.png"))
 
     def test_contains_mode_full(self):
         json_path, meta = self._make_json(self.tmp)
-        name = engraving_output_filename(json_path, meta, "full")
-        self.assertTrue(name.endswith("-full.png"))
+        name = engraving_output_filename(json_path, meta, "frame")
+        self.assertTrue(name.endswith("-frame.png"))
 
     def test_silhouette_and_full_names_differ(self):
         json_path, meta = self._make_json(self.tmp)
-        sil = engraving_output_filename(json_path, meta, "silhouette")
-        full = engraving_output_filename(json_path, meta, "full")
+        sil = engraving_output_filename(json_path, meta, "isolated")
+        full = engraving_output_filename(json_path, meta, "frame")
         self.assertNotEqual(sil, full)
 
 
@@ -255,29 +255,29 @@ class TestEngravingPathsMode(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_silhouette_paths_in_silhouette_subdir(self):
-        paths = engraving_paths(str(self.tmp), self.json_path, self.meta, "silhouette")
-        self.assertIn("silhouette", str(paths["dir"]))
+        paths = engraving_paths(str(self.tmp), self.json_path, self.meta, "isolated")
+        self.assertIn("isolated", str(paths["dir"]))
 
     def test_full_paths_in_full_subdir(self):
-        paths = engraving_paths(str(self.tmp), self.json_path, self.meta, "full")
-        self.assertIn("full", str(paths["dir"]))
+        paths = engraving_paths(str(self.tmp), self.json_path, self.meta, "frame")
+        self.assertIn("frame", str(paths["dir"]))
 
     def test_silhouette_and_full_dirs_different(self):
-        sil = engraving_paths(str(self.tmp), self.json_path, self.meta, "silhouette")["dir"]
-        full = engraving_paths(str(self.tmp), self.json_path, self.meta, "full")["dir"]
+        sil = engraving_paths(str(self.tmp), self.json_path, self.meta, "isolated")["dir"]
+        full = engraving_paths(str(self.tmp), self.json_path, self.meta, "frame")["dir"]
         self.assertNotEqual(sil, full)
 
     def test_is_generated_false_when_no_raw_png(self):
         self.assertFalse(
-            engraving_is_generated(str(self.tmp), self.json_path, self.meta, "silhouette")
+            engraving_is_generated(str(self.tmp), self.json_path, self.meta, "isolated")
         )
 
     def test_is_generated_true_when_raw_png_exists(self):
-        paths = engraving_paths(str(self.tmp), self.json_path, self.meta, "silhouette")
+        paths = engraving_paths(str(self.tmp), self.json_path, self.meta, "isolated")
         paths["dir"].mkdir(parents=True, exist_ok=True)
         paths["raw_png"].write_bytes(_FAKE_PNG_BYTES)
         self.assertTrue(
-            engraving_is_generated(str(self.tmp), self.json_path, self.meta, "silhouette")
+            engraving_is_generated(str(self.tmp), self.json_path, self.meta, "isolated")
         )
 
 
@@ -320,7 +320,7 @@ class TestGenerateEngravingOpenAIModes(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def _run(self, mode="silhouette", force=False, mock_single=None, mock_dual=None):
+    def _run(self, mode="isolated", force=False, mock_single=None, mock_dual=None):
         from services.engraving_generate_openai import generate_engraving_openai
         single_ret = mock_single if mock_single is not None else _FAKE_PNG_BYTES
         dual_ret = mock_dual if mock_dual is not None else _FAKE_PNG_BYTES
@@ -340,52 +340,52 @@ class TestGenerateEngravingOpenAIModes(unittest.TestCase):
     # ── silhouette mode ──────────────────────────────────────────────────────
 
     def test_silhouette_uses_single_image_call(self):
-        _, mock_s, mock_d = self._run(mode="silhouette")
+        _, mock_s, mock_d = self._run(mode="isolated")
         mock_s.assert_called_once()
         mock_d.assert_not_called()
 
     def test_silhouette_prompt_file_used(self):
-        result, _, _ = self._run(mode="silhouette")
+        result, _, _ = self._run(mode="isolated")
         meta_text = result["metadata"].read_text()
         meta = json.loads(meta_text)
-        self.assertIn("silhouette", meta["prompt"]["prompt_file"])
+        self.assertIn("isolated", meta["prompt"]["prompt_file"])
 
     def test_silhouette_mode_stored_in_json(self):
-        result, _, _ = self._run(mode="silhouette")
+        result, _, _ = self._run(mode="isolated")
         meta = json.loads(result["metadata"].read_text())
-        self.assertEqual(meta["mode"], "silhouette")
+        self.assertEqual(meta["mode"], "isolated")
 
     def test_silhouette_engraving_png_has_mode_in_name(self):
-        result, _, _ = self._run(mode="silhouette")
-        self.assertIn("silhouette", result["engraving_png"].name)
+        result, _, _ = self._run(mode="isolated")
+        self.assertIn("isolated", result["engraving_png"].name)
 
     def test_silhouette_raw_png_written(self):
-        result, _, _ = self._run(mode="silhouette")
+        result, _, _ = self._run(mode="isolated")
         self.assertTrue(result["raw_png"].exists())
 
     # ── full mode ────────────────────────────────────────────────────────────
 
     def test_full_uses_dual_image_call(self):
-        _, mock_s, mock_d = self._run(mode="full")
+        _, mock_s, mock_d = self._run(mode="frame")
         mock_d.assert_called_once()
         mock_s.assert_not_called()
 
     def test_full_prompt_file_used(self):
-        result, _, _ = self._run(mode="full")
+        result, _, _ = self._run(mode="frame")
         meta = json.loads(result["metadata"].read_text())
-        self.assertIn("full", meta["prompt"]["prompt_file"])
+        self.assertIn("frame", meta["prompt"]["prompt_file"])
 
     def test_full_mode_stored_in_json(self):
-        result, _, _ = self._run(mode="full")
+        result, _, _ = self._run(mode="frame")
         meta = json.loads(result["metadata"].read_text())
-        self.assertEqual(meta["mode"], "full")
+        self.assertEqual(meta["mode"], "frame")
 
     def test_full_engraving_png_has_mode_in_name(self):
-        result, _, _ = self._run(mode="full")
-        self.assertIn("full", result["engraving_png"].name)
+        result, _, _ = self._run(mode="frame")
+        self.assertIn("frame", result["engraving_png"].name)
 
     def test_full_inputs_include_source_frame(self):
-        result, _, _ = self._run(mode="full")
+        result, _, _ = self._run(mode="frame")
         meta = json.loads(result["metadata"].read_text())
         self.assertIsNotNone(meta.get("inputs", {}).get("source_frame_png"))
 
@@ -419,11 +419,11 @@ class TestGenerateEngravingOpenAIModes(unittest.TestCase):
 
     def test_both_first_result_is_silhouette(self):
         result, _, _ = self._run(mode="both")
-        self.assertEqual(result[0]["mode"], "silhouette")
+        self.assertEqual(result[0]["mode"], "isolated")
 
     def test_both_second_result_is_full(self):
         result, _, _ = self._run(mode="both")
-        self.assertEqual(result[1]["mode"], "full")
+        self.assertEqual(result[1]["mode"], "frame")
 
     def test_both_calls_single_and_dual(self):
         _, mock_s, mock_d = self._run(mode="both")
@@ -439,14 +439,14 @@ class TestGenerateEngravingOpenAIModes(unittest.TestCase):
             "services.engraving_generate_openai._call_openai_api",
             return_value=_FAKE_PNG_BYTES,
         ):
-            generate_engraving_openai(str(self.project), self.json_path, mode="silhouette")
+            generate_engraving_openai(str(self.project), self.json_path, mode="isolated")
         # Second attempt without force
         with patch(
             "services.engraving_generate_openai._call_openai_api",
             return_value=_FAKE_PNG_BYTES,
         ):
             with self.assertRaises(FileExistsError):
-                generate_engraving_openai(str(self.project), self.json_path, mode="silhouette")
+                generate_engraving_openai(str(self.project), self.json_path, mode="isolated")
 
     def test_force_regenerates(self):
         from services.engraving_generate_openai import generate_engraving_openai
@@ -454,7 +454,7 @@ class TestGenerateEngravingOpenAIModes(unittest.TestCase):
             "services.engraving_generate_openai._call_openai_api",
             return_value=_FAKE_PNG_BYTES,
         ):
-            r1 = generate_engraving_openai(str(self.project), self.json_path, mode="silhouette")
+            r1 = generate_engraving_openai(str(self.project), self.json_path, mode="isolated")
         # Overwrite raw.png with different content so we can detect the write
         r1["raw_png"].write_bytes(b"old")
         with patch(
@@ -462,14 +462,14 @@ class TestGenerateEngravingOpenAIModes(unittest.TestCase):
             return_value=_FAKE_PNG_BYTES,
         ):
             r2 = generate_engraving_openai(
-                str(self.project), self.json_path, mode="silhouette", force=True
+                str(self.project), self.json_path, mode="isolated", force=True
             )
         self.assertEqual(r2["raw_png"].read_bytes(), _FAKE_PNG_BYTES)
 
     def test_request_json_contains_mode(self):
-        result, _, _ = self._run(mode="full")
+        result, _, _ = self._run(mode="frame")
         request = json.loads(result["metadata"].parent.joinpath("request.json").read_text())
-        self.assertEqual(request["mode"], "full")
+        self.assertEqual(request["mode"], "frame")
 
 
 # ---------------------------------------------------------------------------
@@ -561,15 +561,15 @@ class TestBatchGenerateEngravings(unittest.TestCase):
 
     def test_skips_already_generated(self):
         from services.engraving_batch import batch_generate_engravings
-        # Pre-generate silhouette
-        paths = engraving_paths(str(self.project), self.json_path, self.targets[0]["meta"], "silhouette")
+        # Pre-generate isolated
+        paths = engraving_paths(str(self.project), self.json_path, self.targets[0]["meta"], "isolated")
         paths["dir"].mkdir(parents=True, exist_ok=True)
         paths["raw_png"].write_bytes(_FAKE_PNG_BYTES)
 
         p1, p2 = self._patch_api()
         with p1 as mock_s, p2:
             summary = batch_generate_engravings(
-                str(self.project), self.targets, mode="silhouette"
+                str(self.project), self.targets, mode="isolated"
             )
         mock_s.assert_not_called()
         self.assertEqual(summary["skipped"], 1)
@@ -577,15 +577,15 @@ class TestBatchGenerateEngravings(unittest.TestCase):
 
     def test_force_regenerates_existing(self):
         from services.engraving_batch import batch_generate_engravings
-        # Pre-generate silhouette
-        paths = engraving_paths(str(self.project), self.json_path, self.targets[0]["meta"], "silhouette")
+        # Pre-generate isolated
+        paths = engraving_paths(str(self.project), self.json_path, self.targets[0]["meta"], "isolated")
         paths["dir"].mkdir(parents=True, exist_ok=True)
         paths["raw_png"].write_bytes(b"old")
 
         p1, p2 = self._patch_api()
         with p1 as mock_s, p2:
             summary = batch_generate_engravings(
-                str(self.project), self.targets, mode="silhouette", force=True
+                str(self.project), self.targets, mode="isolated", force=True
             )
         mock_s.assert_called_once()
         self.assertEqual(summary["generated"], 1)
@@ -596,7 +596,7 @@ class TestBatchGenerateEngravings(unittest.TestCase):
         p1, p2 = self._patch_api()
         with p1 as mock_s, p2:
             summary = batch_generate_engravings(
-                str(self.project), self.targets, mode="silhouette"
+                str(self.project), self.targets, mode="isolated"
             )
         mock_s.assert_called_once()
         self.assertEqual(summary["generated"], 1)
@@ -623,7 +623,7 @@ class TestBatchGenerateEngravings(unittest.TestCase):
             side_effect=RuntimeError("API error"),
         ):
             summary = batch_generate_engravings(
-                str(self.project), self.targets, mode="silhouette"
+                str(self.project), self.targets, mode="isolated"
             )
         self.assertEqual(summary["failed"], 1)
         self.assertEqual(summary["generated"], 0)
@@ -640,7 +640,7 @@ class TestBatchGenerateEngravings(unittest.TestCase):
             batch_generate_engravings(
                 str(self.project),
                 self.targets,
-                mode="silhouette",
+                mode="isolated",
                 on_item_done=_cb,
             )
         self.assertEqual(len(calls), 1)

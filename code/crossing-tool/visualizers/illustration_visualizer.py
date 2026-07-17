@@ -1443,13 +1443,10 @@ class _BatchEngravingWorker(QThread):
                 stderr=subprocess.PIPE,
                 text=True,
             )
-            # Drain stdout (verbose progress lines) so the pipe never blocks.
+            # Drain stdout so the pipe never blocks.
             for line in self._process.stdout:
                 if self._cancelled:
                     break
-                stripped = line.rstrip()
-                if stripped:
-                    print(f"[batch] {stripped}", file=_sys.stdout, flush=True)
             self._process.wait()
             if self._cancelled:
                 self.finished.emit(False, "Cancelled")
@@ -2022,7 +2019,11 @@ class IllustrationPane(QWidget):
             self._meta_rows  = self._eng_meta_rows
             self._sort_combo = self._eng_sort_combo
         self._browser_stack.setCurrentIndex(idx)
-        self._clear_meta()
+        rec = self._browser.currentItem()
+        if rec:
+            self._on_selection_changed(rec)
+        else:
+            self._clear_meta()
 
     @property
     def _active_best_btn(self):
@@ -2066,8 +2067,8 @@ class IllustrationPane(QWidget):
         combo.setFocusPolicy(Qt.NoFocus)
         combo.setSizeAdjustPolicy(QComboBox.AdjustToContentsOnFirstShow)
         combo.addItem("Isolated + Frame", userData="")          # no filter
-        combo.addItem("Frame",            userData="full")
-        combo.addItem("Isolated",         userData="silhouette")
+        combo.addItem("Frame",            userData="frame")
+        combo.addItem("Isolated",         userData="isolated")
         combo.setStyleSheet(
             f"QComboBox {{ background: {theme.BTN_BG}; color: {theme.TEXT};"
             f" border: none; border-radius: 3px; padding: 0px 6px;"
@@ -2078,7 +2079,7 @@ class IllustrationPane(QWidget):
         )
 
         def _on_mode_changed(_idx: int) -> None:
-            mode = combo.currentData()  # "" = Both (no filter), "full", "silhouette"
+            mode = combo.currentData()  # "" = Both (no filter), "frame", "isolated"
             self._eng_source.set_mode_filter(mode)
             browser.refresh()
 

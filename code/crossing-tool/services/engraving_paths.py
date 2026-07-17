@@ -4,7 +4,7 @@ Engravings are derivative assets of silhouette catalog objects.  The
 canonical database path does **not** include the provider or model name —
 that information belongs inside ``engraving.json``, not in the folder path.
 
-Two engraving *modes* are supported: ``"silhouette"`` and ``"full"``.  Each
+Two engraving *modes* are supported: ``"isolated"`` and ``"frame"``.  Each
 mode lives in its own sub-folder so both can coexist for the same object:
 
 Canonical layout::
@@ -12,7 +12,7 @@ Canonical layout::
     <project>/data/engravings/catalog/<media_type>/<filename_stem>/<label>/<object_id>/<mode>/
         request.json
         raw.png
-        <engraving-filename>.png   — named output (e.g. django_1966-f001275-object_0001-silhouette.png)
+        <engraving-filename>.png   — named output (e.g. django_1966-f001275-object_0001-isolated.png)
         engraving.json
 
 ``raw.png`` is the direct model output; the named output is the curated copy
@@ -34,7 +34,7 @@ import re
 from pathlib import Path
 
 ENGRAVING_SCHEMA_VERSION = "2"
-ENGRAVING_MODES = ("silhouette", "full")
+ENGRAVING_MODES = ("isolated", "frame")
 
 # Explicit lifecycle states stored in engraving.json["status"].
 ENGRAVING_STATUSES = ("pending", "generating", "generated", "failed")
@@ -98,11 +98,11 @@ def engraving_dir_for_source(
     project_path: str,
     source_json: str | Path,
     meta: dict,
-    mode: str = "silhouette",
+    mode: str = "isolated",
 ) -> Path:
     """Return the canonical engraving directory for a silhouette object JSON.
 
-    Each mode lives in its own sub-directory so silhouette and full engravings
+    Each mode lives in its own sub-directory so isolated and frame engravings
     can coexist for the same object.
     """
     source_json = Path(source_json)
@@ -136,8 +136,8 @@ def engraving_output_filename(
 
     Examples::
 
-        django_1966-f001275-object_0001-silhouette.png
-        django_1966-f001275-object_0001-full.png
+        django_1966-f001275-object_0001-isolated.png
+        django_1966-f001275-object_0001-frame.png
     """
     source_json = Path(source_json)
     filename_stem = meta.get("filename_stem") or Path(meta.get("filename", "unknown")).stem
@@ -157,7 +157,7 @@ def engraving_paths(
     project_path: str,
     source_json: str | Path,
     meta: dict,
-    mode: str = "silhouette",
+    mode: str = "isolated",
 ) -> dict[str, Path]:
     """Return a dict of all canonical paths for a single engraving asset."""
     base = engraving_dir_for_source(project_path, source_json, meta, mode)
@@ -220,7 +220,7 @@ def engraving_status(
     project_path: str,
     source_json: str | Path,
     meta: dict,
-    mode: str = "silhouette",
+    mode: str = "isolated",
 ) -> str | None:
     """Return the explicit lifecycle status from ``engraving.json``.
 
@@ -236,7 +236,7 @@ def engraving_is_generated(
     project_path: str,
     source_json: str | Path,
     meta: dict,
-    mode: str = "silhouette",
+    mode: str = "isolated",
 ) -> bool:
     """Return ``True`` when the engraving has status ``"generated"``."""
     return engraving_status(project_path, source_json, meta, mode) == "generated"

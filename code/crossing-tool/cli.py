@@ -6608,7 +6608,7 @@ def _engraving_generate(args):
     project_path = prefs.get("path")
     provider = getattr(args, "provider", "prepare") or "prepare"
     force = getattr(args, "force", False)
-    mode = getattr(args, "mode", "silhouette") or "silhouette"
+    mode = getattr(args, "mode", "isolated") or "isolated"
 
     def _rel(p, project):
         try:
@@ -6692,7 +6692,7 @@ def _engraving_batch(args):
     """Batch-generate engravings for all human-best silhouettes not yet generated."""
     _require_path()
     project_path = prefs.get("path")
-    mode = getattr(args, "mode", "silhouette") or "silhouette"
+    mode = getattr(args, "mode", "isolated") or "isolated"
     media_type = normalize_media_type(getattr(args, "media", "movie"))
     label = getattr(args, "label", None)
     model = getattr(args, "model", None) or "gpt-image-2"
@@ -6711,7 +6711,7 @@ def _engraving_batch(args):
         print(f"No human-best silhouettes found for {media_type}{label_note}.")
         return
 
-    modes_info = f"silhouette+full" if mode == "both" else mode
+    modes_info = f"isolated+frame" if mode == "both" else mode
     print(
         f"Batch engraving: {len(targets)} human-best silhouette(s)  "
         f"mode={modes_info}  media={media_type}"
@@ -9795,9 +9795,9 @@ def build_parser():
     p_eng_generate.add_argument(
         "--mode",
         dest="mode",
-        choices=["silhouette", "full", "both"],
-        default="silhouette",
-        help="Engraving mode: silhouette (default), full, or both",
+        choices=["isolated", "frame", "both"],
+        default="isolated",
+        help="Engraving mode: isolated (default), frame, or both",
     )
     p_eng_generate.add_argument(
         "--model",
@@ -9828,9 +9828,9 @@ def build_parser():
     p_eng_batch.add_argument(
         "--mode",
         dest="mode",
-        choices=["silhouette", "full", "both"],
-        default="silhouette",
-        help="Engraving mode: silhouette (default), full, or both",
+        choices=["isolated", "frame", "both"],
+        default="isolated",
+        help="Engraving mode: isolated (default), frame, or both",
     )
     p_eng_batch.add_argument(
         "--media",
