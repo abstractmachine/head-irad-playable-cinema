@@ -321,6 +321,15 @@ class EngravingSource(IllustrationSource):
                     ]
                     output_png = str(named[0]) if named else raw_png
 
+                # Use the explicit status field as the authoritative lifecycle state.
+                # Only "generated" engravings have a viewable image.
+                # Migration of legacy files (no status) happens transparently
+                # inside read_engraving_meta when the status is first read.
+                from services.engraving_paths import read_engraving_meta
+                eng_meta = read_engraving_meta(eng_json_path)
+                if (eng_meta or {}).get("status") != "generated":
+                    continue
+
                 record: dict = {
                     "label":          label,
                     "field":          "--all",   # no annotation taxonomy

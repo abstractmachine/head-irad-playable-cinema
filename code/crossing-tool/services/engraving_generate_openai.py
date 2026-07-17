@@ -43,6 +43,19 @@ DEFAULT_SIZE = "1024x1024"
 VALID_SIZES = ("1024x1024", "1024x1792", "1792x1024")
 
 
+def _set_status(metadata_path: Path, status: str, **extra) -> None:
+    """Update ``engraving.json`` status field in-place (best-effort)."""
+    try:
+        meta = json.loads(metadata_path.read_text(encoding="utf-8"))
+        meta["status"] = status
+        meta.update(extra)
+        metadata_path.write_text(
+            json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+    except Exception:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Prompt expansion
 # ---------------------------------------------------------------------------
@@ -280,9 +293,12 @@ def generate_engraving_openai(
     paths = engraving_paths(str(project), source_json, meta, mode)
 
     # ── Guard: bail early before any expensive work ──────────────────────────
-    if paths["raw_png"].exists() and not force:
+    from services.engraving_paths import read_engraving_meta, ENGRAVING_STATUSES
+    existing = read_engraving_meta(paths["metadata"])
+    existing_status = (existing or {}).get("status")
+    if existing_status == "generated" and not force:
         raise FileExistsError(
-            f"Engraving already generated ({mode}):\n  {paths['raw_png']}\n"
+            f"Engraving already generated ({mode}):\n  {paths['metadata']}\n"
             "Pass force=True (or --force on the CLI) to regenerate."
         )
 
@@ -297,14 +313,23 @@ def generate_engraving_openai(
     # ── Step 3: get OpenAI key ────────────────────────────────────────────────
     api_key = get_key(OPENAI_API_NAME, str(project))
 
-    # ── Step 4: call the API ──────────────────────────────────────────────────
-    if mode == "full":
-        frame_png = _resolve_source_frame_png(source_json, meta, str(project))
-        image_bytes = _call_openai_api_dual(
-            api_key, expanded_prompt, frame_png, sil_png, model, size
-        )
-    else:
-        image_bytes = _call_openai_api(api_key, expanded_prompt, sil_png, model, size)
+    # ── Mark as generating before the API call so crashed processes are detected
+    _set_status(paths["metadata"], "generating")
+
+    try:
+        # ── Step 4: call the API ──────────────────────────────────────────────────
+        if mode == "full":
+            frame_png = _resolve_source_frame_png(source_json, meta, str(project))
+            image_bytes = _call_openai_api_dual(
+                api_key, expanded_prompt, frame_png, sil_png, model, size
+            )
+        else:
+            image_bytes = _call_openai_api(api_key, expanded_prompt, sil_png, model, size)
+    except Exception as exc:
+        _set_status(paths["metadata"], "failed",
+                    last_error=str(exc),
+                    last_attempt=datetime.now(timezone.utc).isoformat())
+        raise
 
     # ── Step 5: write raw.png → copy to named engraving output ───────────────
     paths["raw_png"].write_bytes(image_bytes)

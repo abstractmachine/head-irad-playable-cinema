@@ -29,11 +29,15 @@ where *title_stub* is a filesystem-safe movie title abbreviation,
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
 ENGRAVING_SCHEMA_VERSION = "2"
 ENGRAVING_MODES = ("silhouette", "full")
+
+# Explicit lifecycle states stored in engraving.json["status"].
+ENGRAVING_STATUSES = ("pending", "generating", "generated", "failed")
 
 
 def _safe_part(value: str) -> str:
@@ -167,12 +171,72 @@ def engraving_paths(
     }
 
 
+def read_engraving_meta(eng_json_path: Path) -> dict | None:
+    """Read ``engraving.json`` and migrate legacy / interrupted files in-place.
+
+    Migration rules
+    ---------------
+    - No ``status`` field, or ``status == "prepared"`` (old name):
+        * ``raw.png`` present  → ``"generated"``
+        * ``raw.png`` absent   → ``"pending"``
+    - ``status == "generating"``:
+        The process that was generating did not finish; treat as ``"failed"``.
+
+    Returns ``None`` when the file does not exist.
+    """
+    if not eng_json_path.exists():
+        return None
+    try:
+        meta = json.loads(eng_json_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+    changed = False
+    status = meta.get("status")
+
+    if status not in ENGRAVING_STATUSES:
+        # Legacy "prepared" or missing status — infer from filesystem.
+        raw_png = eng_json_path.parent / "raw.png"
+        meta["status"] = "generated" if raw_png.exists() else "pending"
+        changed = True
+    elif status == "generating":
+        # Process died mid-generation.
+        meta["status"] = "failed"
+        meta.setdefault("last_error", "interrupted (generation process did not complete)")
+        changed = True
+
+    if changed:
+        try:
+            eng_json_path.write_text(
+                json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+        except Exception:
+            pass
+
+    return meta
+
+
+def engraving_status(
+    project_path: str,
+    source_json: str | Path,
+    meta: dict,
+    mode: str = "silhouette",
+) -> str | None:
+    """Return the explicit lifecycle status from ``engraving.json``.
+
+    Returns ``None`` when no engraving exists for the given mode.
+    Migrates legacy files transparently.
+    """
+    paths = engraving_paths(project_path, source_json, meta, mode)
+    eng_meta = read_engraving_meta(paths["metadata"])
+    return eng_meta.get("status") if eng_meta is not None else None
+
+
 def engraving_is_generated(
     project_path: str,
     source_json: str | Path,
     meta: dict,
     mode: str = "silhouette",
 ) -> bool:
-    """Return True when ``raw.png`` already exists for the given mode."""
-    paths = engraving_paths(project_path, source_json, meta, mode)
-    return paths["raw_png"].exists()
+    """Return ``True`` when the engraving has status ``"generated"``."""
+    return engraving_status(project_path, source_json, meta, mode) == "generated"

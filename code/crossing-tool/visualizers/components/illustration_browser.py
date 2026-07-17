@@ -213,6 +213,57 @@ def _clean_stem(stem: str) -> str:
 # IllustrationBrowser
 # ---------------------------------------------------------------------------
 
+class _SweepBar(QWidget):
+    """2 px loading indicator: a fixed-width ACCENT stripe sweeping left → right.
+
+    Uses a custom paintEvent so no QProgressBar track is ever drawn — the idle
+    state is completely invisible and the active colour matches theme.ACCENT
+    exactly, unaffected by any style engine.
+    """
+    _STRIPE_RATIO = 0.30   # stripe is 30 % of bar width
+    _STEP         = 0.04   # advance per tick (~50 fps → ~500 ms per sweep)
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setFixedHeight(2)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self._t      = 0.0
+        self._active = False
+
+    def start(self) -> None:
+        self._t      = 0.0
+        self._active = True
+        self.update()
+
+    def stop(self) -> None:
+        self._active = False
+        self.update()
+
+    def tick(self) -> None:
+        if self._active:
+            # t runs from 0 → 1+STRIPE_RATIO so the stripe fully exits on the right
+            self._t += self._STEP
+            if self._t > 1.0 + self._STRIPE_RATIO:
+                self._t = -self._STRIPE_RATIO        # restart fully off-screen left
+            self.update()
+
+    def paintEvent(self, event) -> None:
+        from PyQt5.QtGui import QPainter, QColor
+        p = QPainter(self)
+        w, h = self.width(), self.height()
+        p.fillRect(0, 0, w, h, QColor(0, 0, 0, 0))   # transparent background
+        if self._active and w > 0:
+            sw  = max(1, int(w * self._STRIPE_RATIO))
+            # leading edge of the stripe
+            x = int(self._t * w) - sw
+            x1 = max(0, x)
+            x2 = min(w, x + sw)
+            if x2 > x1:
+                p.fillRect(x1, 0, x2 - x1, h, QColor(theme.ACCENT))
+        p.end()
+
+
 class IllustrationBrowser(QWidget):
     """Feature-complete illustration browser component.
 
@@ -246,6 +297,9 @@ class IllustrationBrowser(QWidget):
 
     itemActivated = pyqtSignal(dict)
     """Emitted on double-click or Enter — the user intends to use the item."""
+
+    catalogReloaded = pyqtSignal()
+    """Emitted after a background catalog scan completes and the grid is rebuilt."""
 
     keywordChanged = pyqtSignal(str)
     """Emitted whenever the active keyword filter changes.
@@ -348,12 +402,13 @@ class IllustrationBrowser(QWidget):
         self._rebuild_item_combo()
 
         if not self._media_type:
-            self._loading_bar.setRange(0, 1)   # stop animation
-            self._loading_bar.setValue(0)
+            self._loading_timer.stop()
+            self._loading_bar.stop()
             return
 
         self._status_lbl.setText("")
-        self._loading_bar.setRange(0, 0)   # indeterminate: start fuchsia animation
+        self._loading_bar.start()
+        self._loading_timer.start()
         self._catalog_loader = _CatalogLoader(
             self._source, self._media_type, parent=self
         )
@@ -365,8 +420,8 @@ class IllustrationBrowser(QWidget):
         loader = self._catalog_loader
         items  = loader.result_items
         cache  = loader.result_cache
-        self._loading_bar.setRange(0, 1)   # stop animation, keep 3px space
-        self._loading_bar.setValue(0)
+        self._loading_timer.stop()
+        self._loading_bar.stop()
         self._stop_loader()          # cancel any stale thumbnail loader
         # Sync the source's internal record cache so that refresh() and
         # set_sort_keys() (called by sort controls) see the loaded data.
@@ -386,6 +441,8 @@ class IllustrationBrowser(QWidget):
         # Run the combo cascade directly (no extra timer hop — saves the
         # ~2.5 s gap we observed between preamble and _rebuild_item_combo).
         self._rebuild_item_combo()
+        self.catalogReloaded.emit()
+        pass  # timer fires directly on _loading_bar.tick via connect
 
     def _stop_catalog_loader(self) -> None:
         """Disconnect and cancel any in-flight catalog load."""
@@ -437,6 +494,99 @@ class IllustrationBrowser(QWidget):
         self._page_index     = 0
         self._rebuild_item_combo()
 
+    def navigate_direct(
+        self,
+        item: Optional[str] = None,
+        keyword: Optional[str] = None,
+        object_id: Optional[str] = None,
+    ) -> None:
+        """Fast navigation to a known item+keyword, bypassing the cascade.
+
+        Unlike ``navigate_to_filters``, this method does NOT rebuild the
+        field / letter / keyword combos step-by-step.  It applies the filter
+        in a single O(n) pass and rebuilds the grid immediately — typically
+        <50 ms even on a 400 k-item catalog.
+
+        ``object_id`` is the stem of the source JSON (e.g. ``"object_0001"``).
+        When given, the matching cell in the grid is selected after the grid
+        is built.
+        """
+        # ── set item combo without triggering cascade ──────────────────────
+        if item is not None:
+            self._item_combo.blockSignals(True)
+            found = False
+            for i in range(self._item_combo.count()):
+                if self._item_combo.itemData(i) == item:
+                    self._item_combo.setCurrentIndex(i)
+                    found = True
+                    break
+            self._item_combo.blockSignals(False)
+
+        # ── resolve real keyword from the actual record when object_id given ─
+        # The engraving label is the directory name under the film — the
+        # normalised form of the silhouette's original label string.  We need
+        # the *real* label (from the silhouette JSON) so the filter matches.
+        # object_id is only unique *within* a label directory, so we must also
+        # match the parent directory name (= engraving label) to avoid picking
+        # the wrong object_0001 from a different label in the same film.
+        if object_id and (keyword is None or keyword):
+            for r in self._all_items:
+                sil_path = Path(str(r.get("path", "")))
+                if (_clean_stem(r.get("filename_stem", "")) == (item or "") and
+                        sil_path.stem == object_id and
+                        sil_path.parent.name == (keyword or "")):
+                    keyword = r.get("label") or keyword
+                    break
+
+        # ── reset field / letter to "--all" (no cascade) ──────────────────
+        for _combo in (self._field_combo, self._letter_combo):
+            _combo.blockSignals(True)
+            for i in range(_combo.count()):
+                if _combo.itemData(i) == "--all":
+                    _combo.setCurrentIndex(i)
+                    break
+            _combo.blockSignals(False)
+
+        # ── single-pass filter ─────────────────────────────────────────────
+        scope = self._item_combo.currentData()
+        records = self._all_items
+        if scope:
+            records = [r for r in records
+                       if _clean_stem(r.get("filename_stem", "")) == scope]
+        if keyword:
+            records = [r for r in records if r.get("label", "") == keyword]
+
+        self._filtered_items = records
+        self._selected_index = -1
+        self._page_index     = 0
+
+        # ── update keyword combo to reflect the selection ──────────────────
+        self._keyword_combo.blockSignals(True)
+        self._keyword_combo.clear()
+        self._keyword_combo.addItem("<Keyword>", userData="--all")
+        if keyword:
+            self._keyword_combo.addItem(
+                f"{keyword}  ({len(records)})", userData=keyword
+            )
+            self._keyword_combo.setCurrentIndex(1)
+        else:
+            self._keyword_combo.setCurrentIndex(0)
+        self._keyword_combo.blockSignals(False)
+        # Emit currentIndexChanged so _refresh_color runs and the selected
+        # keyword displays in TEXT colour (not the grey placeholder colour).
+        self._keyword_combo.currentIndexChanged.emit(self._keyword_combo.currentIndex())
+
+        # ── rebuild grid and emit keyword signal ───────────────────────────
+        self.keywordChanged.emit(keyword or "")
+        self._rebuild_grid()
+
+        # ── select the specific item if object_id supplied ─────────────────
+        if object_id:
+            for abs_idx, r in enumerate(self._filtered_items):
+                if Path(str(r.get("path", ""))).stem == object_id:
+                    self.select_index(abs_idx)
+                    break
+
     def navigate_to_filters(
         self,
         item: Optional[str] = None,
@@ -444,40 +594,63 @@ class IllustrationBrowser(QWidget):
         letter: Optional[str] = None,
         keyword: Optional[str] = None,
     ) -> None:
-        """Programmatically set one or more filter levels.
+        """Set filter levels in cascade order (item → field → letter → keyword).
 
-        Levels are applied in cascade order (item → field → letter → keyword).
-        Levels not specified are left unchanged.
-        Each level that is set will fire its signal, cascading through the
-        levels below it.
-
-        Parameters
-        ----------
-        item:    filename_stem of the film to select, or ``None``.
-        field:   annotation field key (e.g. ``"objects"``), or ``None``.
-        letter:  first-letter bucket (e.g. ``"H"``), or ``None``.
-        keyword: label string (e.g. ``"horse"``), or ``None``.
+        When *item* is set alongside lower levels, the lower levels are deferred
+        by 250 ms so the async combo-rebuild cascade triggered by changing the
+        item combo has time to complete before we try to set keyword etc.
         """
         if item is not None:
             for i in range(self._item_combo.count()):
                 if self._item_combo.itemData(i) == item:
                     self._item_combo.setCurrentIndex(i)
                     break
+            if field is not None or letter is not None or keyword is not None:
+                _f, _l, _kw = field, letter, keyword
+                QTimer.singleShot(250, lambda: self.navigate_to_filters(
+                    field=_f, letter=_l, keyword=_kw))
+            return
+
         if field is not None:
             for i in range(self._field_combo.count()):
                 if self._field_combo.itemData(i) == field:
                     self._field_combo.setCurrentIndex(i)
                     break
+            if letter is not None or keyword is not None:
+                _l, _kw = letter, keyword
+                QTimer.singleShot(250, lambda: self.navigate_to_filters(
+                    letter=_l, keyword=_kw))
+            return
+
         if letter is not None:
             for i in range(self._letter_combo.count()):
                 if self._letter_combo.itemData(i) == letter:
                     self._letter_combo.setCurrentIndex(i)
                     break
+            if keyword is not None:
+                _kw = keyword
+                QTimer.singleShot(250, lambda: self.navigate_to_filters(keyword=_kw))
+            return
+
         if keyword is not None:
             for i in range(self._keyword_combo.count()):
                 if self._keyword_combo.itemData(i) == keyword:
                     self._keyword_combo.setCurrentIndex(i)
                     break
+
+    def reset_filters(self) -> None:
+        """Reset Title / Field / Letter / Keyword to placeholders.
+
+        Forces the cascade even when the item combo is already at index 0
+        (where setCurrentIndex(0) would be a no-op and fire no signal).
+        The Media combo is intentionally left unchanged.
+        """
+        # Temporarily move to -1 so going back to 0 always fires
+        # currentIndexChanged and triggers the full cascade rebuild.
+        self._item_combo.blockSignals(True)
+        self._item_combo.setCurrentIndex(-1)
+        self._item_combo.blockSignals(False)
+        self._item_combo.setCurrentIndex(0)   # fires signal → cascade
 
     def select_index(self, abs_idx: int) -> None:
         """Select the item at *abs_idx* in the current filtered list.
@@ -684,22 +857,14 @@ class IllustrationBrowser(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
 
-        # Thin fuchsia progress bar — always in layout (3 px) so the height is constant.
-        # Idle: range(0,1)/value(0) → chunk is 0-wide, nothing visible.
-        # Loading: range(0,0) → indeterminate animation.
-        self._loading_bar = QProgressBar()
-        self._loading_bar.setRange(0, 1)   # idle: invisible chunk
-        self._loading_bar.setValue(0)
-        self._loading_bar.setFixedHeight(2)
-        self._loading_bar.setTextVisible(False)
-        self._loading_bar.setFocusPolicy(Qt.NoFocus)
-        self._loading_bar.setStyleSheet(
-            "QProgressBar { background: transparent; border: none;"
-            " margin: 0; padding: 0; }"
-            f" QProgressBar::chunk {{ background: {theme.ACCENT}; }}"
-        )
-        self._loading_bar.setRange(0, 1)   # determinate at 0% — invisible chunk, no animation
-        self._loading_bar.setValue(0)
+        # Thin sweep bar — always in layout (2 px) so the height is constant.
+        # A custom widget paints a fixed-width ACCENT stripe that sweeps left
+        # to right.  No QProgressBar track is ever drawn, so the idle state is
+        # truly invisible and the animation colour is exact regardless of style.
+        self._loading_bar = _SweepBar(self)
+        self._loading_timer = QTimer(self)
+        self._loading_timer.setInterval(20)   # ~50 fps
+        self._loading_timer.timeout.connect(self._loading_bar.tick)
         # NOTE: loading bar is NOT added to this layout; the caller (CatalogBrowser)
         # inserts it into the Filter section header via set_subbar() so it is
         # visible even when the Filter section is collapsed.

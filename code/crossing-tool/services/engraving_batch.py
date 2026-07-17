@@ -29,7 +29,7 @@ import json
 from pathlib import Path
 from typing import Callable
 
-from services.engraving_paths import engraving_is_generated
+from services.engraving_paths import engraving_status
 from services.silhouette_catalog import catalog_base_dir
 
 
@@ -149,10 +149,11 @@ def batch_generate_engravings(
         meta = target["meta"]
         label = target.get("label", meta.get("label", "?"))
 
-        # Skip check: all required modes already generated
+        # Skip if all required modes are already successfully generated.
+        # Failed and pending engravings are retried without needing --force.
         if not force:
             all_done = all(
-                engraving_is_generated(project_path, source_json, meta, m)
+                engraving_status(project_path, source_json, meta, m) == "generated"
                 for m in modes_to_check
             )
             if all_done:

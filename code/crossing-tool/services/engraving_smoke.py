@@ -88,10 +88,16 @@ def prepare_engraving_from_source(
     eng_json_path = paths["metadata"]
 
     if eng_json_path.exists() and not force:
-        raise FileExistsError(
-            f"Engraving already prepared:\n  {eng_json_path}\n"
-            "Pass force=True (or --force on the CLI) to overwrite."
-        )
+        from services.engraving_paths import read_engraving_meta
+        existing = read_engraving_meta(eng_json_path)
+        existing_status = (existing or {}).get("status", "pending")
+        # Only block re-preparation when engraving is already done or queued.
+        # Failed engravings can be retried without --force.
+        if existing_status not in ("failed",):
+            raise FileExistsError(
+                f"Engraving already {existing_status}:\n  {eng_json_path}\n"
+                "Pass force=True (or --force on the CLI) to overwrite."
+            )
 
     prompt_filename, prompt_text = load_engraving_prompt(str(project), mode)
     prompt_sha256 = hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()
@@ -123,7 +129,7 @@ def prepare_engraving_from_source(
     created = datetime.now(timezone.utc).isoformat()
     engraving_meta = {
         "schema_version": ENGRAVING_SCHEMA_VERSION,
-        "status": "prepared",
+        "status": "pending",
         "mode": mode,
         "source": {
             "silhouette_json": _project_rel(str(project), source_json),

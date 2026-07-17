@@ -1379,6 +1379,93 @@ class _DeleteWorker(QThread):
         self.finished.emit()
 
 
+class _EngravingWorker(QThread):
+    """Run a CLI engraving command in a background thread (single item)."""
+    finished = pyqtSignal(bool, str)   # success, error_message
+
+    def __init__(self, cmd: list, parent=None) -> None:
+        super().__init__(parent)
+        self._cmd = cmd
+
+    def run(self) -> None:
+        import subprocess
+        try:
+            result = subprocess.run(
+                self._cmd,
+                capture_output=True,
+                text=True,
+                timeout=600,
+            )
+            ok  = result.returncode == 0
+            err = result.stderr.strip() if not ok else ""
+            if not ok:
+                import sys as _sys
+                print(f"[EngravingWorker] command failed (rc={result.returncode}):",
+                      file=_sys.stderr)
+                if err:
+                    print(err, file=_sys.stderr)
+            self.finished.emit(ok, err)
+        except subprocess.TimeoutExpired:
+            self.finished.emit(False, "Timed out after 10 min")
+        except Exception as exc:
+            self.finished.emit(False, str(exc))
+
+
+class _BatchEngravingWorker(QThread):
+    """Run ``engraving batch`` in a background thread with line-by-line stdout.
+
+    Supports cooperative cancellation via ``cancel()`` which terminates the
+    subprocess.  Emits ``finished(success, error_message)`` when done.
+    """
+    finished = pyqtSignal(bool, str)
+
+    def __init__(self, cmd: list, parent=None) -> None:
+        super().__init__(parent)
+        self._cmd       = cmd
+        self._process   = None
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        """Request cancellation — terminates the subprocess if running."""
+        self._cancelled = True
+        if self._process is not None:
+            try:
+                self._process.terminate()
+            except Exception:
+                pass
+
+    def run(self) -> None:
+        import subprocess, sys as _sys
+        try:
+            self._process = subprocess.Popen(
+                self._cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            # Drain stdout (verbose progress lines) so the pipe never blocks.
+            for line in self._process.stdout:
+                if self._cancelled:
+                    break
+                stripped = line.rstrip()
+                if stripped:
+                    print(f"[batch] {stripped}", file=_sys.stdout, flush=True)
+            self._process.wait()
+            if self._cancelled:
+                self.finished.emit(False, "Cancelled")
+            else:
+                ok  = self._process.returncode == 0
+                err = self._process.stderr.read().strip() if not ok else ""
+                if not ok:
+                    print(f"[BatchEngravingWorker] rc={self._process.returncode}",
+                          file=_sys.stderr)
+                    if err:
+                        print(err, file=_sys.stderr)
+                self.finished.emit(ok, err)
+        except Exception as exc:
+            self.finished.emit(False, str(exc))
+
+
 class _HoverIconButton(QPushButton):
     """QPushButton that swaps its icon to an accent-coloured version on hover."""
 
@@ -1395,9 +1482,18 @@ class _HoverIconButton(QPushButton):
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        if self._normal_icon:
+        # Keep hover icon while checked (running state); restore normal otherwise.
+        if self._normal_icon and not self.isChecked():
             self.setIcon(self._normal_icon)
         super().leaveEvent(event)
+
+    def setChecked(self, checked: bool) -> None:
+        super().setChecked(checked)
+        # Lock to hover icon while checked so the icon matches the ACCENT bg.
+        if checked and self._hover_icon:
+            self.setIcon(self._hover_icon)
+        elif not checked and self._normal_icon:
+            self.setIcon(self._normal_icon)
 
 
 class _WrapLabel(QLabel):
@@ -1458,6 +1554,7 @@ class IllustrationPane(QWidget):
         # Active browser alias — updated on tab switch.
         self._browser = self._browser_sil
         self._browser_sil.selectionChanged.connect(self._on_selection_changed)
+        self._browser_sil.catalogReloaded.connect(self._update_eng_buttons)
         self._browser_eng.selectionChanged.connect(self._on_selection_changed)
 
         # Persist media-type selection across restarts (shared for both modes).
@@ -1829,6 +1926,15 @@ class IllustrationPane(QWidget):
         _rl.setContentsMargins(0, 0, 0, 0)
         _rl.setSpacing(2)
 
+        self._best_btn = QPushButton("Best")
+        self._best_btn.setCheckable(True)
+        self._best_btn.setFocusPolicy(Qt.NoFocus)
+        self._best_btn.setEnabled(False)
+        self._best_btn.setFixedHeight(theme.BTN_H)
+        self._best_btn.setStyleSheet(_abtn)
+        self._best_btn.clicked.connect(self._on_best_btn_clicked)
+        tools_sec.add_widget(self._best_btn)
+
         self._shotlist_btn = _HoverIconButton("Shotlist", _open_icon, _open_icon_hover)
         self._shotlist_btn.setIconSize(_icon_sz)
         self._shotlist_btn.setFocusPolicy(Qt.NoFocus)
@@ -1846,14 +1952,51 @@ class IllustrationPane(QWidget):
         _rl.addWidget(self._sam_btn, 1)
         tools_sec.add_widget(_row)
 
-        self._best_btn = QPushButton("Best")
-        self._best_btn.setCheckable(True)
-        self._best_btn.setFocusPolicy(Qt.NoFocus)
-        self._best_btn.setEnabled(False)
-        self._best_btn.setFixedHeight(theme.BTN_H)
-        self._best_btn.setStyleSheet(_abtn)
-        self._best_btn.clicked.connect(self._on_best_btn_clicked)
-        tools_sec.add_widget(self._best_btn)
+        # ── Engraving generation row: [Engrave] [Engraving] ─────────────
+        _e_icon, _e_icon_hover  = self._make_btn_icon("media-image-plus", 14)
+        _v_icon, _v_icon_hover  = self._make_btn_icon("media-image",      14)
+        _b_icon, _b_icon_hover  = self._make_btn_icon("media-image-plus", 14)
+        _eng_row = QWidget()
+        _eng_rl  = QHBoxLayout(_eng_row)
+        _eng_rl.setContentsMargins(0, 0, 0, 0)
+        _eng_rl.setSpacing(2)
+        self._eng_gen_btn = _HoverIconButton("Engrave", _e_icon, _e_icon_hover)
+        self._eng_gen_btn.setIconSize(_icon_sz)
+        self._eng_gen_btn.setFocusPolicy(Qt.NoFocus)
+        self._eng_gen_btn.setCheckable(True)   # stays highlighted while running
+        self._eng_gen_btn.setEnabled(False)
+        self._eng_gen_btn.setStyleSheet(_abtn)
+        self._eng_gen_btn.clicked.connect(self._start_engraving_generation)
+        _eng_rl.addWidget(self._eng_gen_btn, 1)
+        self._eng_viz_btn = _HoverIconButton("Engraving", _v_icon, _v_icon_hover)
+        self._eng_viz_btn.setIconSize(_icon_sz)
+        self._eng_viz_btn.setFocusPolicy(Qt.NoFocus)
+        self._eng_viz_btn.setEnabled(False)
+        self._eng_viz_btn.setStyleSheet(_abtn)
+        self._eng_viz_btn.clicked.connect(self._visualize_engraving)
+        _eng_rl.addWidget(self._eng_viz_btn, 1)
+        tools_sec.add_widget(_eng_row)
+        self._eng_batch_btn = _HoverIconButton("Generate All Marked", _b_icon, _b_icon_hover)
+        self._eng_batch_btn.setIconSize(_icon_sz)
+        self._eng_batch_btn.setFocusPolicy(Qt.NoFocus)
+        self._eng_batch_btn.setCheckable(True)   # stays highlighted while running
+        self._eng_batch_btn.setEnabled(False)
+        self._eng_batch_btn.setStyleSheet(_abtn)
+        self._eng_batch_btn.clicked.connect(self._toggle_batch_generation)
+        tools_sec.add_widget(self._eng_batch_btn)
+
+        # Animation timer for "Generating…" dots
+        self._eng_anim_timer = QTimer(self)
+        self._eng_anim_timer.setInterval(400)
+        self._eng_anim_timer.timeout.connect(self._tick_eng_animation)
+        self._eng_anim_dots  = 0
+        # Count-refresh timer: re-checks remaining pending items every 2 s
+        # while the batch is running, giving a live countdown on the button.
+        self._eng_count_timer = QTimer(self)
+        self._eng_count_timer.setInterval(2000)
+        self._eng_count_timer.timeout.connect(self._refresh_batch_count)
+        self._eng_gen_running   = False
+        self._eng_batch_running = False
         tools_sec._header.setToolTip(
             "Home / End \u2014 film\n"
             "PgUp / PgDn \u2014 field\n"
@@ -1917,14 +2060,14 @@ class IllustrationPane(QWidget):
     def _build_mode_filter_section(
         self, pv: QVBoxLayout, browser: "IllustrationBrowser"
     ) -> None:
-        """Add a Mode collapsible section with Both / Full / Isolated combo."""
+        """Add a Mode collapsible section with Isolated+Frame / Frame / Isolated combo."""
         mode_sec = CollapsibleSection("Mode", pref_key="ill_eng_section_mode")
         combo = QComboBox()
         combo.setFocusPolicy(Qt.NoFocus)
         combo.setSizeAdjustPolicy(QComboBox.AdjustToContentsOnFirstShow)
-        combo.addItem("Both",     userData="")          # no filter
-        combo.addItem("Full",     userData="full")
-        combo.addItem("Isolated", userData="silhouette")
+        combo.addItem("Isolated + Frame", userData="")          # no filter
+        combo.addItem("Frame",            userData="full")
+        combo.addItem("Isolated",         userData="silhouette")
         combo.setStyleSheet(
             f"QComboBox {{ background: {theme.BTN_BG}; color: {theme.TEXT};"
             f" border: none; border-radius: 3px; padding: 0px 6px;"
@@ -1949,20 +2092,12 @@ class IllustrationPane(QWidget):
         _icon_sz = QSize(14, 14)
         _abtn = self._btn_style()
         _v_icon, _v_icon_hover = self._make_btn_icon("media-image", 14)
+        _s_icon, _s_icon_hover = self._make_btn_icon("media-image", 14)
         _row = QWidget()
         _rl  = QHBoxLayout(_row)
         _rl.setContentsMargins(0, 0, 0, 0)
         _rl.setSpacing(2)
-        self._eng_view_btn = _HoverIconButton("Viewer", _v_icon, _v_icon_hover)
-        self._eng_view_btn.setIconSize(_icon_sz)
-        self._eng_view_btn.setFocusPolicy(Qt.NoFocus)
-        self._eng_view_btn.setEnabled(False)
-        self._eng_view_btn.setStyleSheet(_abtn)
-        self._eng_view_btn.clicked.connect(self._open_engraving_in_viewer)
-        _rl.addWidget(self._eng_view_btn, 1)
-        tools_sec.add_widget(_row)
 
-        # Best button — same behaviour as Silhouettes
         self._eng_best_btn = QPushButton("Best")
         self._eng_best_btn.setCheckable(True)
         self._eng_best_btn.setFocusPolicy(Qt.NoFocus)
@@ -1973,6 +2108,22 @@ class IllustrationPane(QWidget):
         ))
         self._eng_best_btn.clicked.connect(self._on_best_btn_clicked)
         tools_sec.add_widget(self._eng_best_btn)
+
+        self._eng_view_btn = _HoverIconButton("Viewer", _v_icon, _v_icon_hover)
+        self._eng_view_btn.setIconSize(_icon_sz)
+        self._eng_view_btn.setFocusPolicy(Qt.NoFocus)
+        self._eng_view_btn.setEnabled(False)
+        self._eng_view_btn.setStyleSheet(_abtn)
+        self._eng_view_btn.clicked.connect(self._open_engraving_in_viewer)
+        _rl.addWidget(self._eng_view_btn, 1)
+        self._eng_sil_btn = _HoverIconButton("Silhouette", _s_icon, _s_icon_hover)
+        self._eng_sil_btn.setIconSize(_icon_sz)
+        self._eng_sil_btn.setFocusPolicy(Qt.NoFocus)
+        self._eng_sil_btn.setEnabled(False)
+        self._eng_sil_btn.setStyleSheet(_abtn)
+        self._eng_sil_btn.clicked.connect(self._jump_to_silhouette)
+        _rl.addWidget(self._eng_sil_btn, 1)
+        tools_sec.add_widget(_row)
 
         # Delete button — removes the engraving directory; Del/Backspace also fires it
         _del_icon, _del_icon_hover = self._make_btn_icon("trash", 14)
@@ -2017,6 +2168,8 @@ class IllustrationPane(QWidget):
         self._current_rec = None
         if hasattr(self, "_eng_view_btn"):
             self._eng_view_btn.setEnabled(False)
+        if hasattr(self, "_eng_sil_btn"):
+            self._eng_sil_btn.setEnabled(False)
         if hasattr(self, "_eng_delete_btn"):
             self._eng_delete_btn.setEnabled(False)
             self._eng_delete_btn.setText("Delete")
@@ -2029,6 +2182,9 @@ class IllustrationPane(QWidget):
         if hasattr(self, "_shotlist_btn"):
             self._shotlist_btn.setEnabled(False)
             self._sam_btn.setEnabled(False)
+        if hasattr(self, "_eng_viz_btn"):
+            self._eng_viz_btn.setEnabled(False)
+        self._update_eng_buttons()
 
     def _activate_primary_action(self) -> None:
         """Shift+Enter / double-click primary action for the active source."""
@@ -2104,6 +2260,10 @@ class IllustrationPane(QWidget):
         if hasattr(self, "_eng_view_btn"):
             has_png = bool(rec.get("output_png") or rec.get("raw_png"))
             self._eng_view_btn.setEnabled(has_png)
+        if hasattr(self, "_eng_sil_btn"):
+            self._eng_sil_btn.setEnabled(
+                bool(rec.get("label") or rec.get("filename_stem"))
+            )
         if hasattr(self, "_eng_delete_btn"):
             has_dir = bool(rec.get("path") and Path(str(rec.get("path"))).parent.is_dir())
             self._eng_delete_btn.setEnabled(has_dir)
@@ -2111,10 +2271,10 @@ class IllustrationPane(QWidget):
 
         self._current_rec = rec
         _can_open = bool(rec.get("filename") and rec.get("shot_id"))
-        # Tools buttons only exist in the Silhouettes tab.
         if hasattr(self, "_shotlist_btn"):
             self._shotlist_btn.setEnabled(_can_open)
             self._sam_btn.setEnabled(_can_open)
+        self._update_eng_buttons()
 
     # ------------------------------------------------------------------
     # Best-selection workflow
@@ -2177,6 +2337,157 @@ class IllustrationPane(QWidget):
     # ------------------------------------------------------------------
     # Action buttons
 
+    def _count_pending_engravings(self) -> int:
+        """Count marked silhouettes whose engraving is not yet generated."""
+        try:
+            from services.engraving_paths import engraving_status as _eng_status
+            return sum(
+                1 for r in (self._sil_source.items() if hasattr(self, "_sil_source") else [])
+                if r.get("human_best") and r.get("path") and
+                _eng_status(self._project_path, r["path"], r) != "generated"
+            )
+        except Exception:
+            return 0
+
+    def _update_eng_buttons(self) -> None:
+        """Enable/disable and label the Engraving and Marked generation buttons."""
+        if not hasattr(self, "_eng_gen_btn"):
+            return
+        if self._eng_gen_running or self._eng_batch_running:
+            return  # keep running state intact
+
+        rec = self._current_rec
+        if rec and rec.get("path"):
+            status = None
+            try:
+                from services.engraving_paths import engraving_status as _eng_status
+                status = _eng_status(self._project_path, rec["path"], rec)
+                done = status in ("generated", "generating")
+            except Exception:
+                done = False
+            self._eng_gen_btn.setEnabled(not done)
+            self._eng_gen_btn.setChecked(False)
+            self._eng_gen_btn.setText("Engrave")
+            self._eng_viz_btn.setEnabled(status == "generated")
+        else:
+            self._eng_gen_btn.setEnabled(False)
+            self._eng_gen_btn.setChecked(False)
+            self._eng_gen_btn.setText("Engrave")
+            self._eng_viz_btn.setEnabled(False)
+
+        n = self._count_pending_engravings()
+        self._eng_batch_btn.setEnabled(n > 0)
+        self._eng_batch_btn.setChecked(False)
+        self._eng_batch_btn.setText(f"Generate Marked ({n})" if n > 0 else "Generate Marked")
+
+    def _refresh_batch_count(self) -> None:
+        """Re-check pending count while batch is running and update button label."""
+        if not self._eng_batch_running:
+            self._eng_count_timer.stop()
+            return
+        n = self._count_pending_engravings()
+        self._eng_batch_btn.setText(f"Cancel  ({n} left)")
+
+    def _tick_eng_animation(self) -> None:
+        """Animate the single-item Engraving button while it runs."""
+        self._eng_anim_dots = (self._eng_anim_dots + 1) % 4
+        dots = "." * max(1, self._eng_anim_dots)
+        if self._eng_gen_running:
+            self._eng_gen_btn.setText(f"Generating{dots}")
+        if not self._eng_gen_running:
+            self._eng_anim_timer.stop()
+
+    def _start_engraving_generation(self) -> None:
+        """Generate an engraving for the currently selected silhouette via OpenAI."""
+        rec = self._current_rec
+        if not rec or not rec.get("path"):
+            return
+        self._eng_gen_running = True
+        self._eng_gen_btn.setChecked(True)   # ACCENT highlight while running
+        self._eng_gen_btn.setEnabled(False)
+        self._eng_batch_btn.setEnabled(False)
+        self._eng_anim_dots = 0
+        self._eng_anim_timer.start()
+        cmd = [
+            sys.executable,
+            str(Path(__file__).parent.parent / "cli.py"),
+            "engraving", "generate",
+            "--source", str(rec["path"]),
+            "--provider", "openai",
+        ]
+        self._eng_gen_worker = _EngravingWorker(cmd, parent=self)
+        self._eng_gen_worker.finished.connect(self._on_eng_gen_finished)
+        self._eng_gen_worker.start()
+
+    def _on_eng_gen_finished(self, ok: bool, err: str) -> None:
+        self._eng_gen_running = False
+        self._eng_gen_worker  = None
+        self._eng_gen_btn.setChecked(False)
+        if not ok:
+            self._eng_gen_btn.setText("Failed")
+            if err:
+                self._eng_gen_btn.setToolTip(err)
+            QTimer.singleShot(4000, lambda: (
+                self._eng_gen_btn.setText("Engrave"),
+                self._eng_gen_btn.setToolTip(""),
+            ))
+        # Full reload so the new engraving.json is picked up from disk.
+        self._browser_eng.reload()
+        self._update_eng_buttons()
+
+    def _toggle_batch_generation(self) -> None:
+        """Start batch generation, or cancel it if already running."""
+        if self._eng_batch_running:
+            self._cancel_batch_generation()
+        else:
+            self._start_batch_generation()
+
+    def _start_batch_generation(self) -> None:
+        """Generate engravings for all marked silhouettes that need them."""
+        n = self._count_pending_engravings()
+        if n == 0:
+            return
+        self._eng_batch_running = True
+        self._eng_gen_btn.setEnabled(False)
+        self._eng_batch_btn.setEnabled(True)   # keep enabled so user can cancel
+        self._eng_batch_btn.setChecked(True)   # ACCENT highlight
+        self._eng_batch_btn.setText(f"Cancel  ({n} left)")
+        self._eng_count_timer.start()
+        media = self._browser_sil._media_type or "movie"
+        cmd = [
+            sys.executable,
+            str(Path(__file__).parent.parent / "cli.py"),
+            "engraving", "batch",
+            "--media", media,
+            "--verbose",
+        ]
+        self._eng_batch_worker = _BatchEngravingWorker(cmd, parent=self)
+        self._eng_batch_worker.finished.connect(self._on_eng_batch_finished)
+        self._eng_batch_worker.start()
+
+    def _cancel_batch_generation(self) -> None:
+        """Cancel a running batch generation."""
+        if self._eng_batch_worker is not None:
+            self._eng_batch_worker.cancel()
+        # State reset happens in _on_eng_batch_finished(False, "Cancelled")
+
+    def _on_eng_batch_finished(self, ok: bool, err: str) -> None:
+        self._eng_batch_running = False
+        self._eng_batch_worker  = None
+        self._eng_count_timer.stop()
+        self._eng_batch_btn.setChecked(False)
+        if not ok and err and err != "Cancelled":
+            self._eng_batch_btn.setText("Failed")
+            if err:
+                self._eng_batch_btn.setToolTip(err)
+            QTimer.singleShot(4000, lambda: (
+                self._eng_batch_btn.setToolTip(""),
+                self._update_eng_buttons(),
+            ))
+        else:
+            self._update_eng_buttons()
+        self._browser_eng.refresh()
+
     def _open_engraving_in_viewer(self) -> None:
         """Open the selected engraving's output PNG in the OS default image viewer."""
         rec = self._current_rec
@@ -2189,6 +2500,113 @@ class IllustrationPane(QWidget):
                 from PyQt5.QtGui import QDesktopServices
                 QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
                 return
+
+    def _jump_to_silhouette(self) -> None:
+        """Switch to the Silhouettes tab and navigate to the source silhouette."""
+        rec = self._current_rec
+        if not rec:
+            return
+        from visualizers.components.illustration_browser import _clean_stem
+        filename_stem = _clean_stem(rec.get("filename_stem") or "")
+        label         = rec.get("label") or ""
+
+        self._side_scroll.setCurrentIndex(0)
+
+        # Clear the grid immediately so the user sees empty state
+        # rather than stale previous content during the navigation delay.
+        self._browser_sil._filtered_items = []
+        self._browser_sil._selected_index = -1
+        self._browser_sil._page_index     = 0
+        self._browser_sil._rebuild_grid()
+        self._browser_sil._loading_bar.start()
+        self._browser_sil._loading_timer.start()
+
+        object_id = rec.get("object_id") or ""
+
+        def _navigate() -> None:
+            self._browser_sil._loading_timer.stop()
+            self._browser_sil._loading_bar.stop()
+            self._browser_sil.navigate_direct(
+                item      = filename_stem or None,
+                keyword   = label or None,
+                object_id = object_id or None,
+            )
+
+        already_loaded = any(
+            _clean_stem(r.get("filename_stem") or "") == filename_stem
+            for r in self._browser_sil._all_items
+        )
+
+        if already_loaded:
+            QTimer.singleShot(150, _navigate)
+        else:
+            def _after_reload() -> None:
+                try:
+                    self._browser_sil.catalogReloaded.disconnect(_after_reload)
+                except Exception:
+                    pass
+                QTimer.singleShot(150, _navigate)
+
+            self._browser_sil.catalogReloaded.connect(_after_reload)
+            self._browser_sil.reload()
+
+    def _visualize_engraving(self) -> None:
+        """Switch to the Engravings tab and navigate to the current silhouette's engraving.
+
+        If the engraving hasn't been loaded into the browser cache yet (e.g. just
+        generated), reloads the source first and navigates once loading completes.
+        """
+        rec = self._current_rec
+        if not rec:
+            return
+
+        from visualizers.components.illustration_browser import _clean_stem
+        filename_stem = _clean_stem(rec.get("filename_stem") or "")
+        # Use the silhouette's label directory name as the engraving keyword.
+        # Engraving records store the normalised directory name ("a_t__s_f__sign")
+        # not the real label ("A.T.&S.F. sign"), so path.parent.name is the match.
+        sil_path  = Path(str(rec.get("path", "")))
+        eng_label = sil_path.parent.name  # label directory = engraving record label
+
+        # Clear grid + start loading animation immediately on tab switch.
+        self._browser_eng._filtered_items = []
+        self._browser_eng._selected_index = -1
+        self._browser_eng._page_index     = 0
+        self._browser_eng._rebuild_grid()
+        self._browser_eng._loading_bar.start()
+        self._browser_eng._loading_timer.start()
+
+        def _navigate() -> None:
+            self._browser_eng._loading_timer.stop()
+            self._browser_eng._loading_bar.stop()
+            self._browser_eng.navigate_direct(
+                item    = filename_stem or None,
+                keyword = eng_label or None,
+            )
+
+        # Switch to Engravings tab (triggers _on_source_tab_changed).
+        self._side_scroll.setCurrentIndex(1)
+
+        # Check whether the target is already in the browser's cached items.
+        already_loaded = any(
+            _clean_stem(r.get("filename_stem") or "") == filename_stem
+            and r.get("label") == eng_label
+            for r in self._browser_eng._all_items
+        )
+
+        if already_loaded:
+            QTimer.singleShot(150, _navigate)
+        else:
+            # Target not cached yet — reload and navigate once the scan finishes.
+            def _after_reload() -> None:
+                try:
+                    self._browser_eng.catalogReloaded.disconnect(_after_reload)
+                except Exception:
+                    pass
+                QTimer.singleShot(150, _navigate)
+
+            self._browser_eng.catalogReloaded.connect(_after_reload)
+            self._browser_eng.reload()
 
     def _delete_engraving(self) -> None:
         """Delete the selected engraving's mode directory, then refresh the browser.
@@ -2309,8 +2727,17 @@ class IllustrationPane(QWidget):
                 self._browser.navigate_grid(1, 0)
 
     def _handle_letter_key(self, letter: str) -> None:
-        """Jump to the alphabetical bucket *letter* in the browser's letter combo."""
-        self._browser.navigate_to_filters(letter=letter)
+        """Toggle the alphabetical bucket filter for *letter*.
+
+        First press → activates the letter filter.
+        Second press of the same letter → resets to <Letter> (no filter).
+        """
+        current = self._browser._letter_combo.currentData()
+        if current == letter:
+            # Already on this letter — toggle off
+            self._browser.navigate_to_filters(letter="--all")
+        else:
+            self._browser.navigate_to_filters(letter=letter)
 
     # ------------------------------------------------------------------
     # IPC navigation
