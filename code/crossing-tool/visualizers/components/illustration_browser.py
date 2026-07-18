@@ -1,7 +1,12 @@
-"""IllustrationBrowser — feature-complete reusable browser component.
+"""IllustrationBrowser — canonical collection-browsing surface.
 
-Phase 2 implementation.  Owns loading, filtering, pagination, keyboard
-navigation, selection, and thumbnail browsing.
+The browser is the reusable visualization surface for illustration collections.
+It owns browsing mechanics only: loading, filtering, pagination, keyboard
+navigation, drag-and-drop payloads, and selection.
+
+The browser does not own editing, generation, business logic, project logic,
+or CLI operations. It never needs to know why the user is viewing records; it
+only knows how to browse and select them.
 
 Configured once at construction time.  Two built-in sources are supported:
 
@@ -28,10 +33,9 @@ Field and the cascade degrades gracefully to a flat scope-filtered browser.
 
 Selection
 ---------
-The browser is the single owner of the current selection.  Everything that
-needs to react to selection (inspector panels, toolbars, book placement
-tools) connects to ``selectionChanged``.  Nothing communicates directly
-with other panels.
+Selection belongs exclusively to the browser. Everything that reacts to
+selection (inspectors, toolbars, workflow controls) subscribes to
+``selectionChanged`` rather than maintaining a second selection state.
 
 Usage::
 
@@ -265,11 +269,19 @@ class _SweepBar(QWidget):
 
 
 class IllustrationBrowser(QWidget):
-    """Feature-complete illustration browser component.
+    """Canonical visualizer browser for collection navigation.
 
-    Owns loading, filtering, pagination, keyboard navigation, selection, and
-    thumbnail browsing.  Visualizers connect to its signals and react to
-    selection changes — they do not touch item data themselves.
+    Ownership
+    ---------
+    This class owns collection browsing state: active filters, current page,
+    and current selection. It is the canonical left-side browsing surface for
+    visualizers built on this framework.
+
+    Non-responsibilities
+    --------------------
+    This class does not implement project operations, generation pipelines,
+    or business decisions. Those remain in services and CLI commands; this
+    widget only exposes browse/select interactions.
 
     Parameters
     ----------
@@ -291,8 +303,8 @@ class IllustrationBrowser(QWidget):
     selectionChanged = pyqtSignal(dict)
     """Emitted whenever the selected item changes.
 
-    ``item`` is the full catalog record dict.  Connect inspectors, toolbars,
-    and book placement tools here.  Nothing else should own selection.
+    ``item`` is the selected record dict from the current source.
+    Inspector and tool widgets observe this signal; they do not own selection.
     """
 
     itemActivated = pyqtSignal(dict)
@@ -393,6 +405,9 @@ class IllustrationBrowser(QWidget):
         Otherwise a ``_CatalogLoader`` thread is started so the scan runs off
         the main thread — the UI stays responsive and a fuchsia progress bar is
         shown until the results arrive.
+
+        Data-access responsibility remains in the source. The browser triggers
+        reloads but does not scan directories or parse metadata files itself.
         """
         self._stop_catalog_loader()
         # Always clear combos and grid immediately so the UI reflects the new
@@ -461,7 +476,11 @@ class IllustrationBrowser(QWidget):
         # calls _apply_filters() at the end — no explicit call needed here.
 
     def currentItem(self) -> Optional[dict]:
-        """Return the currently selected item dict, or ``None``."""
+        """Return the browser-owned selected record, or ``None``.
+
+        Inspector and action panels should read selection through this API,
+        not by storing duplicate copies of selected state.
+        """
         if 0 <= self._selected_index < len(self._filtered_items):
             return self._filtered_items[self._selected_index]
         return None
@@ -490,6 +509,9 @@ class IllustrationBrowser(QWidget):
         Use after an in-memory source change (e.g. sort-order update) that does
         not require a full catalog scan.  Preserves the current filter combo
         selections where the values still exist in the new data.
+
+        This method refreshes browser presentation state only. It does not
+        perform project operations or mutate source-of-truth metadata.
         """
         self._all_items      = self._source.items()
         self._selected_index = -1

@@ -1,5 +1,27 @@
 #!/usr/bin/env python3
-"""Illustration Visualizer — catalog browser + segmentation explorer.
+"""Illustration Visualizer — reference implementation of the Visualizer Framework.
+
+This module demonstrates framework composition in production code:
+
+- IllustrationBrowser provides canonical collection browsing and selection.
+- IllustrationSource subclasses provide records.
+- Inspector panels are composed from reusable sections/components.
+- styles.theme provides shared visual language tokens.
+
+Ownership model used here:
+
+- Browser owns selection and browsing state.
+- Source owns record access and caching.
+- Inspector owns presentation and selection-scoped controls.
+- Services own business logic.
+- CLI commands remain canonical project operations.
+- Metadata files own persistent project state.
+
+UI actions in this visualizer should call existing services/CLI-backed flows
+instead of duplicating project logic. Interactive editing tools are the only
+expected case where no meaningful CLI equivalent exists.
+
+This module remains a visualizer implementation, not a second project backend.
 
 Two tabs in one window:
 
@@ -1512,10 +1534,14 @@ class _WrapLabel(QLabel):
 
 
 class IllustrationPane(QWidget):
-    """Two-source catalog browser: Silhouettes and Engravings.
+    """Reference framework composition for silhouette/engraving browsing.
 
-    Left pane  — sacred Browser (thumbnail grid, switches source on tab change).
-    Right pane — Inspector: Filter / Sort / Info / Tools (collapsible sections).
+    Layout contract:
+    - Left pane: browser surface (collection browsing + selection).
+    - Right pane: inspector composition (sections reacting to selection).
+
+    The pane wires browser signals to inspector and operation controls. It does
+    not reimplement source scanning or service business logic.
     """
 
     def __init__(self, project_path: str, media_type: Optional[str] = None, parent=None) -> None:
@@ -2803,7 +2829,11 @@ class IllustrationPane(QWidget):
 # ---------------------------------------------------------------------------
 
 class IllustrationWindow(VisualizerWindow):
-    """Top-level window: Silhouette catalog browser."""
+    """Top-level host for the framework reference visualizer.
+
+    Owns window shell concerns (geometry, fullscreen state, IPC lifecycle) and
+    delegates browsing/presentation responsibilities to ``IllustrationPane``.
+    """
 
     def __init__(
         self,

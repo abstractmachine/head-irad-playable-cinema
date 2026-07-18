@@ -1,7 +1,7 @@
-"""ThumbnailCell — single thumbnail cell widget.
+"""ThumbnailCell — canonical grid item interaction widget.
 
-Canonical thumbnail cell for the Visualizer Framework.  Combines the
-features of the two existing implementations:
+Canonical thumbnail cell for the Visualizer Framework. Combines interaction
+behavior used across existing visualizers:
 
 - ``_ThumbnailCell``    (silhouette_visualizer.py) — single click, best state
 - ``_BrowserThumbCell`` (book_visualizer.py)       — double click, drag-and-drop
@@ -43,7 +43,10 @@ from styles import theme
 
 
 class ThumbnailCell(QLabel):
-    """Single thumbnail cell — fixed size, selectable, optionally draggable.
+    """Single thumbnail cell with shared selection/drag behavior.
+
+    This widget represents one browser item. It does not own browser-level
+    selection state, filtering, pagination, or data loading.
 
     Parameters
     ----------

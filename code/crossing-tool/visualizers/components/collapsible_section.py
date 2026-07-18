@@ -1,8 +1,8 @@
-"""CollapsibleSection — Unity-Inspector-style foldable section widget.
+"""CollapsibleSection — shared inspector section container.
 
-A thin header bar (slightly different grey from the panel background) with an
-arrow toggle and a title.  Clicking the header shows or hides the content
-area.  Designed to replace QGroupBox throughout the Crossing visualizers.
+A thin header bar with arrow toggle and title. Clicking the header expands or
+collapses content. This is part of the shared visualizer interaction language
+and replaces ad-hoc section containers.
 
 Usage::
 
@@ -34,7 +34,7 @@ _HEADER_H        = 24   # px
 
 
 class CollapsibleSection(QWidget):
-    """A collapsible section with an arrow-toggle header bar.
+    """A reusable collapsible section for inspector composition.
 
     Parameters
     ----------

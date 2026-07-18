@@ -1,14 +1,14 @@
-"""IllustrationInspector — extensible illustration detail panel.
+"""IllustrationInspector — compositional selection detail surface.
 
-The Inspector shows everything currently known about the selected illustration.
-It is extensible: each visualizer can add its own sections to the vertical
-layout without modifying this base class.
+The inspector presents information and controls for the browser-selected item.
+It is intentionally compositional: visualizers add reusable sections instead
+of replacing inspector infrastructure.
 
 Design
 ------
-The Inspector observes the Browser's ``selectionChanged`` signal and calls
-``setItem()`` whenever the selection changes.  Nothing should communicate
-directly with the Inspector — all updates flow through the Browser selection.
+The inspector reacts to ``IllustrationBrowser.selectionChanged`` via
+``setItem()``. Selection ownership stays in the browser; the inspector does
+not own or arbitrate selection.
 
 The Inspector intentionally does NOT define a section registry or plugin
 framework.  Qt layouts already provide composition.  Each visualizer
@@ -40,7 +40,11 @@ from styles import theme
 
 
 class IllustrationInspector(QWidget):
-    """Extensible panel that inspects the selected illustration.
+    """Extensible panel for selected-item presentation and controls.
+
+    This class owns how the selected record is presented, not which record is
+    selected. Controls hosted here should invoke existing services/CLI-backed
+    operations rather than duplicating project logic.
 
     Parameters
     ----------
@@ -101,6 +105,8 @@ class IllustrationInspector(QWidget):
         fires.  Each section widget in ``_layout`` should be updated by
         the concrete visualizer's wiring — this base method simply stores
         the item for reference.
+
+        Passing ``None`` represents "no browser selection".
         """
         self._item = item
         if item is None:
@@ -111,8 +117,9 @@ class IllustrationInspector(QWidget):
     def addSection(self, widget: QWidget) -> None:
         """Append *widget* as a new section below existing sections.
 
-        The visualizer calls this at construction time to add its own content
-        (e.g. a MetadataBlock, a scores panel, a generation controls widget).
+        Visualizers compose inspector behavior by adding sections
+        (e.g. MetadataBlock, score panels, operation controls). This method
+        avoids custom inspector rewrites per visualizer.
         """
         # Hide the placeholder once real content is present.
         self._placeholder.hide()

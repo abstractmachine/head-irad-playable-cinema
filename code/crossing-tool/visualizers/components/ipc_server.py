@@ -1,8 +1,10 @@
-"""IpcServer — base class for Unix-domain socket IPC servers.
+"""IpcServer — reusable Unix-socket bridge for visualizer windows.
 
-Provides single-instance window management for Crossing Tool visualizers.
-Each visualizer that wants to be singleton-per-project inherits from this
-class and implements ``_handle_message(msg)``.
+Provides single-instance window management and external navigation handoff.
+Subclasses parse small routing messages and emit UI-thread signals.
+
+This class transports messages only. It does not implement project/business
+operations; those remain in services and CLI commands.
 
 Both existing IPC implementations follow the same structure:
 
@@ -41,7 +43,7 @@ from PyQt5.QtCore import QThread
 
 
 class IpcServer(QThread):
-    """Base Unix-domain socket IPC server.
+    """Base Unix-domain socket server for visualizer coordination.
 
     Binds a Unix socket at *socket_path*, accepts connections one at a time,
     reads a complete JSON message, and dispatches to ``_handle_message``.

@@ -1,13 +1,15 @@
-"""IllustrationSource — data-access abstraction for IllustrationBrowser.
+"""IllustrationSource — browser-facing data access boundary.
 
-The Source separates *where illustrations come from* from *how they are
-displayed and filtered*.  IllustrationBrowser only calls:
+The source owns record retrieval. It separates where data comes from from how
+it is browsed. The browser consumes records and never performs storage access.
+
+IllustrationBrowser only calls:
 
     source.reload(media_type)   — refresh the record list
     source.items()              — get the current records
     source.thumbnail_path(record)   — resolve the thumbnail PNG for one record
 
-The Browser never calls ``scan_catalog``, walks directories, or reads JSON.
+The browser never calls ``scan_catalog``, walks directories, or reads JSON.
 
 Built-in sources
 ----------------
@@ -20,10 +22,10 @@ EngravingSource
     from ``engraving.json`` sidecars.
 
 Adding a new illustration type
--------------------------------
-Subclass ``IllustrationSource`` and implement ``_load()`` and ``thumbnail_path()``.
-Pass the new source to ``IllustrationBrowser`` at construction time.  No
-browser code needs to change.
+------------------------------
+Create a new ``IllustrationSource`` subclass and implement ``_load()`` plus
+``thumbnail_path()``. Pass that source into ``IllustrationBrowser``.
+Do not modify browser internals for new data origins.
 """
 
 from __future__ import annotations
@@ -34,12 +36,17 @@ from typing import Optional
 
 
 class IllustrationSource(ABC):
-    """Abstract base class for illustration data sources.
+    """Abstract base class for visualizer record providers.
 
     Subclasses implement ``_load()`` (bulk fetch for a given media type) and
     ``thumbnail_path()`` (thumbnail path for a single record).  The template method
     ``reload()`` calls ``_load()`` and caches the result so ``items()`` is
     always cheap.
+
+    Ownership
+    ---------
+    The source is the owner of record access and in-memory record cache.
+    Browser, inspector, and tool panels read records through this API.
 
     Parameters
     ----------
@@ -55,11 +62,16 @@ class IllustrationSource(ABC):
         """Reload all records for *media_type*.
 
         Results are cached internally; call ``items()`` to retrieve them.
+        This is the data-loading boundary used by the browser.
         """
         self._records = self._load(media_type)
 
     def items(self) -> list[dict]:
-        """Return the current flat list of illustration records."""
+        """Return a snapshot of cached records.
+
+        The returned list is a copy so callers can iterate safely without
+        mutating source-owned storage.
+        """
         return list(self._records)
 
     @abstractmethod
@@ -83,7 +95,7 @@ class IllustrationSource(ABC):
 # ---------------------------------------------------------------------------
 
 class SilhouetteSource(IllustrationSource):
-    """Loads illustration records from the silhouette catalog.
+    """Source for silhouette catalog records.
 
     Delegates to ``services.silhouette_catalog.scan_catalog`` which returns a
     flat list of object metadata dicts, each augmented with a ``path`` key
@@ -93,7 +105,8 @@ class SilhouetteSource(IllustrationSource):
     Sort support
     ------------
     Call ``set_sort_keys(keys)`` to change the multi-key sort order.  Sorting
-    is applied to the cached records in-memory — no additional disk scan.
+    is applied to source-owned cached records in-memory — no additional disk
+    scan.
     The sort is preserved across ``reload()`` calls.
 
     Parameters
@@ -244,7 +257,7 @@ class SilhouetteSource(IllustrationSource):
 # ---------------------------------------------------------------------------
 
 class EngravingSource(IllustrationSource):
-    """Loads illustration records from the engraving catalog.
+    """Source for engraving catalog records.
 
     Walks ``data/engravings/catalog/<media_type>/`` recursively, reading every
     ``engraving.json`` sidecar.  Derives identity fields (label, filename_stem,
@@ -269,7 +282,7 @@ class EngravingSource(IllustrationSource):
     # ------------------------------------------------------------------ mode filter
 
     def reload(self, media_type: str = "movie") -> None:
-        """Reload from disk then re-apply the current mode filter."""
+        """Reload from storage then re-apply the current mode filter."""
         self._all_eng_records = self._load(media_type)
         self._apply_mode_filter()
 
@@ -277,6 +290,7 @@ class EngravingSource(IllustrationSource):
         """Show only records whose ``mode`` field matches *mode*.
 
         Pass ``None`` or ``""`` to show all modes.
+        Filtering is a source concern; the browser remains source-agnostic.
         """
         self._mode_filter = mode or None
         self._apply_mode_filter()

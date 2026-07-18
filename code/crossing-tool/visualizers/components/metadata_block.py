@@ -1,8 +1,8 @@
-"""MetadataBlock — compact key-value metadata display widget.
+"""MetadataBlock — reusable key-value presentation block.
 
-A fixed set of labelled rows that can be updated individually via
-``set(key, value)`` and cleared via ``clear()``.  Used as a building block
-inside IllustrationInspector panels.
+A fixed row set updated via ``set(key, value)`` and reset via ``clear()``.
+Used inside inspector sections to keep metadata presentation consistent across
+visualizers.
 
 Example::
 
@@ -22,7 +22,10 @@ from styles import theme
 
 
 class MetadataBlock(QWidget):
-    """Fixed grid of key–value label pairs for inspector panels.
+    """Fixed key-value row grid for inspector presentation.
+
+    This widget presents metadata only. It does not own selection, data
+    retrieval, or project operations.
 
     Parameters
     ----------

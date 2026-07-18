@@ -1,7 +1,7 @@
-"""ThumbnailLoader — background PNG thumbnail loader.
+"""ThumbnailLoader — shared background thumbnail loading worker.
 
-Loads PNG thumbnail images off the GUI thread and delivers QImages via Qt
-signals, keeping the UI responsive during large catalog scans.
+Loads thumbnail images off the GUI thread and delivers QImages via Qt signals,
+keeping the browser responsive during large scans.
 
 This is the canonical implementation that replaces the three separate loader
 classes currently found in silhouette_visualizer.py and book_visualizer.py:
@@ -68,7 +68,7 @@ def _default_path_for(record: dict) -> Optional[Path]:
 
 
 class ThumbnailLoader(QThread):
-    """Background PNG thumbnail loader.
+    """Background thumbnail loader for browser grids.
 
     Signals
     -------
@@ -96,6 +96,11 @@ class ThumbnailLoader(QThread):
         ``record["path"].with_suffix(".png")``.
     parent:
         Optional parent QObject.
+
+    Ownership
+    ---------
+    Path resolution belongs to the source (or ``path_for`` callback).
+    This loader owns threaded image decoding only.
     """
 
     thumbReady   = pyqtSignal(int, QImage)   # (index, qimage)

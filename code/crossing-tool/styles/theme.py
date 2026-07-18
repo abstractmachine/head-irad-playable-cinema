@@ -1,4 +1,11 @@
-"""Shared visual theme for all Crossing Tool visualizers.
+"""Shared visual language tokens and helpers for Crossing visualizers.
+
+This module is part of the Visualizer Framework public surface. It defines a
+common interaction language (spacing, typography, control states, accents,
+scroll behavior) so different visualizers feel like one system.
+
+Visualizers should compose with these tokens/helpers rather than inventing
+parallel styles per tool.
 
 Design language:
   - Background : 50% grey   (#808080)
@@ -347,10 +354,13 @@ def table_stylesheet() -> str:
 
 
 def apply_theme(app) -> None:
-    """Register bundled fonts and apply the shared stylesheet to *app*.
+    """Apply the canonical visualizer style contract to *app*.
 
     Call once from the visualizer's launcher function, immediately after
     creating the QApplication instance.
+
+    This function standardizes presentation only. It does not alter business
+    logic, project operations, or data ownership boundaries.
     """
     # Force Fusion so palette and stylesheet rules are honoured for combo
     # popups instead of being overridden by the native GTK/platform style.
