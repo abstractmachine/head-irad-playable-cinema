@@ -72,6 +72,7 @@ class ThumbnailCell(QLabel):
         self._index        = index
         self._selected     = False
         self._highlighted  = False   # "best" state — thicker accent border
+        self._light_bg     = False   # engraving mode: white/grey backgrounds
         self._press_pos: Optional[QPoint] = None
 
         # Drag-and-drop — set these before the user can drag
@@ -103,6 +104,19 @@ class ThumbnailCell(QLabel):
         """Toggle the highlight border (fuchsia, 3 px — marks the best item)."""
         if self._highlighted != highlighted:
             self._highlighted = highlighted
+            self._apply_style()
+
+    def set_light_bg(self, enabled: bool) -> None:
+        """Use light (white/grey) backgrounds for transparent-image grids.
+
+        When *enabled* is ``True``:
+        - default state        — light grey background
+        - selected (not best)  — white background
+        - selected + best      — accent colour (same as dark mode)
+        - best (not selected)  — light grey with accent border
+        """
+        if self._light_bg != enabled:
+            self._light_bg = enabled
             self._apply_style()
 
     # ------------------------------------------------------------------ events
@@ -154,25 +168,46 @@ class ThumbnailCell(QLabel):
 
     def _apply_style(self) -> None:
         # selected + best  → grey outer border, ACCENT inner ring (via bg fill)
-        # best only        → ACCENT border with dark inner gap
-        # selected only    → grey border with dark inner gap
+        # best only        → ACCENT border with gap
+        # selected only    → grey border with gap
         # neither          → no visible border, no padding
-        if self._highlighted and self._selected:
-            border  = "2px solid #808080"
-            bg      = theme.ACCENT
-            padding = "4px"
-        elif self._highlighted:
-            border  = f"2px solid {theme.ACCENT}"
-            bg      = theme.CANVAS_BG
-            padding = "2px"
-        elif self._selected:
-            border  = "2px solid #808080"
-            bg      = theme.CANVAS_BG
-            padding = "4px"
+        #
+        # light_bg mode (engravings grid): white/grey backgrounds so
+        # transparent PNGs are legible against a light surface.
+        if self._light_bg:
+            if self._highlighted and self._selected:
+                border  = "2px solid #808080"
+                bg      = theme.ACCENT
+                padding = "4px"
+            elif self._highlighted:
+                border  = f"2px solid {theme.ACCENT}"
+                bg      = "#808080"
+                padding = "2px"
+            elif self._selected:
+                border  = "2px solid #a0a0a0"
+                bg      = "#ffffff"
+                padding = "4px"
+            else:
+                border  = "1px solid #808080"
+                bg      = "#808080"
+                padding = "0px"
         else:
-            border  = "1px solid transparent"
-            bg      = theme.CANVAS_BG
-            padding = "0px"
+            if self._highlighted and self._selected:
+                border  = "2px solid #808080"
+                bg      = theme.ACCENT
+                padding = "4px"
+            elif self._highlighted:
+                border  = f"2px solid {theme.ACCENT}"
+                bg      = theme.CANVAS_BG
+                padding = "2px"
+            elif self._selected:
+                border  = "2px solid #808080"
+                bg      = theme.CANVAS_BG
+                padding = "4px"
+            else:
+                border  = "1px solid transparent"
+                bg      = theme.CANVAS_BG
+                padding = "0px"
 
         self.setStyleSheet(
             f"background: {bg}; border: {border}; padding: {padding};"

@@ -184,6 +184,21 @@ class SilhouetteSource(IllustrationSource):
         if not active_keys:
             return list(records)   # "-----" / none — preserve catalog scan order
 
+        # Special case: binary sort — records with an isolated engraving first.
+        if "engraved_first" in active_keys:
+            from services.engraving_paths import engraving_dir_for_source
+            def _is_engraved(rec: dict) -> int:
+                json_path = rec.get("path")
+                if not json_path:
+                    return 0
+                try:
+                    d = engraving_dir_for_source(
+                        self._project_path, json_path, rec, mode="isolated"
+                    )
+                    return 1 if d.exists() else 0
+                except Exception:
+                    return 0
+            return sorted(records, key=_is_engraved, reverse=True)
         numeric_keys = [k for k in active_keys if k != "alphabetical"]
         use_alpha_only = "alphabetical" in active_keys and not numeric_keys
 

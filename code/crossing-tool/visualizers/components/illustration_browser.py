@@ -320,6 +320,7 @@ class IllustrationBrowser(QWidget):
         thumb_size: int = _THUMB_SIZE,
         page_size:  int = _PAGE_SIZE,
         detach_controls: bool = False,
+        light_bg: bool = False,
         parent: Optional[QWidget] = None,
     ) -> None:
         """Create an IllustrationBrowser.
@@ -339,6 +340,7 @@ class IllustrationBrowser(QWidget):
         self._source           = source
         self._media_type       = media_type
         self._thumb_size       = thumb_size
+        self._light_bg         = light_bg
         # _page_size is now a dynamic property — see @property below.
         # The constructor argument is kept for API compatibility but not stored.
         self._detach_controls  = detach_controls
@@ -1249,6 +1251,7 @@ class IllustrationBrowser(QWidget):
                 tip += f"  f:{frame}"
 
             cell = ThumbnailCell(index=i, size=self._thumb_size, tooltip=tip)
+            cell.set_light_bg(self._light_bg)
             cell.set_selected(is_selected)
             cell.set_highlighted(is_best)
             cell.clicked.connect(self._on_cell_clicked)

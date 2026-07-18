@@ -110,6 +110,7 @@ _SORT_OPTS: list[tuple[str, str]] = [
     ("semantic label", "semantic_label"),
     ("semantic field", "semantic_field"),
     ("alphabetical",   "alphabetical"),
+    ("engraved",       "engraved_first"),
 ]
 
 # 24 visually distinct blob overlay colours (R, G, B)
@@ -1546,7 +1547,7 @@ class IllustrationPane(QWidget):
             source=self._sil_source, media_type=media_type, **_browser_kwargs
         )
         self._browser_eng = IllustrationBrowser(
-            source=self._eng_source, media_type=media_type, **_browser_kwargs
+            source=self._eng_source, media_type=media_type, light_bg=True, **_browser_kwargs
         )
         # Active browser alias — updated on tab switch.
         self._browser = self._browser_sil
