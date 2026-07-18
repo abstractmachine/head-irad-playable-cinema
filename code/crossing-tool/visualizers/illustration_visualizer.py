@@ -42,7 +42,7 @@ Keyboard shortcuts (Catalog tab):
   Escape / Ctrl+Q / Ctrl+W — close
 
 Launched via:
-    crossing visualizer silhouette
+    crossing visualizer illustration
 """
 
 from __future__ import annotations
@@ -1783,47 +1783,11 @@ class IllustrationPane(QWidget):
                         info_keys: tuple) -> dict:
         """Build and add an Info collapsible section; return {key: QLabel} dict."""
         info_sec = CollapsibleSection("Info", pref_key=pref_key)
-        grid_widget = QWidget()
-        grid = QGridLayout(grid_widget)
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(0)
-        grid.setVerticalSpacing(0)
-        grid.setColumnStretch(0, 0)
-        grid.setColumnStretch(1, 1)
-        last_idx = len(info_keys) - 1
-        rows: dict[str, QLabel] = {}
-        for row_idx, key in enumerate(info_keys):
-            _top    = f" border-top: 2px solid {theme.TAB_BG};"    if row_idx == 0        else ""
-            _bottom = f" border-bottom: 2px solid {theme.TAB_BG};" if row_idx < last_idx  else ""
-            kl = QLabel(key)
-            kl.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
-            kl.setStyleSheet(
-                f"background: {theme.CELL_BG}; color: {theme.TEXT_DIM};"
-                f" font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
-                f" font-weight: {theme.WEIGHT_UI};"
-                f"{_top} border-right: 2px solid {theme.TAB_BG}; {_bottom}"
-                f" min-height: 24px; padding: 0px 4px 0px 2px;"
-            )
-            grid.addWidget(kl, row_idx, 0)
-            vl = _WrapLabel("\u2014")
-            vl.setWordWrap(True)
-            vl.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-            vl.setTextInteractionFlags(Qt.TextSelectableByMouse)
-            _sp = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-            _sp.setHeightForWidth(True)
-            vl.setSizePolicy(_sp)
-            vl.setStyleSheet(
-                f"background: {theme.CELL_BG}; color: {theme.TEXT};"
-                f" font-family: '{theme.FAMILY_MONO}'; font-size: {theme.BASE_PT}pt;"
-                f" font-weight: {theme.WEIGHT_MONO};"
-                f"{_top}{_bottom} padding: 0px 2px 0px 3px;"
-            )
-            grid.addWidget(vl, row_idx, 1)
-            rows[key] = vl
-        info_sec.add_widget(grid_widget)
+        block = MetadataBlock(list(info_keys))
+        info_sec.add_widget(block)
         info_sec._body_layout.setContentsMargins(0, 0, 0, 0)
         pv.addWidget(info_sec)
-        return rows
+        return block.labels()
 
     def _build_source_panel(
         self,

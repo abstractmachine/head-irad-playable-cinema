@@ -1279,12 +1279,16 @@ class IllustrationBrowser(QWidget):
             cell.clicked.connect(self._on_cell_clicked)
             cell.doubleClicked.connect(self._on_cell_double_clicked)
 
-            # Build drag-and-drop payload from the record's raw path field
-            # without calling thumbnail_path() (which does Path.exists()).
-            # The ThumbnailLoader verifies file existence in the background.
-            path_raw = rec.get("path")
-            if path_raw:
-                cell.drag_path = str(Path(str(path_raw)).with_suffix(".png"))
+            # Build drag-and-drop payload via source thumbnail resolution so
+            # non-JSON-backed sources (e.g. engraving output paths) can drag
+            # their actual image file instead of a derived sidecar path.
+            drag_path = self._source.thumbnail_path(rec)
+            if drag_path is None:
+                path_raw = rec.get("path")
+                if path_raw:
+                    drag_path = Path(str(path_raw)).with_suffix(".png")
+            if drag_path is not None:
+                cell.drag_path = str(drag_path)
                 cell.drag_meta = {
                     k: str(v) if isinstance(v, Path) else v
                     for k, v in rec.items()

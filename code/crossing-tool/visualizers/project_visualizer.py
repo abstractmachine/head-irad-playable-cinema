@@ -81,7 +81,7 @@ _VISUALIZER_TITLE = {
     "composition": "Composition Visualizer",
     "metadata":    "Metadata Visualizer",
     "cloud":       "Cloud Visualizer",
-    "silhouette":  "Silhouette Visualizer",
+    "illustration": "Illustration Visualizer",
     "palette":     "Palette Visualizer",
     "flipbook":    "Flipbook Visualizer",
     "sync":        "Sync Visualizer",
@@ -436,7 +436,7 @@ class ProjectVisualizer(QMainWindow):
                 ("Mosaic",       "mosaic",       True),
                 ("Cloud",        "cloud",        True),
                 ("Book",         "book",         True),
-                ("Silhouette",   "silhouette",   True),
+                ("Illustration", "illustration", True),
                 ("Palette",      "palette",      True),
                 ("Flipbook",     "flipbook",     True),
                 ("Sync",         "sync",         True),
@@ -526,7 +526,7 @@ class ProjectVisualizer(QMainWindow):
         elif subcommand == "book":
             from visualizers.book_visualizer import BookVisualizerWindow
             return BookVisualizerWindow(project_path)
-        elif subcommand == "silhouette":
+        elif subcommand in ("illustration", "silhouette"):
             model_name = _prefs.get("model_segmentation", "sam3.pt") or "sam3.pt"
             from visualizers.silhouette_visualizer import SilhouetteWindow
             return SilhouetteWindow(project_path, media_type=media_type, model_name=model_name)

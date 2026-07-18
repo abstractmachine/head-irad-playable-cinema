@@ -398,7 +398,7 @@ class _GripHandle(QSplitterHandle):
     width.  Drag behaviour is unchanged.
     """
 
-    _DOT_COLOUR      = QColor("#666666")
+    _DOT_COLOUR      = QColor(SPLITTER)
     _HOVER_COLOUR    = QColor(ACCENT)
     _DOT_R           = 2   # dot radius (px)
     _DOT_GAP         = 6   # centre-to-centre spacing (px)

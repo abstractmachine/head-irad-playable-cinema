@@ -24,11 +24,9 @@ Navigation:
 
 from __future__ import annotations
 
-import datetime
 import json
 import math
 import os
-import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -40,8 +38,12 @@ _CLI_PATH = Path(__file__).parent.parent / "cli.py"
 
 from styles import theme
 from styles.theme import GripSplitter, save_window_geometry, restore_window_geometry
+from visualizers.components.collapsible_section import CollapsibleSection
+from visualizers.components.illustration_browser import IllustrationBrowser
+from visualizers.components.illustration_source import EngravingSource
+from visualizers.components.metadata_block import MetadataBlock
 
-from PyQt5.QtCore import Qt, QByteArray, QEvent, pyqtSignal, QMimeData, QObject, QPoint, QRect, QRectF, QSize, QThread, QTimer, QPointF
+from PyQt5.QtCore import Qt, QByteArray, QEvent, pyqtSignal, QMimeData, QPoint, QRect, QRectF, QSize, QThread, QTimer, QPointF
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -141,6 +143,31 @@ _PANEL_STYLESHEET = (
     f" QPushButton:checked  {{ background-color: {theme.ACCENT}; color: {theme.TEXT}; }}"
     f" QPushButton:disabled {{ color: {theme.TEXT_DIM};"
     f" background-color: {theme.BTN_BG}; }}"
+)
+
+_TAB_CONTENT_STYLESHEET = (
+    f"QWidget {{ background: {theme.TAB_BG}; }}"
+    f" QPushButton {{ background-color: {theme.BTN_BG}; border: none;"
+    f" padding: 0 10px; border-radius: 3px;"
+    f" min-height: {theme.BTN_H}px; max-height: {theme.BTN_H}px; }}"
+    f" QPushButton:hover    {{ background-color: {theme.BTN_HOVER}; }}"
+    f" QPushButton:pressed  {{ background-color: {theme.BTN_PRESSED}; }}"
+    f" QPushButton:checked  {{ background-color: {theme.ACCENT}; color: {theme.TEXT}; }}"
+    f" QPushButton:disabled {{ color: {theme.TEXT_DIM};"
+    f" background-color: {theme.BTN_BG}; }}"
+)
+
+_WORKSPACE_TABS_STYLESHEET = (
+    f"QTabWidget {{ background: {theme.CANVAS_BG}; border: none; }}"
+    f"QTabWidget::pane {{ background: {theme.TAB_BG}; border: none; }}"
+    f"QTabBar {{ background: {theme.CANVAS_BG}; border: none; }}"
+    f"QTabBar::tab {{"
+    f" background: {theme.CANVAS_BG}; color: {theme.TEXT_DIM};"
+    f" padding: 4px 10px; border: none;"
+    f" font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
+    f"}}"
+    f"QTabBar::tab:selected {{ background: {theme.TAB_BG}; color: {theme.TEXT}; }}"
+    f"QTabBar::tab:hover {{ background: {theme.TAB_BG}; color: {theme.TEXT}; }}"
 )
 
 
@@ -766,7 +793,7 @@ class _SpreadView(QWidget):
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor(theme.PANEL_BG))
+        p.fillRect(self.rect(), QColor(theme.CANVAS_BG))
 
         if self._doc is None:
             p.end()
@@ -819,7 +846,6 @@ class _CutOverlay(QWidget):
     selection_changed = pyqtSignal(str)   # emitted with layer id (or "")
     text_sel_committed = pyqtSignal(dict) # emitted when a text selection is created
     text_sel_removed   = pyqtSignal(str)  # emitted with text sel id on deletion
-    engraving_requested       = pyqtSignal(dict)                          # emitted with Image layer dict
     silhouette_drop_requested = pyqtSignal(str, int, float, float, dict)  # abs_path, page_idx, nx, ny, meta
 
     @staticmethod
@@ -901,7 +927,7 @@ class _CutOverlay(QWidget):
 
         # Page action buttons (hover/select on Image layers)
         self._hover_img_id: Optional[str] = None          # Image layer currently under cursor
-        self._action_btn_rects: dict = {}                  # lid → {"engrave": QRect, "delete": QRect}
+        self._action_btn_rects: dict = {}                  # lid → action-name → QRect
         self._action_icons_cache: Optional[dict] = None   # lazy-loaded icon pixmaps
 
         self.setAttribute(Qt.WA_NoSystemBackground)
@@ -947,7 +973,6 @@ class _CutOverlay(QWidget):
         """Lazy-load and cache action button icon pixmaps."""
         if self._action_icons_cache is None:
             self._action_icons_cache = {
-                "engrave": _svg_icon("media-image-plus",  14, "#ffffff"),
                 "delete":  _svg_icon("trash-solid",       14, "#ffffff"),
                 "flip_h":  _svg_icon("flip",              14, "#ffffff"),
                 "flip_v":  _svg_icon("flip-reverse",      14, "#ffffff"),
@@ -955,7 +980,7 @@ class _CutOverlay(QWidget):
         return self._action_icons_cache
 
     def _draw_img_action_buttons(self, p: QPainter, layer: dict, rects: dict) -> None:
-        """Draw [Delete] [Engrave] action buttons above the selected/hovered image.
+        """Draw in-canvas action buttons above the selected/hovered image.
 
         If there is not enough room above the image (buttons would be clipped),
         they are placed below the bottom edge instead.
@@ -974,21 +999,20 @@ class _CutOverlay(QWidget):
             btn_y = min_y - sz - 3
         else:
             btn_y = max_y + 3
-        # Four buttons left-aligned: [delete] [flip_h] [flip_v] [engrave]
+        # Three buttons left-aligned: [delete] [flip_h] [flip_v]
         del_rect = QRect(min_x,                  btn_y, sz, sz)
         fh_rect  = QRect(min_x +     (sz + gap), btn_y, sz, sz)
         fv_rect  = QRect(min_x + 2 * (sz + gap), btn_y, sz, sz)
-        eng_rect = QRect(min_x + 3 * (sz + gap), btn_y, sz, sz)
         self._action_btn_rects[layer["id"]] = {
-            "engrave": eng_rect, "delete": del_rect,
-            "flip_h":  fh_rect,  "flip_v": fv_rect,
+            "delete": del_rect,
+            "flip_h": fh_rect,
+            "flip_v": fv_rect,
         }
         icons = self._get_action_icons()
         for btn_rect, icon_key, btn_color in [
             (del_rect, "delete",  QColor(160,  60,  60, 220)),
             (fh_rect,  "flip_h",  QColor( 60,  90,  90, 220)),
             (fv_rect,  "flip_v",  QColor( 60,  90,  90, 220)),
-            (eng_rect, "engrave", QColor( 60,  60, 160, 220)),
         ]:
             p.setPen(Qt.NoPen)
             p.setBrush(btn_color)
@@ -1005,15 +1029,9 @@ class _CutOverlay(QWidget):
         """Return True and handle the action if *pos* hits an action button."""
         pt = pos.toPoint()
         for lid, btns in self._action_btn_rects.items():
-            eng_rect = btns.get("engrave")
             del_rect = btns.get("delete")
             fh_rect  = btns.get("flip_h")
             fv_rect  = btns.get("flip_v")
-            if eng_rect and eng_rect.contains(pt):
-                layer = self._layer_by_id(lid)
-                if layer:
-                    self.engraving_requested.emit(dict(layer))
-                return True
             if del_rect and del_rect.contains(pt):
                 layer = self._layer_by_id(lid)
                 if layer:
@@ -2532,6 +2550,13 @@ class _CutOverlay(QWidget):
                 p.setPen(QPen(QColor("#888888"), 1, Qt.DashLine))
                 p.setBrush(QColor(80, 80, 80, 60))
                 p.drawRect(QRectF(-sw / 2, -sh / 2, sw, sh))
+                if layer.get("layer_subtype") == "Engraving":
+                    p.setPen(QPen(QColor("#ffffff"), 1))
+                    p.drawText(
+                        QRectF(-sw / 2, -sh / 2, sw, sh),
+                        Qt.AlignCenter,
+                        "Missing Engraving",
+                    )
             p.restore()
 
         # ── segment-insertion hover dot ───────────────────────────────
@@ -2633,6 +2658,8 @@ class _PageBar(QWidget):
         self.setFixedHeight(_BAR_H)
         self.setCursor(Qt.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setAutoFillBackground(False)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
 
     def set_state(self, current: int, total: int) -> None:
         self._current = current
@@ -2641,7 +2668,7 @@ class _PageBar(QWidget):
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor(theme.PANEL_BG))
+        p.fillRect(self.rect(), Qt.transparent)
         n = self._spread_count
         if n > 0:
             cell_w = self.width() / n
@@ -2871,6 +2898,17 @@ class _LayerPanel(QWidget):
 
     def _append_layer(self, layer: dict) -> None:
         lid = layer["id"]
+
+        # Replace any existing UI row for this layer id instead of appending a
+        # duplicate. Image-layer updates can legitimately re-emit commits.
+        for i in reversed(range(self._list.count())):
+            item = self._list.item(i)
+            if item and item.data(Qt.UserRole) == lid:
+                self._list.takeItem(i)
+        self._rows.pop(lid, None)
+        while lid in self._order:
+            self._order.remove(lid)
+
         row = _LayerRow(layer)
         row.delete_requested.connect(self.layer_deleted)
         row.rename_requested.connect(self._on_rename)
@@ -3354,212 +3392,23 @@ class _IllustrationsDrawer(QWidget):
 
 
 # ---------------------------------------------------------------------------
-# Silhouette Browser sidebar — embedded catalog browser for Book Visualizer
+# Engraving Browser sidebar — framework-backed browser for Book Visualizer
 # ---------------------------------------------------------------------------
 
-_BROWSER_PANEL_W    = 420   # px — preferred width of the silhouette browser column (3 cols + margin)
-_BROWSER_THUMB_SZ   = 80    # px per thumbnail cell
-_BROWSER_THUMB_GAP  = 6     # px gap between cells
-_BROWSER_PAGE_SIZE  = 50    # silhouettes per page
-_BROWSER_LOAD_BATCH = 15    # loader yields UI thread every N images
+_BROWSER_PANEL_W   = 420   # px — preferred width of the engraving browser column
+_BROWSER_THUMB_SZ  = 80    # px per thumbnail cell
 
 
-class _BrowserThumbLoader(QThread):
-    """Background loader: reads PNG thumbnails and emits QImages for the sidebar grid.
+class _IllustrationBrowserPanel(QWidget):
+    """Book-side engraving browser composed from framework components.
 
-    Mirrors the _ThumbLoader in silhouette_visualizer.py but is self-contained
-    here to avoid cross-visualizer imports.
-    """
-
-    thumb_ready   = pyqtSignal(int, QImage)  # (cell index, QImage)
-    load_finished = pyqtSignal()
-
-    def __init__(self, records: list, size: int, parent=None) -> None:
-        super().__init__(parent)
-        self._records   = records
-        self._size      = size
-        self._cancelled = False
-
-    def cancel(self) -> None:
-        self._cancelled = True
-
-    def run(self) -> None:
-        try:
-            from PIL import Image as _PIL
-        except ImportError:
-            self.load_finished.emit()
-            return
-
-        for i, rec in enumerate(self._records):
-            if self._cancelled:
-                break
-            json_path = rec.get("path")
-            if not json_path:
-                continue
-            png_path = Path(str(json_path)).with_suffix(".png")
-            try:
-                img = _PIL.open(str(png_path)).convert("RGBA")
-                img.thumbnail((self._size, self._size), _PIL.LANCZOS)
-                w, h = img.size
-                data = img.tobytes("raw", "RGBA")
-                qimg = QImage(data, w, h, 4 * w, QImage.Format_RGBA8888)
-                self.thumb_ready.emit(i, qimg.copy())
-            except Exception:
-                pass
-            if (i + 1) % _BROWSER_LOAD_BATCH == 0:
-                self.msleep(2)   # yield so UI stays responsive
-
-        self.load_finished.emit()
-
-
-class _EngravingThumbLoader(QThread):
-    """Background loader for engraving thumbnail images.
-
-    Accepts a list of ``(index, abs_path)`` pairs and emits ``thumb_ready``
-    for each successfully loaded image so the GUI thread can update cells
-    without blocking.
-    """
-
-    thumb_ready = pyqtSignal(int, QImage)
-
-    def __init__(self, paths: list, size: int, parent=None) -> None:
-        super().__init__(parent)
-        self._paths     = paths   # list of (int, str)
-        self._size      = size
-        self._cancelled = False
-
-    def cancel(self) -> None:
-        self._cancelled = True
-
-    def run(self) -> None:
-        try:
-            from PIL import Image as _PIL
-        except ImportError:
-            return
-        for i, path in self._paths:
-            if self._cancelled:
-                break
-            try:
-                img = _PIL.open(path).convert("RGBA")
-                img.thumbnail((self._size, self._size), _PIL.LANCZOS)
-                w, h = img.size
-                data = img.tobytes("raw", "RGBA")
-                qimg = QImage(data, w, h, 4 * w, QImage.Format_RGBA8888)
-                self.thumb_ready.emit(i, qimg.copy())
-            except Exception:
-                pass
-            self.msleep(2)   # yield so UI stays responsive
-
-
-class _BrowserThumbCell(QLabel):
-    """Single thumbnail cell in the silhouette browser grid.
-
-    Emits ``single_clicked`` on left-click and ``double_clicked`` on
-    double-click so the browser can distinguish selection from insertion.
-    """
-
-    single_clicked = pyqtSignal(int)  # cell index
-    double_clicked = pyqtSignal(int)  # cell index
-
-    def __init__(self, index: int, tooltip: str = "", parent=None) -> None:
-        super().__init__(parent)
-        self._index          = index
-        self._selected       = False
-        self._drag_abs_path  = ""      # set by _rebuild_grid after construction
-        self._drag_meta: dict = {}     # record dict used for the drag payload
-        self._press_pos: Optional[QPoint] = None
-        self.setFixedSize(_BROWSER_THUMB_SZ, _BROWSER_THUMB_SZ)
-        self.setAlignment(Qt.AlignCenter)
-        self.setCursor(Qt.PointingHandCursor)
-        if tooltip:
-            self.setToolTip(tooltip)
-        self._apply_style()
-        self.setText("·")   # placeholder until image loads
-
-    def set_image(self, qimg: QImage) -> None:
-        """Called from the GUI thread when the loader delivers a QImage."""
-        self.setPixmap(QPixmap.fromImage(qimg))
-        self.setText("")
-
-    def set_selected(self, selected: bool) -> None:
-        self._selected = selected
-        self._apply_style()
-
-    def _apply_style(self) -> None:
-        border = (
-            f"2px solid {theme.ACCENT}" if self._selected else "1px solid transparent"
-        )
-        self.setStyleSheet(
-            f"background: transparent; border: {border};"
-            f" color: {theme.TEXT_DIM};"
-            f" font-family: '{theme.FAMILY_MONO}'; font-size: {theme.BASE_PT}pt;"
-        )
-
-    def mousePressEvent(self, event) -> None:  # noqa: N802
-        if event.button() == Qt.LeftButton:
-            self._press_pos = event.pos()
-            self.single_clicked.emit(self._index)
-        super().mousePressEvent(event)
-
-    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
-        if event.button() == Qt.LeftButton:
-            self.double_clicked.emit(self._index)
-        super().mouseDoubleClickEvent(event)
-
-    def mouseMoveEvent(self, event) -> None:  # noqa: N802
-        if (event.buttons() & Qt.LeftButton
-                and self._press_pos is not None
-                and self._drag_abs_path
-                and (event.pos() - self._press_pos).manhattanLength()
-                    >= QApplication.startDragDistance()):
-            mime = QMimeData()
-            payload = json.dumps({"abs_path": self._drag_abs_path,
-                                   "meta":     self._drag_meta})
-            mime.setData("application/x-crossing-illus-source",
-                         QByteArray(payload.encode()))
-            drag = QDrag(self)
-            drag.setMimeData(mime)
-            pix = self.pixmap()
-            if pix and not pix.isNull():
-                scaled = pix.scaled(48, 48, Qt.KeepAspectRatio,
-                                    Qt.SmoothTransformation)
-                drag.setPixmap(scaled)
-                drag.setHotSpot(QPoint(scaled.width() // 2,
-                                       scaled.height() // 2))
-            self._press_pos = None  # prevent re-triggering on same press
-            drag.exec_(Qt.CopyAction)
-            return
-        super().mouseMoveEvent(event)
-
-
-class _SilhouetteBrowserPanel(QWidget):
-    """Docked sidebar panel for browsing the silhouette catalog.
-
-    Two tabs:
-        Silhouettes — Scope / Field / Label filters + paginated thumbnail grid.
-        Engravings  — generated asset library; entries are added by the
-                       page-centric adaptive engraving workflow.
-
-    Emits ``silhouette_insert_requested(png_path, metadata)`` when the user
-    double-clicks a thumbnail.  ``BookVisualizerWindow`` connects this signal
-    to ``_insert_silhouette``, which copies the PNG into the book's
-    ``illustrations/silhouettes/`` folder and creates an Image layer.
+    This panel is intentionally data-limited to engravings only:
+    IllustrationBrowser + EngravingSource.
     """
 
     silhouette_insert_requested = pyqtSignal(str, dict)  # (abs png_path, metadata)
-    engraving_delete_requested   = pyqtSignal(str)        # layer_id of engraving to delete
-    thumbnail_selected           = pyqtSignal(dict)       # catalog record on single-click
-    engraving_selected           = pyqtSignal(dict)       # engraving entry on single-click
-
-    # Background colour for the selected tab + its content pane.
-    # Noticeably darker than PANEL_BG (#6e6e6e) so the active tab stands out.
-    _TAB_CONTENT_BG = "#5a5a5a"
-
-    # Standard annotation field order — same ordering as CatalogBrowser
-    _FIELD_ORDER = [
-        "--all", "setting", "description", "objects",
-        "action", "humans", "wearing", "animals", "text",
-    ]
+    thumbnail_selected = pyqtSignal(dict)                # selected engraving record
+    engraving_selected = pyqtSignal(dict)                # alias for compatibility
 
     def __init__(
         self,
@@ -3569,794 +3418,102 @@ class _SilhouetteBrowserPanel(QWidget):
     ) -> None:
         super().__init__(parent)
         self._project_path = project_path
-        self._media_type   = media_type
+        self._source = EngravingSource(project_path)
+        self._sort_mode = "catalog"
 
-        # Catalog data (populated by _load_catalog)
-        self._field_map: dict = {}    # {field: {label: [records]}}
-        self._film_list: list = []    # sorted list of film stems
+        self._browser = IllustrationBrowser(
+            source=self._source,
+            media_type=media_type,
+            thumb_size=_BROWSER_THUMB_SZ,
+            detach_controls=True,
+            light_bg=True,
+            parent=self,
+        )
+        self._browser.selectionChanged.connect(self._on_selection_changed)
+        self._browser.itemActivated.connect(self._on_item_activated)
+        self._browser.catalogReloaded.connect(self._apply_sort_mode)
 
-        # Current filtered view
-        self._current_records: list = []
-        self._page_idx:        int  = 0
-        self._page_count:      int  = 1
+        self.filter_panel = self._browser.filter_panel
+        self.status_bar = self._browser.status_bar
+        self.pagination_panel = self._browser.pagination_panel
 
-        # Grid state
-        self._page_records: list = []   # records slice shown in the current grid
-        self._cells:        list = []
-        self._selected_idx: int  = -1
-        self._loader: Optional[_BrowserThumbLoader] = None
-
-        # Engraving collection — populated externally by BookVisualizerWindow
-        self._engravings: list = []
-
-        # Engraving thumbnail loader (background thread, like _loader for silhouettes)
-        self._eng_loader = None
-        self._eng_cells:      list = []   # _BrowserThumbCell instances for the current grid
-        self._eng_containers: list = []   # matching container widgets (for resize re-layout)
-        self._selected_eng_idx: int = -1
-
-        self.setStyleSheet(_PANEL_STYLESHEET)
-        self.setMinimumWidth(180)
-        self._build_ui()
-
-        # Defer catalog scan until after the window has finished its first layout pass
-        QTimer.singleShot(0, self._load_catalog)
-
-    # ------------------------------------------------------------------
-    # UI construction
-
-    def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
+        outer.addWidget(self._browser)
 
-        self._tabs = QTabWidget()
-        self._tabs.setDocumentMode(True)
-        # drawBase draws a 1px platform-palette line at the bottom of the tab
-        # bar using QPalette::Light (white on dark themes) regardless of any
-        # stylesheet setting.  Disabling it removes the white line entirely.
-        self._tabs.tabBar().setDrawBase(False)
-        self._tabs.setStyleSheet(
-            f"QTabWidget           {{ background: {theme.PANEL_BG}; border: none; }}"
-            f"QTabWidget::pane     {{ border: none; background: transparent; top: -1px; }}"
-            f"QTabBar              {{ background: {theme.PANEL_BG}; border: none; }}"
-            f"QTabBar::tab {{"
-            f"  background: {theme.PANEL_BG}; color: {theme.TEXT};"
-            f"  padding: 4px 10px; border: none; margin-bottom: 0px;"
-            f"  font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
-            f"}}"
-            f"QTabBar::tab:selected {{ background: {self._TAB_CONTENT_BG};"
-            f"                         color: {theme.TEXT}; border: none; }}"
-            f"QTabBar::tab:hover    {{ background: {self._TAB_CONTENT_BG}; color: {theme.TEXT}; }}"
-        )
-        self._tabs.addTab(self._build_silhouettes_tab(), "Silhouettes")
-        self._tabs.addTab(self._build_engravings_tab(),  "Engravings")
-        self._tabs.currentChanged.connect(self._on_tab_changed)
-        outer.addWidget(self._tabs)
+    def _record_png(self, rec: dict) -> Optional[Path]:
+        """Return the best usable image path for an engraving record."""
+        p = self._source.thumbnail_path(rec)
+        if p is not None and p.exists():
+            return p
+        for key in ("output_png", "raw_png"):
+            val = rec.get(key)
+            if val:
+                cand = Path(str(val))
+                if cand.exists():
+                    return cand
+        return None
 
-    def _build_silhouettes_tab(self) -> QWidget:
-        widget = QWidget()
-        widget.setStyleSheet(_PANEL_STYLESHEET.replace(
-            f"QWidget {{ background: {theme.PANEL_BG}; }}",
-            f"QWidget {{ background: {self._TAB_CONTENT_BG}; }}",
-        ))
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(8, 8, 8, 4)
-        layout.setSpacing(6)
+    def _on_selection_changed(self, rec: dict) -> None:
+        self.thumbnail_selected.emit(dict(rec))
+        self.engraving_selected.emit(dict(rec))
 
-        combo_style = (
-            f"QComboBox {{ background: {theme.INPUT_BG}; color: {theme.TEXT};"
-            f" font-size: {theme.BASE_PT}pt; }}"
-        )
-
-        # Scope ──────────────────────────────────────────────────────
-        scope_grp = QGroupBox("Scope")
-        sg = QVBoxLayout(scope_grp)
-        sg.setContentsMargins(6, 8, 6, 6)
-        self._sil_media_type_combo = QComboBox()
-        self._sil_media_type_combo.setFocusPolicy(Qt.NoFocus)
-        self._sil_media_type_combo.setStyleSheet(combo_style)
-        self._sil_media_type_combo.addItems(["movie", "gameplay"])
-        self._sil_media_type_combo.setCurrentText(self._media_type)
-        self._sil_media_type_combo.currentTextChanged.connect(self._on_sil_media_type_changed)
-        sg.addWidget(self._sil_media_type_combo)
-        self._scope_combo = QComboBox()
-        self._scope_combo.setFocusPolicy(Qt.NoFocus)
-        self._scope_combo.setStyleSheet(combo_style)
-        self._scope_combo.currentIndexChanged.connect(self._on_scope_changed)
-        sg.addWidget(self._scope_combo)
-        layout.addWidget(scope_grp)
-
-        # Field ──────────────────────────────────────────────────────
-        field_grp = QGroupBox("Field")
-        fg = QVBoxLayout(field_grp)
-        fg.setContentsMargins(6, 8, 6, 6)
-        self._field_combo = QComboBox()
-        self._field_combo.setFocusPolicy(Qt.NoFocus)
-        self._field_combo.setStyleSheet(combo_style)
-        self._field_combo.currentIndexChanged.connect(self._on_field_changed)
-        fg.addWidget(self._field_combo)
-        layout.addWidget(field_grp)
-
-        # Label ──────────────────────────────────────────────────────
-        label_grp = QGroupBox("Label")
-        lg = QVBoxLayout(label_grp)
-        lg.setContentsMargins(6, 8, 6, 6)
-        self._label_combo = QComboBox()
-        self._label_combo.setFocusPolicy(Qt.NoFocus)
-        self._label_combo.setStyleSheet(combo_style)
-        self._label_combo.currentIndexChanged.connect(self._on_label_changed)
-        lg.addWidget(self._label_combo)
-        layout.addWidget(label_grp)
-
-        # Status line ────────────────────────────────────────────────
-        self._status_lbl = QLabel("—")
-        self._status_lbl.setWordWrap(True)
-        self._status_lbl.setStyleSheet(
-            f"color: {theme.TEXT_DIM}; font-size: {max(7, theme.BASE_PT - 1)}pt;"
-        )
-        layout.addWidget(self._status_lbl)
-
-        # Thumbnail grid scroll area ─────────────────────────────────
-        self._scroll = QScrollArea()
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._scroll.setFrameShape(QFrame.NoFrame)
-        self._scroll.setFocusPolicy(Qt.NoFocus)
-        self._scroll.setStyleSheet(
-            f"QScrollArea {{ background: transparent; border: none; }}"
-        )
-
-        self._grid_widget = QWidget()
-        self._grid_widget.setStyleSheet("background: transparent;")
-        self._grid_layout = QGridLayout(self._grid_widget)
-        self._grid_layout.setContentsMargins(
-            _BROWSER_THUMB_GAP, _BROWSER_THUMB_GAP,
-            _BROWSER_THUMB_GAP, _BROWSER_THUMB_GAP,
-        )
-        self._grid_layout.setSpacing(_BROWSER_THUMB_GAP)
-        self._grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        self._scroll.setWidget(self._grid_widget)
-
-        layout.addWidget(self._scroll, 1)   # stretch=1 → grid fills remaining height
-
-        # Pagination bar ─────────────────────────────────────────────
-        page_row = QWidget()
-        page_row.setStyleSheet(f"background: {self._TAB_CONTENT_BG};")
-        pr = QHBoxLayout(page_row)
-        pr.setContentsMargins(4, 4, 4, 4)
-        pr.setSpacing(4)
-
-        self._prev_btn = QPushButton("◀")
-        self._prev_btn.setFixedSize(28, 24)
-        self._prev_btn.setFocusPolicy(Qt.NoFocus)
-        self._prev_btn.clicked.connect(self._on_prev_page)
-        pr.addWidget(self._prev_btn)
-
-        self._page_lbl = QLabel("—")
-        self._page_lbl.setAlignment(Qt.AlignCenter)
-        self._page_lbl.setStyleSheet(
-            f"color: {theme.TEXT}; font-size: {max(7, theme.BASE_PT - 1)}pt;"
-        )
-        pr.addWidget(self._page_lbl, 1)
-
-        self._next_btn = QPushButton("▶")
-        self._next_btn.setFixedSize(28, 24)
-        self._next_btn.setFocusPolicy(Qt.NoFocus)
-        self._next_btn.clicked.connect(self._on_next_page)
-        pr.addWidget(self._next_btn)
-
-        layout.addWidget(page_row)
-        return widget
-
-    def _build_engravings_tab(self) -> QWidget:
-        widget = QWidget()
-        widget.setStyleSheet(_PANEL_STYLESHEET.replace(
-            f"QWidget {{ background: {theme.PANEL_BG}; }}",
-            f"QWidget {{ background: {self._TAB_CONTENT_BG}; }}",
-        ))
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        # Scroll area containing the engraving thumbnail grid
-        self._eng_scroll = QScrollArea()
-        self._eng_scroll.setWidgetResizable(True)
-        self._eng_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._eng_scroll.setFrameShape(QFrame.NoFrame)
-        self._eng_scroll.setFocusPolicy(Qt.NoFocus)
-        self._eng_scroll.setStyleSheet(
-            f"QScrollArea {{ background: {self._TAB_CONTENT_BG}; border: none; }}"
-        )
-
-        self._eng_container = QWidget()
-        self._eng_container.setStyleSheet(f"background: {self._TAB_CONTENT_BG};")
-        self._eng_grid_layout = QGridLayout(self._eng_container)
-        self._eng_grid_layout.setContentsMargins(
-            _BROWSER_THUMB_GAP, _BROWSER_THUMB_GAP,
-            _BROWSER_THUMB_GAP, _BROWSER_THUMB_GAP,
-        )
-        self._eng_grid_layout.setSpacing(_BROWSER_THUMB_GAP)
-        self._eng_grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-
-        self._eng_scroll.setWidget(self._eng_container)
-        layout.addWidget(self._eng_scroll, 1)
-        return widget
-
-    # ------------------------------------------------------------------
-    # Catalog loading
-
-    def _load_catalog(self) -> None:
-        """Scan the silhouette catalog and populate filter combos."""
-        self._stop_loader()
-        try:
-            from services.silhouette_catalog import scan_catalog
-            all_records = scan_catalog(self._project_path, media_type=self._media_type)
-        except Exception:
-            self._status_lbl.setText("Catalog unavailable.")
-            self._update_pagination(0, 1)
+    def _on_item_activated(self, rec: dict) -> None:
+        png = self._record_png(rec)
+        if png is None:
             return
+        self.silhouette_insert_requested.emit(str(png), dict(rec))
 
-        field_map: dict = {"--all": {}}
-        film_set:  set  = set()
-        for rec in all_records:
-            if "error" in rec:
-                continue
-            label = rec.get("label") or ""
-            field = rec.get("field") or "--all"
-            if not label:
-                continue
-            field_map.setdefault(field, {}).setdefault(label, []).append(rec)
-            field_map["--all"].setdefault(label, []).append(rec)
-            stem = rec.get("filename_stem") or rec.get("filename") or ""
-            if stem:
-                film_set.add(stem)
+    def _apply_sort_mode(self) -> None:
+        """Apply the active sort mode to the source cache and refresh the grid."""
+        items = self._source.items()
+        if self._sort_mode == "alphabetical":
+            items = sorted(items, key=lambda r: str.casefold(r.get("label") or ""))
+        self._source._records = list(items)
+        self._browser.refresh()
 
-        self._field_map = field_map
-        self._film_list = sorted(film_set)
-
-        # Scope combo
-        self._scope_combo.blockSignals(True)
-        self._scope_combo.clear()
-        _all_label = "All Movies" if self._media_type == "movie" else "All Gameplay"
-        self._scope_combo.addItem(_all_label, userData=None)
-        for stem in self._film_list:
-            self._scope_combo.addItem(stem, userData=stem)
-        self._scope_combo.blockSignals(False)
-
-        # Field combo (standard order, only fields that have data)
-        present = set(field_map.keys())
-        self._field_combo.blockSignals(True)
-        self._field_combo.clear()
-        for f in self._FIELD_ORDER:
-            if f in present:
-                self._field_combo.addItem(f, userData=f)
-        for f in sorted(present - set(self._FIELD_ORDER)):
-            self._field_combo.addItem(f, userData=f)
-        self._field_combo.blockSignals(False)
-
-        if not field_map.get("--all"):
-            self._status_lbl.setText("Catalog empty.\ncrossing index silhouette")
-            self._label_combo.clear()
-            self._clear_grid()
-            self._update_pagination(0, 1)
-            return
-
-        self._field_combo.setCurrentIndex(0)
-        self._on_field_changed(0)
+    def set_sort_mode(self, mode: str) -> None:
+        self._sort_mode = mode
+        self._apply_sort_mode()
 
     # ------------------------------------------------------------------
-    # Filter cascade
-
-    def _on_sil_media_type_changed(self, media_type: str) -> None:
-        """Reload the silhouette catalog for the chosen media type."""
-        if media_type == self._media_type:
-            return
-        self._media_type = media_type
-        self._load_catalog()
-
-    def _on_scope_changed(self, _idx: int) -> None:
-        self._page_idx = 0
-        self._apply_filters()
-
-    def _on_field_changed(self, _idx: int) -> None:
-        """Rebuild the label combo for the newly selected field."""
-        field = self._field_combo.currentData() or "--all"
-        label_counts = self._field_map.get(field, {})
-        self._label_combo.blockSignals(True)
-        self._label_combo.clear()
-        for label in sorted(label_counts.keys()):
-            count = len(label_counts[label])
-            self._label_combo.addItem(f"{label}  ({count})", userData=label)
-        self._label_combo.blockSignals(False)
-        self._page_idx = 0
-        if self._label_combo.count() > 0:
-            self._label_combo.setCurrentIndex(0)
-        self._apply_filters()
-
-    def _on_label_changed(self, _idx: int) -> None:
-        self._page_idx = 0
-        self._apply_filters()
-
-    def _apply_filters(self) -> None:
-        field   = self._field_combo.currentData() or "--all"
-        label   = self._label_combo.currentData()
-        film    = self._scope_combo.currentData()
-        records = self._field_map.get(field, {}).get(label, []) if label else []
-        if film:
-            records = [
-                r for r in records
-                if (r.get("filename_stem") or r.get("filename") or "") == film
-            ]
-        self._current_records = records
-        self._selected_idx    = -1
-        self._show_page(0)
-
-    # ------------------------------------------------------------------
-    # Pagination
-
-    def _show_page(self, page_idx: int) -> None:
-        total      = len(self._current_records)
-        page_count = max(1, math.ceil(total / _BROWSER_PAGE_SIZE)) if total else 1
-        self._page_idx   = max(0, min(page_idx, page_count - 1))
-        self._page_count = page_count
-        self._update_pagination(self._page_idx, page_count)
-
-        start = self._page_idx * _BROWSER_PAGE_SIZE
-        end   = min(start + _BROWSER_PAGE_SIZE, total)
-        self._page_records = self._current_records[start:end]
-
-        if total == 0:
-            self._status_lbl.setText("No objects found")
-        else:
-            self._status_lbl.setText(f"{start + 1}–{end} of {total}")
-
-        self._cells = []
-        self._clear_grid()
-        self._rebuild_grid()
-        self._start_loader()
-
-    def _update_pagination(self, page_idx: int, page_count: int) -> None:
-        self._page_lbl.setText(f"Page {page_idx + 1} / {page_count}")
-        self._prev_btn.setEnabled(page_idx > 0)
-        self._next_btn.setEnabled(page_idx < page_count - 1)
-
-    def _on_prev_page(self) -> None:
-        if self._page_idx > 0:
-            self._show_page(self._page_idx - 1)
-
-    def _on_next_page(self) -> None:
-        if self._page_idx < self._page_count - 1:
-            self._show_page(self._page_idx + 1)
-
-    # ------------------------------------------------------------------
-    # Grid management
-
-    def _clear_grid(self) -> None:
-        self._stop_loader()
-        while self._grid_layout.count():
-            item = self._grid_layout.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
-
-    def _cols(self) -> int:
-        vw = self._scroll.viewport().width()
-        if vw <= 0:
-            vw = 200
-        return max(1, (vw - _BROWSER_THUMB_GAP) // (_BROWSER_THUMB_SZ + _BROWSER_THUMB_GAP))
-
-    def _rebuild_grid(self) -> None:
-        cols      = self._cols()
-        start_abs = self._page_idx * _BROWSER_PAGE_SIZE
-        for i, rec in enumerate(self._page_records):
-            label = rec.get("label", "")
-            stem  = rec.get("filename_stem") or rec.get("filename") or ""
-            frame = rec.get("frame", "")
-            tip   = f"#{start_abs + i + 1}  {label}  {stem}  f:{frame}"
-            cell  = _BrowserThumbCell(i, tooltip=tip)
-            cell.single_clicked.connect(self._on_cell_single)
-            cell.double_clicked.connect(self._on_cell_double)
-            # Populate drag source — same resolution as _on_cell_double
-            json_path = rec.get("path")
-            if json_path:
-                png_path = Path(str(json_path)).with_suffix(".png")
-                if png_path.exists():
-                    cell._drag_abs_path = str(png_path)
-                    cell._drag_meta     = {k: str(v) if isinstance(v, Path) else v
-                                           for k, v in rec.items()}
-            self._grid_layout.addWidget(cell, i // cols, i % cols)
-            self._cells.append(cell)
-
-    def resizeEvent(self, event) -> None:  # noqa: N802
-        super().resizeEvent(event)
-        if self._cells:
-            cols = self._cols()
-            for i, cell in enumerate(self._cells):
-                self._grid_layout.addWidget(cell, i // cols, i % cols)
-        if self._eng_containers:
-            vw = self._eng_scroll.viewport().width()
-            if vw <= 0:
-                vw = 200
-            cols = max(1, (vw - _BROWSER_THUMB_GAP) // (_BROWSER_THUMB_SZ + _BROWSER_THUMB_GAP))
-            for i, container in enumerate(self._eng_containers):
-                self._eng_grid_layout.addWidget(container, i // cols, i % cols)
-
-    def _on_tab_changed(self, index: int) -> None:
-        """Re-layout the engravings grid when the Engravings tab becomes visible.
-
-        The grid is built while the tab is hidden, so viewport().width() is 0
-        at that point.  This fires once the tab is actually shown and the
-        scroll area has its real width.
-        """
-        if index == 1 and self._eng_containers:  # 1 = Engravings tab
-            vw = self._eng_scroll.viewport().width()
-            if vw <= 0:
-                vw = 200
-            cols = max(1, (vw - _BROWSER_THUMB_GAP) // (_BROWSER_THUMB_SZ + _BROWSER_THUMB_GAP))
-            for i, container in enumerate(self._eng_containers):
-                self._eng_grid_layout.addWidget(container, i // cols, i % cols)
-
-    # ------------------------------------------------------------------
-    # Background loader
-
-    def _start_loader(self) -> None:
-        if not self._page_records:
-            return
-        self._loader = _BrowserThumbLoader(self._page_records, _BROWSER_THUMB_SZ)
-        self._loader.thumb_ready.connect(self._on_thumb_ready)
-        self._loader.start()
-
-    def _stop_loader(self) -> None:
-        if self._loader and self._loader.isRunning():
-            self._loader.cancel()
-            self._loader.wait(500)
-        self._loader = None
-
-    def _on_thumb_ready(self, idx: int, qimg: QImage) -> None:
-        if 0 <= idx < len(self._cells):
-            self._cells[idx].set_image(qimg)
-
-    def _stop_eng_loader(self) -> None:
-        if self._eng_loader and self._eng_loader.isRunning():
-            self._eng_loader.cancel()
-            self._eng_loader.wait(500)
-        self._eng_loader    = None
-        self._eng_cells     = []
-        self._eng_containers = []
-        self._selected_eng_idx = -1
-
-    def _on_eng_thumb_ready(self, idx: int, qimg: QImage) -> None:
-        if 0 <= idx < len(self._eng_cells):
-            self._eng_cells[idx].set_image(qimg)
-
-    # ------------------------------------------------------------------
-    # Keyboard navigation helpers (called from BookVisualizerWindow.eventFilter)
-
-    @staticmethod
-    def _step_combo(combo: QComboBox, delta: int) -> None:
-        """Advance *combo* by *delta* steps, wrapping at the ends."""
-        n = combo.count()
-        if n == 0:
-            return
-        new_idx = (combo.currentIndex() + delta) % n
-        combo.setCurrentIndex(new_idx)
+    # Public compatibility surface used by BookVisualizerWindow
 
     def step_scope(self, delta: int) -> None:
-        """Step the Scope combo by *delta* (works on both tabs)."""
-        self._step_combo(self._scope_combo, delta)
+        self._browser.stepItem(delta)
 
     def step_field(self, delta: int) -> None:
-        """Step the Field combo by *delta* (Silhouettes tab only)."""
-        if self._tabs.currentIndex() == 0:
-            self._step_combo(self._field_combo, delta)
+        self._browser.stepField(delta)
 
     def step_label(self, delta: int) -> None:
-        """Step the Label combo by *delta* (Silhouettes tab only)."""
-        if self._tabs.currentIndex() == 0:
-            self._step_combo(self._label_combo, delta)
-
-    # ------------------------------------------------------------------
-    # Selection and insertion
-
-    def _on_eng_cell_single(self, idx: int) -> None:
-        """Highlight the clicked engraving cell and emit engraving_selected."""
-        if 0 <= self._selected_eng_idx < len(self._eng_cells):
-            self._eng_cells[self._selected_eng_idx].set_selected(False)
-        self._selected_eng_idx = idx
-        if 0 <= idx < len(self._eng_cells):
-            self._eng_cells[idx].set_selected(True)
-        sorted_eng = sorted(self._engravings, key=lambda e: e.get("name", ""))
-        if idx < len(sorted_eng):
-            self.engraving_selected.emit(dict(sorted_eng[idx]))
-
-    def _on_cell_single(self, idx: int) -> None:
-        """Select the thumbnail at *idx* and highlight it."""
-        if self._selected_idx == idx:
-            return
-        if 0 <= self._selected_idx < len(self._cells):
-            self._cells[self._selected_idx].set_selected(False)
-        self._selected_idx = idx
-        if 0 <= idx < len(self._cells):
-            self._cells[idx].set_selected(True)
-        abs_idx = self._page_idx * _BROWSER_PAGE_SIZE + idx
-        if abs_idx < len(self._current_records):
-            self.thumbnail_selected.emit(dict(self._current_records[abs_idx]))
+        self._browser.stepKeyword(delta)
 
     def clear_selection(self) -> None:
-        """Deselect the currently highlighted thumbnail without emitting a signal."""
-        if 0 <= self._selected_idx < len(self._cells):
-            self._cells[self._selected_idx].set_selected(False)
-        self._selected_idx = -1
+        if 0 <= self._browser._selected_index < len(self._browser._filtered_items):
+            page_idx = self._browser._selected_index - self._browser._page_index * self._browser._page_size
+            if 0 <= page_idx < len(self._browser._cells):
+                self._browser._cells[page_idx].set_selected(False)
+        self._browser._selected_index = -1
 
-    def _on_cell_double(self, idx: int) -> None:
-        """Select thumbnail and emit an insert request to the Book Visualizer."""
-        self._on_cell_single(idx)
-        abs_idx = self._page_idx * _BROWSER_PAGE_SIZE + idx
-        if abs_idx >= len(self._current_records):
-            return
-        rec       = self._current_records[abs_idx]
-        json_path = rec.get("path")
-        if not json_path:
-            return
-        png_path = Path(str(json_path)).with_suffix(".png")
-        if not png_path.exists():
-            return
-        self.silhouette_insert_requested.emit(str(png_path), dict(rec))
+    def _stop_loader(self) -> None:
+        self._browser._stop_loader()
 
-    # ------------------------------------------------------------------
-    # Engraving collection — public API (called by BookVisualizerWindow)
+    def _stop_eng_loader(self) -> None:
+        self._browser._stop_loader()
 
-    def set_engravings(self, entries: list) -> None:
-        """Replace the full engraving list and refresh the Engravings tab."""
-        self._engravings = list(entries)
-        self._refresh_engravings_tab()
+    def set_engravings(self, _entries: list) -> None:
+        """Compatibility no-op.
 
-    def add_engraving(self, entry: dict) -> None:
-        """Append one engraving entry and refresh the Engravings tab."""
-        self._engravings.append(entry)
-        self._refresh_engravings_tab()
+        Engravings are now sourced from EngravingSource, not maintained as a
+        separate per-window list.
+        """
 
-    def _refresh_engravings_tab(self) -> None:
-        """Rebuild the engraving thumbnail grid in alphabetical order."""
-        # Stop any in-flight thumbnail loader and reset the cell list.
-        self._stop_eng_loader()
-
-        # Clear existing grid items
-        while self._eng_grid_layout.count():
-            item = self._eng_grid_layout.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
-
-        sorted_eng = sorted(self._engravings, key=lambda e: e.get("name", ""))
-
-        if not sorted_eng:
-            empty_lbl = QLabel(
-                "No engravings yet.\n"
-                "Drop a silhouette on the page,\n"
-                "then click \u2295 Adaptive Engraving."
-            )
-            empty_lbl.setWordWrap(True)
-            empty_lbl.setAlignment(Qt.AlignCenter)
-            empty_lbl.setStyleSheet(
-                f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt;"
-                f" background: transparent; padding: 16px;"
-            )
-            self._eng_grid_layout.addWidget(empty_lbl, 0, 0)
-            return
-
-        vw = self._eng_scroll.viewport().width()
-        if vw <= 0:
-            vw = 200
-        cols = max(1, (vw - _BROWSER_THUMB_GAP) // (_BROWSER_THUMB_SZ + _BROWSER_THUMB_GAP))
-
-        for i, entry in enumerate(sorted_eng):
-            # Build tooltip: name + preprocessing size (if available)
-            tip = entry.get("name", "")
-            pre_size = entry.get("preprocessing_size")
-            if pre_size and len(pre_size) == 2:
-                tip = f"{tip}\n{pre_size[0]}×{pre_size[1]} px (preprocessed)"
-
-            cell = _BrowserThumbCell(i, tooltip=tip)
-
-            # Enable drag-and-drop onto book pages.
-            # Use the best available image: output_png first, then fallbacks.
-            drag_png = (
-                entry.get("output_png", "") or
-                entry.get("preprocessing_path", "") or
-                entry.get("source_png", "")
-            )
-            if drag_png and Path(drag_png).exists():
-                cell._drag_abs_path = drag_png
-                cell._drag_meta = {
-                    "label":       entry.get("name", "engraving"),
-                    "layer_id":    entry.get("layer_id", ""),
-                    "output_png":  entry.get("output_png", ""),
-                    "source_png":  entry.get("source_png", ""),
-                    "line_weight": entry.get("line_weight", 1.0),
-                }
-
-            # Wrap cell in a fixed-size container; overlay a trash button that
-            # is hidden by default and revealed only on mouse-enter.
-            layer_id = entry.get("layer_id", "")
-            container = QWidget()
-            container.setFixedSize(_BROWSER_THUMB_SZ, _BROWSER_THUMB_SZ)
-            container.setStyleSheet("background: transparent;")
-            cell.setParent(container)
-            cell.move(0, 0)
-
-            _TRASH_SZ = 20
-            del_btn = QPushButton(container)
-            del_btn.setIcon(_svg_icon("trash", _TRASH_SZ, "#ffffff"))
-            del_btn.setIconSize(QSize(_TRASH_SZ, _TRASH_SZ))
-            del_btn.setFixedSize(_TRASH_SZ + 4, _TRASH_SZ + 4)
-            del_btn.move(_BROWSER_THUMB_SZ - _TRASH_SZ - 6, 4)
-            del_btn.setCursor(Qt.PointingHandCursor)
-            del_btn.setToolTip(f"Delete engraving \"{entry.get('name', '')}\"")
-            del_btn.setStyleSheet(
-                "QPushButton {"
-                "  background: rgba(100,20,20,210);"
-                "  border: none; border-radius: 3px;"
-                "}"
-                "QPushButton:hover { background: rgba(160,30,30,230); }"
-            )
-            del_btn.hide()
-            del_btn.clicked.connect(
-                lambda _checked, lid=layer_id: self.engraving_delete_requested.emit(lid)
-            )
-
-            # Show/hide the button on container hover via event filter.
-            # Guard show/hide with try/except: deleteLater() is deferred so Qt
-            # may still deliver a Leave event after the C++ object is gone.
-            class _HoverFilter(QObject):
-                def __init__(self, btn):
-                    super().__init__(btn)
-                    self._btn = btn
-                def eventFilter(self, obj, ev):
-                    try:
-                        if ev.type() == QEvent.Enter:
-                            self._btn.show()
-                        elif ev.type() == QEvent.Leave:
-                            self._btn.hide()
-                    except RuntimeError:
-                        pass  # C++ object already deleted — ignore
-                    return False
-
-            filt = _HoverFilter(del_btn)
-            container.installEventFilter(filt)
-            container.setMouseTracking(True)
-
-            self._eng_cells.append(cell)
-            self._eng_containers.append(container)
-            cell.single_clicked.connect(self._on_eng_cell_single)
-            self._eng_grid_layout.addWidget(container, i // cols, i % cols)
-
-        # Start background thumbnail loader for engraving images.
-        # Loading large FLUX/preprocessing PNGs synchronously would block
-        # the GUI thread for several seconds when many engravings are present.
-        # Do NOT call _stop_eng_loader() here — that would reset _eng_cells to
-        # [] after we just populated it, so _on_eng_thumb_ready would never
-        # find any cells.  Just cancel the previous loader if one is running.
-        if self._eng_loader and self._eng_loader.isRunning():
-            self._eng_loader.cancel()
-            self._eng_loader.wait(500)
-        self._eng_loader = None
-        paths = [
-            (i, thumb)
-            for i, entry in enumerate(sorted_eng)
-            if (thumb := (
-                entry.get("output_png", "") or
-                entry.get("preprocessing_path", "") or
-                entry.get("source_png", "")
-            )) and Path(thumb).exists()
-        ]
-        if paths:
-            self._eng_loader = _EngravingThumbLoader(paths, _BROWSER_THUMB_SZ)
-            self._eng_loader.thumb_ready.connect(self._on_eng_thumb_ready)
-            self._eng_loader.start()
+    def add_engraving(self, _entry: dict) -> None:
+        """Compatibility no-op for old per-book engraving list updates."""
 
 # ---------------------------------------------------------------------------
 # Engraving generation worker
-# ---------------------------------------------------------------------------
-
-
-class _EngravingWorker(QObject):
-    """Background worker that runs the engraving generator.
-
-    Spawns ``crossing engraving smoke-test`` in a subprocess so each
-    generation gets a fresh CUDA context.  Running CUDA inside a
-    threading.Thread causes NVML reinitialisation failures on second
-    and subsequent invocations.
-
-    Signals
-    -------
-    finished(engraving_id, output_png, metadata_dict)
-        Emitted on successful completion.
-    failed(engraving_id, error_message)
-        Emitted when generation raises any exception.
-    """
-
-    finished = pyqtSignal(str, str, dict)   # eng_id, output_png, metadata
-    failed   = pyqtSignal(str, str)         # eng_id, error_message
-
-    def __init__(
-        self,
-        *,
-        project_path: str,
-        engraving_id: str,
-        preprocessing_path: str,
-        preprocessing_size: list,
-        cache_dir: Path,
-        context_json: str = "",
-        parent=None,
-    ) -> None:
-        super().__init__(parent)
-        self._project_path       = project_path
-        self._engraving_id       = engraving_id
-        self._preprocessing_path = preprocessing_path
-        self._preprocessing_size = preprocessing_size
-        self._cache_dir          = Path(cache_dir)
-        self._context_json       = context_json
-        self._thread             = None
-
-    def start(self) -> None:
-        import threading
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
-
-    def _run(self) -> None:
-        try:
-            cmd = [
-                sys.executable, str(_CLI_PATH),
-                "engraving", "smoke-test",
-                self._preprocessing_path,
-                "--out-dir",      str(self._cache_dir),
-                "--project-path", self._project_path,
-            ]
-            if self._context_json:
-                cmd += ["--context", self._context_json]
-            proc = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-            )
-            # Echo subprocess output to the parent process terminal
-            if proc.stdout:
-                print(proc.stdout, end="", flush=True)
-            if proc.returncode != 0:
-                output = proc.stdout.strip()
-                self.failed.emit(self._engraving_id, output)
-                return
-
-            # Read the generation JSON written by the smoke-test
-            gen_json = self._cache_dir / f"{self._engraving_id}_generation.json"
-            if not gen_json.exists():
-                self.failed.emit(
-                    self._engraving_id,
-                    f"generation JSON not found: {gen_json}",
-                )
-                return
-
-            meta = json.loads(gen_json.read_text(encoding="utf-8"))
-            output_png = meta.get("output_png", "")
-            if not output_png or not Path(output_png).exists():
-                self.failed.emit(
-                    self._engraving_id,
-                    f"output_png missing from generation JSON: {gen_json}",
-                )
-                return
-
-            self.finished.emit(self._engraving_id, output_png, meta)
-
-        except Exception:
-            import traceback
-            self.failed.emit(self._engraving_id, traceback.format_exc())
-
-
-# ---------------------------------------------------------------------------
-# Main window
 # ---------------------------------------------------------------------------
 
 
@@ -4371,7 +3528,7 @@ class _InspectorPanel(QWidget):
 
     line_weight_changed = pyqtSignal(float)  # slider moved
     open_in_shotlist    = pyqtSignal(str, str)  # (filename_stem, shot_id)
-    open_in_silhouette  = pyqtSignal(str, str, str, str)  # (filename_stem, field, label, shot_id)
+    open_in_illustration = pyqtSignal(str, str, str, str)  # (filename_stem, field, label, shot_id)
 
     # Line weight slider: integers 25–400 → displayed as value / 100
     _LW_MIN     = 25
@@ -4504,14 +3661,14 @@ class _InspectorPanel(QWidget):
         )
         btn_row.addWidget(self._shotlist_btn)
 
-        self._silhouette_btn = QPushButton("Silhouette")
-        self._silhouette_btn.setEnabled(False)
-        self._silhouette_btn.clicked.connect(
-            lambda: self.open_in_silhouette.emit(
+        self._illustration_btn = QPushButton("Illustration")
+        self._illustration_btn.setEnabled(False)
+        self._illustration_btn.clicked.connect(
+            lambda: self.open_in_illustration.emit(
                 self._filename_stem, self._field, self._label, self._shot_id
             )
         )
-        btn_row.addWidget(self._silhouette_btn)
+        btn_row.addWidget(self._illustration_btn)
         layout.addLayout(btn_row)
 
         layout.addStretch()
@@ -4582,7 +3739,7 @@ class _InspectorPanel(QWidget):
         self._field         = layer.get("field", "")
         self._label         = layer.get("label") or layer.get("name") or ""
         self._shotlist_btn.setEnabled(bool(self._filename_stem))
-        self._silhouette_btn.setEnabled(bool(self._filename_stem))
+        self._illustration_btn.setEnabled(bool(self._filename_stem))
 
     def load_record(self, record: dict) -> None:
         """Populate inspector from a catalog record (browser thumbnail selection)."""
@@ -4602,7 +3759,7 @@ class _InspectorPanel(QWidget):
         self._field         = record.get("field", "")
         self._label         = record.get("label") or ""
         self._shotlist_btn.setEnabled(bool(self._filename_stem))
-        self._silhouette_btn.setEnabled(bool(self._filename_stem))
+        self._illustration_btn.setEnabled(bool(self._filename_stem))
 
     def clear(self) -> None:
         """Reset all display fields to '—'."""
@@ -4622,7 +3779,7 @@ class _InspectorPanel(QWidget):
         self._field         = ""
         self._label         = ""
         self._shotlist_btn.setEnabled(False)
-        self._silhouette_btn.setEnabled(False)
+        self._illustration_btn.setEnabled(False)
 
 
 class BookVisualizerWindow(QMainWindow):
@@ -4645,9 +3802,6 @@ class BookVisualizerWindow(QMainWindow):
         self._next_layer_id: int = 1      # used by _CutOverlay for id generation
         self._clipboard_layer: Optional[dict] = None  # copy/cut clipboard
 
-        # Active generation workers: engraving_id → _EngravingWorker
-        self._engraving_workers: dict = {}
-
         # Inspector state
         self._inspector_layer:  Optional[dict] = None
         self._inspector_record: Optional[dict] = None
@@ -4655,6 +3809,8 @@ class BookVisualizerWindow(QMainWindow):
         self._build_ui()
         self._load_all_books()
         restore_window_geometry(self, "window_book")
+        self._inspectors_hidden: bool = False
+        self._saved_inspector_split_sizes: Optional[list[int]] = None
         # Grab navigation keys regardless of which child widget has focus
         QApplication.instance().installEventFilter(self)
 
@@ -4680,6 +3836,8 @@ class BookVisualizerWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         central = QWidget()
+        central.setObjectName("book_root")
+        central.setStyleSheet(f"QWidget#book_root {{ background: {theme.CANVAS_BG}; }}")
         self.setCentralWidget(central)
 
         outer = QVBoxLayout(central)
@@ -4687,11 +3845,13 @@ class BookVisualizerWindow(QMainWindow):
         outer.setSpacing(0)
 
         splitter = GripSplitter(Qt.Horizontal)
+        self._main_splitter = splitter
+        self._engraving_split_sizes: Optional[list[int]] = None
         outer.addWidget(splitter, stretch=1)
 
         # ── LEFT: spread view + page bar ─────────────────────────────
         left_col = QWidget()
-        left_col.setStyleSheet(f"background: {theme.PANEL_BG};")
+        left_col.setStyleSheet(f"background: {theme.CANVAS_BG};")
         left_layout = QVBoxLayout(left_col)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(0)
@@ -4707,7 +3867,6 @@ class BookVisualizerWindow(QMainWindow):
         self._overlay.selection_changed.connect(self._on_overlay_selection)
         self._overlay.text_sel_committed.connect(self._on_text_sel_committed)
         self._overlay.text_sel_removed.connect(self._on_text_sel_removed)
-        self._overlay.engraving_requested.connect(self._on_engraving_requested)
         self._overlay.silhouette_drop_requested.connect(self._on_silhouette_drop)
 
         self._page_bar = _PageBar()
@@ -4716,24 +3875,21 @@ class BookVisualizerWindow(QMainWindow):
 
         splitter.addWidget(left_col)
 
-        # ── MIDDLE: Silhouette browser sidebar ────────────────────────
-        self._sil_browser = _SilhouetteBrowserPanel(self._project_path)
+        # ── MIDDLE: Illustration browser sidebar ──────────────────────
+        self._sil_browser = _IllustrationBrowserPanel(self._project_path)
         self._sil_browser.silhouette_insert_requested.connect(self._insert_silhouette)
-        self._sil_browser.engraving_delete_requested.connect(self._on_engraving_delete_requested)
         self._sil_browser.thumbnail_selected.connect(self._on_browser_thumbnail_selected)
-        self._sil_browser.engraving_selected.connect(self._on_browser_engraving_selected)
         splitter.addWidget(self._sil_browser)
 
         # ── RIGHT: control panel (Book / Tools / Layers) ──────────────
         panel = self._build_control_panel()
-        self._inspector.line_weight_changed.connect(self._on_inspector_lw_changed)
-        self._inspector.open_in_shotlist.connect(self._on_open_in_shotlist)
-        self._inspector.open_in_silhouette.connect(self._on_open_in_silhouette)
         splitter.addWidget(panel)
         splitter.setStretchFactor(0, 1)   # canvas gets all extra space
         splitter.setStretchFactor(1, 0)   # silhouette browser: fixed
         splitter.setStretchFactor(2, 0)   # control panel: fixed
         splitter.setSizes([10000, _BROWSER_PANEL_W, _PANEL_WIDTH])
+        self._engraving_split_sizes = [10000, _BROWSER_PANEL_W, _PANEL_WIDTH]
+        QTimer.singleShot(0, self._collapse_engraving_browser)
 
         self.setMinimumSize(700, 480)
         self.resize(1500, 800)
@@ -4757,27 +3913,8 @@ class BookVisualizerWindow(QMainWindow):
         scroll.setStyleSheet(f"QScrollArea {{ background: {theme.PANEL_BG}; border: none; }}")
 
         panel = QWidget()
-        panel.setStyleSheet(_PANEL_STYLESHEET)
+        panel.setStyleSheet(_TAB_CONTENT_STYLESHEET)
         scroll.setWidget(panel)
-
-        # ── QStackedWidget: page 0 = default, page 1 = inspector ──────
-        self._right_stack = QStackedWidget()
-        self._right_stack.addWidget(scroll)          # page 0: default
-
-        inspector_scroll = QScrollArea()
-        inspector_scroll.setFocusPolicy(Qt.NoFocus)
-        inspector_scroll.setWidgetResizable(True)
-        inspector_scroll.setFrameShape(QFrame.NoFrame)
-        inspector_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        inspector_scroll.setStyleSheet(
-            f"QScrollArea {{ background: {theme.PANEL_BG}; border: none; }}"
-        )
-        self._inspector = _InspectorPanel()
-        self._inspector.setStyleSheet(_PANEL_STYLESHEET)
-        inspector_scroll.setWidget(self._inspector)
-        self._right_stack.addWidget(inspector_scroll)  # page 1: inspector
-
-        outer_layout.addWidget(self._right_stack)
 
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(14, 14, 14, 14)
@@ -5019,7 +4156,152 @@ class BookVisualizerWindow(QMainWindow):
         layers_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layout.addWidget(layers_group, stretch=1)
 
+        self._workspace_tabs = QTabWidget()
+        self._workspace_tabs.setDocumentMode(True)
+        self._workspace_tabs.tabBar().setDrawBase(False)
+        self._workspace_tabs.setStyleSheet(_WORKSPACE_TABS_STYLESHEET)
+
+        book_workspace = QWidget()
+        book_workspace_layout = QVBoxLayout(book_workspace)
+        book_workspace_layout.setContentsMargins(0, 0, 0, 0)
+        book_workspace_layout.setSpacing(0)
+        book_workspace_layout.addWidget(scroll)
+
+        engr_workspace = self._build_engraving_workspace_panel()
+        self._book_workspace_idx = self._workspace_tabs.addTab(book_workspace, "Book")
+        self._engr_workspace_idx = self._workspace_tabs.addTab(engr_workspace, "Engravings")
+        self._workspace_tabs.currentChanged.connect(self._on_workspace_tab_changed)
+        self._workspace_tabs.setCurrentIndex(self._book_workspace_idx)
+
+        outer_layout.addWidget(self._workspace_tabs)
         return outer
+
+    def _build_engraving_workspace_panel(self) -> QWidget:
+        """Build the Engravings inspector domain: Filter, Sort, and Info."""
+        panel = QWidget()
+        panel.setStyleSheet(_TAB_CONTENT_STYLESHEET)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
+
+        filter_sec = CollapsibleSection("Filter", pref_key="book_eng_section_filter")
+        fwrap = QWidget()
+        fwrap_lay = QVBoxLayout(fwrap)
+        fwrap_lay.setContentsMargins(0, 0, 0, 0)
+        fwrap_lay.setSpacing(0)
+        fwrap_lay.addWidget(self._sil_browser.filter_panel)
+        fwrap_lay.addWidget(self._sil_browser.status_bar)
+        fwrap_lay.addWidget(self._sil_browser.pagination_panel)
+        filter_sec.add_widget(fwrap)
+        filter_sec._body_layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(filter_sec)
+
+        sort_sec = CollapsibleSection("Sort", pref_key="book_eng_section_sort")
+        self._eng_sort_combo = QComboBox()
+        self._eng_sort_combo.setFocusPolicy(Qt.NoFocus)
+        self._eng_sort_combo.addItem("Catalog", userData="catalog")
+        self._eng_sort_combo.addItem("Alphabetical", userData="alphabetical")
+        self._eng_sort_combo.currentIndexChanged.connect(self._on_engraving_sort_changed)
+        sort_sec.add_widget(self._eng_sort_combo)
+        layout.addWidget(sort_sec)
+
+        info_sec = CollapsibleSection("Info", pref_key="book_eng_section_info")
+        self._eng_info_block = MetadataBlock([
+            "label", "movie", "field", "shot", "dpi", "width", "height"
+        ])
+        info_sec.add_widget(self._eng_info_block)
+        layout.addWidget(info_sec)
+
+        layout.addStretch()
+        return panel
+
+    def _on_workspace_tab_changed(self, idx: int) -> None:
+        if idx == getattr(self, "_engr_workspace_idx", -1):
+            self._expand_engraving_browser()
+        else:
+            self._collapse_engraving_browser()
+
+    def _toggle_inspectors(self) -> None:
+        """Toggle between full-canvas mode and inspector-visible mode.
+
+        Mirrors Illustration Visualizer's Tab behavior: hide/show the
+        side inspectors as a single operation.
+        """
+        sizes = list(self._main_splitter.sizes())
+        if len(sizes) != 3:
+            return
+        if self._inspectors_hidden:
+            restore = self._saved_inspector_split_sizes
+            if restore and len(restore) == 3:
+                self._main_splitter.setSizes(restore)
+            else:
+                self._main_splitter.setSizes([10000, _BROWSER_PANEL_W, _PANEL_WIDTH])
+            self._inspectors_hidden = False
+            if self._workspace_tabs.currentIndex() != getattr(self, "_engr_workspace_idx", -1):
+                self._collapse_engraving_browser()
+            return
+
+        self._saved_inspector_split_sizes = sizes
+        self._main_splitter.setSizes([max(1, sum(sizes)), 0, 0])
+        self._inspectors_hidden = True
+
+    def _expand_engraving_browser(self) -> None:
+        sizes = list(self._main_splitter.sizes())
+        if len(sizes) != 3 or sizes[1] > 0:
+            return
+        if self._engraving_split_sizes and len(self._engraving_split_sizes) == 3:
+            self._main_splitter.setSizes(self._engraving_split_sizes)
+            return
+        total = max(1, sum(sizes))
+        right = max(_PANEL_WIDTH, sizes[2])
+        mid = max(280, total // 4)
+        left = max(1, total - right - mid)
+        self._main_splitter.setSizes([left, mid, right])
+
+    def _collapse_engraving_browser(self) -> None:
+        sizes = list(self._main_splitter.sizes())
+        if len(sizes) != 3:
+            return
+        if sizes[1] > 0:
+            self._engraving_split_sizes = list(sizes)
+        if sizes[1] == 0:
+            return
+        sizes[0] += sizes[1]
+        sizes[1] = 0
+        self._main_splitter.setSizes(sizes)
+
+    def _on_engraving_sort_changed(self, _idx: int) -> None:
+        mode = self._eng_sort_combo.currentData() or "catalog"
+        self._sil_browser.set_sort_mode(mode)
+
+    def _update_engraving_info(self, record: Optional[dict]) -> None:
+        if record is None:
+            self._eng_info_block.clear()
+            return
+        movie = str(record.get("movie") or "").strip()
+        if not movie:
+            stem = str(record.get("filename_stem") or "").strip()
+            if stem:
+                try:
+                    from data.metadata import get_metadata
+                    metas = get_metadata(self._project_path, stem)
+                    if metas:
+                        m = metas[0]
+                        title = m.get("title", "")
+                        year = m.get("year", "")
+                        movie = f"{title} ({year})" if title and year else (title or stem)
+                    else:
+                        movie = stem
+                except Exception:
+                    movie = stem
+
+        self._eng_info_block.set("label", str(record.get("label") or "—"))
+        self._eng_info_block.set("movie", movie or "—")
+        self._eng_info_block.set("field", str(record.get("field") or "—"))
+        self._eng_info_block.set("shot", str(record.get("shot_id") or "—"))
+        self._eng_info_block.set("dpi", str(record.get("dpi") or "—"))
+        self._eng_info_block.set("width", str(record.get("width") or "—"))
+        self._eng_info_block.set("height", str(record.get("height") or "—"))
 
     # ------------------------------------------------------------------
     # Data loading
@@ -5278,370 +4560,52 @@ class BookVisualizerWindow(QMainWindow):
         self._overlay.set_layers_visible(checked)
         self._spread_view.set_layers_visible(checked)
 
-    # ------------------------------------------------------------------
-    # Engraving workflow (page-centric)
-
-    def _on_engraving_requested(self, source_layer: dict) -> None:
-        """Create an engraving child layer and run page-aware preprocessing."""
-        now        = datetime.datetime.now()
-        timestamp  = now.strftime("%Y%m%d_%H%M%S")
-        label      = source_layer.get("name", "engraving").strip() or "engraving"
-        safe_label = label.lower().replace(" ", "_")
-        name       = f"{safe_label}_{timestamp}"
-        eng_id     = f"eng_{uuid.uuid4().hex[:8]}"
-
-        # Resolve source PNG path for preprocessing and thumbnail
-        source_rel = source_layer.get("source", "")
-        source_png = ""
-        book_dir   = self._overlay._book_dir
-        if book_dir and source_rel:
-            candidate = book_dir / source_rel
-            if candidate.exists():
-                source_png = str(candidate)
-
-        # ------------------------------------------------------------------
-        # Page-aware preprocessing
-        # ------------------------------------------------------------------
-        preprocessing_path: str   = ""
-        preprocessing_size: list  = []
-        preprocess_cache_key: str = ""
-        preprocess_dpi: int       = 0
-        page_pt_w: float          = 0.0
-        page_pt_h: float          = 0.0
-
-        if source_png and self._doc is not None:
-            try:
-                page_idx = source_layer["page"]
-                pdf_page = self._doc[page_idx]
-                page_pt_w = float(pdf_page.rect.width)
-                page_pt_h = float(pdf_page.rect.height)
-
-                from data.book import book_dir as _book_dir_fn
-                eng_cache_dir = _book_dir_fn(self._project_path, self._slug) / "engravings"
-
-                from services.engraving_preprocess import preprocess_engraving_source
-                pre = preprocess_engraving_source(
-                    source_png=source_png,
-                    engraving_id=eng_id,
-                    parent_layer_id=source_layer["id"],
-                    source_silhouette_id=source_rel,
-                    page_idx=page_idx,
-                    x=source_layer["x"],
-                    y=source_layer["y"],
-                    width=source_layer["width"],
-                    height=source_layer["height"],
-                    rotation=source_layer.get("rotation", 0.0),
-                    flip_h=source_layer.get("flip_h", False),
-                    flip_v=source_layer.get("flip_v", False),
-                    page_pt_w=page_pt_w,
-                    page_pt_h=page_pt_h,
-                    cache_dir=eng_cache_dir,
-                )
-                preprocessing_path    = pre["preprocessing_path"]
-                preprocessing_size    = pre["preprocessing_size"]
-                preprocess_cache_key  = pre["cache_key"]
-                preprocess_dpi        = pre.get("preprocess_dpi", 0)
-            except Exception as _exc:
-                # Preprocessing failure is non-fatal; the layer is still created.
-                import traceback
-                traceback.print_exc()
-
-        # ------------------------------------------------------------------
-        # Build the engraving layer
-        # ------------------------------------------------------------------
-        eng_layer = {
-            "id":                    eng_id,
-            "type":                  "Image",
-            "layer_subtype":         "Engraving",
-            "name":                  name,
-            "parent_layer_id":       source_layer["id"],
-            "source_silhouette_id":  source_rel,
-            "source":                source_rel,
-            "page":                  source_layer["page"],
-            "spread":                source_layer["spread"],
-            "x":                     source_layer["x"],
-            "y":                     source_layer["y"],
-            "width":                 source_layer["width"],
-            "height":                source_layer["height"],
-            "rotation":              source_layer.get("rotation", 0.0),
-            "flip_h":                source_layer.get("flip_h", False),
-            "flip_v":                source_layer.get("flip_v", False),
-            "z_index":               len(self._overlay.current_layers()),
-            "visible":               True,
-            "created":               now.isoformat(),
-            "line_weight":           float(source_layer.get("line_weight") or 1.0),
-            "label":                 source_layer.get("label", ""),
-            "field":                 source_layer.get("field", ""),
-            "shot_id":               source_layer.get("shot_id", ""),
-            "filename_stem":         source_layer.get("filename_stem", ""),
-            "description":           source_layer.get("description", ""),
-            # Preprocessing provenance:
-            "preprocessing_path":    preprocessing_path,
-            "preprocessing_size":    preprocessing_size,
-            "preprocess_cache_key":  preprocess_cache_key,
-            "preprocess_dpi":        preprocess_dpi,
-            # Future AI generation fields (reserved):
-            "model":          None,
-            "preset":         None,
-            "line_density":   None,
-            "line_thickness": None,
-            "white_space":    None,
-            "output_png":     None,
-        }
-
-        # Hide parent silhouette — keep it in the document, record child link
-        parent = self._overlay._layer_by_id(source_layer["id"])
-        if parent is not None:
-            parent["visible"] = False
-            parent.setdefault("child_layers", []).append(eng_id)
-
-        # Add engraving layer and select it
-        self._overlay._layers.append(eng_layer)
-        self._overlay._sel_id = eng_id
-        self._overlay._sel_pt = None
-        self._overlay.update()
-
-        # Persist layers and rebuild the layer panel (so hidden parent dims)
-        self._on_layer_committed(eng_layer)
-        self._refresh_layer_panel()
-
-        # Add to the Engravings tab and switch to it
-        entry = {
-            "name":                  name,
-            "layer_id":              eng_id,
-            "parent_layer_id":       source_layer["id"],
-            "source_silhouette_id":  source_rel,
-            "source_png":            source_png,
-            "page":                  source_layer["page"],
-            "width":                 source_layer["width"],
-            "height":                source_layer["height"],
-            "created":               now.isoformat(),
-            # Preprocessing result:
-            "preprocessing_path":    preprocessing_path,
-            "preprocessing_size":    preprocessing_size,
-            "preprocess_cache_key":  preprocess_cache_key,
-            "preprocess_dpi":        preprocess_dpi,
-            "line_weight":           float(source_layer.get("line_weight") or 1.0),
-            "label":                 source_layer.get("label", ""),
-            "field":                 source_layer.get("field", ""),
-            "shot_id":               source_layer.get("shot_id", ""),
-            "filename_stem":         source_layer.get("filename_stem", ""),
-            "description":           source_layer.get("description", ""),
-            # Generation fields — populated when worker finishes:
-            "model":          None,
-            "preset":         None,
-            "line_density":   None,
-            "line_thickness": None,
-            "white_space":    None,
-            "output_png":     None,
-        }
-        self._sil_browser.add_engraving(entry)
-        self._sil_browser._tabs.setCurrentIndex(1)
-
-        # ------------------------------------------------------------------
-        # Launch generation worker if preprocessing produced an asset
-        # ------------------------------------------------------------------
-        if preprocessing_path and preprocessing_size:
-            # ------------------------------------------------------------------
-            # Build silhouette context for $variable prompt template expansion.
-            # Resolve movie title from metadata if filename_stem is available.
-            # ------------------------------------------------------------------
-            filename_stem = source_layer.get("filename_stem", "")
-            movie = ""
-            if filename_stem:
-                try:
-                    from data.metadata import get_metadata
-                    metas = get_metadata(self._project_path, filename_stem)
-                    if metas:
-                        m = metas[0]
-                        title = m.get("title", "")
-                        year  = m.get("year", "")
-                        movie = f"{title} ({year})" if title and year else title
-                except Exception:
-                    pass
-
-            context = {
-                "label":       source_layer.get("label", source_layer.get("name", "")),
-                "field":       source_layer.get("field", ""),
-                "movie":       movie,
-                "shot_id":     source_layer.get("shot_id", ""),
-                "description": source_layer.get("description", ""),
-                "line_weight": str(source_layer.get("line_weight", 1.0)),
-            }
-
-            # Merge size-aware variables (v4 prompt support)
-            try:
-                from services.engraving_generate import build_size_context
-                size_ctx = build_size_context(
-                    preprocessing_size=preprocessing_size,
-                    preprocess_dpi=preprocess_dpi,
-                    page_pt_w=page_pt_w,
-                    page_pt_h=page_pt_h,
-                    width_frac=source_layer["width"],
-                    height_frac=source_layer["height"],
-                )
-                context.update(size_ctx)
-            except Exception:
-                pass
-
-            self._start_engraving_worker(eng_id, preprocessing_path, preprocessing_size, context=context)
-
-    def _start_engraving_worker(
-        self,
-        eng_id: str,
-        preprocessing_path: str,
-        preprocessing_size: list,
-        context: dict | None = None,
-    ) -> None:
-        """Spawn a background generation worker for *eng_id*."""
-        import json as _json
-        from data.book import book_dir as _book_dir_fn
-        eng_cache_dir = _book_dir_fn(self._project_path, self._slug) / "engravings"
-
-        context_json = _json.dumps(context, ensure_ascii=False) if context else ""
-
-        worker = _EngravingWorker(
-            project_path=self._project_path,
-            engraving_id=eng_id,
-            preprocessing_path=preprocessing_path,
-            preprocessing_size=preprocessing_size,
-            cache_dir=eng_cache_dir,
-            context_json=context_json,
-            parent=self,
-        )
-        worker.finished.connect(self._on_engraving_generated)
-        worker.failed.connect(self._on_engraving_failed)
-        self._engraving_workers[eng_id] = worker
-
-        # Show spinner on the page overlay
-        self._overlay.start_spinner_for(eng_id)
-
-        worker.start()
-
-    def _on_engraving_generated(self, eng_id: str, output_png: str, metadata: dict) -> None:
-        """Called on the GUI thread when generation succeeds."""
-        # Stop spinner
-        self._overlay.stop_spinner_for(eng_id)
-
-        # Update the layer: set output_png so the overlay draws it
-        layer = self._overlay._layer_by_id(eng_id)
-        if layer is not None:
-            layer["output_png"]          = output_png
-            layer["model"]               = metadata.get("model")
-            layer["generator"]           = metadata.get("generator")
-            layer["line_weight"]         = metadata.get("line_weight", 1.0)
-            layer["seed"]                = metadata.get("seed")
-            layer["num_inference_steps"] = metadata.get("num_inference_steps")
-            layer["guidance_scale"]      = metadata.get("guidance_scale")
-            layer["binary_threshold"]    = metadata.get("binary_threshold")
-            layer["prompt_filename"]     = metadata.get("prompt_filename")
-            # Evict the pixmap cache so the new file is loaded
-            self._overlay._pixmap_cache.pop(output_png, None)
-            self._overlay.update()
-            self._on_layer_committed(layer)
-
-        # Update the Engravings tab entry
-        for entry in self._sil_browser._engravings:
-            if entry.get("layer_id") == eng_id:
-                entry["output_png"]          = output_png
-                entry["model"]               = metadata.get("model")
-                entry["generator"]           = metadata.get("generator")
-                entry["line_weight"]         = metadata.get("line_weight", 1.0)
-                entry["seed"]                = metadata.get("seed")
-                entry["num_inference_steps"] = metadata.get("num_inference_steps")
-                entry["guidance_scale"]      = metadata.get("guidance_scale")
-                entry["binary_threshold"]    = metadata.get("binary_threshold")
-                entry["prompt_filename"]     = metadata.get("prompt_filename")
-                break
-        self._sil_browser._refresh_engravings_tab()
-
-        # Also refresh the spread view (it renders separately from overlay)
-        self._spread_view._cache.clear()
-        self._spread_view._reveal_cache.clear()
-        self._spread_view._do_render()
-
-        self._engraving_workers.pop(eng_id, None)
-
-    def _on_engraving_failed(self, eng_id: str, error_msg: str) -> None:
-        """Called on the GUI thread when generation fails."""
-        self._overlay.mark_generate_error(eng_id)
-        self._overlay.update()
-        self._engraving_workers.pop(eng_id, None)
-        print(f"[engraving] generation failed for {eng_id}:\n{error_msg}")
-
     def _on_engraving_delete_requested(self, layer_id: str) -> None:
-        """Delete an engraving: confirm if the layer exists on any page."""
-        # Find the engraving entry in the browser list
-        entry = next(
-            (e for e in self._sil_browser._engravings if e.get("layer_id") == layer_id),
-            None,
-        )
-        name = entry.get("name", layer_id) if entry else layer_id
+        """Delete only the selected page reference for an engraving layer.
 
-        # Check whether the layer is currently placed on any page
+        Book Visualizer never deletes engraving assets from project storage.
+        """
         eng_layer = self._overlay._layer_by_id(layer_id)
-        if eng_layer is not None:
-            page = eng_layer.get("page")
-            page_label = f"page {page + 1}" if page is not None else "a page"
-            reply = QMessageBox.question(
-                self,
-                "Delete Engraving",
-                f"The engraving \"{name}\" is placed on {page_label}.\n\n"
-                "Deleting it will also remove the layer from that page.\n\n"
-                "Continue?",
-                QMessageBox.Ok | QMessageBox.Cancel,
-                QMessageBox.Cancel,
-            )
-            if reply != QMessageBox.Ok:
-                return
+        if eng_layer is None:
+            return
 
-            # Remove the layer from the overlay and layer panel
-            self._overlay._layers.remove(eng_layer)
-            if self._overlay._sel_id == layer_id:
-                self._overlay._sel_id = None
-                self._overlay._sel_pt = None
-            self._overlay.update()
-            self._layer_panel.remove_layer(layer_id)
+        page = eng_layer.get("page")
+        page_label = f"page {page + 1}" if page is not None else "this page"
+        reply = QMessageBox.question(
+            self,
+            "Remove From Page",
+            f"Remove this engraving from {page_label}?\n\n"
+            "This only removes the page reference."
+            " Project engraving assets are not deleted.",
+            QMessageBox.Ok | QMessageBox.Cancel,
+            QMessageBox.Cancel,
+        )
+        if reply != QMessageBox.Ok:
+            return
 
-            # Remove child_layers reference from the parent silhouette
-            # and restore its visibility if it has no remaining children.
-            parent_id = eng_layer.get("parent_layer_id")
-            if parent_id:
-                parent = self._overlay._layer_by_id(parent_id)
-                if parent is not None:
-                    child_list = parent.get("child_layers", [])
-                    if layer_id in child_list:
-                        child_list.remove(layer_id)
-                    if not child_list:
-                        parent["visible"] = True
+        self._overlay._layers.remove(eng_layer)
+        if self._overlay._sel_id == layer_id:
+            self._overlay._sel_id = None
+            self._overlay._sel_pt = None
+        self._overlay.update()
+        self._layer_panel.remove_layer(layer_id)
 
-            self._save_current_layers()
+        parent_id = eng_layer.get("parent_layer_id")
+        if parent_id:
+            parent = self._overlay._layer_by_id(parent_id)
+            if parent is not None:
+                child_list = parent.get("child_layers", [])
+                if layer_id in child_list:
+                    child_list.remove(layer_id)
+                if not child_list:
+                    parent["visible"] = True
 
-        # Remove from the Engravings tab list and refresh
-        self._sil_browser._engravings = [
-            e for e in self._sil_browser._engravings if e.get("layer_id") != layer_id
-        ]
-        self._sil_browser._refresh_engravings_tab()
-
-        # Delete all files on disk belonging to this engraving ID
-        if entry is not None:
-            self._delete_engraving_files(layer_id)
+        self._save_current_layers()
+        self._sil_browser._browser.reload()
 
     def _delete_engraving_files(self, eng_id: str) -> None:
-        """Remove all cached files for *eng_id* from the engravings directory."""
-        try:
-            from data.book import book_dir as _book_dir_fn
-            eng_cache_dir = _book_dir_fn(self._project_path, self._slug) / "engravings"
-            if not eng_cache_dir.is_dir():
-                return
-            for f in eng_cache_dir.iterdir():
-                if f.name.startswith(f"{eng_id}_"):
-                    try:
-                        f.unlink()
-                    except OSError:
-                        pass
-        except Exception:
-            pass
+        """Deprecated in Book Visualizer: project-level delete is unsupported."""
+        return
 
     # ------------------------------------------------------------------
     # Layer persistence
@@ -5842,84 +4806,115 @@ class BookVisualizerWindow(QMainWindow):
 
     def _on_overlay_selection(self, lid: str) -> None:
         self._layer_panel.select_layer(lid if lid else None)
-        if lid:
-            layer = self._overlay._layer_by_id(lid)
-            if layer and layer.get("type") == "Image":
-                self._show_inspector(layer=layer)
-                return
-        self._hide_inspector()
-
-    # ------------------------------------------------------------------
-    # Inspector
-
-    def _show_inspector(
-        self,
-        layer: Optional[dict] = None,
-        record: Optional[dict] = None,
-    ) -> None:
-        """Switch the right panel to Inspector mode."""
-        if layer is not None:
-            page_pt_w, page_pt_h = 0.0, 0.0
-            if self._doc is not None:
-                try:
-                    pdf_page  = self._doc[layer["page"]]
-                    page_pt_w = float(pdf_page.rect.width)
-                    page_pt_h = float(pdf_page.rect.height)
-                except Exception:
-                    pass
-            movie = ""
-            filename_stem = layer.get("filename_stem", "")
-            if filename_stem:
-                try:
-                    from data.metadata import get_metadata
-                    metas = get_metadata(self._project_path, filename_stem)
-                    if metas:
-                        m     = metas[0]
-                        title = m.get("title", "")
-                        year  = m.get("year", "")
-                        movie = f"{title} ({year})" if title and year else title
-                except Exception:
-                    pass
-            self._inspector.load_layer(layer, page_pt_w, page_pt_h, movie)
-            self._inspector_layer  = layer
-            self._inspector_record = None
-        elif record is not None:
-            self._inspector.load_record(record)
-            self._inspector_layer  = None
-            self._inspector_record = record
-        else:
-            self._hide_inspector()
+        if not lid:
             return
-        self._right_stack.setCurrentIndex(1)
+        layer = self._overlay._layer_by_id(lid)
+        if not layer or layer.get("type") != "Image":
+            return
 
-    def _hide_inspector(self) -> None:
-        """Return the right panel to the default state."""
-        self._inspector_layer  = None
-        self._inspector_record = None
-        self._inspector.clear()
-        self._sil_browser.clear_selection()
-        self._right_stack.setCurrentIndex(0)
+        if hasattr(self, "_workspace_tabs"):
+            self._workspace_tabs.setCurrentIndex(self._engr_workspace_idx)
+
+        page_pt_w = 0.0
+        page_pt_h = 0.0
+        if self._doc is not None:
+            try:
+                pdf_page = self._doc[layer.get("page")]
+                page_pt_w = float(pdf_page.rect.width)
+                page_pt_h = float(pdf_page.rect.height)
+            except Exception:
+                pass
+
+        dpi = "—"
+        obj_w = "—"
+        obj_h = "—"
+        try:
+            from services.engraving_generate import build_size_context
+            sc = build_size_context(
+                preprocessing_size=layer.get("preprocessing_size") or [],
+                preprocess_dpi=layer.get("preprocess_dpi") or 0,
+                page_pt_w=page_pt_w,
+                page_pt_h=page_pt_h,
+                width_frac=layer.get("width", 0.0),
+                height_frac=layer.get("height", 0.0),
+            )
+            dpi = str(sc.get("page_dpi") or "—")
+            wmm = sc.get("object_width_mm")
+            hmm = sc.get("object_height_mm")
+            obj_w = f"{wmm} mm" if wmm else "—"
+            obj_h = f"{hmm} mm" if hmm else "—"
+        except Exception:
+            pass
+
+        self._update_engraving_info({
+            "label": layer.get("label") or layer.get("name") or "—",
+            "filename_stem": layer.get("filename_stem") or "",
+            "field": layer.get("field") or "—",
+            "shot_id": layer.get("shot_id") or "—",
+            "dpi": dpi,
+            "width": obj_w,
+            "height": obj_h,
+        })
 
     def _on_browser_engraving_selected(self, entry: dict) -> None:
-        """Show Inspector when an engraving browser thumbnail is single-clicked."""
-        layer_id = entry.get("layer_id")
-        layer = self._overlay._layer_by_id(layer_id) if layer_id else None
-        if layer is not None:
-            self._show_inspector(layer=layer)
-        else:
-            self._show_inspector(record=entry)
+        """Compatibility alias for browser selection callbacks."""
+        self._on_browser_thumbnail_selected(entry)
 
     def _on_browser_thumbnail_selected(self, record: dict) -> None:
-        """Show Inspector when a browser thumbnail is single-clicked."""
+        """Update Engravings Info when a browser item is selected."""
         if self._overlay._sel_id is not None:
             self._overlay._sel_id = None
             self._overlay._sel_pt = None
             self._overlay.update()
             self._layer_panel.select_layer(None)
-        self._show_inspector(record=record)
+        if hasattr(self, "_workspace_tabs"):
+            self._workspace_tabs.setCurrentIndex(self._engr_workspace_idx)
 
-    def _on_open_in_silhouette(self, filename_stem: str, field: str, label: str = "", shot_id: str = "") -> None:
-        """Open the Silhouette Visualizer filtered to the film, field, label and shot."""
+        page_pt_w = 0.0
+        page_pt_h = 0.0
+        if self._doc is not None:
+            try:
+                page = record.get("page")
+                if page is not None:
+                    pdf_page = self._doc[int(page)]
+                    page_pt_w = float(pdf_page.rect.width)
+                    page_pt_h = float(pdf_page.rect.height)
+            except Exception:
+                pass
+
+        dpi = "—"
+        obj_w = "—"
+        obj_h = "—"
+        try:
+            from services.engraving_generate import build_size_context
+            sc = build_size_context(
+                preprocessing_size=record.get("preprocessing_size") or [],
+                preprocess_dpi=record.get("preprocess_dpi") or 0,
+                page_pt_w=page_pt_w,
+                page_pt_h=page_pt_h,
+                width_frac=record.get("width", 0.0),
+                height_frac=record.get("height", 0.0),
+            )
+            dpi = str(sc.get("page_dpi") or "—")
+            wmm = sc.get("object_width_mm")
+            hmm = sc.get("object_height_mm")
+            obj_w = f"{wmm} mm" if wmm else "—"
+            obj_h = f"{hmm} mm" if hmm else "—"
+        except Exception:
+            pass
+
+        self._update_engraving_info({
+            "label": record.get("label") or record.get("name") or "—",
+            "filename_stem": record.get("filename_stem") or "",
+            "field": record.get("field") or "—",
+            "shot_id": record.get("shot_id") or "—",
+            "dpi": dpi,
+            "width": obj_w,
+            "height": obj_h,
+        })
+
+    def _on_open_in_illustration(self, filename_stem: str, field: str, label: str = "", shot_id: str = "") -> None:
+        """Open the Illustration Visualizer filtered to the film, field, label and shot."""
         if not filename_stem:
             return
         try:
@@ -5958,12 +4953,6 @@ class BookVisualizerWindow(QMainWindow):
         except Exception:
             import traceback
             traceback.print_exc()
-
-    def _on_inspector_lw_changed(self, value: float) -> None:
-        """Persist line_weight change to the active placed layer."""
-        if self._inspector_layer is not None:
-            self._inspector_layer["line_weight"] = value
-            self._save_current_layers()
 
     # ------------------------------------------------------------------
     # Layer panel callbacks
@@ -6041,7 +5030,7 @@ class BookVisualizerWindow(QMainWindow):
         self._save_current_layers()
 
     # ------------------------------------------------------------------
-    # Silhouette insertion (from the browser panel)
+    # Illustration insertion (from the browser panel)
 
     def _insert_silhouette(self, png_path: str, meta: dict) -> None:
         """Insert a catalog silhouette PNG centred on the active spread page."""
@@ -6245,6 +5234,23 @@ class BookVisualizerWindow(QMainWindow):
             focused = QApplication.focusWidget()
             in_text = isinstance(focused, QLineEdit)
             ctrl = mods == Qt.ControlModifier
+            if not in_text:
+                if key in (Qt.Key_Backtab, Qt.Key_Tab) and mods & Qt.ShiftModifier and not (
+                    mods & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier)
+                ):
+                    if self.isFullScreen():
+                        self.showNormal()
+                    else:
+                        self.showFullScreen()
+                    return True
+                if key == Qt.Key_Tab and not (
+                    mods & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier | Qt.ShiftModifier)
+                ):
+                    self._toggle_inspectors()
+                    return True
+                if key == Qt.Key_Escape and mods == Qt.NoModifier:
+                    self.close()
+                    return True
             if not in_text and not mods:
                 if key == Qt.Key_Left:
                     self._go_spread(self._spread_idx - 1)
@@ -6365,20 +5371,23 @@ class BookVisualizerWindow(QMainWindow):
         mods = event.modifiers()
 
         if key == Qt.Key_Escape:
-            if self._overlay._wip_points:
-                self._overlay.cancel_wip()
-            elif self._tool != _TOOL_NONE:
-                self._set_tool(_TOOL_NONE)
-            elif self._overlay._sel_id is not None:
-                self._overlay._sel_id = None
-                self._overlay._sel_pt = None
-                self._overlay.update()
-                self._overlay.selection_changed.emit("")
-            elif self._right_stack.currentIndex() == 1:
-                self._hide_inspector()
+            self.close()
             return
         if key in (Qt.Key_Q, Qt.Key_W) and mods == Qt.ControlModifier:
             self.close()
+            return
+        if key in (Qt.Key_Backtab, Qt.Key_Tab) and mods & Qt.ShiftModifier and not (
+            mods & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier)
+        ):
+            if self.isFullScreen():
+                self.showNormal()
+            else:
+                self.showFullScreen()
+            return
+        if key == Qt.Key_Tab and not (
+            mods & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier | Qt.ShiftModifier)
+        ):
+            self._toggle_inspectors()
             return
         if key in (Qt.Key_Delete, Qt.Key_Backspace):
             if self._overlay._sel_pt is not None:

@@ -7142,7 +7142,7 @@ def cmd_visualizer(args):
     elif sub == "metadata":
         _require_path()
         _metadata_visualizer(args)
-    elif sub == "silhouette":
+    elif sub in ("illustration", "silhouette"):
         _require_path()
         _silhouette_visualizer(args)
     elif sub == "palette":
@@ -7173,7 +7173,7 @@ def _metadata_visualizer(args):
 
 
 def _silhouette_visualizer(args):
-    """Launch the silhouette polygon browser GUI."""
+    """Launch the Illustration Visualizer GUI."""
     _require_visualizer_deps()
     from visualizers.silhouette_visualizer import run_visualizer
     raw_media = getattr(args, "media", None)
@@ -9633,7 +9633,7 @@ def build_parser():
     # visualizer command group — shortcut to all visualizer GUIs
     p_visualizer = sub.add_parser(
         "visualizer",
-        help="Open a visualizer GUI (project, shotlist, composition, mosaic, cloud, silhouette, sync)",
+        help="Open a visualizer GUI (project, shotlist, composition, mosaic, cloud, illustration, sync)",
     )
     p_visualizer.set_defaults(func=cmd_visualizer, visualizer_subcommand="project")
     visualizer_sub = p_visualizer.add_subparsers(dest="visualizer_subcommand", required=False)
@@ -9703,16 +9703,16 @@ def build_parser():
         help="Open the metadata browser GUI (movies and gameplay cards)",
     )
 
-    p_vis_silhouette = visualizer_sub.add_parser(
-        "silhouette",
-        help="Browse cached silhouette polygons (from crossing index silhouette)",
+    p_vis_illustration = visualizer_sub.add_parser(
+        "illustration",
+        help="Open the Illustration Visualizer (catalog + segmentation workspace)",
     )
-    _add_media_arg(p_vis_silhouette, default=None)  # no default: user picks at runtime
-    p_vis_silhouette.add_argument(
+    _add_media_arg(p_vis_illustration, default=None)  # no default: user picks at runtime
+    p_vis_illustration.add_argument(
         "--field",
         metavar="NAME",
         default=None,
-        help="Show only silhouettes for this annotation field",
+        help="Optional initial field filter",
     )
 
     p_vis_palette = visualizer_sub.add_parser(
