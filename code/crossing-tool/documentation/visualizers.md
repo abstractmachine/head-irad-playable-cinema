@@ -15,3 +15,7 @@ A series of "visualizers" exist to better visualize the data created via the `cr
 - [Flipbook](visualizer-flipbook.md)
 - [Palette](visualizer-palette.md)
 - [Silhouette](visualizer-silhouette.md)
+
+## Shared Inspector Layout
+
+- [Inspector Grid Contract](inspector-grid.md)

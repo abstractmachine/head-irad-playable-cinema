@@ -39,9 +39,16 @@ _CLI_PATH = Path(__file__).parent.parent / "cli.py"
 from styles import theme
 from styles.theme import GripSplitter, save_window_geometry, restore_window_geometry
 from visualizers.components.collapsible_section import CollapsibleSection
+from visualizers.components.hover_icon_button import HoverIconButton, build_icon_pair
 from visualizers.components.illustration_browser import IllustrationBrowser
 from visualizers.components.illustration_source import EngravingSource
-from visualizers.components.metadata_block import MetadataBlock
+from visualizers.components.metadata_block import (
+    InspectorTable,
+    MetadataBlock,
+    INSPECTOR_DIVIDER_THICKNESS,
+    INSPECTOR_ROW_HEIGHT,
+    inspector_action_icon_size,
+)
 
 from PyQt5.QtCore import Qt, QByteArray, QEvent, pyqtSignal, QMimeData, QPoint, QRect, QRectF, QSize, QThread, QTimer, QPointF
 from PyQt5.QtWidgets import (
@@ -51,20 +58,19 @@ from PyQt5.QtWidgets import (
     QFileDialog,
     QFrame,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QInputDialog,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
+    QListView,
     QMainWindow,
     QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QSlider,
-    QStackedWidget,
+    QTableWidget,
+    QTableWidgetItem,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -2400,9 +2406,11 @@ class _CutOverlay(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
 
         CUT_COLOR  = QColor("#e6e6e6")           # 90% grey for unselected
-        SEL_COLOR  = QColor(theme.ACCENT)        # fuchsia for selected
+        SEL_COLOR  = QColor(theme.ACCENT)        # highlight color for selected
         FILL_ALPHA = QColor(230, 230, 230, 12)   # very subtle light fill
-        SEL_FILL   = QColor(255, 0, 255, 40)
+        _accent_fill = QColor(theme.ACCENT)
+        _accent_fill.setAlpha(theme.ACCENT_FILL_ALPHA)
+        SEL_FILL   = _accent_fill
         hr = _HANDLE_R - 1                       # slightly smaller handles
 
         # ── text selections ───────────────────────────────────────────────
@@ -2436,8 +2444,10 @@ class _CutOverlay(QWidget):
                 x1 = r.x() + self._text_drag_end_n[0] * r.width()
                 y1 = r.y() + self._text_drag_end_n[1] * r.height()
                 drag_rect = QRectF(min(x0, x1), min(y0, y1), abs(x1 - x0), abs(y1 - y0))
-                p.setPen(QPen(QColor(255, 0, 255, 160), 1.0, Qt.DashLine))
-                p.setBrush(QColor(255, 0, 255, 20))
+                p.setPen(QPen(QColor(theme.ACCENT), 1.0, Qt.DashLine))
+                _drag_fill = QColor(theme.ACCENT)
+                _drag_fill.setAlpha(theme.ACCENT_FILL_ALPHA)
+                p.setBrush(_drag_fill)
                 p.drawRect(drag_rect)
 
         if not self._layers_visible:
@@ -2694,163 +2704,7 @@ class _PageBar(QWidget):
 
 
 # ---------------------------------------------------------------------------
-# _LayerRow — single row in the Layers panel
-# ---------------------------------------------------------------------------
-
-class _LayerRow(QWidget):
-    """One layer entry: drag handle | name (double-click to rename) | × button."""
-
-    delete_requested     = pyqtSignal(str)        # layer id
-    rename_requested     = pyqtSignal(str, str)   # layer id, new name
-    selected             = pyqtSignal(str)         # layer id
-    visibility_toggled   = pyqtSignal(str, bool)  # layer id, new visible state
-
-    def __init__(self, layer: dict, parent: Optional[QWidget] = None) -> None:
-        super().__init__(parent)
-        self._lid  = layer["id"]
-        self._name = layer.get("name", "Cut")
-        self._layer_type = layer.get("type", "Cut")
-        self._visible = layer.get("visible", True)
-        self._editing = False
-
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(4, 2, 4, 2)
-        lay.setSpacing(4)
-
-        # -- type icon --
-        _LAYER_ICONS = {"Cut": "cut", "Image": "journal-page", "Engraving": "plus-circle-solid"}
-        _display_key = layer.get("layer_subtype") or self._layer_type
-        icon_name = _LAYER_ICONS.get(_display_key) or _LAYER_ICONS.get(self._layer_type)
-        if icon_name:
-            self._type_icon = QLabel()
-            self._type_icon.setPixmap(_svg_icon(icon_name, 12, theme.TEXT_DIM).pixmap(12, 12))
-            self._type_icon.setFixedSize(14, 14)
-            self._type_icon.setAlignment(Qt.AlignCenter)
-            lay.addWidget(self._type_icon)
-            lay.addSpacing(2)
-
-        # -- name label (normal state) --
-        self._name_label = QLabel(self._name)
-        self._name_label.setStyleSheet(
-            f"color: {theme.TEXT}; font-family: '{theme.FAMILY_UI}';"
-            f" font-size: {theme.BASE_PT}pt;"
-        )
-        self._name_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        self._name_label.setMaximumWidth(120)
-
-        # -- inline editor (edit state) --
-        self._name_edit = QLineEdit(self._name)
-        self._name_edit.setStyleSheet(
-            f"QLineEdit {{ color: {theme.TEXT}; background: {theme.INPUT_BG};"
-            f" font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
-            f" border: 1px solid {theme.ACCENT}; border-radius: 2px; padding: 0 2px;"
-            f" selection-background-color: {theme.ACCENT}; selection-color: {theme.TEXT}; }}"
-        )
-        self._name_edit.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        self._name_edit.setMaximumWidth(120)
-        self._name_edit.hide()
-        self._name_edit.returnPressed.connect(self._commit_rename)
-        self._name_edit.editingFinished.connect(self._commit_rename)
-
-        lay.addWidget(self._name_label)
-        lay.addWidget(self._name_edit)
-
-        # -- eye (visibility) button --
-        self._eye_btn = QPushButton()
-        self._eye_btn.setIcon(_svg_icon(
-            "eye-solid" if self._visible else "eye-closed", 12,
-            theme.TEXT_DIM if self._visible else theme.ACCENT
-        ))
-        self._eye_btn.setIconSize(QSize(12, 12))
-        self._eye_btn.setFixedSize(18, 18)
-        self._eye_btn.setStyleSheet(
-            "QPushButton { background: transparent; border: none; }"
-        )
-        self._eye_btn.setToolTip("Toggle layer visibility")
-        self._eye_btn.clicked.connect(self._on_eye_clicked)
-        lay.addWidget(self._eye_btn)
-
-        self._del_btn = QPushButton()
-        self._del_btn.setIcon(_svg_icon("trash", 12, theme.TEXT_DIM))
-        self._del_btn.setIconSize(QSize(12, 12))
-        self._del_btn.setFixedSize(18, 18)
-        self._del_btn.setStyleSheet(
-            f"QPushButton {{ background: transparent; border: none; }}"
-            f"QPushButton:hover {{ background: transparent; }}"
-        )
-        self._del_btn.setToolTip("Delete layer")
-        self._del_btn.clicked.connect(lambda: self.delete_requested.emit(self._lid))
-        lay.addWidget(self._del_btn)
-
-        self.setFixedHeight(26)
-        self.setFocusPolicy(Qt.NoFocus)
-        self._del_btn.setFocusPolicy(Qt.NoFocus)
-        self.set_selected(False)
-
-    def _on_eye_clicked(self) -> None:
-        self._visible = not self._visible
-        self._eye_btn.setIcon(_svg_icon(
-            "eye-solid" if self._visible else "eye-closed", 12,
-            theme.TEXT_DIM if self._visible else theme.ACCENT
-        ))
-        # Refresh italic/dim style without changing selection state
-        self.set_selected(self._lid == getattr(self.parent(), "_sel_id", None))
-        self.visibility_toggled.emit(self._lid, self._visible)
-
-    def _start_rename(self) -> None:
-        if self._editing:
-            return
-        self._editing = True
-        self._name_edit.setText(self._name)
-        self._name_label.hide()
-        self._name_edit.show()
-        self._name_edit.setFocus()
-        self._name_edit.selectAll()
-
-    def _commit_rename(self) -> None:
-        if not self._editing:
-            return
-        self._editing = False
-        new_name = self._name_edit.text().strip() or self._name
-        self._name_edit.hide()
-        self._name_label.show()
-        if new_name != self._name:
-            self._name = new_name
-            self._name_label.setText(new_name)
-            self.rename_requested.emit(self._lid, new_name)
-
-    def set_selected(self, selected: bool) -> None:
-        bg = theme.ACCENT if selected else theme.BTN_BG
-        text = theme.TEXT if selected else theme.TEXT_DIM
-        font_style = "normal" if self._visible else "italic"
-        self._name_label.setStyleSheet(
-            f"color: {text}; font-family: '{theme.FAMILY_UI}';"
-            f" font-size: {theme.BASE_PT}pt; font-style: {font_style};"
-            f" background: transparent;"
-        )
-        self.setStyleSheet(
-            f"_LayerRow {{ background: {bg}; border-radius: 3px; }}"
-        )
-        if hasattr(self, "_type_icon"):
-            self._type_icon.setStyleSheet(f"background: {bg};")
-
-    def update_name(self, name: str) -> None:
-        self._name = name
-        self._name_label.setText(name)
-
-    def mousePressEvent(self, event) -> None:  # noqa: N802
-        if self._editing:
-            super().mousePressEvent(event)
-            return
-        self.selected.emit(self._lid)
-        super().mousePressEvent(event)
-
-    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
-        self._start_rename()
-
-
-# ---------------------------------------------------------------------------
-# _LayerPanel — scrollable list of layer rows
+# _LayerPanel — table-driven layer list used in the right control panel
 # ---------------------------------------------------------------------------
 
 class _LayerPanel(QWidget):
@@ -2861,113 +2715,232 @@ class _LayerPanel(QWidget):
     layer_renamed     = pyqtSignal(str, str)  # id, name
     layers_reordered  = pyqtSignal(list)      # new id order
     layer_visibility_toggled = pyqtSignal(str, bool)  # id, visible
+    layer_deselected  = pyqtSignal()          # selection cleared
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self._rows: dict = {}          # lid → _LayerRow
+        self._rows: dict = {}          # lid → row state
         self._order: list = []         # lid order (top = front)
         self._sel_id: Optional[str] = None
+        self._updating_table = False
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        self._list = QListWidget()
-        self._list.setFocusPolicy(Qt.NoFocus)
-        self._list.setDragDropMode(QListWidget.InternalMove)
-        self._list.setDefaultDropAction(Qt.MoveAction)
-        self._list.setStyleSheet(
-            f"QListWidget {{ background: transparent; border: none; }}"
-            f"QListWidget::item {{ border-bottom: 1px solid {theme.PANEL_BG}; }}"
-            f"QListWidget::item:selected {{ background: transparent; }}"
-        )
-        self._list.setSpacing(1)
-        self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._list.model().rowsMoved.connect(self._on_rows_moved)
-        outer.addWidget(self._list)
+        self._table_view = InspectorTable(3)
+        self._table = self._table_view.table()
+        self._table_view.configure_interactive_rows()
+        self._table_view.set_column_resize_mode(0, QHeaderView.Stretch)
+        self._table_view.set_column_resize_mode(1, QHeaderView.Fixed)
+        self._table_view.set_column_resize_mode(2, QHeaderView.Fixed)
+        self._table_view.set_column_width(1, INSPECTOR_ROW_HEIGHT)
+        self._table_view.set_column_width(2, INSPECTOR_ROW_HEIGHT)
+        self._table.itemSelectionChanged.connect(self._on_table_selection_changed)
+        self._table.itemChanged.connect(self._on_table_item_changed)
+        self._table.model().rowsMoved.connect(self._on_rows_moved)
+        # Deselect when clicking empty space below the rows.
+        self._table.viewport().installEventFilter(self)
+        outer.addWidget(self._table_view)
 
     def set_layers(self, layers: list) -> None:
-        self._list.clear()
+        self._updating_table = True
+        self._table_view.set_row_count(0)
         self._rows.clear()
         self._order.clear()
         for layer in layers:
             self._append_layer(layer)
+        self._updating_table = False
+        self._refresh_row_positions()
 
     def add_layer(self, layer: dict) -> None:
         self._append_layer(layer)
 
     def _append_layer(self, layer: dict) -> None:
         lid = layer["id"]
+        self.remove_layer(lid)
 
-        # Replace any existing UI row for this layer id instead of appending a
-        # duplicate. Image-layer updates can legitimately re-emit commits.
-        for i in reversed(range(self._list.count())):
-            item = self._list.item(i)
-            if item and item.data(Qt.UserRole) == lid:
-                self._list.takeItem(i)
-        self._rows.pop(lid, None)
-        while lid in self._order:
-            self._order.remove(lid)
+        row_idx = self._table_view.row_count()
+        self._table_view.insert_row(row_idx)
 
-        row = _LayerRow(layer)
-        row.delete_requested.connect(self.layer_deleted)
-        row.rename_requested.connect(self._on_rename)
-        row.selected.connect(self._on_select)
-        row.visibility_toggled.connect(self.layer_visibility_toggled)
+        name_item = QTableWidgetItem(layer.get("name", "Cut"))
+        name_item.setData(Qt.UserRole, lid)
+        name_item.setFlags(
+            Qt.ItemIsEnabled
+            | Qt.ItemIsSelectable
+            | Qt.ItemIsEditable
+            | Qt.ItemIsDragEnabled
+            | Qt.ItemIsDropEnabled
+        )
+        name_item.setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        self._table_view.set_item(row_idx, 0, name_item)
 
-        item = QListWidgetItem()
-        item.setData(Qt.UserRole, lid)
-        item.setSizeHint(row.sizeHint())
-        self._list.addItem(item)
-        self._list.setItemWidget(item, row)
-        self._rows[lid] = row
+        eye_cell, eye_btn = self._table_view.make_action_button("eye-solid", "Toggle layer visibility")
+        eye_btn.clicked.connect(lambda _=False, _lid=lid: self._toggle_visibility(_lid))
+
+        del_cell, del_btn = self._table_view.make_action_button("trash", "Delete layer")
+        del_btn.clicked.connect(lambda _=False, _lid=lid: self.layer_deleted.emit(_lid))
+
+        self._table_view.set_cell_widget(row_idx, 1, eye_cell)
+        self._table_view.set_cell_widget(row_idx, 2, del_cell)
+
+        self._rows[lid] = {
+            "name": name_item.text(),
+            "visible": bool(layer.get("visible", True)),
+            "eye_btn": eye_btn,
+            "del_btn": del_btn,
+        }
         self._order.append(lid)
+        self._set_eye_icon(lid)
+        self._refresh_row_positions()
 
     def remove_layer(self, lid: str) -> None:
-        for i in range(self._list.count()):
-            item = self._list.item(i)
-            if item and item.data(Qt.UserRole) == lid:
-                self._list.takeItem(i)
-                break
+        row_idx = self._row_for_id(lid)
+        if row_idx is not None:
+            self._table_view.remove_row(row_idx)
         self._rows.pop(lid, None)
         if lid in self._order:
             self._order.remove(lid)
         if self._sel_id == lid:
             self._sel_id = None
+        self._refresh_row_positions()
 
     def remove_all(self) -> None:
-        self._list.clear()
+        self._table_view.set_row_count(0)
         self._rows.clear()
         self._order.clear()
         self._sel_id = None
 
     def select_layer(self, lid: Optional[str]) -> None:
-        if self._sel_id and self._sel_id in self._rows:
-            self._rows[self._sel_id].set_selected(False)
         self._sel_id = lid
-        if lid and lid in self._rows:
-            self._rows[lid].set_selected(True)
+        self._updating_table = True
+        if lid is None:
+            self._table.clearSelection()
+        else:
+            row_idx = self._row_for_id(lid)
+            if row_idx is not None:
+                self._table.selectRow(row_idx)
+                self._table.setCurrentCell(row_idx, 0)
+        self._updating_table = False
+        self._refresh_row_positions()
 
     def update_layer_name(self, lid: str, name: str) -> None:
-        if lid in self._rows:
-            self._rows[lid].update_name(name)
+        row_idx = self._row_for_id(lid)
+        state = self._rows.get(lid)
+        if row_idx is None or state is None:
+            return
+        item = self._table.item(row_idx, 0)
+        if item is None:
+            return
+        self._updating_table = True
+        item.setText(name)
+        self._updating_table = False
+        state["name"] = name
 
-    def _on_select(self, lid: str) -> None:
+    def update_layer_visibility(self, lid: str, visible: bool) -> None:
+        state = self._rows.get(lid)
+        if state is None:
+            return
+        state["visible"] = bool(visible)
+        self._set_eye_icon(lid)
+        self._refresh_row_positions()
+
+    def _on_table_selection_changed(self) -> None:
+        if self._updating_table:
+            return
+        row_idx = self._table.currentRow()
+        if row_idx < 0:
+            self.select_layer(None)
+            self.layer_deselected.emit()
+            return
+        item = self._table.item(row_idx, 0)
+        if item is None:
+            return
+        lid = item.data(Qt.UserRole)
         self.select_layer(lid)
         self.layer_selected.emit(lid)
 
-    def _on_rename(self, lid: str, name: str) -> None:
-        self.update_layer_name(lid, name)
-        self.layer_renamed.emit(lid, name)
+    def _on_table_item_changed(self, item: QTableWidgetItem) -> None:
+        if self._updating_table or item.column() != 0:
+            return
+        lid = item.data(Qt.UserRole)
+        if not lid or lid not in self._rows:
+            return
+        state = self._rows[lid]
+        old_name = state.get("name", "Cut")
+        new_name = item.text().strip() or old_name
+        if new_name != item.text():
+            self._updating_table = True
+            item.setText(new_name)
+            self._updating_table = False
+        if new_name != old_name:
+            state["name"] = new_name
+            self.layer_renamed.emit(lid, new_name)
 
     def _on_rows_moved(self) -> None:
+        self._rebuild_order()
+        self._refresh_row_positions()
+        self.layers_reordered.emit(list(self._order))
+
+    def _refresh_row_positions(self) -> None:
+        self._rebuild_order()
+        for idx, lid in enumerate(self._order):
+            item = self._table.item(idx, 0)
+            if item is None:
+                continue
+            state = self._rows.get(lid)
+            if state is None:
+                continue
+            selected = lid == self._sel_id
+            self._table_view.style_text_item(item, selected, dimmed=not state.get("visible", True))
+
+            for col in (1, 2):
+                w = self._table.cellWidget(idx, col)
+                if w is not None:
+                    self._table_view.style_action_cell(w, selected, add_left_divider=True)
+
+    def _set_eye_icon(self, lid: str) -> None:
+        state = self._rows.get(lid)
+        if state is None:
+            return
+        icon_name = "eye-solid" if state.get("visible", True) else "eye-closed"
+        btn = state.get("eye_btn")
+        if btn is None:
+            return
+        n, h = build_icon_pair(icon_name, inspector_action_icon_size(), normal_color=theme.TEXT_DIM)
+        btn.set_icons(n, h)
+
+    def _toggle_visibility(self, lid: str) -> None:
+        state = self._rows.get(lid)
+        if state is None:
+            return
+        state["visible"] = not state.get("visible", True)
+        self._set_eye_icon(lid)
+        self._refresh_row_positions()
+        self.layer_visibility_toggled.emit(lid, state["visible"])
+
+    def _row_for_id(self, lid: str) -> Optional[int]:
+        for i in range(self._table.rowCount()):
+            item = self._table.item(i, 0)
+            if item is not None and item.data(Qt.UserRole) == lid:
+                return i
+        return None
+
+    def _rebuild_order(self) -> None:
         new_order = []
-        for i in range(self._list.count()):
-            item = self._list.item(i)
-            if item:
+        for i in range(self._table.rowCount()):
+            item = self._table.item(i, 0)
+            if item is not None:
                 new_order.append(item.data(Qt.UserRole))
         self._order = new_order
-        self.layers_reordered.emit(new_order)
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if obj is self._table.viewport() and event.type() == QEvent.MouseButtonPress:
+            idx = self._table.indexAt(event.pos())
+            if not idx.isValid():
+                # Let itemSelectionChanged fire naturally to emit layer_deselected.
+                self._table.clearSelection()
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -3512,276 +3485,6 @@ class _IllustrationBrowserPanel(QWidget):
     def add_engraving(self, _entry: dict) -> None:
         """Compatibility no-op for old per-book engraving list updates."""
 
-# ---------------------------------------------------------------------------
-# Engraving generation worker
-# ---------------------------------------------------------------------------
-
-
-class _InspectorPanel(QWidget):
-    """Inspector panel shown in the right column when an Image layer or catalog
-    thumbnail is selected.  Replaces Book / Tools / Layers for the duration of
-    the selection (Unity-style contextual Inspector).
-
-    The parent window switches a ``QStackedWidget`` to index 1 to reveal this
-    panel, and back to index 0 to restore the default layout.
-    """
-
-    line_weight_changed = pyqtSignal(float)  # slider moved
-    open_in_shotlist    = pyqtSignal(str, str)  # (filename_stem, shot_id)
-    open_in_illustration = pyqtSignal(str, str, str, str)  # (filename_stem, field, label, shot_id)
-
-    # Line weight slider: integers 25–400 → displayed as value / 100
-    _LW_MIN     = 25
-    _LW_MAX     = 400
-    _LW_DEFAULT = 100   # = 1.0
-
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
-        super().__init__(parent)
-        self._filename_stem = ""
-        self._shot_id       = ""
-        self._field         = ""
-        self._label         = ""
-        self._build_ui()
-
-    def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(10)
-
-        dim  = f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt;"
-        val  = f"color: {theme.TEXT};     font-size: {theme.BASE_PT}pt;"
-        bold = f"color: {theme.TEXT};     font-size: {theme.BASE_PT + 1}pt; font-weight: bold;"
-
-        # ── Header ─────────────────────────────────────────────────────
-        # Helper: two-column key / value row
-        def _row(label_text: str, value_widget: QWidget, parent_layout: QVBoxLayout) -> None:
-            row = QHBoxLayout()
-            lbl = QLabel(label_text + ":")
-            lbl.setStyleSheet(dim)
-            lbl.setFixedWidth(80)
-            row.addWidget(lbl)
-            row.addWidget(value_widget, 1)
-            parent_layout.addLayout(row)
-
-        def _val() -> QLabel:
-            w = QLabel("—")
-            w.setStyleSheet(val)
-            w.setWordWrap(True)
-            w.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-            return w
-
-        # ── Selection ──────────────────────────────────────────────────
-        sel_group = QGroupBox("Selection")
-        sel_lay   = QVBoxLayout(sel_group)
-        sel_lay.setContentsMargins(8, 12, 8, 8)
-        sel_lay.setSpacing(4)
-
-        self._lbl_label = _val()
-        self._lbl_field = _val()
-        self._lbl_movie = _val()
-        self._lbl_shot  = _val()
-        self._lbl_shot.setStyleSheet(val + " font-family: monospace; font-size: 8pt;")
-        _row("Label", self._lbl_label, sel_lay)
-        _row("Field", self._lbl_field, sel_lay)
-        _row("Movie", self._lbl_movie, sel_lay)
-        _row("Shot",  self._lbl_shot,  sel_lay)
-        layout.addWidget(sel_group)
-
-        # ── Page Information ───────────────────────────────────────────
-        page_group = QGroupBox("Page Information")
-        page_lay   = QVBoxLayout(page_group)
-        page_lay.setContentsMargins(8, 12, 8, 8)
-        page_lay.setSpacing(4)
-
-        self._lbl_dpi    = _val()
-        self._lbl_page_w = _val()
-        self._lbl_page_h = _val()
-        _row("DPI",    self._lbl_dpi,    page_lay)
-        _row("Width",  self._lbl_page_w, page_lay)
-        _row("Height", self._lbl_page_h, page_lay)
-        layout.addWidget(page_group)
-
-        # ── Object Information ─────────────────────────────────────────
-        obj_group = QGroupBox("Object Information")
-        obj_lay   = QVBoxLayout(obj_group)
-        obj_lay.setContentsMargins(8, 12, 8, 8)
-        obj_lay.setSpacing(4)
-
-        self._lbl_obj_w_px = _val()
-        self._lbl_obj_h_px = _val()
-        self._lbl_obj_w_mm = _val()
-        self._lbl_obj_h_mm = _val()
-        _row("Width (px)",  self._lbl_obj_w_px, obj_lay)
-        _row("Height (px)", self._lbl_obj_h_px, obj_lay)
-        _row("Width (mm)",  self._lbl_obj_w_mm, obj_lay)
-        _row("Height (mm)", self._lbl_obj_h_mm, obj_lay)
-        layout.addWidget(obj_group)
-
-        # ── Line Weight ────────────────────────────────────────────────
-        lw_group = QGroupBox("Line Weight")
-        lw_lay   = QVBoxLayout(lw_group)
-        lw_lay.setContentsMargins(8, 12, 8, 8)
-        lw_lay.setSpacing(6)
-
-        lw_row = QHBoxLayout()
-        self._lw_slider = QSlider(Qt.Horizontal)
-        self._lw_slider.setRange(self._LW_MIN, self._LW_MAX)
-        self._lw_slider.setValue(self._LW_DEFAULT)
-        self._lw_slider.setSingleStep(5)
-        self._lw_slider.setPageStep(25)
-        self._lw_slider.setTickInterval(75)
-        self._lw_slider.setTickPosition(QSlider.TicksBelow)
-        self._lw_slider.setFocusPolicy(Qt.NoFocus)
-        lw_row.addWidget(self._lw_slider, 1)
-
-        self._lw_val = QLabel("1.00")
-        self._lw_val.setStyleSheet(val)
-        self._lw_val.setFixedWidth(34)
-        self._lw_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        lw_row.addWidget(self._lw_val)
-        lw_lay.addLayout(lw_row)
-
-        rng_row = QHBoxLayout()
-        for txt, align in (("0.25", Qt.AlignLeft), ("4.00", Qt.AlignRight)):
-            rl = QLabel(txt)
-            rl.setStyleSheet(dim)
-            rl.setAlignment(align)
-            rng_row.addWidget(rl, 1)
-        lw_lay.addLayout(rng_row)
-
-        self._lw_slider.valueChanged.connect(self._on_lw_slider)
-        layout.addWidget(lw_group)
-
-        # ── Viewer buttons ──────────────────────────────────────────────
-        btn_row = QHBoxLayout()
-        self._shotlist_btn = QPushButton("Shotlist")
-        self._shotlist_btn.setEnabled(False)
-        self._shotlist_btn.clicked.connect(
-            lambda: self.open_in_shotlist.emit(self._filename_stem, self._shot_id)
-        )
-        btn_row.addWidget(self._shotlist_btn)
-
-        self._illustration_btn = QPushButton("Illustration")
-        self._illustration_btn.setEnabled(False)
-        self._illustration_btn.clicked.connect(
-            lambda: self.open_in_illustration.emit(
-                self._filename_stem, self._field, self._label, self._shot_id
-            )
-        )
-        btn_row.addWidget(self._illustration_btn)
-        layout.addLayout(btn_row)
-
-        layout.addStretch()
-
-    # ------------------------------------------------------------------
-
-    def _on_lw_slider(self, value: int) -> None:
-        lw = value / 100.0
-        self._lw_val.setText(f"{lw:.2f}")
-        self.line_weight_changed.emit(lw)
-
-    def current_line_weight(self) -> float:
-        return self._lw_slider.value() / 100.0
-
-    def set_line_weight(self, value: float) -> None:
-        self._lw_slider.blockSignals(True)
-        self._lw_slider.setValue(
-            max(self._LW_MIN, min(self._LW_MAX, int(round(value * 100))))
-        )
-        self._lw_slider.blockSignals(False)
-        self._lw_val.setText(f"{value:.2f}")
-
-    def load_layer(
-        self,
-        layer: dict,
-        page_pt_w: float = 0.0,
-        page_pt_h: float = 0.0,
-        movie: str = "",
-    ) -> None:
-        """Populate inspector from a placed Image/Engraving layer dict."""
-        self._lbl_label.setText(layer.get("label") or layer.get("name") or "—")
-        self._lbl_field.setText(layer.get("field") or "—")
-        self._lbl_movie.setText(movie or "—")
-        self._lbl_shot.setText(layer.get("shot_id") or "—")
-
-        try:
-            from services.engraving_generate import build_size_context
-            sc = build_size_context(
-                preprocessing_size=layer.get("preprocessing_size") or [],
-                preprocess_dpi=layer.get("preprocess_dpi") or 0,
-                page_pt_w=page_pt_w,
-                page_pt_h=page_pt_h,
-                width_frac=layer.get("width", 0.0),
-                height_frac=layer.get("height", 0.0),
-            )
-        except Exception:
-            sc = {}
-
-        def _mm(key: str) -> str:
-            v = sc.get(key, "")
-            return f"{v} mm" if v else "—"
-
-        def _px(key: str) -> str:
-            v = sc.get(key, "")
-            return f"{v} px" if v else "—"
-
-        self._lbl_dpi.setText(sc.get("page_dpi") or "—")
-        self._lbl_page_w.setText(_mm("page_width_mm"))
-        self._lbl_page_h.setText(_mm("page_height_mm"))
-        self._lbl_obj_w_px.setText(_px("object_width_px"))
-        self._lbl_obj_h_px.setText(_px("object_height_px"))
-        self._lbl_obj_w_mm.setText(_mm("object_width_mm"))
-        self._lbl_obj_h_mm.setText(_mm("object_height_mm"))
-
-        self.set_line_weight(float(layer.get("line_weight") or 1.0))
-        self._filename_stem = layer.get("filename_stem", "")
-        self._shot_id       = layer.get("shot_id", "")
-        self._field         = layer.get("field", "")
-        self._label         = layer.get("label") or layer.get("name") or ""
-        self._shotlist_btn.setEnabled(bool(self._filename_stem))
-        self._illustration_btn.setEnabled(bool(self._filename_stem))
-
-    def load_record(self, record: dict) -> None:
-        """Populate inspector from a catalog record (browser thumbnail selection)."""
-        self._lbl_label.setText(record.get("label") or "—")
-        self._lbl_field.setText(record.get("field") or "—")
-        self._lbl_movie.setText(record.get("filename_stem") or "—")
-        self._lbl_shot.setText(record.get("shot_id") or "—")
-        for w in (
-            self._lbl_dpi, self._lbl_page_w, self._lbl_page_h,
-            self._lbl_obj_w_px, self._lbl_obj_h_px,
-            self._lbl_obj_w_mm, self._lbl_obj_h_mm,
-        ):
-            w.setText("—")
-        self.set_line_weight(float(record.get("line_weight") or 1.0))
-        self._filename_stem = record.get("filename_stem", "")
-        self._shot_id       = record.get("shot_id", "")
-        self._field         = record.get("field", "")
-        self._label         = record.get("label") or ""
-        self._shotlist_btn.setEnabled(bool(self._filename_stem))
-        self._illustration_btn.setEnabled(bool(self._filename_stem))
-
-    def clear(self) -> None:
-        """Reset all display fields to '—'."""
-        for w in (
-            self._lbl_label, self._lbl_field, self._lbl_movie, self._lbl_shot,
-            self._lbl_dpi, self._lbl_page_w, self._lbl_page_h,
-            self._lbl_obj_w_px, self._lbl_obj_h_px,
-            self._lbl_obj_w_mm, self._lbl_obj_h_mm,
-        ):
-            w.setText("—")
-        self._lw_slider.blockSignals(True)
-        self._lw_slider.setValue(self._LW_DEFAULT)
-        self._lw_slider.blockSignals(False)
-        self._lw_val.setText("1.00")
-        self._filename_stem = ""
-        self._shot_id       = ""
-        self._field         = ""
-        self._label         = ""
-        self._shotlist_btn.setEnabled(False)
-        self._illustration_btn.setEnabled(False)
-
-
 class BookVisualizerWindow(QMainWindow):
     """Main window for the Book Visualizer."""
 
@@ -3801,10 +3504,6 @@ class BookVisualizerWindow(QMainWindow):
         self._tool: str = _TOOL_NONE
         self._next_layer_id: int = 1      # used by _CutOverlay for id generation
         self._clipboard_layer: Optional[dict] = None  # copy/cut clipboard
-
-        # Inspector state
-        self._inspector_layer:  Optional[dict] = None
-        self._inspector_record: Optional[dict] = None
 
         self._build_ui()
         self._load_all_books()
@@ -3916,21 +3615,77 @@ class BookVisualizerWindow(QMainWindow):
         panel.setStyleSheet(_TAB_CONTENT_STYLESHEET)
         scroll.setWidget(panel)
 
+        section_gap = theme.SECTION_GAP
+        action_btn_style = (
+            f"QPushButton {{"
+            f"  background-color: {theme.BTN_BG}; color: {theme.TEXT};"
+            f"  border: none; border-radius: 3px; padding: 0 8px;"
+            f"  min-height: {theme.BTN_H}px; max-height: {theme.BTN_H}px;"
+            f"}}"
+            f"QPushButton:hover   {{ background-color: {theme.ACCENT}; color: {theme.ACCENT_TEXT}; }}"
+            f"QPushButton:pressed {{ background-color: {theme.BTN_PRESSED}; }}"
+            f"QPushButton:checked {{ background-color: {theme.ACCENT}; color: {theme.ACCENT_TEXT}; }}"
+            f"QPushButton:disabled {{ background-color: {theme.BTN_BG};"
+            f" color: rgba(255,255,255,0.15); }}"
+        )
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(14)
+        layout.setContentsMargins(section_gap, section_gap, section_gap, section_gap)
+        layout.setSpacing(section_gap)
 
-        # ── Book group ────────────────────────────────────────────────
-        book_group = QGroupBox("Book")
-        book_layout = QVBoxLayout(book_group)
-        book_layout.setContentsMargins(8, 12, 8, 8)
-        book_layout.setSpacing(6)
+        # ── Info section ──────────────────────────────────────────────
+        book_sec = CollapsibleSection("Info", pref_key="book_section_info")
+        book_wrap = QWidget()
+        book_layout = QVBoxLayout(book_wrap)
+        book_layout.setContentsMargins(0, 0, 0, 0)
+        book_layout.setSpacing(section_gap)
 
         self._combo = QComboBox()
         self._combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self._combo.setStyleSheet(
-            f"QComboBox {{ background: {theme.INPUT_BG}; }}"
+        self._combo.setFocusPolicy(Qt.NoFocus)
+        self._combo.setMaxVisibleItems(10)
+        self._combo.setSizeAdjustPolicy(QComboBox.AdjustToContentsOnFirstShow)
+
+        _book_sv = QListView(self._combo)
+        _book_sv.setUniformItemSizes(True)
+        _book_sv.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        _book_sv.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        _book_sv.setFrameShape(QFrame.NoFrame)
+        _book_sv.setLineWidth(0)
+        _book_sv.setMidLineWidth(0)
+        _book_sv.setContentsMargins(0, 0, 0, 0)
+        _book_sv.setStyleSheet(
+            f"QListView {{ background: {theme.INPUT_BG}; color: {theme.TEXT};"
+            f" border: 0px; margin: 0px; padding: 0px; outline: 0px; }}"
+            f"QListView::item {{ background: {theme.INPUT_BG}; padding: 0px 8px;"
+            f" min-height: 24px; border: 0px; }}"
+            f"QListView::item:selected {{ background: {theme.ACCENT}; color: {theme.ACCENT_TEXT}; }}"
         )
+        self._combo.setView(_book_sv)
+        _book_sv.setViewportMargins(0, 0, 0, 0)
+        _book_sc = _book_sv.parentWidget()
+        if _book_sc is not None:
+            _book_sc.setFrameStyle(QFrame.NoFrame)
+            _book_sc.setLineWidth(0)
+            _book_sc.setMidLineWidth(0)
+            _book_sc.setStyleSheet(
+                f"QFrame {{ background: {theme.INPUT_BG}; border: 0px; margin: 0px; padding: 0px; }}"
+            )
+            if _book_sc.layout():
+                _book_sc.layout().setContentsMargins(0, 0, 0, 0)
+                _book_sc.layout().setSpacing(0)
+
+        def _refresh_book_combo_color(_idx: int = 0) -> None:
+            _has_choice = bool(self._combo.currentText().strip())
+            _col = theme.TEXT if _has_choice else theme.TEXT_DIM
+            self._combo.setStyleSheet(
+                f"QComboBox {{ background: {theme.BTN_BG}; color: {_col};"
+                f" border: none; border-radius: 3px; padding: 0px 6px;"
+                f" min-height: {theme.BTN_H}px; max-height: {theme.BTN_H}px; }}"
+                f"QComboBox::drop-down {{ border: none; }}"
+            )
+
+        self._combo.currentIndexChanged.connect(_refresh_book_combo_color)
+        _refresh_book_combo_color()
         self._combo.currentIndexChanged.connect(self._on_combo_changed)
         self._combo.installEventFilter(self)
         book_layout.addWidget(self._combo)
@@ -3938,28 +3693,51 @@ class BookVisualizerWindow(QMainWindow):
         # Page info row
         dim_style = f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt;"
 
-        self._pages_label = QLabel("—")
-        self._pages_label.setWordWrap(True)
-        self._pages_label.setStyleSheet(dim_style)
-        book_layout.addWidget(self._pages_label)
+        # Import / New buttons
+        book_btn_row = QHBoxLayout()
+        book_btn_row.setContentsMargins(0, 0, 0, 0)
+        book_btn_row.setSpacing(section_gap)
+
+        self._import_btn = QPushButton("Replace")
+        self._import_btn.setToolTip("Import a PDF into this book")
+        self._import_btn.setStyleSheet(action_btn_style)
+        self._import_btn.clicked.connect(self._on_import)
+        book_btn_row.addWidget(self._import_btn, 1)
+
+        self._new_btn = QPushButton("New")
+        self._new_btn.setToolTip("Create a new book")
+        self._new_btn.setStyleSheet(action_btn_style)
+        self._new_btn.clicked.connect(self._on_new_book)
+        book_btn_row.addWidget(self._new_btn, 1)
+
+        del_n, del_h = build_icon_pair("trash", theme.BTN_ICON, normal_color=theme.TEXT_DIM)
+        self._delete_book_btn = HoverIconButton("", del_n, del_h)
+        self._delete_book_btn.setIconSize(QSize(theme.BTN_ICON, theme.BTN_ICON))
+        self._delete_book_btn.setFixedSize(theme.BTN_H, theme.BTN_H)
+        self._delete_book_btn.setStyleSheet(action_btn_style)
+        self._delete_book_btn.setToolTip("Delete this book")
+        self._delete_book_btn.setFocusPolicy(Qt.NoFocus)
+        self._delete_book_btn.clicked.connect(self._on_delete_book)
+        book_btn_row.addWidget(self._delete_book_btn)
+
+        book_layout.addLayout(book_btn_row)
 
         spread_row = QWidget()
         spread_row_layout = QHBoxLayout(spread_row)
         spread_row_layout.setContentsMargins(0, 0, 0, 0)
-        spread_row_layout.setSpacing(2)
-
-        self._spread_prefix = QLabel("")
-        self._spread_prefix.setStyleSheet(dim_style)
-        spread_row_layout.addWidget(self._spread_prefix)
+        spread_row_layout.setSpacing(section_gap)
 
         self._spread_page_edit = QLineEdit("")
         self._spread_page_edit.setPlaceholderText("\u2014")
         self._spread_page_edit.setStyleSheet(
-            f"{dim_style} background: {theme.INPUT_BG}; border: none; padding: 1px 3px;"
-            f" selection-background-color: {theme.ACCENT}; selection-color: {theme.TEXT};"
+            f"{dim_style} background: {theme.INPUT_BG}; border: none;"
+            f" min-height: {theme.BTN_H}px; max-height: {theme.BTN_H}px;"
+            f" padding: 0px 6px; border-radius: 3px;"
+            f" selection-background-color: {theme.ACCENT}; selection-color: {theme.ACCENT_TEXT};"
         )
         self._spread_page_edit.setToolTip("Type a page number and press Enter to jump")
         self._spread_page_edit.setFixedWidth(60)
+        self._spread_page_edit.setFixedHeight(theme.BTN_H)
         self._spread_page_edit.returnPressed.connect(self._on_page_entered)
 
         def _spread_page_mouse_press(e):
@@ -3971,11 +3749,16 @@ class BookVisualizerWindow(QMainWindow):
 
         self._spread_suffix = QLabel("")
         self._spread_suffix.setStyleSheet(dim_style)
+        self._spread_suffix.setFixedHeight(theme.BTN_H)
+        self._spread_suffix.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         spread_row_layout.addWidget(self._spread_suffix)
         spread_row_layout.addStretch()
 
+        self._spread_row = spread_row
         book_layout.addWidget(spread_row)
+        self._spread_row.hide()
 
+        # Match shared section-body grid used by Engravings panels.
         self._loading_label = QLabel("")
         self._loading_label.setWordWrap(True)
         self._loading_label.setStyleSheet(
@@ -3985,50 +3768,29 @@ class BookVisualizerWindow(QMainWindow):
         self._loading_label.hide()
         book_layout.addWidget(self._loading_label)
 
-        # Import / New buttons
-        book_btn_row = QHBoxLayout()
-        book_btn_row.setSpacing(4)
+        book_sec.add_widget(book_wrap)
+        layout.addWidget(book_sec)
 
-        self._import_btn = QPushButton("Import")
-        self._import_btn.setToolTip("Import a PDF into this book")
-        self._import_btn.clicked.connect(self._on_import)
-        book_btn_row.addWidget(self._import_btn)
-
-        self._new_btn = QPushButton("New")
-        self._new_btn.setToolTip("Create a new book")
-        self._new_btn.clicked.connect(self._on_new_book)
-        book_btn_row.addWidget(self._new_btn)
-
-        self._delete_book_btn = QPushButton()
-        self._delete_book_btn.setIcon(_svg_icon("trash", 14, theme.TEXT_DIM))
-        self._delete_book_btn.setIconSize(QSize(14, 14))
-        self._delete_book_btn.setFixedSize(26, 26)
-        self._delete_book_btn.setToolTip("Delete this book")
-        self._delete_book_btn.setFocusPolicy(Qt.NoFocus)
-        self._delete_book_btn.clicked.connect(self._on_delete_book)
-        book_btn_row.addWidget(self._delete_book_btn)
-
-        book_layout.addLayout(book_btn_row)
-
-        layout.addWidget(book_group)
-
-        # ── Tools group ───────────────────────────────────────────────
-        tools_group = QGroupBox("Tools")
-        tools_layout = QVBoxLayout(tools_group)
-        tools_layout.setContentsMargins(8, 12, 8, 8)
-        tools_layout.setSpacing(6)
+        # ── Tools section ─────────────────────────────────────────────
+        tools_sec = CollapsibleSection("Tools", pref_key="book_section_tools")
+        tools_wrap = QWidget()
+        tools_layout = QVBoxLayout(tools_wrap)
+        tools_layout.setContentsMargins(0, 0, 0, 0)
+        tools_layout.setSpacing(section_gap)
 
         tool_row = QHBoxLayout()
-        tool_row.setSpacing(4)
+        tool_row.setContentsMargins(0, 0, 0, 0)
+        tool_row.setSpacing(section_gap)
 
-        ICON_SIZE = 18
-        BTN_SIZE  = 32
+        ICON_SIZE = theme.BTN_ICON
+        BTN_SIZE  = theme.BTN_H
 
-        self._text_btn = QPushButton()
-        self._text_btn.setIcon(_svg_icon("text", ICON_SIZE))
+        text_n, text_h = build_icon_pair("text", ICON_SIZE)
+        self._text_btn = HoverIconButton("", text_n, text_h)
         self._text_btn.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
         self._text_btn.setCheckable(True)
         self._text_btn.setFixedSize(BTN_SIZE, BTN_SIZE)
+        self._text_btn.setStyleSheet(action_btn_style)
         self._text_btn.setToolTip("Text tool — drag to select PDF text")
         self._text_btn.clicked.connect(lambda checked: self._set_tool(_TOOL_TEXT if checked else _TOOL_NONE))
         tool_row.addWidget(self._text_btn)
@@ -4039,18 +3801,10 @@ class BookVisualizerWindow(QMainWindow):
         _mask_pair_lay.setContentsMargins(0, 0, 0, 0)
         _mask_pair_lay.setSpacing(0)
 
-        _mask_btn_style = (
-            f"QPushButton {{ background-color: {theme.BTN_BG}; border: none;"
-            f" padding: 0px; }}"
-            f" QPushButton:hover    {{ background-color: {theme.BTN_HOVER}; }}"
-            f" QPushButton:pressed  {{ background-color: {theme.BTN_PRESSED}; }}"
-            f" QPushButton:checked  {{ background-color: {theme.ACCENT}; }}"
-            f" QPushButton:disabled {{ color: {theme.TEXT_DIM};"
-            f" background-color: {theme.BTN_BG}; }}"
-        )
+        _mask_btn_style = action_btn_style
 
-        self._mask_left_btn = QPushButton()
-        self._mask_left_btn.setIcon(_svg_icon("mask-square", ICON_SIZE))
+        mask_n, mask_h = build_icon_pair("mask-square", ICON_SIZE)
+        self._mask_left_btn = HoverIconButton("", mask_n, mask_h)
         self._mask_left_btn.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
         self._mask_left_btn.setCheckable(True)
         self._mask_left_btn.setFixedSize(BTN_SIZE, BTN_SIZE)
@@ -4062,8 +3816,7 @@ class BookVisualizerWindow(QMainWindow):
         self._mask_left_btn.clicked.connect(self._toggle_mask_left)
         _mask_pair_lay.addWidget(self._mask_left_btn)
 
-        self._mask_right_btn = QPushButton()
-        self._mask_right_btn.setIcon(_svg_icon("mask-square", ICON_SIZE))
+        self._mask_right_btn = HoverIconButton("", mask_n, mask_h)
         self._mask_right_btn.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
         self._mask_right_btn.setCheckable(True)
         self._mask_right_btn.setFixedSize(BTN_SIZE, BTN_SIZE)
@@ -4077,28 +3830,31 @@ class BookVisualizerWindow(QMainWindow):
 
         tool_row.addWidget(_mask_pair)
 
-        self._cut_btn = QPushButton()
-        self._cut_btn.setIcon(_svg_icon("cut", ICON_SIZE))
+        cut_n, cut_h = build_icon_pair("cut", ICON_SIZE)
+        self._cut_btn = HoverIconButton("", cut_n, cut_h)
         self._cut_btn.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
         self._cut_btn.setCheckable(True)
         self._cut_btn.setFixedSize(BTN_SIZE, BTN_SIZE)
+        self._cut_btn.setStyleSheet(action_btn_style)
         self._cut_btn.setToolTip("Cut tool — draw polygon cuts")
         self._cut_btn.clicked.connect(lambda checked: self._set_tool(_TOOL_CUT if checked else _TOOL_NONE))
         tool_row.addWidget(self._cut_btn)
 
-        self._erase_btn = QPushButton()
-        self._erase_btn.setIcon(_svg_icon("erase", ICON_SIZE))
+        erase_n, erase_h = build_icon_pair("erase", ICON_SIZE)
+        self._erase_btn = HoverIconButton("", erase_n, erase_h)
         self._erase_btn.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
         self._erase_btn.setCheckable(True)
         self._erase_btn.setFixedSize(BTN_SIZE, BTN_SIZE)
+        self._erase_btn.setStyleSheet(action_btn_style)
         self._erase_btn.setToolTip("Erase tool — click a cut to remove it")
         self._erase_btn.clicked.connect(lambda checked: self._set_tool(_TOOL_ERASE if checked else _TOOL_NONE))
         tool_row.addWidget(self._erase_btn)
 
-        self._trash_btn = QPushButton()
-        self._trash_btn.setIcon(_svg_icon("trash-solid", ICON_SIZE))
+        trash_n, trash_h = build_icon_pair("trash-solid", ICON_SIZE)
+        self._trash_btn = HoverIconButton("", trash_n, trash_h)
         self._trash_btn.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
         self._trash_btn.setFixedSize(BTN_SIZE, BTN_SIZE)
+        self._trash_btn.setStyleSheet(action_btn_style)
         self._trash_btn.setToolTip("Delete all cuts on this spread")
         self._trash_btn.clicked.connect(self._on_trash)
         tool_row.addWidget(self._trash_btn)
@@ -4108,7 +3864,13 @@ class BookVisualizerWindow(QMainWindow):
 
         self._show_outlines_chk = QCheckBox("Handles")
         self._show_outlines_chk.setChecked(True)
+        self._show_outlines_chk.setFixedHeight(theme.BTN_H)
         self._show_outlines_chk.setFocusPolicy(Qt.NoFocus)
+        self._show_outlines_chk.setStyleSheet(
+            f"QCheckBox {{ color: {theme.TEXT};"
+            f" min-height: {theme.BTN_H}px; max-height: {theme.BTN_H}px; padding: 0px; }}"
+            f"QCheckBox::indicator {{ width: {theme.BTN_ICON}px; height: {theme.BTN_ICON}px; }}"
+        )
         self._show_outlines_chk.toggled.connect(
             lambda checked: self._overlay.set_show_outlines(checked)
         )
@@ -4116,36 +3878,48 @@ class BookVisualizerWindow(QMainWindow):
 
         self._text_vis_chk = QCheckBox("Selections")
         self._text_vis_chk.setChecked(True)
+        self._text_vis_chk.setFixedHeight(theme.BTN_H)
         self._text_vis_chk.setFocusPolicy(Qt.NoFocus)
+        self._text_vis_chk.setStyleSheet(
+            f"QCheckBox {{ color: {theme.TEXT};"
+            f" min-height: {theme.BTN_H}px; max-height: {theme.BTN_H}px; padding: 0px; }}"
+            f"QCheckBox::indicator {{ width: {theme.BTN_ICON}px; height: {theme.BTN_ICON}px; }}"
+        )
         self._text_vis_chk.toggled.connect(
             lambda checked: self._overlay.set_text_sels_visible(checked)
         )
         tools_layout.addWidget(self._text_vis_chk)
-        layout.addWidget(tools_group)
+        tools_sec.add_widget(tools_wrap)
+        layout.addWidget(tools_sec)
 
-        # ── Layers group ──────────────────────────────────────────────
-        layers_group = QGroupBox("Layers")
-        layers_group_layout = QVBoxLayout(layers_group)
-        layers_group_layout.setContentsMargins(6, 6, 6, 6)
-        layers_group_layout.setSpacing(4)
+        # ── Layers section ────────────────────────────────────────────
+        layers_sec = CollapsibleSection("Layers", pref_key="book_section_layers")
+        layers_wrap = QWidget()
+        layers_group_layout = QVBoxLayout(layers_wrap)
+        layers_group_layout.setContentsMargins(0, 0, 0, 0)
+        layers_group_layout.setSpacing(0)
 
-        # Eye (visibility) button in the group header area
+        # Eye (visibility) button in title bar
         self._layers_visible_btn = QPushButton()
         self._layers_visible_btn.setCheckable(True)
         self._layers_visible_btn.setChecked(True)
-        self._layers_visible_btn.setFixedSize(20, 20)
+        self._layers_visible_btn.setFixedSize(theme.BTN_H, theme.BTN_H)
         self._layers_visible_btn.setFocusPolicy(Qt.NoFocus)
         self._layers_visible_btn.setStyleSheet(
-            "QPushButton { background: transparent; border: none; }"
+            f"QPushButton {{ background: {theme.TITLE_BG}; border: none; }}"
+            f"QPushButton:hover {{ background: {theme.TITLE_BG}; border: none; }}"
+            f"QPushButton:pressed {{ background: {theme.TITLE_BG}; border: none; }}"
+            f"QPushButton:checked {{ background: {theme.TITLE_BG}; border: none; }}"
         )
-        self._layers_visible_btn.setIcon(_svg_icon("eye-solid", 14, theme.ACCENT))
-        self._layers_visible_btn.setIconSize(QSize(14, 14))
+        self._layers_visible_btn.setIcon(_svg_icon("eye-solid", theme.BTN_ICON, theme.ACCENT))
+        self._layers_visible_btn.setIconSize(QSize(theme.BTN_ICON, theme.BTN_ICON))
         self._layers_visible_btn.toggled.connect(self._on_layers_visible_toggled)
-        layers_group_layout.addWidget(self._layers_visible_btn, 0, Qt.AlignRight)
+        layers_sec.set_header_widget(self._layers_visible_btn)
 
         self._layer_panel = _LayerPanel()
         self._layer_panel.setMinimumHeight(100)
         self._layer_panel.layer_selected.connect(self._on_panel_layer_selected)
+        self._layer_panel.layer_deselected.connect(self._on_panel_layer_deselected)
         self._layer_panel.layer_deleted.connect(self._on_panel_layer_deleted)
         self._layer_panel.layer_renamed.connect(self._on_panel_layer_renamed)
         self._layer_panel.layers_reordered.connect(self._on_panel_layers_reordered)
@@ -4153,8 +3927,17 @@ class BookVisualizerWindow(QMainWindow):
         self._layer_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layers_group_layout.addWidget(self._layer_panel, stretch=1)
 
-        layers_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        layout.addWidget(layers_group, stretch=1)
+        layers_sec.add_widget(layers_wrap)
+        layers_sec.set_fill_vertical(True)
+        layers_index = layout.count()
+        layout.addWidget(layers_sec)
+
+        def _sync_layers_section_stretch(expanded: bool) -> None:
+            layout.setStretch(layers_index, 1 if expanded else 0)
+
+        layers_sec.expandedChanged.connect(_sync_layers_section_stretch)
+        _sync_layers_section_stretch(layers_sec.is_expanded())
+        layout.addStretch()
 
         self._workspace_tabs = QTabWidget()
         self._workspace_tabs.setDocumentMode(True)
@@ -4180,9 +3963,10 @@ class BookVisualizerWindow(QMainWindow):
         """Build the Engravings inspector domain: Filter, Sort, and Info."""
         panel = QWidget()
         panel.setStyleSheet(_TAB_CONTENT_STYLESHEET)
+        section_gap = theme.SECTION_GAP
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(6)
+        layout.setContentsMargins(section_gap, section_gap, section_gap, section_gap)
+        layout.setSpacing(section_gap)
 
         filter_sec = CollapsibleSection("Filter", pref_key="book_eng_section_filter")
         fwrap = QWidget()
@@ -4193,7 +3977,6 @@ class BookVisualizerWindow(QMainWindow):
         fwrap_lay.addWidget(self._sil_browser.status_bar)
         fwrap_lay.addWidget(self._sil_browser.pagination_panel)
         filter_sec.add_widget(fwrap)
-        filter_sec._body_layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(filter_sec)
 
         sort_sec = CollapsibleSection("Sort", pref_key="book_eng_section_sort")
@@ -4210,6 +3993,7 @@ class BookVisualizerWindow(QMainWindow):
             "label", "movie", "field", "shot", "dpi", "width", "height"
         ])
         info_sec.add_widget(self._eng_info_block)
+        # Keep section header -> first row gap on the shared 2px grid.
         layout.addWidget(info_sec)
 
         layout.addStretch()
@@ -4319,7 +4103,8 @@ class BookVisualizerWindow(QMainWindow):
         self._updating_combo = False
 
         if not self._books:
-            self._pages_label.setText("No books yet.")
+            self._spread_page_edit.setText("")
+            self._spread_suffix.setText("No books yet.")
             self._spread_view.clear()
             return
 
@@ -4357,13 +4142,12 @@ class BookVisualizerWindow(QMainWindow):
             self._updating_combo = False
 
         self._page_bar.set_state(0, 0)
-        self._spread_prefix.setText("")
         self._spread_page_edit.setText("")
         self._spread_suffix.setText("")
         self._loading_label.hide()
 
         if not pdf_rel:
-            self._pages_label.setText("No PDF imported.")
+            self._spread_suffix.setText("No PDF imported.")
             self._import_btn.setText("Import")
             self._import_btn.setToolTip("Import a PDF into this book")
             self._persist_current(slug)
@@ -4375,7 +4159,7 @@ class BookVisualizerWindow(QMainWindow):
         pdf_path = book_dir(self._project_path, slug) / pdf_rel
 
         if not pdf_path.exists():
-            self._pages_label.setText("PDF file missing.")
+            self._spread_suffix.setText("PDF file missing.")
             self._import_btn.setText("Import")
             self._import_btn.setToolTip("Import a PDF into this book")
             self._persist_current(slug)
@@ -4388,10 +4172,8 @@ class BookVisualizerWindow(QMainWindow):
             self._doc  = fitz.open(str(pdf_path))
             self._slug = slug
         except Exception as exc:
-            self._pages_label.setText(f"Error: {exc}")
+            self._spread_suffix.setText(f"Error: {exc}")
             return
-
-        self._pages_label.setText(f"{page_count} pages")
         self._import_btn.setText("Replace")
         self._import_btn.setToolTip("Replace the current PDF with a new file")
         self._persist_current(slug)
@@ -4430,7 +4212,6 @@ class BookVisualizerWindow(QMainWindow):
         if self._doc is None:
             self._spread_view.clear()
             self._page_bar.set_state(0, 0)
-            self._spread_prefix.setText("")
             self._spread_page_edit.setText("")
             self._spread_suffix.setText("")
             return
@@ -4439,7 +4220,6 @@ class BookVisualizerWindow(QMainWindow):
         if n == 0:
             self._spread_view.clear()
             self._page_bar.set_state(0, 0)
-            self._spread_prefix.setText("")
             self._spread_page_edit.setText("")
             self._spread_suffix.setText("")
             return
@@ -4447,13 +4227,10 @@ class BookVisualizerWindow(QMainWindow):
         self._spread_view.set_spread(self._doc, self._slug, left_i, right_i, self._spread_idx)
         self._page_bar.set_state(self._spread_idx, n)
         if left_i is None:
-            self._spread_prefix.setText("p.")
             self._spread_page_edit.setText("1")
         elif right_i is None:
-            self._spread_prefix.setText("p.")
             self._spread_page_edit.setText(str(left_i + 1))
         else:
-            self._spread_prefix.setText("pp.")
             self._spread_page_edit.setText(f"{left_i + 1}–{right_i + 1}")
         self._spread_suffix.setText(f" of {page_count}")
         self._persist_spread()
@@ -4556,7 +4333,7 @@ class BookVisualizerWindow(QMainWindow):
     def _on_layers_visible_toggled(self, checked: bool) -> None:
         icon_name = "eye-solid" if checked else "eye-closed"
         color = theme.ACCENT if checked else theme.TEXT_DIM
-        self._layers_visible_btn.setIcon(_svg_icon(icon_name, 14, color))
+        self._layers_visible_btn.setIcon(_svg_icon(icon_name, theme.BTN_ICON, color))
         self._overlay.set_layers_visible(checked)
         self._spread_view.set_layers_visible(checked)
 
@@ -4960,6 +4737,9 @@ class BookVisualizerWindow(QMainWindow):
     def _on_panel_layer_selected(self, lid: str) -> None:
         self._overlay.select_layer(lid)
 
+    def _on_panel_layer_deselected(self) -> None:
+        self._overlay.select_layer(None)
+
     def _on_panel_layer_deleted(self, lid: str) -> None:
         layer = self._overlay._layer_by_id(lid)
         if layer is not None:
@@ -4996,6 +4776,12 @@ class BookVisualizerWindow(QMainWindow):
         layer = self._overlay._layer_by_id(lid)
         if layer is not None:
             layer["visible"] = visible
+            mirror_id = layer.get("mirror_id")
+            if mirror_id:
+                mirror = self._overlay._layer_by_id(mirror_id)
+                if mirror is not None:
+                    mirror["visible"] = visible
+                    self._layer_panel.update_layer_visibility(mirror_id, visible)
             self._overlay.update()
             self._spread_view.set_layers(self._overlay.current_layers())
             self._save_current_layers()

@@ -78,8 +78,13 @@ class IllustrationInspector(QWidget):
         self._content = QWidget()
         self._content.setStyleSheet(f"background: {theme.PANEL_BG};")
         self._layout = QVBoxLayout(self._content)
-        self._layout.setContentsMargins(8, 8, 8, 8)
-        self._layout.setSpacing(8)
+        self._layout.setContentsMargins(
+            theme.SECTION_GAP,
+            theme.SECTION_GAP,
+            theme.SECTION_GAP,
+            theme.SECTION_GAP,
+        )
+        self._layout.setSpacing(theme.SECTION_GAP)
         self._layout.setAlignment(Qt.AlignTop)
 
         # TODO (Phase 4): sections added by each concrete visualizer will

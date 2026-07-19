@@ -43,7 +43,16 @@ CELL_BG      = "#606060"   # table cell backgrounds (same as TITLE_BG for now)
 BTN_BG       = "#606060"   # button face
 BTN_HOVER    = "#8d8d8d"   # button hover (lighter than BG)
 BTN_PRESSED  = "#565656"   # button pressed (darker)
-BTN_H        = 24          # fixed height for all buttons (px))
+BUTTON_HEIGHT = 24         # fixed height for all inspector/action buttons (px)
+BUTTON_ICON_SIZE = max(12, BUTTON_HEIGHT - 10)  # canonical icon size for square toolbar/header buttons
+BTN_H        = BUTTON_HEIGHT
+BTN_ICON     = BUTTON_ICON_SIZE
+# Inspector grid contract (all visualizers):
+# - Use edge-to-edge section bodies (no extra nested wrapper insets)
+# - Use SECTION_GAP for panel/section interior spacing
+# - Keep row rhythm consistent via BTN_H for controls in inspector rows
+INSPECTOR_GAP = 2          # canonical inspector spacing/margins (px)
+SECTION_GAP  = INSPECTOR_GAP
 TEXT         = "#ffffff"   # primary text — white
 TEXT_DIM     = "#909090"   # secondary / hint text
 BORDER       = "#ffffff"   # interactive element borders (buttons, inputs) — white
@@ -51,6 +60,7 @@ UI_BORDER    = "#404040"   # structural chrome borders (group boxes, frames) —
 SPLITTER     = "#737373"   # splitter drag handles — 45% grey (barely visible on BG)
 ACCENT       = "#ffff00"   # selections, active, checked states
 ACCENT_TEXT  = "#000000"   # text on ACCENT background (black on yellow; use #ffffff for dark accents)
+ACCENT_FILL_ALPHA = 64     # alpha for accent-colored area fills (25% of 255)
 CANVAS_BG    = "#3a3a3a"   # video / image display areas (dark so content pops)
 TAB_BG       = "#545454"   # tab labels + pane content — 10 % lighter than CANVAS_BG
 # ---------------------------------------------------------------------------

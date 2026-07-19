@@ -10,14 +10,22 @@ Usage::
     sec.add_widget(media_combo)
     sec.add_widget(item_combo)
     parent_layout.addWidget(sec)
+
+Layout contract for inspector panes:
+        - Parent panel spacing and margins should use theme.SECTION_GAP.
+        - Section body should typically remain edge-to-edge
+            (set section._body_layout contents margins to 0 when appropriate).
+        - Avoid adding extra nested wrapper margins unless a section explicitly
+            needs a distinct inset treatment.
 """
 
 from __future__ import annotations
 
 from typing import Optional
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import (
+    QHBoxLayout,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -34,6 +42,8 @@ _HEADER_H        = 24   # px
 
 
 class CollapsibleSection(QWidget):
+    expandedChanged = pyqtSignal(bool)
+
     """A reusable collapsible section for inspector composition.
 
     Parameters
@@ -71,7 +81,10 @@ class CollapsibleSection(QWidget):
             except Exception:
                 pass
         self._expanded = expanded
+        self._fill_vertical = False
         self._subbar: Optional[QWidget] = None
+        self._header_widget: Optional[QWidget] = None
+        self._apply_size_policy()
         self._build_ui()
 
     # ------------------------------------------------------------------ build
@@ -82,6 +95,10 @@ class CollapsibleSection(QWidget):
         outer.setSpacing(0)
 
         # ── Header button ─────────────────────────────────────────────────
+        self._header_row = QWidget()
+        header_row_layout = QHBoxLayout(self._header_row)
+        header_row_layout.setContentsMargins(0, 0, 0, 0)
+        header_row_layout.setSpacing(0)
         self._header = QPushButton()
         self._header.setFixedHeight(_HEADER_H)
         self._header.setFocusPolicy(Qt.NoFocus)
@@ -103,15 +120,24 @@ class CollapsibleSection(QWidget):
         )
         self._header.clicked.connect(self._toggle)
         self._refresh_header()
-        outer.addWidget(self._header)
+        header_row_layout.addWidget(self._header, 1)
+        outer.addWidget(self._header_row)
+
+        # Structural separator band between title and body content.
+        # This is a section-level rhythm element, not a table row border.
+        self._body_band = QWidget()
+        self._body_band.setFixedHeight(theme.SECTION_GAP)
+        self._body_band.setStyleSheet(f"background: {theme.TAB_BG};")
+        self._body_band.setVisible(self._expanded)
+        outer.addWidget(self._body_band)
 
         # ── Content area ─────────────────────────────────────────────────
         self._body = QWidget()
         self._body.setStyleSheet(f"background: {theme.TAB_BG};")
         self._body.setVisible(self._expanded)
         self._body_layout = QVBoxLayout(self._body)
-        self._body_layout.setContentsMargins(0, 2, 0, 0)
-        self._body_layout.setSpacing(2)
+        self._body_layout.setContentsMargins(0, 0, 0, 0)
+        self._body_layout.setSpacing(theme.SECTION_GAP)
         outer.addWidget(self._body)
 
     # ------------------------------------------------------------------ private
@@ -127,9 +153,12 @@ class CollapsibleSection(QWidget):
     def _toggle(self) -> None:
         self._expanded = not self._expanded
         self._refresh_header()
+        self._body_band.setVisible(self._expanded)
         self._body.setVisible(self._expanded)
         if self._subbar is not None:
             self._subbar.setVisible(self._expanded)
+        self._apply_size_policy()
+        self.expandedChanged.emit(self._expanded)
         # Persist the new state immediately
         if self._pref_key is not None:
             try:
@@ -137,6 +166,13 @@ class CollapsibleSection(QWidget):
                 _prefs.set(self._pref_key, self._expanded)
             except Exception:
                 pass
+
+    def _apply_size_policy(self) -> None:
+        """Apply vertical policy: top-snapping by default, optional fill when open."""
+        if self._fill_vertical and self._expanded:
+            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            return
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
 
     # ------------------------------------------------------------------ public
 
@@ -165,7 +201,26 @@ class CollapsibleSection(QWidget):
         self._subtitle = subtitle.strip()
         self._refresh_header()
 
+    def set_header_widget(self, widget: QWidget) -> None:
+        """Attach an accessory widget to the right side of the title bar."""
+        row_layout = self._header_row.layout()
+        if self._header_widget is not None:
+            row_layout.removeWidget(self._header_widget)
+            self._header_widget.setParent(None)
+        self._header_widget = widget
+        widget.setParent(self._header_row)
+        row_layout.addWidget(widget, 0, Qt.AlignRight | Qt.AlignVCenter)
+
     def set_expanded(self, expanded: bool) -> None:
         """Programmatically expand or collapse the section."""
         if expanded != self._expanded:
             self._toggle()
+
+    def set_fill_vertical(self, fill: bool) -> None:
+        """When enabled, expand vertically only while section body is open."""
+        self._fill_vertical = bool(fill)
+        self._apply_size_policy()
+
+    def is_expanded(self) -> bool:
+        """Return current expanded/collapsed state."""
+        return self._expanded

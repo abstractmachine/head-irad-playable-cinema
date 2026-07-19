@@ -1785,7 +1785,6 @@ class IllustrationPane(QWidget):
         info_sec = CollapsibleSection("Info", pref_key=pref_key)
         block = MetadataBlock(list(info_keys))
         info_sec.add_widget(block)
-        info_sec._body_layout.setContentsMargins(0, 0, 0, 0)
         pv.addWidget(info_sec)
         return block.labels()
 
@@ -1822,7 +1821,6 @@ class IllustrationPane(QWidget):
         )
         pv.addWidget(filter_sec)
         filter_sec.set_subbar(browser._loading_bar)
-        filter_sec._body_layout.setContentsMargins(0, 0, 0, 0)
 
         # ── Sort (optional) ───────────────────────────────────────────────
         sort_combo = None
