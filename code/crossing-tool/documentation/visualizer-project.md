@@ -58,6 +58,6 @@ Buttons to open each of the other visualizers:
 | Mosaic | [Mosaic Visualizer](visualizer-mosaic.md) |
 | Cloud | [Cloud Visualizer](visualizer-cloud.md) |
 | Book | [Book Visualizer](visualizer-book.md) |
-| Silhouette | [Silhouette Visualizer](visualizer-silhouette.md) |
+| Illustration | [Illustration Visualizer](visualizer-illustration.md) |
 | Palette | [Palette Visualizer](visualizer-palette.md) |
 | Flipbook | [Flipbook Visualizer](visualizer-flipbook.md) |

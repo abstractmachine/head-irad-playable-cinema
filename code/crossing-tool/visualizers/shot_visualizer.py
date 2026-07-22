@@ -38,12 +38,12 @@ from PyQt5.QtCore import Qt, QTimer, QEvent, QThread, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel,
-    QMessageBox, QSizePolicy, QSlider, QStyle, QComboBox,
+    QMessageBox, QSizePolicy, QComboBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QFrame,
-    QTextEdit, QGridLayout, QStackedLayout,
+    QTextEdit, QGridLayout, QStackedLayout, QScrollArea, QTabWidget,
 )
 from styles.theme import GripSplitter, JumpScrollBar, save_window_geometry, restore_window_geometry
-from PyQt5.QtGui import QFont, QPixmap, QImage, QColor, QMouseEvent, QPalette, QBrush
+from PyQt5.QtGui import QFont, QPixmap, QImage, QColor, QPalette, QBrush
 from PyQt5.QtCore import pyqtSignal as _pyqtSignal, QThread as _QThread
 from tool.shortcuts import (
     KEY_PREV_TITLE, KEY_NEXT_TITLE,
@@ -52,6 +52,8 @@ from tool.shortcuts import (
     KEY_PREV_FRAME, KEY_NEXT_FRAME,
     KEY_PLAY_PAUSE,
 )
+from visualizers.components.collapsible_section import CollapsibleSection
+from visualizers.components.metadata_block import MetadataBlock
 
 from data.shotlist import read_shotlist, write_shotlist, get_shotlist_path, attach_shot_ids
 from data.metadata import get_metadata
@@ -477,39 +479,6 @@ def _display_name(filename: str) -> str:
     return name
 
 
-class ClickSeekSlider(QSlider):
-    """A QSlider that jumps to the exact position on a single click."""
-
-    # Fire BEFORE any value change so callers can snapshot play state first.
-    mousePressed  = pyqtSignal()
-    mouseReleased = pyqtSignal()
-
-    def mousePressEvent(self, event: QMouseEvent):
-        if event.button() == Qt.LeftButton:
-            self.mousePressed.emit()   # must be before setValue
-            opt = self.style().subControlRect(
-                QStyle.CC_Slider, self._style_option(), QStyle.SC_SliderGroove, self
-            )
-            groove_width = opt.width()
-            if groove_width > 0:
-                ratio = (event.x() - opt.x()) / groove_width
-                ratio = max(0.0, min(1.0, ratio))
-                value = round(self.minimum() + ratio * (self.maximum() - self.minimum()))
-                self.setValue(value)
-        super().mousePressEvent(event)
-
-    def mouseReleaseEvent(self, event: QMouseEvent):
-        if event.button() == Qt.LeftButton:
-            self.mouseReleased.emit()
-        super().mouseReleaseEvent(event)
-
-    def _style_option(self):
-        from PyQt5.QtWidgets import QStyleOptionSlider
-        opt = QStyleOptionSlider()
-        self.initStyleOption(opt)
-        return opt
-
-
 # ---------------------------------------------------------------------------
 # Annotation helpers
 # ---------------------------------------------------------------------------
@@ -521,6 +490,21 @@ except ImportError:
 
 # Best-frame column index
 _BEST_COLUMN_INDEX = 3
+
+
+def _allow_metadata_wrap(block: MetadataBlock) -> None:
+    """Let a MetadataBlock's value labels wrap across lines instead of
+    overflowing/clipping when the inspector is narrower than their content.
+
+    Customizes the label instances directly via the block's public
+    ``labels()`` accessor, so the shared MetadataBlock component's default
+    fixed single-line row contract (used as-is by other visualizers) is left
+    untouched.
+    """
+    for lbl in block.labels().values():
+        lbl.setWordWrap(True)
+        lbl.setMinimumHeight(0)
+        lbl.setMaximumHeight(16777215)
 
 def _get_annotation_json_path(project_path: str, filename: str, media_type: str) -> Path:
     stem = Path(filename).stem
@@ -638,7 +622,7 @@ def _make_shot_row(index: int, shot: dict, annotation, edited: bool, has_ann_fil
             best_bg = None
             best_fg = QColor("#ffffff")  # always white text on Best cell when populated
 
-    _DEFAULT_BG = QColor("#666666")
+    _DEFAULT_BG = QColor(theme.CELL_BG)
     items = [
         QTableWidgetItem(status),
         QTableWidgetItem(shot_str),
@@ -757,6 +741,10 @@ class ShotlistVisualizer(QMainWindow):
         self.current_shot_index  = 0
         self.modified            = False
 
+        # ---- Window mode state (Tab / Shift+Tab shortcuts) ----
+        self._inspectors_hidden    = False
+        self._saved_inspector_sizes = None
+
         # ---- Video state ----
         self.cap                  = None
         self.is_playing           = False
@@ -769,6 +757,7 @@ class ShotlistVisualizer(QMainWindow):
         self._play_start_frame    = 0
         self._playback_speed      = 1.0
         self._current_shot_end_frame = 0
+        self._last_pixmap          = None   # last displayed frame, unscaled — for resize rescaling
         self.audio                = AudioPlayer(verbose=self._verbose)
         self._audio_start_signal.connect(self._on_audio_start_main_thread)
 
@@ -1035,23 +1024,70 @@ class ShotlistVisualizer(QMainWindow):
         root = QWidget()
         self.setCentralWidget(root)
         outer = QVBoxLayout(root)
-        outer.setContentsMargins(4, 4, 4, 4)
-        outer.setSpacing(4)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
         h_splitter = GripSplitter(Qt.Horizontal)
         outer.addWidget(h_splitter, stretch=1)
 
-        # ---- COL 1: video + slider ----
-        left = QWidget()
-        left_layout = QVBoxLayout(left)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(2)
+        # ---- Browser: full-window playback area ----
+        browser = self._build_browser()
+        h_splitter.addWidget(browser)
+
+        # ---- Scene panel: its own collapsible, content-width side panel ----
+        scene_panel = self._build_scene_panel()
+        h_splitter.addWidget(scene_panel)
+
+        # ---- Shot panel: its own collapsible, content-width side panel ----
+        shot_panel = self._build_shot_panel()
+        h_splitter.addWidget(shot_panel)
+
+        # ---- Inspector: Filter / Info / Annotation / Playback / Tools ----
+        inspector = self._build_inspector()
+        h_splitter.addWidget(inspector)
+
+        # Browser absorbs all extra space; the side panels and inspector are
+        # fixed-width and only collapse/expand via their splitter grip handles.
+        h_splitter.setStretchFactor(0, 1)
+        h_splitter.setStretchFactor(1, 0)
+        h_splitter.setStretchFactor(2, 0)
+        h_splitter.setStretchFactor(3, 0)
+        self._h_splitter   = h_splitter
+        self._scene_panel  = scene_panel
+        self._shot_panel   = shot_panel
+
+        self.rebuild_shot_list()
+        self.rebuild_scene_list()
+        self.update_stats()
+
+        QTimer.singleShot(0, self._fit_side_panels)
+        self.setFocus()
+
+    def _build_browser(self) -> QWidget:
+        """Build the Browser: full-window video playback, subtitle overlay,
+        and the bottom timeline scrubber.
+
+        The Browser is for viewing, scrubbing, and navigating playback only —
+        annotations and inspector-style metadata live in the Inspector instead.
+        """
+        browser = QWidget()
+        browser_layout = QVBoxLayout(browser)
+        browser_layout.setContentsMargins(0, 0, 0, 0)
+        browser_layout.setSpacing(2)
+        # Same dark display background used by the Book and Illustration
+        # browsers, so the Shotlist Browser's video/letterboxing matches the
+        # shared framework look instead of the generic app grey.
+        browser.setStyleSheet(f"background: {theme.CANVAS_BG};")
 
         self.frame_label = QLabel()
         self.frame_label.setAlignment(Qt.AlignCenter)
         self.frame_label.setScaledContents(False)
         self.frame_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
         self.frame_label.setMinimumSize(1, 1)
+        # Rescale the cached frame whenever the label's size changes for any
+        # reason (window resize, splitter drag, or a deferred panel-fit
+        # changing pane widths) so the video always fills the available area.
+        self.frame_label.installEventFilter(self)
 
         # Subtitle overlay — sits on top of the video frame, anchored to the
         # bottom, and is never part of the vertical flow so video position is
@@ -1083,101 +1119,32 @@ class ShotlistVisualizer(QMainWindow):
         _stack.addWidget(_sub_overlay)
         _stack.setCurrentIndex(1)
 
-        left_layout.addWidget(video_container, stretch=1)
+        browser_layout.addWidget(video_container, stretch=1)
 
-        self.timeline_slider = ClickSeekSlider(Qt.Horizontal)
+        # Timeline scrubber — a real scrollbar whose handle length reflects
+        # the current shot's frame span relative to the whole film's length,
+        # the same idea as the Book Visualizer's bottom position bar.
+        self.timeline_slider = JumpScrollBar(Qt.Horizontal)
         self.timeline_slider.setMinimum(0)
         self.timeline_slider.setMaximum(max(0, self.total_frames - 1))
+        self.timeline_slider.setPageStep(1)
         self.timeline_slider.setValue(0)
+        self.timeline_slider.setFixedHeight(theme.SCROLLBAR_W)
         self.timeline_slider.setFocusPolicy(Qt.NoFocus)
         self.timeline_slider.valueChanged.connect(self._on_timeline_seek)
         self.timeline_slider.mousePressed.connect(self._on_timeline_press)
         self.timeline_slider.mouseReleased.connect(self._on_timeline_release)
         self.timeline_slider.setToolTip("Scrub timeline  [←/→ frame  Shift+←/→ 1s]")
-        left_layout.addWidget(self.timeline_slider)
+        browser_layout.addWidget(self.timeline_slider)
 
-        # ---- COL 2: annotation panel (collapsible via splitter handle) ----
-        mid = QWidget()
-        mid_layout = QVBoxLayout(mid)
-        mid_layout.setContentsMargins(2, 2, 2, 2)
-        mid_layout.setSpacing(4)
+        return browser
 
-        self.ann_repr_combo = QComboBox()
-        self.ann_repr_combo.setFocusPolicy(Qt.NoFocus)
-        for _mode in ("fields", "json", "txt", "vector", "mapping"):
-            self.ann_repr_combo.addItem(_mode)
-        self.ann_repr_combo.setCurrentIndex(0)
-        self.ann_repr_combo.currentIndexChanged.connect(self._on_repr_changed)
-        mid_layout.addWidget(self.ann_repr_combo)
-
-        self.ann_display = QTextEdit()
-        self.ann_display.setReadOnly(True)
-        self.ann_display.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.ann_display.textChanged.connect(self._on_ann_text_changed)
-        self.ann_display.installEventFilter(self)
-        self.ann_display.hide()  # hidden when mode == "fields"
-        mid_layout.addWidget(self.ann_display, stretch=1)
-
-        self.ann_fields_table = QTableWidget()
-        self.ann_fields_table.setColumnCount(1)
-        self.ann_fields_table.horizontalHeader().hide()
-        self.ann_fields_table.verticalHeader().hide()
-        self.ann_fields_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.ann_fields_table.horizontalHeader().setStretchLastSection(True)
-        self.ann_fields_table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.ann_fields_table.setEditTriggers(
-            QAbstractItemView.DoubleClicked |
-            QAbstractItemView.SelectedClicked |
-            QAbstractItemView.EditKeyPressed
-        )
-        self.ann_fields_table.setWordWrap(True)
-        self.ann_fields_table.setFont(theme.font_mono())
-        self.ann_fields_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.ann_fields_table.itemChanged.connect(self._on_fields_cell_changed)
-        self.ann_fields_table.setVerticalScrollBar(JumpScrollBar())
-        # Re-fit row heights whenever the column is resized (e.g. splitter drag).
-        self.ann_fields_table.horizontalHeader().sectionResized.connect(
-            lambda _l, _o, _n: self.ann_fields_table.resizeRowsToContents()
-        )
-        mid_layout.addWidget(self.ann_fields_table, stretch=1)
-
-        self.ann_dirty_label = QLabel()
-        self.ann_dirty_label.setFont(theme.font_ui())
-        self.ann_dirty_label.setStyleSheet(f"color: {theme.ACCENT};")
-        self.ann_dirty_label.hide()
-        mid_layout.addWidget(self.ann_dirty_label)
-
-        # ---- COL 3: shotlist + controls ----
-        right = QWidget()
-        right_layout = QVBoxLayout(right)
-        right_layout.setContentsMargins(2, 2, 2, 2)
-        right_layout.setSpacing(4)
-
-        # Media type selector (movie / gameplay)
-        self.media_type_combo = QComboBox()
-        self.media_type_combo.setFocusPolicy(Qt.NoFocus)
-        self.media_type_combo.addItems(["movie", "gameplay"])
-        self.media_type_combo.setCurrentText(self.media_type)
-        self.media_type_combo.currentTextChanged.connect(self._on_media_type_changed)
-        right_layout.addWidget(self.media_type_combo)
-        # Movie selector (always visible — outside the vertical splitter)
-        self.movie_combo = QComboBox()
-        self.movie_combo.setFocusPolicy(Qt.NoFocus)
-        for fn in self.filenames:
-            self.movie_combo.addItem(_display_name(fn), fn)
-        self.movie_combo.setCurrentIndex(self.current_movie_index)
-        self.movie_combo.currentIndexChanged.connect(self.on_movie_combo_changed)
-        right_layout.addWidget(self.movie_combo)
-
-        # Vertical splitter: tables (top, collapsible) / controls (bottom)
-        v_splitter = GripSplitter(Qt.Vertical)
-        right_layout.addWidget(v_splitter, stretch=1)
-
-        # -- Tables widget --
-        tables_widget = QWidget()
-        tables_layout = QHBoxLayout(tables_widget)
-        tables_layout.setContentsMargins(0, 0, 0, 0)
-        tables_layout.setSpacing(1)
+    def _build_scene_panel(self) -> QWidget:
+        """Build the Scene index as its own collapsible, content-width panel."""
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         _tbl = theme.table_stylesheet()
 
@@ -1192,15 +1159,23 @@ class ShotlistVisualizer(QMainWindow):
         self.scene_list.setShowGrid(True)
         self.scene_list.setGridStyle(Qt.SolidLine)
         self.scene_list.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
-        self.scene_list.setMaximumWidth(68)
-        self.scene_list.setMinimumWidth(56)
         self.scene_list.setFocusPolicy(Qt.NoFocus)
         self.scene_list.cellClicked.connect(self.on_scene_selected)
         self.scene_list.setToolTip("Scenes — click to jump  [PgUp/PgDn navigate  N/M split/merge]")
         self.scene_list.setFrameShape(QFrame.NoFrame)
         self.scene_list.setStyleSheet(_tbl)
         self.scene_list.setVerticalScrollBar(JumpScrollBar())
-        tables_layout.addWidget(self.scene_list)
+        layout.addWidget(self.scene_list, stretch=1)
+
+        return panel
+
+    def _build_shot_panel(self) -> QWidget:
+        """Build the Shot index + frame-based timecode table as its own
+        collapsible, content-width panel."""
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         self.shot_list = QTableWidget()
         self.shot_list.setColumnCount(6)
@@ -1229,13 +1204,13 @@ class ShotlistVisualizer(QMainWindow):
         # Selection colour is applied via the palette instead.
         _shot_list_stylesheet = f"""
             QTableWidget {{
-                background: transparent;
+                background: {theme.TAB_BG};
                 border: none;
-                gridline-color: {theme.BG};
+                gridline-color: {theme.TAB_BG};
             }}
             QTableWidget::item:selected {{
                 background: {theme.ACCENT};
-                color: {theme.TEXT};
+                color: {theme.ACCENT_TEXT};
             }}
             QHeaderView::section {{
                 background: {theme.PANEL_BG};
@@ -1252,180 +1227,492 @@ class ShotlistVisualizer(QMainWindow):
         self.shot_list.setStyleSheet(_shot_list_stylesheet)
         _pal = self.shot_list.palette()
         _pal.setColor(QPalette.Highlight, QColor(theme.ACCENT))
-        _pal.setColor(QPalette.HighlightedText, QColor(theme.TEXT))
+        _pal.setColor(QPalette.HighlightedText, QColor(theme.ACCENT_TEXT))
         self.shot_list.setPalette(_pal)
         self.shot_list.setVerticalScrollBar(JumpScrollBar())
-        tables_layout.addWidget(self.shot_list, stretch=1)
+        layout.addWidget(self.shot_list, stretch=1)
 
-        v_splitter.addWidget(tables_widget)
+        return panel
 
-        # -- Controls widget --
-        controls_widget = QWidget()
-        controls_layout = QVBoxLayout(controls_widget)
-        controls_layout.setContentsMargins(0, 0, 0, 0)
-        controls_layout.setSpacing(4)
+    def _build_inspector(self) -> QWidget:
+        """Build the right-side inspector: a tabbed panel (single "Shotlist" tab)
+        containing Filter, Info, Annotation, Playback, and Tools sections.
 
-        self.stats_label = QLabel()
-        self.stats_label.setFont(theme.font_mono())
-        self.stats_label.setWordWrap(True)
-        self.stats_label.setStyleSheet(f"background-color: {theme.INPUT_BG}; padding: 4px;")
-        controls_layout.addWidget(self.stats_label)
+        Unlike the Scene/Shot panels, the inspector is a genuinely resizable
+        splitter pane (drag its grip handle to widen/narrow it). Its minimum
+        width is computed from the Tools section's 2-column button grid — the
+        widest fixed content in the inspector — so the tab can be as thin as
+        possible without any button text overflowing; narrower than that and
+        the GripSplitter's usual collapse behavior takes over. It is wrapped
+        in a QTabWidget purely for visual consistency with the Book/
+        Illustration inspector color scheme, even though only a single tab
+        exists today.
+        """
+        outer = QWidget()
+        outer.setStyleSheet(f"background: {theme.PANEL_BG};")
 
-        self.info_label = QLabel()
-        self.info_label.setFont(theme.font_mono())
-        self.info_label.setWordWrap(True)
-        self.info_label.setMinimumHeight(60)
-        self.info_label.setStyleSheet(f"background-color: {theme.INPUT_BG}; padding: 4px;")
-        controls_layout.addWidget(self.info_label)
+        outer_layout = QVBoxLayout(outer)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
 
-        # Button grid — 4 rows x 3 cols
-        btn_grid = QGridLayout()
-        btn_grid.setSpacing(4)
+        tabs = QTabWidget()
+        tabs.setDocumentMode(True)
+        tabs.tabBar().setDrawBase(False)
+        tabs.setStyleSheet(theme.tab_strip_stylesheet())
 
-        # Row 0: annotation actions
+        shotlist_tab = QWidget()
+        shotlist_tab.setStyleSheet(f"background: {theme.TAB_BG};")
+        shotlist_tab_layout = QVBoxLayout(shotlist_tab)
+        shotlist_tab_layout.setContentsMargins(0, 0, 0, 0)
+        shotlist_tab_layout.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setFocusPolicy(Qt.NoFocus)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # Always reserve the vertical scrollbar's width instead of letting it
+        # appear/disappear on demand — otherwise the button grids below would
+        # reflow every time a section's expand/collapse crosses the scroll
+        # threshold.  With AlwaysOn the scrollbar's width is baked into the
+        # layout from the start, so it only ever "pushes" the other grip
+        # panels once (via _fit_side_panels), never mid-session.
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        scroll.setStyleSheet(f"QScrollArea {{ background: {theme.TAB_BG}; border: none; }}")
+        shotlist_tab_layout.addWidget(scroll)
+
+        content = QWidget()
+        content.setStyleSheet(f"background: {theme.TAB_BG};")
+        scroll.setWidget(content)
+
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(
+            theme.SECTION_GAP, theme.SECTION_GAP, theme.SECTION_GAP, theme.SECTION_GAP
+        )
+        layout.setSpacing(theme.SECTION_GAP)
+        layout.setAlignment(Qt.AlignTop)
+
+        filter_sec     = self._build_filter_section()
+        info_sec       = self._build_info_section()
+        annotation_sec = self._build_annotation_section()
+        playback_sec   = self._build_playback_section()
+        tools_sec      = self._build_tools_section()   # sets self._tools_content_w
+
+        layout.addWidget(filter_sec)
+        layout.addWidget(info_sec)
+        layout.addWidget(annotation_sec)
+        layout.addWidget(playback_sec)
+        layout.addWidget(tools_sec)
+
+        tabs.addTab(shotlist_tab, "Shotlist")
+        outer_layout.addWidget(tabs)
+
+        # Thinnest allowed tab width = the Tools grid's natural (unwrapped)
+        # button width + the content layout's own margins + the permanently
+        # reserved vertical scrollbar strip.
+        self._inspector_min_w = self._tools_content_w + 2 * theme.SECTION_GAP + theme.SCROLLBAR_W
+        outer.setMinimumWidth(self._inspector_min_w)
+
+        return outer
+
+    def _build_filter_section(self) -> CollapsibleSection:
+        """Filter — choose which film (and media type) the Browser shows."""
+        sec = CollapsibleSection("Filter", pref_key="shotlist_section_filter")
+
+        self.media_type_combo = QComboBox()
+        self.media_type_combo.setFocusPolicy(Qt.NoFocus)
+        self.media_type_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLength)
+        self.media_type_combo.setMinimumContentsLength(8)
+        self.media_type_combo.addItems(["movie", "gameplay"])
+        self.media_type_combo.setCurrentText(self.media_type)
+        self.media_type_combo.currentTextChanged.connect(self._on_media_type_changed)
+        sec.add_widget(self.media_type_combo)
+
+        # AdjustToMinimumContentsLength decouples the combo's own width from
+        # the length of its longest item — without this, a long movie title
+        # would make QComboBox report a huge sizeHint()/minimumSizeHint()
+        # that forces the whole Inspector wider.  The full title is shown
+        # separately, wrapped, in _movie_title_label below.
+        self.movie_combo = QComboBox()
+        self.movie_combo.setFocusPolicy(Qt.NoFocus)
+        self.movie_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLength)
+        self.movie_combo.setMinimumContentsLength(8)
+        for fn in self.filenames:
+            self.movie_combo.addItem(_display_name(fn), fn)
+        self.movie_combo.setCurrentIndex(self.current_movie_index)
+        self.movie_combo.currentIndexChanged.connect(self.on_movie_combo_changed)
+        sec.add_widget(self.movie_combo)
+
+        # The combo box itself can only elide its closed-state text onto one
+        # line; this label shows the full title, wrapping at word/character
+        # boundaries when the inspector is narrower than the title.
+        self._movie_title_label = QLabel(self.movie_combo.currentText())
+        self._movie_title_label.setWordWrap(True)
+        self._movie_title_label.setFont(theme.font_mono())
+        self._movie_title_label.setStyleSheet(f"color: {theme.TEXT_DIM};")
+        self.movie_combo.currentTextChanged.connect(self._movie_title_label.setText)
+        sec.add_widget(self._movie_title_label)
+
+        return sec
+
+    def _build_info_section(self) -> CollapsibleSection:
+        """Info — aggregate shotlist stats plus the selected shot's detail."""
+        sec = CollapsibleSection("Info", pref_key="shotlist_section_info")
+
+        self._stats_block = MetadataBlock(["Scenes", "Shots", "Active", "Ignored", "Annotated"])
+        _allow_metadata_wrap(self._stats_block)
+        sec.add_widget(self._stats_block)
+
+        self._shot_info_block = MetadataBlock(
+            ["Scene", "Shot", "Frame", "Start", "End", "Confidence", "Shot ID"]
+        )
+        _allow_metadata_wrap(self._shot_info_block)
+        sec.add_widget(self._shot_info_block)
+
+        return sec
+
+    def _build_annotation_section(self) -> CollapsibleSection:
+        """Annotation — annotation display/edit surface plus annotation actions.
+
+        Annotations live in the Inspector, never in the Browser.
+        """
+        sec = CollapsibleSection("Annotation", pref_key="shotlist_section_annotation")
+
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(0, 0, 0, 0)
+        btn_row.setSpacing(theme.SECTION_GAP)
+
         self.annotate_button = QPushButton("\u26a1 Auto-Annotate")
         self.annotate_button.setCheckable(True)
         self.annotate_button.setChecked(False)
         self.annotate_button.clicked.connect(self._toggle_auto_annotate)
         self.annotate_button.setFocusPolicy(Qt.NoFocus)
+        self.annotate_button.setStyleSheet(theme.action_button_stylesheet())
         self.annotate_button.setToolTip(
             "Start / stop background LLM annotation of unannotated shots in this film"
         )
-        btn_grid.addWidget(self.annotate_button, 0, 0)
+        btn_row.addWidget(self.annotate_button)
 
         self.remove_ann_button = QPushButton("\U0001f5d1 Remove")
         self.remove_ann_button.clicked.connect(self._remove_current_annotation)
         self.remove_ann_button.setFocusPolicy(Qt.NoFocus)
+        self.remove_ann_button.setStyleSheet(theme.action_button_stylesheet())
         self.remove_ann_button.setToolTip("Delete the annotation for the currently selected shot")
-        btn_grid.addWidget(self.remove_ann_button, 0, 1)
+        btn_row.addWidget(self.remove_ann_button)
 
+        btn_row_widget = QWidget()
+        btn_row_widget.setLayout(btn_row)
+        sec.add_widget(btn_row_widget)
 
+        # This row of paired buttons is one of the candidates considered when
+        # computing the Inspector's minimum width (see _build_inspector) —
+        # it must never be narrower than this, or the buttons would overflow
+        # off the right edge with no way to reach them (no horizontal scroll).
+        self._annotation_btn_row_w = (
+            self.annotate_button.sizeHint().width()
+            + theme.SECTION_GAP
+            + self.remove_ann_button.sizeHint().width()
+        )
 
-        # Row 1: shot editing
-        self.split_button = QPushButton("New Shot")
-        self.split_button.clicked.connect(self.split_shot_at_current_frame)
-        self.split_button.setFocusPolicy(Qt.NoFocus)
-        self.split_button.setToolTip("Split current shot at current frame  [Shift+N]")
-        btn_grid.addWidget(self.split_button, 1, 0)
+        # The representation combo (fields/json/txt/vector/mapping) is kept
+        # fully functional for internal state (_update_annotation_panel etc.)
+        # but hidden from view — the fields table below is the only
+        # representation shown in the Inspector.
+        self.ann_repr_combo = QComboBox()
+        self.ann_repr_combo.setFocusPolicy(Qt.NoFocus)
+        for _mode in ("fields", "json", "txt", "vector", "mapping"):
+            self.ann_repr_combo.addItem(_mode)
+        self.ann_repr_combo.setCurrentIndex(0)
+        self.ann_repr_combo.currentIndexChanged.connect(self._on_repr_changed)
+        sec.add_widget(self.ann_repr_combo)
+        self.ann_repr_combo.hide()
 
-        self.merge_button = QPushButton("Merge Shot")
-        self.merge_button.clicked.connect(self.merge_with_previous)
-        self.merge_button.setFocusPolicy(Qt.NoFocus)
-        self.merge_button.setToolTip("Merge current shot with previous shot  [Shift+M]")
-        btn_grid.addWidget(self.merge_button, 1, 1)
+        self.ann_display = QTextEdit()
+        self.ann_display.setReadOnly(True)
+        self.ann_display.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.ann_display.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.ann_display.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.ann_display.textChanged.connect(self._on_ann_text_changed)
+        self.ann_display.installEventFilter(self)
+        self.ann_display.hide()  # hidden when mode == "fields"
+        sec.add_widget(self.ann_display)
 
-        self.ignore_button = QPushButton("\u2297 Ignore")
-        self.ignore_button.clicked.connect(self.toggle_current_ignore)
-        self.ignore_button.setFocusPolicy(Qt.NoFocus)
-        self.ignore_button.setToolTip("Toggle Ignore on current shot  [I]")
-        btn_grid.addWidget(self.ignore_button, 1, 2)
+        # Two-column key/value table (field name | content), matching the
+        # same CELL_BG/TEXT_DIM/TEXT color convention as the Book/Illustration
+        # Info panels (visualizers/components/metadata_block.py). The value
+        # column is still directly editable (double-click), unlike a plain
+        # MetadataBlock, so a QTableWidget is used instead of that component.
+        self.ann_fields_table = QTableWidget()
+        self.ann_fields_table.setColumnCount(2)
+        self.ann_fields_table.horizontalHeader().hide()
+        self.ann_fields_table.verticalHeader().hide()
+        self.ann_fields_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.ann_fields_table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.ann_fields_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.ann_fields_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.ann_fields_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.ann_fields_table.setEditTriggers(
+            QAbstractItemView.DoubleClicked |
+            QAbstractItemView.SelectedClicked |
+            QAbstractItemView.EditKeyPressed
+        )
+        self.ann_fields_table.setWordWrap(True)
+        self.ann_fields_table.setFont(theme.font_mono())
+        self.ann_fields_table.setStyleSheet(f"""
+            QTableWidget {{
+                background: {theme.TAB_BG};
+                border: none;
+                gridline-color: {theme.TAB_BG};
+            }}
+            QTableWidget::item:selected {{
+                background: {theme.ACCENT};
+                color: {theme.ACCENT_TEXT};
+            }}
+        """)
+        self.ann_fields_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.ann_fields_table.itemChanged.connect(self._on_fields_cell_changed)
+        # Re-fit row heights + the table's own height whenever the column is
+        # resized (e.g. inspector width change) — no internal scrollbar; the
+        # table always shows every row and pushes the sections below it,
+        # letting the outer Inspector scroll area handle any overflow.
+        self.ann_fields_table.horizontalHeader().sectionResized.connect(
+            self._on_ann_fields_table_resized
+        )
+        sec.add_widget(self.ann_fields_table)
 
-        # Row 2: scene editing
-        self.split_scene_button = QPushButton("New Scene")
-        self.split_scene_button.clicked.connect(self.split_scene_at_current_shot)
-        self.split_scene_button.setFocusPolicy(Qt.NoFocus)
-        self.split_scene_button.setToolTip("Start a new scene at current shot  [N]")
-        btn_grid.addWidget(self.split_scene_button, 2, 0)
+        self.ann_dirty_label = QLabel()
+        self.ann_dirty_label.setFont(theme.font_ui())
+        self.ann_dirty_label.setStyleSheet(f"color: {theme.ACCENT};")
+        self.ann_dirty_label.setWordWrap(True)
+        self.ann_dirty_label.hide()
+        sec.add_widget(self.ann_dirty_label)
 
-        self.merge_scene_button = QPushButton("Merge Scene")
-        self.merge_scene_button.clicked.connect(self.merge_scene_at_current_shot)
-        self.merge_scene_button.setFocusPolicy(Qt.NoFocus)
-        self.merge_scene_button.setToolTip("Merge current scene into previous scene  [M]")
-        btn_grid.addWidget(self.merge_scene_button, 2, 1)
+        return sec
 
-        self.save_button = QPushButton("\U0001f4be Save")
-        self.save_button.clicked.connect(self.save_changes)
-        self.save_button.setEnabled(False)
-        self.save_button.setFocusPolicy(Qt.NoFocus)
-        self.save_button.setToolTip("Save shotlist changes to CSV  [Ctrl+S]")
-        btn_grid.addWidget(self.save_button, 2, 2)
+    def _build_playback_section(self) -> CollapsibleSection:
+        """Playback — transport controls for the Browser."""
+        sec = CollapsibleSection("Playback", pref_key="shotlist_section_playback")
+        sec.setToolTip(
+            "\u2191 / \u2193  previous / next shot\n"
+            "PgUp / PgDn  previous / next scene\n"
+            "Space  play / pause\n"
+            "\u2190 / \u2192  step one frame\n"
+            "Shift+\u2190 / Shift+\u2192  step 1 second\n"
+            "Home / End  previous / next movie"
+        )
 
-        # Row 3: playback
+        grid = QGridLayout()
+        grid.setSpacing(theme.SECTION_GAP)
+
         self.play_pause_button = QPushButton("\u25b6 Play")
         self.play_pause_button.clicked.connect(self.toggle_play_pause)
         self.play_pause_button.setFocusPolicy(Qt.NoFocus)
+        self.play_pause_button.setStyleSheet(theme.action_button_stylesheet())
         self.play_pause_button.setToolTip("Play / Pause  [Space]")
-        btn_grid.addWidget(self.play_pause_button, 3, 0)
+        grid.addWidget(self.play_pause_button, 0, 0)
 
         self.continue_button = QPushButton("Continue")
         self.continue_button.setCheckable(True)
         self.continue_button.setChecked(True)
         self.continue_button.clicked.connect(self._on_continue_clicked)
         self.continue_button.setFocusPolicy(Qt.NoFocus)
+        self.continue_button.setStyleSheet(theme.action_button_stylesheet())
         self.continue_button.setToolTip("When OFF: playback stops at the end of the current shot  [C]")
-        btn_grid.addWidget(self.continue_button, 3, 1)
+        grid.addWidget(self.continue_button, 0, 1)
 
         self.loop_button = QPushButton("Loop")
         self.loop_button.setCheckable(True)
         self.loop_button.setChecked(False)
         self.loop_button.clicked.connect(self._on_loop_clicked)
         self.loop_button.setFocusPolicy(Qt.NoFocus)
+        self.loop_button.setStyleSheet(theme.action_button_stylesheet())
         self.loop_button.setToolTip("Loop the current shot infinitely until turned off  [L]")
-        btn_grid.addWidget(self.loop_button, 3, 2)
+        grid.addWidget(self.loop_button, 1, 0)
 
         self.gremlins_button = QPushButton("\U0001f47e Gremlins")
         self.gremlins_button.setCheckable(True)
         self.gremlins_button.setChecked(False)
         self.gremlins_button.clicked.connect(self.toggle_gremlins)
         self.gremlins_button.setFocusPolicy(Qt.NoFocus)
+        self.gremlins_button.setStyleSheet(theme.action_button_stylesheet())
         self.gremlins_button.setToolTip("Randomly jump movies/timecodes every 5 s  [G]")
-        btn_grid.addWidget(self.gremlins_button, 0, 2)
+        grid.addWidget(self.gremlins_button, 1, 1)
 
-        # Row 3 annotation buttons moved to row 0
+        grid_widget = QWidget()
+        grid_widget.setLayout(grid)
+        sec.add_widget(grid_widget)
 
-        controls_layout.addLayout(btn_grid)
+        # This 2-column grid is one of the candidates considered when
+        # computing the Inspector's minimum width (see _build_inspector).
+        col0_w = max(self.play_pause_button.sizeHint().width(), self.loop_button.sizeHint().width())
+        col1_w = max(self.continue_button.sizeHint().width(), self.gremlins_button.sizeHint().width())
+        self._playback_content_w = col0_w + theme.SECTION_GAP + col1_w
 
-        hint = QLabel("\u2191\u2193 shot  PgUp/Dn scene  Space play  \u2190\u2192 frame  Shift+\u2190\u2192 1s  Home/End movie")
-        hint.setFont(theme.font_ui())
-        hint.setStyleSheet(f"color: {theme.TEXT_DIM};")
-        controls_layout.addWidget(hint)
+        return sec
 
-        v_splitter.addWidget(controls_widget)
-        v_splitter.setStretchFactor(0, 1)
-        v_splitter.setStretchFactor(1, 0)
+    def _build_tools_section(self) -> CollapsibleSection:
+        """Tools — operations that change project data (shot/scene structure)."""
+        sec = CollapsibleSection("Tools", pref_key="shotlist_section_tools")
+        sec.setToolTip(
+            "I  toggle Ignore on current shot\n"
+            "N  new scene at current shot\n"
+            "Shift+N  new shot at current frame\n"
+            "M  merge current scene into previous\n"
+            "Shift+M  merge current shot with previous\n"
+            "Ctrl+S  save shotlist changes\n"
+            "\n"
+            "Scene table — click a row to jump to that scene\n"
+            "Shot table — click a row to jump to that shot\n"
+            "  click Best to jump to the best frame\n"
+            "  click Stop to show the end frame\n"
+            "B  jump to best frame\n"
+            "Shift+B  set current frame as best\n"
+            "Ctrl+B  clear best frame"
+        )
 
-        # ---- Assemble horizontal splitter ----
-        h_splitter.addWidget(left)
-        h_splitter.addWidget(mid)
-        h_splitter.addWidget(right)
-        mid.setMinimumWidth(220)
-        right.setMinimumWidth(200)
-        h_splitter.setStretchFactor(0, 3)
-        h_splitter.setStretchFactor(1, 1)
-        h_splitter.setStretchFactor(2, 0)
-        self._h_splitter   = h_splitter
-        self._right_widget = right
-        self._mid_widget   = mid
+        grid = QGridLayout()
+        grid.setSpacing(theme.SECTION_GAP)
 
-        self.rebuild_shot_list()
-        self.rebuild_scene_list()
-        self.update_stats()
+        self.split_button = QPushButton("New Shot")
+        self.split_button.clicked.connect(self.split_shot_at_current_frame)
+        self.split_button.setFocusPolicy(Qt.NoFocus)
+        self.split_button.setStyleSheet(theme.action_button_stylesheet())
+        self.split_button.setToolTip("Split current shot at current frame  [Shift+N]")
+        grid.addWidget(self.split_button, 0, 0)
 
-        QTimer.singleShot(0, self._fit_right_panel)
-        self.setFocus()
+        self.merge_button = QPushButton("Merge Shot")
+        self.merge_button.clicked.connect(self.merge_with_previous)
+        self.merge_button.setFocusPolicy(Qt.NoFocus)
+        self.merge_button.setStyleSheet(theme.action_button_stylesheet())
+        self.merge_button.setToolTip("Merge current shot with previous shot  [Shift+M]")
+        grid.addWidget(self.merge_button, 0, 1)
 
-    def _fit_right_panel(self):
-        """Auto-size the right splitter panel to the natural width of the shot table."""
+        self.ignore_button = QPushButton("\u2297 Ignore")
+        self.ignore_button.clicked.connect(self.toggle_current_ignore)
+        self.ignore_button.setFocusPolicy(Qt.NoFocus)
+        self.ignore_button.setStyleSheet(theme.action_button_stylesheet())
+        self.ignore_button.setToolTip("Toggle Ignore on current shot  [I]")
+        grid.addWidget(self.ignore_button, 1, 0)
+
+        self.split_scene_button = QPushButton("New Scene")
+        self.split_scene_button.clicked.connect(self.split_scene_at_current_shot)
+        self.split_scene_button.setFocusPolicy(Qt.NoFocus)
+        self.split_scene_button.setStyleSheet(theme.action_button_stylesheet())
+        self.split_scene_button.setToolTip("Start a new scene at current shot  [N]")
+        grid.addWidget(self.split_scene_button, 1, 1)
+
+        self.merge_scene_button = QPushButton("Merge Scene")
+        self.merge_scene_button.clicked.connect(self.merge_scene_at_current_shot)
+        self.merge_scene_button.setFocusPolicy(Qt.NoFocus)
+        self.merge_scene_button.setStyleSheet(theme.action_button_stylesheet())
+        self.merge_scene_button.setToolTip("Merge current scene into previous scene  [M]")
+        grid.addWidget(self.merge_scene_button, 2, 0)
+
+        self.save_button = QPushButton("\U0001f4be Save")
+        self.save_button.clicked.connect(self.save_changes)
+        self.save_button.setEnabled(False)
+        self.save_button.setFocusPolicy(Qt.NoFocus)
+        self.save_button.setStyleSheet(theme.action_button_stylesheet())
+        self.save_button.setToolTip("Save shotlist changes to CSV  [Ctrl+S]")
+        grid.addWidget(self.save_button, 2, 1)
+
+        grid_widget = QWidget()
+        grid_widget.setLayout(grid)
+        sec.add_widget(grid_widget)
+
+        # The Tools grid (2 columns) is the widest fixed content in the
+        # inspector — its natural (unwrapped) button width is the basis for
+        # the thinnest allowed Shotlist tab width (see _build_inspector).
+        col0_w = max(
+            self.split_button.sizeHint().width(),
+            self.ignore_button.sizeHint().width(),
+            self.merge_scene_button.sizeHint().width(),
+        )
+        col1_w = max(
+            self.merge_button.sizeHint().width(),
+            self.split_scene_button.sizeHint().width(),
+            self.save_button.sizeHint().width(),
+        )
+        self._tools_content_w = col0_w + theme.SECTION_GAP + col1_w
+
+        return sec
+
+    def _fit_side_panels(self):
+        """Auto-size the Scene and Shot panels to the natural width of their content.
+
+        Both panels are fixed-width (content-driven) and are not manually
+        resizable — only their splitter grip handles can collapse/expand them.
+        """
+        self.scene_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.scene_list.resizeColumnsToContents()
+        scene_w = self.scene_list.columnWidth(0)
+        scene_w += self.scene_list.verticalScrollBar().sizeHint().width()
+        self.scene_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        scene_panel_w = max(56, scene_w + 4)
+        self._scene_panel.setFixedWidth(scene_panel_w)
+
         hdr = self.shot_list.horizontalHeader()
         for c in range(self.shot_list.columnCount()):
             hdr.setSectionResizeMode(c, QHeaderView.ResizeToContents)
         self.shot_list.resizeColumnsToContents()
-        table_w = sum(self.shot_list.columnWidth(c) for c in range(self.shot_list.columnCount()))
+        shot_w = sum(self.shot_list.columnWidth(c) for c in range(self.shot_list.columnCount()))
         hdr.setSectionResizeMode(4, QHeaderView.Stretch)
-        table_w += self.shot_list.verticalScrollBar().sizeHint().width()
-        margins = self._right_widget.layout().contentsMargins()
-        right_w = table_w + margins.left() + margins.right() + self.scene_list.maximumWidth() + 4
-        sizes   = self._h_splitter.sizes()
-        total   = sum(sizes)
-        # Start the mid (fields) panel at a compact width — just wide enough
-        # for field titles at the current font size, no wider.
-        mid_w   = self._mid_widget.minimumWidth()
-        left_w  = max(200, total - mid_w - right_w)
-        self._h_splitter.setSizes([left_w, mid_w, right_w])
+        shot_w += self.shot_list.verticalScrollBar().sizeHint().width()
+        shot_panel_w = shot_w + 4
+        self._shot_panel.setFixedWidth(shot_panel_w)
+
+        # A QSplitter only re-applies a pane's min/max constraints on the next
+        # explicit setSizes() call — it does NOT proactively shrink a pane's
+        # already-allocated slot just because a child's setFixedWidth changed
+        # after the splitter's first layout pass.  Without this, the handle
+        # stays where it was and leaves dead space between the narrowed panel
+        # and the next pane.  Force an immediate redistribution here so the
+        # Scene/Shot panels and Browser all reflect their real widths right away.
+        # The Inspector opens at its thinnest natural (content-driven) width —
+        # the user can drag it wider from there.
+        total = sum(self._h_splitter.sizes()) or self.width()
+        inspector_w = self._inspector_min_w
+        browser_w = max(200, total - scene_panel_w - shot_panel_w - inspector_w)
+        self._h_splitter.setSizes([browser_w, scene_panel_w, shot_panel_w, inspector_w])
+
+    def _toggle_inspectors(self) -> None:
+        """Toggle between full-Browser mode and inspector-visible mode.
+
+        Mirrors the Book/Illustration Visualizers' Tab behavior: hide/show
+        the Scene panel, Shot panel, and Inspector as a single operation so
+        the Browser can fill the entire window for distraction-free playback.
+        """
+        sizes = list(self._h_splitter.sizes())
+        if len(sizes) != 4:
+            return
+        if self._inspectors_hidden:
+            restore = self._saved_inspector_sizes
+            if restore and len(restore) == 4:
+                self._h_splitter.setSizes(restore)
+            else:
+                self._fit_side_panels()
+            self._inspectors_hidden = False
+        else:
+            self._saved_inspector_sizes = sizes
+            self._h_splitter.setSizes([max(1, sum(sizes)), 0, 0, 0])
+            self._inspectors_hidden = True
+
+    def _sync_timeline_pagestep(self):
+        """Set the timeline scrubber's pageStep to the current shot's frame span.
+
+        This makes the scrubber's rendered handle length communicate how much
+        of the whole film that shot occupies — mirrors the Book Visualizer's
+        bottom position bar.
+        """
+        if 0 <= self.current_shot_index < len(self.shots):
+            shot  = self.shots[self.current_shot_index]
+            span  = int(shot.get('end_frame', 0)) - int(shot.get('start_frame', 0)) + 1
+            self.timeline_slider.setPageStep(max(1, span))
 
     def _update_timeline_slider(self):
         """Sync the timeline slider to the current frame without triggering a seek."""
         self._updating_slider = True
+        self._sync_timeline_pagestep()
         self.timeline_slider.setValue(self.current_frame_number)
         self._updating_slider = False
 
@@ -1449,6 +1736,7 @@ class ShotlistVisualizer(QMainWindow):
             self.stop_playback()
         self.current_frame_number = value
         self.update_current_shot_from_frame()
+        self._sync_timeline_pagestep()
         frame = self._get_frame(self.current_frame_number)
         if frame is not None:
             self._display_frame(frame)
@@ -1477,13 +1765,29 @@ class ShotlistVisualizer(QMainWindow):
         q_image = QImage(frame_rgb.data, width, height, 3 * width, QImage.Format_RGB888)
         pixmap = QPixmap.fromImage(q_image)
         if not pixmap.isNull():
-            # Scale to fit window while maintaining aspect ratio
-            scaled_pixmap = pixmap.scaled(
-                self.frame_label.size(),
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation
-            )
-            self.frame_label.setPixmap(scaled_pixmap)
+            # Copy (not just reference) the QImage-backed pixmap so it survives
+            # after frame_rgb's underlying numpy buffer is reused/freed, then
+            # cache it unscaled so resize events can rescale without re-decoding.
+            self._last_pixmap = pixmap.copy()
+            self._rescale_current_frame()
+
+    def _rescale_current_frame(self):
+        """Re-scale the last displayed frame to the video label's current size.
+
+        Called after every new frame is displayed, and also whenever
+        frame_label itself is resized (window resize, splitter drag, or a
+        deferred panel-fit changing pane widths) via the installed event
+        filter, so the video always fills the available area instead of
+        staying cached at whatever size it happened to be first displayed at.
+        """
+        if self._last_pixmap is None or self._last_pixmap.isNull():
+            return
+        scaled_pixmap = self._last_pixmap.scaled(
+            self.frame_label.size(),
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation
+        )
+        self.frame_label.setPixmap(scaled_pixmap)
     
     def toggle_play_pause(self):
         """Toggle video playback."""
@@ -1931,7 +2235,7 @@ class ShotlistVisualizer(QMainWindow):
         self.subtitle_label.setText(text)
 
     def update_frame_info(self):
-        """Update info label with current frame details."""
+        """Update the Info section's shot-detail block with current frame details."""
         if not (0 <= self.current_shot_index < len(self.shots)):
             return
         shot       = self.shots[self.current_shot_index]
@@ -1939,14 +2243,14 @@ class ShotlistVisualizer(QMainWindow):
         start_tc   = shot.get('start_time', '?')
         end_tc     = shot.get('end_time', '?')
         confidence = shot.get('Shot_Confidence', '')
-        conf_str   = f"\nConf: {confidence}" if confidence else ""
         shot_id    = shot.get('shot_id', '')
-        sid_str    = f"\n{shot_id}" if shot_id else ""
-        self.info_label.setText(
-            f"Scene {scene}  Shot #{self.current_shot_index}\n"
-            f"Frame: {self.current_frame_number}\n"
-            f"{start_tc} → {end_tc}{conf_str}{sid_str}"
-        )
+        self._shot_info_block.set("Scene", str(scene))
+        self._shot_info_block.set("Shot", f"#{self.current_shot_index}")
+        self._shot_info_block.set("Frame", str(self.current_frame_number))
+        self._shot_info_block.set("Start", str(start_tc))
+        self._shot_info_block.set("End", str(end_tc))
+        self._shot_info_block.set("Confidence", str(confidence) if confidence else "—")
+        self._shot_info_block.set("Shot ID", str(shot_id) if shot_id else "—")
         self._update_subtitle_display()
     
     def on_shot_selected(self, row: int, col: int = 0):
@@ -2134,17 +2438,18 @@ class ShotlistVisualizer(QMainWindow):
         self.update_stats()
 
     def update_stats(self):
-        """Update statistics display."""
+        """Update the Info section's aggregate stats block."""
         total_shots   = len(self.shots)
         ignored_shots = sum(1 for shot in self.shots if shot.get('Ignore', 'No') == 'Yes')
         active_shots  = total_shots - ignored_shots
         total_scenes  = len(set(shot.get('Scene', '0') for shot in self.shots))
         ann_count     = len(self.annotation_index)
-        ann_str       = f"  Annotated: {ann_count}/{total_shots}" if self._has_ann_file else ""
-        self.stats_label.setText(
-            f"Scenes: {total_scenes}  Shots: {total_shots}\n"
-            f"Active: {active_shots}  Ignored: {ignored_shots}{ann_str}"
-        )
+        ann_str       = f"{ann_count}/{total_shots}" if self._has_ann_file else "—"
+        self._stats_block.set("Scenes", str(total_scenes))
+        self._stats_block.set("Shots", str(total_shots))
+        self._stats_block.set("Active", str(active_shots))
+        self._stats_block.set("Ignored", str(ignored_shots))
+        self._stats_block.set("Annotated", ann_str)
     
     def update_buttons(self):
         """Update button states based on current position."""
@@ -2166,15 +2471,26 @@ class ShotlistVisualizer(QMainWindow):
         self.save_changes()
     
     def eventFilter(self, obj, event):
-        """Intercept events from child widgets to handle keyboard shortcuts globally."""
+        """Intercept events from child widgets to handle keyboard shortcuts globally
+        and to keep the Browser's video frame filling its label after any resize."""
         try:
+            if event.type() == QEvent.Resize and obj is self.frame_label:
+                self._rescale_current_frame()
+                return False
+            if event.type() == QEvent.Resize and obj is self.ann_display:
+                # Re-fit the annotation text display's height to its wrapped
+                # content whenever the inspector is resized (e.g. drag-resize
+                # of the Shotlist tab) — it never scrolls internally.
+                self._resize_ann_display()
+                return False
             if event.type() == QEvent.KeyPress:
                 key  = event.key()
                 mods = event.modifiers()
                 if obj == self.ann_display:
-                    # Ctrl+S saves a dirty JSON edit; Escape discards it.
-                    # QTextEdit consumes these before they reach keyPressEvent, so
-                    # we must intercept them here.
+                    # Ctrl+S saves a dirty JSON edit; Escape discards it (or,
+                    # when there's nothing to discard, closes the window like
+                    # everywhere else). QTextEdit consumes these before they
+                    # reach keyPressEvent, so we must intercept them here.
                     if key == Qt.Key_S and mods & Qt.ControlModifier:
                         if self._ann_dirty:
                             self._save_annotation_edit()
@@ -2182,9 +2498,16 @@ class ShotlistVisualizer(QMainWindow):
                     if key == Qt.Key_Escape:
                         if self._ann_dirty:
                             self._discard_ann_edit()
+                        else:
+                            self.close()
                         return True
                     if key in (Qt.Key_Q, Qt.Key_W) and mods & Qt.ControlModifier:
                         self.close()
+                        return True
+                    if key in (Qt.Key_Tab, Qt.Key_Backtab):
+                        # Redirect Tab / Shift+Tab to the window instead of
+                        # letting the text edit insert a tab character.
+                        self.keyPressEvent(event)
                         return True
                 elif obj == self.shot_list:
                     # Redirect keyboard events to main window
@@ -2195,7 +2518,8 @@ class ShotlistVisualizer(QMainWindow):
                                KEY_PREV_SHOT, KEY_NEXT_SHOT,
                                KEY_PREV_ITEM, KEY_NEXT_ITEM,
                                KEY_PREV_TITLE, KEY_NEXT_TITLE,
-                               Qt.Key_B, Qt.Key_C, Qt.Key_E, Qt.Key_F, Qt.Key_I, Qt.Key_M, Qt.Key_N, Qt.Key_G, Qt.Key_S):
+                               Qt.Key_B, Qt.Key_C, Qt.Key_E, Qt.Key_F, Qt.Key_I, Qt.Key_M, Qt.Key_N, Qt.Key_G, Qt.Key_S,
+                               Qt.Key_Tab, Qt.Key_Backtab, Qt.Key_Escape):
                         self.keyPressEvent(event)
                         return True
             return super().eventFilter(obj, event)
@@ -2209,6 +2533,24 @@ class ShotlistVisualizer(QMainWindow):
         mods = event.modifiers()
         if key in (Qt.Key_Q, Qt.Key_W) and mods & Qt.ControlModifier:
             self.close()
+            return
+        if key == Qt.Key_Escape:
+            self.close()
+            return
+        if key in (Qt.Key_Backtab, Qt.Key_Tab) and mods & Qt.ShiftModifier and not (
+            mods & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier)
+        ):
+            # Shift+Tab — toggle true fullscreen
+            if self.isFullScreen():
+                self.showNormal()
+            else:
+                self.showFullScreen()
+            return
+        if key == Qt.Key_Tab and not (
+            mods & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier | Qt.ShiftModifier)
+        ):
+            # Tab — toggle Scene/Shot/Inspector panes
+            self._toggle_inspectors()
             return
         if key == Qt.Key_Space:
             self.toggle_play_pause()
@@ -2319,6 +2661,38 @@ class ShotlistVisualizer(QMainWindow):
     #  Annotation panel                                                    #
     # ------------------------------------------------------------------ #
 
+    def _resize_ann_fields_table(self) -> None:
+        """Size ann_fields_table to exactly fit all of its rows.
+
+        No internal scrollbar — the table always shows every row and grows
+        or shrinks the Annotation section, pushing Playback/Tools down (or
+        back up), while the outer Inspector scroll area handles any overflow.
+        """
+        tbl = self.ann_fields_table
+        total_h = sum(tbl.rowHeight(r) for r in range(tbl.rowCount()))
+        tbl.setFixedHeight(total_h + 2 * tbl.frameWidth())
+
+    def _on_ann_fields_table_resized(self, _logical_index, _old_size, _new_size) -> None:
+        """Re-fit row heights and the table's own height after a width change."""
+        self.ann_fields_table.resizeRowsToContents()
+        self._resize_ann_fields_table()
+
+    def _resize_ann_display(self) -> None:
+        """Size ann_display to exactly fit its wrapped document content.
+
+        No internal scrollbar — the widget always shows all of its text and
+        grows or shrinks the Annotation section, pushing Playback/Tools down
+        (or back up), while the outer Inspector scroll area handles any
+        overflow.
+        """
+        width = self.ann_display.viewport().width()
+        if width <= 0:
+            return
+        doc = self.ann_display.document()
+        doc.setTextWidth(width)
+        height = int(doc.size().height()) + 2 * self.ann_display.frameWidth()
+        self.ann_display.setFixedHeight(max(1, height))
+
     def _update_annotation_panel(self, index: int, shot: dict):
         """Refresh the annotation display panel for a given shot."""
         shot_id = shot.get("shot_id", "") if isinstance(shot, dict) else ""
@@ -2342,21 +2716,27 @@ class ShotlistVisualizer(QMainWindow):
                 self.ann_display.setPlainText(self._render_annotation_mapping(index))
             self.ann_display.setReadOnly(mode != "json")
             self.ann_display.blockSignals(False)
+            self._resize_ann_display()
         self._ann_dirty = False
         self.ann_dirty_label.hide()
 
     def _populate_fields_table(self, ann: dict | None, shot: dict):
-        """Fill ann_fields_table with alternating title/content rows."""
+        """Fill ann_fields_table with one key/value row per annotation field."""
         tbl = self.ann_fields_table
         tbl.blockSignals(True)
         tbl.clearContents()
+        if tbl.columnSpan(0, 0) > 1:
+            tbl.setSpan(0, 0, 1, 1)   # clear a previous "no annotation" span
         if ann is None:
             tbl.setRowCount(1)
             item = QTableWidgetItem("(no annotation)")
             item.setFlags(Qt.ItemIsEnabled)
+            item.setBackground(QColor(theme.CELL_BG))
             item.setForeground(QColor(theme.TEXT_DIM))
             tbl.setItem(0, 0, item)
+            tbl.setSpan(0, 0, 1, 2)
             tbl.blockSignals(False)
+            self._resize_ann_fields_table()
             return
 
         try:
@@ -2366,43 +2746,42 @@ class ShotlistVisualizer(QMainWindow):
             ordered_keys = [k for k in ann if k != "shot_index"]
         keys = [k for k in ordered_keys if k in ann]
 
-        tbl.setRowCount(len(keys) * 2)
-        title_bg   = QColor(theme.PANEL_BG)
-        content_bg = QColor(theme.BG)
-        text_fg    = QColor(theme.TEXT)
+        tbl.setRowCount(len(keys))
+        cell_bg = QColor(theme.CELL_BG)
+        key_fg  = QColor(theme.TEXT_DIM)
+        val_fg  = QColor(theme.TEXT)
 
-        for i, k in enumerate(keys):
-            title_row   = i * 2
-            content_row = i * 2 + 1
+        for row, k in enumerate(keys):
+            # ---- key column (non-editable) ----
+            key_item = QTableWidgetItem(k)
+            key_item.setFont(theme.font_ui())
+            key_item.setBackground(cell_bg)
+            key_item.setForeground(key_fg)
+            key_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            key_item.setFlags(Qt.ItemIsEnabled)
+            tbl.setItem(row, 0, key_item)
 
-            # ---- title row (non-editable, bold) ----
-            title_item = QTableWidgetItem(k)
-            title_item.setFont(theme.font_mono(bold=True))
-            title_item.setBackground(title_bg)
-            title_item.setForeground(text_fg)
-            title_item.setFlags(Qt.ItemIsEnabled)
-            tbl.setItem(title_row, 0, title_item)
-
-            # ---- content row (editable) ----
+            # ---- value column (editable) ----
             v = ann[k]
             v_str = ", ".join(str(x) for x in v) if isinstance(v, list) else str(v)
-            content_item = QTableWidgetItem(v_str)
-            content_item.setBackground(content_bg)
-            content_item.setForeground(text_fg)
-            content_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsEditable | Qt.ItemIsSelectable)
-            tbl.setItem(content_row, 0, content_item)
+            value_item = QTableWidgetItem(v_str)
+            value_item.setBackground(cell_bg)
+            value_item.setForeground(val_fg)
+            value_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            value_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsEditable | Qt.ItemIsSelectable)
+            tbl.setItem(row, 1, value_item)
 
         tbl.resizeRowsToContents()
         tbl.blockSignals(False)
+        self._resize_ann_fields_table()
 
     def _on_fields_cell_changed(self, item: "QTableWidgetItem"):
         """Called when a content cell in the fields table is edited."""
+        if item.column() != 1:
+            return   # only the value column is editable
         row = item.row()
-        if row % 2 == 0:
-            # Title row — skip
-            return
 
-        key_item = self.ann_fields_table.item(row - 1, 0)
+        key_item = self.ann_fields_table.item(row, 0)
         if key_item is None:
             return
         key = key_item.text()
@@ -2444,6 +2823,7 @@ class ShotlistVisualizer(QMainWindow):
 
         # Resize the edited row in case text wrapped
         self.ann_fields_table.resizeRowToContents(row)
+        self._resize_ann_fields_table()
 
     def _render_annotation_json(self, ann: dict | None) -> str:
         if ann is None:
@@ -2530,6 +2910,7 @@ class ShotlistVisualizer(QMainWindow):
 
     def _on_ann_text_changed(self):
         """Called whenever the annotation text display changes."""
+        self._resize_ann_display()
         if not self._ann_dirty:
             mode = self.ann_repr_combo.currentText()
             if mode == "json":

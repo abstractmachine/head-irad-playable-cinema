@@ -12,7 +12,6 @@ _VISUALIZER_TITLE = {
     "metadata":     "Metadata Visualizer",
     "cloud":        "Cloud Visualizer",
     "illustration": "Illustration Visualizer",
-    "silhouette":   "Illustration Visualizer",
     "palette":      "Palette Visualizer",
     "flipbook":     "Flipbook Visualizer",
     "book":         "Book Visualizer",

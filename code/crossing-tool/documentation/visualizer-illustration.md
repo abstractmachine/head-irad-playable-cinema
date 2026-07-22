@@ -1,13 +1,13 @@
-# Silhouette
+# Illustration
 
-![Silhouette Visualizer screenshot](./images/visualizers/visualizer-silhouette.png)
+![Illustration Visualizer screenshot](./images/visualizers/visualizer-illustration.png)
 
-The `Silhouette` visualizer is a catalog browser for extracted object silhouettes. It displays all transparent PNG cutouts in the silhouette cache, filtered by vocabulary label, with quality controls and a link to open the source shot in the Shotlist Visualizer.
+The `Illustration` visualizer is a catalog browser for extracted object silhouettes. It displays all transparent PNG cutouts in the silhouette cache, filtered by vocabulary label, with quality controls and a link to open the source shot in the Shotlist Visualizer.
 
 Open it with:
 
 ```
-crossing visualizer silhouette
+crossing visualizer illustration
 ```
 
 ## Layout

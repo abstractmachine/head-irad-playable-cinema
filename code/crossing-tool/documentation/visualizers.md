@@ -14,7 +14,7 @@ A series of "visualizers" exist to better visualize the data created via the `cr
 - [Cloud](visualizer-cloud.md)
 - [Flipbook](visualizer-flipbook.md)
 - [Palette](visualizer-palette.md)
-- [Silhouette](visualizer-silhouette.md)
+- [Illustration](visualizer-illustration.md)
 
 ## Shared Inspector Layout
 

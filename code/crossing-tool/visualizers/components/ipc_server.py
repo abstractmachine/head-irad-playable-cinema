@@ -9,7 +9,7 @@ operations; those remain in services and CLI commands.
 Both existing IPC implementations follow the same structure:
 
 - ``_IpcServer``    (shot_visualizer.py)       — navigate to shot on load
-- ``_SilIpcServer`` (silhouette_visualizer.py) — navigate to label/field
+- ``_IllIpcServer`` (illustration_visualizer.py) — navigate to label/field
 
 Migration of existing callers to subclass IpcServer is deferred to a later
 phase.  The Shot Visualizer is explicitly out of scope for the initial

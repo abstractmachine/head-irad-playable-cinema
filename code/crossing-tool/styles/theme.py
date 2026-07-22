@@ -47,6 +47,10 @@ BUTTON_HEIGHT = 24         # fixed height for all inspector/action buttons (px)
 BUTTON_ICON_SIZE = max(12, BUTTON_HEIGHT - 10)  # canonical icon size for square toolbar/header buttons
 BTN_H        = BUTTON_HEIGHT
 BTN_ICON     = BUTTON_ICON_SIZE
+# Canonical vertical scrollbar width (px) — shared by the global QSS default
+# (plain QScrollBar/QScrollArea/QTextEdit etc.) and JumpScrollBar, so every
+# vertical scrollbar in the app is the same thickness.
+SCROLLBAR_W  = 16
 # Inspector grid contract (all visualizers):
 # - Use edge-to-edge section bodies (no extra nested wrapper insets)
 # - Use SECTION_GAP for panel/section interior spacing
@@ -234,7 +238,7 @@ QSlider::sub-page:horizontal {{
 /* ── Scroll bars ───────────────────────────────────────────── */
 QScrollBar:vertical {{
     background: {CANVAS_BG};
-    width: 8px;
+    width: {SCROLLBAR_W}px;
 }}
 QScrollBar::handle:vertical {{
     background: transparent;
@@ -335,12 +339,12 @@ def table_stylesheet() -> str:
     """Return the shared QTableWidget stylesheet used by list visualizers."""
     return f"""
         QTableWidget {{
-            background: transparent;
+            background: {TAB_BG};
             border: none;
-            gridline-color: {BG};
+            gridline-color: {TAB_BG};
         }}
         QTableWidget::item {{
-            background: #666666;
+            background: {CELL_BG};
             color: {TEXT};
             border: none;
             padding: 2px;
@@ -361,6 +365,59 @@ def table_stylesheet() -> str:
             border: none;
         }}
     """
+
+
+def action_button_stylesheet() -> str:
+    """Return the shared per-button stylesheet used for inspector action buttons.
+
+    Qt Style Sheets cascade: once ANY ancestor of a widget has its own
+    (even minimal, bare-property) stylesheet, that ancestor's local
+    stylesheet takes precedence over the application-wide stylesheet for
+    that widget's descendants — including a generic app-wide
+    ``QPushButton {...}`` rule. Any button nested inside a styled container
+    (e.g. a CollapsibleSection body, a colored panel) therefore needs this
+    stylesheet applied directly to *itself* to reliably get the canonical
+    background/hover/pressed/checked/disabled look, matching the
+    ``action_btn_style`` / ``_btn_style()`` convention already used by the
+    Book and Illustration Visualizers.
+    """
+    return (
+        f"QPushButton {{"
+        f"  background-color: {BTN_BG}; color: {TEXT};"
+        f"  border: none; border-radius: 3px; padding: 0 8px;"
+        f"  min-height: {BTN_H}px; max-height: {BTN_H}px;"
+        f"}}"
+        f"QPushButton:hover    {{ background-color: {ACCENT}; color: {ACCENT_TEXT}; }}"
+        f"QPushButton:pressed  {{ background-color: {BTN_PRESSED}; }}"
+        f"QPushButton:checked  {{ background-color: {ACCENT}; color: {ACCENT_TEXT}; }}"
+        f"QPushButton:disabled {{ background-color: {BTN_BG};"
+        f" color: rgba(255,255,255,0.15); }}"
+    )
+
+
+
+def tab_strip_stylesheet() -> str:
+    """Return the shared QTabWidget/QTabBar stylesheet used by inspector tab strips.
+
+    This is the canonical "workspace tabs" look (dark CANVAS_BG tab bar, TAB_BG
+    tab pane, dim inactive labels) used by the Book Visualizer's Book/Engravings
+    tabs. Any visualizer inspector that wraps its content in a QTabWidget
+    should use this instead of inventing its own tab styling, so the color
+    scheme stays identical across visualizers even when a tab strip has only
+    a single tab.
+    """
+    return (
+        f"QTabWidget {{ background: {CANVAS_BG}; border: none; }}"
+        f"QTabWidget::pane {{ background: {TAB_BG}; border: none; }}"
+        f"QTabBar {{ background: {CANVAS_BG}; border: none; }}"
+        f"QTabBar::tab {{"
+        f" background: {CANVAS_BG}; color: {TEXT_DIM};"
+        f" padding: 4px 10px; border: none;"
+        f" font-family: '{FAMILY_UI}'; font-size: {BASE_PT}pt;"
+        f"}}"
+        f"QTabBar::tab:selected {{ background: {TAB_BG}; color: {TEXT}; }}"
+        f"QTabBar::tab:hover {{ background: {TAB_BG}; color: {TEXT}; }}"
+    )
 
 
 def apply_theme(app) -> None:
@@ -454,11 +511,26 @@ class _GripHandle(QSplitterHandle):
                 return i
         return -1
 
+    @staticmethod
+    def _is_fixed_pane(sp, i: int) -> bool:
+        """Return True if pane *i* has a hard fixed width (e.g. via setFixedWidth).
+
+        Such a pane (like a content-driven, non-resizable side panel) cannot
+        actually absorb or give up arbitrary space, so it must be skipped when
+        looking for a partner pane to exchange space with — otherwise the
+        requested size gets silently clamped by Qt and leaves an unaccounted
+        dead-space gap instead of being handed off to a pane that can use it.
+        """
+        w = sp.widget(i)
+        return w is not None and w.minimumWidth() >= w.maximumWidth()
+
     def _toggle_right_pane(self) -> None:
         """Collapse or expand the pane immediately to the right of this handle.
 
-        Space is always exchanged with the nearest non-collapsed pane to the
-        left so that already-collapsed neighbours are not accidentally opened.
+        Space is always exchanged with the nearest visible, resizable pane to
+        the left — already-collapsed neighbours and hard fixed-width panes
+        (which cannot actually grow/shrink to absorb the change) are skipped
+        in favour of the next pane further left.
         """
         sp  = self.splitter()
         idx = self._handle_index()
@@ -467,13 +539,16 @@ class _GripHandle(QSplitterHandle):
         sizes      = list(sp.sizes())
         right_size = sizes[idx]
 
-        # Find the nearest left pane that is currently visible (size > 0).
+        # Find the nearest left pane that is currently visible (size > 0)
+        # and actually resizable (not a hard fixed-width pane).
         left_idx = idx - 1
-        while left_idx >= 0 and sizes[left_idx] == 0:
+        while left_idx >= 0 and (
+            sizes[left_idx] == 0 or self._is_fixed_pane(sp, left_idx)
+        ):
             left_idx -= 1
 
         if left_idx < 0:
-            return   # nothing visible to exchange space with
+            return   # nothing visible & resizable to exchange space with
 
         if right_size == 0:
             # Expand — take space from the leftmost visible neighbour
@@ -528,41 +603,58 @@ class GripSplitter(QSplitter):
 
 from PyQt5.QtWidgets import QScrollBar, QStyle, QStyleOptionSlider  # noqa: E402
 from PyQt5.QtGui import QCursor                                      # noqa: E402
+from PyQt5.QtCore import pyqtSignal                                  # noqa: E402
 
 
 class JumpScrollBar(QScrollBar):
-    """Vertical scrollbar with two UX improvements over the default:
+    """Scrollbar (vertical or horizontal) with UX improvements over the default:
 
     1. Hovering *anywhere* on the bar immediately highlights the handle fuchsia
        (not just when the cursor is directly on the handle thumb).
     2. Clicking in the track (not on the handle) jumps the viewport to that
        position instantly instead of doing a page-step.  Click+drag is also
        supported for continuous scrubbing.
+    3. ``mousePressed`` / ``mouseReleased`` fire on every left-button
+       press/release (both the click-to-jump path and ordinary handle
+       dragging), so callers can pause a video/animation while scrubbing and
+       resume it afterwards.
+
+    Pass a ``pageStep`` that reflects the size of the "current unit" (e.g. one
+    shot's frame span) so the rendered handle length communicates how much of
+    the total range that unit occupies — the same idea as the Book
+    Visualizer's bottom position bar, generalised to a real scrollbar. This is
+    the shared horizontal timeline-scrubber primitive used by the Shotlist
+    Visualizer's Browser.
     """
 
-    _STYLE_IDLE = (
-        f"QScrollBar:vertical {{ background: {CANVAS_BG}; width: 16px; }}"
-        "QScrollBar::handle:vertical {"
-        "    background: transparent;"
-        f"   border-left: 2px solid {ACCENT};"
-        "    border-radius: 0; min-height: 20px; }"
-        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
-        "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }"
-    )
-    _STYLE_HOVER = (
-        f"QScrollBar:vertical {{ background: {CANVAS_BG}; width: 16px; }}"
-        "QScrollBar::handle:vertical {"
-        f"   background: {ACCENT};"
-        f"   border-left: 2px solid {ACCENT};"
-        "    border-radius: 0; min-height: 20px; }"
-        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
-        "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }"
-    )
+    mousePressed  = pyqtSignal()
+    mouseReleased = pyqtSignal()
 
-    def __init__(self, parent=None) -> None:
-        super().__init__(Qt.Vertical, parent)
-        self.setStyleSheet(self._STYLE_IDLE)
+    def __init__(self, orientation: Qt.Orientation = Qt.Vertical, parent=None) -> None:
+        super().__init__(orientation, parent)
         self._drag_active = False
+        self.setStyleSheet(self._style(hover=False))
+
+    def _style(self, hover: bool) -> str:
+        horiz        = self.orientation() == Qt.Horizontal
+        orient       = "horizontal" if horiz else "vertical"
+        size_prop    = "height" if horiz else "width"
+        # Horizontal bars sit below their content (e.g. the Shotlist Browser's
+        # timeline scrubber), so the idle/collapsed indicator line should
+        # touch the bottom edge, not float at the top. Vertical bars keep the
+        # existing left-edge indicator (adjacent to the content they scroll).
+        border_side  = "border-bottom" if horiz else "border-left"
+        min_len_prop = "min-width" if horiz else "min-height"
+        handle_bg    = ACCENT if hover else "transparent"
+        return (
+            f"QScrollBar:{orient} {{ background: {CANVAS_BG}; {size_prop}: {SCROLLBAR_W}px; }}"
+            f"QScrollBar::handle:{orient} {{"
+            f"    background: {handle_bg};"
+            f"   {border_side}: 2px solid {ACCENT};"
+            f"    border-radius: 0; {min_len_prop}: 20px; }}"
+            f"QScrollBar::add-line:{orient}, QScrollBar::sub-line:{orient} {{ {size_prop}: 0; }}"
+            f"QScrollBar::add-page:{orient}, QScrollBar::sub-page:{orient} {{ background: none; }}"
+        )
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -570,7 +662,7 @@ class JumpScrollBar(QScrollBar):
         # (common with ScrollBarAsNeeded), Qt won't fire enterEvent.  Apply the
         # hover style immediately so the user gets visual feedback right away.
         if self.underMouse():
-            self.setStyleSheet(self._STYLE_HOVER)
+            self.setStyleSheet(self._style(hover=True))
 
     def _groove(self):
         opt = QStyleOptionSlider()
@@ -580,30 +672,34 @@ class JumpScrollBar(QScrollBar):
         )
         return groove, opt.upsideDown
 
+    def _pos_and_length(self, pos, groove):
+        """Return (offset-into-groove, groove-length) along the scroll axis."""
+        if self.orientation() == Qt.Horizontal:
+            return pos.x() - groove.x(), groove.width()
+        return pos.y() - groove.y(), groove.height()
+
     def enterEvent(self, event) -> None:
-        self.setStyleSheet(self._STYLE_HOVER)
+        self.setStyleSheet(self._style(hover=True))
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:
         if not self._drag_active:
-            self.setStyleSheet(self._STYLE_IDLE)
+            self.setStyleSheet(self._style(hover=False))
         super().leaveEvent(event)
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton:
+            self.mousePressed.emit()   # must fire before any value change
             opt = QStyleOptionSlider()
             self.initStyleOption(opt)
             handle_rect = self.style().subControlRect(
                 QStyle.CC_ScrollBar, opt, QStyle.SC_ScrollBarSlider, self
             )
             if not handle_rect.contains(event.pos()):
-                groove = self.style().subControlRect(
-                    QStyle.CC_ScrollBar, opt, QStyle.SC_ScrollBarGroove, self
-                )
-                pos = event.y() - groove.y()
+                groove, upside_down = self._groove()
+                pos, length = self._pos_and_length(event.pos(), groove)
                 value = QStyle.sliderValueFromPosition(
-                    self.minimum(), self.maximum(), pos, groove.height(),
-                    opt.upsideDown,
+                    self.minimum(), self.maximum(), pos, length, upside_down,
                 )
                 self.setValue(value)
                 self._drag_active = True
@@ -615,9 +711,9 @@ class JumpScrollBar(QScrollBar):
         if self._drag_active:
             local = self.mapFromGlobal(QCursor.pos())
             groove, upside_down = self._groove()
-            pos = local.y() - groove.y()
+            pos, length = self._pos_and_length(local, groove)
             value = QStyle.sliderValueFromPosition(
-                self.minimum(), self.maximum(), pos, groove.height(), upside_down
+                self.minimum(), self.maximum(), pos, length, upside_down
             )
             self.setValue(value)
             return
@@ -628,9 +724,12 @@ class JumpScrollBar(QScrollBar):
             self._drag_active = False
             self.releaseMouse()
             if not self.rect().contains(self.mapFromGlobal(QCursor.pos())):
-                self.setStyleSheet(self._STYLE_IDLE)
+                self.setStyleSheet(self._style(hover=False))
+            self.mouseReleased.emit()
             return
         super().mouseReleaseEvent(event)
+        if event.button() == Qt.LeftButton:
+            self.mouseReleased.emit()
 
 
 # ---------------------------------------------------------------------------
@@ -676,7 +775,7 @@ def svg_icon(name: str, size: int = 16, color: str = "#ffffff"):
     """Load an Iconoir SVG, recolour strokes to *color*, return a QIcon.
 
     This is the canonical icon-loading function for all Crossing Tool
-    visualizers.  Both ``book_visualizer`` and ``silhouette_visualizer``
+    visualizers.  Both ``book_visualizer`` and ``illustration_visualizer``
     delegate here instead of maintaining their own local copies.
 
     Parameters

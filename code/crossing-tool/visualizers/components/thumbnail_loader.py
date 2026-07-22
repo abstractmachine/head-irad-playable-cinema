@@ -4,9 +4,9 @@ Loads thumbnail images off the GUI thread and delivers QImages via Qt signals,
 keeping the browser responsive during large scans.
 
 This is the canonical implementation that replaces the three separate loader
-classes currently found in silhouette_visualizer.py and book_visualizer.py:
+classes currently found in illustration_visualizer.py and book_visualizer.py:
 
-  - ``_ThumbLoader``        (silhouette_visualizer.py)
+  - ``_ThumbLoader``        (illustration_visualizer.py)
   - ``_BrowserThumbLoader`` (book_visualizer.py)
   - ``_EngravingThumbLoader`` (book_visualizer.py)
 

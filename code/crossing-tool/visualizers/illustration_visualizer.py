@@ -2823,7 +2823,7 @@ class IllustrationWindow(VisualizerWindow):
         # Reopen in fullscreen if that was the state when the app was last closed
         QTimer.singleShot(0, self._restore_saved_state)
 
-        # IPC server — lets open_at_silhouette navigate an existing instance
+        # IPC server — lets open_at_illustration navigate an existing instance
         self._ipc_server = _IllIpcServer(project_path, parent=self)
         self._ipc_server.navigate_requested.connect(self._on_ipc_navigate)
         self._ipc_server.start()
@@ -2937,7 +2937,7 @@ def run_visualizer(
     initial_label: Optional[str] = None,
     initial_shot: Optional[str] = None,
 ) -> None:
-    """Create QApplication (if needed) and launch the Silhouette window."""
+    """Create QApplication (if needed) and launch the Illustration window."""
     from tool import prefs as _prefs
 
     model_name = _prefs.get("model_segmentation", _DEFAULT_MODEL) or _DEFAULT_MODEL

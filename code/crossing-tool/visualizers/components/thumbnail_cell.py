@@ -3,7 +3,7 @@
 Canonical thumbnail cell for the Visualizer Framework. Combines interaction
 behavior used across existing visualizers:
 
-- ``_ThumbnailCell``    (silhouette_visualizer.py) — single click, best state
+- ``_ThumbnailCell``    (illustration_visualizer.py) — single click, best state
 - ``_BrowserThumbCell`` (book_visualizer.py)       — double click, drag-and-drop
 
 Migration of existing callers to this canonical class is deferred to Phase 2.

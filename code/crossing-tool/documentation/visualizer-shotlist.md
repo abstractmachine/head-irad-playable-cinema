@@ -2,7 +2,7 @@
 
 ![Shotlist Visualizer screenshot](./images/visualizers/visualizer-shotlist.png)
 
-The `Shotlist` visualizer is the primary tool for reviewing, editing, and annotating shot lists. It combines a frame-accurate video player, an annotation panel, and a scene/shot table in one window.
+The `Shotlist` visualizer is the primary tool for reviewing, editing, and annotating shot lists. It combines a frame-accurate video player, a scene/shot index, and an annotation panel in one window, following the shared Visualizer Framework layout (Browser / side panels / Inspector).
 
 Open it with:
 
@@ -12,13 +12,27 @@ crossing visualizer shotlist
 
 ## Layout
 
-### Left — Video Player
+### Browser — Video Playback
 
-Displays the current frame of the active shot. A timeline scrubber at the bottom lets you seek within the clip. The title bar shows the film name, scene number, and total shot count.
+The full-window playback area. Displays the current frame of the active shot with the subtitle overlay on top. A timeline scrubber at the bottom lets you scrub the whole film — the scrubber's handle length reflects how much of the film the current shot spans. The Browser is for viewing, scrubbing, and navigating playback only; it holds no annotation or inspector-style controls.
 
-### Middle — Annotation Panel
+### Scene panel
 
-Displays and edits the structured annotation fields for the selected shot:
+A collapsible, content-width side panel listing one row per scene. Click a row to jump to that scene. Collapse or expand it via its splitter grip handle (it is not manually resizable).
+
+### Shot panel
+
+A collapsible, content-width side panel listing shots in the film with columns: `✓` (annotated), `Shot` number, `Start` timecode, `Best` frame, `Stop` timecode, `Ignore` flag. The active shot is highlighted in fuchsia. Collapse or expand it via its splitter grip handle (it is not manually resizable).
+
+### Inspector
+
+A fixed-width right-side panel built from collapsible sections:
+
+**Filter** — Media type (movie / gameplay) and film selector.
+
+**Info** — Aggregate stats (scene count, shot count, active/ignored/annotated totals) and the current shot's detail (scene, shot #, frame, start/end timecode, confidence, shot ID).
+
+**Annotation** — Displays and edits the structured annotation for the selected shot (fields/json/txt/vector/mapping representations), plus **Auto-Annotate** and **Remove** actions:
 
 | Field | Description |
 |---|---|
@@ -37,34 +51,30 @@ Displays and edits the structured annotation fields for the selected shot:
 | `action` | Actions taking place |
 | `text` | On-screen text |
 
-Fields shown in bold have a value. Fields shown in muted text are empty. The panel can be collapsed to give more room to the video.
+Fields shown in bold have a value. Fields shown in muted text are empty.
 
-### Right — Scene & Shot Tables
+**Playback** — Play/Pause, Continue, Loop, and Gremlins controls.
 
-**Top: film selector** — Choose a film (and media type) from the dropdown. The status line shows scene count, shot count, active/ignored/annotated totals.
+**Tools** — Shot/scene structural edits: New Shot, Merge Shot, Ignore, New Scene, Merge Scene, and Save.
 
-**Scene table** — One row per scene. Click to jump to that scene.
-
-**Shot table** — Lists shots within the selected scene with columns: `✓` (annotated), `Shot` number, `Start` timecode, `Best` frame, `Stop` timecode, `Ignore` flag. The active shot is highlighted in fuchsia.
-
-**Shot info** — Below the tables shows the current shot's scene/shot number, frame number, timecodes, and media ID.
+Any section can be collapsed independently to give more room to the ones you're using.
 
 ## Action Buttons
 
-| Button | Action |
-|---|---|
-| **Auto-Annotate** | Run the AI annotation pipeline on the current shot |
-| **Remove** | Delete the current shot from the shotlist |
-| **Gremlins** | Inspect or fix annotation data issues |
-| **New Shot** | Insert a new shot boundary at the current frame |
-| **Merge Shot** | Merge the current shot with the next shot |
-| **Ignore** | Toggle the current shot as ignored (excluded from analysis) |
-| **New Scene** | Start a new scene at the current shot |
-| **Merge Scene** | Merge the current scene into the previous scene |
-| **Save** | Write annotation changes to disk |
-| **Play** | Play/pause video |
-| **Continue** | Advance to the next unannotated shot and play |
-| **Loop** | Toggle looping playback of the current shot |
+| Button | Section | Action |
+|---|---|---|
+| **Auto-Annotate** | Annotation | Run the AI annotation pipeline on the current shot |
+| **Remove** | Annotation | Delete the annotation for the current shot |
+| **New Shot** | Tools | Insert a new shot boundary at the current frame |
+| **Merge Shot** | Tools | Merge the current shot with the previous shot |
+| **Ignore** | Tools | Toggle the current shot as ignored (excluded from analysis) |
+| **New Scene** | Tools | Start a new scene at the current shot |
+| **Merge Scene** | Tools | Merge the current scene into the previous scene |
+| **Save** | Tools | Write shotlist changes to disk |
+| **Play** | Playback | Play/pause video |
+| **Continue** | Playback | Advance to the next unannotated shot and play |
+| **Loop** | Playback | Toggle looping playback of the current shot |
+| **Gremlins** | Playback | Randomly jump movies/timecodes every 5s |
 
 ## Keyboard Shortcuts
 

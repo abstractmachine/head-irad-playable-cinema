@@ -7142,9 +7142,9 @@ def cmd_visualizer(args):
     elif sub == "metadata":
         _require_path()
         _metadata_visualizer(args)
-    elif sub in ("illustration", "silhouette"):
+    elif sub == "illustration":
         _require_path()
-        _silhouette_visualizer(args)
+        _illustration_visualizer(args)
     elif sub == "palette":
         _require_path()
         _palette_visualizer(args)
@@ -7172,10 +7172,10 @@ def _metadata_visualizer(args):
     run_visualizer(prefs.get("path"))
 
 
-def _silhouette_visualizer(args):
+def _illustration_visualizer(args):
     """Launch the Illustration Visualizer GUI."""
     _require_visualizer_deps()
-    from visualizers.silhouette_visualizer import run_visualizer
+    from visualizers.illustration_visualizer import run_visualizer
     raw_media = getattr(args, "media", None)
     run_visualizer(
         prefs.get("path"),

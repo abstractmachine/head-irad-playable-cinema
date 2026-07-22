@@ -526,10 +526,10 @@ class ProjectVisualizer(QMainWindow):
         elif subcommand == "book":
             from visualizers.book_visualizer import BookVisualizerWindow
             return BookVisualizerWindow(project_path)
-        elif subcommand in ("illustration", "silhouette"):
+        elif subcommand == "illustration":
             model_name = _prefs.get("model_segmentation", "sam3.pt") or "sam3.pt"
-            from visualizers.silhouette_visualizer import SilhouetteWindow
-            return SilhouetteWindow(project_path, media_type=media_type, model_name=model_name)
+            from visualizers.illustration_visualizer import IllustrationWindow
+            return IllustrationWindow(project_path, media_type=media_type, model_name=model_name)
         elif subcommand == "palette":
             from visualizers.palette_visualizer import PaletteVisualizerWindow
             return PaletteVisualizerWindow(project_path, media_type=media_type)
@@ -542,7 +542,7 @@ class ProjectVisualizer(QMainWindow):
             return SyncVisualizerWindow()
         elif subcommand == "segmentation":
             model_name = _prefs.get("model_segmentation", "sam3.pt") or "sam3.pt"
-            from visualizers.silhouette_visualizer import SAMExplorer
+            from visualizers.illustration_visualizer import SAMExplorer
             return SAMExplorer(project_path, model_name=model_name)
         return None  # caller falls through to subprocess
 

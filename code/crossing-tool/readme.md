@@ -81,6 +81,6 @@ crossing visualizer
     - [Cloud](documentation/visualizer-cloud.md) (interactive word-cloud explorer)
     - [Flipbook](documentation/visualizer-flipbook.md) (per-shot motif + palette color grid)
     - [Palette](documentation/visualizer-palette.md) (per-shot foreground/background color swatch grid)
-    - [Silhouette](documentation/visualizer-silhouette.md) (catalog browser for extracted object cutouts + SAM-3 explorer)
+    - [Illustration](documentation/visualizer-illustration.md) (catalog browser for extracted object cutouts + SAM-3 explorer)
 - [Source Code](documentation/source.md) — source file tree and key functions per module
 - [MCP Server](documentation/mcp.md) — Claude Desktop integration via Model Context Protocol

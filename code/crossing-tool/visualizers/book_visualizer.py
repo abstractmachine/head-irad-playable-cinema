@@ -4695,8 +4695,8 @@ class BookVisualizerWindow(QMainWindow):
         if not filename_stem:
             return
         try:
-            from visualizers.silhouette_visualizer import open_at_silhouette
-            open_at_silhouette(
+            from visualizers.illustration_visualizer import open_at_illustration
+            open_at_illustration(
                 self._project_path,
                 filename_stem=filename_stem,
                 field=field or None,
