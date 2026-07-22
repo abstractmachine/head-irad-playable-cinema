@@ -1641,14 +1641,14 @@ class IllustrationPane(QWidget):
         sil_scroll, self._sil_sort_combo, self._sil_meta_rows = self._build_source_panel(
             self._browser_sil, "ill_sil", _SIL_INFO_KEYS, has_sort=True,  has_tools=True
         )
-        tabs.addTab(sil_scroll, "Silhouettes")
+        tabs.addTab(sil_scroll, " Silhouettes ")
 
         # ── Engravings tab ────────────────────────────────────────────────
         eng_scroll, self._eng_sort_combo, self._eng_meta_rows = self._build_source_panel(
             self._browser_eng, "ill_eng", _ENG_INFO_KEYS,
             has_sort=False, has_mode_filter=True, has_eng_tools=True
         )
-        tabs.addTab(eng_scroll, "Engravings")
+        tabs.addTab(eng_scroll, " Engravings ")
 
         # Active-panel aliases (Silhouettes is default).
         self._sort_combo = self._sil_sort_combo
@@ -1671,7 +1671,7 @@ class IllustrationPane(QWidget):
         tabs.setMinimumWidth(_SIDE_PANE_W)
         tabs.setDocumentMode(True)
         tabs.tabBar().setDrawBase(False)
-        tabs.tabBar().setExpanding(True)
+        tabs.tabBar().setExpanding(False)
         tabs.tabBar().setUsesScrollButtons(False)
         tabs.setFocusPolicy(Qt.NoFocus)
         tabs.tabBar().setFocusPolicy(Qt.NoFocus)
@@ -1681,7 +1681,7 @@ class IllustrationPane(QWidget):
             f"QTabBar              {{ background: {theme.CANVAS_BG}; border: none; }}"
             f"QTabBar::tab {{"
             f"  background: {theme.CANVAS_BG}; color: {theme.TEXT_DIM};"
-            f"  padding: 2px 8px; border: none; margin-bottom: 0;"
+            f"  padding: 2px 16px; border: none; margin-bottom: 0;"
             f"  font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
             f"  font-weight: {theme.WEIGHT_UI};"
             f"  min-height: 20px;"

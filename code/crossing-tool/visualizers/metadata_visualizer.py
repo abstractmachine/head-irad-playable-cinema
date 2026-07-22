@@ -1,582 +1,660 @@
 #!/usr/bin/env python3
-"""Metadata Visualizer — scrollable card-based browser for Movies and Gameplay.
+"""Metadata Visualizer — canonical two-pane browser for Movies and Gameplay.
 
 Launched via:
     crossing visualizer metadata
 
 Layout:
-  LEFT  — Movies column (scrollable card list)
-  RIGHT — Gameplay column (scrollable card list)
+  LEFT  — tabbed thumbnail browser (Movies / Gameplay)
+  RIGHT — single Info inspector
 
-Each card shows a thumbnail, title, and key metadata fields.
+The browser owns selection only. The inspector reflects the selected record.
 """
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from styles import theme
-from styles.theme import save_window_geometry, restore_window_geometry
+from styles.theme import GripSplitter, JumpScrollBar, restore_window_geometry, save_window_geometry
+from tool import prefs as _prefs
+from tool.shortcuts import VisualizerWindow
+from visualizers.components.collapsible_section import CollapsibleSection
+from visualizers.components.metadata_block import MetadataBlock
+from visualizers.components.thumbnail_cell import ThumbnailCell
+from visualizers.components.thumbnail_loader import ThumbnailLoader
 
-from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
+from PyQt5.QtCore import QEvent, Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QFont, QImage, QWheelEvent
 from PyQt5.QtWidgets import (
     QApplication,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMainWindow,
-    QProgressBar,
     QScrollArea,
-    QSizePolicy,
+    QStackedWidget,
+    QTabBar,
     QVBoxLayout,
     QWidget,
 )
-from PyQt5.QtGui import QPixmap
-from styles.theme import JumpScrollBar
+_THUMB_SIZE = 120
+_THUMB_GAP = theme.SECTION_GAP
+_INSPECTOR_MIN_W = 280
+_ZOOM_MIN = 0.75
+_ZOOM_MAX = 1.75
+_ZOOM_STEP = 0.10
+_ZOOM_DEFAULT = 1.00
 
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-THUMB_W = 160   # max thumbnail width (aspect-ratio may give less)
-THUMB_H = 60
-CARD_H = 124           # fixed height: title + date + ~5 lines overview at 10pt
-CARD_FONT_PT  = theme.BASE_PT + 1   # one step up from global base
-CARD_SPACING = 6
-COLUMN_MIN_W = 300
-OVERVIEW_MAX_CHARS = 340
+def _zoom_key(media_type: str) -> str:
+    return f"metadata_browser_zoom_{media_type}"
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+def _wrap_anywhere(text: str) -> str:
+    return "\u200b".join(text)
+
+
+def _browser_title_font(zoom: float) -> QFont:
+    font = theme.font_ui()
+    font.setPointSize(max(6, round(theme.BASE_PT * zoom)))
+    font.setWeight(theme.WEIGHT_UI)
+    return font
+
+_INFO_ROWS = [
+    "title",
+    "filename",
+    "original_filename",
+    "media_type",
+    "year",
+    "director",
+    "game",
+    "duration",
+    "tagline",
+    "overview",
+    "media_id",
+    "tmdb",
+    "imdb",
+]
+
 
 def _resolve_thumbnail(project_path: str, media_type: str, filename: str) -> Path | None:
-    """Return the thumbnail path for *filename*, or None if not found."""
     stem = Path(filename).stem
     dirs_to_try = [media_type]
     if media_type == "movie":
-        dirs_to_try.append("movies")  # backward-compat: existing projects store under movies/
+        dirs_to_try.append("movies")
     for mdir in dirs_to_try:
         thumb_dir = Path(project_path) / "media" / "thumbnails" / mdir
         for name in (stem + ".jpg", stem.replace(" ", "-") + ".jpg"):
-            p = thumb_dir / name
-            if p.exists():
-                return p
+            path = thumb_dir / name
+            if path.exists():
+                return path
     return None
 
 
-def _truncate(text: str, max_chars: int) -> str:
-    if not text:
-        return ""
-    text = text.strip()
-    if len(text) <= max_chars:
-        return text
-    return text[:max_chars].rstrip() + "…"
-
-
-class _PlaceholderCard(QFrame):
-    """Fixed-geometry skeleton card shown while metadata + thumbnails are loading."""
-
-    _THUMB_BG = "#464646"
-    _BAR_BG   = "#464646"
-    _CARD_BG  = "#595959"
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFrameShape(QFrame.NoFrame)
-        self.setFixedHeight(CARD_H)
-        self.setStyleSheet(f"QFrame {{ background-color: {self._CARD_BG}; border: none; }}")
-
-        row = QHBoxLayout(self)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(0)
-
-        thumb_ph = QFrame()
-        thumb_ph.setFixedSize(THUMB_W, CARD_H)
-        thumb_ph.setStyleSheet(f"background-color: {self._THUMB_BG}; border: none;")
-        row.addWidget(thumb_ph)
-
-        text_col = QVBoxLayout()
-        text_col.setContentsMargins(6, 14, 6, 14)
-        text_col.setSpacing(8)
-        for bar_w in (140, 90, 200, 170, 110):
-            bar = QFrame()
-            bar.setFixedHeight(9)
-            bar.setFixedWidth(bar_w)
-            bar.setStyleSheet(
-                f"background-color: {self._BAR_BG}; border: none; border-radius: 3px;"
-            )
-            text_col.addWidget(bar)
-        text_col.addStretch(1)
-        row.addLayout(text_col, 1)
-
-
-
-_CARD_NORMAL = "QFrame { background-color: #666666; border: none; }"
-_CARD_HOVER  = f"QFrame {{ background-color: {theme.ACCENT}; border: none; }}"
-_CLI_PATH    = Path(__file__).parent.parent / "cli.py"
-
-
-def _make_thumb_label(thumb_bytes: bytes) -> "QLabel":
-    """Return a fixed-size thumbnail QLabel.  Width is derived from the image
-    aspect ratio (minimum 40px); height is always CARD_H.
-    Size is determined once at creation — no dynamic resizeEvent."""
-    lbl = QLabel()
-    lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-    lbl.setStyleSheet("border: none; background-color: #464646;")
-    w = THUMB_W  # fallback if no image
-    if thumb_bytes:
-        pix = QPixmap()
-        if pix.loadFromData(thumb_bytes) and not pix.isNull() and pix.height() > 0:
-            w = max(40, round(pix.width() * CARD_H / pix.height()))
-            scaled = pix.scaled(w, CARD_H, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
-            lbl.setPixmap(scaled)
-    lbl.setFixedSize(w, CARD_H)
-    return lbl
-
-
-class _BaseCard(QFrame):
-    """Common hover-highlight and click-to-open behaviour."""
-
-    def __init__(self, filename: str, media_type: str, parent=None):
-        super().__init__(parent)
-        self._filename   = filename
-        self._media_type = media_type
-        self.setFrameShape(QFrame.NoFrame)
-        self.setFixedHeight(CARD_H)
-        self.setStyleSheet(_CARD_NORMAL)
-        self.setCursor(Qt.PointingHandCursor)
-
-    def enterEvent(self, event) -> None:
-        self.setStyleSheet(_CARD_HOVER)
-        for child in self.findChildren(QLabel, "dim"):
-            child.setStyleSheet(f"background-color: transparent; border: none; color: #333333;")
-        super().enterEvent(event)
-
-    def leaveEvent(self, event) -> None:
-        self.setStyleSheet(_CARD_NORMAL)
-        for child in self.findChildren(QLabel, "dim"):
-            child.setStyleSheet(f"background-color: transparent; border: none; color: {theme.TEXT_DIM};")
-        super().leaveEvent(event)
-
-    def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton and self._filename:
-            from tool import prefs as _prefs
-            from visualizers.shot_visualizer import open_at_shot
-            open_at_shot(
-                _prefs.get("path") or "",
-                self._filename,
-                self._media_type,
-            )
-        super().mousePressEvent(event)
-
-
-class _MovieCard(_BaseCard):
-    """Compact card for a single movie metadata record."""
-
-    def __init__(self, record: dict, thumb_bytes: bytes, parent=None) -> None:
-        super().__init__(record.get("filename", ""), "movie", parent)
-
-        row = QHBoxLayout(self)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(0)
-
-        # Thumbnail — stable fixed-size label (size computed once from aspect ratio)
-        thumb_label = _make_thumb_label(thumb_bytes)
-        row.addWidget(thumb_label)
-
-        # Text block
-        text_col = QVBoxLayout()
-        text_col.setContentsMargins(6, 6, 6, 6)
-        text_col.setSpacing(2)
-
-        title = record.get("title") or "(untitled)"
-        title_label = QLabel(title)
-        _f = theme.font_ui(bold=True); _f.setPointSize(CARD_FONT_PT)
-        title_label.setFont(_f)
-        title_label.setWordWrap(True)
-        title_label.setStyleSheet("background-color: transparent; border: none; color: #ffffff;")
-        text_col.addWidget(title_label)
-
-        year = str(record.get("year", "")) if record.get("year") else ""
-        director = record.get("director", "")
-        meta_parts = [p for p in (year, director) if p]
-        if meta_parts:
-            meta_label = QLabel(" \u00b7 ".join(meta_parts))
-            meta_label.setObjectName("dim")
-            _fm = theme.font_mono(); _fm.setPointSize(CARD_FONT_PT)
-            meta_label.setFont(_fm)
-            meta_label.setStyleSheet(f"background-color: transparent; border: none; color: {theme.TEXT_DIM};")
-            meta_label.setWordWrap(True)
-            text_col.addWidget(meta_label)
-
-        overview = _truncate(record.get("overview", ""), OVERVIEW_MAX_CHARS)
-        if overview:
-            overview_label = QLabel(overview)
-            overview_label.setObjectName("dim")
-            _fo = theme.font_ui(); _fo.setPointSize(CARD_FONT_PT)
-            overview_label.setFont(_fo)
-            overview_label.setStyleSheet(f"background-color: transparent; border: none; color: {theme.TEXT_DIM};")
-            overview_label.setWordWrap(True)
-            overview_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
-            text_col.addWidget(overview_label)
-
-        text_col.addStretch(1)
-        row.addLayout(text_col, 1)
-
-
-class _GameplayCard(_BaseCard):
-    """Compact card for a single gameplay metadata record."""
-
-    def __init__(self, record: dict, thumb_bytes: bytes, parent=None) -> None:
-        super().__init__(record.get("filename", ""), "gameplay", parent)
-
-        row = QHBoxLayout(self)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(0)
-
-        # Thumbnail — stable fixed-size label (size computed once from aspect ratio)
-        thumb_label = _make_thumb_label(thumb_bytes)
-        row.addWidget(thumb_label)
-
-        # Text block
-        text_col = QVBoxLayout()
-        text_col.setContentsMargins(6, 6, 6, 6)
-        text_col.setSpacing(2)
-
-        title = record.get("title") or "(untitled)"
-        title_label = QLabel(title)
-        _f = theme.font_ui(bold=True); _f.setPointSize(CARD_FONT_PT)
-        title_label.setFont(_f)
-        title_label.setWordWrap(True)
-        title_label.setStyleSheet("background-color: transparent; border: none; color: #ffffff;")
-        text_col.addWidget(title_label)
-
-        game = record.get("game", "")
-        if game:
-            game_label = QLabel(game)
-            game_label.setObjectName("dim")
-            _fm = theme.font_mono(); _fm.setPointSize(CARD_FONT_PT)
-            game_label.setFont(_fm)
-            game_label.setStyleSheet(f"background-color: transparent; border: none; color: {theme.TEXT_DIM};")
-            game_label.setWordWrap(True)
-            text_col.addWidget(game_label)
-
-        overview = _truncate(record.get("overview", ""), OVERVIEW_MAX_CHARS)
-        if overview:
-            overview_label = QLabel(overview)
-            overview_label.setObjectName("dim")
-            _fo = theme.font_ui(); _fo.setPointSize(CARD_FONT_PT)
-            overview_label.setFont(_fo)
-            overview_label.setStyleSheet(f"background-color: transparent; border: none; color: {theme.TEXT_DIM};")
-            overview_label.setWordWrap(True)
-            overview_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
-            text_col.addWidget(overview_label)
-
-        text_col.addStretch(1)
-        row.addLayout(text_col, 1)
-
-
-# ---------------------------------------------------------------------------
-# Background loader
-# ---------------------------------------------------------------------------
-
-class _MetadataLoader(QThread):
-    """Loads metadata + thumbnails for one media type and emits them one at a time.
-
-    Thumbnail file I/O is done here so the main thread only has to do fast
-    in-memory QPixmap.loadFromData() work between event-loop ticks.
-    """
-
-    total_known    = pyqtSignal(int)         # emitted once before any records
-    record_ready   = pyqtSignal(dict, bytes) # (record dict, raw JPEG bytes or b"")
-    finished_loading = pyqtSignal(int)       # total count when done
-
-    def __init__(self, project_path: str, media_type: str, parent=None) -> None:
-        super().__init__(parent)
-        self._project_path = project_path
-        self._media_type = media_type
-
-    def run(self) -> None:
+def _format_value(value) -> str:
+    if value is None or value == "":
+        return "—"
+    if isinstance(value, (list, tuple)):
+        text = ", ".join(_format_value(item) for item in value if item not in (None, "")) or "—"
+        return _wrap_anywhere(text)
+    if isinstance(value, dict):
         try:
-            from data.metadata import get_metadata
-            records = get_metadata(self._project_path, media_type=self._media_type)
-            self.total_known.emit(len(records))
-            for record in records:
-                thumb_bytes = b""
-                thumb_path = _resolve_thumbnail(
-                    self._project_path, self._media_type, record.get("filename", "")
-                )
-                if thumb_path:
-                    try:
-                        thumb_bytes = thumb_path.read_bytes()
-                    except OSError:
-                        pass
-                self.record_ready.emit(record, thumb_bytes)
-            self.finished_loading.emit(len(records))
+            return _wrap_anywhere(json.dumps(value, ensure_ascii=True, sort_keys=True))
         except Exception:
-            self.total_known.emit(0)
-            self.finished_loading.emit(0)
+            return _wrap_anywhere(str(value))
+    return _wrap_anywhere(str(value))
 
 
-# ---------------------------------------------------------------------------
-# Column widget — scrollable list of cards
-# ---------------------------------------------------------------------------
+class _MetadataBrowserPage(QWidget):
+    selectionChanged = pyqtSignal(object)
 
-class _CardColumn(QScrollArea):
-    """A labeled, vertically-scrollable column of cards."""
-
-    def __init__(self, heading: str, parent=None) -> None:
+    def __init__(self, project_path: str, media_type: str, heading: str, parent=None) -> None:
         super().__init__(parent)
-        self.setWidgetResizable(True)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.setMinimumWidth(COLUMN_MIN_W)
-        self.setStyleSheet(
-            f"QScrollArea {{ border: none; background-color: {theme.BG}; }}"
-        )
-        self.setVerticalScrollBar(JumpScrollBar())
-
-        container = QWidget()
-        container.setStyleSheet(f"background-color: {theme.BG};")
-        self._layout = QVBoxLayout(container)
-        self._layout.setContentsMargins(6, 6, 6, 6)
-        self._layout.setSpacing(CARD_SPACING)
-
-        heading_label = QLabel(heading)
-        heading_label.setFont(theme.font_ui(bold=True))
-        heading_label.setStyleSheet(
-            f"color: {theme.TEXT}; font-size: 12pt; "
-            "padding-bottom: 4px; background-color: transparent;"
-        )
-        self._layout.addWidget(heading_label)
-
-        # 1px separator that doubles as a loading progress bar.
-        # During loading: fuchsia chunk grows left-to-right over the UI_BORDER base.
-        # When done: the bar is hidden and the heading's bottom spacing is enough.
-        self._progress = QProgressBar()
-        self._progress.setFixedHeight(1)
-        self._progress.setTextVisible(False)
-        self._progress.setRange(0, 1)
-        self._progress.setValue(0)
-        self._progress.setStyleSheet(
-            f"QProgressBar {{ background-color: {theme.UI_BORDER}; border: none; "
-            f"border-radius: 0px; max-height: 1px; }}"
-            f"QProgressBar::chunk {{ background-color: {theme.ACCENT}; "
-            f"border-radius: 0px; }}"
-        )
-        self._layout.addWidget(self._progress)
-        self._layout.addSpacing(4)
-
-        self._layout.addStretch(1)
-        self.setWidget(container)
-
-    def set_total(self, n: int) -> None:
-        self._progress.setRange(0, max(n, 1))
-        # Pre-allocate skeleton placeholders so the column reaches its full height
-        # immediately — subsequent fill_card calls do in-place swaps (no height change).
-        self._placeholders: list = []
-        if n <= 0:
-            return
-        container = self.widget()
-        container.setUpdatesEnabled(False)
-        try:
-            for _ in range(n):
-                ph = _PlaceholderCard()
-                count = self._layout.count()
-                self._layout.insertWidget(count - 1, ph)  # before trailing stretch
-                self._placeholders.append(ph)
-        finally:
-            container.setUpdatesEnabled(True)
-
-    def fill_card(self, index: int, card: QFrame) -> None:
-        """Replace the placeholder at *index* with the real *card* in-place."""
-        if index < len(self._placeholders):
-            ph = self._placeholders[index]
-            idx = self._layout.indexOf(ph)
-            if idx >= 0:
-                self._layout.insertWidget(idx, card)
-                self._layout.removeWidget(ph)
-                ph.deleteLater()
-            self._placeholders[index] = card
-        else:
-            # Fallback: total_known was never called or count was wrong
-            count = self._layout.count()
-            self._layout.insertWidget(count - 1, card)
-
-    def increment_progress(self) -> None:
-        self._progress.setValue(self._progress.value() + 1)
-
-    def finish_progress(self) -> None:
-        self._progress.setValue(0)
-
-    def add_card(self, card: QFrame) -> None:
-        count = self._layout.count()
-        self._layout.insertWidget(count - 1, card)
-
-    def set_empty_message(self, message: str) -> None:
-        lbl = QLabel(message)
-        lbl.setStyleSheet(f"color: {theme.TEXT_DIM}; background-color: transparent; border: none;")
-        lbl.setAlignment(Qt.AlignCenter)
-        self.add_card(lbl)
-
-    def _remove_leftover_placeholders(self) -> None:
-        """Remove any skeleton cards that never got a real card (e.g. load error)."""
-        for ph in self._placeholders:
-            if isinstance(ph, _PlaceholderCard):
-                self._layout.removeWidget(ph)
-                ph.deleteLater()
-        self._placeholders = []
-
-
-# ---------------------------------------------------------------------------
-# Main window
-# ---------------------------------------------------------------------------
-
-class MetadataVisualizer(QMainWindow):
-
-    def __init__(self, project_path: str) -> None:
-        super().__init__()
-        self.setWindowTitle("Crossing — Metadata")
         self._project_path = project_path
+        self._media_type = media_type
+        self._heading = heading
+        self._records: list[dict] = []
+        self._cells: list[ThumbnailCell] = []
+        self._selected_index = -1
+        self._grid_cols = 1
+        self._loader: ThumbnailLoader | None = None
+        self._zoom = float(_prefs.get(_zoom_key(media_type), _ZOOM_DEFAULT) or _ZOOM_DEFAULT)
+        self._item_by_index: list[_BrowserItem] = []
 
-        root = QWidget()
-        self.setCentralWidget(root)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setStyleSheet(f"QWidget {{ background: {theme.CANVAS_BG}; }}")
 
-        outer = QHBoxLayout(root)
-        outer.setContentsMargins(8, 8, 8, 8)
-        outer.setSpacing(8)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        self._movies_col = _CardColumn("Movies")
-        self._gameplay_col = _CardColumn("Gameplay")
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._scroll.setFocusPolicy(Qt.NoFocus)
+        self._scroll.setStyleSheet(f"QScrollArea {{ background: {theme.CANVAS_BG}; border: none; }}")
+        self._scroll.setVerticalScrollBar(JumpScrollBar())
+        self._scroll.viewport().installEventFilter(self)
 
-        outer.addWidget(self._movies_col, 1)
-        outer.addWidget(self._gameplay_col, 1)
+        self._grid_widget = QWidget()
+        self._grid_widget.setStyleSheet(f"background: {theme.CANVAS_BG};")
+        self._grid_layout = QGridLayout(self._grid_widget)
+        self._grid_layout.setContentsMargins(0, 0, 0, 0)
+        self._grid_layout.setSpacing(_THUMB_GAP)
+        self._grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
 
-        self.resize(900, 700)
-        restore_window_geometry(self, "window_metadata")
-        self._start_loaders()
+        self._empty_label = QLabel(f"No {heading.lower()} metadata found.")
+        self._empty_label.setAlignment(Qt.AlignCenter)
+        self._empty_label.setStyleSheet(
+            f"color: {theme.TEXT_DIM}; background: transparent; font-size: {theme.BASE_PT}pt;"
+        )
+        self._empty_label.setWordWrap(True)
 
-    def _start_loaders(self) -> None:
-        # Per-column queues; drained one card per event-loop tick so the
-        # UI repaints between every card insertion.
-        self._movie_queue:    list[tuple[dict, bytes]] = []
-        self._gameplay_queue: list[tuple[dict, bytes]] = []
-        self._movie_draining    = False
-        self._gameplay_draining = False
-        self._movies_fill_idx   = 0
-        self._gameplay_fill_idx = 0
-        self._movies_total   = 0
-        self._gameplay_total = 0
+        self._grid_layout.addWidget(self._empty_label, 0, 0)
+        self._scroll.setWidget(self._grid_widget)
+        outer.addWidget(self._scroll)
 
-        self._movies_loader = _MetadataLoader(self._project_path, "movie", self)
-        self._movies_loader.total_known.connect(self._movies_col.set_total)
-        self._movies_loader.record_ready.connect(self._on_movie_record)
-        self._movies_loader.finished_loading.connect(self._on_movies_done)
-        self._movies_loader.start()
+        self._resize_timer = QTimer(self)
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.timeout.connect(self._relayout_cells)
 
-        self._gameplay_loader = _MetadataLoader(self._project_path, "gameplay", self)
-        self._gameplay_loader.total_known.connect(self._gameplay_col.set_total)
-        self._gameplay_loader.record_ready.connect(self._on_gameplay_record)
-        self._gameplay_loader.finished_loading.connect(self._on_gameplay_done)
-        self._gameplay_loader.start()
+    def set_records(self, records: list[dict]) -> None:
+        self._stop_loader()
+        self._records = list(records)
+        self._selected_index = 0 if self._records else -1
+        self._rebuild_grid(select_first=True)
 
-    # -- movies -------------------------------------------------------------
+    def zoom(self) -> float:
+        return self._zoom
 
-    def _on_movie_record(self, record: dict, thumb_bytes: bytes) -> None:
-        self._movie_queue.append((record, thumb_bytes))
-        if not self._movie_draining:
-            self._movie_draining = True
-            QTimer.singleShot(0, self._drain_movies)
-
-    def _drain_movies(self) -> None:
-        if self._movie_queue:
-            record, thumb_bytes = self._movie_queue.pop(0)
-            card = _MovieCard(record, thumb_bytes)
-            self._movies_col.fill_card(self._movies_fill_idx, card)
-            self._movies_fill_idx += 1
-            self._movies_col.increment_progress()
-            QTimer.singleShot(0, self._drain_movies)
-        else:
-            self._movie_draining = False
-
-    def _on_movies_done(self, count: int) -> None:
-        if count == 0:
-            self._movies_col._remove_leftover_placeholders()
-            self._movies_col.finish_progress()
-            self._movies_col.set_empty_message("No movie metadata found.")
-        else:
-            QTimer.singleShot(0, self._finish_movies)
-
-    def _finish_movies(self) -> None:
-        if self._movie_queue or self._movie_draining:
-            QTimer.singleShot(20, self._finish_movies)
-        else:
-            self._movies_col._remove_leftover_placeholders()
-            self._movies_col.finish_progress()
-
-    # -- gameplay -----------------------------------------------------------
-
-    def _on_gameplay_record(self, record: dict, thumb_bytes: bytes) -> None:
-        self._gameplay_queue.append((record, thumb_bytes))
-        if not self._gameplay_draining:
-            self._gameplay_draining = True
-            QTimer.singleShot(0, self._drain_gameplay)
-
-    def _drain_gameplay(self) -> None:
-        if self._gameplay_queue:
-            record, thumb_bytes = self._gameplay_queue.pop(0)
-            card = _GameplayCard(record, thumb_bytes)
-            self._gameplay_col.fill_card(self._gameplay_fill_idx, card)
-            self._gameplay_fill_idx += 1
-            self._gameplay_col.increment_progress()
-            QTimer.singleShot(0, self._drain_gameplay)
-        else:
-            self._gameplay_draining = False
-
-    def _on_gameplay_done(self, count: int) -> None:
-        if count == 0:
-            self._gameplay_col._remove_leftover_placeholders()
-            self._gameplay_col.finish_progress()
-            self._gameplay_col.set_empty_message("No gameplay metadata found.")
-        else:
-            QTimer.singleShot(0, self._finish_gameplay)
-
-    def _finish_gameplay(self) -> None:
-        if self._gameplay_queue or self._gameplay_draining:
-            QTimer.singleShot(20, self._finish_gameplay)
-        else:
-            self._gameplay_col._remove_leftover_placeholders()
-            self._gameplay_col.finish_progress()
-
-    def keyPressEvent(self, event) -> None:
-        if event.key() in (Qt.Key_Q, Qt.Key_W) and event.modifiers() & Qt.ControlModifier:
-            self.close()
+    def set_zoom(self, zoom: float, persist: bool = True) -> None:
+        zoom = max(_ZOOM_MIN, min(_ZOOM_MAX, zoom))
+        if abs(zoom - self._zoom) < 1e-6:
             return
+        self._zoom = zoom
+        if persist:
+            _prefs.set(_zoom_key(self._media_type), self._zoom)
+        for item in self._item_by_index:
+            item.set_zoom(self._zoom)
+        self._grid_layout.invalidate()
+        self._grid_widget.adjustSize()
+
+    def _change_zoom(self, delta: float) -> None:
+        self.set_zoom(self._zoom + delta)
+
+    def current_record(self) -> dict | None:
+        if 0 <= self._selected_index < len(self._records):
+            return self._records[self._selected_index]
+        return None
+
+    def _thumbnail_path_for(self, record: dict) -> Path | None:
+        return _resolve_thumbnail(
+            self._project_path,
+            self._media_type,
+            record.get("filename", ""),
+        )
+
+    def _clear_grid(self) -> None:
+        while self._grid_layout.count():
+            item = self._grid_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None and widget is not self._empty_label:
+                widget.deleteLater()
+        self._cells = []
+        self._item_by_index = []
+
+    def _cols(self) -> int:
+        viewport_width = self._scroll.viewport().width() or 200
+        return max(1, (viewport_width - _THUMB_GAP) // (_THUMB_SIZE + _THUMB_GAP))
+
+    def _rebuild_grid(self, select_first: bool = False) -> None:
+        self._clear_grid()
+        if not self._records:
+            self._grid_layout.addWidget(self._empty_label, 0, 0)
+            self.selectionChanged.emit(None)
+            return
+
+        cols = self._cols()
+        self._grid_cols = cols
+        active_index = self._selected_index
+        if active_index < 0 and select_first:
+            active_index = 0
+        if active_index >= len(self._records):
+            active_index = len(self._records) - 1
+        self._selected_index = active_index
+
+        for index, record in enumerate(self._records):
+            title = record.get("title") or Path(record.get("filename", "")).stem or "(untitled)"
+            subtitle = record.get("year") or record.get("game") or record.get("director") or ""
+            tooltip = title if not subtitle else f"{title} — {subtitle}"
+            item = _BrowserItem(index=index, title=title, tooltip=tooltip, zoom=self._zoom)
+            item.clicked.connect(self._on_cell_clicked)
+            item.doubleClicked.connect(self._on_cell_double_clicked)
+            item.set_selected(index == self._selected_index)
+            self._cells.append(item.thumbnail())
+            self._item_by_index.append(item)
+            self._grid_layout.addWidget(item, index // cols, index % cols)
+
+        self._start_loader()
+        self._apply_zoom_to_items()
+        self._emit_current_selection()
+
+    def _apply_zoom_to_items(self) -> None:
+        for item in self._item_by_index:
+            item.set_zoom(self._zoom)
+
+    def _start_loader(self) -> None:
+        if not self._records:
+            return
+        self._loader = ThumbnailLoader(
+            self._records,
+            _THUMB_SIZE,
+            path_for=self._thumbnail_path_for,
+            parent=self,
+        )
+        self._loader.thumbReady.connect(self._on_thumb_ready)
+        self._loader.start()
+
+    def _stop_loader(self) -> None:
+        if self._loader is None:
+            return
+        try:
+            self._loader.thumbReady.disconnect(self._on_thumb_ready)
+        except (TypeError, RuntimeError):
+            pass
+        if self._loader.isRunning():
+            self._loader.cancel()
+            self._loader.wait(300)
+        self._loader = None
+
+    def _on_thumb_ready(self, index: int, qimg: QImage) -> None:
+        if 0 <= index < len(self._item_by_index):
+            self._item_by_index[index].set_image(qimg)
+
+    def _set_selected_index(self, index: int, emit: bool = True) -> None:
+        if not self._records:
+            self._selected_index = -1
+            if emit:
+                self.selectionChanged.emit(None)
+            return
+
+        index = max(0, min(index, len(self._records) - 1))
+        if index == self._selected_index and emit:
+            self._emit_current_selection()
+            return
+
+        if 0 <= self._selected_index < len(self._item_by_index):
+            self._item_by_index[self._selected_index].set_selected(False)
+
+        self._selected_index = index
+
+        if 0 <= self._selected_index < len(self._item_by_index):
+            self._item_by_index[self._selected_index].set_selected(True)
+            self._scroll.ensureWidgetVisible(self._item_by_index[self._selected_index])
+
+        if emit:
+            self._emit_current_selection()
+
+    def _emit_current_selection(self) -> None:
+        self.selectionChanged.emit(self.current_record())
+
+    def _on_cell_clicked(self, index: int) -> None:
+        self.setFocus()
+        self._set_selected_index(index, emit=True)
+
+    def _on_cell_double_clicked(self, index: int) -> None:
+        self._on_cell_clicked(index)
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if obj is self._scroll.viewport() and event.type() == QEvent.Wheel:
+            wheel = event  # type: ignore[assignment]
+            if wheel.modifiers() & Qt.ControlModifier:
+                delta = wheel.angleDelta().y()
+                if delta > 0:
+                    self._change_zoom(_ZOOM_STEP)
+                elif delta < 0:
+                    self._change_zoom(-_ZOOM_STEP)
+                wheel.accept()
+                return True
+        return super().eventFilter(obj, event)
+
+    def _relayout_cells(self) -> None:
+        if not self._item_by_index:
+            return
+        cols = self._cols()
+        self._grid_cols = cols
+        while self._grid_layout.count():
+            item = self._grid_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None and widget is not self._empty_label:
+                widget.setParent(None)
+        for index, item_widget in enumerate(self._item_by_index):
+            self._grid_layout.addWidget(item_widget, index // cols, index % cols)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._resize_timer.start(0)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        key = event.key()
+        mod = event.modifiers()
+        if mod & Qt.ControlModifier:
+            if key in (Qt.Key_Plus, Qt.Key_Equal):
+                self._change_zoom(_ZOOM_STEP)
+                return
+            if key in (Qt.Key_Minus, Qt.Key_Underscore):
+                self._change_zoom(-_ZOOM_STEP)
+                return
+            if key == Qt.Key_0:
+                self.set_zoom(_ZOOM_DEFAULT)
+                return
+        if key == Qt.Key_Home:
+            self._set_selected_index(0)
+            return
+        if key == Qt.Key_End:
+            self._set_selected_index(len(self._records) - 1)
+            return
+
+        if key in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down):
+            if not self._records:
+                return
+            cols = max(1, self._grid_cols)
+            delta = {
+                Qt.Key_Left: -1,
+                Qt.Key_Right: 1,
+                Qt.Key_Up: -cols,
+                Qt.Key_Down: cols,
+            }[key]
+            self._set_selected_index(self._selected_index + delta)
+            return
+
         super().keyPressEvent(event)
 
 
-# ---------------------------------------------------------------------------
-# Public launcher
-# ---------------------------------------------------------------------------
+class _BrowserItem(QWidget):
+    clicked = pyqtSignal(int)
+    doubleClicked = pyqtSignal(int)
+
+    def __init__(self, index: int, title: str, tooltip: str = "", zoom: float = 1.0, parent=None) -> None:
+        super().__init__(parent)
+        self._index = index
+        self._raw_title = title
+        self._zoom = zoom
+        self._thumb = ThumbnailCell(index=index, size=_THUMB_SIZE, tooltip=tooltip, parent=self)
+        self._thumb.drag_path = ""
+        self._thumb.drag_meta = {}
+        self._thumb.clicked.connect(lambda _idx: self.clicked.emit(self._index))
+        self._thumb.doubleClicked.connect(lambda _idx: self.doubleClicked.emit(self._index))
+
+        self._title = QLabel(self)
+        self._title.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+        self._title.setWordWrap(True)
+        self._title.setTextInteractionFlags(Qt.NoTextInteraction)
+        self._title.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._title.setStyleSheet(
+            f"background: transparent; color: {theme.TEXT};"
+        )
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(2)
+        outer.addWidget(self._thumb, 0, Qt.AlignHCenter)
+        outer.addWidget(self._title, 0)
+
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.set_zoom(zoom)
+
+    def thumbnail(self) -> ThumbnailCell:
+        return self._thumb
+
+    def set_image(self, qimg: QImage) -> None:
+        self._thumb.set_image(qimg)
+
+    def set_selected(self, selected: bool) -> None:
+        self._thumb.set_selected(selected)
+
+    def set_zoom(self, zoom: float) -> None:
+        self._zoom = zoom
+        self._title.setFont(_browser_title_font(zoom))
+        self._title.setText(_wrap_anywhere(self._raw_title))
+        self._title.setFixedWidth(_THUMB_SIZE)
+        self._title.setMinimumHeight(self._title.sizeHint().height())
+        self.adjustSize()
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(self._index)
+        super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self.doubleClicked.emit(self._index)
+        super().mouseDoubleClickEvent(event)
+
+
+class MetadataVisualizer(VisualizerWindow):
+    def __init__(self, project_path: str) -> None:
+        super().__init__()
+        self._project_path = project_path
+        self._inspector_hidden = False
+        self._saved_splitter_sizes: list[int] = []
+        self._selected_records: dict[str, dict | None] = {"movie": None, "gameplay": None}
+
+        self.setWindowTitle("Crossing — Metadata Visualizer")
+
+        root = QWidget()
+        root.setStyleSheet(f"background: {theme.CANVAS_BG};")
+        self.setCentralWidget(root)
+
+        layout = QHBoxLayout(root)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self._splitter = GripSplitter(Qt.Horizontal)
+        layout.addWidget(self._splitter)
+
+        self._browser_stack = QStackedWidget()
+        self._browser_stack.setContentsMargins(0, 0, 0, 0)
+
+        self._movie_page = _MetadataBrowserPage(project_path, "movie", "Movies")
+        self._gameplay_page = _MetadataBrowserPage(project_path, "gameplay", "Gameplay")
+        self._movie_page.selectionChanged.connect(lambda rec: self._on_page_selection_changed("movie", rec))
+        self._gameplay_page.selectionChanged.connect(lambda rec: self._on_page_selection_changed("gameplay", rec))
+
+        self._browser_stack.addWidget(self._movie_page)
+        self._browser_stack.addWidget(self._gameplay_page)
+
+        self._inspector_shell = self._build_inspector()
+
+        self._splitter.addWidget(self._browser_stack)
+        self._splitter.addWidget(self._inspector_shell)
+        self._splitter.setStretchFactor(0, 1)
+        self._splitter.setStretchFactor(1, 0)
+
+        self.setMinimumSize(980, 640)
+        restore_window_geometry(self, "window_metadata")
+        QTimer.singleShot(0, self._fit_splitter_width)
+
+        self._load_records()
 
     def closeEvent(self, event) -> None:
         save_window_geometry(self, "window_metadata")
         super().closeEvent(event)
 
+    def _load_records(self) -> None:
+        from data.metadata import get_metadata
 
-# ---------------------------------------------------------------------------
-# Public launcher
-# ---------------------------------------------------------------------------
+        try:
+            movie_records = get_metadata(self._project_path, media_type="movie")
+        except Exception:
+            movie_records = []
+
+        try:
+            gameplay_records = get_metadata(self._project_path, media_type="gameplay")
+        except Exception:
+            gameplay_records = []
+
+        self._movie_page.set_records(movie_records)
+        self._gameplay_page.set_records(gameplay_records)
+        self._sync_inspector_to_current_tab()
+
+    def _build_inspector(self) -> QWidget:
+        outer = QWidget()
+        outer.setStyleSheet(f"background: {theme.CANVAS_BG};")
+        outer.setMinimumWidth(_INSPECTOR_MIN_W)
+        outer_layout = QVBoxLayout(outer)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        tabs = QTabBar()
+        tabs.setExpanding(False)
+        tabs.setUsesScrollButtons(False)
+        tabs.setDrawBase(False)
+        tabs.setFocusPolicy(Qt.NoFocus)
+        tabs.setFocusPolicy(Qt.NoFocus)
+        tabs.setStyleSheet(theme.tab_strip_stylesheet())
+        self._source_tabs = tabs
+
+        tabs.addTab(" Movies ")
+        tabs.addTab(" Gameplay ")
+
+        tabs.currentChanged.connect(self._on_source_tab_changed)
+
+        outer_layout.addWidget(tabs)
+
+        pane = QWidget()
+        pane.setStyleSheet(f"background: {theme.TAB_BG};")
+        pane_layout = QVBoxLayout(pane)
+        pane_layout.setContentsMargins(2, 2, 2, 2)
+        pane_layout.setSpacing(2)
+
+        self._info_section = CollapsibleSection("Info", pref_key="metadata_section_info")
+        self._info_section.setStyleSheet(f"background: {theme.TAB_BG};")
+        info_wrap = QWidget()
+        info_layout = QVBoxLayout(info_wrap)
+        info_layout.setContentsMargins(0, 0, 0, 0)
+        info_layout.setSpacing(0)
+
+        self._info_block = MetadataBlock(_INFO_ROWS)
+        info_layout.addWidget(self._info_block)
+        self._info_section.add_widget(info_wrap)
+
+        pane_layout.addWidget(self._info_section)
+        outer_layout.addWidget(pane)
+        outer_layout.addStretch(1)
+        return outer
+
+    def _fit_splitter_width(self) -> None:
+        inspector_w = max(_INSPECTOR_MIN_W, self._inspector_shell.sizeHint().width())
+        total_w = max(self.width(), 980)
+        browser_w = max(1, total_w - inspector_w)
+        self._splitter.setSizes([browser_w, inspector_w])
+        self._saved_splitter_sizes = [browser_w, inspector_w]
+
+    def _toggle_inspector(self) -> None:
+        if self._inspector_hidden:
+            self._inspector_shell.show()
+            if self._saved_splitter_sizes:
+                self._splitter.setSizes(self._saved_splitter_sizes)
+            else:
+                self._fit_splitter_width()
+            self._inspector_hidden = False
+            return
+
+        self._saved_splitter_sizes = self._splitter.sizes()
+        self._inspector_shell.hide()
+        self._splitter.setSizes([max(1, self.width() - 1), 0])
+        self._inspector_hidden = True
+
+    def _toggle_fullscreen(self) -> None:
+        if self.isFullScreen():
+            self.showNormal()
+        else:
+            self.showFullScreen()
+
+    def _on_page_selection_changed(self, media_type: str, record: object) -> None:
+        self._selected_records[media_type] = record if isinstance(record, dict) else None
+        source_tabs = getattr(self, "_source_tabs", None)
+        if source_tabs is None:
+            return
+        current_page = "movie" if source_tabs.currentIndex() == 0 else "gameplay"
+        if current_page == media_type:
+            self._show_record(record if isinstance(record, dict) else None)
+
+    def _sync_inspector_to_current_tab(self) -> None:
+        source_tabs = getattr(self, "_source_tabs", None)
+        if source_tabs is None:
+            return
+        current_index = source_tabs.currentIndex()
+        current_page = "movie" if current_index == 0 else "gameplay"
+        self._browser_stack.setCurrentIndex(current_index)
+        self._show_record(self._selected_records.get(current_page))
+
+    def _on_source_tab_changed(self, index: int) -> None:
+        self._browser_stack.setCurrentIndex(index)
+        self._sync_inspector_to_current_tab()
+
+    def _show_record(self, record: dict | None) -> None:
+        if record is None:
+            for key in _INFO_ROWS:
+                self._info_block.set(key, "—")
+            return
+
+        values = {
+            "title": record.get("title"),
+            "filename": record.get("filename"),
+            "original_filename": record.get("original_filename"),
+            "media_type": record.get("media_type"),
+            "year": record.get("year"),
+            "director": record.get("director"),
+            "game": record.get("game"),
+            "duration": record.get("duration"),
+            "tagline": record.get("tagline"),
+            "overview": record.get("overview"),
+            "media_id": record.get("media_id"),
+            "tmdb": record.get("tmdb"),
+            "imdb": record.get("imdb"),
+        }
+        for key in _INFO_ROWS:
+            value = _format_value(values.get(key))
+            if key == "overview" and value != "—":
+                value = value[:260].rstrip() + ("…" if len(value) > 260 else "")
+            self._info_block.set(key, value)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        key = event.key()
+        mod = event.modifiers()
+        if key == Qt.Key_Escape:
+            self.close()
+            return
+        if key in (Qt.Key_Q, Qt.Key_W) and mod & Qt.ControlModifier:
+            self.close()
+            return
+        if key == Qt.Key_Tab and not (mod & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier)):
+            if mod & Qt.ShiftModifier:
+                self._toggle_fullscreen()
+            else:
+                self._toggle_inspector()
+            return
+        if key == Qt.Key_Backtab:
+            self._toggle_fullscreen()
+            return
+        super().keyPressEvent(event)
+
 
 def run_visualizer(project_path: str) -> None:
     """Create the QApplication (if needed) and launch the metadata visualizer."""
     from visualizers._window_helpers import raise_existing_window
+
     if raise_existing_window("metadata"):
         return
 

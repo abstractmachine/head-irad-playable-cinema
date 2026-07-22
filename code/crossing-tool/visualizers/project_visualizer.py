@@ -595,7 +595,7 @@ class ProjectVisualizer(VisualizerWindow):
 
     def _build_inspector(self) -> QWidget:
         outer = QWidget()
-        outer.setStyleSheet(f"background: {theme.PANEL_BG};")
+        outer.setStyleSheet(f"background: {theme.CANVAS_BG};")
 
         outer_layout = QVBoxLayout(outer)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -604,7 +604,7 @@ class ProjectVisualizer(VisualizerWindow):
         tabs = QTabWidget()
         tabs.setDocumentMode(True)
         tabs.tabBar().setDrawBase(False)
-        tabs.tabBar().setExpanding(True)
+        tabs.tabBar().setExpanding(False)
         tabs.tabBar().setUsesScrollButtons(False)
         tabs.setFocusPolicy(Qt.NoFocus)
         tabs.tabBar().setFocusPolicy(Qt.NoFocus)
@@ -660,7 +660,7 @@ class ProjectVisualizer(VisualizerWindow):
         layout.addWidget(import_sec)
         layout.addWidget(visualizers_sec)
 
-        tabs.addTab(project_tab, "Project")
+        tabs.addTab(project_tab, " Project ")
         outer_layout.addWidget(tabs)
 
         self._inspector_scroll = scroll

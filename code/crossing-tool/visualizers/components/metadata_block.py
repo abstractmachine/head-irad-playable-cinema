@@ -311,13 +311,13 @@ class MetadataBlock(QWidget):
 
             val_lbl = QLabel("—")
             val_lbl.setStyleSheet(table_value_cell_style(top, bottom))
-            val_lbl.setWordWrap(False)
+            val_lbl.setWordWrap(True)
             val_lbl.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
             val_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
             sp = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
             sp.setHeightForWidth(True)
             val_lbl.setSizePolicy(sp)
-            val_lbl.setFixedHeight(INSPECTOR_ROW_HEIGHT)
+            val_lbl.setMinimumHeight(INSPECTOR_ROW_HEIGHT)
             layout.addWidget(val_lbl, row_idx, 1)
 
             self._labels[key] = val_lbl

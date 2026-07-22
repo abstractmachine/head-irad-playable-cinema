@@ -2,7 +2,12 @@
 
 ![Metadata Visualizer screenshot](./images/visualizers/visualizer-metadata.png)
 
-The `Metadata` visualizer is a scrollable card-based browser showing all imported media in two columns: **Movies** on the left and **Gameplay** on the right.
+The `Metadata` visualizer is a canonical two-pane browser:
+
+- left: tabbed thumbnail browser
+- right: single `Info` inspector
+
+The browser has two tabs: **Movies** and **Gameplay**. Selecting a thumbnail updates the inspector.
 
 Open it with:
 
@@ -12,18 +17,13 @@ crossing visualizer metadata
 
 ## Layout
 
-Each media entry appears as a card containing:
+The browser shows a grid of thumbnails using the canonical Crossing thumbnail cell styling. Movies use poster images; gameplay uses first-frame or existing gameplay thumbnails.
 
-- **Thumbnail** — poster image for movies, or a video frame for gameplay clips
-- **Title** — the media title (bold)
-- **Year · Director** — for movies; game name for gameplay
-- **Overview** — a short plot or description summary
-
-Cards are loaded asynchronously; thumbnails appear as they become available.
+The inspector contains one collapsible section, `Info`, using the shared inspector table contract.
 
 ## Navigation
 
-Scroll independently within the Movies and Gameplay columns. The fuchsia scrollbar on the divider indicates loading progress.
+Use the `Movies` and `Gameplay` tabs to switch between datasets. Arrow keys move selection within the active grid, and the window keeps the canonical `TAB` / `SHIFT+TAB` shortcuts used by the other visualizers.
 
 ## Requirements
 

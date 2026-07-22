@@ -413,7 +413,7 @@ def tab_strip_stylesheet() -> str:
         f"QTabBar {{ background: {CANVAS_BG}; border: none; }}"
         f"QTabBar::tab {{"
         f" background: {CANVAS_BG}; color: {TEXT_DIM};"
-        f" padding: 2px 8px; border: none;"
+        f" padding: 2px 16px; border: none;"
         f" font-family: '{FAMILY_UI}'; font-size: {BASE_PT}pt;"
         f" font-weight: {WEIGHT_UI};"
         f" min-height: 20px;"

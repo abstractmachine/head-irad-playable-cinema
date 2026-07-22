@@ -169,7 +169,7 @@ _WORKSPACE_TABS_STYLESHEET = (
     f"QTabBar {{ background: {theme.CANVAS_BG}; border: none; }}"
     f"QTabBar::tab {{"
     f" background: {theme.CANVAS_BG}; color: {theme.TEXT_DIM};"
-    f" padding: 2px 8px; border: none;"
+    f" padding: 2px 12px; border: none;"
     f" font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
     f" font-weight: {theme.WEIGHT_UI};"
     f" min-height: 20px;"
@@ -3945,7 +3945,7 @@ class BookVisualizerWindow(QMainWindow):
         self._workspace_tabs = QTabWidget()
         self._workspace_tabs.setDocumentMode(True)
         self._workspace_tabs.tabBar().setDrawBase(False)
-        self._workspace_tabs.tabBar().setExpanding(True)
+        self._workspace_tabs.tabBar().setExpanding(False)
         self._workspace_tabs.tabBar().setUsesScrollButtons(False)
         self._workspace_tabs.setFocusPolicy(Qt.NoFocus)
         self._workspace_tabs.tabBar().setFocusPolicy(Qt.NoFocus)
@@ -3958,8 +3958,8 @@ class BookVisualizerWindow(QMainWindow):
         book_workspace_layout.addWidget(scroll)
 
         engr_workspace = self._build_engraving_workspace_panel()
-        self._book_workspace_idx = self._workspace_tabs.addTab(book_workspace, "Book")
-        self._engr_workspace_idx = self._workspace_tabs.addTab(engr_workspace, "Engravings")
+        self._book_workspace_idx = self._workspace_tabs.addTab(book_workspace, " Book ")
+        self._engr_workspace_idx = self._workspace_tabs.addTab(engr_workspace, " Engravings ")
         self._workspace_tabs.currentChanged.connect(self._on_workspace_tab_changed)
         self._workspace_tabs.setCurrentIndex(self._book_workspace_idx)
 
