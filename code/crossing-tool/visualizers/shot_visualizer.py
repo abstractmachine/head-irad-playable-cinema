@@ -34,7 +34,7 @@ except ImportError:
 
 # Fix Qt plugin conflict with OpenCV
 # Import PyQt5 first, then remove OpenCV's Qt plugin path
-from PyQt5.QtCore import Qt, QTimer, QEvent, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, QEvent, QThread, QObject, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel,
@@ -100,6 +100,10 @@ class _IpcServer(_QThread):
         srv = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
         try:
             srv.bind(str(sock_path))
+        except OSError as exc:
+            print(f"[shotlist ipc] socket bind failed for {sock_path}: {exc}", file=sys.stderr)
+            return
+        try:
             srv.listen(5)
             srv.settimeout(1.0)
             while self._running:
@@ -135,6 +139,23 @@ class _IpcServer(_QThread):
 
     def stop(self) -> None:
         self._running = False
+
+
+class _ShotlistEscapeFilter(QObject):
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if event.type() == QEvent.KeyPress and event.key() == Qt.Key_Escape:
+            app = QApplication.instance()
+            win = app.activeWindow() if app else None
+            if win is None:
+                return False
+            focus = win.focusWidget()
+            ann_display = getattr(win, "ann_display", None)
+            if focus is ann_display and getattr(win, "_ann_dirty", False):
+                return False
+            if hasattr(win, "close"):
+                win.close()
+                return True
+        return False
 
 
 def ipc_send_load(
@@ -3320,6 +3341,17 @@ def main():
                 print("Run 'crossing shotlist shot detect' first to generate shotlist.", file=sys.stderr)
                 sys.exit(1)
 
+    # If a Shotlist window is already running for this project, hand off to it
+    # instead of starting a second IPC server that would collide on the socket.
+    if filenames and ipc_send_load(
+        project_path,
+        filenames[0],
+        args.media,
+        shot_id=args.shot_id,
+        playback="play" if getattr(args, "play", False) else "pause",
+    ):
+        return
+
     # Enable low-level fault handler so C-level crashes (segfaults etc.) print a traceback.
     # In verbose mode also write the crash output to a dedicated log file so it survives
     # even if the terminal scrollback is lost.
@@ -3336,6 +3368,9 @@ def main():
     # Launch Qt application
     app = QApplication(sys.argv)
     theme.apply_theme(app)
+    if not hasattr(app, "_shotlist_escape_filter"):
+        app._shotlist_escape_filter = _ShotlistEscapeFilter(app)
+        app.installEventFilter(app._shotlist_escape_filter)
     visualizer = ShotlistVisualizer(project_path, filenames, 0, args.media, verbose=args.verbose)
 
     # Use saved geometry if available; otherwise open maximised.

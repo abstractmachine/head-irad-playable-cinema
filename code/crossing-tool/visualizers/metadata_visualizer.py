@@ -25,21 +25,22 @@ from tool import prefs as _prefs
 from tool.shortcuts import VisualizerWindow
 from visualizers.components.collapsible_section import CollapsibleSection
 from visualizers.components.metadata_block import MetadataBlock
-from visualizers.components.thumbnail_cell import ThumbnailCell
 from visualizers.components.thumbnail_loader import ThumbnailLoader
+from visualizers.shot_visualizer import open_at_shot
 
 from PyQt5.QtCore import QEvent, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QFont, QImage, QWheelEvent
+from PyQt5.QtGui import QImage, QPixmap, QWheelEvent
 from PyQt5.QtWidgets import (
     QApplication,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QPushButton,
     QScrollArea,
     QStackedWidget,
     QTabBar,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -47,9 +48,10 @@ _THUMB_SIZE = 120
 _THUMB_GAP = theme.SECTION_GAP
 _INSPECTOR_MIN_W = 280
 _ZOOM_MIN = 0.75
-_ZOOM_MAX = 1.75
+_ZOOM_MAX = 7.00
 _ZOOM_STEP = 0.10
 _ZOOM_DEFAULT = 1.00
+_THUMB_LOAD_SIZE = int(round(_THUMB_SIZE * _ZOOM_MAX))
 
 
 def _zoom_key(media_type: str) -> str:
@@ -59,12 +61,6 @@ def _zoom_key(media_type: str) -> str:
 def _wrap_anywhere(text: str) -> str:
     return "\u200b".join(text)
 
-
-def _browser_title_font(zoom: float) -> QFont:
-    font = theme.font_ui()
-    font.setPointSize(max(6, round(theme.BASE_PT * zoom)))
-    font.setWeight(theme.WEIGHT_UI)
-    return font
 
 _INFO_ROWS = [
     "title",
@@ -111,8 +107,98 @@ def _format_value(value) -> str:
     return _wrap_anywhere(str(value))
 
 
+class _MetadataFlowWidget(QWidget):
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._cells: list[_BrowserItem] = []
+        self._empty_label: QLabel | None = None
+        self._first_row_count = 1
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+    def set_empty_label(self, label: QLabel) -> None:
+        self._empty_label = label
+        label.setParent(self)
+        label.hide()
+
+    def set_cells(self, cells: list[_BrowserItem]) -> None:
+        for cell in self._cells:
+            cell.setParent(None)
+        self._cells = list(cells)
+        for cell in self._cells:
+            cell.setParent(self)
+            cell.show()
+        if self._empty_label is not None:
+            self._empty_label.hide()
+        self.request_reflow()
+
+    def clear_cells(self) -> None:
+        for cell in self._cells:
+            cell.setParent(None)
+            cell.deleteLater()
+        self._cells = []
+        self._first_row_count = 1
+        if self._empty_label is not None:
+            self._empty_label.show()
+        self.request_reflow()
+
+    def request_reflow(self) -> None:
+        self._do_flow_layout()
+
+    def first_row_count(self) -> int:
+        return self._first_row_count
+
+    def _do_flow_layout(self) -> None:
+        viewport = self.parentWidget()
+        viewport_w = max(1, viewport.width() if viewport is not None else self.width())
+
+        if not self._cells:
+            if self._empty_label is not None:
+                self._empty_label.setGeometry(self.rect())
+                self._empty_label.show()
+                self._empty_label.raise_()
+            self._first_row_count = 1
+            self.setMinimumHeight(1)
+            return
+
+        margin = _THUMB_GAP
+        spacing = _THUMB_GAP
+
+        x = margin
+        y = margin
+        row_h = 0
+        first_row_count = 0
+        first_row_finalized = False
+
+        for index, cell in enumerate(self._cells):
+            cell_w = max(1, cell.sizeHint().width())
+            cell_h = max(1, cell.sizeHint().height())
+
+            if x > margin and x + cell_w > viewport_w - margin:
+                if not first_row_finalized:
+                    first_row_finalized = True
+                    first_row_count = index
+                x = margin
+                y += row_h + spacing
+                row_h = 0
+
+            cell.move(x, y)
+            cell.resize(cell_w, cell_h)
+            x += cell_w + spacing
+            row_h = max(row_h, cell_h)
+
+        if not first_row_finalized:
+            first_row_count = len(self._cells)
+        self._first_row_count = max(1, first_row_count)
+
+        total_h = y + row_h + margin
+        if self._empty_label is not None:
+            self._empty_label.hide()
+        self.setMinimumHeight(max(1, total_h))
+
+
 class _MetadataBrowserPage(QWidget):
     selectionChanged = pyqtSignal(object)
+    openRequested = pyqtSignal(object)
 
     def __init__(self, project_path: str, media_type: str, heading: str, parent=None) -> None:
         super().__init__(parent)
@@ -120,7 +206,6 @@ class _MetadataBrowserPage(QWidget):
         self._media_type = media_type
         self._heading = heading
         self._records: list[dict] = []
-        self._cells: list[ThumbnailCell] = []
         self._selected_index = -1
         self._grid_cols = 1
         self._loader: ThumbnailLoader | None = None
@@ -144,13 +229,8 @@ class _MetadataBrowserPage(QWidget):
         self._scroll.setVerticalScrollBar(JumpScrollBar())
         self._scroll.viewport().installEventFilter(self)
 
-        self._grid_widget = QWidget()
+        self._grid_widget = _MetadataFlowWidget()
         self._grid_widget.setStyleSheet(f"background: {theme.CANVAS_BG};")
-        self._grid_layout = QGridLayout(self._grid_widget)
-        self._grid_layout.setContentsMargins(0, 0, 0, 0)
-        self._grid_layout.setSpacing(_THUMB_GAP)
-        self._grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-
         self._empty_label = QLabel(f"No {heading.lower()} metadata found.")
         self._empty_label.setAlignment(Qt.AlignCenter)
         self._empty_label.setStyleSheet(
@@ -158,13 +238,16 @@ class _MetadataBrowserPage(QWidget):
         )
         self._empty_label.setWordWrap(True)
 
-        self._grid_layout.addWidget(self._empty_label, 0, 0)
+        self._grid_widget.set_empty_label(self._empty_label)
         self._scroll.setWidget(self._grid_widget)
         outer.addWidget(self._scroll)
 
         self._resize_timer = QTimer(self)
         self._resize_timer.setSingleShot(True)
         self._resize_timer.timeout.connect(self._relayout_cells)
+
+    def request_reflow(self) -> None:
+        self._resize_timer.start(0)
 
     def set_records(self, records: list[dict]) -> None:
         self._stop_loader()
@@ -184,8 +267,7 @@ class _MetadataBrowserPage(QWidget):
             _prefs.set(_zoom_key(self._media_type), self._zoom)
         for item in self._item_by_index:
             item.set_zoom(self._zoom)
-        self._grid_layout.invalidate()
-        self._grid_widget.adjustSize()
+        self.request_reflow()
 
     def _change_zoom(self, delta: float) -> None:
         self.set_zoom(self._zoom + delta)
@@ -195,6 +277,12 @@ class _MetadataBrowserPage(QWidget):
             return self._records[self._selected_index]
         return None
 
+    def current_thumbnail_path(self) -> Path | None:
+        record = self.current_record()
+        if record is None:
+            return None
+        return self._thumbnail_path_for(record)
+
     def _thumbnail_path_for(self, record: dict) -> Path | None:
         return _resolve_thumbnail(
             self._project_path,
@@ -203,27 +291,15 @@ class _MetadataBrowserPage(QWidget):
         )
 
     def _clear_grid(self) -> None:
-        while self._grid_layout.count():
-            item = self._grid_layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None and widget is not self._empty_label:
-                widget.deleteLater()
-        self._cells = []
+        self._grid_widget.clear_cells()
         self._item_by_index = []
-
-    def _cols(self) -> int:
-        viewport_width = self._scroll.viewport().width() or 200
-        return max(1, (viewport_width - _THUMB_GAP) // (_THUMB_SIZE + _THUMB_GAP))
 
     def _rebuild_grid(self, select_first: bool = False) -> None:
         self._clear_grid()
         if not self._records:
-            self._grid_layout.addWidget(self._empty_label, 0, 0)
             self.selectionChanged.emit(None)
             return
 
-        cols = self._cols()
-        self._grid_cols = cols
         active_index = self._selected_index
         if active_index < 0 and select_first:
             active_index = 0
@@ -235,14 +311,13 @@ class _MetadataBrowserPage(QWidget):
             title = record.get("title") or Path(record.get("filename", "")).stem or "(untitled)"
             subtitle = record.get("year") or record.get("game") or record.get("director") or ""
             tooltip = title if not subtitle else f"{title} — {subtitle}"
-            item = _BrowserItem(index=index, title=title, tooltip=tooltip, zoom=self._zoom)
+            item = _BrowserItem(index=index, tooltip=tooltip, zoom=self._zoom, media_type=self._media_type)
             item.clicked.connect(self._on_cell_clicked)
             item.doubleClicked.connect(self._on_cell_double_clicked)
             item.set_selected(index == self._selected_index)
-            self._cells.append(item.thumbnail())
             self._item_by_index.append(item)
-            self._grid_layout.addWidget(item, index // cols, index % cols)
 
+        self._grid_widget.set_cells(self._item_by_index)
         self._start_loader()
         self._apply_zoom_to_items()
         self._emit_current_selection()
@@ -250,13 +325,14 @@ class _MetadataBrowserPage(QWidget):
     def _apply_zoom_to_items(self) -> None:
         for item in self._item_by_index:
             item.set_zoom(self._zoom)
+        self.request_reflow()
 
     def _start_loader(self) -> None:
         if not self._records:
             return
         self._loader = ThumbnailLoader(
             self._records,
-            _THUMB_SIZE,
+            _THUMB_LOAD_SIZE,
             path_for=self._thumbnail_path_for,
             parent=self,
         )
@@ -278,6 +354,7 @@ class _MetadataBrowserPage(QWidget):
     def _on_thumb_ready(self, index: int, qimg: QImage) -> None:
         if 0 <= index < len(self._item_by_index):
             self._item_by_index[index].set_image(qimg)
+            self.request_reflow()
 
     def _set_selected_index(self, index: int, emit: bool = True) -> None:
         if not self._records:
@@ -312,6 +389,7 @@ class _MetadataBrowserPage(QWidget):
 
     def _on_cell_double_clicked(self, index: int) -> None:
         self._on_cell_clicked(index)
+        self.openRequested.emit(self.current_record())
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
         if obj is self._scroll.viewport() and event.type() == QEvent.Wheel:
@@ -324,24 +402,19 @@ class _MetadataBrowserPage(QWidget):
                     self._change_zoom(-_ZOOM_STEP)
                 wheel.accept()
                 return True
+        if obj is self._scroll.viewport() and event.type() == QEvent.Resize:
+            self.request_reflow()
         return super().eventFilter(obj, event)
 
     def _relayout_cells(self) -> None:
         if not self._item_by_index:
             return
-        cols = self._cols()
-        self._grid_cols = cols
-        while self._grid_layout.count():
-            item = self._grid_layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None and widget is not self._empty_label:
-                widget.setParent(None)
-        for index, item_widget in enumerate(self._item_by_index):
-            self._grid_layout.addWidget(item_widget, index // cols, index % cols)
+        self._grid_widget.request_reflow()
+        self._grid_cols = max(1, self._grid_widget.first_row_count())
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
-        self._resize_timer.start(0)
+        self.request_reflow()
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
         key = event.key()
@@ -383,52 +456,72 @@ class _BrowserItem(QWidget):
     clicked = pyqtSignal(int)
     doubleClicked = pyqtSignal(int)
 
-    def __init__(self, index: int, title: str, tooltip: str = "", zoom: float = 1.0, parent=None) -> None:
+    def __init__(self, index: int, tooltip: str = "", zoom: float = 1.0, media_type: str = "movie", parent=None) -> None:
         super().__init__(parent)
         self._index = index
-        self._raw_title = title
         self._zoom = zoom
-        self._thumb = ThumbnailCell(index=index, size=_THUMB_SIZE, tooltip=tooltip, parent=self)
-        self._thumb.drag_path = ""
-        self._thumb.drag_meta = {}
-        self._thumb.clicked.connect(lambda _idx: self.clicked.emit(self._index))
-        self._thumb.doubleClicked.connect(lambda _idx: self.doubleClicked.emit(self._index))
-
-        self._title = QLabel(self)
-        self._title.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
-        self._title.setWordWrap(True)
-        self._title.setTextInteractionFlags(Qt.NoTextInteraction)
-        self._title.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        self._title.setStyleSheet(
-            f"background: transparent; color: {theme.TEXT};"
-        )
+        self._media_type = media_type
+        self._qimg: QImage | None = None
+        self._thumb = QLabel(self)
+        self._thumb.setAlignment(Qt.AlignCenter)
+        self._thumb.setCursor(Qt.PointingHandCursor)
+        self._thumb.setFocusPolicy(Qt.NoFocus)
+        self._thumb.setStyleSheet("background: transparent;")
+        if tooltip:
+            self.setToolTip(tooltip)
+            self._thumb.setToolTip(tooltip)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(2)
-        outer.addWidget(self._thumb, 0, Qt.AlignHCenter)
-        outer.addWidget(self._title, 0)
+        outer.setSpacing(0)
+        outer.addWidget(self._thumb, 0, Qt.AlignCenter)
 
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.NoFocus)
+        self._thumb.mousePressEvent = self.mousePressEvent  # type: ignore[assignment]
+        self._thumb.mouseDoubleClickEvent = self.mouseDoubleClickEvent  # type: ignore[assignment]
         self.set_zoom(zoom)
 
-    def thumbnail(self) -> ThumbnailCell:
-        return self._thumb
+    def _frame_size(self) -> tuple[int, int]:
+        target = max(48, int(round(_THUMB_SIZE * self._zoom)))
+        if self._media_type == "movie":
+            return max(32, int(round(target * 0.67))), target
+        return target, target
 
     def set_image(self, qimg: QImage) -> None:
-        self._thumb.set_image(qimg)
+        self._qimg = qimg
+        self._update_thumbnail()
 
     def set_selected(self, selected: bool) -> None:
-        self._thumb.set_selected(selected)
+        if self.property("selected") != selected:
+            self.setProperty("selected", selected)
+            self._apply_style()
 
     def set_zoom(self, zoom: float) -> None:
         self._zoom = zoom
-        self._title.setFont(_browser_title_font(zoom))
-        self._title.setText(_wrap_anywhere(self._raw_title))
-        self._title.setFixedWidth(_THUMB_SIZE)
-        self._title.setMinimumHeight(self._title.sizeHint().height())
-        self.adjustSize()
+        self._update_thumbnail()
+
+    def _apply_style(self) -> None:
+        border = theme.ACCENT if self.property("selected") else "transparent"
+        self.setStyleSheet(
+            f"background: {theme.CANVAS_BG}; border: 2px solid {border};"
+        )
+
+    def _update_thumbnail(self) -> None:
+        target = max(48, int(round(_THUMB_SIZE * self._zoom)))
+        frame_w, frame_h = self._frame_size()
+        if self._qimg is None or self._qimg.isNull():
+            self._thumb.setPixmap(QPixmap())
+            self._thumb.setFixedSize(frame_w, frame_h)
+            self.setFixedSize(frame_w + 4, frame_h + 4)
+            self._apply_style()
+            return
+
+        scaled = self._qimg.scaled(frame_w, frame_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self._thumb.setPixmap(QPixmap.fromImage(scaled))
+        self._thumb.setFixedSize(frame_w, frame_h)
+        self.setFixedSize(frame_w + 4, frame_h + 4)
+        self._apply_style()
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton:
@@ -446,8 +539,15 @@ class MetadataVisualizer(VisualizerWindow):
         super().__init__()
         self._project_path = project_path
         self._inspector_hidden = False
+        self._inspector_auto_collapsed = False
         self._saved_splitter_sizes: list[int] = []
+        self._last_visible_splitter_sizes: list[int] = []
         self._selected_records: dict[str, dict | None] = {"movie": None, "gameplay": None}
+        self._current_thumbnail_path: Path | None = None
+        self._inspector_collapse_w = 0
+        self._inspector_restore_w = 0
+        self._inspector_scrollbar_visible = False
+        self._inspector_scrollbar_extent = 0
 
         self.setWindowTitle("Crossing — Metadata Visualizer")
 
@@ -469,6 +569,8 @@ class MetadataVisualizer(VisualizerWindow):
         self._gameplay_page = _MetadataBrowserPage(project_path, "gameplay", "Gameplay")
         self._movie_page.selectionChanged.connect(lambda rec: self._on_page_selection_changed("movie", rec))
         self._gameplay_page.selectionChanged.connect(lambda rec: self._on_page_selection_changed("gameplay", rec))
+        self._movie_page.openRequested.connect(lambda rec: self._open_record_in_shotlist("movie", rec))
+        self._gameplay_page.openRequested.connect(lambda rec: self._open_record_in_shotlist("gameplay", rec))
 
         self._browser_stack.addWidget(self._movie_page)
         self._browser_stack.addWidget(self._gameplay_page)
@@ -479,6 +581,7 @@ class MetadataVisualizer(VisualizerWindow):
         self._splitter.addWidget(self._inspector_shell)
         self._splitter.setStretchFactor(0, 1)
         self._splitter.setStretchFactor(1, 0)
+        self._splitter.splitterMoved.connect(self._on_splitter_moved)
 
         self.setMinimumSize(980, 640)
         restore_window_geometry(self, "window_metadata")
@@ -508,18 +611,30 @@ class MetadataVisualizer(VisualizerWindow):
         self._sync_inspector_to_current_tab()
 
     def _build_inspector(self) -> QWidget:
-        outer = QWidget()
-        outer.setStyleSheet(f"background: {theme.CANVAS_BG};")
-        outer.setMinimumWidth(_INSPECTOR_MIN_W)
-        outer_layout = QVBoxLayout(outer)
+        outer = QScrollArea()
+        outer.setWidgetResizable(True)
+        outer.setFrameShape(QFrame.NoFrame)
+        outer.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        outer.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        outer.setStyleSheet(f"QScrollArea {{ background: {theme.CANVAS_BG}; border: none; }}")
+        outer.verticalScrollBar().rangeChanged.connect(self._on_inspector_scrollbar_range_changed)
+
+        content = QWidget()
+        content.setStyleSheet(f"background: {theme.CANVAS_BG};")
+        content.setMinimumWidth(_INSPECTOR_MIN_W)
+        content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        self._inspector_content = content
+        self._inspector_scroll = outer
+
+        outer_layout = QVBoxLayout(content)
         outer_layout.setContentsMargins(0, 0, 0, 0)
         outer_layout.setSpacing(0)
+        outer_layout.setAlignment(Qt.AlignTop)
 
         tabs = QTabBar()
         tabs.setExpanding(False)
         tabs.setUsesScrollButtons(False)
         tabs.setDrawBase(False)
-        tabs.setFocusPolicy(Qt.NoFocus)
         tabs.setFocusPolicy(Qt.NoFocus)
         tabs.setStyleSheet(theme.tab_strip_stylesheet())
         self._source_tabs = tabs
@@ -533,9 +648,47 @@ class MetadataVisualizer(VisualizerWindow):
 
         pane = QWidget()
         pane.setStyleSheet(f"background: {theme.TAB_BG};")
+        pane.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         pane_layout = QVBoxLayout(pane)
         pane_layout.setContentsMargins(2, 2, 2, 2)
         pane_layout.setSpacing(2)
+        pane_layout.setAlignment(Qt.AlignTop)
+
+        self._tools_section = CollapsibleSection("Tools", pref_key="metadata_section_tools")
+        self._tools_section.setStyleSheet(f"background: {theme.TAB_BG};")
+        tools_wrap = QWidget()
+        tools_layout = QVBoxLayout(tools_wrap)
+        tools_layout.setContentsMargins(0, 0, 0, 0)
+        tools_layout.setSpacing(2)
+        tools_row = QHBoxLayout()
+        tools_row.setContentsMargins(0, 0, 0, 0)
+        tools_row.setSpacing(2)
+
+        action_style = theme.action_button_stylesheet()
+
+        self._zoom_in_btn = QPushButton("Zoom +")
+        self._zoom_in_btn.setFocusPolicy(Qt.NoFocus)
+        self._zoom_in_btn.setStyleSheet(action_style)
+        self._zoom_in_btn.clicked.connect(self._zoom_in_current_page)
+        tools_row.addWidget(self._zoom_in_btn)
+
+        self._zoom_out_btn = QPushButton("Zoom -")
+        self._zoom_out_btn.setFocusPolicy(Qt.NoFocus)
+        self._zoom_out_btn.setStyleSheet(action_style)
+        self._zoom_out_btn.clicked.connect(self._zoom_out_current_page)
+        tools_row.addWidget(self._zoom_out_btn)
+
+        self._shotlist_btn = QPushButton("Shotlist")
+        self._shotlist_btn.setFocusPolicy(Qt.NoFocus)
+        self._shotlist_btn.setStyleSheet(action_style)
+        self._shotlist_btn.setToolTip("Open the selected movie or gameplay entry in Shotlist")
+        self._shotlist_btn.clicked.connect(self._open_selected_in_shotlist)
+        tools_row.addWidget(self._shotlist_btn)
+
+        tools_row.addStretch(1)
+        tools_layout.addLayout(tools_row)
+        self._tools_section.add_widget(tools_wrap)
+        pane_layout.addWidget(self._tools_section)
 
         self._info_section = CollapsibleSection("Info", pref_key="metadata_section_info")
         self._info_section.setStyleSheet(f"background: {theme.TAB_BG};")
@@ -549,37 +702,232 @@ class MetadataVisualizer(VisualizerWindow):
         self._info_section.add_widget(info_wrap)
 
         pane_layout.addWidget(self._info_section)
-        outer_layout.addWidget(pane)
-        outer_layout.addStretch(1)
+        self._thumbnail_section = CollapsibleSection("Thumbnail", pref_key="metadata_section_thumbnail")
+        self._thumbnail_section.setStyleSheet(f"background: {theme.TAB_BG};")
+        thumbnail_wrap = QWidget()
+        thumbnail_layout = QVBoxLayout(thumbnail_wrap)
+        thumbnail_layout.setContentsMargins(0, 0, 0, 0)
+        thumbnail_layout.setSpacing(0)
+        self._thumbnail_label = QLabel("No thumbnail")
+        self._thumbnail_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self._thumbnail_label.setStyleSheet(f"color: {theme.TEXT_DIM}; background: {theme.CANVAS_BG};")
+        self._thumbnail_label.setMinimumHeight(140)
+        self._thumbnail_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        thumbnail_layout.addWidget(self._thumbnail_label)
+        self._thumbnail_section.add_widget(thumbnail_wrap)
+        pane_layout.addWidget(self._thumbnail_section)
+
+        outer_layout.addWidget(pane, 0, Qt.AlignTop)
+        outer.setWidget(content)
         return outer
 
     def _fit_splitter_width(self) -> None:
         inspector_w = max(_INSPECTOR_MIN_W, self._inspector_shell.sizeHint().width())
+        self._inspector_collapse_w = inspector_w
+        self._inspector_shell.setMinimumWidth(inspector_w)
         total_w = max(self.width(), 980)
         browser_w = max(1, total_w - inspector_w)
         self._splitter.setSizes([browser_w, inspector_w])
         self._saved_splitter_sizes = [browser_w, inspector_w]
+        self._last_visible_splitter_sizes = [browser_w, inspector_w]
+        self._inspector_restore_w = browser_w + inspector_w
+        self._request_browser_reflow()
+        self._update_thumbnail_preview()
+
+    def _on_inspector_scrollbar_range_changed(self, _min: int, _max: int) -> None:
+        QTimer.singleShot(0, self._sync_inspector_scrollbar_width)
+
+    def _sync_inspector_scrollbar_width(self) -> None:
+        if getattr(self, "_inspector_hidden", False) or getattr(self, "_inspector_auto_collapsed", False):
+            return
+        scroll = getattr(self, "_inspector_scroll", None)
+        if scroll is None:
+            return
+
+        vbar = scroll.verticalScrollBar()
+        visible = vbar.isVisible()
+        extent = max(0, vbar.sizeHint().width())
+        if extent <= 0:
+            return
+
+        if visible == self._inspector_scrollbar_visible and extent == self._inspector_scrollbar_extent:
+            return
+
+        sizes = self._splitter.sizes()
+        if len(sizes) != 2:
+            return
+
+        browser_w, inspector_w = sizes
+        delta = extent if visible else -self._inspector_scrollbar_extent
+        if delta == 0:
+            return
+
+        browser_w = max(1, browser_w - delta)
+        inspector_w = max(1, inspector_w + delta)
+        self._splitter.blockSignals(True)
+        self._splitter.setSizes([browser_w, inspector_w])
+        self._splitter.blockSignals(False)
+
+        self._inspector_scrollbar_visible = visible
+        self._inspector_scrollbar_extent = extent if visible else 0
+        self._last_visible_splitter_sizes = [browser_w, inspector_w]
+        self._saved_splitter_sizes = [browser_w, inspector_w]
+        self._inspector_restore_w = browser_w + inspector_w
+        self._request_browser_reflow()
+        self._update_thumbnail_preview()
+
+    def _inspector_collapse_threshold(self) -> int:
+        if self._inspector_collapse_w > 0:
+            return self._inspector_collapse_w
+        content_w = 0
+        if hasattr(self, "_inspector_content"):
+            content_w = self._inspector_content.sizeHint().width()
+        self._inspector_collapse_w = max(_INSPECTOR_MIN_W, content_w, self._inspector_shell.sizeHint().width())
+        return self._inspector_collapse_w
+
+    def _sync_inspector_auto_collapse(self) -> None:
+        threshold = self._inspector_collapse_threshold()
+        sizes = self._splitter.sizes()
+        inspector_w = sizes[1] if len(sizes) > 1 else 0
+
+        if self._inspector_hidden:
+            return
+
+        if inspector_w > 0 and inspector_w < threshold:
+            if not self._inspector_auto_collapsed:
+                if self._last_visible_splitter_sizes:
+                    self._saved_splitter_sizes = list(self._last_visible_splitter_sizes)
+                    self._inspector_restore_w = sum(self._last_visible_splitter_sizes)
+                else:
+                    self._saved_splitter_sizes = list(sizes)
+                    self._inspector_restore_w = sum(sizes)
+
+                self._inspector_shell.setMinimumWidth(0)
+                self._splitter.setSizes([max(1, self.width() - 1), 0])
+                self._inspector_auto_collapsed = True
+            return
+
+        if self._inspector_auto_collapsed:
+            self._inspector_shell.setMinimumWidth(threshold)
+            if self._last_visible_splitter_sizes:
+                self._splitter.setSizes(self._last_visible_splitter_sizes)
+            elif self._saved_splitter_sizes:
+                self._splitter.setSizes(self._saved_splitter_sizes)
+            else:
+                self._fit_splitter_width()
+            self._inspector_auto_collapsed = False
+            QTimer.singleShot(0, self._request_browser_reflow)
+            QTimer.singleShot(0, self._update_thumbnail_preview)
+            return
+
+        if inspector_w >= threshold:
+            self._last_visible_splitter_sizes = list(sizes)
+            self._saved_splitter_sizes = list(sizes)
+            self._inspector_restore_w = sum(sizes)
+
+    def _request_browser_reflow(self) -> None:
+        page = self._browser_stack.currentWidget()
+        if isinstance(page, _MetadataBrowserPage):
+            page.request_reflow()
+
+    def _active_page(self) -> _MetadataBrowserPage | None:
+        page = self._browser_stack.currentWidget()
+        return page if isinstance(page, _MetadataBrowserPage) else None
+
+    def _zoom_in_current_page(self) -> None:
+        page = self._active_page()
+        if page is not None:
+            page._change_zoom(_ZOOM_STEP)
+
+    def _zoom_out_current_page(self) -> None:
+        page = self._active_page()
+        if page is not None:
+            page._change_zoom(-_ZOOM_STEP)
+
+    def _current_page_record(self) -> dict | None:
+        page = self._active_page()
+        return page.current_record() if page is not None else None
+
+    def _current_page_thumbnail_path(self) -> Path | None:
+        page = self._active_page()
+        return page.current_thumbnail_path() if page is not None else None
+
+    def _update_thumbnail_preview(self) -> None:
+        if not hasattr(self, "_thumbnail_label"):
+            return
+        path = self._current_page_thumbnail_path()
+        self._current_thumbnail_path = path
+        if path is None or not path.exists():
+            self._thumbnail_label.setPixmap(QPixmap())
+            self._thumbnail_label.setText("No thumbnail")
+            self._thumbnail_label.setFixedHeight(140)
+            return
+
+        pixmap = QPixmap(str(path))
+        if pixmap.isNull():
+            self._thumbnail_label.setPixmap(QPixmap())
+            self._thumbnail_label.setText("No thumbnail")
+            self._thumbnail_label.setFixedHeight(140)
+            return
+
+        available_w = max(1, self._thumbnail_section.contentsRect().width())
+        scaled = pixmap.scaledToWidth(available_w, Qt.SmoothTransformation)
+        self._thumbnail_label.setText("")
+        self._thumbnail_label.setPixmap(scaled)
+        self._thumbnail_label.setFixedWidth(max(1, scaled.width()))
+        self._thumbnail_label.setFixedHeight(max(1, scaled.height()))
+
+    def _open_selected_in_shotlist(self) -> None:
+        record = self._current_page_record()
+        self._open_record_in_shotlist("movie" if self._browser_stack.currentIndex() == 0 else "gameplay", record)
+
+    def _open_record_in_shotlist(self, fallback_media_type: str, record: object) -> None:
+        if not isinstance(record, dict):
+            return
+        filename = str(record.get("filename") or "")
+        if not filename:
+            return
+        media_type = str(record.get("media_type") or fallback_media_type)
+        open_at_shot(self._project_path, filename, media_type=media_type)
+
+    def _on_splitter_moved(self, _pos: int, _index: int) -> None:
+        self._sync_inspector_auto_collapse()
+        self._request_browser_reflow()
+        self._update_thumbnail_preview()
 
     def _toggle_inspector(self) -> None:
         if self._inspector_hidden:
             self._inspector_shell.show()
-            if self._saved_splitter_sizes:
+            self._inspector_shell.setMinimumWidth(self._inspector_collapse_w or _INSPECTOR_MIN_W)
+            if self._last_visible_splitter_sizes:
+                self._splitter.setSizes(self._last_visible_splitter_sizes)
+            elif self._saved_splitter_sizes:
                 self._splitter.setSizes(self._saved_splitter_sizes)
             else:
                 self._fit_splitter_width()
             self._inspector_hidden = False
+            self._inspector_auto_collapsed = False
+            QTimer.singleShot(0, self._request_browser_reflow)
+            QTimer.singleShot(0, self._update_thumbnail_preview)
             return
 
         self._saved_splitter_sizes = self._splitter.sizes()
+        self._last_visible_splitter_sizes = list(self._saved_splitter_sizes)
+        self._inspector_restore_w = sum(self._saved_splitter_sizes)
         self._inspector_shell.hide()
         self._splitter.setSizes([max(1, self.width() - 1), 0])
         self._inspector_hidden = True
+        self._inspector_auto_collapsed = False
+        QTimer.singleShot(0, self._request_browser_reflow)
+        QTimer.singleShot(0, self._update_thumbnail_preview)
 
     def _toggle_fullscreen(self) -> None:
         if self.isFullScreen():
             self.showNormal()
         else:
             self.showFullScreen()
+        QTimer.singleShot(0, self._request_browser_reflow)
+        QTimer.singleShot(0, self._update_thumbnail_preview)
 
     def _on_page_selection_changed(self, media_type: str, record: object) -> None:
         self._selected_records[media_type] = record if isinstance(record, dict) else None
@@ -598,15 +946,30 @@ class MetadataVisualizer(VisualizerWindow):
         current_page = "movie" if current_index == 0 else "gameplay"
         self._browser_stack.setCurrentIndex(current_index)
         self._show_record(self._selected_records.get(current_page))
+        self._request_browser_reflow()
+        self._update_thumbnail_preview()
 
     def _on_source_tab_changed(self, index: int) -> None:
         self._browser_stack.setCurrentIndex(index)
         self._sync_inspector_to_current_tab()
 
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._sync_inspector_auto_collapse()
+        QTimer.singleShot(0, self._request_browser_reflow)
+        QTimer.singleShot(0, self._update_thumbnail_preview)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._sync_inspector_auto_collapse()
+        QTimer.singleShot(0, self._request_browser_reflow)
+        QTimer.singleShot(0, self._update_thumbnail_preview)
+
     def _show_record(self, record: dict | None) -> None:
         if record is None:
             for key in _INFO_ROWS:
                 self._info_block.set(key, "—")
+            self._update_thumbnail_preview()
             return
 
         values = {
@@ -629,6 +992,7 @@ class MetadataVisualizer(VisualizerWindow):
             if key == "overview" and value != "—":
                 value = value[:260].rstrip() + ("…" if len(value) > 260 else "")
             self._info_block.set(key, value)
+        self._update_thumbnail_preview()
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
         key = event.key()

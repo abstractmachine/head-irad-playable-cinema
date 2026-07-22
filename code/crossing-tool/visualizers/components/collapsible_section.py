@@ -172,7 +172,7 @@ class CollapsibleSection(QWidget):
         if self._fill_vertical and self._expanded:
             self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             return
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
     # ------------------------------------------------------------------ public
 

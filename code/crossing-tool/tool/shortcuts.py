@@ -19,6 +19,7 @@ class _AppTabFilter(QObject):
     consume them.
 
     Keys intercepted (with no Ctrl/Meta/Alt):
+    - Escape: close the active visualizer immediately
     - Tab / Shift+Tab: panel toggle / fullscreen
     - Shift+Left / Shift+Right: page navigation
 
@@ -31,6 +32,13 @@ class _AppTabFilter(QObject):
             key = event.key()
             mod = event.modifiers()
             if mod & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier):
+                return False
+            if key == Qt.Key_Escape:
+                app = QApplication.instance()
+                win = app.activeWindow() if app else None
+                if win is not None and hasattr(win, "close"):
+                    win.close()
+                    return True
                 return False
             intercept = (
                 key in (Qt.Key_Tab, Qt.Key_Backtab)
