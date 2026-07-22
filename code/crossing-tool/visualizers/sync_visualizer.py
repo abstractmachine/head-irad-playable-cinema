@@ -3986,6 +3986,7 @@ class _ColorPickBtn(QPushButton):
         "  border: 1px solid #666666; border-radius: 3px; padding: 1px 8px;"
         "}"
         "QPushButton:hover { border-color: #ffffff; color: #ff00ff; }"
+        "QPushButton:focus { outline: none; }"
     )
 
     def __init__(self, color: QColor, allow_alpha: bool = False,

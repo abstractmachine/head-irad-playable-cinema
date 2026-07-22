@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import QPushButton
 
@@ -16,6 +17,7 @@ class HoverIconButton(QPushButton):
         super().__init__(text, parent)
         self._normal_icon = normal_icon
         self._hover_icon = hover_icon
+        self.setFocusPolicy(Qt.NoFocus)
         if normal_icon is not None:
             self.setIcon(normal_icon)
 

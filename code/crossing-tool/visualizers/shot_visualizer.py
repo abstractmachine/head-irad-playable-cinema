@@ -53,7 +53,7 @@ from tool.shortcuts import (
     KEY_PLAY_PAUSE,
 )
 from visualizers.components.collapsible_section import CollapsibleSection
-from visualizers.components.metadata_block import MetadataBlock
+from visualizers.components.metadata_block import INSPECTOR_ROW_HEIGHT, MetadataBlock
 
 from data.shotlist import read_shotlist, write_shotlist, get_shotlist_path, attach_shot_ids
 from data.metadata import get_metadata
@@ -1538,6 +1538,8 @@ class ShotlistVisualizer(QMainWindow):
         self.ann_fields_table.setColumnCount(2)
         self.ann_fields_table.horizontalHeader().hide()
         self.ann_fields_table.verticalHeader().hide()
+        self.ann_fields_table.verticalHeader().setDefaultSectionSize(INSPECTOR_ROW_HEIGHT)
+        self.ann_fields_table.verticalHeader().setMinimumSectionSize(INSPECTOR_ROW_HEIGHT)
         self.ann_fields_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.ann_fields_table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.ann_fields_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -2784,6 +2786,10 @@ class ShotlistVisualizer(QMainWindow):
     def _on_ann_fields_table_resized(self, _logical_index, _old_size, _new_size) -> None:
         """Re-fit row heights and the table's own height after a width change."""
         self.ann_fields_table.resizeRowsToContents()
+        for row in range(self.ann_fields_table.rowCount()):
+            self.ann_fields_table.setRowHeight(
+                row, max(self.ann_fields_table.rowHeight(row), INSPECTOR_ROW_HEIGHT)
+            )
         self._resize_ann_fields_table()
 
     def _resize_ann_display(self) -> None:
@@ -2868,8 +2874,11 @@ class ShotlistVisualizer(QMainWindow):
             key_lbl.setStyleSheet(
                 f"background: {theme.CELL_BG}; color: {theme.TEXT_DIM};"
                 f" font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
-                f" font-weight: {theme.WEIGHT_UI}; border: none; padding: 0px 4px 0px 2px;"
+                f" font-weight: {theme.WEIGHT_UI};"
+                f" border-right: 2px solid {theme.TAB_BG};"
+                f" padding: 0px 4px 0px 2px;"
             )
+            key_lbl.setFixedHeight(INSPECTOR_ROW_HEIGHT)
             tbl.setCellWidget(row, 0, key_lbl)
 
             # ---- value column (editable) ----

@@ -608,6 +608,7 @@ class _HoverButton(QPushButton):
         super().__init__(symbol, parent)
         r = _BTN_DIAM // 2
         self.setFixedSize(_BTN_DIAM, _BTN_DIAM)
+        self.setFocusPolicy(Qt.NoFocus)
         self.setStyleSheet(
             f"QPushButton {{"
             f"  background-color: rgba(30,30,30,190);"
@@ -626,6 +627,7 @@ class _HoverButton(QPushButton):
             f"  color: rgba(128,128,128,90);"
             f"  background-color: rgba(30,30,30,80);"
             f"}}"
+            f"QPushButton:focus {{ outline: none; }}"
         )
 
 

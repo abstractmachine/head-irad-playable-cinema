@@ -179,6 +179,7 @@ QPushButton:hover    {{ background-color: {BTN_HOVER}; }}
 QPushButton:pressed  {{ background-color: {BTN_PRESSED}; }}
 QPushButton:checked  {{ background-color: {ACCENT}; color: {ACCENT_TEXT}; }}
 QPushButton:disabled {{ color: {TEXT_DIM}; }}
+QPushButton:focus    {{ outline: none; }}
 
 /* ── Combo boxes & line edits ──────────────────────────────── */
 QComboBox, QLineEdit {{

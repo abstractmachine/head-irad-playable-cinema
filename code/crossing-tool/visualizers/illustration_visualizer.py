@@ -1493,6 +1493,7 @@ class _HoverIconButton(QPushButton):
         super().__init__(text, parent)
         self._normal_icon = normal_icon
         self._hover_icon  = hover_icon
+        self.setFocusPolicy(Qt.NoFocus)
         if normal_icon:
             self.setIcon(normal_icon)
 
@@ -1865,6 +1866,7 @@ class IllustrationPane(QWidget):
             f" {{ background-color: {theme.BTN_BG}; color: {theme.ACCENT}; }}"
             f"QPushButton:disabled {{ background-color: {theme.BTN_BG};"
             f" color: rgba(255,255,255,0.15); }}"
+            f"QPushButton:focus {{ outline: none; }}"
         )
 
     def _make_btn_icon(self, svg_name: str, size: int = 14) -> tuple:
@@ -1911,6 +1913,7 @@ class IllustrationPane(QWidget):
             f" {{ background-color: {theme.BTN_BG}; color: {theme.ACCENT}; }}"
             f"QPushButton:disabled {{ background-color: {theme.BTN_BG};"
             f" color: rgba(255,255,255,0.15); }}"
+            f"QPushButton:focus {{ outline: none; }}"
         )
         _row = QWidget()
         _rl  = QHBoxLayout(_row)

@@ -16,15 +16,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from styles import theme
-from styles.theme import save_window_geometry, restore_window_geometry
+from styles.theme import GripSplitter, JumpScrollBar, save_window_geometry, restore_window_geometry
+from tool.shortcuts import VisualizerWindow
+from visualizers.components.collapsible_section import CollapsibleSection
+from visualizers.components.metadata_block import INSPECTOR_ROW_HEIGHT, table_key_cell_style
 
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QEvent, QTimer
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget,
-    QVBoxLayout, QHBoxLayout, QGridLayout,
-    QGroupBox, QLineEdit, QPushButton,
-    QComboBox, QFormLayout, QDoubleSpinBox, QSpinBox,
-    QFileDialog, QMessageBox,
+    QApplication, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QFrame,
+    QGridLayout, QHBoxLayout, QLineEdit, QListView, QMessageBox, QPushButton,
+    QScrollArea, QSizePolicy, QSpinBox, QTabWidget, QVBoxLayout, QWidget, QLabel,
 )
 
 from tool import prefs as _prefs
@@ -71,6 +72,76 @@ def _local_models(project_path: str) -> list[str]:
     ]
 
 
+def _style_canonical_combo(combo: QComboBox) -> None:
+    """Apply the canonical visualizer combo font and popup styling."""
+    combo.setFocusPolicy(Qt.NoFocus)
+    combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLength)
+    combo.setFont(theme.font_ui())
+    combo.setStyleSheet(
+        f"QComboBox {{"
+        f"  background: {theme.BTN_BG}; color: {theme.TEXT};"
+        f"  border: none; border-radius: 3px; padding: 0px 6px;"
+        f"  min-height: 24px; max-height: 24px;"
+        f"  font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
+        f"  font-weight: {theme.WEIGHT_UI};"
+        f"}}"
+        f"QComboBox::drop-down {{ border: none; }}"
+        f"QComboBox QAbstractItemView, QComboBox QListView {{"
+        f"  background: {theme.INPUT_BG}; color: {theme.TEXT};"
+        f"  border: 0px; margin: 0px; padding: 0px; outline: 0px;"
+        f"  selection-background-color: {theme.ACCENT};"
+        f"  selection-color: {theme.ACCENT_TEXT};"
+        f"  font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
+        f"}}"
+        f"QComboBox QAbstractItemView::item, QComboBox QListView::item {{"
+        f"  padding: 0px 8px; min-height: 24px; border: 0px;"
+        f"}}"
+    )
+    view = QListView(combo)
+    view.setUniformItemSizes(True)
+    view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    view.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+    view.setFrameShape(QFrame.NoFrame)
+    view.setLineWidth(0)
+    view.setMidLineWidth(0)
+    view.setContentsMargins(0, 0, 0, 0)
+    view.setFont(theme.font_ui())
+    view.setStyleSheet(
+        f"QListView {{ background: {theme.INPUT_BG}; color: {theme.TEXT};"
+        f" border: 0px; margin: 0px; padding: 0px; outline: 0px;"
+        f" font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt; }}"
+        f"QListView::item {{ background: {theme.INPUT_BG}; padding: 0px 8px;"
+        f" min-height: 24px; border: 0px; }}"
+        f"QListView::item:selected {{ background: {theme.ACCENT}; color: {theme.ACCENT_TEXT}; }}"
+    )
+    combo.setView(view)
+
+
+def _style_canonical_form_label(label: QWidget) -> None:
+    label.setStyleSheet(table_key_cell_style("", ""))
+    label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+    label.setFixedHeight(INSPECTOR_ROW_HEIGHT)
+
+
+def _normalize_form_labels(form: QFormLayout) -> None:
+    labels: list[QLabel] = []
+    for row in range(form.rowCount()):
+        item = form.itemAt(row, QFormLayout.LabelRole)
+        if item is None:
+            continue
+        widget = item.widget()
+        if isinstance(widget, QLabel):
+            _style_canonical_form_label(widget)
+            labels.append(widget)
+
+    if not labels:
+        return
+
+    max_width = max(lbl.sizeHint().width() for lbl in labels)
+    for lbl in labels:
+        lbl.setFixedWidth(max_width)
+
+
 # ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
@@ -88,11 +159,11 @@ _VISUALIZER_TITLE = {
 }
 
 
-class ProjectVisualizer(QMainWindow):
+class ProjectVisualizer(VisualizerWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Crossing — Project")
+        self.setWindowTitle("Crossing — Project Visualizer")
         self._procs: dict[str, subprocess.Popen] = {}
         self._windows: dict[str, object] = {}  # in-process visualizer windows
         self._backup_proc: subprocess.Popen | None = None
@@ -100,22 +171,35 @@ class ProjectVisualizer(QMainWindow):
         self._backup_master_fd: int = -1
         self._backup_stdout_buf: bytes = b""
         self._backup_anim_frame: int = 0
+        self._inspector_hidden = False
+        self._saved_splitter_sizes: list[int] = []
 
         root = QWidget()
+        root.setStyleSheet(f"background: {theme.CANVAS_BG};")
         self.setCentralWidget(root)
 
-        layout = QVBoxLayout(root)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
+        layout = QHBoxLayout(root)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        layout.addWidget(self._build_project_group())
-        layout.addWidget(self._build_backup_group())
-        layout.addWidget(self._build_defaults_group())
-        layout.addWidget(self._build_models_group())
-        layout.addWidget(self._build_media_group())
-        layout.addWidget(self._build_launchers_group())
+        self._splitter = GripSplitter(Qt.Horizontal)
 
-        self.setMinimumWidth(480)
+        self._browser = QWidget()
+        self._browser.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._browser.setStyleSheet(f"background: {theme.CANVAS_BG};")
+
+        self._inspector_shell = self._build_inspector()
+
+        self._splitter.addWidget(self._browser)
+        self._splitter.addWidget(self._inspector_shell)
+        self._splitter.setStretchFactor(0, 1)
+        self._splitter.setStretchFactor(1, 0)
+        self._splitter.handle(1).installEventFilter(self)
+
+        layout.addWidget(self._splitter)
+
+        self.setMinimumSize(900, 560)
+        QTimer.singleShot(0, self._fit_splitter_width)
         restore_window_geometry(self, "window_project")
 
     def closeEvent(self, event) -> None:
@@ -125,11 +209,15 @@ class ProjectVisualizer(QMainWindow):
     # ------------------------------------------------------------------
     # Project path
 
-    def _build_project_group(self) -> QGroupBox:
-        group = QGroupBox("Project")
-        row = QHBoxLayout(group)
-        row.setContentsMargins(8, 12, 8, 8)
-        row.setSpacing(6)
+    def _build_folder_section(self) -> CollapsibleSection:
+        sec = CollapsibleSection("Folder", pref_key="project_section_folder")
+        outer = QVBoxLayout()
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(theme.SECTION_GAP)
+
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
 
         self.path_edit = QLineEdit()
         self.path_edit.setReadOnly(True)
@@ -137,11 +225,17 @@ class ProjectVisualizer(QMainWindow):
         self.path_edit.setText(_prefs.get("path") or "")
         row.addWidget(self.path_edit, 1)
 
+        outer.addLayout(row)
+
         browse_btn = QPushButton("Browse…")
         browse_btn.clicked.connect(self._on_browse)
-        row.addWidget(browse_btn)
+        browse_btn.setStyleSheet(theme.action_button_stylesheet())
+        outer.addWidget(browse_btn)
 
-        return group
+        row_widget = QWidget()
+        row_widget.setLayout(outer)
+        sec.add_widget(row_widget)
+        return sec
 
     def _on_browse(self) -> None:
         folder = QFileDialog.getExistingDirectory(
@@ -157,14 +251,15 @@ class ProjectVisualizer(QMainWindow):
     # ------------------------------------------------------------------
     # Backup path
 
-    def _build_backup_group(self) -> QGroupBox:
-        group = QGroupBox("Backup")
-        outer = QVBoxLayout(group)
-        outer.setContentsMargins(8, 12, 8, 8)
-        outer.setSpacing(6)
+    def _build_backup_section(self) -> CollapsibleSection:
+        sec = CollapsibleSection("Backup", pref_key="project_section_backup")
+        outer = QVBoxLayout()
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(theme.SECTION_GAP)
 
         row = QHBoxLayout()
-        row.setSpacing(6)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
 
         self.backup_path_edit = QLineEdit()
         self.backup_path_edit.setReadOnly(True)
@@ -172,18 +267,31 @@ class ProjectVisualizer(QMainWindow):
         self.backup_path_edit.setText(_prefs.get("backup_path") or "")
         row.addWidget(self.backup_path_edit, 1)
 
+        outer.addLayout(row)
+
         browse_btn = QPushButton("Browse…")
         browse_btn.clicked.connect(self._on_backup_browse)
-        row.addWidget(browse_btn)
-
-        outer.addLayout(row)
+        browse_btn.setStyleSheet(theme.action_button_stylesheet())
+        browse_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         self.backup_btn = QPushButton("Backup")
         self.backup_btn.clicked.connect(self._on_backup_run)
-        outer.addWidget(self.backup_btn)
+        self.backup_btn.setStyleSheet(theme.action_button_stylesheet())
+        self.backup_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        buttons_row = QHBoxLayout()
+        buttons_row.setContentsMargins(0, 0, 0, 0)
+        buttons_row.setSpacing(theme.SECTION_GAP)
+        buttons_row.addWidget(browse_btn, 1)
+        buttons_row.addWidget(self.backup_btn, 1)
+        outer.addLayout(buttons_row)
+
+        outer_widget = QWidget()
+        outer_widget.setLayout(outer)
+        sec.add_widget(outer_widget)
 
         self._refresh_backup_button()
-        return group
+        return sec
 
     def _on_backup_browse(self) -> None:
         folder = QFileDialog.getExistingDirectory(
@@ -282,17 +390,19 @@ class ProjectVisualizer(QMainWindow):
                 pass
             self._backup_proc = None
             self.backup_btn.setEnabled(True)
-            self.backup_btn.setText("Run Backup")
+            self.backup_btn.setText("Backup")
             self.backup_btn.setStyleSheet("")
 
     # ------------------------------------------------------------------
     # Defaults
 
-    def _build_defaults_group(self) -> QGroupBox:
-        group = QGroupBox("Defaults")
-        form = QFormLayout(group)
-        form.setContentsMargins(8, 12, 8, 8)
-        form.setSpacing(5)
+    def _build_defaults_section(self) -> CollapsibleSection:
+        sec = CollapsibleSection("Defaults", pref_key="project_section_defaults")
+        form = QFormLayout()
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setSpacing(theme.SECTION_GAP)
+        form.setHorizontalSpacing(0)
+        form.setVerticalSpacing(theme.SECTION_GAP)
         form.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
 
         self._default_widgets: dict = {}
@@ -314,16 +424,23 @@ class ProjectVisualizer(QMainWindow):
             self._default_widgets[key] = w
             form.addRow(label, w)
 
-        return group
+        _normalize_form_labels(form)
+
+        form_widget = QWidget()
+        form_widget.setLayout(form)
+        sec.add_widget(form_widget)
+        return sec
 
     # ------------------------------------------------------------------
     # Models
 
-    def _build_models_group(self) -> QGroupBox:
-        group = QGroupBox("Models")
-        form = QFormLayout(group)
-        form.setContentsMargins(8, 12, 8, 8)
-        form.setSpacing(5)
+    def _build_models_section(self) -> CollapsibleSection:
+        sec = CollapsibleSection("Models", pref_key="project_section_models")
+        form = QFormLayout()
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setSpacing(theme.SECTION_GAP)
+        form.setHorizontalSpacing(0)
+        form.setVerticalSpacing(theme.SECTION_GAP)
 
         self._model_combos: dict[str, QComboBox] = {}
         for role, key in _MODEL_KEYS.items():
@@ -331,11 +448,17 @@ class ProjectVisualizer(QMainWindow):
             combo.currentTextChanged.connect(
                 lambda text, k=key: _prefs.set(k, text) if text else None
             )
+            _style_canonical_combo(combo)
             self._model_combos[role] = combo
             form.addRow(role.capitalize(), combo)
 
+        _normalize_form_labels(form)
+
+        form_widget = QWidget()
+        form_widget.setLayout(form)
+        sec.add_widget(form_widget)
         self._reload_model_combos()
-        return group
+        return sec
 
     def _reload_model_combos(self) -> None:
         path = _prefs.get("path") or ""
@@ -355,14 +478,18 @@ class ProjectVisualizer(QMainWindow):
     # ------------------------------------------------------------------
     # Media import
 
-    def _build_media_group(self) -> QGroupBox:
-        group = QGroupBox("Import Media")
-        form = QFormLayout(group)
-        form.setContentsMargins(8, 12, 8, 8)
-        form.setSpacing(6)
+    def _build_import_section(self) -> CollapsibleSection:
+        sec = CollapsibleSection("Import", pref_key="project_section_import")
+        form = QFormLayout()
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setSpacing(theme.SECTION_GAP)
+        form.setHorizontalSpacing(0)
+        form.setVerticalSpacing(theme.SECTION_GAP)
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
 
         self.media_type_combo = QComboBox()
         self.media_type_combo.addItems(["movie", "gameplay"])
+        _style_canonical_combo(self.media_type_combo)
         form.addRow("Type", self.media_type_combo)
 
         self.media_game_edit = QLineEdit()
@@ -372,15 +499,21 @@ class ProjectVisualizer(QMainWindow):
         self._media_game_label = form.itemAt(form.rowCount() - 1, QFormLayout.LabelRole).widget()
         self._media_game_field = form.itemAt(form.rowCount() - 1, QFormLayout.FieldRole).widget()
 
+        _normalize_form_labels(form)
+
         import_btn = QPushButton("Import")
         import_btn.clicked.connect(self._on_media_import)
-        form.addRow("", import_btn)
+        import_btn.setStyleSheet(theme.action_button_stylesheet())
 
         self.media_type_combo.currentTextChanged.connect(self._on_media_type_changed)
         # Set initial visibility
         self._on_media_type_changed(self.media_type_combo.currentText())
 
-        return group
+        form_widget = QWidget()
+        form_widget.setLayout(form)
+        sec.add_widget(form_widget)
+        sec.add_widget(import_btn)
+        return sec
 
     def _on_media_type_changed(self, media_type: str):
         visible = (media_type == "gameplay")
@@ -421,13 +554,13 @@ class ProjectVisualizer(QMainWindow):
 
     # Launcher buttons
 
-    def _build_launchers_group(self) -> QGroupBox:
-        group = QGroupBox("Visualizers")
+    def _build_visualizers_section(self) -> CollapsibleSection:
+        sec = CollapsibleSection("Visualizers", pref_key="project_section_visualizers")
 
         grid_widget = QWidget()
         grid = QGridLayout(grid_widget)
         grid.setContentsMargins(0, 0, 0, 0)
-        grid.setSpacing(6)
+        grid.setSpacing(2)
 
         for (label, sub, enabled), (row, col) in zip(
             [
@@ -446,15 +579,137 @@ class ProjectVisualizer(QMainWindow):
         ):
             btn = QPushButton(label)
             btn.setEnabled(enabled)
+            btn.setStyleSheet(theme.action_button_stylesheet())
             if enabled:
                 btn.clicked.connect(lambda _, s=sub: self._launch(s))
             grid.addWidget(btn, row, col)
 
-        outer = QVBoxLayout(group)
-        outer.setContentsMargins(8, 12, 8, 8)
+        outer = QVBoxLayout()
+        outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(grid_widget)
 
-        return group
+        outer_widget = QWidget()
+        outer_widget.setLayout(outer)
+        sec.add_widget(outer_widget)
+        return sec
+
+    def _build_inspector(self) -> QWidget:
+        outer = QWidget()
+        outer.setStyleSheet(f"background: {theme.PANEL_BG};")
+
+        outer_layout = QVBoxLayout(outer)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        tabs = QTabWidget()
+        tabs.setDocumentMode(True)
+        tabs.tabBar().setDrawBase(False)
+        tabs.tabBar().setExpanding(True)
+        tabs.tabBar().setUsesScrollButtons(False)
+        tabs.setFocusPolicy(Qt.NoFocus)
+        tabs.tabBar().setFocusPolicy(Qt.NoFocus)
+        tabs.setStyleSheet(theme.tab_strip_stylesheet())
+
+        project_tab = QWidget()
+        project_tab.setStyleSheet(f"background: {theme.TAB_BG};")
+        project_tab_layout = QVBoxLayout(project_tab)
+        project_tab_layout.setContentsMargins(0, 0, 0, 0)
+        project_tab_layout.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setFocusPolicy(Qt.NoFocus)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBar(JumpScrollBar())
+        scroll.setStyleSheet(
+            f"QScrollArea {{ background: {theme.TAB_BG}; border: none; }}"
+            f"QScrollBar:vertical {{ background: {theme.CANVAS_BG}; width: {theme.SCROLLBAR_W}px; }}"
+            f"QScrollBar::groove:vertical {{ background: transparent; border: none; }}"
+            f"QScrollBar::handle:vertical {{"
+            f"  background: transparent; border-left: 2px solid {theme.ACCENT};"
+            f"  border-radius: 0; min-height: 20px; }}"
+            f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}"
+            f"QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}"
+        )
+        project_tab_layout.addWidget(scroll)
+
+        content = QWidget()
+        content.setStyleSheet(f"background: {theme.TAB_BG};")
+        scroll.setWidget(content)
+
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(
+            theme.SECTION_GAP, theme.SECTION_GAP, theme.SECTION_GAP, theme.SECTION_GAP
+        )
+        layout.setSpacing(theme.SECTION_GAP)
+        layout.setAlignment(Qt.AlignTop)
+
+        folder_sec = self._build_folder_section()
+        backup_sec = self._build_backup_section()
+        defaults_sec = self._build_defaults_section()
+        models_sec = self._build_models_section()
+        import_sec = self._build_import_section()
+        visualizers_sec = self._build_visualizers_section()
+
+        layout.addWidget(folder_sec)
+        layout.addWidget(backup_sec)
+        layout.addWidget(defaults_sec)
+        layout.addWidget(models_sec)
+        layout.addWidget(import_sec)
+        layout.addWidget(visualizers_sec)
+
+        tabs.addTab(project_tab, "Project")
+        outer_layout.addWidget(tabs)
+
+        self._inspector_scroll = scroll
+        self._inspector_tabs = tabs
+        return outer
+
+    def _fit_splitter_width(self) -> None:
+        total = self._splitter.width()
+        if total <= 0:
+            QTimer.singleShot(100, self._fit_splitter_width)
+            return
+        inspector_w = max(320, self._inspector_shell.sizeHint().width())
+        self._inspector_shell.setMinimumWidth(inspector_w)
+        self._splitter.setSizes([max(1, total - inspector_w), inspector_w])
+
+    def _sync_inspector_min_width(self) -> None:
+        if self._inspector_hidden:
+            self._inspector_shell.setMinimumWidth(0)
+            return
+        sizes = self._splitter.sizes()
+        if len(sizes) != 2:
+            return
+        inspector_w = max(0, sizes[1])
+        self._inspector_shell.setMinimumWidth(inspector_w)
+
+    def _toggle_inspector(self) -> None:
+        if self._inspector_hidden:
+            self._inspector_shell.setVisible(True)
+            self._inspector_hidden = False
+            if self._saved_splitter_sizes and len(self._saved_splitter_sizes) == 2:
+                self._splitter.setSizes(self._saved_splitter_sizes)
+            else:
+                QTimer.singleShot(0, self._fit_splitter_width)
+            QTimer.singleShot(0, self._sync_inspector_min_width)
+            return
+
+        self._saved_splitter_sizes = list(self._splitter.sizes())
+        self._inspector_shell.setVisible(False)
+        self._inspector_hidden = True
+        self._inspector_shell.setMinimumWidth(0)
+
+    def eventFilter(self, obj, event) -> bool:
+        if obj is self._splitter.handle(1) and event.type() == QEvent.MouseButtonRelease:
+            # Clear the live minimum before GripSplitter processes the click.
+            # That keeps the pane draggable wider while still allowing the
+            # grip handle to collapse/restore it on click.
+            self._inspector_shell.setMinimumWidth(0)
+            QTimer.singleShot(0, self._sync_inspector_min_width)
+        return super().eventFilter(obj, event)
 
     def _launch(self, subcommand: str) -> None:
         if not _prefs.get("path"):
@@ -550,8 +805,26 @@ class ProjectVisualizer(QMainWindow):
     # Keyboard
 
     def keyPressEvent(self, event) -> None:
-        if event.key() in (Qt.Key_Q, Qt.Key_W) and event.modifiers() & Qt.ControlModifier:
+        key = event.key()
+        mod = event.modifiers()
+        if key == Qt.Key_Escape:
             self.close()
+            return
+        if key in (Qt.Key_Q, Qt.Key_W) and mod & Qt.ControlModifier:
+            self.close()
+            return
+        if key in (Qt.Key_Backtab, Qt.Key_Tab) and mod & Qt.ShiftModifier and not (
+            mod & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier)
+        ):
+            if self.isFullScreen():
+                self.showNormal()
+            else:
+                self.showFullScreen()
+            return
+        if key == Qt.Key_Tab and not (
+            mod & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier | Qt.ShiftModifier)
+        ):
+            self._toggle_inspector()
             return
         super().keyPressEvent(event)
 
