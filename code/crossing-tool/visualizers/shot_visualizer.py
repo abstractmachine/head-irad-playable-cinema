@@ -39,7 +39,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel,
     QMessageBox, QSizePolicy, QComboBox,
-    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QFrame,
+    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QFrame, QListView,
     QTextEdit, QGridLayout, QStackedLayout, QScrollArea, QTabWidget,
 )
 from styles.theme import GripSplitter, JumpScrollBar, save_window_geometry, restore_window_geometry
@@ -505,6 +505,63 @@ def _allow_metadata_wrap(block: MetadataBlock) -> None:
         lbl.setWordWrap(True)
         lbl.setMinimumHeight(0)
         lbl.setMaximumHeight(16777215)
+
+
+def _style_canonical_combo(combo: QComboBox) -> None:
+    """Apply the canonical Illustration-style dropdown font and popup chrome."""
+    combo.setFocusPolicy(Qt.NoFocus)
+    combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLength)
+    combo.setFont(theme.font_ui())
+    combo.setStyleSheet(
+        f"QComboBox {{"
+        f"  background: {theme.BTN_BG}; color: {theme.TEXT};"
+        f"  border: none; border-radius: 3px; padding: 0px 6px;"
+        f"  min-height: 24px; max-height: 24px;"
+        f"  font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
+        f"  font-weight: {theme.WEIGHT_UI};"
+        f"}}"
+        f"QComboBox::drop-down {{ border: none; }}"
+        f"QComboBox QAbstractItemView, QComboBox QListView {{"
+        f"  background: {theme.INPUT_BG}; color: {theme.TEXT};"
+        f"  border: 0px; margin: 0px; padding: 0px; outline: 0px;"
+        f"  selection-background-color: {theme.ACCENT};"
+        f"  selection-color: {theme.ACCENT_TEXT};"
+        f"  font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
+        f"}}"
+        f"QComboBox QAbstractItemView::item, QComboBox QListView::item {{"
+        f"  padding: 0px 8px; min-height: 24px; border: 0px;"
+        f"}}"
+    )
+    view = QListView(combo)
+    view.setUniformItemSizes(True)
+    view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    view.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+    view.setFrameShape(QFrame.NoFrame)
+    view.setLineWidth(0)
+    view.setMidLineWidth(0)
+    view.setContentsMargins(0, 0, 0, 0)
+    view.setFont(theme.font_ui())
+    view.setStyleSheet(
+        f"QListView {{ background: {theme.INPUT_BG}; color: {theme.TEXT};"
+        f" border: 0px; margin: 0px; padding: 0px; outline: 0px;"
+        f" font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt; }}"
+        f"QListView::item {{ background: {theme.INPUT_BG}; padding: 0px 8px;"
+        f" min-height: 24px; border: 0px; }}"
+        f"QListView::item:selected {{ background: {theme.ACCENT}; color: {theme.ACCENT_TEXT}; }}"
+    )
+    combo.setView(view)
+    view.setViewportMargins(0, 0, 0, 0)
+    container = view.parentWidget()
+    if container is not None:
+        container.setFrameStyle(QFrame.NoFrame)
+        container.setLineWidth(0)
+        container.setMidLineWidth(0)
+        container.setStyleSheet(
+            f"QFrame {{ background: {theme.INPUT_BG}; border: 0px; margin: 0px; padding: 0px; }}"
+        )
+        if container.layout():
+            container.layout().setContentsMargins(0, 0, 0, 0)
+            container.layout().setSpacing(0)
 
 def _get_annotation_json_path(project_path: str, filename: str, media_type: str) -> Path:
     stem = Path(filename).stem
@@ -1277,8 +1334,18 @@ class ShotlistVisualizer(QMainWindow):
         # threshold.  With AlwaysOn the scrollbar's width is baked into the
         # layout from the start, so it only ever "pushes" the other grip
         # panels once (via _fit_side_panels), never mid-session.
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
-        scroll.setStyleSheet(f"QScrollArea {{ background: {theme.TAB_BG}; border: none; }}")
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBar(JumpScrollBar())
+        scroll.setStyleSheet(
+            f"QScrollArea {{ background: {theme.TAB_BG}; border: none; }}"
+            f"QScrollBar:vertical {{ background: {theme.CANVAS_BG}; width: {theme.SCROLLBAR_W}px; }}"
+            f"QScrollBar::groove:vertical {{ background: transparent; border: none; }}"
+            f"QScrollBar::handle:vertical {{"
+            f"  background: transparent; border-left: 2px solid {theme.ACCENT};"
+            f"  border-radius: 0; min-height: 20px; }}"
+            f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}"
+            f"QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}"
+        )
         shotlist_tab_layout.addWidget(scroll)
 
         content = QWidget()
@@ -1293,39 +1360,75 @@ class ShotlistVisualizer(QMainWindow):
         layout.setAlignment(Qt.AlignTop)
 
         filter_sec     = self._build_filter_section()
-        info_sec       = self._build_info_section()
-        annotation_sec = self._build_annotation_section()
         playback_sec   = self._build_playback_section()
         tools_sec      = self._build_tools_section()   # sets self._tools_content_w
+        info_sec       = self._build_info_section()
+        annotation_sec = self._build_annotation_section()
 
         layout.addWidget(filter_sec)
-        layout.addWidget(info_sec)
-        layout.addWidget(annotation_sec)
         layout.addWidget(playback_sec)
         layout.addWidget(tools_sec)
+        layout.addWidget(info_sec)
+        layout.addWidget(annotation_sec)
 
         tabs.addTab(shotlist_tab, "Shotlist")
         outer_layout.addWidget(tabs)
 
-        # Thinnest allowed tab width = the Tools grid's natural (unwrapped)
-        # button width + the content layout's own margins + the permanently
-        # reserved vertical scrollbar strip.
-        self._inspector_min_w = self._tools_content_w + 2 * theme.SECTION_GAP + theme.SCROLLBAR_W
+        # Thinnest allowed tab width = the widest fixed-width row in the
+        # inspector, plus the content layout's own margins.  This keeps the
+        # action buttons and other non-wrapping controls fully inside the
+        # pane even before the scrollbar width is added dynamically.
+        self._inspector_min_w = max(
+            self._tools_content_w,
+            self._annotation_btn_row_w,
+            self._playback_content_w,
+            self._annotation_btn_row_w + theme.BUTTON_HEIGHT,
+            self._tools_content_w + theme.BUTTON_HEIGHT,
+        ) + 3 * theme.SECTION_GAP + 2 * theme.SCROLLBAR_W
         outer.setMinimumWidth(self._inspector_min_w)
+        self._inspector_scroll = scroll
+        self._inspector_sb_visible = False
+        scroll.verticalScrollBar().rangeChanged.connect(self._sync_inspector_scrollbar_width)
+        QTimer.singleShot(0, self._sync_inspector_scrollbar_width)
 
         return outer
+
+    def _sync_inspector_scrollbar_width(self, *_args) -> None:
+        """Reserve or release splitter width when the inspector scrollbar appears."""
+        scroll = getattr(self, "_inspector_scroll", None)
+        splitter = getattr(self, "_h_splitter", None)
+        if scroll is None or splitter is None:
+            return
+
+        sb = scroll.verticalScrollBar()
+        visible = sb.maximum() > 0
+        if visible == getattr(self, "_inspector_sb_visible", False):
+            return
+
+        sizes = list(splitter.sizes())
+        if len(sizes) != 4:
+            self._inspector_sb_visible = visible
+            return
+
+        sb_w = theme.SCROLLBAR_W
+        if visible:
+            sizes[-1] += sb_w
+        else:
+            sizes[-1] = max(0, sizes[-1] - sb_w)
+
+        self._inspector_sb_visible = visible
+        splitter.setSizes(sizes)
 
     def _build_filter_section(self) -> CollapsibleSection:
         """Filter — choose which film (and media type) the Browser shows."""
         sec = CollapsibleSection("Filter", pref_key="shotlist_section_filter")
 
         self.media_type_combo = QComboBox()
-        self.media_type_combo.setFocusPolicy(Qt.NoFocus)
-        self.media_type_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLength)
         self.media_type_combo.setMinimumContentsLength(8)
         self.media_type_combo.addItems(["movie", "gameplay"])
         self.media_type_combo.setCurrentText(self.media_type)
         self.media_type_combo.currentTextChanged.connect(self._on_media_type_changed)
+        _style_canonical_combo(self.media_type_combo)
         sec.add_widget(self.media_type_combo)
 
         # AdjustToMinimumContentsLength decouples the combo's own width from
@@ -1334,24 +1437,13 @@ class ShotlistVisualizer(QMainWindow):
         # that forces the whole Inspector wider.  The full title is shown
         # separately, wrapped, in _movie_title_label below.
         self.movie_combo = QComboBox()
-        self.movie_combo.setFocusPolicy(Qt.NoFocus)
-        self.movie_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLength)
         self.movie_combo.setMinimumContentsLength(8)
         for fn in self.filenames:
             self.movie_combo.addItem(_display_name(fn), fn)
         self.movie_combo.setCurrentIndex(self.current_movie_index)
         self.movie_combo.currentIndexChanged.connect(self.on_movie_combo_changed)
+        _style_canonical_combo(self.movie_combo)
         sec.add_widget(self.movie_combo)
-
-        # The combo box itself can only elide its closed-state text onto one
-        # line; this label shows the full title, wrapping at word/character
-        # boundaries when the inspector is narrower than the title.
-        self._movie_title_label = QLabel(self.movie_combo.currentText())
-        self._movie_title_label.setWordWrap(True)
-        self._movie_title_label.setFont(theme.font_mono())
-        self._movie_title_label.setStyleSheet(f"color: {theme.TEXT_DIM};")
-        self.movie_combo.currentTextChanged.connect(self._movie_title_label.setText)
-        sec.add_widget(self._movie_title_label)
 
         return sec
 
@@ -1419,11 +1511,11 @@ class ShotlistVisualizer(QMainWindow):
         # but hidden from view — the fields table below is the only
         # representation shown in the Inspector.
         self.ann_repr_combo = QComboBox()
-        self.ann_repr_combo.setFocusPolicy(Qt.NoFocus)
         for _mode in ("fields", "json", "txt", "vector", "mapping"):
             self.ann_repr_combo.addItem(_mode)
         self.ann_repr_combo.setCurrentIndex(0)
         self.ann_repr_combo.currentIndexChanged.connect(self._on_repr_changed)
+        _style_canonical_combo(self.ann_repr_combo)
         sec.add_widget(self.ann_repr_combo)
         self.ann_repr_combo.hide()
 
@@ -1457,12 +1549,21 @@ class ShotlistVisualizer(QMainWindow):
             QAbstractItemView.EditKeyPressed
         )
         self.ann_fields_table.setWordWrap(True)
-        self.ann_fields_table.setFont(theme.font_mono())
+        self.ann_fields_table.setFont(theme.font_ui())
         self.ann_fields_table.setStyleSheet(f"""
             QTableWidget {{
                 background: {theme.TAB_BG};
                 border: none;
                 gridline-color: {theme.TAB_BG};
+                font-family: '{theme.FAMILY_UI}';
+                font-size: {theme.BASE_PT}pt;
+                font-weight: {theme.WEIGHT_UI};
+            }}
+            QTableWidget::item {{
+                background: {theme.CELL_BG};
+                border: none;
+                padding: 0px 2px 0px 3px;
+                font-size: {theme.BASE_PT}pt;
             }}
             QTableWidget::item:selected {{
                 background: {theme.ACCENT};
@@ -1502,6 +1603,7 @@ class ShotlistVisualizer(QMainWindow):
         )
 
         grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(theme.SECTION_GAP)
 
         self.play_pause_button = QPushButton("\u25b6 Play")
@@ -1538,6 +1640,9 @@ class ShotlistVisualizer(QMainWindow):
         self.gremlins_button.setToolTip("Randomly jump movies/timecodes every 5 s  [G]")
         grid.addWidget(self.gremlins_button, 1, 1)
 
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+
         grid_widget = QWidget()
         grid_widget.setLayout(grid)
         sec.add_widget(grid_widget)
@@ -1571,6 +1676,7 @@ class ShotlistVisualizer(QMainWindow):
         )
 
         grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(theme.SECTION_GAP)
 
         self.split_button = QPushButton("New Shot")
@@ -1615,6 +1721,9 @@ class ShotlistVisualizer(QMainWindow):
         self.save_button.setStyleSheet(theme.action_button_stylesheet())
         self.save_button.setToolTip("Save shotlist changes to CSV  [Ctrl+S]")
         grid.addWidget(self.save_button, 2, 1)
+
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
 
         grid_widget = QWidget()
         grid_widget.setLayout(grid)
@@ -2753,18 +2862,21 @@ class ShotlistVisualizer(QMainWindow):
 
         for row, k in enumerate(keys):
             # ---- key column (non-editable) ----
-            key_item = QTableWidgetItem(k)
-            key_item.setFont(theme.font_ui())
-            key_item.setBackground(cell_bg)
-            key_item.setForeground(key_fg)
-            key_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            key_item.setFlags(Qt.ItemIsEnabled)
-            tbl.setItem(row, 0, key_item)
+            key_lbl = QLabel(k)
+            key_lbl.setFont(theme.font_ui())
+            key_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            key_lbl.setStyleSheet(
+                f"background: {theme.CELL_BG}; color: {theme.TEXT_DIM};"
+                f" font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
+                f" font-weight: {theme.WEIGHT_UI}; border: none; padding: 0px 4px 0px 2px;"
+            )
+            tbl.setCellWidget(row, 0, key_lbl)
 
             # ---- value column (editable) ----
             v = ann[k]
             v_str = ", ".join(str(x) for x in v) if isinstance(v, list) else str(v)
             value_item = QTableWidgetItem(v_str)
+            value_item.setFont(theme.font_mono())
             value_item.setBackground(cell_bg)
             value_item.setForeground(val_fg)
             value_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)

@@ -50,7 +50,7 @@ BTN_ICON     = BUTTON_ICON_SIZE
 # Canonical vertical scrollbar width (px) — shared by the global QSS default
 # (plain QScrollBar/QScrollArea/QTextEdit etc.) and JumpScrollBar, so every
 # vertical scrollbar in the app is the same thickness.
-SCROLLBAR_W  = 16
+SCROLLBAR_W  = 8
 # Inspector grid contract (all visualizers):
 # - Use edge-to-edge section bodies (no extra nested wrapper insets)
 # - Use SECTION_GAP for panel/section interior spacing
@@ -262,14 +262,14 @@ QScrollBar::handle:horizontal {{
     background: transparent;
     border-left: none;
     border-right: none;
-    border-top: 2px solid {ACCENT};
-    border-bottom: none;
+    border-top: none;
+    border-bottom: 2px solid {ACCENT};
     border-radius: 0;
     min-width: 20px;
 }}
 QScrollBar::handle:horizontal:hover, QScrollBar::handle:horizontal:pressed {{
     background: {ACCENT};
-    border-top: 2px solid {ACCENT};
+    border-bottom: 2px solid {ACCENT};
 }}
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
 
@@ -412,10 +412,14 @@ def tab_strip_stylesheet() -> str:
         f"QTabBar {{ background: {CANVAS_BG}; border: none; }}"
         f"QTabBar::tab {{"
         f" background: {CANVAS_BG}; color: {TEXT_DIM};"
-        f" padding: 4px 10px; border: none;"
+        f" padding: 2px 8px; border: none;"
         f" font-family: '{FAMILY_UI}'; font-size: {BASE_PT}pt;"
+        f" font-weight: {WEIGHT_UI};"
+        f" min-height: 20px;"
+        f" min-width: 0px;"
         f"}}"
-        f"QTabBar::tab:selected {{ background: {TAB_BG}; color: {TEXT}; }}"
+        f"QTabBar::tab:selected {{ background: {TAB_BG}; color: {TEXT}; border: none; }}"
+        f"QTabBar::tab:focus {{ outline: none; }}"
         f"QTabBar::tab:hover {{ background: {TAB_BG}; color: {TEXT}; }}"
     )
 
@@ -476,6 +480,7 @@ class _GripHandle(QSplitterHandle):
         super().__init__(orientation, parent)
         self._hovered    = False
         self._press_pos  = None   # set on mouse-down; cleared on release
+        self._dragged    = False  # set once a real drag move is observed
         self._saved_size = 0      # remembered size of right pane before collapse
 
     def enterEvent(self, event):
@@ -491,13 +496,21 @@ class _GripHandle(QSplitterHandle):
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self._press_pos = event.pos()
+            self._dragged = False
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._press_pos is not None and (event.buttons() & Qt.LeftButton):
+            if (event.pos() - self._press_pos).manhattanLength() > self._CLICK_THRESHOLD:
+                self._dragged = True
+        super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton and self._press_pos is not None:
-            if (event.pos() - self._press_pos).manhattanLength() <= self._CLICK_THRESHOLD:
+            if not self._dragged and (event.pos() - self._press_pos).manhattanLength() <= self._CLICK_THRESHOLD:
                 self._toggle_right_pane()
         self._press_pos = None
+        self._dragged = False
         super().mouseReleaseEvent(event)
 
     # ------------------------------------------------------------------
@@ -648,6 +661,7 @@ class JumpScrollBar(QScrollBar):
         handle_bg    = ACCENT if hover else "transparent"
         return (
             f"QScrollBar:{orient} {{ background: {CANVAS_BG}; {size_prop}: {SCROLLBAR_W}px; }}"
+            f"QScrollBar::groove:{orient} {{ background: transparent; border: none; }}"
             f"QScrollBar::handle:{orient} {{"
             f"    background: {handle_bg};"
             f"   {border_side}: 2px solid {ACCENT};"

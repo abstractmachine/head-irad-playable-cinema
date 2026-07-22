@@ -169,8 +169,11 @@ _WORKSPACE_TABS_STYLESHEET = (
     f"QTabBar {{ background: {theme.CANVAS_BG}; border: none; }}"
     f"QTabBar::tab {{"
     f" background: {theme.CANVAS_BG}; color: {theme.TEXT_DIM};"
-    f" padding: 4px 10px; border: none;"
+    f" padding: 2px 8px; border: none;"
     f" font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
+    f" font-weight: {theme.WEIGHT_UI};"
+    f" min-height: 20px;"
+    f" min-width: 0px;"
     f"}}"
     f"QTabBar::tab:selected {{ background: {theme.TAB_BG}; color: {theme.TEXT}; }}"
     f"QTabBar::tab:hover {{ background: {theme.TAB_BG}; color: {theme.TEXT}; }}"
@@ -3581,8 +3584,8 @@ class BookVisualizerWindow(QMainWindow):
         splitter.addWidget(self._sil_browser)
 
         # ── RIGHT: control panel (Book / Tools / Layers) ──────────────
-        panel = self._build_control_panel()
-        splitter.addWidget(panel)
+        self._control_panel = self._build_control_panel()
+        splitter.addWidget(self._control_panel)
         splitter.setStretchFactor(0, 1)   # canvas gets all extra space
         splitter.setStretchFactor(1, 0)   # silhouette browser: fixed
         splitter.setStretchFactor(2, 0)   # control panel: fixed
@@ -3942,6 +3945,10 @@ class BookVisualizerWindow(QMainWindow):
         self._workspace_tabs = QTabWidget()
         self._workspace_tabs.setDocumentMode(True)
         self._workspace_tabs.tabBar().setDrawBase(False)
+        self._workspace_tabs.tabBar().setExpanding(True)
+        self._workspace_tabs.tabBar().setUsesScrollButtons(False)
+        self._workspace_tabs.setFocusPolicy(Qt.NoFocus)
+        self._workspace_tabs.tabBar().setFocusPolicy(Qt.NoFocus)
         self._workspace_tabs.setStyleSheet(_WORKSPACE_TABS_STYLESHEET)
 
         book_workspace = QWidget()
@@ -4016,6 +4023,8 @@ class BookVisualizerWindow(QMainWindow):
             return
         if self._inspectors_hidden:
             restore = self._saved_inspector_split_sizes
+            self._sil_browser.setVisible(True)
+            self._control_panel.setVisible(True)
             if restore and len(restore) == 3:
                 self._main_splitter.setSizes(restore)
             else:
@@ -4026,7 +4035,8 @@ class BookVisualizerWindow(QMainWindow):
             return
 
         self._saved_inspector_split_sizes = sizes
-        self._main_splitter.setSizes([max(1, sum(sizes)), 0, 0])
+        self._sil_browser.setVisible(False)
+        self._control_panel.setVisible(False)
         self._inspectors_hidden = True
 
     def _expand_engraving_browser(self) -> None:

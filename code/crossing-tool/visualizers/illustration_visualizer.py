@@ -1670,6 +1670,8 @@ class IllustrationPane(QWidget):
         tabs.setMinimumWidth(_SIDE_PANE_W)
         tabs.setDocumentMode(True)
         tabs.tabBar().setDrawBase(False)
+        tabs.tabBar().setExpanding(True)
+        tabs.tabBar().setUsesScrollButtons(False)
         tabs.setFocusPolicy(Qt.NoFocus)
         tabs.tabBar().setFocusPolicy(Qt.NoFocus)
         tabs.setStyleSheet(
@@ -1678,11 +1680,14 @@ class IllustrationPane(QWidget):
             f"QTabBar              {{ background: {theme.CANVAS_BG}; border: none; }}"
             f"QTabBar::tab {{"
             f"  background: {theme.CANVAS_BG}; color: {theme.TEXT_DIM};"
-            f"  padding: 4px 12px; border: none; margin-bottom: 0;"
+            f"  padding: 2px 8px; border: none; margin-bottom: 0;"
             f"  font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
             f"  font-weight: {theme.WEIGHT_UI};"
+            f"  min-height: 20px;"
+            f"  min-width: 0px;"
             f"}}"
-            f"QTabBar::tab:selected {{ background: {_TAB_ACTIVE}; color: {theme.TEXT}; }}"
+            f"QTabBar::tab:selected {{ background: {_TAB_ACTIVE}; color: {theme.TEXT}; border: none; }}"
+            f"QTabBar::tab:focus {{ outline: none; }}"
             f"QTabBar::tab:hover    {{ background: {_TAB_ACTIVE}; color: {theme.TEXT}; }}"
         )
         return tabs
