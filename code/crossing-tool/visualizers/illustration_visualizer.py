@@ -59,7 +59,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from styles import theme
-from styles.theme import GripSplitter, JumpScrollBar, save_window_geometry, restore_window_geometry
+from styles.theme import GripSplitter, JumpScrollBar
 
 # Fix Qt plugin conflict with OpenCV — del env var before first PyQt5 import
 if "QT_QPA_PLATFORM_PLUGIN_PATH" in os.environ:
@@ -104,7 +104,7 @@ from PyQt5.QtGui import (
 from styles.theme import svg_icon as _svg_icon
 
 # Framework components
-from tool.shortcuts import VisualizerWindow
+from visualizers.window_visualizer import WindowVisualizer
 from visualizers.components.collapsible_section import CollapsibleSection
 from visualizers.components.illustration_browser import IllustrationBrowser
 from visualizers.components.illustration_source import SilhouetteSource, EngravingSource
@@ -1657,7 +1657,10 @@ class IllustrationPane(QWidget):
         # Track scrollbar visibility to keep pane width stable.
         self._inspector_sb_visible = False
         self._inspector_scroll = sil_scroll
-        sil_scroll.verticalScrollBar().rangeChanged.connect(self._on_inspector_sb_range)
+        # Delay connecting the scrollbar rangeChanged signal until the window
+        # shell has been constructed to avoid early emissions before the
+        # splitter has valid sizes. Connection will be made by the window
+        # owner (IllustrationWindow) after the shell is initialized.
 
         tabs.currentChanged.connect(self._on_source_tab_changed)
         return tabs
@@ -2798,7 +2801,7 @@ class IllustrationPane(QWidget):
 # Main window
 # ---------------------------------------------------------------------------
 
-class IllustrationWindow(VisualizerWindow):
+class IllustrationWindow(WindowVisualizer):
     """Top-level host for the framework reference visualizer.
 
     Owns window shell concerns (geometry, fullscreen state, IPC lifecycle) and
@@ -2815,21 +2818,50 @@ class IllustrationWindow(VisualizerWindow):
         initial_label: Optional[str] = None,
         initial_shot: Optional[str] = None,
     ) -> None:
-        super().__init__()
-        self.setWindowTitle("Crossing — Illustration Visualizer")
+        # Initialize attributes used by create_browser/create_inspector
+        # before WindowVisualizer.__init__ runs (it calls those hooks).
         self._project_path = project_path
+        self._media_type = media_type
+        self._model_name = model_name
+        self._initial_film = initial_film
+        self._initial_field = initial_field
+        self._initial_label = initial_label
+        self._initial_shot = initial_shot
 
-        self._catalog = IllustrationPane(project_path, media_type=media_type)
-        if initial_film or initial_field or initial_label or initial_shot:
-            QTimer.singleShot(0, lambda: self._catalog.navigate_to(
-                initial_film, initial_field, initial_label, initial_shot
-            ))
-        self.setCentralWidget(self._catalog)
+        # Let WindowVisualizer manage geometry persistence for this window.
+        super().__init__(pref_key="window_illustration")
+        self.setWindowTitle("Crossing — Illustration Visualizer")
+
+        # IllustrationPane is the visual catalog; create_browser will have
+        # already instantiated it and returned its browser widget. Configure
+        # the window sizing and restore additional state after layout.
         self.setMinimumSize(900, 560)
         self.resize(1300, 760)
-        restore_window_geometry(self, "window_illustration")
-        # Reopen in fullscreen if that was the state when the app was last closed
         QTimer.singleShot(0, self._restore_saved_state)
+
+        # Connect inspector scrollbar rangeChanged after the shell has
+        # completed its initial layout so the splitter has valid sizes.
+        try:
+            def _connect_sb():
+                try:
+                    cat = getattr(self, '_catalog', None)
+                    if cat is None:
+                        QTimer.singleShot(50, _connect_sb)
+                        return
+                    panel_splitter = getattr(cat, '_panel_splitter', None)
+                    # Wait until the catalog's panel splitter has sizes (two panes)
+                    if panel_splitter is None or len(panel_splitter.sizes()) < 2:
+                        QTimer.singleShot(50, _connect_sb)
+                        return
+                    inscroll = getattr(cat, '_inspector_scroll', None)
+                    if inscroll is not None:
+                        inscroll.verticalScrollBar().rangeChanged.connect(cat._on_inspector_sb_range)
+                except Exception:
+                    # If anything goes wrong, retry once later
+                    QTimer.singleShot(100, _connect_sb)
+            QTimer.singleShot(50, _connect_sb)
+        except Exception:
+            pass
 
         # IPC server — lets open_at_illustration navigate an existing instance
         self._ipc_server = _IllIpcServer(project_path, parent=self)
@@ -2850,6 +2882,63 @@ class IllustrationWindow(VisualizerWindow):
             label or None,
             shot_id or None,
         )
+
+    # ------------------------------------------------------------------
+    # WindowVisualizer hooks
+    def create_browser(self) -> QWidget:
+        # Instantiate the IllustrationPane (catalog) and return its browser widget.
+        self._catalog = IllustrationPane(self._project_path, media_type=self._media_type)
+        if self._initial_film or self._initial_field or self._initial_label or self._initial_shot:
+            QTimer.singleShot(0, lambda: self._catalog.navigate_to(
+                self._initial_film, self._initial_field, self._initial_label, self._initial_shot
+            ))
+        return self._catalog._browser_stack
+
+    def create_inspector(self) -> QWidget:
+        # Return the side inspector/filter pane created by the catalog.
+        return getattr(self, "_catalog", None)._side_scroll
+
+    def _fit_splitter_width(self) -> None:
+        # Delegate to the IllustrationPane's panel fitter.
+        try:
+            self._catalog._fit_panel_width()
+        except Exception:
+            QTimer.singleShot(100, self._fit_splitter_width)
+
+    def _toggle_inspector(self) -> None:
+        # Keep WindowVisualizer behavior, but synchronize the catalog's
+        # internal panel state so the IllustrationPane remains consistent.
+        try:
+            if hasattr(self, '_catalog') and getattr(self._catalog, '_panel_splitter', None):
+                # Save current sizes so the catalog can restore them later.
+                self._catalog._saved_panel_sizes = list(self._catalog._panel_splitter.sizes())
+        except Exception:
+            pass
+
+        # Perform the shell-level toggle (show/hide inspector)
+        super()._toggle_inspector()
+
+        # After toggle, update the catalog state to reflect shell visibility.
+        try:
+            hidden = getattr(self, '_inspector_hidden', False)
+            if hasattr(self, '_catalog'):
+                self._catalog._panels_hidden = hidden
+                if hidden:
+                    try:
+                        self._catalog._side_scroll.setVisible(False)
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        self._catalog._side_scroll.setVisible(True)
+                        if getattr(self._catalog, '_saved_panel_sizes', None):
+                            self._catalog._panel_splitter.setSizes(self._catalog._saved_panel_sizes)
+                        else:
+                            QTimer.singleShot(0, self._catalog._fit_panel_width)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
     def _restore_saved_state(self) -> None:
         """Restore panel mode, splitter sizes and fullscreen state from prefs.
@@ -2894,25 +2983,23 @@ class IllustrationWindow(VisualizerWindow):
         _prefs.set("window_illustration_panel_sizes", panel_sizes)
         self._ipc_server.stop()
         self._ipc_server.wait(1000)
-        save_window_geometry(self, "window_illustration")
         super().closeEvent(event)
 
     def keyPressEvent(self, event) -> None:
         key = event.key()
         mod = event.modifiers()
-        if key == Qt.Key_Escape:
-            self.close()
-        elif key in (Qt.Key_Q, Qt.Key_W) and mod & Qt.ControlModifier:
-            self.close()
-        elif key in (Qt.Key_Backtab, Qt.Key_Tab) and mod & Qt.ShiftModifier:
-            # Shift+Tab — toggle true fullscreen
-            if self.isFullScreen():
-                self.showNormal()
-            else:
-                self.showFullScreen()
-        elif key == Qt.Key_Tab and not (mod & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier)):
-            # Tab — toggle Filter + Inspector panes
-            self._catalog._toggle_panels()
+        # Delegate global window shortcuts to WindowVisualizer
+        if key == Qt.Key_Escape or (key in (Qt.Key_Q, Qt.Key_W) and mod & Qt.ControlModifier):
+            super().keyPressEvent(event)
+            return
+        if key in (Qt.Key_Backtab, Qt.Key_Tab) and mod & Qt.ShiftModifier:
+            # Shift+Tab — WindowVisualizer toggles fullscreen
+            super().keyPressEvent(event)
+            return
+        if key == Qt.Key_Tab and not (mod & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier)):
+            # Tab — WindowVisualizer owns inspector/panel toggling
+            super().keyPressEvent(event)
+            return
         elif key in (Qt.Key_Home, Qt.Key_End,
                      Qt.Key_PageUp, Qt.Key_PageDown,
                      Qt.Key_Up, Qt.Key_Down,

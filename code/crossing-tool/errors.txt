@@ -1,0 +1,7 @@
+~/playable/dead-crossing$ crossing visualizer illustration
+Traceback (most recent call last):
+  File "/home/cowpoke/playable/head-irad-playable-cinema/code/crossing-tool/visualizers/illustration_visualizer.py", line 2054, in _on_inspector_sb_range
+    sizes[-1] += sb_w
+    ~~~~~^^^^
+IndexError: list index out of range
+Aborted (core dumped)
