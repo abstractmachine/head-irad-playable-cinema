@@ -20,9 +20,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from styles import theme
-from styles.theme import GripSplitter, JumpScrollBar, restore_window_geometry, save_window_geometry
+from styles.theme import JumpScrollBar
 from tool import prefs as _prefs
-from tool.shortcuts import VisualizerWindow
+from visualizers.window_visualizer import WindowVisualizer
 from visualizers.components.collapsible_section import CollapsibleSection
 from visualizers.components.metadata_block import MetadataBlock
 from visualizers.components.thumbnail_loader import ThumbnailLoader
@@ -535,10 +535,13 @@ class _BrowserItem(QWidget):
         super().mouseDoubleClickEvent(event)
 
 
-class MetadataVisualizer(VisualizerWindow):
+class MetadataVisualizer(WindowVisualizer):
     def __init__(self, project_path: str) -> None:
-        super().__init__()
+        # Initialize attributes required by create_browser()/create_inspector()
+        # before the WindowVisualizer constructor runs (it calls those hooks).
         self._project_path = project_path
+        # Let the window shell persist geometry under this pref key
+        super().__init__(pref_key="window_metadata")
         self._inspector_hidden = False
         self._inspector_auto_collapsed = False
         self._saved_splitter_sizes: list[int] = []
@@ -552,47 +555,23 @@ class MetadataVisualizer(VisualizerWindow):
 
         self.setWindowTitle("Crossing — Metadata Visualizer")
 
-        root = QWidget()
-        root.setStyleSheet(f"background: {theme.CANVAS_BG};")
-        self.setCentralWidget(root)
-
-        layout = QHBoxLayout(root)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        self._splitter = GripSplitter(Qt.Horizontal)
-        self._splitter.setProperty("snap_right_pane_on_drag", False)
-        layout.addWidget(self._splitter)
-
-        self._browser_stack = QStackedWidget()
-        self._browser_stack.setContentsMargins(0, 0, 0, 0)
-
-        self._movie_page = _MetadataBrowserPage(project_path, "movie", "Movies")
-        self._gameplay_page = _MetadataBrowserPage(project_path, "gameplay", "Gameplay")
-        self._movie_page.selectionChanged.connect(lambda rec: self._on_page_selection_changed("movie", rec))
-        self._gameplay_page.selectionChanged.connect(lambda rec: self._on_page_selection_changed("gameplay", rec))
-        self._movie_page.openRequested.connect(lambda rec: self._open_record_in_shotlist("movie", rec))
-        self._gameplay_page.openRequested.connect(lambda rec: self._open_record_in_shotlist("gameplay", rec))
-
-        self._browser_stack.addWidget(self._movie_page)
-        self._browser_stack.addWidget(self._gameplay_page)
-
-        self._inspector_shell = self._build_inspector()
-
-        self._splitter.addWidget(self._browser_stack)
-        self._splitter.addWidget(self._inspector_shell)
-        self._splitter.setStretchFactor(0, 1)
-        self._splitter.setStretchFactor(1, 0)
-        self._splitter.splitterMoved.connect(self._on_splitter_moved)
-
+        # Browser and inspector are created via WindowVisualizer hooks.
+        # `create_browser` and `create_inspector` will be called from
+        # the WindowVisualizer constructor; configure the splitter
+        # behavior here after the shell exists.
         self.setMinimumSize(980, 640)
-        restore_window_geometry(self, "window_metadata")
-        QTimer.singleShot(0, self._fit_splitter_width)
+        # Tweak splitter behavior set by the shell
+        try:
+            self._splitter.setProperty("snap_right_pane_on_drag", False)
+            self._splitter.splitterMoved.connect(self._on_splitter_moved)
+        except Exception:
+            pass
 
+        # Populate browser/inspector content and load records
         self._load_records()
 
     def closeEvent(self, event) -> None:
-        save_window_geometry(self, "window_metadata")
+        # Geometry persistence handled by WindowVisualizer; just propagate.
         super().closeEvent(event)
 
     def _load_records(self) -> None:
@@ -723,6 +702,28 @@ class MetadataVisualizer(VisualizerWindow):
         outer_layout.addWidget(pane, 0, Qt.AlignTop)
         outer.setWidget(content)
         return outer
+
+    # WindowVisualizer hook: create the inspector shell widget
+    def create_inspector(self) -> QWidget:
+        # Build and store the inspector shell exactly where it was before.
+        self._inspector_shell = self._build_inspector()
+        return self._inspector_shell
+
+    # WindowVisualizer hook: create the browser widget
+    def create_browser(self) -> QWidget:
+        self._browser_stack = QStackedWidget()
+        self._browser_stack.setContentsMargins(0, 0, 0, 0)
+
+        self._movie_page = _MetadataBrowserPage(self._project_path, "movie", "Movies")
+        self._gameplay_page = _MetadataBrowserPage(self._project_path, "gameplay", "Gameplay")
+        self._movie_page.selectionChanged.connect(lambda rec: self._on_page_selection_changed("movie", rec))
+        self._gameplay_page.selectionChanged.connect(lambda rec: self._on_page_selection_changed("gameplay", rec))
+        self._movie_page.openRequested.connect(lambda rec: self._open_record_in_shotlist("movie", rec))
+        self._gameplay_page.openRequested.connect(lambda rec: self._open_record_in_shotlist("gameplay", rec))
+
+        self._browser_stack.addWidget(self._movie_page)
+        self._browser_stack.addWidget(self._gameplay_page)
+        return self._browser_stack
 
     def _fit_splitter_width(self) -> None:
         inspector_w = self._inspector_collapse_threshold()
@@ -921,25 +922,8 @@ class MetadataVisualizer(VisualizerWindow):
             self._info_block.set(key, value)
         self._update_thumbnail_preview()
 
-    def keyPressEvent(self, event) -> None:  # noqa: N802
-        key = event.key()
-        mod = event.modifiers()
-        if key == Qt.Key_Escape:
-            self.close()
-            return
-        if key in (Qt.Key_Q, Qt.Key_W) and mod & Qt.ControlModifier:
-            self.close()
-            return
-        if key == Qt.Key_Tab and not (mod & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier)):
-            if mod & Qt.ShiftModifier:
-                self._toggle_fullscreen()
-            else:
-                self._toggle_inspector()
-            return
-        if key == Qt.Key_Backtab:
-            self._toggle_fullscreen()
-            return
-        super().keyPressEvent(event)
+    # Keyboard handling (Esc, Ctrl+Q/W, Tab, Shift+Tab) is provided by
+    # WindowVisualizer; do not reimplement it here.
 
 
 def run_visualizer(project_path: str) -> None:
