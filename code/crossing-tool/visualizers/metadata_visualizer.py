@@ -37,6 +37,7 @@ from PyQt5.QtWidgets import (
     QLabel,
     QMainWindow,
     QPushButton,
+    QGridLayout,
     QScrollArea,
     QStackedWidget,
     QTabBar,
@@ -47,7 +48,7 @@ from PyQt5.QtWidgets import (
 _THUMB_SIZE = 120
 _THUMB_GAP = theme.SECTION_GAP
 _INSPECTOR_MIN_W = 280
-_ZOOM_MIN = 0.75
+_ZOOM_MIN = 0.60
 _ZOOM_MAX = 7.00
 _ZOOM_STEP = 0.10
 _ZOOM_DEFAULT = 1.00
@@ -560,6 +561,7 @@ class MetadataVisualizer(VisualizerWindow):
         layout.setSpacing(0)
 
         self._splitter = GripSplitter(Qt.Horizontal)
+        self._splitter.setProperty("snap_right_pane_on_drag", False)
         layout.addWidget(self._splitter)
 
         self._browser_stack = QStackedWidget()
@@ -660,9 +662,11 @@ class MetadataVisualizer(VisualizerWindow):
         tools_layout = QVBoxLayout(tools_wrap)
         tools_layout.setContentsMargins(0, 0, 0, 0)
         tools_layout.setSpacing(2)
-        tools_row = QHBoxLayout()
-        tools_row.setContentsMargins(0, 0, 0, 0)
-        tools_row.setSpacing(2)
+        tools_grid = QGridLayout()
+        tools_grid.setContentsMargins(0, 0, 0, 0)
+        tools_grid.setSpacing(2)
+        tools_grid.setColumnStretch(0, 1)
+        tools_grid.setColumnStretch(1, 1)
 
         action_style = theme.action_button_stylesheet()
 
@@ -670,23 +674,22 @@ class MetadataVisualizer(VisualizerWindow):
         self._zoom_in_btn.setFocusPolicy(Qt.NoFocus)
         self._zoom_in_btn.setStyleSheet(action_style)
         self._zoom_in_btn.clicked.connect(self._zoom_in_current_page)
-        tools_row.addWidget(self._zoom_in_btn)
+        tools_grid.addWidget(self._zoom_in_btn, 0, 0)
 
         self._zoom_out_btn = QPushButton("Zoom -")
         self._zoom_out_btn.setFocusPolicy(Qt.NoFocus)
         self._zoom_out_btn.setStyleSheet(action_style)
         self._zoom_out_btn.clicked.connect(self._zoom_out_current_page)
-        tools_row.addWidget(self._zoom_out_btn)
+        tools_grid.addWidget(self._zoom_out_btn, 0, 1)
 
         self._shotlist_btn = QPushButton("Shotlist")
         self._shotlist_btn.setFocusPolicy(Qt.NoFocus)
         self._shotlist_btn.setStyleSheet(action_style)
         self._shotlist_btn.setToolTip("Open the selected movie or gameplay entry in Shotlist")
         self._shotlist_btn.clicked.connect(self._open_selected_in_shotlist)
-        tools_row.addWidget(self._shotlist_btn)
+        tools_grid.addWidget(self._shotlist_btn, 1, 0, 1, 2)
 
-        tools_row.addStretch(1)
-        tools_layout.addLayout(tools_row)
+        tools_layout.addLayout(tools_grid)
         self._tools_section.add_widget(tools_wrap)
         pane_layout.addWidget(self._tools_section)
 
@@ -722,8 +725,7 @@ class MetadataVisualizer(VisualizerWindow):
         return outer
 
     def _fit_splitter_width(self) -> None:
-        inspector_w = max(_INSPECTOR_MIN_W, self._inspector_shell.sizeHint().width())
-        self._inspector_collapse_w = inspector_w
+        inspector_w = self._inspector_collapse_threshold()
         self._inspector_shell.setMinimumWidth(inspector_w)
         total_w = max(self.width(), 980)
         browser_w = max(1, total_w - inspector_w)
@@ -735,95 +737,23 @@ class MetadataVisualizer(VisualizerWindow):
         self._update_thumbnail_preview()
 
     def _on_inspector_scrollbar_range_changed(self, _min: int, _max: int) -> None:
-        QTimer.singleShot(0, self._sync_inspector_scrollbar_width)
+        return
 
     def _sync_inspector_scrollbar_width(self) -> None:
-        if getattr(self, "_inspector_hidden", False) or getattr(self, "_inspector_auto_collapsed", False):
-            return
-        scroll = getattr(self, "_inspector_scroll", None)
-        if scroll is None:
-            return
-
-        vbar = scroll.verticalScrollBar()
-        visible = vbar.isVisible()
-        extent = max(0, vbar.sizeHint().width())
-        if extent <= 0:
-            return
-
-        if visible == self._inspector_scrollbar_visible and extent == self._inspector_scrollbar_extent:
-            return
-
-        sizes = self._splitter.sizes()
-        if len(sizes) != 2:
-            return
-
-        browser_w, inspector_w = sizes
-        delta = extent if visible else -self._inspector_scrollbar_extent
-        if delta == 0:
-            return
-
-        browser_w = max(1, browser_w - delta)
-        inspector_w = max(1, inspector_w + delta)
-        self._splitter.blockSignals(True)
-        self._splitter.setSizes([browser_w, inspector_w])
-        self._splitter.blockSignals(False)
-
-        self._inspector_scrollbar_visible = visible
-        self._inspector_scrollbar_extent = extent if visible else 0
-        self._last_visible_splitter_sizes = [browser_w, inspector_w]
-        self._saved_splitter_sizes = [browser_w, inspector_w]
-        self._inspector_restore_w = browser_w + inspector_w
-        self._request_browser_reflow()
-        self._update_thumbnail_preview()
+        return
 
     def _inspector_collapse_threshold(self) -> int:
-        if self._inspector_collapse_w > 0:
-            return self._inspector_collapse_w
-        content_w = 0
-        if hasattr(self, "_inspector_content"):
-            content_w = self._inspector_content.sizeHint().width()
-        self._inspector_collapse_w = max(_INSPECTOR_MIN_W, content_w, self._inspector_shell.sizeHint().width())
+        fixed_w = 0
+        if hasattr(self, "_source_tabs"):
+            fixed_w = max(fixed_w, self._source_tabs.sizeHint().width())
+        if hasattr(self, "_tools_section"):
+            fixed_w = max(fixed_w, self._tools_section.sizeHint().width())
+
+        self._inspector_collapse_w = max(_INSPECTOR_MIN_W, int(round(fixed_w * 0.5)))
         return self._inspector_collapse_w
 
     def _sync_inspector_auto_collapse(self) -> None:
-        threshold = self._inspector_collapse_threshold()
-        sizes = self._splitter.sizes()
-        inspector_w = sizes[1] if len(sizes) > 1 else 0
-
-        if self._inspector_hidden:
-            return
-
-        if inspector_w > 0 and inspector_w < threshold:
-            if not self._inspector_auto_collapsed:
-                if self._last_visible_splitter_sizes:
-                    self._saved_splitter_sizes = list(self._last_visible_splitter_sizes)
-                    self._inspector_restore_w = sum(self._last_visible_splitter_sizes)
-                else:
-                    self._saved_splitter_sizes = list(sizes)
-                    self._inspector_restore_w = sum(sizes)
-
-                self._inspector_shell.setMinimumWidth(0)
-                self._splitter.setSizes([max(1, self.width() - 1), 0])
-                self._inspector_auto_collapsed = True
-            return
-
-        if self._inspector_auto_collapsed:
-            self._inspector_shell.setMinimumWidth(threshold)
-            if self._last_visible_splitter_sizes:
-                self._splitter.setSizes(self._last_visible_splitter_sizes)
-            elif self._saved_splitter_sizes:
-                self._splitter.setSizes(self._saved_splitter_sizes)
-            else:
-                self._fit_splitter_width()
-            self._inspector_auto_collapsed = False
-            QTimer.singleShot(0, self._request_browser_reflow)
-            QTimer.singleShot(0, self._update_thumbnail_preview)
-            return
-
-        if inspector_w >= threshold:
-            self._last_visible_splitter_sizes = list(sizes)
-            self._saved_splitter_sizes = list(sizes)
-            self._inspector_restore_w = sum(sizes)
+        return
 
     def _request_browser_reflow(self) -> None:
         page = self._browser_stack.currentWidget()
@@ -891,7 +821,6 @@ class MetadataVisualizer(VisualizerWindow):
         open_at_shot(self._project_path, filename, media_type=media_type)
 
     def _on_splitter_moved(self, _pos: int, _index: int) -> None:
-        self._sync_inspector_auto_collapse()
         self._request_browser_reflow()
         self._update_thumbnail_preview()
 
@@ -955,13 +884,11 @@ class MetadataVisualizer(VisualizerWindow):
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
-        self._sync_inspector_auto_collapse()
         QTimer.singleShot(0, self._request_browser_reflow)
         QTimer.singleShot(0, self._update_thumbnail_preview)
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
-        self._sync_inspector_auto_collapse()
         QTimer.singleShot(0, self._request_browser_reflow)
         QTimer.singleShot(0, self._update_thumbnail_preview)
 

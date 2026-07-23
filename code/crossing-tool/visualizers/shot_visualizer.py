@@ -141,20 +141,39 @@ class _IpcServer(_QThread):
         self._running = False
 
 
-class _ShotlistEscapeFilter(QObject):
+class _ShotlistShortcutFilter(QObject):
+    """Application-level shortcut filter for Shotlist.
+
+    Routes Tab / Shift+Tab and Escape to the active Shotlist window before Qt's
+    focus engine or child widgets can consume them.
+    """
+
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
-        if event.type() == QEvent.KeyPress and event.key() == Qt.Key_Escape:
-            app = QApplication.instance()
-            win = app.activeWindow() if app else None
-            if win is None:
-                return False
+        if event.type() != QEvent.KeyPress:
+            return False
+
+        key = event.key()
+        mods = event.modifiers()
+        if mods & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier):
+            return False
+
+        if key not in (Qt.Key_Escape, Qt.Key_Tab, Qt.Key_Backtab):
+            return False
+
+        app = QApplication.instance()
+        win = app.activeWindow() if app else None
+        if win is None:
+            return False
+
+        if key == Qt.Key_Escape:
             focus = win.focusWidget()
             ann_display = getattr(win, "ann_display", None)
             if focus is ann_display and getattr(win, "_ann_dirty", False):
                 return False
-            if hasattr(win, "close"):
-                win.close()
-                return True
+
+        if hasattr(win, "keyPressEvent"):
+            win.keyPressEvent(event)
+            return True
         return False
 
 
@@ -1133,6 +1152,7 @@ class ShotlistVisualizer(QMainWindow):
         self._h_splitter   = h_splitter
         self._scene_panel  = scene_panel
         self._shot_panel   = shot_panel
+        self._inspector    = inspector
 
         self.rebuild_shot_list()
         self.rebuild_scene_list()
@@ -1224,7 +1244,26 @@ class ShotlistVisualizer(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        _tbl = theme.table_stylesheet()
+        _tbl = theme.table_stylesheet() + f"""
+            QTableWidget::item {{
+                background: {theme.CELL_BG};
+                color: {theme.TEXT};
+                border: none;
+                border-bottom: 2px solid {theme.TAB_BG};
+                padding: 0px 2px 0px 3px;
+            }}
+            QHeaderView::section {{
+                background: {theme.TITLE_BG};
+                color: {theme.TEXT};
+                font-weight: bold;
+                border: none;
+                padding: 4px 2px;
+            }}
+            QTableCornerButton::section {{
+                background: {theme.TITLE_BG};
+                border: none;
+            }}
+        """
 
         self.scene_list = QTableWidget()
         self.scene_list.setColumnCount(1)
@@ -1286,19 +1325,25 @@ class ShotlistVisualizer(QMainWindow):
                 border: none;
                 gridline-color: {theme.TAB_BG};
             }}
+            QTableWidget::item {{
+                background: {theme.CELL_BG};
+                border: none;
+                border-bottom: 2px solid {theme.TAB_BG};
+                padding: 0px 2px 0px 3px;
+            }}
             QTableWidget::item:selected {{
                 background: {theme.ACCENT};
                 color: {theme.ACCENT_TEXT};
             }}
             QHeaderView::section {{
-                background: {theme.PANEL_BG};
+                background: {theme.TITLE_BG};
                 color: {theme.TEXT};
                 font-weight: bold;
                 border: none;
                 padding: 4px 2px;
             }}
             QTableCornerButton::section {{
-                background: {theme.PANEL_BG};
+                background: {theme.TITLE_BG};
                 border: none;
             }}
         """
@@ -1405,7 +1450,7 @@ class ShotlistVisualizer(QMainWindow):
             self._playback_content_w,
             self._annotation_btn_row_w + theme.BUTTON_HEIGHT,
             self._tools_content_w + theme.BUTTON_HEIGHT,
-        ) + 3 * theme.SECTION_GAP + 2 * theme.SCROLLBAR_W
+        ) + 3 * theme.SECTION_GAP + 2 * theme.SCROLLBAR_W + 10
         outer.setMinimumWidth(self._inspector_min_w)
         self._inspector_scroll = scroll
         self._inspector_sb_visible = False
@@ -1572,6 +1617,7 @@ class ShotlistVisualizer(QMainWindow):
             QAbstractItemView.EditKeyPressed
         )
         self.ann_fields_table.setWordWrap(True)
+        self.ann_fields_table.setTextElideMode(Qt.ElideNone)
         self.ann_fields_table.setFont(theme.font_ui())
         self.ann_fields_table.setStyleSheet(f"""
             QTableWidget {{
@@ -1814,19 +1860,20 @@ class ShotlistVisualizer(QMainWindow):
         the Scene panel, Shot panel, and Inspector as a single operation so
         the Browser can fill the entire window for distraction-free playback.
         """
-        sizes = list(self._h_splitter.sizes())
-        if len(sizes) != 4:
-            return
         if self._inspectors_hidden:
-            restore = self._saved_inspector_sizes
-            if restore and len(restore) == 4:
-                self._h_splitter.setSizes(restore)
-            else:
-                self._fit_side_panels()
+            self._scene_panel.show()
+            self._shot_panel.show()
+            inspector = getattr(self, "_inspector", None)
+            if inspector is not None:
+                inspector.show()
+            self._fit_side_panels()
             self._inspectors_hidden = False
         else:
-            self._saved_inspector_sizes = sizes
-            self._h_splitter.setSizes([max(1, sum(sizes)), 0, 0, 0])
+            self._scene_panel.hide()
+            self._shot_panel.hide()
+            inspector = getattr(self, "_inspector", None)
+            if inspector is not None:
+                inspector.hide()
             self._inspectors_hidden = True
 
     def _sync_timeline_pagestep(self):
@@ -2669,7 +2716,7 @@ class ShotlistVisualizer(QMainWindow):
         if key == Qt.Key_Escape:
             self.close()
             return
-        if key in (Qt.Key_Backtab, Qt.Key_Tab) and mods & Qt.ShiftModifier and not (
+        if key == Qt.Key_Backtab and mods & Qt.ShiftModifier and not (
             mods & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier)
         ):
             # Shift+Tab — toggle true fullscreen
@@ -2679,7 +2726,7 @@ class ShotlistVisualizer(QMainWindow):
                 self.showFullScreen()
             return
         if key == Qt.Key_Tab and not (
-            mods & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier | Qt.ShiftModifier)
+            mods & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier)
         ):
             # Tab — toggle Scene/Shot/Inspector panes
             self._toggle_inspectors()
@@ -2804,14 +2851,24 @@ class ShotlistVisualizer(QMainWindow):
         total_h = sum(tbl.rowHeight(r) for r in range(tbl.rowCount()))
         tbl.setFixedHeight(total_h + 2 * tbl.frameWidth())
 
-    def _on_ann_fields_table_resized(self, _logical_index, _old_size, _new_size) -> None:
-        """Re-fit row heights and the table's own height after a width change."""
-        self.ann_fields_table.resizeRowsToContents()
-        for row in range(self.ann_fields_table.rowCount()):
-            self.ann_fields_table.setRowHeight(
-                row, max(self.ann_fields_table.rowHeight(row), INSPECTOR_ROW_HEIGHT)
+    def _refit_ann_fields_table(self) -> None:
+        """Recompute wrapped row heights after the table has settled on its width."""
+        tbl = self.ann_fields_table
+        if not tbl.isVisible():
+            return
+        tbl.resizeRowsToContents()
+        for row in range(tbl.rowCount()):
+            tbl.setRowHeight(
+                row, max(tbl.rowHeight(row), INSPECTOR_ROW_HEIGHT)
             )
         self._resize_ann_fields_table()
+
+    def _schedule_ann_fields_table_refit(self) -> None:
+        QTimer.singleShot(0, self._refit_ann_fields_table)
+
+    def _on_ann_fields_table_resized(self, _logical_index, _old_size, _new_size) -> None:
+        """Re-fit row heights and the table's own height after a width change."""
+        self._schedule_ann_fields_table_refit()
 
     def _resize_ann_display(self) -> None:
         """Size ann_display to exactly fit its wrapped document content.
@@ -2838,6 +2895,7 @@ class ShotlistVisualizer(QMainWindow):
             self.ann_display.hide()
             self.ann_fields_table.show()
             self._populate_fields_table(ann, shot)
+            self._schedule_ann_fields_table_refit()
         else:
             self.ann_fields_table.hide()
             self.ann_display.show()
@@ -2872,7 +2930,7 @@ class ShotlistVisualizer(QMainWindow):
             tbl.setItem(0, 0, item)
             tbl.setSpan(0, 0, 1, 2)
             tbl.blockSignals(False)
-            self._resize_ann_fields_table()
+            self._schedule_ann_fields_table_refit()
             return
 
         try:
@@ -2891,15 +2949,14 @@ class ShotlistVisualizer(QMainWindow):
             # ---- key column (non-editable) ----
             key_lbl = QLabel(k)
             key_lbl.setFont(theme.font_ui())
-            key_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            key_lbl.setAlignment(Qt.AlignRight | Qt.AlignTop)
             key_lbl.setStyleSheet(
                 f"background: {theme.CELL_BG}; color: {theme.TEXT_DIM};"
                 f" font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
                 f" font-weight: {theme.WEIGHT_UI};"
-                f" border-right: 2px solid {theme.TAB_BG};"
-                f" padding: 0px 4px 0px 2px;"
+                f" padding: 0px 2px 0px 2px;"
             )
-            key_lbl.setFixedHeight(INSPECTOR_ROW_HEIGHT)
+            key_lbl.setMinimumHeight(INSPECTOR_ROW_HEIGHT)
             tbl.setCellWidget(row, 0, key_lbl)
 
             # ---- value column (editable) ----
@@ -2909,13 +2966,12 @@ class ShotlistVisualizer(QMainWindow):
             value_item.setFont(theme.font_mono())
             value_item.setBackground(cell_bg)
             value_item.setForeground(val_fg)
-            value_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            value_item.setTextAlignment(Qt.AlignLeft | Qt.AlignTop)
             value_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsEditable | Qt.ItemIsSelectable)
             tbl.setItem(row, 1, value_item)
 
-        tbl.resizeRowsToContents()
         tbl.blockSignals(False)
-        self._resize_ann_fields_table()
+        self._schedule_ann_fields_table_refit()
 
     def _on_fields_cell_changed(self, item: "QTableWidgetItem"):
         """Called when a content cell in the fields table is edited."""
@@ -3368,9 +3424,9 @@ def main():
     # Launch Qt application
     app = QApplication(sys.argv)
     theme.apply_theme(app)
-    if not hasattr(app, "_shotlist_escape_filter"):
-        app._shotlist_escape_filter = _ShotlistEscapeFilter(app)
-        app.installEventFilter(app._shotlist_escape_filter)
+    if not hasattr(app, "_shotlist_shortcut_filter"):
+        app._shotlist_shortcut_filter = _ShotlistShortcutFilter(app)
+        app.installEventFilter(app._shotlist_shortcut_filter)
     visualizer = ShotlistVisualizer(project_path, filenames, 0, args.media, verbose=args.verbose)
 
     # Use saved geometry if available; otherwise open maximised.

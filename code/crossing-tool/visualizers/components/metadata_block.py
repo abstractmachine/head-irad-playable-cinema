@@ -57,7 +57,7 @@ def table_key_cell_style(top: str, bottom: str) -> str:
         f" font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
         f" font-weight: {theme.WEIGHT_UI};"
         f"{top} border-right: {INSPECTOR_DIVIDER_THICKNESS}px solid {theme.TAB_BG}; {bottom}"
-        f" min-height: {INSPECTOR_ROW_HEIGHT}px; max-height: {INSPECTOR_ROW_HEIGHT}px;"
+        f" min-height: {INSPECTOR_ROW_HEIGHT}px;"
         f" padding: 0px 4px 0px 2px;"
     )
 
@@ -69,7 +69,6 @@ def table_value_cell_style(top: str, bottom: str) -> str:
         f" font-size: {theme.BASE_PT}pt;"
         f" font-weight: {theme.WEIGHT_MONO};"
         f"{top}{bottom} min-height: {INSPECTOR_ROW_HEIGHT}px;"
-        f" max-height: {INSPECTOR_ROW_HEIGHT}px;"
         f" padding: 0px 2px 0px 3px;"
     )
 
@@ -305,14 +304,14 @@ class MetadataBlock(QWidget):
 
             key_lbl = QLabel(key)
             key_lbl.setStyleSheet(table_key_cell_style(top, bottom))
-            key_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            key_lbl.setFixedHeight(INSPECTOR_ROW_HEIGHT)
+            key_lbl.setAlignment(Qt.AlignRight | Qt.AlignTop)
+            key_lbl.setMinimumHeight(INSPECTOR_ROW_HEIGHT)
             layout.addWidget(key_lbl, row_idx, 0)
 
             val_lbl = QLabel("—")
             val_lbl.setStyleSheet(table_value_cell_style(top, bottom))
             val_lbl.setWordWrap(True)
-            val_lbl.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+            val_lbl.setAlignment(Qt.AlignTop | Qt.AlignLeft)
             val_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
             sp = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
             sp.setHeightForWidth(True)

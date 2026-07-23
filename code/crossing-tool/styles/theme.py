@@ -482,6 +482,7 @@ class _GripHandle(QSplitterHandle):
         self._hovered    = False
         self._press_pos  = None   # set on mouse-down; cleared on release
         self._dragged    = False  # set once a real drag move is observed
+        self._last_right_size = 0 # right-pane size observed during drag
         self._saved_size = 0      # remembered size of right pane before collapse
 
     def enterEvent(self, event):
@@ -498,13 +499,20 @@ class _GripHandle(QSplitterHandle):
         if event.button() == Qt.LeftButton:
             self._press_pos = event.pos()
             self._dragged = False
+            sp = self.splitter()
+            idx = self._handle_index()
+            if idx >= 0:
+                sizes = sp.sizes()
+                self._last_right_size = sizes[idx] if idx < len(sizes) else 0
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
         if self._press_pos is not None and (event.buttons() & Qt.LeftButton):
-            if (event.pos() - self._press_pos).manhattanLength() > self._CLICK_THRESHOLD:
+            if (event.pos() - self._press_pos).manhattanLength() > 0:
                 self._dragged = True
         super().mouseMoveEvent(event)
+        if self._dragged:
+            self._maybe_snap_right_pane_closed()
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton and self._press_pos is not None:
@@ -512,6 +520,7 @@ class _GripHandle(QSplitterHandle):
                 self._toggle_right_pane()
         self._press_pos = None
         self._dragged = False
+        self._last_right_size = 0
         super().mouseReleaseEvent(event)
 
     # ------------------------------------------------------------------
@@ -537,6 +546,34 @@ class _GripHandle(QSplitterHandle):
         """
         w = sp.widget(i)
         return w is not None and w.minimumWidth() >= w.maximumWidth()
+
+    def _maybe_snap_right_pane_closed(self) -> None:
+        """Collapse the right pane as soon as a drag reaches its minimum width."""
+        sp = self.splitter()
+        if not sp.property("snap_right_pane_on_drag"):
+            return
+        idx = self._handle_index()
+        if idx < 0:
+            return
+
+        sizes = sp.sizes()
+        if idx >= len(sizes):
+            return
+
+        right_size = sizes[idx]
+        if right_size <= 0:
+            self._last_right_size = 0
+            return
+
+        w_min = getattr(sp.widget(idx), "minimumWidth", lambda: 0)()
+        collapse_at = max(1, w_min)
+        if right_size <= collapse_at and right_size < self._last_right_size:
+            self._dragged = True
+            self._toggle_right_pane()
+            self._last_right_size = 0
+            return
+
+        self._last_right_size = right_size
 
     def _toggle_right_pane(self) -> None:
         """Collapse or expand the pane immediately to the right of this handle.
