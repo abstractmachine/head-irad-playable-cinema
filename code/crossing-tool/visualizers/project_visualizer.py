@@ -16,8 +16,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from styles import theme
-from styles.theme import GripSplitter, JumpScrollBar, save_window_geometry, restore_window_geometry
-from tool.shortcuts import VisualizerWindow
+from styles.theme import JumpScrollBar
+from visualizers.window_visualizer import WindowVisualizer
 from visualizers.components.collapsible_section import CollapsibleSection
 from visualizers.components.metadata_block import INSPECTOR_ROW_HEIGHT, table_key_cell_style
 
@@ -159,10 +159,11 @@ _VISUALIZER_TITLE = {
 }
 
 
-class ProjectVisualizer(VisualizerWindow):
+class ProjectVisualizer(WindowVisualizer):
 
     def __init__(self) -> None:
-        super().__init__()
+        # Provide pref key to the shell so geometry is saved/restored there
+        super().__init__(pref_key="window_project")
         self.setWindowTitle("Crossing — Project Visualizer")
         self._procs: dict[str, subprocess.Popen] = {}
         self._windows: dict[str, object] = {}  # in-process visualizer windows
@@ -171,40 +172,11 @@ class ProjectVisualizer(VisualizerWindow):
         self._backup_master_fd: int = -1
         self._backup_stdout_buf: bytes = b""
         self._backup_anim_frame: int = 0
-        self._inspector_hidden = False
-        self._saved_splitter_sizes: list[int] = []
 
-        root = QWidget()
-        root.setStyleSheet(f"background: {theme.CANVAS_BG};")
-        self.setCentralWidget(root)
-
-        layout = QHBoxLayout(root)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        self._splitter = GripSplitter(Qt.Horizontal)
-
-        self._browser = QWidget()
-        self._browser.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self._browser.setStyleSheet(f"background: {theme.CANVAS_BG};")
-
-        self._inspector_shell = self._build_inspector()
-
-        self._splitter.addWidget(self._browser)
-        self._splitter.addWidget(self._inspector_shell)
-        self._splitter.setStretchFactor(0, 1)
-        self._splitter.setStretchFactor(1, 0)
-        self._splitter.handle(1).installEventFilter(self)
-
-        layout.addWidget(self._splitter)
-
+        # visual sizing hint
         self.setMinimumSize(900, 560)
-        QTimer.singleShot(0, self._fit_splitter_width)
-        restore_window_geometry(self, "window_project")
 
-    def closeEvent(self, event) -> None:
-        save_window_geometry(self, "window_project")
-        super().closeEvent(event)
+    # geometry handled by WindowVisualizer (pref_key passed at construction)
 
     # ------------------------------------------------------------------
     # Project path
@@ -593,7 +565,7 @@ class ProjectVisualizer(VisualizerWindow):
         sec.add_widget(outer_widget)
         return sec
 
-    def _build_inspector(self) -> QWidget:
+    def create_inspector(self) -> QWidget:
         outer = QWidget()
         outer.setStyleSheet(f"background: {theme.CANVAS_BG};")
 
@@ -667,49 +639,13 @@ class ProjectVisualizer(VisualizerWindow):
         self._inspector_tabs = tabs
         return outer
 
-    def _fit_splitter_width(self) -> None:
-        total = self._splitter.width()
-        if total <= 0:
-            QTimer.singleShot(100, self._fit_splitter_width)
-            return
-        inspector_w = max(320, self._inspector_shell.sizeHint().width())
-        self._inspector_shell.setMinimumWidth(inspector_w)
-        self._splitter.setSizes([max(1, total - inspector_w), inspector_w])
+    def create_browser(self) -> QWidget:
+        w = QWidget()
+        w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        w.setStyleSheet(f"background: {theme.CANVAS_BG};")
+        return w
 
-    def _sync_inspector_min_width(self) -> None:
-        if self._inspector_hidden:
-            self._inspector_shell.setMinimumWidth(0)
-            return
-        sizes = self._splitter.sizes()
-        if len(sizes) != 2:
-            return
-        inspector_w = max(0, sizes[1])
-        self._inspector_shell.setMinimumWidth(inspector_w)
-
-    def _toggle_inspector(self) -> None:
-        if self._inspector_hidden:
-            self._inspector_shell.setVisible(True)
-            self._inspector_hidden = False
-            if self._saved_splitter_sizes and len(self._saved_splitter_sizes) == 2:
-                self._splitter.setSizes(self._saved_splitter_sizes)
-            else:
-                QTimer.singleShot(0, self._fit_splitter_width)
-            QTimer.singleShot(0, self._sync_inspector_min_width)
-            return
-
-        self._saved_splitter_sizes = list(self._splitter.sizes())
-        self._inspector_shell.setVisible(False)
-        self._inspector_hidden = True
-        self._inspector_shell.setMinimumWidth(0)
-
-    def eventFilter(self, obj, event) -> bool:
-        if obj is self._splitter.handle(1) and event.type() == QEvent.MouseButtonRelease:
-            # Clear the live minimum before GripSplitter processes the click.
-            # That keeps the pane draggable wider while still allowing the
-            # grip handle to collapse/restore it on click.
-            self._inspector_shell.setMinimumWidth(0)
-            QTimer.singleShot(0, self._sync_inspector_min_width)
-        return super().eventFilter(obj, event)
+    # Splitter/panel behavior provided by WindowVisualizer
 
     def _launch(self, subcommand: str) -> None:
         if not _prefs.get("path"):
@@ -801,32 +737,7 @@ class ProjectVisualizer(VisualizerWindow):
             return SAMExplorer(project_path, model_name=model_name)
         return None  # caller falls through to subprocess
 
-    # ------------------------------------------------------------------
-    # Keyboard
-
-    def keyPressEvent(self, event) -> None:
-        key = event.key()
-        mod = event.modifiers()
-        if key == Qt.Key_Escape:
-            self.close()
-            return
-        if key in (Qt.Key_Q, Qt.Key_W) and mod & Qt.ControlModifier:
-            self.close()
-            return
-        if key in (Qt.Key_Backtab, Qt.Key_Tab) and mod & Qt.ShiftModifier and not (
-            mod & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier)
-        ):
-            if self.isFullScreen():
-                self.showNormal()
-            else:
-                self.showFullScreen()
-            return
-        if key == Qt.Key_Tab and not (
-            mod & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier | Qt.ShiftModifier)
-        ):
-            self._toggle_inspector()
-            return
-        super().keyPressEvent(event)
+    # Keyboard handled by WindowVisualizer (Tab/Shift+Tab/Esc/Ctrl+Q/Ctrl+W)
 
 
 # ---------------------------------------------------------------------------
