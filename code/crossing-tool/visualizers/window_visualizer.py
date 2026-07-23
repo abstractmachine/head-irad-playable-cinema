@@ -66,6 +66,8 @@ class WindowVisualizer(VisualizerWindow):
         except Exception:
             pass
 
+        # normal startup (no debug instrumentation)
+
         layout.addWidget(self._splitter)
 
         QTimer.singleShot(0, self._fit_splitter_width)
@@ -111,6 +113,7 @@ class WindowVisualizer(VisualizerWindow):
             return
         super().keyPressEvent(event)
 
+    # Debug helper removed
     # Splitter layout helpers ---------------------------------------
     def _fit_splitter_width(self) -> None:
         total = self._splitter.width()

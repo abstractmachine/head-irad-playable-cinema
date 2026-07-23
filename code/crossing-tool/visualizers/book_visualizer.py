@@ -38,6 +38,7 @@ _CLI_PATH = Path(__file__).parent.parent / "cli.py"
 
 from styles import theme
 from styles.theme import GripSplitter, save_window_geometry, restore_window_geometry
+from visualizers.window_visualizer import WindowVisualizer
 from visualizers.components.collapsible_section import CollapsibleSection
 from visualizers.components.hover_icon_button import HoverIconButton, build_icon_pair
 from visualizers.components.illustration_browser import IllustrationBrowser
@@ -377,7 +378,7 @@ class _SpreadView(QWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._doc   = None            # open fitz.Document
-        self._slug  = ""
+        self._slug  = "" 
         self._left_i:  Optional[int] = None
         self._right_i: Optional[int] = None
         self._spread_idx: int = 0
@@ -447,6 +448,7 @@ class _SpreadView(QWidget):
         render picks up the new cuts, then triggers an immediate re-render.
         """
         self._all_layers = list(layers)
+        
         self._layers_ver += 1
         self._cache.clear()
         self._reveal_cache.clear()
@@ -807,6 +809,7 @@ class _SpreadView(QWidget):
         if self._doc is None:
             p.end()
             return
+        
 
         key = (self._slug, self._left_i, self._right_i, self.width(), self.height())
         if key not in self._cache:
@@ -3488,18 +3491,18 @@ class _IllustrationBrowserPanel(QWidget):
     def add_engraving(self, _entry: dict) -> None:
         """Compatibility no-op for old per-book engraving list updates."""
 
-class BookVisualizerWindow(QMainWindow):
+class BookVisualizerWindow(WindowVisualizer):
     """Main window for the Book Visualizer."""
 
     def __init__(self, project_path: str) -> None:
-        super().__init__()
-        self.setWindowTitle("Crossing — Book Visualizer")
+        # Initialize attributes used by create_browser/create_inspector
+        # before WindowVisualizer.__init__ runs (it calls those hooks).
         self._project_path = project_path
 
         self._books: list[dict] = []
         self._current_book_idx: int = 0   # index into self._books
         self._doc = None                  # open fitz.Document (or None)
-        self._slug: str = ""              # slug of the currently open book
+        self._slug: str = ""            # slug of the currently open book
         self._spread_idx: int = 0         # current spread index
         self._updating_combo: bool = False
 
@@ -3508,50 +3511,39 @@ class BookVisualizerWindow(QMainWindow):
         self._next_layer_id: int = 1      # used by _CutOverlay for id generation
         self._clipboard_layer: Optional[dict] = None  # copy/cut clipboard
 
-        self._build_ui()
+        # Let WindowVisualizer manage geometry persistence for this window.
+        super().__init__(pref_key="window_book")
+        self.setWindowTitle("Crossing — Book Visualizer")
+        # normal initialization (no debug reporting)
+
+        # Post-layout adjustments
+        self.setMinimumSize(700, 480)
+        self.resize(1500, 800)
+
+        # Populate books + restore per-book state
         self._load_all_books()
-        restore_window_geometry(self, "window_book")
         self._inspectors_hidden: bool = False
         self._saved_inspector_split_sizes: Optional[list[int]] = None
-        # Grab navigation keys regardless of which child widget has focus
-        QApplication.instance().installEventFilter(self)
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
         # Ensure the spread renders on first show (the initial _do_render call in
         # __init__ fires before the widget has a valid size, so we retry here).
         QTimer.singleShot(0, self._spread_view._do_render)
+        # post-show actions (no debug reporting)
 
     def closeEvent(self, event) -> None:  # noqa: N802
         self._sil_browser._stop_loader()
         self._sil_browser._stop_eng_loader()
         self._save_current_layers()
         self._close_doc()
-        save_window_geometry(self, "window_book")
-        app = QApplication.instance()
-        if app is not None:
-            app.removeEventFilter(self)
+        # WindowVisualizer handles geometry persistence
         super().closeEvent(event)
 
     # ------------------------------------------------------------------
-    # UI construction
-
-    def _build_ui(self) -> None:
-        central = QWidget()
-        central.setObjectName("book_root")
-        central.setStyleSheet(f"QWidget#book_root {{ background: {theme.CANVAS_BG}; }}")
-        self.setCentralWidget(central)
-
-        outer = QVBoxLayout(central)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-
-        splitter = GripSplitter(Qt.Horizontal)
-        self._main_splitter = splitter
-        self._engraving_split_sizes: Optional[list[int]] = None
-        outer.addWidget(splitter, stretch=1)
-
-        # ── LEFT: spread view + page bar ─────────────────────────────
+    # WindowVisualizer hooks
+    def create_browser(self) -> QWidget:
+        # Build the left canvas column (spread view + page bar) and return it
         left_col = QWidget()
         left_col.setStyleSheet(f"background: {theme.CANVAS_BG};")
         left_layout = QVBoxLayout(left_col)
@@ -3575,23 +3567,30 @@ class BookVisualizerWindow(QMainWindow):
         self._page_bar.jumped.connect(self._go_spread)
         left_layout.addWidget(self._page_bar)
 
-        splitter.addWidget(left_col)
+        return left_col
 
-        # ── MIDDLE: Illustration browser sidebar ──────────────────────
+    def create_inspector(self) -> QWidget:
+        # Build the combined inspector: illustration browser + control panel
+        panel_split = GripSplitter(Qt.Horizontal)
+        self._panel_splitter = panel_split
+        self._engraving_split_sizes: Optional[list[int]] = None
+
+        # Middle: engraving browser
         self._sil_browser = _IllustrationBrowserPanel(self._project_path)
         self._sil_browser.silhouette_insert_requested.connect(self._insert_silhouette)
         self._sil_browser.thumbnail_selected.connect(self._on_browser_thumbnail_selected)
-        splitter.addWidget(self._sil_browser)
+        panel_split.addWidget(self._sil_browser)
 
-        # ── RIGHT: control panel (Book / Tools / Layers) ──────────────
+        # Right: control panel
         self._control_panel = self._build_control_panel()
-        splitter.addWidget(self._control_panel)
-        splitter.setStretchFactor(0, 1)   # canvas gets all extra space
-        splitter.setStretchFactor(1, 0)   # silhouette browser: fixed
-        splitter.setStretchFactor(2, 0)   # control panel: fixed
-        splitter.setSizes([10000, _BROWSER_PANEL_W, _PANEL_WIDTH])
-        self._engraving_split_sizes = [10000, _BROWSER_PANEL_W, _PANEL_WIDTH]
+        panel_split.addWidget(self._control_panel)
+
+        panel_split.setStretchFactor(0, 0)
+        panel_split.setStretchFactor(1, 0)
+        panel_split.setSizes([_BROWSER_PANEL_W, _PANEL_WIDTH])
+        self._engraving_split_sizes = [_BROWSER_PANEL_W, _PANEL_WIDTH]
         QTimer.singleShot(0, self._collapse_engraving_browser)
+        return panel_split
 
         self.setMinimumSize(700, 480)
         self.resize(1500, 800)
@@ -3600,6 +3599,7 @@ class BookVisualizerWindow(QMainWindow):
         # Outer container with fixed width
         outer = QWidget()
         outer.setFixedWidth(_PANEL_WIDTH)
+        # normal construction of control panel wrapper
         outer.setStyleSheet(_PANEL_STYLESHEET)
 
         outer_layout = QVBoxLayout(outer)
@@ -4012,57 +4012,84 @@ class BookVisualizerWindow(QMainWindow):
         else:
             self._collapse_engraving_browser()
 
+    # Debug helper removed
+
+    # Debug helpers removed
+
+    # Debug helpers removed
+
     def _toggle_inspectors(self) -> None:
         """Toggle between full-canvas mode and inspector-visible mode.
 
         Mirrors Illustration Visualizer's Tab behavior: hide/show the
         side inspectors as a single operation.
         """
-        sizes = list(self._main_splitter.sizes())
-        if len(sizes) != 3:
-            return
-        if self._inspectors_hidden:
-            restore = self._saved_inspector_split_sizes
-            self._sil_browser.setVisible(True)
-            self._control_panel.setVisible(True)
-            if restore and len(restore) == 3:
-                self._main_splitter.setSizes(restore)
-            else:
-                self._main_splitter.setSizes([10000, _BROWSER_PANEL_W, _PANEL_WIDTH])
-            self._inspectors_hidden = False
-            if self._workspace_tabs.currentIndex() != getattr(self, "_engr_workspace_idx", -1):
-                self._collapse_engraving_browser()
-            return
+        # Save internal panel sizes, delegate shell show/hide to WindowVisualizer,
+        # and restore internal sizes when the inspector is shown again. Do not
+        # modify the outer shell splitter here.
+        panel = getattr(self, "_panel_splitter", None)
 
-        self._saved_inspector_split_sizes = sizes
-        self._sil_browser.setVisible(False)
-        self._control_panel.setVisible(False)
-        self._inspectors_hidden = True
+        # toggle inspectors: preserve behavior without debug prints
+
+        try:
+            self._saved_panel_sizes = list(panel.sizes()) if panel is not None else None
+        except Exception:
+            self._saved_panel_sizes = None
+
+        # Delegate show/hide to the shell (WindowVisualizer manages outer splitter)
+        super()._toggle_inspector()
+
+        # If inspector is now visible, restore the internal panel sizes.
+        try:
+            if not getattr(self, "_inspector_hidden", False) and panel is not None and self._saved_panel_sizes:
+                self._panel_splitter.setSizes(self._saved_panel_sizes)
+        except Exception:
+            pass
+
+        # Ensure internal engravings panel state matches the active tab.
+        if getattr(self, "_workspace_tabs", None) and self._workspace_tabs.currentIndex() != getattr(self, "_engr_workspace_idx", -1):
+            self._collapse_engraving_browser()
+
+        # end toggle inspectors
 
     def _expand_engraving_browser(self) -> None:
-        sizes = list(self._main_splitter.sizes())
-        if len(sizes) != 3 or sizes[1] > 0:
+        panel = getattr(self, "_panel_splitter", None)
+        # expand engraving browser (no debug prints)
+        if panel is None:
             return
-        if self._engraving_split_sizes and len(self._engraving_split_sizes) == 3:
-            self._main_splitter.setSizes(self._engraving_split_sizes)
+        sizes = list(panel.sizes())
+        # only expand when currently collapsed (left size == 0)
+        if len(sizes) != 2 or sizes[0] > 0:
             return
-        total = max(1, sum(sizes))
-        right = max(_PANEL_WIDTH, sizes[2])
-        mid = max(280, total // 4)
-        left = max(1, total - right - mid)
-        self._main_splitter.setSizes([left, mid, right])
+        # Restore saved internal sizes if available, otherwise use defaults.
+        if self._engraving_split_sizes and len(self._engraving_split_sizes) == 2:
+            panel.setSizes(list(self._engraving_split_sizes))
+            return
+        # Fallback defaults for internal panel widths
+        mid = max(280, 360)
+        right = max(_PANEL_WIDTH, 300)
+        panel.setSizes([mid, right])
+
+        # end expand engraving browser
 
     def _collapse_engraving_browser(self) -> None:
-        sizes = list(self._main_splitter.sizes())
-        if len(sizes) != 3:
+        panel = getattr(self, "_panel_splitter", None)
+        # collapse engraving browser (no debug prints)
+        if panel is None:
             return
-        if sizes[1] > 0:
-            self._engraving_split_sizes = list(sizes)
-        if sizes[1] == 0:
+        sizes = list(panel.sizes())
+        if len(sizes) != 2:
             return
-        sizes[0] += sizes[1]
-        sizes[1] = 0
-        self._main_splitter.setSizes(sizes)
+        mid, right = sizes[0], sizes[1]
+        if mid > 0:
+            self._engraving_split_sizes = [int(mid), int(right)]
+        if mid == 0:
+            return
+        total = max(1, int(mid + right))
+        # collapse the engraving pane internally — do not touch outer splitter
+        panel.setSizes([0, total])
+
+        # end collapse engraving browser
 
     def _on_engraving_sort_changed(self, _idx: int) -> None:
         mode = self._eng_sort_combo.currentData() or "catalog"

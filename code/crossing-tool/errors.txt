@@ -1,7 +1,141 @@
-~/playable/dead-crossing$ crossing visualizer illustration
-Traceback (most recent call last):
-  File "/home/cowpoke/playable/head-irad-playable-cinema/code/crossing-tool/visualizers/illustration_visualizer.py", line 2054, in _on_inspector_sb_range
-    sizes[-1] += sb_w
-    ~~~~~^^^^
-IndexError: list index out of range
-Aborted (core dumped)
+~/playable/dead-crossing$ crossing visualizer book
+
+*** CREATED INSPECTOR WRAPPER ***
+var_name=outer class=QWidget objectName='' id=127061666044304
+created_at: /home/cowpoke/playable/head-irad-playable-cinema/code/crossing-tool/visualizers/book_visualizer.py:3639
+parent id=None class=None
+width=270 min=270 max=270 hint=-1 policy=5
+children:
+*** END CREATED INSPECTOR WRAPPER ***
+
+
+----- INSPECTOR HIERARCHY DUMP -----
+No inspector_shell present
+
+----- PANEL SPLITTER DIAGNOSTICS -----
+splitter.count() -> 2
+splitter.sizes() -> [366, 270]
+splitter.handleWidth() -> 10
+splitter.childrenCollapsible() -> True
+splitter.opaqueResize() -> True
+child[0] class=_IllustrationBrowserPanel id=127061666039696 width=366 geometry=PyQt5.QtCore.QRect(0, 0, 366, 480) visible=False
+child[1] class=QWidget id=127061666044304 width=270 geometry=PyQt5.QtCore.QRect(370, 0, 270, 480) visible=False
+----- END PANEL SPLITTER DIAGNOSTICS -----
+
+
+*** CREATED INSPECTOR WRAPPER ***
+var_name=_control_panel_after_super class=QWidget objectName='' id=127061666044304
+parent id=127061666039552 class=GripSplitter
+width=270 min=270 max=270 hint=264 policy=5
+children:
+   QTabWidget#:id=127061649593328
+*** END CREATED INSPECTOR WRAPPER ***
+
+
+----- INSPECTOR HIERARCHY DUMP -----
+
+*** CREATED INSPECTOR WRAPPER ***
+var_name=_control_panel_after_show class=QWidget objectName='' id=127061666044304
+parent id=127061666039552 class=GripSplitter
+width=270 min=270 max=270 hint=264 policy=5
+children:
+   QTabWidget#:id=127061649593328
+*** END CREATED INSPECTOR WRAPPER ***
+
+
+----- INSPECTOR HIERARCHY DUMP -----
+
+==============================
+_collapse_engraving_browser BEFORE
+OUTER : [1166, 324]
+INNER : [44, 270]
+
+==============================
+_collapse_engraving_browser AFTER
+OUTER : [1166, 324]
+INNER : [0, 270]
+
+----- PANEL SPLITTER DIAGNOSTICS -----
+splitter.count() -> 2
+splitter.sizes() -> [0, 270]
+splitter.handleWidth() -> 10
+splitter.childrenCollapsible() -> True
+splitter.opaqueResize() -> True
+child[0] class=_IllustrationBrowserPanel id=127061666039696 width=0 geometry=PyQt5.QtCore.QRect(-1, -801, 0, 800) visible=True
+child[1] class=QWidget id=127061666044304 width=270 geometry=PyQt5.QtCore.QRect(38, 0, 270, 800) visible=True
+----- END PANEL SPLITTER DIAGNOSTICS -----
+
+
+===== OUTER CHAIN DIAGNOSTICS =====
+WindowVisualizer(self) -> class=BookVisualizerWindow objectName='' id=127061666037824 parent=None
+    geometry=PyQt5.QtCore.QRect(259, 163, 1500, 800) width=1500 height=800 min=700 max=16777215 sizeHint=PyQt5.QtCore.QSize(334, 472) sizePolicy_h=5
+    layout=QLayout contentsMargins=<PyQt5.QtCore.QMargins object at 0x738fcd763220> spacing=6
+root (centralWidget) -> class=QWidget objectName='' id=127061666038112 parent=BookVisualizerWindow
+    geometry=PyQt5.QtCore.QRect(0, 0, 1500, 800) width=1500 height=800 min=0 max=16777215 sizeHint=PyQt5.QtCore.QSize(334, 472) sizePolicy_h=5
+    layout=QHBoxLayout contentsMargins=<PyQt5.QtCore.QMargins object at 0x738fcd761310> spacing=0
+outer_splitter (self._splitter) -> class=GripSplitter objectName='' id=127061666038400 parent=QWidget
+    geometry=PyQt5.QtCore.QRect(0, 0, 1500, 800) width=1500 height=800 min=0 max=16777215 sizeHint=PyQt5.QtCore.QSize(308, 472) sizePolicy_h=7
+    layout=None contentsMargins=None spacing=None
+
+--- OUTER SPLITTER ---
+splitter.sizes() -> [1166, 324]
+splitter.handleWidth() -> 10
+splitter.count() -> 2
+splitter.sizeHint() -> PyQt5.QtCore.QSize(308, 472)
+splitter.minimumSizeHint() -> PyQt5.QtCore.QSize(334, 472)
+child[0] class=QWidget geometry=PyQt5.QtCore.QRect(0, 0, 1166, 800) width=1166 visible=True
+  child[0] sizeHint() -> PyQt5.QtCore.QSize(0, 8)
+  child[0] minimumSizeHint() -> PyQt5.QtCore.QSize(0, 8)
+  child[0] minimumWidth() -> 0 maximumWidth() -> 16777215
+  child[0] layout.contentsMargins=<PyQt5.QtCore.QMargins object at 0x738fcd763140> spacing=0
+  child[0] child[0] class=_SpreadView geometry=PyQt5.QtCore.QRect(0, 0, 1166, 792)
+  child[0] child[1] class=_PageBar geometry=PyQt5.QtCore.QRect(0, 792, 1166, 8)
+child[1] class=GripSplitter geometry=PyQt5.QtCore.QRect(1176, 0, 324, 800) width=324 visible=True
+  child[1] sizeHint() -> PyQt5.QtCore.QSize(308, 472)
+  child[1] minimumSizeHint() -> PyQt5.QtCore.QSize(324, 472)
+  child[1] minimumWidth() -> 0 maximumWidth() -> 16777215
+inspector_shell (self._inspector_shell) -> class=GripSplitter objectName='' id=127061666039552 parent=GripSplitter
+    geometry=PyQt5.QtCore.QRect(1176, 0, 324, 800) width=324 height=800 min=0 max=16777215 sizeHint=PyQt5.QtCore.QSize(308, 472) sizePolicy_h=7
+    layout=None contentsMargins=None spacing=None
+internal_panel_splitter (self._panel_splitter) -> class=GripSplitter objectName='' id=127061666039552 parent=GripSplitter
+    geometry=PyQt5.QtCore.QRect(1176, 0, 324, 800) width=324 height=800 min=0 max=16777215 sizeHint=PyQt5.QtCore.QSize(308, 472) sizePolicy_h=7
+    layout=None contentsMargins=None spacing=None
+internal splitter.sizes() -> [0, 270]
+internal.parent[0] -> class=GripSplitter objectName='' id=127061666038400 parent=QWidget
+    geometry=PyQt5.QtCore.QRect(0, 0, 1500, 800) width=1500 height=800 min=0 max=16777215 sizeHint=PyQt5.QtCore.QSize(308, 472) sizePolicy_h=7
+    layout=None contentsMargins=None spacing=None
+internal.parent[1] -> class=QWidget objectName='' id=127061666038112 parent=BookVisualizerWindow
+    geometry=PyQt5.QtCore.QRect(0, 0, 1500, 800) width=1500 height=800 min=0 max=16777215 sizeHint=PyQt5.QtCore.QSize(334, 472) sizePolicy_h=5
+    layout=QHBoxLayout contentsMargins=<PyQt5.QtCore.QMargins object at 0x738fcd7633e0> spacing=0
+  parent[1] layout.contentsMargins() -> <PyQt5.QtCore.QMargins object at 0x738fcd7633e0> spacing() -> 0
+internal.parent[2] -> class=BookVisualizerWindow objectName='' id=127061666037824 parent=None
+    geometry=PyQt5.QtCore.QRect(259, 163, 1500, 800) width=1500 height=800 min=700 max=16777215 sizeHint=PyQt5.QtCore.QSize(334, 472) sizePolicy_h=5
+    layout=QLayout contentsMargins=<PyQt5.QtCore.QMargins object at 0x738fcd763300> spacing=6
+  parent[2] layout.contentsMargins() -> <PyQt5.QtCore.QMargins object at 0x738fcd763300> spacing() -> 6
+===== END OUTER CHAIN DIAGNOSTICS =====
+
+
+==============================
+_expand_engraving_browser BEFORE
+OUTER : [1170, 320]
+INNER : [0, 270]
+
+==============================
+_collapse_engraving_browser BEFORE
+OUTER : [1170, 320]
+INNER : [44, 266]
+
+==============================
+_collapse_engraving_browser AFTER
+OUTER : [1170, 320]
+INNER : [0, 270]
+
+----- PANEL SPLITTER DIAGNOSTICS -----
+splitter.count() -> 2
+splitter.sizes() -> [0, 270]
+splitter.handleWidth() -> 10
+splitter.childrenCollapsible() -> True
+splitter.opaqueResize() -> True
+child[0] class=_IllustrationBrowserPanel id=127061666039696 width=0 geometry=PyQt5.QtCore.QRect(-1, -801, 0, 800) visible=True
+child[1] class=QWidget id=127061666044304 width=270 geometry=PyQt5.QtCore.QRect(36, 0, 270, 800) visible=True
+----- END PANEL SPLITTER DIAGNOSTICS -----
