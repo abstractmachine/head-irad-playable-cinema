@@ -24,6 +24,7 @@ from styles.theme import JumpScrollBar
 from tool import prefs as _prefs
 from visualizers.window_visualizer import WindowVisualizer
 from visualizers.components.collapsible_section import CollapsibleSection
+from visualizers.components.inspector import Inspector
 from visualizers.components.metadata_block import MetadataBlock
 from visualizers.components.thumbnail_loader import ThumbnailLoader
 from visualizers.shot_visualizer import open_at_shot
@@ -592,26 +593,13 @@ class MetadataVisualizer(WindowVisualizer):
         self._sync_inspector_to_current_tab()
 
     def _build_inspector(self) -> QWidget:
-        outer = QScrollArea()
-        outer.setWidgetResizable(True)
-        outer.setFrameShape(QFrame.NoFrame)
-        outer.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        outer.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        outer.setStyleSheet(f"QScrollArea {{ background: {theme.CANVAS_BG}; border: none; }}")
-        outer.verticalScrollBar().rangeChanged.connect(self._on_inspector_scrollbar_range_changed)
+        inspector = Inspector(self)
+        inspector.scroll.verticalScrollBar().rangeChanged.connect(self._on_inspector_scrollbar_range_changed)
 
-        content = QWidget()
-        content.setStyleSheet(f"background: {theme.CANVAS_BG};")
-        content.setMinimumWidth(_INSPECTOR_MIN_W)
-        content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-        self._inspector_content = content
-        self._inspector_scroll = outer
+        # Configure content size
+        inspector.set_minimum_width(_INSPECTOR_MIN_W)
 
-        outer_layout = QVBoxLayout(content)
-        outer_layout.setContentsMargins(0, 0, 0, 0)
-        outer_layout.setSpacing(0)
-        outer_layout.setAlignment(Qt.AlignTop)
-
+        # Top source tabs (non-collapsible)
         tabs = QTabBar()
         tabs.setExpanding(False)
         tabs.setUsesScrollButtons(False)
@@ -625,18 +613,9 @@ class MetadataVisualizer(WindowVisualizer):
 
         tabs.currentChanged.connect(self._on_source_tab_changed)
 
-        outer_layout.addWidget(tabs)
+        inspector.add_widget(tabs, alignment=Qt.AlignTop)
 
-        pane = QWidget()
-        pane.setStyleSheet(f"background: {theme.TAB_BG};")
-        pane.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-        pane_layout = QVBoxLayout(pane)
-        pane_layout.setContentsMargins(2, 2, 2, 2)
-        pane_layout.setSpacing(2)
-        pane_layout.setAlignment(Qt.AlignTop)
-
-        self._tools_section = CollapsibleSection("Tools", pref_key="metadata_section_tools")
-        self._tools_section.setStyleSheet(f"background: {theme.TAB_BG};")
+        # Tools section
         tools_wrap = QWidget()
         tools_layout = QVBoxLayout(tools_wrap)
         tools_layout.setContentsMargins(0, 0, 0, 0)
@@ -669,11 +648,9 @@ class MetadataVisualizer(WindowVisualizer):
         tools_grid.addWidget(self._shotlist_btn, 1, 0, 1, 2)
 
         tools_layout.addLayout(tools_grid)
-        self._tools_section.add_widget(tools_wrap)
-        pane_layout.addWidget(self._tools_section)
+        self._tools_section = inspector.add_group("Tools", tools_wrap, pref_key="metadata_section_tools")
 
-        self._info_section = CollapsibleSection("Info", pref_key="metadata_section_info")
-        self._info_section.setStyleSheet(f"background: {theme.TAB_BG};")
+        # Info section
         info_wrap = QWidget()
         info_layout = QVBoxLayout(info_wrap)
         info_layout.setContentsMargins(0, 0, 0, 0)
@@ -681,11 +658,9 @@ class MetadataVisualizer(WindowVisualizer):
 
         self._info_block = MetadataBlock(_INFO_ROWS)
         info_layout.addWidget(self._info_block)
-        self._info_section.add_widget(info_wrap)
+        self._info_section = inspector.add_group("Info", info_wrap, pref_key="metadata_section_info")
 
-        pane_layout.addWidget(self._info_section)
-        self._thumbnail_section = CollapsibleSection("Thumbnail", pref_key="metadata_section_thumbnail")
-        self._thumbnail_section.setStyleSheet(f"background: {theme.TAB_BG};")
+        # Thumbnail section
         thumbnail_wrap = QWidget()
         thumbnail_layout = QVBoxLayout(thumbnail_wrap)
         thumbnail_layout.setContentsMargins(0, 0, 0, 0)
@@ -696,18 +671,14 @@ class MetadataVisualizer(WindowVisualizer):
         self._thumbnail_label.setMinimumHeight(140)
         self._thumbnail_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         thumbnail_layout.addWidget(self._thumbnail_label)
-        self._thumbnail_section.add_widget(thumbnail_wrap)
-        pane_layout.addWidget(self._thumbnail_section)
+        self._thumbnail_section = inspector.add_group("Thumbnail", thumbnail_wrap, pref_key="metadata_section_thumbnail")
 
-        outer_layout.addWidget(pane, 0, Qt.AlignTop)
-        outer.setWidget(content)
-        return outer
+        return inspector
 
     # WindowVisualizer hook: create the inspector shell widget
     def create_inspector(self) -> QWidget:
-        # Build and store the inspector shell exactly where it was before.
-        self._inspector_shell = self._build_inspector()
-        return self._inspector_shell
+        # Build inspector and return its shell widget to the window shell.
+        return self._build_inspector()
 
     # WindowVisualizer hook: create the browser widget
     def create_browser(self) -> QWidget:
