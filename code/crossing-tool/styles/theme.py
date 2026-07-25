@@ -818,7 +818,13 @@ def save_window_geometry(win, key: str) -> None:
     """Save *win*'s current screen geometry to prefs under *key*."""
     from tool import prefs as _prefs
     g = win.geometry()
-    _prefs.set(key, [g.x(), g.y(), g.width(), g.height()])
+    # Persist fullscreen state along with geometry so apps restarted
+    # after being closed in fullscreen can return to fullscreen.
+    try:
+        is_fs = bool(win.isFullScreen())
+    except Exception:
+        is_fs = False
+    _prefs.set(key, [g.x(), g.y(), g.width(), g.height(), 1 if is_fs else 0])
 
 
 def restore_window_geometry(win, key: str) -> None:
@@ -828,14 +834,26 @@ def restore_window_geometry(win, key: str) -> None:
     """
     from tool import prefs as _prefs
     geom = _prefs.get(key)
-    if not (isinstance(geom, (list, tuple)) and len(geom) == 4):
+    # Support legacy stored geometry as [x,y,w,h] or the new format
+    # [x,y,w,h,fullscreen_flag].
+    if not (isinstance(geom, (list, tuple)) and len(geom) in (4, 5)):
         return
     from PyQt5.QtWidgets import QApplication
-    x, y, w, h = (int(v) for v in geom)
+    x, y, w, h = (int(v) for v in geom[:4])
     screen = QApplication.primaryScreen().availableGeometry()
     x = max(screen.left(), min(x, screen.right()  - 100))
     y = max(screen.top(),  min(y, screen.bottom() - 100))
     win.setGeometry(x, y, w, h)
+    # If the stored tuple included a fullscreen flag, restore it.
+    try:
+        if len(geom) == 5 and int(geom[4]):
+            # Defer calling showFullScreen until the event loop can process
+            # initial layout; callers often call restore_window_geometry in
+            # constructors so schedule a single-shot to enter fullscreen.
+            from PyQt5.QtCore import QTimer
+            QTimer.singleShot(0, lambda: win.showFullScreen())
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
