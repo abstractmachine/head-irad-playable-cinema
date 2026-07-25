@@ -501,6 +501,23 @@ class _BrowserItem(QWidget):
 
     def _frame_size(self) -> tuple[int, int]:
         target = max(48, int(round(_THUMB_SIZE * self._zoom)))
+        # If we have a loaded image, respect its natural aspect ratio so
+        # the browser highlights and layout match the media's shape.
+        if self._qimg is not None and not self._qimg.isNull():
+            try:
+                iw = float(self._qimg.width())
+                ih = float(self._qimg.height())
+                ratio = iw / ih if ih > 0 else 1.0
+            except Exception:
+                ratio = 1.0
+            frame_h = target
+            frame_w = max(32, int(round(frame_h * ratio)))
+            return frame_w, frame_h
+
+        # Fallback behaviour when no image is available yet: preserve the
+        # previous movie shortcut (approx 2.35/1 -> 0.67 width ratio) and
+        # square cells for other media types so layout is stable until the
+        # thumbnail loads.
         if self._media_type == "movie":
             return max(32, int(round(target * 0.67))), target
         return target, target
@@ -977,8 +994,8 @@ class MetadataVisualizer(WindowVisualizer):
         }
         for key in _INFO_ROWS:
             value = _format_value(values.get(key))
-            if key == "overview" and value != "—":
-                value = value[:260].rstrip() + ("…" if len(value) > 260 else "")
+            # Presentation: do not truncate long fields here. Let MetadataBlock
+            # handle wrapping/height so full values are displayed.
             self._info_block.set(key, value)
         self._update_thumbnail_preview()
 
