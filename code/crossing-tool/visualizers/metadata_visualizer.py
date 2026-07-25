@@ -495,8 +495,16 @@ class _BrowserItem(QWidget):
 
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.NoFocus)
-        self._thumb.mousePressEvent = self.mousePressEvent  # type: ignore[assignment]
-        self._thumb.mouseDoubleClickEvent = self.mouseDoubleClickEvent  # type: ignore[assignment]
+        # Let the parent `_BrowserItem` receive mouse events so clicks
+        # and double-clicks are handled exactly once. Making the label
+        # transparent to mouse events avoids duplicate handlers firing
+        # when both the label and parent receive the same event.
+        try:
+            self._thumb.setAttribute(Qt.WA_TransparentForMouseEvents)
+        except Exception:
+            # Fallback: bind events explicitly if attribute isn't available.
+            self._thumb.mousePressEvent = self.mousePressEvent  # type: ignore[assignment]
+            self._thumb.mouseDoubleClickEvent = self.mouseDoubleClickEvent  # type: ignore[assignment]
         self.set_zoom(zoom)
 
     def _frame_size(self) -> tuple[int, int]:
@@ -560,11 +568,21 @@ class _BrowserItem(QWidget):
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton:
             self.clicked.emit(self._index)
+            try:
+                event.accept()
+            except Exception:
+                pass
+            return
         super().mousePressEvent(event)
 
     def mouseDoubleClickEvent(self, event) -> None:
         if event.button() == Qt.LeftButton:
             self.doubleClicked.emit(self._index)
+            try:
+                event.accept()
+            except Exception:
+                pass
+            return
         super().mouseDoubleClickEvent(event)
 
 

@@ -232,6 +232,29 @@ def open_at_shot(
     shared entry-point used by all visualizers and CLI commands that want to
     open a film at a specific shot.
     """
+    # If a ShotlistVisualizer is already running in this process for the
+    # same project, reuse it directly instead of sending IPC or spawning
+    # a new process. This handles the common case where the user has
+    # already opened Shotlist from the same application session.
+    try:
+        from PyQt5.QtWidgets import QApplication
+        from PyQt5.QtCore import QTimer
+        app = QApplication.instance()
+        if app is not None:
+            for w in app.topLevelWidgets():
+                try:
+                    if isinstance(w, ShotlistVisualizer) and getattr(w, "project_path", None) == project_path:
+                        # Defer to the main loop to perform the load so callers
+                        # don't block and UI state updates happen cleanly.
+                        QTimer.singleShot(0, lambda w=w: w._on_ipc_load(filename, media_type, shot_id, "play" if play else "pause"))
+                        return
+                except Exception:
+                    # ignore and try next widget
+                    pass
+    except Exception:
+        # Non-GUI context or PyQt not available — fall back to IPC/spawn.
+        pass
+
     import subprocess as _sp
     if ipc_send_load(project_path, filename, media_type, shot_id=shot_id, playback="play" if play else "pause"):
         return
