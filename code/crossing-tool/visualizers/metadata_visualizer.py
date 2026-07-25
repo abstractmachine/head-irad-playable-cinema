@@ -269,7 +269,14 @@ class _MetadataBrowserPage(QWidget):
             _prefs.set(_zoom_key(self._media_type), self._zoom)
         for item in self._item_by_index:
             item.set_zoom(self._zoom)
-        self.request_reflow()
+        # Immediately reflow the grid so zoom changes jump to the new scale
+        # instead of animating or stepping gradually. If the direct call
+        # fails for any reason, fall back to the debounced request_reflow().
+        try:
+            self._grid_widget._do_flow_layout()
+            self._grid_cols = max(1, self._grid_widget.first_row_count())
+        except Exception:
+            self.request_reflow()
 
     def _change_zoom(self, delta: float) -> None:
         self.set_zoom(self._zoom + delta)
@@ -397,11 +404,19 @@ class _MetadataBrowserPage(QWidget):
         if obj is self._scroll.viewport() and event.type() == QEvent.Wheel:
             wheel = event  # type: ignore[assignment]
             if wheel.modifiers() & Qt.ControlModifier:
+                # Map the wheel delta into discrete zoom steps and apply a
+                # direct jump to the resulting zoom so the change is immediate.
+                # angleDelta is usually a multiple of 120 per notch.
                 delta = wheel.angleDelta().y()
-                if delta > 0:
-                    self._change_zoom(_ZOOM_STEP)
-                elif delta < 0:
-                    self._change_zoom(-_ZOOM_STEP)
+                try:
+                    notches = int(delta / 120)
+                except Exception:
+                    notches = 1 if delta > 0 else -1 if delta < 0 else 0
+                if notches != 0:
+                    self.set_zoom(self._zoom + notches * _ZOOM_STEP)
+                else:
+                    # Fallback to a single step when delta is small.
+                    self._change_zoom(_ZOOM_STEP if delta > 0 else -_ZOOM_STEP)
                 wheel.accept()
                 return True
         if obj is self._scroll.viewport() and event.type() == QEvent.Resize:
@@ -594,7 +609,7 @@ class MetadataVisualizer(WindowVisualizer):
 
     def _build_inspector(self) -> QWidget:
         inspector = Inspector(self)
-        inspector.scroll.verticalScrollBar().rangeChanged.connect(self._on_inspector_scrollbar_range_changed)
+        inspector.connect_scrollbar_range_changed(self._on_inspector_scrollbar_range_changed)
 
         # Configure content size
         inspector.set_minimum_width(_INSPECTOR_MIN_W)
@@ -613,20 +628,55 @@ class MetadataVisualizer(WindowVisualizer):
 
         tabs.currentChanged.connect(self._on_source_tab_changed)
 
-        inspector.add_widget(tabs, alignment=Qt.AlignTop)
+        inspector.panel().add_widget(tabs, alignment=Qt.AlignTop)
+
+        # Thumbnail section
+        thumbnail_wrap = QWidget()
+        thumbnail_layout = QVBoxLayout(thumbnail_wrap)
+        thumbnail_layout.setContentsMargins(0, 0, 0, 0)
+        thumbnail_layout.setSpacing(0)
+        self._thumbnail_label = QLabel("No thumbnail")
+        self._thumbnail_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        # Let the TabPanel paint the canonical pane background; keep the
+        # thumbnail label itself transparent so the panel shows through.
+        # Ensure no internal margins/padding so the image sits flush with
+        # the section body edges.
+        self._thumbnail_label.setStyleSheet(
+            f"color: {theme.TEXT_DIM}; background: transparent; margin: 0px; padding: 0px; border: none;"
+        )
+        self._thumbnail_label.setMinimumHeight(140)
+        self._thumbnail_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        thumbnail_layout.addWidget(self._thumbnail_label)
+        self._thumbnail_section = inspector.panel().add_section("Thumbnail", thumbnail_wrap, pref_key="metadata_section_thumbnail")
+
+        # Info section
+        info_wrap = QWidget()
+        info_layout = QVBoxLayout(info_wrap)
+        info_layout.setContentsMargins(0, 0, 0, 0)
+        info_layout.setSpacing(0)
+
+        self._info_block = MetadataBlock(_INFO_ROWS)
+        info_layout.addWidget(self._info_block)
+        self._info_section = inspector.panel().add_section("Info", info_wrap, pref_key="metadata_section_info")
 
         # Tools section
         tools_wrap = QWidget()
         tools_layout = QVBoxLayout(tools_wrap)
         tools_layout.setContentsMargins(0, 0, 0, 0)
-        tools_layout.setSpacing(2)
+        tools_layout.setSpacing(theme.INSPECTOR_GAP)
         tools_grid = QGridLayout()
         tools_grid.setContentsMargins(0, 0, 0, 0)
-        tools_grid.setSpacing(2)
+        tools_grid.setSpacing(theme.INSPECTOR_GAP)
         tools_grid.setColumnStretch(0, 1)
         tools_grid.setColumnStretch(1, 1)
 
         action_style = theme.action_button_stylesheet()
+        # Ensure inspector action buttons use the same UI font weight as
+        # CollapsibleSection titles so button text feels visually consistent.
+        action_style = (
+            action_style
+            + f"QPushButton {{ font-family: '{theme.FAMILY_UI}'; font-weight: {theme.WEIGHT_UI}; }}"
+        )
 
         self._zoom_in_btn = QPushButton("Zoom +")
         self._zoom_in_btn.setFocusPolicy(Qt.NoFocus)
@@ -648,30 +698,7 @@ class MetadataVisualizer(WindowVisualizer):
         tools_grid.addWidget(self._shotlist_btn, 1, 0, 1, 2)
 
         tools_layout.addLayout(tools_grid)
-        self._tools_section = inspector.add_group("Tools", tools_wrap, pref_key="metadata_section_tools")
-
-        # Info section
-        info_wrap = QWidget()
-        info_layout = QVBoxLayout(info_wrap)
-        info_layout.setContentsMargins(0, 0, 0, 0)
-        info_layout.setSpacing(0)
-
-        self._info_block = MetadataBlock(_INFO_ROWS)
-        info_layout.addWidget(self._info_block)
-        self._info_section = inspector.add_group("Info", info_wrap, pref_key="metadata_section_info")
-
-        # Thumbnail section
-        thumbnail_wrap = QWidget()
-        thumbnail_layout = QVBoxLayout(thumbnail_wrap)
-        thumbnail_layout.setContentsMargins(0, 0, 0, 0)
-        thumbnail_layout.setSpacing(0)
-        self._thumbnail_label = QLabel("No thumbnail")
-        self._thumbnail_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        self._thumbnail_label.setStyleSheet(f"color: {theme.TEXT_DIM}; background: {theme.CANVAS_BG};")
-        self._thumbnail_label.setMinimumHeight(140)
-        self._thumbnail_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        thumbnail_layout.addWidget(self._thumbnail_label)
-        self._thumbnail_section = inspector.add_group("Thumbnail", thumbnail_wrap, pref_key="metadata_section_thumbnail")
+        self._tools_section = inspector.panel().add_section("Tools", tools_wrap, pref_key="metadata_section_tools")
 
         return inspector
 
@@ -705,11 +732,33 @@ class MetadataVisualizer(WindowVisualizer):
         self._saved_splitter_sizes = [browser_w, inspector_w]
         self._last_visible_splitter_sizes = [browser_w, inspector_w]
         self._inspector_restore_w = browser_w + inspector_w
-        self._request_browser_reflow()
-        self._update_thumbnail_preview()
+        # Defer reflow & thumbnail update so layouts and splitter sizes
+        # have settled; avoids initial clipping until the user drags.
+        QTimer.singleShot(0, self._request_browser_reflow)
+        QTimer.singleShot(0, self._update_thumbnail_preview)
 
     def _on_inspector_scrollbar_range_changed(self, _min: int, _max: int) -> None:
-        return
+        # Reserve or release splitter width when the inspector scrollbar appears.
+        visible = (_max > 0)
+        if visible == getattr(self, "_inspector_scrollbar_visible", False):
+            return
+
+        sizes = list(self._splitter.sizes())
+        if len(sizes) != 2:
+            self._inspector_scrollbar_visible = visible
+            return
+
+        sb_w = theme.SCROLLBAR_W
+        if visible:
+            sizes[1] += sb_w
+        else:
+            sizes[1] = max(0, sizes[1] - sb_w)
+
+        self._inspector_scrollbar_visible = visible
+        try:
+            self._splitter.setSizes(sizes)
+        except Exception:
+            pass
 
     def _sync_inspector_scrollbar_width(self) -> None:
         return
@@ -772,11 +821,51 @@ class MetadataVisualizer(WindowVisualizer):
             self._thumbnail_label.setFixedHeight(140)
             return
 
-        available_w = max(1, self._thumbnail_section.contentsRect().width())
+        # Compute available width inside the section *body* so the image
+        # scales to the true content area (not the header or tab padding).
+        # Use the scroll area's viewport width but subtract the content
+        # widget's left/right contents margins so the image does not bleed
+        # into the pane inset owned by the content widget.
+        available_w = None
+        try:
+            from PyQt5.QtWidgets import QScrollArea
+            node = self._thumbnail_section
+            while node is not None:
+                node = node.parentWidget()
+                if node is None:
+                    break
+                if isinstance(node, QScrollArea):
+                    vp_w = max(1, node.viewport().width())
+                    try:
+                        content = node.widget()
+                        if content is not None and content.layout() is not None:
+                            m = content.layout().contentsMargins()
+                            vp_w = max(1, vp_w - (m.left() + m.right()))
+                    except Exception:
+                        pass
+                    available_w = vp_w
+                    break
+        except Exception:
+            available_w = None
+
+        if available_w is None:
+            try:
+                body = getattr(self._thumbnail_section, "_body")
+                available_w = max(1, body.contentsRect().width())
+            except Exception:
+                available_w = max(1, self._thumbnail_section.contentsRect().width())
+
+        # Scale the pixmap to the available width and constrain the QLabel
+        # so it cannot grow beyond that width. Keep a fixed height to
+        # reserve vertical space equal to the scaled image height.
         scaled = pixmap.scaledToWidth(available_w, Qt.SmoothTransformation)
         self._thumbnail_label.setText("")
         self._thumbnail_label.setPixmap(scaled)
-        self._thumbnail_label.setFixedWidth(max(1, scaled.width()))
+        try:
+            self._thumbnail_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            self._thumbnail_label.setMaximumWidth(available_w)
+        except Exception:
+            pass
         self._thumbnail_label.setFixedHeight(max(1, scaled.height()))
 
     def _open_selected_in_shotlist(self) -> None:

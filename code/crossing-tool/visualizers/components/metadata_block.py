@@ -31,10 +31,11 @@ from PyQt5.QtWidgets import (
 )
 
 from styles import theme
+from styles.theme import JumpScrollBar
 
 
 INSPECTOR_ROW_HEIGHT = 24
-INSPECTOR_DIVIDER_THICKNESS = 2
+INSPECTOR_DIVIDER_THICKNESS = theme.INSPECTOR_GAP
 
 # Backward-compatible aliases for existing imports.
 TABLE_ROW_H = INSPECTOR_ROW_HEIGHT
@@ -48,6 +49,10 @@ def table_row_edges(row_idx: int, last_idx: int) -> tuple[str, str]:
     # row separator on every row.
     top = ""
     bottom = ""
+    # Add a bottom divider between rows (but not after the last row) so the
+    # seam color (TAB_BG) appears only between cells, not around the table.
+    if row_idx < last_idx:
+        bottom = f"border-bottom: {INSPECTOR_DIVIDER_THICKNESS}px solid {theme.TAB_BG};"
     return top, bottom
 
 
@@ -56,9 +61,10 @@ def table_key_cell_style(top: str, bottom: str) -> str:
         f"background: {theme.CELL_BG}; color: {theme.TEXT_DIM};"
         f" font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
         f" font-weight: {theme.WEIGHT_UI};"
-        f"{top} border-right: {INSPECTOR_DIVIDER_THICKNESS}px solid {theme.TAB_BG}; {bottom}"
+        f"{top}{bottom}"
+        f" border-right: {INSPECTOR_DIVIDER_THICKNESS}px solid {theme.TAB_BG};"
         f" min-height: {INSPECTOR_ROW_HEIGHT}px;"
-        f" padding: 0px 4px 0px 2px;"
+        f" padding: 0px;"
     )
 
 
@@ -69,18 +75,17 @@ def table_value_cell_style(top: str, bottom: str) -> str:
         f" font-size: {theme.BASE_PT}pt;"
         f" font-weight: {theme.WEIGHT_MONO};"
         f"{top}{bottom} min-height: {INSPECTOR_ROW_HEIGHT}px;"
-        f" padding: 0px 2px 0px 3px;"
+        f" padding: 0px;"
     )
 
 
 def table_widget_style() -> str:
     """Return the canonical chrome style for table-based inspector widgets."""
     return (
-        f"background: {theme.TAB_BG};"
+        f"background: transparent;"
         f" border: none;"
         f" margin: 0px;"
         f" padding: 0px;"
-        f" gridline-color: {theme.TAB_BG};"
     )
 
 
@@ -89,7 +94,7 @@ def table_widget_item_style() -> str:
     return (
         f"background: {theme.CELL_BG};"
         f" border: none;"
-        f" padding: 0px 2px 0px 3px;"
+        f" padding: 0px {theme.INSPECTOR_GAP}px 0px 3px;"
     )
 
 
@@ -117,7 +122,8 @@ def inspector_action_button_size() -> int:
 
 def inspector_action_button_style() -> str:
     return (
-        f"QPushButton {{ background: transparent; border: none; border-radius: 0px; padding: 0px; }}"
+        f"QPushButton {{ background: transparent; border: none; border-radius: 0px; padding: 0px;"
+        f" font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt; font-weight: {theme.WEIGHT_UI}; }}"
         f"QPushButton:hover {{ background: {theme.ACCENT}; }}"
         f"QPushButton:pressed {{ background: {theme.BTN_PRESSED}; }}"
     )
@@ -136,18 +142,25 @@ class InspectorTable(QWidget):
         self._table.setFrameShape(QTableWidget.NoFrame)
         self._table.setLineWidth(0)
         self._table.setMidLineWidth(0)
-        # Override the palette Base color so the viewport area below the last row
-        # shows TAB_BG instead of Qt's default white.  Stylesheets cannot override
-        # this palette role reliably on all platforms.
-        _pal = self._table.palette()
-        _pal.setColor(QPalette.Base, QColor(theme.TAB_BG))
-        _pal.setColor(QPalette.AlternateBase, QColor(theme.TAB_BG))
-        self._table.setPalette(_pal)
+        # Keep the table viewport transparent so the TabPanel surface shows
+        # through as the single pane background.  Use a transparent viewport
+        # stylesheet rather than altering the palette so all platforms behave
+        # consistently.
+        try:
+            self._table.viewport().setStyleSheet("background: transparent;")
+        except Exception:
+            pass
         self._table.setFocusPolicy(Qt.NoFocus)
-        self._table.setShowGrid(True)
+        # Disable the native grid so only the internal seam styles we add
+        # via cell CSS are visible (no outer perimeter/gridlines).
+        self._table.setShowGrid(False)
         self._table.setWordWrap(False)
         self._table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        try:
+            self._table.setVerticalScrollBar(JumpScrollBar())
+        except Exception:
+            pass
         self._table.setCornerButtonEnabled(False)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._table.setSelectionMode(QAbstractItemView.NoSelection)
@@ -167,6 +180,12 @@ class InspectorTable(QWidget):
             f"QTableWidget::item {{ {table_widget_item_style()} }}"
             f"QTableWidget::item:selected {{ background: {theme.ACCENT}; color: {theme.ACCENT_TEXT}; }}"
         )
+        # Table wrapper should not paint a background — the TabPanel owns
+        # the pane background; keep wrapper transparent and edge-to-edge.
+        try:
+            self.setStyleSheet("background: transparent; border: none;")
+        except Exception:
+            pass
         outer.addWidget(self._table)
 
     def table(self) -> QTableWidget:
@@ -211,6 +230,10 @@ class InspectorTable(QWidget):
 
     def make_cell(self, child: QWidget, alignment: Qt.Alignment = Qt.AlignCenter) -> QWidget:
         cell = QWidget()
+        try:
+            cell.setStyleSheet("background: transparent; margin: 0px; padding: 0px;")
+        except Exception:
+            pass
         layout = QHBoxLayout(cell)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -286,13 +309,17 @@ class MetadataBlock(QWidget):
 
     def __init__(self, rows: list[str], parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setStyleSheet(f"background: {theme.TAB_BG};")
+        # Wrapper should be transparent and borderless so TabPanel paints
+        # the canonical pane background; keep internal seams only.
+        try:
+            self.setStyleSheet("background: transparent; border: none;")
+        except Exception:
+            pass
         layout = QGridLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setHorizontalSpacing(0)
-        # INSPECTOR_DIVIDER_THICKNESS px TAB_BG gap between rows — the TAB_BG
-        # widget background shows through as the horizontal row separator.
-        layout.setVerticalSpacing(INSPECTOR_DIVIDER_THICKNESS)
+        # No vertical spacing between rows so cells touch edge-to-edge.
+        layout.setVerticalSpacing(0)
         layout.setColumnStretch(0, 0)
         layout.setColumnStretch(1, 1)
 

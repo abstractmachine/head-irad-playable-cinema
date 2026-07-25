@@ -38,7 +38,7 @@ from pathlib import Path
 BG           = "#808080"   # 50% grey — main window / widget background
 PANEL_BG     = "#6e6e6e"   # slightly darker for control-panel areas
 INPUT_BG     = "#606060"   # input fields, list backgrounds
-TITLE_BG     = "#4d4d4d"   # section titlebar backgrounds (slightly darker than TAB_BG)
+TITLE_BG     = "#4A4A4A"   # header/title background (slightly darker than PANEL_BG)
 CELL_BG      = "#606060"   # table cell backgrounds (same as TITLE_BG for now)
 BTN_BG       = "#606060"   # button face
 BTN_HOVER    = "#8d8d8d"   # button hover (lighter than BG)
@@ -55,7 +55,7 @@ SCROLLBAR_W  = 8
 # - Use edge-to-edge section bodies (no extra nested wrapper insets)
 # - Use SECTION_GAP for panel/section interior spacing
 # - Keep row rhythm consistent via BTN_H for controls in inspector rows
-INSPECTOR_GAP = 2          # canonical inspector spacing/margins (px)
+INSPECTOR_GAP = 3          # canonical inspector spacing/margins (px)
 SECTION_GAP  = INSPECTOR_GAP
 TEXT         = "#ffffff"   # primary text — white
 TEXT_DIM     = "#909090"   # secondary / hint text
@@ -66,7 +66,7 @@ ACCENT       = "#ffff00"   # selections, active, checked states
 ACCENT_TEXT  = "#000000"   # text on ACCENT background (black on yellow; use #ffffff for dark accents)
 ACCENT_FILL_ALPHA = 64     # alpha for accent-colored area fills (25% of 255)
 CANVAS_BG    = "#3a3a3a"   # video / image display areas (dark so content pops)
-TAB_BG       = "#545454"   # tab labels + pane content — 10 % lighter than CANVAS_BG
+TAB_BG       = "#6e6e6e"   # panel/tab background (same as PANEL_BG)
 # ---------------------------------------------------------------------------
 # Typography
 # ---------------------------------------------------------------------------
@@ -421,7 +421,8 @@ def tab_strip_stylesheet() -> str:
         f"}}"
         f"QTabBar::tab:selected {{ background: {TAB_BG}; color: {TEXT}; border: none; }}"
         f"QTabBar::tab:focus {{ outline: none; }}"
-        f"QTabBar::tab:hover {{ background: {TAB_BG}; color: {TEXT}; }}"
+        f"QTabBar::tab:hover {{ background: {ACCENT}; color: {ACCENT_TEXT}; }}"
+        f"QTabBar::tab:selected:hover {{ background: {TAB_BG}; color: {TEXT}; }}"
     )
 
 
@@ -684,6 +685,23 @@ class JumpScrollBar(QScrollBar):
     def __init__(self, orientation: Qt.Orientation = Qt.Vertical, parent=None) -> None:
         super().__init__(orientation, parent)
         self._drag_active = False
+        # Enable hover tracking so enter/leave events fire reliably.
+        try:
+            self.setMouseTracking(True)
+            self.setAttribute(self.WA_Hover, True)
+        except Exception:
+            pass
+        # Ensure the physical scrollbar thickness matches the canonical
+        # token so it is consistent across all visualizers. Use fixed size
+        # along the scroll axis to avoid platform defaults overriding the
+        # stylesheet width.
+        try:
+            if orientation == Qt.Vertical:
+                self.setFixedWidth(SCROLLBAR_W)
+            else:
+                self.setFixedHeight(SCROLLBAR_W)
+        except Exception:
+            pass
         self.setStyleSheet(self._style(hover=False))
 
     def _style(self, hover: bool) -> str:
@@ -697,14 +715,17 @@ class JumpScrollBar(QScrollBar):
         border_side  = "border-bottom" if horiz else "border-left"
         min_len_prop = "min-width" if horiz else "min-height"
         handle_bg    = ACCENT if hover else "transparent"
+        # Ensure the scroll bar itself and its groove have no border so it
+        # visually sits flush with adjacent chrome. The handle still draws
+        # an accent indicator but without an outer frame.
         return (
-            f"QScrollBar:{orient} {{ background: {CANVAS_BG}; {size_prop}: {SCROLLBAR_W}px; }}"
+            f"QScrollBar:{orient} {{ background: {CANVAS_BG}; {size_prop}: {SCROLLBAR_W}px; border: none; }}"
             f"QScrollBar::groove:{orient} {{ background: transparent; border: none; }}"
             f"QScrollBar::handle:{orient} {{"
             f"    background: {handle_bg};"
             f"   {border_side}: 2px solid {ACCENT};"
             f"    border-radius: 0; {min_len_prop}: 20px; }}"
-            f"QScrollBar::add-line:{orient}, QScrollBar::sub-line:{orient} {{ {size_prop}: 0; }}"
+            f"QScrollBar::add-line:{orient}, QScrollBar::sub-line:{orient} {{ {size_prop}: 0; border: none; }}"
             f"QScrollBar::add-page:{orient}, QScrollBar::sub-page:{orient} {{ background: none; }}"
         )
 
@@ -757,6 +778,11 @@ class JumpScrollBar(QScrollBar):
                 self._drag_active = True
                 self.grabMouse()
                 return
+        # Ensure focus so subsequent mouseMove events are routed to us.
+        try:
+            self.setFocus()
+        except Exception:
+            pass
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:

@@ -1,29 +1,25 @@
-~/playable/dead-crossing$ crossing visualizer metadata
-Traceback (most recent call last):
-  File "/home/cowpoke/.local/bin/crossing", line 10, in <module>
-    sys.exit(main())
-             ^^^^^^
-  File "/home/cowpoke/playable/head-irad-playable-cinema/code/crossing-tool/cli.py", line 10009, in main
-    args.func(args)
-  File "/home/cowpoke/playable/head-irad-playable-cinema/code/crossing-tool/cli.py", line 7144, in cmd_visualizer
-    _metadata_visualizer(args)
-  File "/home/cowpoke/playable/head-irad-playable-cinema/code/crossing-tool/cli.py", line 7172, in _metadata_visualizer
-    run_visualizer(prefs.get("path"))
-  File "/home/cowpoke/playable/head-irad-playable-cinema/code/crossing-tool/visualizers/metadata_visualizer.py", line 905, in run_visualizer
-    win = MetadataVisualizer(project_path)
-          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/cowpoke/playable/head-irad-playable-cinema/code/crossing-tool/visualizers/metadata_visualizer.py", line 545, in __init__
-    super().__init__(pref_key="window_metadata")
-  File "/home/cowpoke/playable/head-irad-playable-cinema/code/crossing-tool/visualizers/window_visualizer.py", line 55, in __init__
-    self._inspector_shell = self.create_inspector()
-                            ^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/cowpoke/playable/head-irad-playable-cinema/code/crossing-tool/visualizers/metadata_visualizer.py", line 677, in create_inspector
-    return self._build_inspector()
-           ^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/cowpoke/playable/head-irad-playable-cinema/code/crossing-tool/visualizers/metadata_visualizer.py", line 596, in _build_inspector
-    inspector = Inspector(self)
-                ^^^^^^^^^^^^^^^
-  File "/home/cowpoke/playable/head-irad-playable-cinema/code/crossing-tool/visualizers/components/inspector.py", line 33, in __init__
-    self.scroll.setHorizontalScrollBarPolicy(self.scroll.ScrollBarAlwaysOff)
-                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AttributeError: 'QScrollArea' object has no attribute 'ScrollBarAlwaysOff'
+I'll mark the import-check todo as completed.
+
+Completed: *Run import checks and report stylesheet/widget change* (4/5)
+
+Yes — the patches were applied. Quick summary and exact locations:
+
+- **TabPanel:** tab_panel.py — inspector now uses the standard `JumpScrollBar()` and `setFocusPolicy(Qt.NoFocus)`; I removed the synthetic viewport event-forwarding so behaviour matches the browser.
+- **Corner widget hidden:** tab_panel.py — `corner.setFixedSize(0, 0)` and `corner.hide()` removed the small grey box.
+- **Metadata table/perimeter removed:** metadata_block.py — removed the `gridline-color` entry; metadata_block.py — `self._table.setShowGrid(False)` (no native grid) and `self._table.setVerticalScrollBar(JumpScrollBar())`.
+- **Import check (what I ran):**
+```bash
+python3 - << 'PY'
+import sys
+sys.path.insert(0,'/home/cowpoke/playable/head-irad-playable-cinema/code/crossing-tool')
+import importlib
+from styles import theme
+print('SCROLLBAR_W=',theme.SCROLLBAR_W,'TAB_BG=',theme.TAB_BG)
+import visualizers.metadata_visualizer as mv
+importlib.reload(mv)
+print('reload ok')
+PY
+```
+Output: `SCROLLBAR_W= 8 TAB_BG= #00FF00` and `reload ok`.
+
+If you still don't see changes in your editor/UI: try re-opening the files or restart the app (or run the import command above). Want me to revert the debug `theme.TAB_BG` green now?

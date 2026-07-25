@@ -34,9 +34,10 @@ from __future__ import annotations
 from typing import Optional
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QLabel, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from styles import theme
+from visualizers.components.inspector import Inspector
 
 
 class IllustrationInspector(QWidget):
@@ -57,49 +58,34 @@ class IllustrationInspector(QWidget):
 
         self._item: Optional[dict] = None
 
-        self._build_ui()
-
-    # ------------------------------------------------------------------ UI
-
-    def _build_ui(self) -> None:
+        self._inspector = Inspector(self)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
-
-        # Scroll area so the inspector can host arbitrarily many sections.
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(scroll.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet(
-            f"QScrollArea {{ background: {theme.PANEL_BG}; border: none; }}"
-        )
-
-        self._content = QWidget()
-        self._content.setStyleSheet(f"background: {theme.PANEL_BG};")
-        self._layout = QVBoxLayout(self._content)
-        self._layout.setContentsMargins(
-            theme.SECTION_GAP,
-            theme.SECTION_GAP,
-            theme.SECTION_GAP,
-            theme.SECTION_GAP,
-        )
-        self._layout.setSpacing(theme.SECTION_GAP)
-        self._layout.setAlignment(Qt.AlignTop)
-
-        # TODO (Phase 4): sections added by each concrete visualizer will
-        # appear here.  The placeholder below will be removed when the first
-        # real section is added.
+        outer.addWidget(self._inspector)
+        # Placeholder label is added into the inspector panel until real
+        # sections are appended by callers.
         self._placeholder = QLabel("No illustration selected.")
         self._placeholder.setAlignment(Qt.AlignCenter)
-        self._placeholder.setStyleSheet(
-            f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt;"
-        )
+        self._placeholder.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt;")
         self._placeholder.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-        self._layout.addWidget(self._placeholder)
+        self._inspector.panel().add_widget(self._placeholder)
 
-        scroll.setWidget(self._content)
-        outer.addWidget(scroll)
+    # ------------------------------------------------------------------ UI
+
+    def addSection(self, widget: QWidget) -> None:
+        """Append *widget* as a new section below existing sections.
+
+        Visualizers compose inspector behavior by adding sections
+        (e.g. MetadataBlock, score panels, operation controls). This method
+        avoids custom inspector rewrites per visualizer.
+        """
+        # Hide the placeholder once real content is present.
+        try:
+            self._placeholder.hide()
+        except Exception:
+            pass
+        self._inspector.panel().add_widget(widget)
 
     # ------------------------------------------------------------------ public API
 
@@ -115,20 +101,19 @@ class IllustrationInspector(QWidget):
         """
         self._item = item
         if item is None:
-            self._placeholder.setText("No illustration selected.")
+            try:
+                self._placeholder.setText("No illustration selected.")
+            except Exception:
+                pass
         else:
-            self._placeholder.setText("")
+            try:
+                self._placeholder.setText("")
+            except Exception:
+                pass
 
     def addSection(self, widget: QWidget) -> None:
-        """Append *widget* as a new section below existing sections.
-
-        Visualizers compose inspector behavior by adding sections
-        (e.g. MetadataBlock, score panels, operation controls). This method
-        avoids custom inspector rewrites per visualizer.
-        """
-        # Hide the placeholder once real content is present.
-        self._placeholder.hide()
-        self._layout.addWidget(widget)
+        # Deprecated alias for backwards compatibility.
+        self._inspector.panel().add_widget(widget)
 
     def currentItem(self) -> Optional[dict]:
         """Return the currently displayed item dict, or ``None``."""

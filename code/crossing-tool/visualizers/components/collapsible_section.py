@@ -99,11 +99,20 @@ class CollapsibleSection(QWidget):
         header_row_layout = QHBoxLayout(self._header_row)
         header_row_layout.setContentsMargins(0, 0, 0, 0)
         header_row_layout.setSpacing(0)
+        # Ensure the header row paints its own background (slightly darker
+        # than the section body) so the title area reads as a distinct band.
+        try:
+            self._header_row.setStyleSheet(f"background: {theme.TITLE_BG}; border: none;")
+        except Exception:
+            pass
         self._header = QPushButton()
         self._header.setFixedHeight(_HEADER_H)
         self._header.setFocusPolicy(Qt.NoFocus)
         self._header.setCheckable(False)
         self._header.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        # Header renders a distinct title band. Keep the header background
+        # on the header itself, but do not paint the section body — the
+        # TabPanel owns the canonical pane background.
         self._header.setStyleSheet(
             f"QPushButton {{"
             f"  background: {theme.TITLE_BG};"
@@ -124,20 +133,24 @@ class CollapsibleSection(QWidget):
         outer.addWidget(self._header_row)
 
         # Structural separator band between title and body content.
-        # This is a section-level rhythm element, not a table row border.
+        # This band should be transparent so the TabPanel background shows
+        # through as a continuous surface; keep the fixed height for the
+        # canonical inspector gap.
         self._body_band = QWidget()
-        self._body_band.setFixedHeight(theme.SECTION_GAP)
-        self._body_band.setStyleSheet(f"background: {theme.TAB_BG};")
+        self._body_band.setFixedHeight(theme.INSPECTOR_GAP)
+        self._body_band.setStyleSheet("background: transparent;")
         self._body_band.setVisible(self._expanded)
         outer.addWidget(self._body_band)
 
         # ── Content area ─────────────────────────────────────────────────
         self._body = QWidget()
-        self._body.setStyleSheet(f"background: {theme.TAB_BG};")
+        # Do not paint the section body; it should be transparent so the
+        # TabPanel background shows through as one continuous surface.
+        self._body.setStyleSheet("background: transparent;")
         self._body.setVisible(self._expanded)
         self._body_layout = QVBoxLayout(self._body)
         self._body_layout.setContentsMargins(0, 0, 0, 0)
-        self._body_layout.setSpacing(theme.SECTION_GAP)
+        self._body_layout.setSpacing(theme.INSPECTOR_GAP)
         outer.addWidget(self._body)
 
     # ------------------------------------------------------------------ private
