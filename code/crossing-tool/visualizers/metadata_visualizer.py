@@ -11,6 +11,16 @@ Layout:
 The browser owns selection only. The inspector reflects the selected record.
 """
 
+# TODO:
+# A small number of metadata records (~8 titles) produce a one-row height
+# overshoot in MetadataBlock. The layout is otherwise correct.
+#
+# Do not "fix" this with timers, adjustSize(), processEvents(), or
+# custom text measurement. Previous experiments made the behavior worse.
+#
+# If revisited, investigate QLabel's effective wrapping width rather than
+# replacing Qt's text layout.
+
 from __future__ import annotations
 
 import json
