@@ -15,7 +15,7 @@ Example::
 
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt, QSize
+from PyQt5.QtCore import Qt, QSize, QTimer
 from PyQt5.QtGui import QBrush, QColor, QPalette
 from PyQt5.QtWidgets import (
     QAbstractItemView,
@@ -172,8 +172,11 @@ class InspectorTable(QWidget):
 
         vh = self._table.verticalHeader()
         vh.hide()
+        # Keep a sensible default section size but allow the header to resize
+        # rows to their contents. Inspector tables should not assume fixed row
+        # heights so use ResizeToContents to honor widget preferred sizes.
         vh.setDefaultSectionSize(INSPECTOR_ROW_HEIGHT)
-        vh.setSectionResizeMode(QHeaderView.Fixed)
+        vh.setSectionResizeMode(QHeaderView.ResizeToContents)
 
         self._table.setStyleSheet(
             f"QTableWidget {{ {table_widget_style()} }}"
@@ -211,7 +214,11 @@ class InspectorTable(QWidget):
 
     def insert_row(self, row: int) -> None:
         self._table.insertRow(row)
-        self._table.setRowHeight(row, INSPECTOR_ROW_HEIGHT)
+        # Do not force a fixed row height here. Rows are sized to contents.
+        try:
+            self._table.resizeRowToContents(row)
+        except Exception:
+            pass
 
     def remove_row(self, row: int) -> None:
         self._table.removeRow(row)
@@ -224,6 +231,12 @@ class InspectorTable(QWidget):
 
     def set_cell_widget(self, row: int, column: int, widget: QWidget) -> None:
         self._table.setCellWidget(row, column, widget)
+        # Ensure the table updates the row height to match the widget's
+        # preferred size immediately.
+        try:
+            self._table.resizeRowToContents(row)
+        except Exception:
+            pass
 
     def cell_widget(self, row: int, column: int) -> QWidget | None:
         return self._table.cellWidget(row, column)
@@ -289,22 +302,18 @@ class InspectorTable(QWidget):
 
 
 class MetadataBlock(QWidget):
-    """Fixed key-value row grid for inspector presentation.
+    """Key-value row grid for inspector presentation with dynamic row heights.
 
-    Uses QGridLayout directly — this is the golden-reference implementation
-    for the inspector table visual contract. Do not route Info through
-    InspectorTable/QTableWidget as that inflates row heights.
+    New sizing policy (canonical for inspector tables):
 
-    This widget presents metadata only. It does not own selection, data
-    retrieval, or project operations.
+    The table computes row geometry from widget preferred sizes rather than
+    imposing a fixed row height. Each widget in a row is asked for its
+    preferred height (via heightForWidth() where available, otherwise
+    sizeHint()). The row height is the maximum of those preferred heights
+    and the standard minimum row height.
 
-    Parameters
-    ----------
-    rows:
-        Ordered list of key names.  Each key gets one row: a right-aligned
-        dim label on the left and a white value label on the right.
-    parent:
-        Optional parent widget.
+    This lets any widget (QLabel, QTextEdit, image widgets, custom widgets)
+    participate without special-casing fields like "overview".
     """
 
     def __init__(self, rows: list[str], parent: QWidget | None = None) -> None:
@@ -323,6 +332,7 @@ class MetadataBlock(QWidget):
         layout.setColumnStretch(0, 0)
         layout.setColumnStretch(1, 1)
 
+        self._layout = layout
         self._rows = list(rows)
         self._labels: dict[str, QLabel] = {}
         last_idx = len(self._rows) - 1
@@ -348,6 +358,124 @@ class MetadataBlock(QWidget):
 
             self._labels[key] = val_lbl
 
+        # Deferred timer used to coalesce multiple set() calls into a single
+        # recalculation. When loading a new record, the first set() call in
+        # the batch will reset per-row state to the canonical baseline so
+        # previous record heights do not leak into the new one.
+        self._defer_timer = QTimer(self)
+        self._defer_timer.setSingleShot(True)
+        self._defer_timer.timeout.connect(self._recalc_rows)
+
+        # Schedule an initial row recalculation after construction so that
+        # sizeHints produced during style/layout initialization are respected.
+        QTimer.singleShot(0, self._recalc_rows)
+
+    def _reset_row_state(self) -> None:
+        """Reset per-row sizing state to the canonical baseline.
+
+        This clears any minimum-height state left behind by previously
+        displayed records so the next record starts from a clean baseline.
+        """
+        try:
+            layout = self._layout
+            if layout is None:
+                return
+            for row_idx, key in enumerate(self._rows):
+                key_item = layout.itemAtPosition(row_idx, 0)
+                val_item = layout.itemAtPosition(row_idx, 1)
+                key_widget = key_item.widget() if key_item is not None else None
+                val_widget = val_item.widget() if val_item is not None else None
+                try:
+                    if key_widget is not None:
+                        key_widget.setMinimumHeight(INSPECTOR_ROW_HEIGHT)
+                        key_widget.setMaximumHeight(16777215)
+                    if val_widget is not None:
+                        val_widget.setMinimumHeight(INSPECTOR_ROW_HEIGHT)
+                        val_widget.setMaximumHeight(16777215)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _compute_required_height(self, widget: QWidget, avail_width: int) -> int:
+        """Return the preferred height for widget given avail_width.
+
+        Uses heightForWidth() when available; falls back to sizeHint().
+        """
+        try:
+            if widget is None:
+                return INSPECTOR_ROW_HEIGHT
+            # If the widget participates in height-for-width negotiation,
+            # prefer that result. Otherwise use sizeHint().
+            if hasattr(widget, "hasHeightForWidth") and widget.hasHeightForWidth():
+                return max(INSPECTOR_ROW_HEIGHT, int(widget.heightForWidth(max(1, avail_width))))
+            return max(INSPECTOR_ROW_HEIGHT, int(widget.sizeHint().height()))
+        except Exception:
+            return INSPECTOR_ROW_HEIGHT
+
+    def _recalc_rows(self) -> None:
+        """Recalculate and apply minimum heights for each table row.
+
+        Policy: for each row, ask every widget in the row for its preferred
+        height (respecting the available width for that widget). The row's
+        minimum height becomes the max of those preferred heights and the
+        standard minimum row height.
+        """
+        try:
+            layout = self._layout
+            if layout is None:
+                return
+
+            # Available width for the grid content area
+            content_w = max(0, self.contentsRect().width())
+
+            # For each row, compute widths/availabilities. Prefer the actual
+            # widget.width() if already laid out; fall back to sizeHint widths.
+            for row_idx, key in enumerate(self._rows):
+                key_w = layout.itemAtPosition(row_idx, 0)
+                val_w = layout.itemAtPosition(row_idx, 1)
+                key_widget = key_w.widget() if key_w is not None else None
+                val_widget = val_w.widget() if val_w is not None else None
+
+                # Determine available widths for heightForWidth calls.
+                try:
+                    key_avail = key_widget.width() if key_widget is not None and key_widget.width() > 0 else (key_widget.sizeHint().width() if key_widget is not None else 0)
+                except Exception:
+                    key_avail = 0
+                try:
+                    val_avail = val_widget.width() if val_widget is not None and val_widget.width() > 0 else max(0, content_w - key_avail)
+                except Exception:
+                    val_avail = max(0, content_w - key_avail)
+
+                kh = self._compute_required_height(key_widget, key_avail)
+                vh = self._compute_required_height(val_widget, val_avail)
+
+                row_h = max(INSPECTOR_ROW_HEIGHT, kh, vh)
+
+                # Apply to both widgets by setting their minimumHeight. This
+                # drives the layout to give the row the desired height.
+                try:
+                    if key_widget is not None:
+                        if key_widget.minimumHeight() != row_h:
+                            key_widget.setMinimumHeight(row_h)
+                    if val_widget is not None:
+                        if val_widget.minimumHeight() != row_h:
+                            val_widget.setMinimumHeight(row_h)
+                except Exception:
+                    pass
+
+            # Ensure layout/parents update
+            self.updateGeometry()
+            self.update()
+        except Exception:
+            pass
+
+    def resizeEvent(self, ev) -> None:  # type: ignore[override]
+        super().resizeEvent(ev)
+        # Recompute row heights whenever the block is resized so heightForWidth
+        # can use the current column widths.
+        QTimer.singleShot(0, self._recalc_rows)
+
     def labels(self) -> dict[str, QLabel]:
         """Return the mutable key → value-label mapping used by callers."""
         return dict(self._labels)
@@ -356,8 +484,44 @@ class MetadataBlock(QWidget):
         """Set the displayed value for *key*.  No-op if *key* is unknown."""
         if key in self._labels:
             self._labels[key].setText(value)
+            # Coalesce multiple sets into a single recalculation. The first
+            # set in a batch resets per-row state so previous heights don't
+            # leak into the new record.
+            try:
+                if not self._defer_timer.isActive():
+                    self._reset_row_state()
+                self._defer_timer.start(0)
+            except Exception:
+                QTimer.singleShot(0, self._recalc_rows)
 
     def clear(self) -> None:
         """Reset all rows to the placeholder dash (—)."""
+        # Reset row sizing state before applying placeholders so the table
+        # starts from the canonical baseline.
+        self._reset_row_state()
         for lbl in self._labels.values():
             lbl.setText("—")
+        try:
+            if not self._defer_timer.isActive():
+                self._defer_timer.start(0)
+        except Exception:
+            QTimer.singleShot(0, self._recalc_rows)
+
+    def load(self, mapping: dict[str, str]) -> None:
+        """Load a mapping of key → value as a single record update.
+
+        This method resets per-row sizing state to the canonical baseline,
+        applies all values, and then recomputes row heights once.
+        """
+        # Reset per-row sizing state first so no previous heights persist.
+        self._reset_row_state()
+        for key in self._rows:
+            value = mapping.get(key, "—")
+            lbl = self._labels.get(key)
+            if lbl is not None:
+                lbl.setText(value if value is not None else "—")
+        try:
+            # Defer one tick so layout settles before computing heightForWidth
+            self._defer_timer.start(0)
+        except Exception:
+            QTimer.singleShot(0, self._recalc_rows)

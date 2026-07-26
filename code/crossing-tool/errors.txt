@@ -1,25 +1,2559 @@
-I'll mark the import-check todo as completed.
+~/playable/dead-crossing$ crossing visualizer metadata
+--- INSPECTOR DEBUG DUMP [startup] ---
+[startup] WindowVisualizer -> MetadataVisualizer
+    objectName: 
+    geometry: (203, 157, 1373, 783)
+    width: 1373
+    height: 783
+    sizeHint: (334, 408)
+    minimumSizeHint: (334, 68)
+    minimumWidth: 980
+    maximumWidth: 16777215
+    minimumHeight: 640
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 1373, 783)
+[startup] InspectorShell -> Inspector
+    objectName: 
+    geometry: (1093, 0, 280, 783)
+    width: 280
+    height: 783
+    sizeHint: (280, 408)
+    minimumSizeHint: (280, 68)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 0
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 280, 783)
+[startup] TabPanel -> TabPanel
+    objectName: 
+    geometry: (0, 0, 280, 783)
+    width: 280
+    height: 783
+    sizeHint: (162, 408)
+    minimumSizeHint: (162, 68)
+    minimumWidth: 280
+    maximumWidth: 16777215
+    minimumHeight: 0
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 280, 783)
+[startup] TabPanel._content_scroll -> QScrollArea
+    objectName: 
+    geometry: (0, 24, 280, 759)
+    width: 280
+    height: 759
+    sizeHint: (122, 384)
+    minimumSizeHint: (52, 44)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 0
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 280, 759)
+[startup] TabPanel._content_scroll.viewport -> QWidget
+    objectName: qt_scrollarea_viewport
+    geometry: (0, 0, 272, 759)
+    width: 272
+    height: 759
+    sizeHint: (-1, -1)
+    minimumSizeHint: (-1, -1)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 0
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 272, 759)
+[startup] TabPanel._content_widget -> QWidget
+    objectName: 
+    geometry: (0, 0, 280, 759)
+    width: 280
+    height: 759
+    sizeHint: (280, 690)
+    minimumSizeHint: (122, 690)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 0
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 280, 759)
+[TabPanel._content_layout] layout -> contentsMargins: (l=3, t=3, r=3, b=3) spacing=3 count=3
+[startup] CollapsibleSection count: 3
+[startup] Section[0] title=Thumbnail visible=True sizeHint=(89,156)
+[startup] Section[0]._header_row -> QWidget
+    objectName: 
+    geometry: (0, 0, 274, 24)
+    width: 274
+    height: 24
+    sizeHint: (89, 24)
+    minimumSizeHint: (89, 24)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 0
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 274, 24)
+[startup] Section[0]._body_band -> QWidget
+    objectName: 
+    geometry: (0, 24, 274, 3)
+    width: 274
+    height: 3
+    sizeHint: (-1, -1)
+    minimumSizeHint: (-1, -1)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 3
+    maximumHeight: 3
+    visible: True
+    contentsRect: (0, 0, 274, 3)
+[startup] Section[0]._body -> QWidget
+    objectName: 
+    geometry: (0, 27, 274, 129)
+    width: 274
+    height: 129
+    sizeHint: (86, 129)
+    minimumSizeHint: (86, 129)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 0
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 274, 129)
+[Section[0]_body_layout] layout -> contentsMargins: (l=0, t=0, r=0, b=0) spacing=3 count=1
+[startup] Section[1] title=Info visible=True sizeHint=(274,498)
+[startup] Section[1]._header_row -> QWidget
+    objectName: 
+    geometry: (0, 0, 274, 24)
+    width: 274
+    height: 24
+    sizeHint: (54, 24)
+    minimumSizeHint: (54, 24)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 0
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 274, 24)
+[startup] Section[1]._body_band -> QWidget
+    objectName: 
+    geometry: (0, 24, 274, 3)
+    width: 274
+    height: 3
+    sizeHint: (-1, -1)
+    minimumSizeHint: (-1, -1)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 3
+    maximumHeight: 3
+    visible: True
+    contentsRect: (0, 0, 274, 3)
+[startup] Section[1]._body -> QWidget
+    objectName: 
+    geometry: (0, 27, 274, 471)
+    width: 274
+    height: 471
+    sizeHint: (274, 471)
+    minimumSizeHint: (116, 471)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 0
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 274, 471)
+[Section[1]_body_layout] layout -> contentsMargins: (l=0, t=0, r=0, b=0) spacing=3 count=1
+[startup] Section[2] title=Tools visible=True sizeHint=(62,24)
+[startup] Section[2]._header_row -> QWidget
+    objectName: 
+    geometry: (0, 0, 274, 24)
+    width: 274
+    height: 24
+    sizeHint: (62, 24)
+    minimumSizeHint: (62, 24)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 0
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 274, 24)
+[startup] Section[2]._body_band -> QWidget
+    objectName: 
+    geometry: (0, 0, 640, 3)
+    width: 640
+    height: 3
+    sizeHint: (-1, -1)
+    minimumSizeHint: (-1, -1)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 3
+    maximumHeight: 3
+    visible: False
+    contentsRect: (0, 0, 640, 3)
+[startup] Section[2]._body -> QWidget
+    objectName: 
+    geometry: (0, 0, 640, 480)
+    width: 640
+    height: 480
+    sizeHint: (117, 51)
+    minimumSizeHint: (117, 51)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 0
+    maximumHeight: 16777215
+    visible: False
+    contentsRect: (0, 0, 640, 480)
+[Section[2]_body_layout] layout -> contentsMargins: (l=0, t=0, r=0, b=0) spacing=3 count=1
+[startup] Sum visible CollapsibleSection sizeHints height = 678
+[startup] TabPanel._content_widget.sizeHint().height = 690
+[startup] MetadataBlock -> MetadataBlock
+    objectName: 
+    geometry: (0, 0, 274, 471)
+    width: 274
+    height: 471
+    sizeHint: (274, 471)
+    minimumSizeHint: (116, 471)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 0
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 274, 471)
+[MetadataBlock.grid_layout] layout -> contentsMargins: (l=0, t=0, r=0, b=0) spacing=0 count=26
+[startup] Metadata key=title -> QLabel
+    objectName: 
+    geometry: (102, 0, 172, 26)
+    width: 172
+    height: 26
+    sizeHint: (126, 41)
+    minimumSizeHint: (14, 26)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 26
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 172, 23)
+    wordWrap: True
+    heightForWidth(@172): 26
+[startup] key=title: sizeHint.h=41 heightForWidth=26 allocated.h=26
+[startup] Metadata key=filename -> QLabel
+    objectName: 
+    geometry: (102, 26, 172, 56)
+    width: 172
+    height: 56
+    sizeHint: (126, 56)
+    minimumSizeHint: (14, 26)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 56
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 172, 53)
+    wordWrap: True
+    heightForWidth(@172): 56
+[startup] key=filename: sizeHint.h=56 heightForWidth=56 allocated.h=56
+[startup] Metadata key=original_filename -> QLabel
+    objectName: 
+    geometry: (102, 82, 172, 56)
+    width: 172
+    height: 56
+    sizeHint: (126, 56)
+    minimumSizeHint: (14, 26)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 56
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 172, 53)
+    wordWrap: True
+    heightForWidth(@172): 56
+[startup] key=original_filename: sizeHint.h=56 heightForWidth=56 allocated.h=56
+[startup] Metadata key=media_type -> QLabel
+    objectName: 
+    geometry: (102, 138, 172, 26)
+    width: 172
+    height: 26
+    sizeHint: (14, 26)
+    minimumSizeHint: (14, 26)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 26
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 172, 23)
+    wordWrap: True
+    heightForWidth(@172): 26
+[startup] key=media_type: sizeHint.h=26 heightForWidth=26 allocated.h=26
+[startup] Metadata key=year -> QLabel
+    objectName: 
+    geometry: (102, 164, 172, 26)
+    width: 172
+    height: 26
+    sizeHint: (34, 26)
+    minimumSizeHint: (14, 26)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 26
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 172, 23)
+    wordWrap: True
+    heightForWidth(@172): 26
+[startup] key=year: sizeHint.h=26 heightForWidth=26 allocated.h=26
+[startup] Metadata key=director -> QLabel
+    objectName: 
+    geometry: (102, 190, 172, 26)
+    width: 172
+    height: 26
+    sizeHint: (113, 26)
+    minimumSizeHint: (14, 26)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 26
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 172, 23)
+    wordWrap: True
+    heightForWidth(@172): 26
+[startup] key=director: sizeHint.h=26 heightForWidth=26 allocated.h=26
+[startup] Metadata key=game -> QLabel
+    objectName: 
+    geometry: (102, 216, 172, 26)
+    width: 172
+    height: 26
+    sizeHint: (14, 26)
+    minimumSizeHint: (14, 26)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 26
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 172, 23)
+    wordWrap: True
+    heightForWidth(@172): 26
+[startup] key=game: sizeHint.h=26 heightForWidth=26 allocated.h=26
+[startup] Metadata key=duration -> QLabel
+    objectName: 
+    geometry: (102, 242, 172, 26)
+    width: 172
+    height: 26
+    sizeHint: (21, 26)
+    minimumSizeHint: (14, 26)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 26
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 172, 23)
+    wordWrap: True
+    heightForWidth(@172): 26
+[startup] key=duration: sizeHint.h=26 heightForWidth=26 allocated.h=26
+[startup] Metadata key=tagline -> QLabel
+    objectName: 
+    geometry: (102, 268, 172, 26)
+    width: 172
+    height: 26
+    sizeHint: (14, 26)
+    minimumSizeHint: (14, 26)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 26
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 172, 23)
+    wordWrap: True
+    heightForWidth(@172): 26
+[startup] key=tagline: sizeHint.h=26 heightForWidth=26 allocated.h=26
+[startup] Metadata key=overview -> QLabel
+    objectName: 
+    geometry: (102, 294, 172, 101)
+    width: 172
+    height: 101
+    sizeHint: (172, 101)
+    minimumSizeHint: (14, 26)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 101
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 172, 98)
+    wordWrap: True
+    heightForWidth(@172): 101
+[startup] key=overview: sizeHint.h=101 heightForWidth=101 allocated.h=101
+[startup] Metadata key=media_id -> QLabel
+    objectName: 
+    geometry: (102, 395, 172, 26)
+    width: 172
+    height: 26
+    sizeHint: (73, 26)
+    minimumSizeHint: (14, 26)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 26
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 172, 23)
+    wordWrap: True
+    heightForWidth(@172): 26
+[startup] key=media_id: sizeHint.h=26 heightForWidth=26 allocated.h=26
+[startup] Metadata key=tmdb -> QLabel
+    objectName: 
+    geometry: (102, 421, 172, 26)
+    width: 172
+    height: 26
+    sizeHint: (40, 26)
+    minimumSizeHint: (14, 26)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 26
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 172, 23)
+    wordWrap: True
+    heightForWidth(@172): 26
+[startup] key=tmdb: sizeHint.h=26 heightForWidth=26 allocated.h=26
+[startup] Metadata key=imdb -> QLabel
+    objectName: 
+    geometry: (102, 447, 172, 24)
+    width: 172
+    height: 24
+    sizeHint: (60, 24)
+    minimumSizeHint: (7, 24)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 24
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 172, 24)
+    wordWrap: True
+    heightForWidth(@172): 24
+[startup] key=imdb: sizeHint.h=24 heightForWidth=24 allocated.h=24
+[startup] MetadataBlock: sum value-label sizeHint heights = 486, sum allocated heights = 471, block geom.h = 471
+[startup] Inspector vertical scrollbar:
+[startup] Inspector.vscrollbar -> JumpScrollBar
+    objectName: 
+    geometry: (0, 0, 8, 759)
+    width: 8
+    height: 759
+    sizeHint: (8, 36)
+    minimumSizeHint: (-1, -1)
+    minimumWidth: 8
+    maximumWidth: 8
+    minimumHeight: 0
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 8, 759)
+    visible: True
+    minimum: 0 maximum: 0 pageStep: 759 value: 0
+[startup] Comparison: TabPanel content_widget.sizeHint.h=690 vs scroll viewport.h=759
+[startup] content_widget.sizeHint < viewport.h -> content smaller than viewport; grey area likely leftover viewport space
+[startup] content_widget.actual.height=759 viewport.h=759
+[startup] content_widget actual height <= viewport -> viewport has leftover space
+--- INSPECTOR DEBUG DUMP [post_populate] ---
+[post_populate] WindowVisualizer -> MetadataVisualizer
+    objectName: 
+    geometry: (203, 157, 1373, 783)
+    width: 1373
+    height: 783
+    sizeHint: (334, 408)
+    minimumSizeHint: (334, 68)
+    minimumWidth: 980
+    maximumWidth: 16777215
+    minimumHeight: 640
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 1373, 783)
+[post_populate] InspectorShell -> Inspector
+    objectName: 
+    geometry: (1093, 0, 280, 783)
+    width: 280
+    height: 783
+    sizeHint: (280, 408)
+    minimumSizeHint: (280, 68)
+    minimumWidth: 280
+    maximumWidth: 16777215
+    minimumHeight: 0
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 280, 783)
+[post_populate] TabPanel -> TabPanel
+    objectName: 
+    geometry: (0, 0, 280, 783)
+    width: 280
+    height: 783
+    sizeHint: (162, 408)
+    minimumSizeHint: (162, 68)
+    minimumWidth: 280
+    maximumWidth: 16777215
+    minimumHeight: 0
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 280, 783)
+[post_populate] TabPanel._content_scroll -> QScrollArea
+    objectName: 
+    geometry: (0, 24, 280, 759)
+    width: 280
+    height: 759
+    sizeHint: (122, 384)
+    minimumSizeHint: (52, 44)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 0
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 280, 759)
+[post_populate] TabPanel._content_scroll.viewport -> QWidget
+    objectName: qt_scrollarea_viewport
+    geometry: (0, 0, 280, 759)
+    width: 280
+    height: 759
+    sizeHint: (-1, -1)
+    minimumSizeHint: (-1, -1)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 0
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 280, 759)
+[post_populate] TabPanel._content_widget -> QWidget
+    objectName: 
+    geometry: (0, 0, 280, 759)
+    width: 280
+    height: 759
+    sizeHint: (280, 690)
+    minimumSizeHint: (122, 690)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 0
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 280, 759)
+[TabPanel._content_layout] layout -> contentsMargins: (l=3, t=3, r=3, b=3) spacing=3 count=3
+[post_populate] CollapsibleSection count: 3
+[post_populate] Section[0] title=Thumbnail visible=True sizeHint=(89,156)
+[post_populate] Section[0]._header_row -> QWidget
+    objectName: 
+    geometry: (0, 0, 274, 24)
+    width: 274
+    height: 24
+    sizeHint: (89, 24)
+    minimumSizeHint: (89, 24)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 0
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 274, 24)
+[post_populate] Section[0]._body_band -> QWidget
+    objectName: 
+    geometry: (0, 24, 274, 3)
+    width: 274
+    height: 3
+    sizeHint: (-1, -1)
+    minimumSizeHint: (-1, -1)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 3
+    maximumHeight: 3
+    visible: True
+    contentsRect: (0, 0, 274, 3)
+[post_populate] Section[0]._body -> QWidget
+    objectName: 
+    geometry: (0, 27, 274, 129)
+    width: 274
+    height: 129
+    sizeHint: (86, 129)
+    minimumSizeHint: (86, 129)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 0
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 274, 129)
+[Section[0]_body_layout] layout -> contentsMargins: (l=0, t=0, r=0, b=0) spacing=3 count=1
+[post_populate] Section[1] title=Info visible=True sizeHint=(274,498)
+[post_populate] Section[1]._header_row -> QWidget
+    objectName: 
+    geometry: (0, 0, 274, 24)
+    width: 274
+    height: 24
+    sizeHint: (54, 24)
+    minimumSizeHint: (54, 24)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 0
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 274, 24)
+[post_populate] Section[1]._body_band -> QWidget
+    objectName: 
+    geometry: (0, 24, 274, 3)
+    width: 274
+    height: 3
+    sizeHint: (-1, -1)
+    minimumSizeHint: (-1, -1)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 3
+    maximumHeight: 3
+    visible: True
+    contentsRect: (0, 0, 274, 3)
+[post_populate] Section[1]._body -> QWidget
+    objectName: 
+    geometry: (0, 27, 274, 471)
+    width: 274
+    height: 471
+    sizeHint: (274, 471)
+    minimumSizeHint: (116, 471)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 0
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 274, 471)
+[Section[1]_body_layout] layout -> contentsMargins: (l=0, t=0, r=0, b=0) spacing=3 count=1
+[post_populate] Section[2] title=Tools visible=True sizeHint=(62,24)
+[post_populate] Section[2]._header_row -> QWidget
+    objectName: 
+    geometry: (0, 0, 274, 24)
+    width: 274
+    height: 24
+    sizeHint: (62, 24)
+    minimumSizeHint: (62, 24)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 0
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 274, 24)
+[post_populate] Section[2]._body_band -> QWidget
+    objectName: 
+    geometry: (0, 0, 640, 3)
+    width: 640
+    height: 3
+    sizeHint: (-1, -1)
+    minimumSizeHint: (-1, -1)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 3
+    maximumHeight: 3
+    visible: False
+    contentsRect: (0, 0, 640, 3)
+[post_populate] Section[2]._body -> QWidget
+    objectName: 
+    geometry: (0, 0, 640, 480)
+    width: 640
+    height: 480
+    sizeHint: (117, 51)
+    minimumSizeHint: (117, 51)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 0
+    maximumHeight: 16777215
+    visible: False
+    contentsRect: (0, 0, 640, 480)
+[Section[2]_body_layout] layout -> contentsMargins: (l=0, t=0, r=0, b=0) spacing=3 count=1
+[post_populate] Sum visible CollapsibleSection sizeHints height = 678
+[post_populate] TabPanel._content_widget.sizeHint().height = 690
+[post_populate] MetadataBlock -> MetadataBlock
+    objectName: 
+    geometry: (0, 0, 274, 471)
+    width: 274
+    height: 471
+    sizeHint: (274, 471)
+    minimumSizeHint: (116, 471)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 0
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 274, 471)
+[MetadataBlock.grid_layout] layout -> contentsMargins: (l=0, t=0, r=0, b=0) spacing=0 count=26
+[post_populate] Metadata key=title -> QLabel
+    objectName: 
+    geometry: (102, 0, 172, 26)
+    width: 172
+    height: 26
+    sizeHint: (126, 41)
+    minimumSizeHint: (14, 26)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 26
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 172, 23)
+    wordWrap: True
+    heightForWidth(@172): 26
+[post_populate] key=title: sizeHint.h=41 heightForWidth=26 allocated.h=26
+[post_populate] Metadata key=filename -> QLabel
+    objectName: 
+    geometry: (102, 26, 172, 56)
+    width: 172
+    height: 56
+    sizeHint: (126, 56)
+    minimumSizeHint: (14, 26)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 56
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 172, 53)
+    wordWrap: True
+    heightForWidth(@172): 56
+[post_populate] key=filename: sizeHint.h=56 heightForWidth=56 allocated.h=56
+[post_populate] Metadata key=original_filename -> QLabel
+    objectName: 
+    geometry: (102, 82, 172, 56)
+    width: 172
+    height: 56
+    sizeHint: (126, 56)
+    minimumSizeHint: (14, 26)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 56
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 172, 53)
+    wordWrap: True
+    heightForWidth(@172): 56
+[post_populate] key=original_filename: sizeHint.h=56 heightForWidth=56 allocated.h=56
+[post_populate] Metadata key=media_type -> QLabel
+    objectName: 
+    geometry: (102, 138, 172, 26)
+    width: 172
+    height: 26
+    sizeHint: (14, 26)
+    minimumSizeHint: (14, 26)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 26
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 172, 23)
+    wordWrap: True
+    heightForWidth(@172): 26
+[post_populate] key=media_type: sizeHint.h=26 heightForWidth=26 allocated.h=26
+[post_populate] Metadata key=year -> QLabel
+    objectName: 
+    geometry: (102, 164, 172, 26)
+    width: 172
+    height: 26
+    sizeHint: (34, 26)
+    minimumSizeHint: (14, 26)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 26
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 172, 23)
+    wordWrap: True
+    heightForWidth(@172): 26
+[post_populate] key=year: sizeHint.h=26 heightForWidth=26 allocated.h=26
+[post_populate] Metadata key=director -> QLabel
+    objectName: 
+    geometry: (102, 190, 172, 26)
+    width: 172
+    height: 26
+    sizeHint: (113, 26)
+    minimumSizeHint: (14, 26)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 26
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 172, 23)
+    wordWrap: True
+    heightForWidth(@172): 26
+[post_populate] key=director: sizeHint.h=26 heightForWidth=26 allocated.h=26
+[post_populate] Metadata key=game -> QLabel
+    objectName: 
+    geometry: (102, 216, 172, 26)
+    width: 172
+    height: 26
+    sizeHint: (14, 26)
+    minimumSizeHint: (14, 26)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 26
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 172, 23)
+    wordWrap: True
+    heightForWidth(@172): 26
+[post_populate] key=game: sizeHint.h=26 heightForWidth=26 allocated.h=26
+[post_populate] Metadata key=duration -> QLabel
+    objectName: 
+    geometry: (102, 242, 172, 26)
+    width: 172
+    height: 26
+    sizeHint: (21, 26)
+    minimumSizeHint: (14, 26)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 26
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 172, 23)
+    wordWrap: True
+    heightForWidth(@172): 26
+[post_populate] key=duration: sizeHint.h=26 heightForWidth=26 allocated.h=26
+[post_populate] Metadata key=tagline -> QLabel
+    objectName: 
+    geometry: (102, 268, 172, 26)
+    width: 172
+    height: 26
+    sizeHint: (14, 26)
+    minimumSizeHint: (14, 26)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 26
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 172, 23)
+    wordWrap: True
+    heightForWidth(@172): 26
+[post_populate] key=tagline: sizeHint.h=26 heightForWidth=26 allocated.h=26
+[post_populate] Metadata key=overview -> QLabel
+    objectName: 
+    geometry: (102, 294, 172, 101)
+    width: 172
+    height: 101
+    sizeHint: (172, 101)
+    minimumSizeHint: (14, 26)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 101
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 172, 98)
+    wordWrap: True
+    heightForWidth(@172): 101
+[post_populate] key=overview: sizeHint.h=101 heightForWidth=101 allocated.h=101
+[post_populate] Metadata key=media_id -> QLabel
+    objectName: 
+    geometry: (102, 395, 172, 26)
+    width: 172
+    height: 26
+    sizeHint: (73, 26)
+    minimumSizeHint: (14, 26)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 26
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 172, 23)
+    wordWrap: True
+    heightForWidth(@172): 26
+[post_populate] key=media_id: sizeHint.h=26 heightForWidth=26 allocated.h=26
+[post_populate] Metadata key=tmdb -> QLabel
+    objectName: 
+    geometry: (102, 421, 172, 26)
+    width: 172
+    height: 26
+    sizeHint: (40, 26)
+    minimumSizeHint: (14, 26)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 26
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 172, 23)
+    wordWrap: True
+    heightForWidth(@172): 26
+[post_populate] key=tmdb: sizeHint.h=26 heightForWidth=26 allocated.h=26
+[post_populate] Metadata key=imdb -> QLabel
+    objectName: 
+    geometry: (102, 447, 172, 24)
+    width: 172
+    height: 24
+    sizeHint: (60, 24)
+    minimumSizeHint: (7, 24)
+    minimumWidth: 0
+    maximumWidth: 16777215
+    minimumHeight: 24
+    maximumHeight: 16777215
+    visible: True
+    contentsRect: (0, 0, 172, 24)
+    wordWrap: True
+    heightForWidth(@172): 24
+[post_populate] key=imdb: sizeHint.h=24 heightForWidth=24 allocated.h=24
+[post_populate] MetadataBlock: sum value-label sizeHint heights = 486, sum allocated heights = 471, block geom.h = 471
+[post_populate] Inspector vertical scrollbar:
+[post_populate] Inspector.vscrollbar -> JumpScrollBar
+    objectName: 
+    geometry: (0, 0, 8, 759)
+    width: 8
+    height: 759
+    sizeHint: (8, 36)
+    minimumSizeHint: (-1, -1)
+    minimumWidth: 8
+    maximumWidth: 8
+    minimumHeight: 0
+    maximumHeight: 16777215
+    visible: False
+    contentsRect: (0, 0, 8, 759)
+    visible: False
+    minimum: 0 maximum: 0 pageStep: 759 value: 0
+[post_populate] Comparison: TabPanel content_widget.sizeHint.h=690 vs scroll viewport.h=759
+[post_populate] content_widget.sizeHint < viewport.h -> content smaller than viewport; grey area likely leftover viewport space
+[post_populate] content_widget.actual.height=759 viewport.h=759
+[post_populate] content_widget actual height <= viewport -> viewport has leftover space
 
-Completed: *Run import checks and report stylesheet/widget change* (4/5)
+CLICK 1: $10,000 for a Massacre
+MetadataBlock: geometry=(0, 0, 274, 471) sizeHint=(274, 471) minimumSizeHint=(116, 471) contentsRect=(0, 0, 274, 471)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 26) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 26) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=41 row_geom_h=26 row_min_h=26
+Row[1] field=filename
+  key_label: geometry=(0, 26, 102, 56) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 26, 172, 56) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=56 contentsRect=(0, 0, 172, 53) allocated_height=56 sizeHint_h=56 row_geom_h=56 row_min_h=56
+Row[2] field=original_filename
+  key_label: geometry=(0, 82, 102, 56) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 82, 172, 56) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=56 contentsRect=(0, 0, 172, 53) allocated_height=56 sizeHint_h=56 row_geom_h=56 row_min_h=56
+Row[3] field=media_type
+  key_label: geometry=(0, 138, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 138, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 164, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 164, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 190, 102, 26) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 190, 172, 26) sizeHint=(113, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[6] field=game
+  key_label: geometry=(0, 216, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 216, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 242, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 242, 172, 26) sizeHint=(21, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 268, 102, 26) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 268, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[9] field=overview
+  key_label: geometry=(0, 294, 102, 101) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 294, 172, 101) sizeHint=(172, 101) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=101 contentsRect=(0, 0, 172, 98) allocated_height=101 sizeHint_h=101 row_geom_h=101 row_min_h=101
+    OVERVIEW: text_len=269 explicit_breaks=0 approx_lines_hfw=8 approx_lines_alloc=7 allocated_height=101 heightForWidth=101 sizeHint_h=101 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 395, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 395, 172, 26) sizeHint=(73, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 421, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 421, 172, 26) sizeHint=(40, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 447, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 447, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=471 sum_allocated=471 sum_sizeHint=486 block_geom_h=471
+Short summary: no clear single cause; possibly layout interplay
 
-Yes — the patches were applied. Quick summary and exact locations:
+CLICK 2: 'Neath the Arizona Skies
+MetadataBlock: geometry=(0, 0, 274, 741) sizeHint=(439, 741) minimumSizeHint=(116, 741) contentsRect=(0, 0, 274, 741)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 26) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 26) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=41 row_geom_h=26 row_min_h=26
+Row[1] field=filename
+  key_label: geometry=(0, 26, 102, 41) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 26, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[2] field=original_filename
+  key_label: geometry=(0, 67, 102, 41) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 67, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[3] field=media_type
+  key_label: geometry=(0, 108, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 108, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 134, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 134, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 160, 102, 26) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 160, 172, 26) sizeHint=(106, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[6] field=game
+  key_label: geometry=(0, 186, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 186, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 212, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 212, 172, 26) sizeHint=(21, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 238, 102, 41) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 238, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[9] field=overview
+  key_label: geometry=(0, 279, 102, 386) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 279, 172, 386) sizeHint=(337, 206) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=386 contentsRect=(0, 0, 172, 383) allocated_height=386 sizeHint_h=206 row_geom_h=386 row_min_h=386
+    OVERVIEW: text_len=1219 explicit_breaks=0 approx_lines_hfw=28 approx_lines_alloc=27 allocated_height=386 heightForWidth=386 sizeHint_h=206 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 665, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 665, 172, 26) sizeHint=(73, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 691, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 691, 172, 26) sizeHint=(40, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 717, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 717, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=741 sum_allocated=741 sum_sizeHint=621 block_geom_h=741
+Short summary: label reports too-small sizeHint
 
-- **TabPanel:** tab_panel.py — inspector now uses the standard `JumpScrollBar()` and `setFocusPolicy(Qt.NoFocus)`; I removed the synthetic viewport event-forwarding so behaviour matches the browser.
-- **Corner widget hidden:** tab_panel.py — `corner.setFixedSize(0, 0)` and `corner.hide()` removed the small grey box.
-- **Metadata table/perimeter removed:** metadata_block.py — removed the `gridline-color` entry; metadata_block.py — `self._table.setShowGrid(False)` (no native grid) and `self._table.setVerticalScrollBar(JumpScrollBar())`.
-- **Import check (what I ran):**
-```bash
-python3 - << 'PY'
-import sys
-sys.path.insert(0,'/home/cowpoke/playable/head-irad-playable-cinema/code/crossing-tool')
-import importlib
-from styles import theme
-print('SCROLLBAR_W=',theme.SCROLLBAR_W,'TAB_BG=',theme.TAB_BG)
-import visualizers.metadata_visualizer as mv
-importlib.reload(mv)
-print('reload ok')
-PY
-```
-Output: `SCROLLBAR_W= 8 TAB_BG= #00FF00` and `reload ok`.
+CLICK 3: 3 Bad Men
+MetadataBlock: geometry=(0, 0, 274, 411) sizeHint=(228, 441) minimumSizeHint=(116, 411) contentsRect=(0, 0, 274, 411)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 26) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 26) sizeHint=(67, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[1] field=filename
+  key_label: geometry=(0, 26, 102, 41) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 26, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[2] field=original_filename
+  key_label: geometry=(0, 67, 102, 41) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 67, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[3] field=media_type
+  key_label: geometry=(0, 108, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 108, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 134, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 134, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 160, 102, 26) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 160, 172, 26) sizeHint=(67, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[6] field=game
+  key_label: geometry=(0, 186, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 186, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 212, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 212, 172, 26) sizeHint=(21, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 238, 102, 41) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 238, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[9] field=overview
+  key_label: geometry=(0, 279, 102, 56) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 279, 172, 56) sizeHint=(126, 71) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=56 contentsRect=(0, 0, 172, 53) allocated_height=56 sizeHint_h=71 row_geom_h=56 row_min_h=56
+    OVERVIEW: text_len=145 explicit_breaks=0 approx_lines_hfw=4 approx_lines_alloc=4 allocated_height=56 heightForWidth=56 sizeHint_h=71 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 335, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 335, 172, 26) sizeHint=(73, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 361, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 361, 172, 26) sizeHint=(40, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 387, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 387, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=411 sum_allocated=411 sum_sizeHint=441 block_geom_h=411
+Short summary: no clear single cause; possibly layout interplay
 
-If you still don't see changes in your editor/UI: try re-opening the files or restart the app (or run the import command above). Want me to revert the debug `theme.TAB_BG` green now?
+CLICK 4: 3 Godfathers
+MetadataBlock: geometry=(0, 0, 274, 471) sizeHint=(294, 471) minimumSizeHint=(116, 471) contentsRect=(0, 0, 274, 471)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 26) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 26) sizeHint=(87, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[1] field=filename
+  key_label: geometry=(0, 26, 102, 41) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 26, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[2] field=original_filename
+  key_label: geometry=(0, 67, 102, 41) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 67, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[3] field=media_type
+  key_label: geometry=(0, 108, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 108, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 134, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 134, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 160, 102, 26) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 160, 172, 26) sizeHint=(67, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[6] field=game
+  key_label: geometry=(0, 186, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 186, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 212, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 212, 172, 26) sizeHint=(27, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 238, 102, 41) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 238, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[9] field=overview
+  key_label: geometry=(0, 279, 102, 116) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 279, 172, 116) sizeHint=(192, 101) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=116 contentsRect=(0, 0, 172, 113) allocated_height=116 sizeHint_h=101 row_geom_h=116 row_min_h=116
+    OVERVIEW: text_len=315 explicit_breaks=0 approx_lines_hfw=9 approx_lines_alloc=8 allocated_height=116 heightForWidth=116 sizeHint_h=101 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 395, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 395, 172, 26) sizeHint=(73, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 421, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 421, 172, 26) sizeHint=(40, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 447, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 447, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=471 sum_allocated=471 sum_sizeHint=456 block_geom_h=471
+Short summary: label reports too-small sizeHint
+
+CLICK 5: 3:10 to Yuma
+MetadataBlock: geometry=(0, 0, 274, 516) sizeHint=(314, 516) minimumSizeHint=(116, 516) contentsRect=(0, 0, 274, 516)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 26) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 26) sizeHint=(87, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[1] field=filename
+  key_label: geometry=(0, 26, 102, 41) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 26, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[2] field=original_filename
+  key_label: geometry=(0, 67, 102, 41) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 67, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[3] field=media_type
+  key_label: geometry=(0, 108, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 108, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 134, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 134, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 160, 102, 26) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 160, 172, 26) sizeHint=(87, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[6] field=game
+  key_label: geometry=(0, 186, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 186, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 212, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 212, 172, 26) sizeHint=(21, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 238, 102, 86) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 238, 172, 86) sizeHint=(172, 86) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=86 contentsRect=(0, 0, 172, 83) allocated_height=86 sizeHint_h=86 row_geom_h=86 row_min_h=86
+Row[9] field=overview
+  key_label: geometry=(0, 324, 102, 116) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 324, 172, 116) sizeHint=(212, 101) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=116 contentsRect=(0, 0, 172, 113) allocated_height=116 sizeHint_h=101 row_geom_h=116 row_min_h=116
+    OVERVIEW: text_len=349 explicit_breaks=0 approx_lines_hfw=9 approx_lines_alloc=8 allocated_height=116 heightForWidth=116 sizeHint_h=101 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 440, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 440, 172, 26) sizeHint=(73, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 466, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 466, 172, 26) sizeHint=(40, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 492, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 492, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=516 sum_allocated=516 sum_sizeHint=501 block_geom_h=516
+Short summary: label reports too-small sizeHint
+
+CLICK 6: 7 Men from Now
+MetadataBlock: geometry=(0, 0, 274, 441) sizeHint=(274, 441) minimumSizeHint=(116, 441) contentsRect=(0, 0, 274, 441)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 26) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 26) sizeHint=(100, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[1] field=filename
+  key_label: geometry=(0, 26, 102, 41) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 26, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[2] field=original_filename
+  key_label: geometry=(0, 67, 102, 41) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 67, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[3] field=media_type
+  key_label: geometry=(0, 108, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 108, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 134, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 134, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 160, 102, 26) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 160, 172, 26) sizeHint=(106, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[6] field=game
+  key_label: geometry=(0, 186, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 186, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 212, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 212, 172, 26) sizeHint=(21, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 238, 102, 26) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 238, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[9] field=overview
+  key_label: geometry=(0, 264, 102, 101) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 264, 172, 101) sizeHint=(172, 101) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=101 contentsRect=(0, 0, 172, 98) allocated_height=101 sizeHint_h=101 row_geom_h=101 row_min_h=101
+    OVERVIEW: text_len=263 explicit_breaks=0 approx_lines_hfw=8 approx_lines_alloc=7 allocated_height=101 heightForWidth=101 sizeHint_h=101 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 365, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 365, 172, 26) sizeHint=(73, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 391, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 391, 172, 26) sizeHint=(40, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 417, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 417, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=441 sum_allocated=441 sum_sizeHint=471 block_geom_h=441
+Short summary: no clear single cause; possibly layout interplay
+
+CLICK 7: 7th Cavalry
+MetadataBlock: geometry=(0, 0, 274, 456) sizeHint=(274, 456) minimumSizeHint=(116, 456) contentsRect=(0, 0, 274, 456)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 26) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 26) sizeHint=(80, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[1] field=filename
+  key_label: geometry=(0, 26, 102, 41) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 26, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[2] field=original_filename
+  key_label: geometry=(0, 67, 102, 41) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 67, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[3] field=media_type
+  key_label: geometry=(0, 108, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 108, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 134, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 134, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 160, 102, 26) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 160, 172, 26) sizeHint=(106, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[6] field=game
+  key_label: geometry=(0, 186, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 186, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 212, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 212, 172, 26) sizeHint=(21, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 238, 102, 56) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 238, 172, 56) sizeHint=(126, 71) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=56 contentsRect=(0, 0, 172, 53) allocated_height=56 sizeHint_h=71 row_geom_h=56 row_min_h=56
+Row[9] field=overview
+  key_label: geometry=(0, 294, 102, 86) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 294, 172, 86) sizeHint=(172, 86) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=86 contentsRect=(0, 0, 172, 83) allocated_height=86 sizeHint_h=86 row_geom_h=86 row_min_h=86
+    OVERVIEW: text_len=203 explicit_breaks=0 approx_lines_hfw=7 approx_lines_alloc=6 allocated_height=86 heightForWidth=86 sizeHint_h=86 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 380, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 380, 172, 26) sizeHint=(73, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 406, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 406, 172, 26) sizeHint=(40, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 432, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 432, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=456 sum_allocated=456 sum_sizeHint=471 block_geom_h=456
+Short summary: no clear single cause; possibly layout interplay
+
+CLICK 8: A Bullet Is Waiting
+MetadataBlock: geometry=(0, 0, 274, 501) sizeHint=(314, 501) minimumSizeHint=(116, 501) contentsRect=(0, 0, 274, 501)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 26) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 26) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=41 row_geom_h=26 row_min_h=26
+Row[1] field=filename
+  key_label: geometry=(0, 26, 102, 41) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 26, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[2] field=original_filename
+  key_label: geometry=(0, 67, 102, 41) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 67, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[3] field=media_type
+  key_label: geometry=(0, 108, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 108, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 134, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 134, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 160, 102, 26) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 160, 172, 26) sizeHint=(80, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[6] field=game
+  key_label: geometry=(0, 186, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 186, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 212, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 212, 172, 26) sizeHint=(21, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 238, 102, 26) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 238, 172, 26) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=41 row_geom_h=26 row_min_h=26
+Row[9] field=overview
+  key_label: geometry=(0, 264, 102, 161) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 264, 172, 161) sizeHint=(212, 131) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=161 contentsRect=(0, 0, 172, 158) allocated_height=161 sizeHint_h=131 row_geom_h=161 row_min_h=161
+    OVERVIEW: text_len=455 explicit_breaks=0 approx_lines_hfw=12 approx_lines_alloc=11 allocated_height=161 heightForWidth=161 sizeHint_h=131 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 425, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 425, 172, 26) sizeHint=(73, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 451, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 451, 172, 26) sizeHint=(40, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 477, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 477, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=501 sum_allocated=501 sum_sizeHint=531 block_geom_h=501
+Short summary: label reports too-small sizeHint
+
+CLICK 9: A Fistful of Dollars
+MetadataBlock: geometry=(0, 0, 274, 621) sizeHint=(373, 621) minimumSizeHint=(116, 621) contentsRect=(0, 0, 274, 621)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 26) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 26) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=41 row_geom_h=26 row_min_h=26
+Row[1] field=filename
+  key_label: geometry=(0, 26, 102, 41) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 26, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[2] field=original_filename
+  key_label: geometry=(0, 67, 102, 41) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 67, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[3] field=media_type
+  key_label: geometry=(0, 108, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 108, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 134, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 134, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 160, 102, 26) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 160, 172, 26) sizeHint=(87, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[6] field=game
+  key_label: geometry=(0, 186, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 186, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 212, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 212, 172, 26) sizeHint=(21, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 238, 102, 56) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 238, 172, 56) sizeHint=(126, 71) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=56 contentsRect=(0, 0, 172, 53) allocated_height=56 sizeHint_h=71 row_geom_h=56 row_min_h=56
+Row[9] field=overview
+  key_label: geometry=(0, 294, 102, 251) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 294, 172, 251) sizeHint=(271, 161) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=251 contentsRect=(0, 0, 172, 248) allocated_height=251 sizeHint_h=161 row_geom_h=251 row_min_h=251
+    OVERVIEW: text_len=797 explicit_breaks=0 approx_lines_hfw=18 approx_lines_alloc=17 allocated_height=251 heightForWidth=251 sizeHint_h=161 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 545, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 545, 172, 26) sizeHint=(60, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 571, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 571, 172, 26) sizeHint=(27, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 597, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 597, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=621 sum_allocated=621 sum_sizeHint=591 block_geom_h=621
+Short summary: label reports too-small sizeHint
+
+CLICK 10: A Man Called Gannon
+MetadataBlock: geometry=(0, 0, 274, 441) sizeHint=(274, 441) minimumSizeHint=(116, 441) contentsRect=(0, 0, 274, 441)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 26) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 26) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=41 row_geom_h=26 row_min_h=26
+Row[1] field=filename
+  key_label: geometry=(0, 26, 102, 41) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 26, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[2] field=original_filename
+  key_label: geometry=(0, 67, 102, 41) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 67, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[3] field=media_type
+  key_label: geometry=(0, 108, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 108, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 134, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 134, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 160, 102, 26) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 160, 172, 26) sizeHint=(106, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[6] field=game
+  key_label: geometry=(0, 186, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 186, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 212, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 212, 172, 26) sizeHint=(27, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 238, 102, 41) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 238, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[9] field=overview
+  key_label: geometry=(0, 279, 102, 86) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 279, 172, 86) sizeHint=(172, 86) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=86 contentsRect=(0, 0, 172, 83) allocated_height=86 sizeHint_h=86 row_geom_h=86 row_min_h=86
+    OVERVIEW: text_len=253 explicit_breaks=0 approx_lines_hfw=7 approx_lines_alloc=6 allocated_height=86 heightForWidth=86 sizeHint_h=86 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 365, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 365, 172, 26) sizeHint=(80, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 391, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 391, 172, 26) sizeHint=(47, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 417, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 417, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=441 sum_allocated=441 sum_sizeHint=501 block_geom_h=441
+Short summary: no clear single cause; possibly layout interplay
+
+CLICK 11: A Million Ways to Die in the West
+MetadataBlock: geometry=(0, 0, 274, 516) sizeHint=(314, 516) minimumSizeHint=(116, 516) contentsRect=(0, 0, 274, 516)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 41) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[1] field=filename
+  key_label: geometry=(0, 41, 102, 56) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 41, 172, 56) sizeHint=(126, 71) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=56 contentsRect=(0, 0, 172, 53) allocated_height=56 sizeHint_h=71 row_geom_h=56 row_min_h=56
+Row[2] field=original_filename
+  key_label: geometry=(0, 97, 102, 56) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 97, 172, 56) sizeHint=(126, 71) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=56 contentsRect=(0, 0, 172, 53) allocated_height=56 sizeHint_h=71 row_geom_h=56 row_min_h=56
+Row[3] field=media_type
+  key_label: geometry=(0, 153, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 153, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 179, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 179, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 205, 102, 26) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 205, 172, 26) sizeHint=(106, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[6] field=game
+  key_label: geometry=(0, 231, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 231, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 257, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 257, 172, 26) sizeHint=(27, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 283, 102, 26) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 283, 172, 26) sizeHint=(120, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[9] field=overview
+  key_label: geometry=(0, 309, 102, 131) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 309, 172, 131) sizeHint=(212, 101) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=131 contentsRect=(0, 0, 172, 128) allocated_height=131 sizeHint_h=101 row_geom_h=131 row_min_h=131
+    OVERVIEW: text_len=369 explicit_breaks=0 approx_lines_hfw=10 approx_lines_alloc=9 allocated_height=131 heightForWidth=131 sizeHint_h=101 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 440, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 440, 172, 26) sizeHint=(80, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 466, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 466, 172, 26) sizeHint=(47, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 492, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 492, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=516 sum_allocated=516 sum_sizeHint=516 block_geom_h=516
+Short summary: label reports too-small sizeHint
+
+CLICK 12: 'Neath the Arizona Skies
+MetadataBlock: geometry=(0, 0, 274, 741) sizeHint=(439, 741) minimumSizeHint=(116, 741) contentsRect=(0, 0, 274, 741)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 26) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 26) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=41 row_geom_h=26 row_min_h=26
+Row[1] field=filename
+  key_label: geometry=(0, 26, 102, 41) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 26, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[2] field=original_filename
+  key_label: geometry=(0, 67, 102, 41) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 67, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[3] field=media_type
+  key_label: geometry=(0, 108, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 108, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 134, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 134, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 160, 102, 26) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 160, 172, 26) sizeHint=(106, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[6] field=game
+  key_label: geometry=(0, 186, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 186, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 212, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 212, 172, 26) sizeHint=(21, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 238, 102, 41) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 238, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[9] field=overview
+  key_label: geometry=(0, 279, 102, 386) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 279, 172, 386) sizeHint=(337, 206) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=386 contentsRect=(0, 0, 172, 383) allocated_height=386 sizeHint_h=206 row_geom_h=386 row_min_h=386
+    OVERVIEW: text_len=1219 explicit_breaks=0 approx_lines_hfw=28 approx_lines_alloc=27 allocated_height=386 heightForWidth=386 sizeHint_h=206 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 665, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 665, 172, 26) sizeHint=(73, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 691, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 691, 172, 26) sizeHint=(40, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 717, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 717, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=741 sum_allocated=741 sum_sizeHint=621 block_geom_h=741
+Short summary: label reports too-small sizeHint
+
+CLICK 13: 3 Bad Men
+MetadataBlock: geometry=(0, 0, 274, 411) sizeHint=(228, 441) minimumSizeHint=(116, 411) contentsRect=(0, 0, 274, 411)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 26) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 26) sizeHint=(67, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[1] field=filename
+  key_label: geometry=(0, 26, 102, 41) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 26, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[2] field=original_filename
+  key_label: geometry=(0, 67, 102, 41) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 67, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[3] field=media_type
+  key_label: geometry=(0, 108, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 108, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 134, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 134, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 160, 102, 26) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 160, 172, 26) sizeHint=(67, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[6] field=game
+  key_label: geometry=(0, 186, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 186, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 212, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 212, 172, 26) sizeHint=(21, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 238, 102, 41) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 238, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[9] field=overview
+  key_label: geometry=(0, 279, 102, 56) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 279, 172, 56) sizeHint=(126, 71) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=56 contentsRect=(0, 0, 172, 53) allocated_height=56 sizeHint_h=71 row_geom_h=56 row_min_h=56
+    OVERVIEW: text_len=145 explicit_breaks=0 approx_lines_hfw=4 approx_lines_alloc=4 allocated_height=56 heightForWidth=56 sizeHint_h=71 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 335, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 335, 172, 26) sizeHint=(73, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 361, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 361, 172, 26) sizeHint=(40, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 387, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 387, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=411 sum_allocated=411 sum_sizeHint=441 block_geom_h=411
+Short summary: no clear single cause; possibly layout interplay
+
+CLICK 14: 3 Godfathers
+MetadataBlock: geometry=(0, 0, 274, 471) sizeHint=(294, 471) minimumSizeHint=(116, 471) contentsRect=(0, 0, 274, 471)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 26) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 26) sizeHint=(87, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[1] field=filename
+  key_label: geometry=(0, 26, 102, 41) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 26, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[2] field=original_filename
+  key_label: geometry=(0, 67, 102, 41) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 67, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[3] field=media_type
+  key_label: geometry=(0, 108, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 108, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 134, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 134, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 160, 102, 26) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 160, 172, 26) sizeHint=(67, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[6] field=game
+  key_label: geometry=(0, 186, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 186, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 212, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 212, 172, 26) sizeHint=(27, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 238, 102, 41) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 238, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[9] field=overview
+  key_label: geometry=(0, 279, 102, 116) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 279, 172, 116) sizeHint=(192, 101) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=116 contentsRect=(0, 0, 172, 113) allocated_height=116 sizeHint_h=101 row_geom_h=116 row_min_h=116
+    OVERVIEW: text_len=315 explicit_breaks=0 approx_lines_hfw=9 approx_lines_alloc=8 allocated_height=116 heightForWidth=116 sizeHint_h=101 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 395, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 395, 172, 26) sizeHint=(73, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 421, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 421, 172, 26) sizeHint=(40, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 447, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 447, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=471 sum_allocated=471 sum_sizeHint=456 block_geom_h=471
+Short summary: label reports too-small sizeHint
+
+CLICK 15: 3 Bad Men
+MetadataBlock: geometry=(0, 0, 274, 411) sizeHint=(228, 441) minimumSizeHint=(116, 411) contentsRect=(0, 0, 274, 411)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 26) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 26) sizeHint=(67, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[1] field=filename
+  key_label: geometry=(0, 26, 102, 41) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 26, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[2] field=original_filename
+  key_label: geometry=(0, 67, 102, 41) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 67, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[3] field=media_type
+  key_label: geometry=(0, 108, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 108, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 134, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 134, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 160, 102, 26) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 160, 172, 26) sizeHint=(67, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[6] field=game
+  key_label: geometry=(0, 186, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 186, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 212, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 212, 172, 26) sizeHint=(21, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 238, 102, 41) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 238, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[9] field=overview
+  key_label: geometry=(0, 279, 102, 56) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 279, 172, 56) sizeHint=(126, 71) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=56 contentsRect=(0, 0, 172, 53) allocated_height=56 sizeHint_h=71 row_geom_h=56 row_min_h=56
+    OVERVIEW: text_len=145 explicit_breaks=0 approx_lines_hfw=4 approx_lines_alloc=4 allocated_height=56 heightForWidth=56 sizeHint_h=71 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 335, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 335, 172, 26) sizeHint=(73, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 361, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 361, 172, 26) sizeHint=(40, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 387, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 387, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=411 sum_allocated=411 sum_sizeHint=441 block_geom_h=411
+Short summary: no clear single cause; possibly layout interplay
+
+CLICK 16: Macho Callahan
+MetadataBlock: geometry=(0, 0, 274, 696) sizeHint=(400, 696) minimumSizeHint=(116, 696) contentsRect=(0, 0, 274, 696)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 26) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 26) sizeHint=(100, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[1] field=filename
+  key_label: geometry=(0, 26, 102, 41) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 26, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[2] field=original_filename
+  key_label: geometry=(0, 67, 102, 41) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 67, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[3] field=media_type
+  key_label: geometry=(0, 108, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 108, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 134, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 134, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 160, 102, 26) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 160, 172, 26) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=41 row_geom_h=26 row_min_h=26
+Row[6] field=game
+  key_label: geometry=(0, 186, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 186, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 212, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 212, 172, 26) sizeHint=(21, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 238, 102, 86) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 238, 172, 86) sizeHint=(172, 86) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=86 contentsRect=(0, 0, 172, 83) allocated_height=86 sizeHint_h=86 row_geom_h=86 row_min_h=86
+Row[9] field=overview
+  key_label: geometry=(0, 324, 102, 296) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 324, 172, 296) sizeHint=(298, 176) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=296 contentsRect=(0, 0, 172, 293) allocated_height=296 sizeHint_h=176 row_geom_h=296 row_min_h=296
+    OVERVIEW: text_len=943 explicit_breaks=0 approx_lines_hfw=22 approx_lines_alloc=21 allocated_height=296 heightForWidth=296 sizeHint_h=176 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 620, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 620, 172, 26) sizeHint=(80, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 646, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 646, 172, 26) sizeHint=(47, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 672, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 672, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=696 sum_allocated=696 sum_sizeHint=621 block_geom_h=696
+Short summary: label reports too-small sizeHint
+
+CLICK 17: Major Dundee
+MetadataBlock: geometry=(0, 0, 274, 501) sizeHint=(314, 501) minimumSizeHint=(116, 501) contentsRect=(0, 0, 274, 501)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 26) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 26) sizeHint=(87, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[1] field=filename
+  key_label: geometry=(0, 26, 102, 41) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 26, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[2] field=original_filename
+  key_label: geometry=(0, 67, 102, 41) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 67, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[3] field=media_type
+  key_label: geometry=(0, 108, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 108, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 134, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 134, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 160, 102, 26) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 160, 172, 26) sizeHint=(93, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[6] field=game
+  key_label: geometry=(0, 186, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 186, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 212, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 212, 172, 26) sizeHint=(27, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 238, 102, 26) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 238, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[9] field=overview
+  key_label: geometry=(0, 264, 102, 161) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 264, 172, 161) sizeHint=(212, 131) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=161 contentsRect=(0, 0, 172, 158) allocated_height=161 sizeHint_h=131 row_geom_h=161 row_min_h=161
+    OVERVIEW: text_len=491 explicit_breaks=0 approx_lines_hfw=12 approx_lines_alloc=11 allocated_height=161 heightForWidth=161 sizeHint_h=131 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 425, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 425, 172, 26) sizeHint=(73, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 451, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 451, 172, 26) sizeHint=(40, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 477, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 477, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=501 sum_allocated=501 sum_sizeHint=471 block_geom_h=501
+Short summary: label reports too-small sizeHint
+
+CLICK 18: Man with the Gun
+MetadataBlock: geometry=(0, 0, 274, 561) sizeHint=(347, 561) minimumSizeHint=(116, 561) contentsRect=(0, 0, 274, 561)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 26) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 26) sizeHint=(113, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[1] field=filename
+  key_label: geometry=(0, 26, 102, 41) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 26, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[2] field=original_filename
+  key_label: geometry=(0, 67, 102, 41) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 67, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[3] field=media_type
+  key_label: geometry=(0, 108, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 108, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 134, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 134, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 160, 102, 26) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 160, 172, 26) sizeHint=(100, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[6] field=game
+  key_label: geometry=(0, 186, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 186, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 212, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 212, 172, 26) sizeHint=(21, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 238, 102, 41) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 238, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[9] field=overview
+  key_label: geometry=(0, 279, 102, 206) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 279, 172, 206) sizeHint=(245, 146) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=206 contentsRect=(0, 0, 172, 203) allocated_height=206 sizeHint_h=146 row_geom_h=206 row_min_h=206
+    OVERVIEW: text_len=645 explicit_breaks=0 approx_lines_hfw=15 approx_lines_alloc=14 allocated_height=206 heightForWidth=206 sizeHint_h=146 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 485, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 485, 172, 26) sizeHint=(73, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 511, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 511, 172, 26) sizeHint=(40, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 537, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 537, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=561 sum_allocated=561 sum_sizeHint=546 block_geom_h=561
+Short summary: label reports too-small sizeHint
+
+CLICK 19: Go West
+MetadataBlock: geometry=(0, 0, 274, 501) sizeHint=(294, 501) minimumSizeHint=(116, 501) contentsRect=(0, 0, 274, 501)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 26) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 26) sizeHint=(54, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[1] field=filename
+  key_label: geometry=(0, 26, 102, 41) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 26, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[2] field=original_filename
+  key_label: geometry=(0, 67, 102, 41) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 67, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[3] field=media_type
+  key_label: geometry=(0, 108, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 108, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 134, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 134, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 160, 102, 26) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 160, 172, 26) sizeHint=(93, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[6] field=game
+  key_label: geometry=(0, 186, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 186, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 212, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 212, 172, 26) sizeHint=(21, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 238, 102, 71) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 238, 172, 71) sizeHint=(172, 71) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=71 contentsRect=(0, 0, 172, 68) allocated_height=71 sizeHint_h=71 row_geom_h=71 row_min_h=71
+Row[9] field=overview
+  key_label: geometry=(0, 309, 102, 116) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 309, 172, 116) sizeHint=(192, 101) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=116 contentsRect=(0, 0, 172, 113) allocated_height=116 sizeHint_h=101 row_geom_h=116 row_min_h=116
+    OVERVIEW: text_len=313 explicit_breaks=0 approx_lines_hfw=9 approx_lines_alloc=8 allocated_height=116 heightForWidth=116 sizeHint_h=101 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 425, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 425, 172, 26) sizeHint=(73, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 451, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 451, 172, 26) sizeHint=(40, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 477, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 477, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=501 sum_allocated=501 sum_sizeHint=486 block_geom_h=501
+Short summary: label reports too-small sizeHint
+
+CLICK 20: Drums Along the Mohawk
+MetadataBlock: geometry=(0, 0, 274, 531) sizeHint=(347, 531) minimumSizeHint=(116, 531) contentsRect=(0, 0, 274, 531)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 26) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 26) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=41 row_geom_h=26 row_min_h=26
+Row[1] field=filename
+  key_label: geometry=(0, 26, 102, 41) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 26, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[2] field=original_filename
+  key_label: geometry=(0, 67, 102, 41) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 67, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[3] field=media_type
+  key_label: geometry=(0, 108, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 108, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 134, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 134, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 160, 102, 26) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 160, 172, 26) sizeHint=(67, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[6] field=game
+  key_label: geometry=(0, 186, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 186, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 212, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 212, 172, 26) sizeHint=(27, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 238, 102, 41) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 238, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[9] field=overview
+  key_label: geometry=(0, 279, 102, 176) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 279, 172, 176) sizeHint=(245, 131) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=176 contentsRect=(0, 0, 172, 173) allocated_height=176 sizeHint_h=131 row_geom_h=176 row_min_h=176
+    OVERVIEW: text_len=521 explicit_breaks=0 approx_lines_hfw=13 approx_lines_alloc=12 allocated_height=176 heightForWidth=176 sizeHint_h=131 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 455, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 455, 172, 26) sizeHint=(73, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 481, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 481, 172, 26) sizeHint=(40, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 507, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 507, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=531 sum_allocated=531 sum_sizeHint=531 block_geom_h=531
+Short summary: label reports too-small sizeHint
+
+CLICK 21: Pony Express
+MetadataBlock: geometry=(0, 0, 274, 591) sizeHint=(347, 591) minimumSizeHint=(116, 591) contentsRect=(0, 0, 274, 591)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 26) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 26) sizeHint=(87, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[1] field=filename
+  key_label: geometry=(0, 26, 102, 41) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 26, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[2] field=original_filename
+  key_label: geometry=(0, 67, 102, 41) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 67, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[3] field=media_type
+  key_label: geometry=(0, 108, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 108, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 134, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 134, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 160, 102, 26) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 160, 172, 26) sizeHint=(87, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[6] field=game
+  key_label: geometry=(0, 186, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 186, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 212, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 212, 172, 26) sizeHint=(27, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 238, 102, 86) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 238, 172, 86) sizeHint=(172, 86) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=86 contentsRect=(0, 0, 172, 83) allocated_height=86 sizeHint_h=86 row_geom_h=86 row_min_h=86
+Row[9] field=overview
+  key_label: geometry=(0, 324, 102, 191) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 324, 172, 191) sizeHint=(245, 146) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=191 contentsRect=(0, 0, 172, 188) allocated_height=191 sizeHint_h=146 row_geom_h=191 row_min_h=191
+    OVERVIEW: text_len=589 explicit_breaks=0 approx_lines_hfw=14 approx_lines_alloc=13 allocated_height=191 heightForWidth=191 sizeHint_h=146 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 515, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 515, 172, 26) sizeHint=(73, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 541, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 541, 172, 26) sizeHint=(40, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 567, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 567, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=591 sum_allocated=591 sum_sizeHint=546 block_geom_h=591
+Short summary: label reports too-small sizeHint
+
+CLICK 22: Guns and Guts
+MetadataBlock: geometry=(0, 0, 274, 606) sizeHint=(400, 606) minimumSizeHint=(116, 606) contentsRect=(0, 0, 274, 606)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 26) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 26) sizeHint=(93, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[1] field=filename
+  key_label: geometry=(0, 26, 102, 41) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 26, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[2] field=original_filename
+  key_label: geometry=(0, 67, 102, 41) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 67, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[3] field=media_type
+  key_label: geometry=(0, 108, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 108, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 134, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 134, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 160, 102, 26) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 160, 172, 26) sizeHint=(113, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[6] field=game
+  key_label: geometry=(0, 186, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 186, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 212, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 212, 172, 26) sizeHint=(21, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 238, 102, 26) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 238, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[9] field=overview
+  key_label: geometry=(0, 264, 102, 266) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 264, 172, 266) sizeHint=(298, 161) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=266 contentsRect=(0, 0, 172, 263) allocated_height=266 sizeHint_h=161 row_geom_h=266 row_min_h=266
+    OVERVIEW: text_len=857 explicit_breaks=0 approx_lines_hfw=19 approx_lines_alloc=19 allocated_height=266 heightForWidth=266 sizeHint_h=161 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 530, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 530, 172, 26) sizeHint=(80, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 556, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 556, 172, 26) sizeHint=(47, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 582, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 582, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=606 sum_allocated=606 sum_sizeHint=531 block_geom_h=606
+Short summary: label reports too-small sizeHint
+
+CLICK 23: Ned Kelly
+MetadataBlock: geometry=(0, 0, 274, 546) sizeHint=(347, 546) minimumSizeHint=(116, 546) contentsRect=(0, 0, 274, 546)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 26) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 26) sizeHint=(67, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[1] field=filename
+  key_label: geometry=(0, 26, 102, 41) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 26, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[2] field=original_filename
+  key_label: geometry=(0, 67, 102, 41) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 67, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[3] field=media_type
+  key_label: geometry=(0, 108, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 108, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 134, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 134, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 160, 102, 26) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 160, 172, 26) sizeHint=(106, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[6] field=game
+  key_label: geometry=(0, 186, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 186, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 212, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 212, 172, 26) sizeHint=(27, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 238, 102, 56) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 238, 172, 56) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=56 contentsRect=(0, 0, 172, 53) allocated_height=56 sizeHint_h=56 row_geom_h=56 row_min_h=56
+Row[9] field=overview
+  key_label: geometry=(0, 294, 102, 176) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 294, 172, 176) sizeHint=(245, 131) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=176 contentsRect=(0, 0, 172, 173) allocated_height=176 sizeHint_h=131 row_geom_h=176 row_min_h=176
+    OVERVIEW: text_len=541 explicit_breaks=0 approx_lines_hfw=13 approx_lines_alloc=12 allocated_height=176 heightForWidth=176 sizeHint_h=131 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 470, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 470, 172, 26) sizeHint=(73, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 496, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 496, 172, 26) sizeHint=(40, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 522, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 522, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=546 sum_allocated=546 sum_sizeHint=501 block_geom_h=546
+Short summary: label reports too-small sizeHint
+
+CLICK 24: Out West
+MetadataBlock: geometry=(0, 0, 274, 591) sizeHint=(373, 591) minimumSizeHint=(116, 591) contentsRect=(0, 0, 274, 591)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 26) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 26) sizeHint=(60, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[1] field=filename
+  key_label: geometry=(0, 26, 102, 41) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 26, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[2] field=original_filename
+  key_label: geometry=(0, 67, 102, 41) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 67, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[3] field=media_type
+  key_label: geometry=(0, 108, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 108, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 134, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 134, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 160, 102, 26) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 160, 172, 26) sizeHint=(106, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[6] field=game
+  key_label: geometry=(0, 186, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 186, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 212, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 212, 172, 26) sizeHint=(21, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 238, 102, 26) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 238, 172, 26) sizeHint=(126, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[9] field=overview
+  key_label: geometry=(0, 264, 102, 251) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 264, 172, 251) sizeHint=(271, 161) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=251 contentsRect=(0, 0, 172, 248) allocated_height=251 sizeHint_h=161 row_geom_h=251 row_min_h=251
+    OVERVIEW: text_len=785 explicit_breaks=0 approx_lines_hfw=18 approx_lines_alloc=17 allocated_height=251 heightForWidth=251 sizeHint_h=161 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 515, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 515, 172, 26) sizeHint=(73, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 541, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 541, 172, 26) sizeHint=(40, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 567, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 567, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=591 sum_allocated=591 sum_sizeHint=501 block_geom_h=591
+Short summary: label reports too-small sizeHint
+
+CLICK 25: Pat Garrett & Billy the Kid
+MetadataBlock: geometry=(0, 0, 274, 501) sizeHint=(274, 501) minimumSizeHint=(116, 501) contentsRect=(0, 0, 274, 501)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 41) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[1] field=filename
+  key_label: geometry=(0, 41, 102, 56) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 41, 172, 56) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=56 contentsRect=(0, 0, 172, 53) allocated_height=56 sizeHint_h=56 row_geom_h=56 row_min_h=56
+Row[2] field=original_filename
+  key_label: geometry=(0, 97, 102, 56) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 97, 172, 56) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=56 contentsRect=(0, 0, 172, 53) allocated_height=56 sizeHint_h=56 row_geom_h=56 row_min_h=56
+Row[3] field=media_type
+  key_label: geometry=(0, 153, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 153, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 179, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 179, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 205, 102, 26) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 205, 172, 26) sizeHint=(93, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[6] field=game
+  key_label: geometry=(0, 231, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 231, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 257, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 257, 172, 26) sizeHint=(27, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 283, 102, 41) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 283, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[9] field=overview
+  key_label: geometry=(0, 324, 102, 101) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 324, 172, 101) sizeHint=(172, 101) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=101 contentsRect=(0, 0, 172, 98) allocated_height=101 sizeHint_h=101 row_geom_h=101 row_min_h=101
+    OVERVIEW: text_len=265 explicit_breaks=0 approx_lines_hfw=8 approx_lines_alloc=7 allocated_height=101 heightForWidth=101 sizeHint_h=101 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 425, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 425, 172, 26) sizeHint=(73, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 451, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 451, 172, 26) sizeHint=(40, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 477, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 477, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=501 sum_allocated=501 sum_sizeHint=516 block_geom_h=501
+Short summary: no clear single cause; possibly layout interplay
+
+CLICK 26: Pecos Pest
+MetadataBlock: geometry=(0, 0, 274, 636) sizeHint=(400, 636) minimumSizeHint=(116, 636) contentsRect=(0, 0, 274, 636)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 26) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 26) sizeHint=(73, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[1] field=filename
+  key_label: geometry=(0, 26, 102, 41) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 26, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[2] field=original_filename
+  key_label: geometry=(0, 67, 102, 41) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 67, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[3] field=media_type
+  key_label: geometry=(0, 108, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 108, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 134, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 134, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 160, 102, 41) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 160, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[6] field=game
+  key_label: geometry=(0, 201, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 201, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 227, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 227, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 253, 102, 26) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 253, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[9] field=overview
+  key_label: geometry=(0, 279, 102, 281) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 279, 172, 281) sizeHint=(298, 176) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=281 contentsRect=(0, 0, 172, 278) allocated_height=281 sizeHint_h=176 row_geom_h=281 row_min_h=281
+    OVERVIEW: text_len=885 explicit_breaks=0 approx_lines_hfw=21 approx_lines_alloc=20 allocated_height=281 heightForWidth=281 sizeHint_h=176 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 560, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 560, 172, 26) sizeHint=(73, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 586, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 586, 172, 26) sizeHint=(40, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 612, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 612, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=636 sum_allocated=636 sum_sizeHint=531 block_geom_h=636
+Short summary: label reports too-small sizeHint
+
+CLICK 27: Pursued
+MetadataBlock: geometry=(0, 0, 274, 546) sizeHint=(314, 546) minimumSizeHint=(116, 546) contentsRect=(0, 0, 274, 546)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 26) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 26) sizeHint=(54, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[1] field=filename
+  key_label: geometry=(0, 26, 102, 41) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 26, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[2] field=original_filename
+  key_label: geometry=(0, 67, 102, 41) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 67, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[3] field=media_type
+  key_label: geometry=(0, 108, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 108, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 134, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 134, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 160, 102, 26) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 160, 172, 26) sizeHint=(80, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[6] field=game
+  key_label: geometry=(0, 186, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 186, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 212, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 212, 172, 26) sizeHint=(27, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 238, 102, 71) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 238, 172, 71) sizeHint=(172, 71) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=71 contentsRect=(0, 0, 172, 68) allocated_height=71 sizeHint_h=71 row_geom_h=71 row_min_h=71
+Row[9] field=overview
+  key_label: geometry=(0, 309, 102, 161) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 309, 172, 161) sizeHint=(212, 131) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=161 contentsRect=(0, 0, 172, 158) allocated_height=161 sizeHint_h=131 row_geom_h=161 row_min_h=161
+    OVERVIEW: text_len=465 explicit_breaks=0 approx_lines_hfw=12 approx_lines_alloc=11 allocated_height=161 heightForWidth=161 sizeHint_h=131 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 470, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 470, 172, 26) sizeHint=(73, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 496, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 496, 172, 26) sizeHint=(40, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 522, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 522, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=546 sum_allocated=546 sum_sizeHint=516 block_geom_h=546
+Short summary: label reports too-small sizeHint
+
+
+
+
+
+
+
+
+CLICK 28: 3 Bad Men
+MetadataBlock: geometry=(0, 0, 274, 411) sizeHint=(228, 441) minimumSizeHint=(116, 411) contentsRect=(0, 0, 274, 411)
+grid_layout: margins=(0,0,0,0) spacing=0 item_count=26 row_count=13 col_count=2
+Row[0] field=title
+  key_label: geometry=(0, 0, 102, 26) sizeHint=(32, 26) minimumSizeHint=(32, 26)
+  value_label: geometry=(102, 0, 172, 26) sizeHint=(67, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[1] field=filename
+  key_label: geometry=(0, 26, 102, 41) sizeHint=(56, 26) minimumSizeHint=(56, 26)
+  value_label: geometry=(102, 26, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[2] field=original_filename
+  key_label: geometry=(0, 67, 102, 41) sizeHint=(102, 26) minimumSizeHint=(102, 26)
+  value_label: geometry=(102, 67, 172, 41) sizeHint=(126, 41) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=41 row_geom_h=41 row_min_h=41
+Row[3] field=media_type
+  key_label: geometry=(0, 108, 102, 26) sizeHint=(72, 26) minimumSizeHint=(72, 26)
+  value_label: geometry=(102, 108, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[4] field=year
+  key_label: geometry=(0, 134, 102, 26) sizeHint=(34, 26) minimumSizeHint=(34, 26)
+  value_label: geometry=(102, 134, 172, 26) sizeHint=(34, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[5] field=director
+  key_label: geometry=(0, 160, 102, 26) sizeHint=(52, 26) minimumSizeHint=(52, 26)
+  value_label: geometry=(102, 160, 172, 26) sizeHint=(67, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[6] field=game
+  key_label: geometry=(0, 186, 102, 26) sizeHint=(40, 26) minimumSizeHint=(40, 26)
+  value_label: geometry=(102, 186, 172, 26) sizeHint=(14, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[7] field=duration
+  key_label: geometry=(0, 212, 102, 26) sizeHint=(54, 26) minimumSizeHint=(54, 26)
+  value_label: geometry=(102, 212, 172, 26) sizeHint=(21, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[8] field=tagline
+  key_label: geometry=(0, 238, 102, 41) sizeHint=(47, 26) minimumSizeHint=(47, 26)
+  value_label: geometry=(102, 238, 172, 41) sizeHint=(126, 56) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=41 contentsRect=(0, 0, 172, 38) allocated_height=41 sizeHint_h=56 row_geom_h=41 row_min_h=41
+Row[9] field=overview
+  key_label: geometry=(0, 279, 102, 56) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 279, 172, 56) sizeHint=(126, 71) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=56 contentsRect=(0, 0, 172, 53) allocated_height=56 sizeHint_h=71 row_geom_h=56 row_min_h=56
+    OVERVIEW: text_len=145 explicit_breaks=0 approx_lines_hfw=4 approx_lines_alloc=4 allocated_height=56 heightForWidth=56 sizeHint_h=71 clipped=False
+Row[10] field=media_id
+  key_label: geometry=(0, 335, 102, 26) sizeHint=(58, 26) minimumSizeHint=(58, 26)
+  value_label: geometry=(102, 335, 172, 26) sizeHint=(73, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[11] field=tmdb
+  key_label: geometry=(0, 361, 102, 26) sizeHint=(38, 26) minimumSizeHint=(38, 26)
+  value_label: geometry=(102, 361, 172, 26) sizeHint=(40, 26) minimumSizeHint=(14, 26)
+    wordWrap=True heightForWidth=26 contentsRect=(0, 0, 172, 23) allocated_height=26 sizeHint_h=26 row_geom_h=26 row_min_h=26
+Row[12] field=imdb
+  key_label: geometry=(0, 387, 102, 24) sizeHint=(37, 24) minimumSizeHint=(37, 24)
+  value_label: geometry=(102, 387, 172, 24) sizeHint=(60, 24) minimumSizeHint=(7, 24)
+    wordWrap=True heightForWidth=24 contentsRect=(0, 0, 172, 24) allocated_height=24 sizeHint_h=24 row_geom_h=24 row_min_h=24
+Summary metrics: sum_heightForWidth=411 sum_allocated=411 sum_sizeHint=441 block_geom_h=411
+Short summary: no clear single cause; possibly layout interplay
+~/playable/dead-crossing$ 
