@@ -229,6 +229,19 @@ class _MetadataBrowserPage(QWidget):
         self._grid_widget.clear_cells()
         self._item_by_index = []
 
+    def create_item_for_record(self, index: int, record: dict) -> _BrowserItem:
+        """Create and return a `_BrowserItem` for `record` at `index`.
+
+        This extracts the existing inline construction logic from
+        `_rebuild_grid()` so the browser can delegate item creation.
+        Behavior is intentionally identical to the original code.
+        """
+        title = record.get("title") or Path(record.get("filename", "")).stem or "(untitled)"
+        subtitle = record.get("year") or record.get("game") or record.get("director") or ""
+        tooltip = title if not subtitle else f"{title} — {subtitle}"
+        item = _BrowserItem(index=index, tooltip=tooltip, zoom=self._zoom, media_type=self._media_type)
+        return item
+
     def _rebuild_grid(self, select_first: bool = False) -> None:
         self._clear_grid()
         if not self._records:
@@ -243,10 +256,7 @@ class _MetadataBrowserPage(QWidget):
         self._selected_index = active_index
 
         for index, record in enumerate(self._records):
-            title = record.get("title") or Path(record.get("filename", "")).stem or "(untitled)"
-            subtitle = record.get("year") or record.get("game") or record.get("director") or ""
-            tooltip = title if not subtitle else f"{title} — {subtitle}"
-            item = _BrowserItem(index=index, tooltip=tooltip, zoom=self._zoom, media_type=self._media_type)
+            item = self.create_item_for_record(index, record)
             item.clicked.connect(self._on_cell_clicked)
             item.doubleClicked.connect(self._on_cell_double_clicked)
             item.set_selected(index == self._selected_index)
