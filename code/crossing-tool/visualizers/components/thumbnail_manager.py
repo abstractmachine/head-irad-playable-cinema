@@ -11,8 +11,7 @@ thumbReady events to the provided callback.
 
 from __future__ import annotations
 
-from typing import Callable, Optional
-from pathlib import Path
+from typing import Callable, Optional, Any
 
 from PyQt5.QtCore import QObject
 from PyQt5.QtGui import QImage
@@ -31,7 +30,7 @@ class ThumbnailManager(QObject):
         self,
         records: list[dict],
         size: int,
-        path_for: Callable[[dict], Optional[Path]],
+        path_for: Callable[[dict], Optional[Any]],
         apply_callback: Callable[[int, QImage], None],
     ) -> None:
         """Start a new ThumbnailLoader for *records*.
