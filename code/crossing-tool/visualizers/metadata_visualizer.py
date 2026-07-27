@@ -39,6 +39,7 @@ from visualizers.components.metadata_block import MetadataBlock
 from visualizers.components.thumbnail_manager import ThumbnailManager
 from visualizers.components.flow_widget import FlowWidget
 from visualizers.components.selection_manager import SelectionManager
+from visualizers.components.zoom_manager import ZoomManager
 from visualizers.shot_visualizer import open_at_shot
 
 from PyQt5.QtCore import QEvent, Qt, QTimer, pyqtSignal
@@ -138,7 +139,16 @@ class _MetadataBrowserPage(QWidget):
         self._grid_cols = 1
         # ThumbnailManager owns the loader lifecycle and forwards images.
         self._thumb_manager: ThumbnailManager = ThumbnailManager(self)
-        self._zoom = float(_prefs.get(_zoom_key(media_type), _ZOOM_DEFAULT) or _ZOOM_DEFAULT)
+        # ZoomManager owns zoom/view-state and keeps page._zoom in sync.
+        initial_zoom = float(_prefs.get(_zoom_key(media_type), _ZOOM_DEFAULT) or _ZOOM_DEFAULT)
+        self._zoom_manager = ZoomManager(
+            self,
+            initial_zoom,
+            _ZOOM_MIN,
+            _ZOOM_MAX,
+            _ZOOM_STEP,
+            persist_cb=lambda v: _prefs.set(_zoom_key(self._media_type), v),
+        )
         self._item_by_index: list[_BrowserItem] = []
         # SelectionManager owns selection index and side-effects.
         self._selection_manager = SelectionManager(self)
@@ -187,28 +197,13 @@ class _MetadataBrowserPage(QWidget):
         self._rebuild_grid(select_first=True)
 
     def zoom(self) -> float:
-        return self._zoom
+        return self._zoom_manager.zoom()
 
     def set_zoom(self, zoom: float, persist: bool = True) -> None:
-        zoom = max(_ZOOM_MIN, min(_ZOOM_MAX, zoom))
-        if abs(zoom - self._zoom) < 1e-6:
-            return
-        self._zoom = zoom
-        if persist:
-            _prefs.set(_zoom_key(self._media_type), self._zoom)
-        for item in self._item_by_index:
-            item.set_zoom(self._zoom)
-        # Immediately reflow the grid so zoom changes jump to the new scale
-        # instead of animating or stepping gradually. If the direct call
-        # fails for any reason, fall back to the debounced request_reflow().
-        try:
-            self._grid_widget._do_flow_layout()
-            self._grid_cols = max(1, self._grid_widget.first_row_count())
-        except Exception:
-            self.request_reflow()
+        return self._zoom_manager.set_zoom(zoom, persist=persist)
 
     def _change_zoom(self, delta: float) -> None:
-        self.set_zoom(self._zoom + delta)
+        return self._zoom_manager.change_zoom(delta)
 
     def current_record(self) -> dict | None:
         if 0 <= self._selected_index < len(self._records):
@@ -276,9 +271,7 @@ class _MetadataBrowserPage(QWidget):
         self._emit_current_selection()
 
     def _apply_zoom_to_items(self) -> None:
-        for item in self._item_by_index:
-            item.set_zoom(self._zoom)
-        self.request_reflow()
+        return self._zoom_manager.apply_zoom_to_items()
 
     def _start_loader(self) -> None:
         if not self._records:
