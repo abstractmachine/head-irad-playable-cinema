@@ -36,7 +36,7 @@ from visualizers.window_visualizer import WindowVisualizer
 from visualizers.components.collapsible_section import CollapsibleSection
 from visualizers.components.inspector import Inspector
 from visualizers.components.metadata_block import MetadataBlock
-from visualizers.components.thumbnail_loader import ThumbnailLoader
+from visualizers.components.thumbnail_manager import ThumbnailManager
 from visualizers.shot_visualizer import open_at_shot
 
 from PyQt5.QtCore import QEvent, Qt, QTimer, pyqtSignal
@@ -220,7 +220,8 @@ class _MetadataBrowserPage(QWidget):
         self._records: list[dict] = []
         self._selected_index = -1
         self._grid_cols = 1
-        self._loader: ThumbnailLoader | None = None
+        # ThumbnailManager owns the loader lifecycle and forwards images.
+        self._thumb_manager: ThumbnailManager = ThumbnailManager(self)
         self._zoom = float(_prefs.get(_zoom_key(media_type), _ZOOM_DEFAULT) or _ZOOM_DEFAULT)
         self._item_by_index: list[_BrowserItem] = []
 
@@ -349,31 +350,31 @@ class _MetadataBrowserPage(QWidget):
     def _start_loader(self) -> None:
         if not self._records:
             return
-        self._loader = ThumbnailLoader(
+
+        def _apply_cb(index: int, qimg: QImage) -> None:
+            try:
+                if 0 <= index < len(self._item_by_index):
+                    self._item_by_index[index].set_image(qimg)
+                    self.request_reflow()
+            except Exception:
+                pass
+
+        self._thumb_manager.start(
             self._records,
             _THUMB_LOAD_SIZE,
             path_for=self._thumbnail_path_for,
-            parent=self,
+            apply_callback=_apply_cb,
         )
-        self._loader.thumbReady.connect(self._on_thumb_ready)
-        self._loader.start()
 
     def _stop_loader(self) -> None:
-        if self._loader is None:
-            return
         try:
-            self._loader.thumbReady.disconnect(self._on_thumb_ready)
-        except (TypeError, RuntimeError):
+            self._thumb_manager.stop()
+        except Exception:
             pass
-        if self._loader.isRunning():
-            self._loader.cancel()
-            self._loader.wait(300)
-        self._loader = None
 
-    def _on_thumb_ready(self, index: int, qimg: QImage) -> None:
-        if 0 <= index < len(self._item_by_index):
-            self._item_by_index[index].set_image(qimg)
-            self.request_reflow()
+    # Note: thumbnail delivery is now handled by ThumbnailManager; images
+    # are forwarded to the grid via the apply_callback provided in
+    # `_start_loader`.
 
     def _set_selected_index(self, index: int, emit: bool = True) -> None:
         if not self._records:
