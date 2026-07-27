@@ -38,6 +38,7 @@ from visualizers.components.inspector import Inspector
 from visualizers.components.metadata_block import MetadataBlock
 from visualizers.components.thumbnail_manager import ThumbnailManager
 from visualizers.components.flow_widget import FlowWidget
+from visualizers.components.selection_manager import SelectionManager
 from visualizers.shot_visualizer import open_at_shot
 
 from PyQt5.QtCore import QEvent, Qt, QTimer, pyqtSignal
@@ -139,6 +140,8 @@ class _MetadataBrowserPage(QWidget):
         self._thumb_manager: ThumbnailManager = ThumbnailManager(self)
         self._zoom = float(_prefs.get(_zoom_key(media_type), _ZOOM_DEFAULT) or _ZOOM_DEFAULT)
         self._item_by_index: list[_BrowserItem] = []
+        # SelectionManager owns selection index and side-effects.
+        self._selection_manager = SelectionManager(self)
 
         self.setFocusPolicy(Qt.StrongFocus)
         self.setStyleSheet(f"QWidget {{ background: {theme.CANVAS_BG}; }}")
@@ -253,7 +256,12 @@ class _MetadataBrowserPage(QWidget):
             active_index = 0
         if active_index >= len(self._records):
             active_index = len(self._records) - 1
-        self._selected_index = active_index
+        # Delegate selection index ownership to SelectionManager.
+        try:
+            self._selection_manager.set_selected_index(active_index, emit=False)
+        except Exception:
+            # Fallback: mirror on the page for compatibility
+            self._selected_index = active_index
 
         for index, record in enumerate(self._records):
             item = self.create_item_for_record(index, record)
@@ -302,39 +310,52 @@ class _MetadataBrowserPage(QWidget):
     # `_start_loader`.
 
     def _set_selected_index(self, index: int, emit: bool = True) -> None:
-        if not self._records:
-            self._selected_index = -1
+        try:
+            self._selection_manager.set_selected_index(index, emit=emit)
+        except Exception:
+            # Fallback to previous inline behavior on error
+            if not self._records:
+                self._selected_index = -1
+                if emit:
+                    self.selectionChanged.emit(None)
+                return
+
+            index = max(0, min(index, len(self._records) - 1))
+            if index == self._selected_index and emit:
+                self._emit_current_selection()
+                return
+
+            if 0 <= self._selected_index < len(self._item_by_index):
+                self._item_by_index[self._selected_index].set_selected(False)
+
+            self._selected_index = index
+
+            if 0 <= self._selected_index < len(self._item_by_index):
+                self._item_by_index[self._selected_index].set_selected(True)
+                self._scroll.ensureWidgetVisible(self._item_by_index[self._selected_index])
+
             if emit:
-                self.selectionChanged.emit(None)
-            return
-
-        index = max(0, min(index, len(self._records) - 1))
-        if index == self._selected_index and emit:
-            self._emit_current_selection()
-            return
-
-        if 0 <= self._selected_index < len(self._item_by_index):
-            self._item_by_index[self._selected_index].set_selected(False)
-
-        self._selected_index = index
-
-        if 0 <= self._selected_index < len(self._item_by_index):
-            self._item_by_index[self._selected_index].set_selected(True)
-            self._scroll.ensureWidgetVisible(self._item_by_index[self._selected_index])
-
-        if emit:
-            self._emit_current_selection()
+                self._emit_current_selection()
 
     def _emit_current_selection(self) -> None:
-        self.selectionChanged.emit(self.current_record())
+        try:
+            self._selection_manager.emit_current_selection()
+        except Exception:
+            self.selectionChanged.emit(self.current_record())
 
     def _on_cell_clicked(self, index: int) -> None:
-        self.setFocus()
-        self._set_selected_index(index, emit=True)
+        try:
+            self._selection_manager.on_cell_clicked(index)
+        except Exception:
+            self.setFocus()
+            self._set_selected_index(index, emit=True)
 
     def _on_cell_double_clicked(self, index: int) -> None:
-        self._on_cell_clicked(index)
-        self.openRequested.emit(self.current_record())
+        try:
+            self._selection_manager.on_cell_double_clicked(index)
+        except Exception:
+            self._on_cell_clicked(index)
+            self.openRequested.emit(self.current_record())
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
         if obj is self._scroll.viewport() and event.type() == QEvent.Wheel:
