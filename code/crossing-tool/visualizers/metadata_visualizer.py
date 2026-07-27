@@ -37,6 +37,7 @@ from visualizers.components.collapsible_section import CollapsibleSection
 from visualizers.components.inspector import Inspector
 from visualizers.components.metadata_block import MetadataBlock
 from visualizers.components.thumbnail_manager import ThumbnailManager
+from visualizers.components.flow_widget import _MetadataFlowWidget
 from visualizers.shot_visualizer import open_at_shot
 
 from PyQt5.QtCore import QEvent, Qt, QTimer, pyqtSignal
@@ -119,93 +120,7 @@ def _format_value(value) -> str:
     return _wrap_anywhere(str(value))
 
 
-class _MetadataFlowWidget(QWidget):
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self._cells: list[_BrowserItem] = []
-        self._empty_label: QLabel | None = None
-        self._first_row_count = 1
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
-    def set_empty_label(self, label: QLabel) -> None:
-        self._empty_label = label
-        label.setParent(self)
-        label.hide()
-
-    def set_cells(self, cells: list[_BrowserItem]) -> None:
-        for cell in self._cells:
-            cell.setParent(None)
-        self._cells = list(cells)
-        for cell in self._cells:
-            cell.setParent(self)
-            cell.show()
-        if self._empty_label is not None:
-            self._empty_label.hide()
-        self.request_reflow()
-
-    def clear_cells(self) -> None:
-        for cell in self._cells:
-            cell.setParent(None)
-            cell.deleteLater()
-        self._cells = []
-        self._first_row_count = 1
-        if self._empty_label is not None:
-            self._empty_label.show()
-        self.request_reflow()
-
-    def request_reflow(self) -> None:
-        self._do_flow_layout()
-
-    def first_row_count(self) -> int:
-        return self._first_row_count
-
-    def _do_flow_layout(self) -> None:
-        viewport = self.parentWidget()
-        viewport_w = max(1, viewport.width() if viewport is not None else self.width())
-
-        if not self._cells:
-            if self._empty_label is not None:
-                self._empty_label.setGeometry(self.rect())
-                self._empty_label.show()
-                self._empty_label.raise_()
-            self._first_row_count = 1
-            self.setMinimumHeight(1)
-            return
-
-        margin = _THUMB_GAP
-        spacing = _THUMB_GAP
-
-        x = margin
-        y = margin
-        row_h = 0
-        first_row_count = 0
-        first_row_finalized = False
-
-        for index, cell in enumerate(self._cells):
-            cell_w = max(1, cell.sizeHint().width())
-            cell_h = max(1, cell.sizeHint().height())
-
-            if x > margin and x + cell_w > viewport_w - margin:
-                if not first_row_finalized:
-                    first_row_finalized = True
-                    first_row_count = index
-                x = margin
-                y += row_h + spacing
-                row_h = 0
-
-            cell.move(x, y)
-            cell.resize(cell_w, cell_h)
-            x += cell_w + spacing
-            row_h = max(row_h, cell_h)
-
-        if not first_row_finalized:
-            first_row_count = len(self._cells)
-        self._first_row_count = max(1, first_row_count)
-
-        total_h = y + row_h + margin
-        if self._empty_label is not None:
-            self._empty_label.hide()
-        self.setMinimumHeight(max(1, total_h))
 
 
 class _MetadataBrowserPage(QWidget):
