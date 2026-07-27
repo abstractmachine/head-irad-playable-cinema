@@ -413,14 +413,39 @@ class _MetadataBrowserPage(QWidget):
         if key in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down):
             if not self._records:
                 return
-            cols = max(1, self._grid_cols)
-            delta = {
-                Qt.Key_Left: -1,
-                Qt.Key_Right: 1,
-                Qt.Key_Up: -cols,
-                Qt.Key_Down: cols,
-            }[key]
-            self._set_selected_index(self._selected_index + delta)
+            try:
+                from visualizers.components.selection_manager import SelectionManager
+
+                mapping = {
+                    Qt.Key_Left: SelectionManager.Direction.LEFT,
+                    Qt.Key_Right: SelectionManager.Direction.RIGHT,
+                    Qt.Key_Up: SelectionManager.Direction.UP,
+                    Qt.Key_Down: SelectionManager.Direction.DOWN,
+                }
+                direction = mapping.get(key)
+                if direction is not None:
+                    try:
+                        self._selection_manager.move(direction)
+                    except Exception:
+                        # Fallback to previous inline arithmetic
+                        cols = max(1, self._grid_cols)
+                        delta = {
+                            Qt.Key_Left: -1,
+                            Qt.Key_Right: 1,
+                            Qt.Key_Up: -cols,
+                            Qt.Key_Down: cols,
+                        }[key]
+                        self._set_selected_index(self._selected_index + delta)
+            except Exception:
+                # If mapping/import fails, preserve legacy behavior
+                cols = max(1, self._grid_cols)
+                delta = {
+                    Qt.Key_Left: -1,
+                    Qt.Key_Right: 1,
+                    Qt.Key_Up: -cols,
+                    Qt.Key_Down: cols,
+                }[key]
+                self._set_selected_index(self._selected_index + delta)
             return
 
         super().keyPressEvent(event)

@@ -12,6 +12,7 @@ this manager.
 from __future__ import annotations
 
 from typing import Any
+from enum import Enum
 
 from PyQt5.QtCore import QObject
 
@@ -97,5 +98,33 @@ class SelectionManager(QObject):
         self.on_cell_clicked(index)
         try:
             self._page.openRequested.emit(self._page.current_record())
+        except Exception:
+            pass
+
+    # Navigation --------------------------------------------------
+    class Direction(Enum):
+        LEFT = 1
+        RIGHT = 2
+        UP = 3
+        DOWN = 4
+
+    def move(self, direction: "SelectionManager.Direction") -> None:
+        """Move selection according to the supplied direction.
+
+        This translates directional intent into an index delta using the
+        current page layout (`_grid_cols`) and delegates to
+        `set_selected_index` which handles clamping and side-effects.
+        """
+        if not getattr(self._page, "_records", None):
+            return
+        cols = max(1, getattr(self._page, "_grid_cols", 1))
+        delta = {
+            SelectionManager.Direction.LEFT: -1,
+            SelectionManager.Direction.RIGHT: 1,
+            SelectionManager.Direction.UP: -cols,
+            SelectionManager.Direction.DOWN: cols,
+        }[direction]
+        try:
+            self.set_selected_index(self._selected_index + delta, emit=True)
         except Exception:
             pass
