@@ -37,7 +37,7 @@ from visualizers.components.collapsible_section import CollapsibleSection
 from visualizers.components.inspector import Inspector
 from visualizers.components.metadata_block import MetadataBlock
 from visualizers.components.thumbnail_manager import ThumbnailManager
-from visualizers.components.flow_widget import _MetadataFlowWidget
+from visualizers.components.flow_widget import FlowWidget
 from visualizers.shot_visualizer import open_at_shot
 
 from PyQt5.QtCore import QEvent, Qt, QTimer, pyqtSignal
@@ -157,7 +157,7 @@ class _MetadataBrowserPage(QWidget):
         self._scroll.setVerticalScrollBar(JumpScrollBar())
         self._scroll.viewport().installEventFilter(self)
 
-        self._grid_widget = _MetadataFlowWidget()
+        self._grid_widget = FlowWidget()
         self._grid_widget.setStyleSheet(f"background: {theme.CANVAS_BG};")
         self._empty_label = QLabel(f"No {heading.lower()} metadata found.")
         self._empty_label.setAlignment(Qt.AlignCenter)

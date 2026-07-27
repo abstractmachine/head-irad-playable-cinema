@@ -1,10 +1,10 @@
 """Shared flow/grid widget used by browser pages.
 
-This is a minimal extraction of the original `_MetadataFlowWidget` from
-`metadata_visualizer.py`. It provides a deterministic flow layout for a
-collection of child widgets and exposes the same public API the browser
-expects: `set_cells`, `clear_cells`, `request_reflow`, and
-`first_row_count`.
+This is a minimal extraction of the original flow widget from
+`metadata_visualizer.py`. It provides a
+deterministic flow layout for a collection of child widgets and exposes
+the same public API the browser expects: `set_cells`, `clear_cells`,
+`request_reflow`, and `first_row_count`.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from styles import theme
 from PyQt5.QtWidgets import QWidget, QLabel, QSizePolicy
 
 
-class _MetadataFlowWidget(QWidget):
+class FlowWidget(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._cells: list[QWidget] = []
