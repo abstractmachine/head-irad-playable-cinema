@@ -59,7 +59,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from styles import theme
-from styles.theme import GripSplitter, JumpScrollBar
+from styles.theme import GripSplitter, JumpScrollBar, save_window_geometry, restore_window_geometry
 
 # Fix Qt plugin conflict with OpenCV — del env var before first PyQt5 import
 if "QT_QPA_PLATFORM_PLUGIN_PATH" in os.environ:
@@ -110,7 +110,7 @@ from visualizers.components.collapsible_section import CollapsibleSection
 from visualizers.components.illustration_browser import IllustrationBrowser
 from visualizers.components.illustration_source import SilhouetteSource, EngravingSource
 from visualizers.components.inspector import Inspector
-from visualizers.components.hover_icon_button import HoverIconButton
+from visualizers.components.hover_icon_button import HoverIconButton, build_icon_pair
 
 
 # ---------------------------------------------------------------------------
@@ -1509,6 +1509,72 @@ class _WrapLabel(QLabel):
                 self.setMinimumHeight(needed)
 
 
+class _TabWidgetCompat(QWidget):
+    """Compatibility wrapper that exposes a minimal QTabWidget-like API
+    (`setCurrentIndex`, `currentIndex`, `currentChanged`) while hosting
+    the new shared `Inspector` shell as its visual content.
+
+    This keeps existing code that calls `setCurrentIndex()` working without
+    changing the Inspector-based composition.
+    """
+    currentChanged = pyqtSignal(int)
+
+    def __init__(self, inspector: Inspector, tabbar: QTabBar, stack: QStackedWidget, parent=None):
+        super().__init__(parent)
+        self._inspector = inspector
+        self._tabbar = tabbar
+        self._stack = stack
+
+        # Reparent the inspector widget into this wrapper so the wrapper is
+        # the actual widget returned to window shell code (splitter, sizing).
+        try:
+            self._inspector.setParent(self)
+        except Exception:
+            pass
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self._inspector)
+
+        # Mirror tab changes: update stacked pages and re-emit a
+        # QTabWidget-compatible `currentChanged` signal.
+        try:
+            self._tabbar.currentChanged.connect(self._on_tab_changed)
+        except Exception:
+            pass
+
+    def _on_tab_changed(self, idx: int) -> None:
+        try:
+            self._stack.setCurrentIndex(idx)
+        except Exception:
+            pass
+        try:
+            self.currentChanged.emit(idx)
+        except Exception:
+            pass
+
+    # QTabWidget-compatible API ------------------------------------------------
+    def setCurrentIndex(self, idx: int) -> None:
+        try:
+            self._tabbar.setCurrentIndex(int(idx))
+        except Exception:
+            try:
+                self._stack.setCurrentIndex(int(idx))
+            except Exception:
+                pass
+
+    def currentIndex(self) -> int:
+        try:
+            return int(self._tabbar.currentIndex())
+        except Exception:
+            try:
+                return int(self._stack.currentIndex())
+            except Exception:
+                return -1
+
+
+
 class IllustrationPane(QWidget):
     """Reference framework composition for silhouette/engraving browsing.
 
@@ -1640,8 +1706,12 @@ class IllustrationPane(QWidget):
         inspector.panel().add_widget(tabbar, alignment=Qt.AlignTop)
         inspector.panel().add_widget(stack)
 
-        # Keep external aliases compatible with existing code
-        self._side_scroll = inspector
+        # Wrap the Inspector with a QTabWidget-compatible adapter so code
+        # that expects a QTabWidget-like API (setCurrentIndex(), currentIndex(),
+        # currentChanged) continues to work. Keep the wrapper parented to
+        # the IllustrationPane so WindowVisualizer receives a proper shell.
+        adapter = _TabWidgetCompat(inspector, tabbar, stack, parent=self)
+        self._side_scroll = adapter
         self._sort_combo = self._sil_sort_combo
         self._meta_rows = self._sil_meta_rows
 
@@ -1657,7 +1727,7 @@ class IllustrationPane(QWidget):
         tabbar.currentChanged.connect(stack.setCurrentIndex)
         tabbar.currentChanged.connect(self._on_source_tab_changed)
 
-        return inspector
+        return adapter
 
     # ------------------------------------------------------------------ helpers
 
@@ -1842,21 +1912,10 @@ class IllustrationPane(QWidget):
         )
 
     def _make_btn_icon(self, svg_name: str, size: int = 14) -> tuple:
-        """Return (normal_icon, hover_icon) for *svg_name*.
-
-        normal_icon  — TEXT colour when enabled; dim grey when disabled.
-        hover_icon   — ACCENT_TEXT colour when enabled; dim grey when disabled.
-        Both icons have a proper QIcon.Disabled pixmap so Qt renders the right
-        colour automatically when the button is disabled, with no extra code.
+        """Return (normal_icon, hover_icon) for *svg_name* by delegating
+        to the shared `build_icon_pair()` helper.
         """
-        _dim = _svg_icon(svg_name, size, "#7f7f7f").pixmap(size, size)
-        normal = QIcon()
-        normal.addPixmap(_svg_icon(svg_name, size, theme.TEXT).pixmap(size, size))
-        normal.addPixmap(_dim, QIcon.Disabled)
-        hover = QIcon()
-        hover.addPixmap(_svg_icon(svg_name, size, theme.ACCENT_TEXT).pixmap(size, size))
-        hover.addPixmap(_dim, QIcon.Disabled)
-        return normal, hover
+        return build_icon_pair(svg_name, size, normal_color=theme.TEXT, hover_color=theme.ACCENT_TEXT)
 
     def _build_tools_section(self, pv: QVBoxLayout) -> None:
         """Add the Tools collapsible section to *pv*."""
