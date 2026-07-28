@@ -1769,8 +1769,11 @@ class IllustrationPane(QWidget):
         panel.setStyleSheet(_content_style)
         panel.setMinimumWidth(_SIDE_PANE_W)
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(2, 2, 2, 2)
-        layout.setSpacing(2)
+        # Let the shared TabPanel/Inspector own the canonical inset and
+        # spacing. Keep the local content layout edge-to-edge so the
+        # TabPanel's `theme.INSPECTOR_GAP` is the single source of truth.
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         scroll.setWidget(panel)
         return scroll, panel, layout
 
@@ -1921,15 +1924,7 @@ class IllustrationPane(QWidget):
         """Add the Tools collapsible section to *pv*."""
         tools_sec = CollapsibleSection("Tools", pref_key="ill_section_tools")
         _icon_sz = QSize(14, 14)
-        _pix_normal   = _svg_icon("open-in-window", 14, theme.TEXT).pixmap(14, 14)
-        _pix_hover    = _svg_icon("open-in-window", 14, theme.ACCENT_TEXT).pixmap(14, 14)
-        _pix_disabled = _svg_icon("open-in-window", 14, "#7f7f7f").pixmap(14, 14)
-        _open_icon = QIcon()
-        _open_icon.addPixmap(_pix_normal)
-        _open_icon.addPixmap(_pix_disabled, QIcon.Disabled)
-        _open_icon_hover = QIcon()
-        _open_icon_hover.addPixmap(_pix_hover)
-        _open_icon_hover.addPixmap(_pix_disabled, QIcon.Disabled)
+        _open_icon, _open_icon_hover = self._make_btn_icon("open-in-window", 14)
 
         _abtn = (
             f"QPushButton {{"
