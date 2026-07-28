@@ -84,6 +84,7 @@ from PyQt5.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QTabWidget,
+    QTabBar,
     QVBoxLayout,
     QWidget,
 )
@@ -108,6 +109,7 @@ from visualizers.window_visualizer import WindowVisualizer
 from visualizers.components.collapsible_section import CollapsibleSection
 from visualizers.components.illustration_browser import IllustrationBrowser
 from visualizers.components.illustration_source import SilhouetteSource, EngravingSource
+from visualizers.components.inspector import Inspector
 
 
 # ---------------------------------------------------------------------------
@@ -1630,40 +1632,59 @@ class IllustrationPane(QWidget):
 
     # --
 
-    def _build_inspector_pane(self) -> QTabWidget:
+    def _build_inspector_pane(self) -> QWidget:
         """Right pane: two source tabs (Silhouettes / Engravings), each with
-        Filter / Sort / Info / Tools collapsible sections."""
-        # Styled tab widget (no content tabs yet).
-        tabs = self._make_tab_widget()
-        self._side_scroll = tabs
+        Filter / Sort / Info / Tools collapsible sections.
 
-        # ── Silhouettes tab ───────────────────────────────────────────────
+        This builds a small adapter that uses the shared `Inspector` surface:
+        a pinned `QTabBar` in the header and a `QStackedWidget` for pages.
+        """
+        inspector = Inspector(self)
+        inspector.set_minimum_width(_SIDE_PANE_W)
+
+        # Top tab bar (pinned to the Inspector header)
+        tabbar = QTabBar()
+        tabbar.setExpanding(False)
+        tabbar.setUsesScrollButtons(False)
+        tabbar.setDrawBase(False)
+        tabbar.setFocusPolicy(Qt.NoFocus)
+        tabbar.setStyleSheet(theme.tab_strip_stylesheet())
+
+        # Pages: each page is the same scroll-area returned by _build_source_panel
         sil_scroll, self._sil_sort_combo, self._sil_meta_rows = self._build_source_panel(
-            self._browser_sil, "ill_sil", _SIL_INFO_KEYS, has_sort=True,  has_tools=True
+            self._browser_sil, "ill_sil", _SIL_INFO_KEYS, has_sort=True, has_tools=True
         )
-        tabs.addTab(sil_scroll, " Silhouettes ")
-
-        # ── Engravings tab ────────────────────────────────────────────────
         eng_scroll, self._eng_sort_combo, self._eng_meta_rows = self._build_source_panel(
             self._browser_eng, "ill_eng", _ENG_INFO_KEYS,
             has_sort=False, has_mode_filter=True, has_eng_tools=True
         )
-        tabs.addTab(eng_scroll, " Engravings ")
 
-        # Active-panel aliases (Silhouettes is default).
+        stack = QStackedWidget()
+        stack.addWidget(sil_scroll)
+        stack.addWidget(eng_scroll)
+
+        # Add header and content to the Inspector panel
+        inspector.panel().add_widget(tabbar, alignment=Qt.AlignTop)
+        inspector.panel().add_widget(stack)
+
+        # Keep external aliases compatible with existing code
+        self._side_scroll = inspector
         self._sort_combo = self._sil_sort_combo
-        self._meta_rows  = self._sil_meta_rows
+        self._meta_rows = self._sil_meta_rows
 
         # Track scrollbar visibility to keep pane width stable.
         self._inspector_sb_visible = False
+        # Keep a reference to the current page's scroll area (Silhouettes by default)
         self._inspector_scroll = sil_scroll
-        # Delay connecting the scrollbar rangeChanged signal until the window
-        # shell has been constructed to avoid early emissions before the
-        # splitter has valid sizes. Connection will be made by the window
-        # owner (IllustrationWindow) after the shell is initialized.
 
-        tabs.currentChanged.connect(self._on_source_tab_changed)
-        return tabs
+        # Wire tab interactions: update the stacked pages and preserve the
+        # original source-switch semantics used elsewhere in the pane.
+        tabbar.addTab(" Silhouettes ")
+        tabbar.addTab(" Engravings ")
+        tabbar.currentChanged.connect(stack.setCurrentIndex)
+        tabbar.currentChanged.connect(self._on_source_tab_changed)
+
+        return inspector
 
     # ------------------------------------------------------------------ helpers
 
