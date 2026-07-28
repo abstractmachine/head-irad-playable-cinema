@@ -110,6 +110,7 @@ from visualizers.components.collapsible_section import CollapsibleSection
 from visualizers.components.illustration_browser import IllustrationBrowser
 from visualizers.components.illustration_source import SilhouetteSource, EngravingSource
 from visualizers.components.inspector import Inspector
+from visualizers.components.hover_icon_button import HoverIconButton
 
 
 # ---------------------------------------------------------------------------
@@ -1488,35 +1489,7 @@ class _BatchEngravingWorker(QThread):
             self.finished.emit(False, str(exc))
 
 
-class _HoverIconButton(QPushButton):
-    """QPushButton that swaps its icon to an accent-coloured version on hover."""
-
-    def __init__(self, text: str = "", normal_icon=None, hover_icon=None, parent=None):
-        super().__init__(text, parent)
-        self._normal_icon = normal_icon
-        self._hover_icon  = hover_icon
-        self.setFocusPolicy(Qt.NoFocus)
-        if normal_icon:
-            self.setIcon(normal_icon)
-
-    def enterEvent(self, event):
-        if self._hover_icon and self.isEnabled():
-            self.setIcon(self._hover_icon)
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        # Keep hover icon while checked (running state); restore normal otherwise.
-        if self._normal_icon and not self.isChecked():
-            self.setIcon(self._normal_icon)
-        super().leaveEvent(event)
-
-    def setChecked(self, checked: bool) -> None:
-        super().setChecked(checked)
-        # Lock to hover icon while checked so the icon matches the ACCENT bg.
-        if checked and self._hover_icon:
-            self.setIcon(self._hover_icon)
-        elif not checked and self._normal_icon:
-            self.setIcon(self._normal_icon)
+# Use shared HoverIconButton from visualizers.components.hover_icon_button
 
 
 class _WrapLabel(QLabel):
@@ -1953,7 +1926,7 @@ class IllustrationPane(QWidget):
         self._best_btn.clicked.connect(self._on_best_btn_clicked)
         tools_sec.add_widget(self._best_btn)
 
-        self._shotlist_btn = _HoverIconButton("Shotlist", _open_icon, _open_icon_hover)
+        self._shotlist_btn = HoverIconButton("Shotlist", _open_icon, _open_icon_hover)
         self._shotlist_btn.setIconSize(_icon_sz)
         self._shotlist_btn.setFocusPolicy(Qt.NoFocus)
         self._shotlist_btn.setEnabled(False)
@@ -1961,7 +1934,7 @@ class IllustrationPane(QWidget):
         self._shotlist_btn.clicked.connect(self._open_in_shotlist)
         _rl.addWidget(self._shotlist_btn, 1)
 
-        self._sam_btn = _HoverIconButton("Segmentation", _open_icon, _open_icon_hover)
+        self._sam_btn = HoverIconButton("Segmentation", _open_icon, _open_icon_hover)
         self._sam_btn.setIconSize(_icon_sz)
         self._sam_btn.setFocusPolicy(Qt.NoFocus)
         self._sam_btn.setEnabled(False)
@@ -1978,7 +1951,7 @@ class IllustrationPane(QWidget):
         _eng_rl  = QHBoxLayout(_eng_row)
         _eng_rl.setContentsMargins(0, 0, 0, 0)
         _eng_rl.setSpacing(2)
-        self._eng_gen_btn = _HoverIconButton("Engrave", _e_icon, _e_icon_hover)
+        self._eng_gen_btn = HoverIconButton("Engrave", _e_icon, _e_icon_hover)
         self._eng_gen_btn.setIconSize(_icon_sz)
         self._eng_gen_btn.setFocusPolicy(Qt.NoFocus)
         self._eng_gen_btn.setCheckable(True)   # stays highlighted while running
@@ -1986,7 +1959,7 @@ class IllustrationPane(QWidget):
         self._eng_gen_btn.setStyleSheet(_abtn)
         self._eng_gen_btn.clicked.connect(self._start_engraving_generation)
         _eng_rl.addWidget(self._eng_gen_btn, 1)
-        self._eng_viz_btn = _HoverIconButton("Engraving", _v_icon, _v_icon_hover)
+        self._eng_viz_btn = HoverIconButton("Engraving", _v_icon, _v_icon_hover)
         self._eng_viz_btn.setIconSize(_icon_sz)
         self._eng_viz_btn.setFocusPolicy(Qt.NoFocus)
         self._eng_viz_btn.setEnabled(False)
@@ -1994,7 +1967,7 @@ class IllustrationPane(QWidget):
         self._eng_viz_btn.clicked.connect(self._visualize_engraving)
         _eng_rl.addWidget(self._eng_viz_btn, 1)
         tools_sec.add_widget(_eng_row)
-        self._eng_batch_btn = _HoverIconButton("Generate All Marked", _b_icon, _b_icon_hover)
+        self._eng_batch_btn = HoverIconButton("Generate All Marked", _b_icon, _b_icon_hover)
         self._eng_batch_btn.setIconSize(_icon_sz)
         self._eng_batch_btn.setFocusPolicy(Qt.NoFocus)
         self._eng_batch_btn.setCheckable(True)   # stays highlighted while running
@@ -2131,14 +2104,14 @@ class IllustrationPane(QWidget):
         self._eng_best_btn.clicked.connect(self._on_best_btn_clicked)
         tools_sec.add_widget(self._eng_best_btn)
 
-        self._eng_view_btn = _HoverIconButton("Viewer", _v_icon, _v_icon_hover)
+        self._eng_view_btn = HoverIconButton("Viewer", _v_icon, _v_icon_hover)
         self._eng_view_btn.setIconSize(_icon_sz)
         self._eng_view_btn.setFocusPolicy(Qt.NoFocus)
         self._eng_view_btn.setEnabled(False)
         self._eng_view_btn.setStyleSheet(_abtn)
         self._eng_view_btn.clicked.connect(self._open_engraving_in_viewer)
         _rl.addWidget(self._eng_view_btn, 1)
-        self._eng_sil_btn = _HoverIconButton("Silhouette", _s_icon, _s_icon_hover)
+        self._eng_sil_btn = HoverIconButton("Silhouette", _s_icon, _s_icon_hover)
         self._eng_sil_btn.setIconSize(_icon_sz)
         self._eng_sil_btn.setFocusPolicy(Qt.NoFocus)
         self._eng_sil_btn.setEnabled(False)
@@ -2149,7 +2122,7 @@ class IllustrationPane(QWidget):
 
         # Delete button — removes the engraving directory; Del/Backspace also fires it
         _del_icon, _del_icon_hover = self._make_btn_icon("trash", 14)
-        self._eng_delete_btn = _HoverIconButton("Delete", _del_icon, _del_icon_hover)
+        self._eng_delete_btn = HoverIconButton("Delete", _del_icon, _del_icon_hover)
         self._eng_delete_btn.setIconSize(_icon_sz)
         self._eng_delete_btn.setFocusPolicy(Qt.NoFocus)
         self._eng_delete_btn.setEnabled(False)
