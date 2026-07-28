@@ -1661,34 +1661,9 @@ class IllustrationPane(QWidget):
 
     # ------------------------------------------------------------------ helpers
 
-    def _make_tab_widget(self) -> QTabWidget:
-        """Return a styled QTabWidget for the inspector pane."""
-        _TAB_ACTIVE = theme.TAB_BG
-        tabs = QTabWidget()
-        tabs.setMinimumWidth(_SIDE_PANE_W)
-        tabs.setDocumentMode(True)
-        tabs.tabBar().setDrawBase(False)
-        tabs.tabBar().setExpanding(False)
-        tabs.tabBar().setUsesScrollButtons(False)
-        tabs.setFocusPolicy(Qt.NoFocus)
-        tabs.tabBar().setFocusPolicy(Qt.NoFocus)
-        tabs.setStyleSheet(
-            f"QTabWidget           {{ background: {theme.CANVAS_BG}; border: none; }}"
-            f"QTabWidget::pane     {{ border: none; background: {_TAB_ACTIVE}; }}"
-            f"QTabBar              {{ background: {theme.CANVAS_BG}; border: none; }}"
-            f"QTabBar::tab {{"
-            f"  background: {theme.CANVAS_BG}; color: {theme.TEXT_DIM};"
-            f"  padding: 2px 16px; border: none; margin-bottom: 0;"
-            f"  font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
-            f"  font-weight: {theme.WEIGHT_UI};"
-            f"  min-height: 20px;"
-            f"  min-width: 0px;"
-            f"}}"
-            f"QTabBar::tab:selected {{ background: {_TAB_ACTIVE}; color: {theme.TEXT}; border: none; }}"
-            f"QTabBar::tab:focus {{ outline: none; }}"
-            f"QTabBar::tab:hover    {{ background: {_TAB_ACTIVE}; color: {theme.TEXT}; }}"
-        )
-        return tabs
+    # _make_tab_widget removed: shell composition now uses shared Inspector
+    # and a minimal adapter (QTabBar + QStackedWidget) created in
+    # `_build_inspector_pane()` to preserve the pinned header behaviour.
 
     def _make_panel_scroll(self) -> tuple:
         """Return (QScrollArea, QWidget panel, QVBoxLayout) for a source panel."""
