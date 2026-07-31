@@ -897,15 +897,9 @@ class IllustrationBrowser(QWidget):
         lay.setContentsMargins(0, 2, 0, 0)
         lay.setSpacing(4)
 
-        # Explicit disabled style so inactive buttons are visibly much darker.
-        _page_btn_style = (
-            f"QPushButton {{ background: {theme.BTN_BG}; border: none;"
-            f" border-radius: 3px; color: {theme.TEXT};"
-            f" font-size: {theme.BASE_PT}pt; padding: 0; }}"
-            f"QPushButton:hover    {{ background: {theme.BTN_HOVER}; }}"
-            f"QPushButton:pressed  {{ background: {theme.BTN_PRESSED}; }}"
-            f"QPushButton:disabled {{ color: rgba(255,255,255,40); background: {theme.BTN_BG}; }}"
-        )
+        # Use the shared action button stylesheet so pagination arrows use
+        # the canonical highlight/hover/pressed/checked colors (ACCENT).
+        _page_btn_style = theme.action_button_stylesheet()
 
         self._prev_btn = QPushButton("◀")
         self._prev_btn.setFixedSize(24, 24)

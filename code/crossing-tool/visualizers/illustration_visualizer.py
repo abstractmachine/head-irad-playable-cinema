@@ -1707,19 +1707,71 @@ class IllustrationPane(QWidget):
             has_sort=False, has_mode_filter=True, has_eng_tools=True
         )
 
-        stack = QStackedWidget()
-        stack.addWidget(sil_panel)
-        stack.addWidget(eng_panel)
+        # Host that keeps only the active page mounted so hidden pages do
+        # not influence sizeHint/minimumSize. This ensures the shared
+        # TabPanel scroll host only measures the active page.
+        class _SinglePageHost(QWidget):
+            def __init__(self, parent=None):
+                super().__init__(parent)
+                self._lay = QVBoxLayout(self)
+                self._lay.setContentsMargins(0, 0, 0, 0)
+                self._lay.setSpacing(0)
+                self._pages = {}
+                self._current = None
+
+            def register_page(self, idx: int, widget: QWidget) -> None:
+                # keep a reference but do not parent yet; parenting occurs
+                # when the page becomes active so hidden pages don't affect
+                # layout metrics.
+                self._pages[int(idx)] = widget
+
+            def setCurrentIndex(self, idx: int) -> None:
+                try:
+                    # remove old
+                    if self._current is not None:
+                        try:
+                            self._lay.removeWidget(self._current)
+                        except Exception:
+                            pass
+                        try:
+                            self._current.setParent(None)
+                            self._current.hide()
+                        except Exception:
+                            pass
+                    # add new
+                    neww = self._pages.get(int(idx))
+                    if neww is None:
+                        self._current = None
+                        return
+                    try:
+                        neww.setParent(self)
+                    except Exception:
+                        pass
+                    self._lay.addWidget(neww)
+                    neww.show()
+                    self._current = neww
+                except Exception:
+                    pass
+
+            def currentIndex(self) -> int:
+                for k, v in self._pages.items():
+                    if v is self._current:
+                        return int(k)
+                return -1
+
+        host = _SinglePageHost(parent=self)
+        host.register_page(0, sil_panel)
+        host.register_page(1, eng_panel)
 
         # Add header and content to the Inspector panel
         inspector.panel().add_widget(tabbar, alignment=Qt.AlignTop)
-        inspector.panel().add_widget(stack)
+        inspector.panel().add_widget(host)
 
         # Wrap the Inspector with a QTabWidget-compatible adapter so code
         # that expects a QTabWidget-like API (setCurrentIndex(), currentIndex(),
         # currentChanged) continues to work. Keep the wrapper parented to
         # the IllustrationPane so WindowVisualizer receives a proper shell.
-        adapter = _TabWidgetCompat(inspector, tabbar, stack, parent=self)
+        adapter = _TabWidgetCompat(inspector, tabbar, host, parent=self)
         self._side_scroll = adapter
         self._sort_combo = self._sil_sort_combo
         self._meta_rows = self._sil_meta_rows
@@ -1729,8 +1781,12 @@ class IllustrationPane(QWidget):
         # original source-switch semantics used elsewhere in the pane.
         tabbar.addTab(" Silhouettes ")
         tabbar.addTab(" Engravings ")
-        tabbar.currentChanged.connect(stack.setCurrentIndex)
         tabbar.currentChanged.connect(self._on_source_tab_changed)
+        # Ensure the initial page is mounted into the host
+        try:
+            host.setCurrentIndex(0)
+        except Exception:
+            pass
 
         return adapter
 
