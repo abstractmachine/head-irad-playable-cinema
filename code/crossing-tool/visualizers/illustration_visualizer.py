@@ -1296,9 +1296,14 @@ def _ill_ipc_socket_path(project_path: str) -> Path:
 
 
 class _IllIpcServer(QThread):
-    """Listens on a Unix-domain socket and emits navigate_requested."""
+    """Listens on a Unix-domain socket and emits navigate_requested.
 
-    navigate_requested = pyqtSignal(str, str, str, str)  # film, field, label, shot_id
+    The navigate message now includes `media_type` so callers can request
+    a mode switch on the running instance before navigation.
+    """
+
+    # film, field, label, shot_id, media_type
+    navigate_requested = pyqtSignal(str, str, str, str, str)
 
     def __init__(self, project_path: str, parent=None) -> None:
         super().__init__(parent)
@@ -1337,6 +1342,7 @@ class _IllIpcServer(QThread):
                             msg.get("field", ""),
                             msg.get("label", ""),
                             msg.get("shot_id", ""),
+                            msg.get("media_type", ""),
                         )
                 except Exception:
                     pass
@@ -1359,6 +1365,7 @@ def _ill_ipc_send_navigate(
     field: str = "",
     label: str = "",
     shot_id: str = "",
+    media_type: str = "",
 ) -> bool:
     """Send a navigate request to a running Illustration Visualizer.
 
@@ -1374,11 +1381,12 @@ def _ill_ipc_send_navigate(
         conn.settimeout(2.0)
         conn.connect(str(sock_path))
         msg = _json.dumps({
-            "action":  "navigate",
-            "film":    film,
-            "field":   field,
-            "label":   label,
-            "shot_id": shot_id,
+            "action":     "navigate",
+            "film":       film,
+            "field":      field,
+            "label":      label,
+            "shot_id":    shot_id,
+            "media_type": media_type,
         })
         conn.sendall(msg.encode())
         conn.close()
@@ -2873,19 +2881,52 @@ class IllustrationWindow(WindowVisualizer):
         self._ipc_server.start()
 
     def _on_ipc_navigate(
-        self, film: str, field: str, label: str, shot_id: str
+            self, film: str, field: str, label: str, shot_id: str, media_type: str
     ) -> None:
-        """Raise this window and navigate the catalog."""
-        self.show()
-        self.showNormal()
-        self.raise_()
-        self.activateWindow()
-        self._catalog.navigate_to(
-            film or None,
-            field or None,
-            label or None,
-            shot_id or None,
-        )
+            """Raise this window, switch media type if requested, then navigate."""
+            self.show()
+            self.showNormal()
+            self.raise_()
+            self.activateWindow()
+
+            # If a media_type was requested and it differs from the current
+            # catalog mode, update the UI controls first so the browser reloads
+            # into the requested mode before navigation.
+            try:
+                if media_type:
+                    cat = getattr(self, '_catalog', None)
+                    if cat is not None and getattr(cat, '_media_type', None) != media_type:
+                        # Update the pane-level control (if present)
+                        try:
+                            if getattr(cat, '_media_type_combo', None) is not None:
+                                cat._media_type_combo.setCurrentText(media_type)
+                        except Exception:
+                            pass
+                        # Update each browser's internal media combo to trigger reload
+                        try:
+                            for b in (getattr(cat, '_browser_sil', None), getattr(cat, '_browser_eng', None)):
+                                if b is None:
+                                    continue
+                                try:
+                                    idx = b._media_combo.findData(media_type)
+                                    if idx >= 0:
+                                        b._media_combo.setCurrentIndex(idx)
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+            # Perform navigation (may be applied immediately or deferred by the
+            # browser while it reloads its items). Ensure navigation runs after
+            # the requested mode has been requested above.
+            self._catalog.navigate_to(
+                film or None,
+                field or None,
+                label or None,
+                shot_id or None,
+            )
 
     # ------------------------------------------------------------------
     # WindowVisualizer hooks
@@ -3051,6 +3092,7 @@ def open_at_illustration(
         field=field or "",
         label=label or "",
         shot_id=str(shot_id) if shot_id else "",
+        media_type=media_type or "",
     ):
         # Also raise any in-process window
         from visualizers._window_helpers import raise_existing_window
