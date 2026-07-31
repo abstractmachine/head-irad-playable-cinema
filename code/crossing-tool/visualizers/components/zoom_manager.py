@@ -9,10 +9,15 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
-from PyQt5.QtCore import QObject
+from PyQt5.QtCore import QObject, pyqtSignal
 
 
 class ZoomManager(QObject):
+    """Manage zoom state and notify listeners when it changes.
+
+    Emits `zoomChanged(float)` whenever the zoom value is updated.
+    """
+    zoomChanged = pyqtSignal(float)
     def __init__(
         self,
         page: Any,
@@ -69,6 +74,12 @@ class ZoomManager(QObject):
                 self._page.request_reflow()
             except Exception:
                 pass
+
+        # Notify listeners that the zoom value changed.
+        try:
+            self.zoomChanged.emit(self._zoom)
+        except Exception:
+            pass
 
     def change_zoom(self, delta: float) -> None:
         self.set_zoom(self._zoom + delta)

@@ -64,7 +64,7 @@ _THUMB_GAP = theme.SECTION_GAP
 _INSPECTOR_MIN_W = 280
 _ZOOM_MIN = 0.60
 _ZOOM_MAX = 7.00
-_ZOOM_STEP = 0.10
+_ZOOM_STEP = 0.40
 _ZOOM_DEFAULT = 1.00
 _THUMB_LOAD_SIZE = int(round(_THUMB_SIZE * _ZOOM_MAX))
 
@@ -740,6 +740,18 @@ class MetadataVisualizer(WindowVisualizer):
 
         self._browser_stack.addWidget(self._movie_page)
         self._browser_stack.addWidget(self._gameplay_page)
+        # Keep the zoom buttons in sync with the active page and zoom state.
+        try:
+            self._browser_stack.currentChanged.connect(lambda _idx: self._update_zoom_buttons())
+        except Exception:
+            pass
+        try:
+            self._movie_page._zoom_manager.zoomChanged.connect(lambda _z: self._update_zoom_buttons())
+            self._gameplay_page._zoom_manager.zoomChanged.connect(lambda _z: self._update_zoom_buttons())
+        except Exception:
+            pass
+        # Initial button state
+        QTimer.singleShot(0, self._update_zoom_buttons)
         return self._browser_stack
 
     def _fit_splitter_width(self) -> None:
@@ -786,10 +798,51 @@ class MetadataVisualizer(WindowVisualizer):
         if page is not None:
             page._change_zoom(_ZOOM_STEP)
 
+        # Update buttons state after change
+        QTimer.singleShot(0, self._update_zoom_buttons)
+
     def _zoom_out_current_page(self) -> None:
         page = self._active_page()
         if page is not None:
             page._change_zoom(-_ZOOM_STEP)
+
+        # Update buttons state after change
+        QTimer.singleShot(0, self._update_zoom_buttons)
+
+    def _update_zoom_buttons(self) -> None:
+        """Enable/disable zoom buttons based on the active page's limits."""
+        page = self._active_page()
+        if page is None:
+            try:
+                self._zoom_in_btn.setEnabled(False)
+                self._zoom_out_btn.setEnabled(False)
+            except Exception:
+                pass
+            return
+
+        zm = getattr(page, "_zoom_manager", None)
+        try:
+            if zm is None:
+                z = page.zoom()
+                step = _ZOOM_STEP
+                zmin = _ZOOM_MIN
+                zmax = _ZOOM_MAX
+            else:
+                z = zm.zoom()
+                step = getattr(zm, "_step", _ZOOM_STEP)
+                zmin = getattr(zm, "_min", _ZOOM_MIN)
+                zmax = getattr(zm, "_max", _ZOOM_MAX)
+
+            eps = 1e-9
+            # Disable only when already at the hard limits.
+            self._zoom_in_btn.setEnabled(z < zmax - eps)
+            self._zoom_out_btn.setEnabled(z > zmin + eps)
+        except Exception:
+            try:
+                self._zoom_in_btn.setEnabled(True)
+                self._zoom_out_btn.setEnabled(True)
+            except Exception:
+                pass
 
     def _current_page_record(self) -> dict | None:
         page = self._active_page()

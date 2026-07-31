@@ -36,13 +36,13 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 BG           = "#808080"   # 50% grey — main window / widget background
-PANEL_BG     = "#6e6e6e"   # slightly darker for control-panel areas
+PANEL_BG     = "#555555"   # slightly darker for control-panel areas
 INPUT_BG     = "#606060"   # input fields, list backgrounds
 TITLE_BG     = "#4A4A4A"   # header/title background (slightly darker than PANEL_BG)
 CELL_BG      = "#606060"   # table cell backgrounds (same as TITLE_BG for now)
 BTN_BG       = "#606060"   # button face
 BTN_HOVER    = "#8d8d8d"   # button hover (lighter than BG)
-BTN_PRESSED  = "#565656"   # button pressed (darker)
+BTN_PRESSED  = "#505050"   # button pressed (darker)
 BUTTON_HEIGHT = 24         # fixed height for all inspector/action buttons (px)
 BUTTON_ICON_SIZE = max(12, BUTTON_HEIGHT - 10)  # canonical icon size for square toolbar/header buttons
 BTN_H        = BUTTON_HEIGHT
@@ -63,10 +63,10 @@ BORDER       = "#ffffff"   # interactive element borders (buttons, inputs) — w
 UI_BORDER    = "#404040"   # structural chrome borders (group boxes, frames) — 25% grey
 SPLITTER     = "#737373"   # splitter drag handles — 45% grey (barely visible on BG)
 ACCENT       = "#ffff00"   # selections, active, checked states
-ACCENT_TEXT  = "#000000"   # text on ACCENT background (black on yellow; use #ffffff for dark accents)
+ACCENT_TEXT  = "#333333"   # text on ACCENT background (black on yellow; use #ffffff for dark accents)
 ACCENT_FILL_ALPHA = 64     # alpha for accent-colored area fills (25% of 255)
 CANVAS_BG    = "#3a3a3a"   # video / image display areas (dark so content pops)
-TAB_BG       = "#6e6e6e"   # panel/tab background (same as PANEL_BG)
+TAB_BG       = "#555555"   # panel/tab background (same as PANEL_BG)
 # ---------------------------------------------------------------------------
 # Typography
 # ---------------------------------------------------------------------------
@@ -389,7 +389,11 @@ def action_button_stylesheet() -> str:
         f"  min-height: {BTN_H}px; max-height: {BTN_H}px;"
         f"}}"
         f"QPushButton:hover    {{ background-color: {ACCENT}; color: {ACCENT_TEXT}; }}"
-        f"QPushButton:pressed  {{ background-color: {BTN_PRESSED}; }}"
+        # Invert the hover foreground/background while the button is pressed:
+        # the button background becomes the accent text color and the
+        # foreground becomes the accent color so the pressed state reads
+        # as an inversion of the hover state.
+        f"QPushButton:pressed  {{ background-color: {ACCENT_TEXT}; color: {ACCENT}; }}"
         f"QPushButton:checked  {{ background-color: {ACCENT}; color: {ACCENT_TEXT}; }}"
         f"QPushButton:disabled {{ background-color: {BTN_BG};"
         f" color: rgba(255,255,255,0.15); }}"
