@@ -624,7 +624,6 @@ class MetadataVisualizer(WindowVisualizer):
 
     def _build_inspector(self) -> QWidget:
         inspector = Inspector(self)
-        inspector.connect_scrollbar_range_changed(self._on_inspector_scrollbar_range_changed)
 
         # Configure content size
         inspector.set_minimum_width(_INSPECTOR_MIN_W)
@@ -756,29 +755,6 @@ class MetadataVisualizer(WindowVisualizer):
         # have settled; avoids initial clipping until the user drags.
         QTimer.singleShot(0, self._request_browser_reflow)
         QTimer.singleShot(0, self._update_thumbnail_preview)
-
-    def _on_inspector_scrollbar_range_changed(self, _min: int, _max: int) -> None:
-        # Reserve or release splitter width when the inspector scrollbar appears.
-        visible = (_max > 0)
-        if visible == getattr(self, "_inspector_scrollbar_visible", False):
-            return
-
-        sizes = list(self._splitter.sizes())
-        if len(sizes) != 2:
-            self._inspector_scrollbar_visible = visible
-            return
-
-        sb_w = theme.SCROLLBAR_W
-        if visible:
-            sizes[1] += sb_w
-        else:
-            sizes[1] = max(0, sizes[1] - sb_w)
-
-        self._inspector_scrollbar_visible = visible
-        try:
-            self._splitter.setSizes(sizes)
-        except Exception:
-            pass
 
     def _sync_inspector_scrollbar_width(self) -> None:
         return

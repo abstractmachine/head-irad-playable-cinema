@@ -70,6 +70,24 @@ class WindowVisualizer(VisualizerWindow):
 
         layout.addWidget(self._splitter)
 
+        # Attach shared inspector scrollbar gutter behavior when possible.
+        try:
+            # Import locally to avoid module-level circular imports.
+            from visualizers.components.inspector import Inspector
+            inspector_obj = None
+            if isinstance(self._inspector_shell, Inspector):
+                inspector_obj = self._inspector_shell
+            else:
+                # Adapter wrappers (e.g. _TabWidgetCompat) expose the
+                # underlying Inspector on `_inspector` — use that when present.
+                nested = getattr(self._inspector_shell, "_inspector", None)
+                if isinstance(nested, Inspector):
+                    inspector_obj = nested
+            if inspector_obj is not None and hasattr(inspector_obj, "attach_scrollbar_gutter"):
+                inspector_obj.attach_scrollbar_gutter(self._splitter, inspector_index=1)
+        except Exception:
+            pass
+
         QTimer.singleShot(0, self._fit_splitter_width)
 
         if self._pref_key:

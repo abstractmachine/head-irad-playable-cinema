@@ -67,3 +67,46 @@ class Inspector(QWidget):
         except Exception:
             pass
 
+    def attach_scrollbar_gutter(self, splitter, inspector_index: int = 1) -> None:
+        """Attach gutter-reservation behavior to *splitter* driven by this
+        Inspector's internal vertical scrollbar.
+
+        When the scrollbar appears the splitter's pane at *inspector_index*
+        is widened by `theme.SCROLLBAR_W`; when it disappears the width is
+        released. Multiple calls with the same *splitter* are idempotent.
+        """
+        try:
+            if self.scroll is None:
+                return
+            # State dict keyed by splitter id to avoid duplicate attachments
+            if not hasattr(self, "_gutter_state"):
+                self._gutter_state = {}
+
+            key = id(splitter)
+            if key in self._gutter_state:
+                return
+            self._gutter_state[key] = False
+
+            def _on_range(_min: int, _max: int) -> None:
+                visible = (_max > 0)
+                if self._gutter_state.get(key, False) == visible:
+                    return
+                sizes = list(splitter.sizes())
+                if len(sizes) <= inspector_index:
+                    self._gutter_state[key] = visible
+                    return
+                sb_w = theme.SCROLLBAR_W
+                if visible:
+                    sizes[inspector_index] += sb_w
+                else:
+                    sizes[inspector_index] = max(0, sizes[inspector_index] - sb_w)
+                self._gutter_state[key] = visible
+                try:
+                    splitter.setSizes(sizes)
+                except Exception:
+                    pass
+
+            self.scroll.verticalScrollBar().rangeChanged.connect(_on_range)
+        except Exception:
+            pass
+

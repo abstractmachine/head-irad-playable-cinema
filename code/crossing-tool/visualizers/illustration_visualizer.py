@@ -1699,17 +1699,17 @@ class IllustrationPane(QWidget):
         tabbar.setStyleSheet(theme.tab_strip_stylesheet())
 
         # Pages: each page is the same scroll-area returned by _build_source_panel
-        sil_scroll, self._sil_sort_combo, self._sil_meta_rows = self._build_source_panel(
+        sil_panel, self._sil_sort_combo, self._sil_meta_rows = self._build_source_panel(
             self._browser_sil, "ill_sil", _SIL_INFO_KEYS, has_sort=True, has_tools=True
         )
-        eng_scroll, self._eng_sort_combo, self._eng_meta_rows = self._build_source_panel(
+        eng_panel, self._eng_sort_combo, self._eng_meta_rows = self._build_source_panel(
             self._browser_eng, "ill_eng", _ENG_INFO_KEYS,
             has_sort=False, has_mode_filter=True, has_eng_tools=True
         )
 
         stack = QStackedWidget()
-        stack.addWidget(sil_scroll)
-        stack.addWidget(eng_scroll)
+        stack.addWidget(sil_panel)
+        stack.addWidget(eng_panel)
 
         # Add header and content to the Inspector panel
         inspector.panel().add_widget(tabbar, alignment=Qt.AlignTop)
@@ -1724,10 +1724,6 @@ class IllustrationPane(QWidget):
         self._sort_combo = self._sil_sort_combo
         self._meta_rows = self._sil_meta_rows
 
-        # Track scrollbar visibility to keep pane width stable.
-        self._inspector_sb_visible = False
-        # Keep a reference to the current page's scroll area (Silhouettes by default)
-        self._inspector_scroll = sil_scroll
 
         # Wire tab interactions: update the stacked pages and preserve the
         # original source-switch semantics used elsewhere in the pane.
@@ -1745,7 +1741,11 @@ class IllustrationPane(QWidget):
     # `_build_inspector_pane()` to preserve the pinned header behaviour.
 
     def _make_panel_scroll(self) -> tuple:
-        """Return (QScrollArea, QWidget panel, QVBoxLayout) for a source panel."""
+        """Return (QWidget panel, QVBoxLayout) for a source page.
+
+        The returned `panel` is a plain widget that will be hosted inside the
+        shared `TabPanel` content area (so it must not be its own QScrollArea).
+        """
         _TAB_ACTIVE = theme.TAB_BG
         _content_style = (
             f"QWidget {{ background: {_TAB_ACTIVE}; }}"
@@ -1767,13 +1767,6 @@ class IllustrationPane(QWidget):
             f" QPushButton:disabled {{ color: {theme.TEXT_DIM};"
             f" background-color: {theme.BTN_BG}; }}"
         )
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setFocusPolicy(Qt.NoFocus)
-        scroll.viewport().setFocusPolicy(Qt.NoFocus)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setStyleSheet(f"QScrollArea {{ background: {_TAB_ACTIVE}; border: none; }}")
         panel = QWidget()
         panel.setStyleSheet(_content_style)
         panel.setMinimumWidth(_SIDE_PANE_W)
@@ -1784,8 +1777,7 @@ class IllustrationPane(QWidget):
         # TabPanel-managed sections (e.g. Metadata/Movie inspector).
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(theme.INSPECTOR_GAP)
-        scroll.setWidget(panel)
-        return scroll, panel, layout
+        return panel, layout
 
     def _make_sort_combo(self, pv: QVBoxLayout, pref_key: str) -> QComboBox:
         """Build, wire, and add a Sort section+combo to *pv*; return the combo."""
@@ -1841,11 +1833,11 @@ class IllustrationPane(QWidget):
         Returns (QScrollArea, sort_combo, meta_rows).  sort_combo is None when
         has_sort is False.
         """
-        scroll, panel, pv = self._make_panel_scroll()
+        panel, pv = self._make_panel_scroll()
 
         # ── Filter ────────────────────────────────────────────────────────
         filter_sec = CollapsibleSection("Filter",
-                                        pref_key=f"{pref_prefix}_section_filter")
+                        pref_key=f"{pref_prefix}_section_filter")
         _fb = QWidget()
         _fb_lay = QVBoxLayout(_fb)
         _fb_lay.setContentsMargins(0, 0, 0, 0)
@@ -1879,7 +1871,7 @@ class IllustrationPane(QWidget):
             self._build_engraving_tools_section(pv)
 
         pv.addStretch()
-        return scroll, sort_combo, meta_rows
+        return panel, sort_combo, meta_rows
 
     # ------------------------------------------------------------------ shared button helpers
 
@@ -2054,19 +2046,7 @@ class IllustrationPane(QWidget):
         except Exception:
             pass
 
-    def _on_inspector_sb_range(self, _min: int, max_val: int) -> None:
-        """Widen the inspector splitter pane when the scrollbar appears, shrink when it hides."""
-        from PyQt5.QtWidgets import QStyle
-        sb_w = self._inspector_scroll.style().pixelMetric(QStyle.PM_ScrollBarExtent)
-        sizes = self._panel_splitter.sizes()
-        if max_val > 0 and not self._inspector_sb_visible:
-            self._inspector_sb_visible = True
-            sizes[-1] += sb_w
-            self._panel_splitter.setSizes(sizes)
-        elif max_val == 0 and self._inspector_sb_visible:
-            self._inspector_sb_visible = False
-            sizes[-1] = max(0, sizes[-1] - sb_w)
-            self._panel_splitter.setSizes(sizes)
+    
 
     def _build_mode_filter_section(
         self, pv: QVBoxLayout, browser: "IllustrationBrowser"
@@ -2852,29 +2832,7 @@ class IllustrationWindow(WindowVisualizer):
         self.resize(1300, 760)
         QTimer.singleShot(0, self._restore_saved_state)
 
-        # Connect inspector scrollbar rangeChanged after the shell has
-        # completed its initial layout so the splitter has valid sizes.
-        try:
-            def _connect_sb():
-                try:
-                    cat = getattr(self, '_catalog', None)
-                    if cat is None:
-                        QTimer.singleShot(50, _connect_sb)
-                        return
-                    panel_splitter = getattr(cat, '_panel_splitter', None)
-                    # Wait until the catalog's panel splitter has sizes (two panes)
-                    if panel_splitter is None or len(panel_splitter.sizes()) < 2:
-                        QTimer.singleShot(50, _connect_sb)
-                        return
-                    inscroll = getattr(cat, '_inspector_scroll', None)
-                    if inscroll is not None:
-                        inscroll.verticalScrollBar().rangeChanged.connect(cat._on_inspector_sb_range)
-                except Exception:
-                    # If anything goes wrong, retry once later
-                    QTimer.singleShot(100, _connect_sb)
-            QTimer.singleShot(50, _connect_sb)
-        except Exception:
-            pass
+        # (shared gutter helper will be attached by WindowVisualizer)
 
         # IPC server — lets open_at_illustration navigate an existing instance
         self._ipc_server = _IllIpcServer(project_path, parent=self)
