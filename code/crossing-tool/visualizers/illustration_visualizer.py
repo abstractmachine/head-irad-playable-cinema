@@ -1778,11 +1778,12 @@ class IllustrationPane(QWidget):
         panel.setStyleSheet(_content_style)
         panel.setMinimumWidth(_SIDE_PANE_W)
         layout = QVBoxLayout(panel)
-        # Let the shared TabPanel/Inspector own the canonical inset and
-        # spacing. Keep the local content layout edge-to-edge so the
-        # TabPanel's `theme.INSPECTOR_GAP` is the single source of truth.
+        # Keep the local content layout edge-to-edge horizontally but use
+        # the canonical inspector spacing between collapsible sections so
+        # panels built here (Silhouettes/Engravings) match the spacing of
+        # TabPanel-managed sections (e.g. Metadata/Movie inspector).
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        layout.setSpacing(theme.INSPECTOR_GAP)
         scroll.setWidget(panel)
         return scroll, panel, layout
 
