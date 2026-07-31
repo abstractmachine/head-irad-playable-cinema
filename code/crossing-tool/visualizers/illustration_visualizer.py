@@ -60,6 +60,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from styles import theme
 from styles.theme import GripSplitter, JumpScrollBar, save_window_geometry, restore_window_geometry
+from visualizers.components.combo_popup import attach_combo_popup
 
 # Fix Qt plugin conflict with OpenCV — del env var before first PyQt5 import
 if "QT_QPA_PLATFORM_PLUGIN_PATH" in os.environ:
@@ -1785,7 +1786,7 @@ class IllustrationPane(QWidget):
         combo.setMaxVisibleItems(10)
         combo.setSizeAdjustPolicy(QComboBox.AdjustToContentsOnFirstShow)
         # Configure popup view using shared helper
-        self._attach_combo_popup(combo)
+        attach_combo_popup(combo)
         combo.addItem("-----", userData=None)
         for disp, key in _SORT_OPTS:
             combo.addItem(disp, userData=key)
@@ -1805,40 +1806,7 @@ class IllustrationPane(QWidget):
         pv.addWidget(sort_sec)
         return combo
 
-    def _attach_combo_popup(self, combo: QComboBox) -> QListView:
-        """Create and attach a styled QListView popup to *combo*.
-
-        This centralizes popup styling and container cleanup so multiple
-        combos can share the same appearance and behavior.
-        Returns the created QListView.
-        """
-        _sv = QListView(combo)
-        _sv.setUniformItemSizes(True)
-        _sv.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        _sv.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        _sv.setFrameShape(QFrame.NoFrame)
-        _sv.setLineWidth(0)
-        _sv.setMidLineWidth(0)
-        _sv.setContentsMargins(0, 0, 0, 0)
-        _sv.setStyleSheet(
-            f"QListView {{ background: {theme.INPUT_BG}; color: {theme.TEXT};"
-            f" border: 0px; margin: 0px; padding: 0px; outline: 0px; }}"
-            f"QListView::item {{ background: {theme.INPUT_BG}; padding: 0px 8px;"
-            f" min-height: 24px; border: 0px; }}"
-            f"QListView::item:selected {{ background: {theme.ACCENT}; color: {theme.ACCENT_TEXT}; }}"
-        )
-        combo.setView(_sv)
-        _sv.setViewportMargins(0, 0, 0, 0)
-        _sc = _sv.parentWidget()
-        if _sc is not None:
-            _sc.setFrameStyle(QFrame.NoFrame)
-            _sc.setLineWidth(0)
-            _sc.setMidLineWidth(0)
-            _sc.setStyleSheet(f"QFrame {{ background: {theme.INPUT_BG}; border: 0px; margin: 0px; padding: 0px; }}")
-            if _sc.layout():
-                _sc.layout().setContentsMargins(0, 0, 0, 0)
-                _sc.layout().setSpacing(0)
-        return _sv
+    # Popup attachment handled by visualizers.components.combo_popup.attach_combo_popup
 
     def _make_info_grid(self, pv: QVBoxLayout, pref_key: str,
                         info_keys: tuple) -> dict:
@@ -2106,13 +2074,13 @@ class IllustrationPane(QWidget):
             f"QComboBox {{ background: {theme.BTN_BG}; color: {theme.TEXT};"
             f" border: none; border-radius: 3px; padding: 0px 6px;"
             f" font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
-            f" font-weight: {theme.WEIGHT_UI};"
+            f" font-weight: bold;"
             f" min-height: 24px; max-height: 24px; }}"
             f"QComboBox::drop-down {{ border: none; }}"
         )
 
         # Ensure popup uses canonical styling/cleanup
-        self._attach_combo_popup(combo)
+        attach_combo_popup(combo)
 
         def _on_mode_changed(_idx: int) -> None:
             mode = combo.currentData()  # "" = Both (no filter), "frame", "isolated"

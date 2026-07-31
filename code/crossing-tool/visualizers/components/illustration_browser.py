@@ -75,6 +75,7 @@ from styles import theme
 from visualizers.components.illustration_source import IllustrationSource
 from visualizers.components.thumbnail_cell import ThumbnailCell
 from visualizers.components.thumbnail_loader import ThumbnailLoader
+from visualizers.components.combo_popup import attach_combo_popup
 
 # ---------------------------------------------------------------------------
 # Combo popup border fix
@@ -772,7 +773,7 @@ class IllustrationBrowser(QWidget):
         combo_style = (
             f"QComboBox {{ background: {theme.BTN_BG}; color: {theme.TEXT};"
             f" font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
-            f" font-weight: {theme.WEIGHT_UI}; border: none;"
+            f" font-weight: bold; border: none;"
             f" border-radius: 3px; padding: 0px 6px;"
             f" min-height: 24px; max-height: 24px; }}"
             f"QComboBox::drop-down {{ border: none; }}"
@@ -798,40 +799,8 @@ class IllustrationBrowser(QWidget):
             combo.setFocusPolicy(Qt.NoFocus)
             combo.setMaxVisibleItems(6)
             combo.setSizeAdjustPolicy(QComboBox.AdjustToContentsOnFirstShow)
-            # Replace the internal view with a custom QListView so we have
-            # full control over popup geometry, colors, and borders — one path,
-            # no container-frame interference.
-            _view = QListView(combo)
-            _view.setUniformItemSizes(True)
-            _view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            _view.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-            _view.setFrameShape(QFrame.NoFrame)
-            _view.setLineWidth(0)
-            _view.setMidLineWidth(0)
-            _view.setContentsMargins(0, 0, 0, 0)
-            _view.setStyleSheet(
-                f"QListView {{"
-                f" background: {theme.INPUT_BG}; color: {theme.TEXT};"
-                f" border: 0px; margin: 0px; padding: 0px; outline: 0px; }}"
-                f"QListView::item {{"
-                f" background: {theme.INPUT_BG}; padding: 0px 8px; min-height: 24px; border: 0px; }}"
-                f"QListView::item:selected {{"
-                f" background: {theme.ACCENT}; color: {theme.ACCENT_TEXT}; }}"
-            )
-            combo.setView(_view)
-            _view.setViewportMargins(0, 0, 0, 0)
-            _container = _view.parentWidget()
-            if _container is not None:
-                _container.setFrameStyle(QFrame.NoFrame)
-                _container.setLineWidth(0)
-                _container.setMidLineWidth(0)
-                _container.setStyleSheet(
-                    f"QFrame {{ background: {theme.INPUT_BG};"
-                    f" border: 0px; margin: 0px; padding: 0px; }}"
-                )
-                if _container.layout():
-                    _container.layout().setContentsMargins(0, 0, 0, 0)
-                    _container.layout().setSpacing(0)
+            # Attach the canonical popup view and styling
+            attach_combo_popup(combo)
             layout.addWidget(combo)
 
         # Media — <Media> means "nothing selected" (fast empty-browser start)
