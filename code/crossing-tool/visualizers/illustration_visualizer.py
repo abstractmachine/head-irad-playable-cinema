@@ -1784,7 +1784,34 @@ class IllustrationPane(QWidget):
         combo.setFocusPolicy(Qt.NoFocus)
         combo.setMaxVisibleItems(10)
         combo.setSizeAdjustPolicy(QComboBox.AdjustToContentsOnFirstShow)
-        # Custom QListView for popup styling.
+        # Configure popup view using shared helper
+        self._attach_combo_popup(combo)
+        combo.addItem("-----", userData=None)
+        for disp, key in _SORT_OPTS:
+            combo.addItem(disp, userData=key)
+
+        def _refresh_color(_idx: int = 0, _c=combo) -> None:
+            _col = theme.TEXT_DIM if _c.currentData() is None else theme.TEXT
+            _c.setStyleSheet(
+                f"QComboBox {{ background: {theme.BTN_BG}; color: {_col};"
+                f" border: none; border-radius: 3px; padding: 0px 6px;"
+                f" min-height: 24px; max-height: 24px; }}"
+                f"QComboBox::drop-down {{ border: none; }}"
+            )
+        combo.currentIndexChanged.connect(_refresh_color)
+        combo.currentIndexChanged.connect(self._on_sort_changed)
+        _refresh_color()
+        sort_sec.add_widget(combo)
+        pv.addWidget(sort_sec)
+        return combo
+
+    def _attach_combo_popup(self, combo: QComboBox) -> QListView:
+        """Create and attach a styled QListView popup to *combo*.
+
+        This centralizes popup styling and container cleanup so multiple
+        combos can share the same appearance and behavior.
+        Returns the created QListView.
+        """
         _sv = QListView(combo)
         _sv.setUniformItemSizes(True)
         _sv.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -1811,24 +1838,7 @@ class IllustrationPane(QWidget):
             if _sc.layout():
                 _sc.layout().setContentsMargins(0, 0, 0, 0)
                 _sc.layout().setSpacing(0)
-        combo.addItem("-----", userData=None)
-        for disp, key in _SORT_OPTS:
-            combo.addItem(disp, userData=key)
-
-        def _refresh_color(_idx: int = 0, _c=combo) -> None:
-            _col = theme.TEXT_DIM if _c.currentData() is None else theme.TEXT
-            _c.setStyleSheet(
-                f"QComboBox {{ background: {theme.BTN_BG}; color: {_col};"
-                f" border: none; border-radius: 3px; padding: 0px 6px;"
-                f" min-height: 24px; max-height: 24px; }}"
-                f"QComboBox::drop-down {{ border: none; }}"
-            )
-        combo.currentIndexChanged.connect(_refresh_color)
-        combo.currentIndexChanged.connect(self._on_sort_changed)
-        _refresh_color()
-        sort_sec.add_widget(combo)
-        pv.addWidget(sort_sec)
-        return combo
+        return _sv
 
     def _make_info_grid(self, pv: QVBoxLayout, pref_key: str,
                         info_keys: tuple) -> dict:
@@ -2100,6 +2110,9 @@ class IllustrationPane(QWidget):
             f" min-height: 24px; max-height: 24px; }}"
             f"QComboBox::drop-down {{ border: none; }}"
         )
+
+        # Ensure popup uses canonical styling/cleanup
+        self._attach_combo_popup(combo)
 
         def _on_mode_changed(_idx: int) -> None:
             mode = combo.currentData()  # "" = Both (no filter), "frame", "isolated"
