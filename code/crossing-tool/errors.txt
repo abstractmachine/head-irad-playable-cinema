@@ -1,0 +1,2 @@
+git add .
+git commit -m "Refactor: introduce canonical visualizer launcher (no behavioral changes)"

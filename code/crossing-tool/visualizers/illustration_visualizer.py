@@ -3055,29 +3055,25 @@ def run_visualizer(
     initial_label: Optional[str] = None,
     initial_shot: Optional[str] = None,
 ) -> None:
-    """Create QApplication (if needed) and launch the Illustration window."""
-    from tool import prefs as _prefs
+    """Thin compatibility wrapper that delegates to the canonical launcher.
 
-    model_name = _prefs.get("model_segmentation", _DEFAULT_MODEL) or _DEFAULT_MODEL
+    Behaviour is unchanged: the CLI entrypoint calls this function and the
+    launcher performs the actual startup (raise existing window, ensure
+    QApplication, apply theme, construct and show the window, exec loop).
+    """
+    from visualizers.launcher import launch_visualizer
 
-    from visualizers._window_helpers import raise_existing_window
-    if raise_existing_window("illustration"):
-        return
-
-    app = QApplication.instance() or QApplication(sys.argv)
-    theme.apply_theme(app)
-
-    win = IllustrationWindow(
+    launch_visualizer(
+        "illustration",
         project_path,
         media_type=media_type,
-        model_name=model_name,
-        initial_film=initial_film or (field and None),
-        initial_field=initial_field or field,
+        model_name=None,
+        field=field,
+        initial_film=initial_film,
+        initial_field=initial_field,
         initial_label=initial_label,
         initial_shot=initial_shot,
     )
-    win.show()
-    sys.exit(app.exec_())
 
 
 def open_at_illustration(
