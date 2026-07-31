@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import sys
 from typing import Optional
+from pathlib import Path
+import subprocess as _sp
 
 from PyQt5.QtWidgets import QApplication
 
@@ -49,26 +51,59 @@ def launch_visualizer(
     if raise_existing_window("illustration"):
         return
 
-    # Create or reuse QApplication instance and apply the shared theme.
-    app = QApplication.instance() or QApplication(sys.argv)
-    theme.apply_theme(app)
+    # If there's no QApplication, behave like the CLI/standalone path:
+    # create the QApplication, apply theme and construct the window.
+    app = QApplication.instance()
+    if app is None:
+        created_app = True
+        app = QApplication(sys.argv)
+        theme.apply_theme(app)
 
-    # Determine model_name using the same prefs fallback used previously.
-    if model_name is None:
-        model_name = _prefs.get("model_segmentation", "sam3.pt") or "sam3.pt"
+        # Determine model_name using the same prefs fallback used previously.
+        if model_name is None:
+            model_name = _prefs.get("model_segmentation", "sam3.pt") or "sam3.pt"
 
-    # Import the visualizer window lazily to avoid import cycles at module
-    # import time; the caller (CLI) will have imported the module already.
-    from visualizers.illustration_visualizer import IllustrationWindow
+        # Import the visualizer window lazily to avoid import cycles at module
+        # import time; the caller (CLI) will have imported the module already.
+        from visualizers.illustration_visualizer import IllustrationWindow
 
-    win = IllustrationWindow(
-        project_path,
-        media_type=media_type,
-        model_name=model_name,
-        initial_film=initial_film or (field and None),
-        initial_field=initial_field or field,
-        initial_label=initial_label,
-        initial_shot=initial_shot,
-    )
-    win.show()
-    sys.exit(app.exec_())
+        win = IllustrationWindow(
+            project_path,
+            media_type=media_type,
+            model_name=model_name,
+            initial_film=initial_film or (field and None),
+            initial_field=initial_field or field,
+            initial_label=initial_label,
+            initial_shot=initial_shot,
+        )
+        win.show()
+
+        # CLI / standalone case: enter the event loop and exit the process
+        # when it finishes to preserve the previous behaviour.
+        sys.exit(app.exec_())
+
+    # If we reached here an application is already running in this process.
+    # Per the new architecture, do NOT construct another visualizer's
+    # QWidget hierarchy inside this process. Instead spawn an independent
+    # process that will create its own QApplication and window.
+    vis_script = Path(__file__).parent / "illustration_visualizer.py"
+    cmd = [
+        sys.executable, str(vis_script),
+        "--project", project_path,
+        "--media", media_type,
+    ]
+    if initial_film:
+        cmd += ["--film", initial_film]
+    if initial_field:
+        cmd += ["--field", initial_field]
+    if initial_label:
+        cmd += ["--label", initial_label]
+    if initial_shot:
+        cmd += ["--shot", str(initial_shot)]
+
+    try:
+        _sp.Popen(cmd)
+    except Exception:
+        # Best-effort: we do not want to crash the caller if spawning fails.
+        pass
+    return None

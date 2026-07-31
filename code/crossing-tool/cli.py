@@ -7175,9 +7175,10 @@ def _metadata_visualizer(args):
 def _illustration_visualizer(args):
     """Launch the Illustration Visualizer GUI."""
     _require_visualizer_deps()
-    from visualizers.illustration_visualizer import run_visualizer
+    from visualizers.launcher import launch_visualizer
     raw_media = getattr(args, "media", None)
-    run_visualizer(
+    launch_visualizer(
+        "illustration",
         prefs.get("path"),
         media_type=normalize_media_type(raw_media) if raw_media else None,
         field=getattr(args, "field", None),

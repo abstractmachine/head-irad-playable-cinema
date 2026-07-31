@@ -3046,34 +3046,7 @@ class IllustrationWindow(WindowVisualizer):
 
 
 
-def run_visualizer(
-    project_path: str,
-    media_type: Optional[str] = None,
-    field: Optional[str] = None,
-    initial_film: Optional[str] = None,
-    initial_field: Optional[str] = None,
-    initial_label: Optional[str] = None,
-    initial_shot: Optional[str] = None,
-) -> None:
-    """Thin compatibility wrapper that delegates to the canonical launcher.
-
-    Behaviour is unchanged: the CLI entrypoint calls this function and the
-    launcher performs the actual startup (raise existing window, ensure
-    QApplication, apply theme, construct and show the window, exec loop).
-    """
-    from visualizers.launcher import launch_visualizer
-
-    launch_visualizer(
-        "illustration",
-        project_path,
-        media_type=media_type,
-        model_name=None,
-        field=field,
-        initial_film=initial_film,
-        initial_field=initial_field,
-        initial_label=initial_label,
-        initial_shot=initial_shot,
-    )
+## `run_visualizer` removed — use `visualizers.launcher.launch_visualizer`
 
 
 def open_at_illustration(
@@ -3090,7 +3063,6 @@ def open_at_illustration(
     command via IPC and raises the existing window.  Otherwise spawns a new
     process with the supplied filter arguments.
     """
-    import subprocess as _sp
     # Try IPC first (works whether the window is in-process or a subprocess)
     if _ill_ipc_send_navigate(
         project_path,
@@ -3103,20 +3075,22 @@ def open_at_illustration(
         from visualizers._window_helpers import raise_existing_window
         raise_existing_window("illustration")
         return
-    cmd = [
-        sys.executable, str(Path(__file__)),
-        "--project", project_path,
-        "--media",   media_type,
-    ]
-    if filename_stem:
-        cmd += ["--film", filename_stem]
-    if field:
-        cmd += ["--field", field]
-    if label:
-        cmd += ["--label", label]
-    if shot_id:
-        cmd += ["--shot", str(shot_id)]
-    _sp.Popen(cmd)
+
+    # No IPC endpoint responded — delegate process creation to the canonical
+    # launcher. The launcher is the single place that knows how to start an
+    # independent Illustration process; it will either create a QApplication
+    # and show a window (CLI / standalone case) or spawn a new OS process
+    # when invoked from inside an existing visualizer process.
+    from visualizers.launcher import launch_visualizer
+    launch_visualizer(
+        "illustration",
+        project_path,
+        media_type=media_type,
+        initial_film=filename_stem,
+        initial_field=field,
+        initial_label=label,
+        initial_shot=shot_id,
+    )
 
 
 if __name__ == "__main__":
@@ -3130,7 +3104,9 @@ if __name__ == "__main__":
     ap.add_argument("--label",  default=None, help="Initial label to select")
     ap.add_argument("--shot",   default=None, help="Initial shot_id to select")
     parsed = ap.parse_args()
-    run_visualizer(
+    from visualizers.launcher import launch_visualizer
+    launch_visualizer(
+        "illustration",
         parsed.project,
         media_type=parsed.media,
         initial_film=parsed.film,

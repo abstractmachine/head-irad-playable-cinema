@@ -675,6 +675,12 @@ class ProjectVisualizer(WindowVisualizer):
             self._windows[subcommand] = win  # keep reference so Qt doesn't GC it
             return
 
+        # For the Illustration visualizer we must not construct its QWidget
+        # inside this process. _create_in_process_window() will have delegated
+        # to the canonical IPC/launcher path; nothing more to do here.
+        if subcommand == "illustration":
+            return
+
         # Fallback for subcommands not handled in-process (e.g. shotlist).
         # For shotlist specifically, ping its IPC socket to raise the window.
         if subcommand == "shotlist":
@@ -718,9 +724,13 @@ class ProjectVisualizer(WindowVisualizer):
             from visualizers.book_visualizer import BookVisualizerWindow
             return BookVisualizerWindow(project_path)
         elif subcommand == "illustration":
-            model_name = _prefs.get("model_segmentation", "sam3.pt") or "sam3.pt"
-            from visualizers.illustration_visualizer import IllustrationWindow
-            return IllustrationWindow(project_path, media_type=media_type, model_name=model_name)
+            # Per the new architecture, never instantiate another visualizer's
+            # QWidget hierarchy inside this process. Instead request navigation
+            # via the Illustration helper which will try IPC and otherwise
+            # delegate process creation to the canonical launcher.
+            from visualizers.illustration_visualizer import open_at_illustration
+            open_at_illustration(project_path, media_type=media_type)
+            return None
         elif subcommand == "palette":
             from visualizers.palette_visualizer import PaletteVisualizerWindow
             return PaletteVisualizerWindow(project_path, media_type=media_type)
