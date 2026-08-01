@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal, QEvent
 from PyQt5.QtWidgets import (
     QHBoxLayout,
     QPushButton,
@@ -83,6 +83,11 @@ class CollapsibleSection(QWidget):
         self._expanded = expanded
         self._fill_vertical = False
         self._subbar: Optional[QWidget] = None
+        # When True the subbar is considered persistent and remains visible
+        # even when the section body is collapsed. This is used for the
+        # canonical filter-loading indicator which should be visible on the
+        # section header regardless of expanded state.
+        self._subbar_persistent: bool = False
         self._header_widget: Optional[QWidget] = None
         self._apply_size_policy()
         self._build_ui()
@@ -128,6 +133,12 @@ class CollapsibleSection(QWidget):
             f"QPushButton:hover {{ background: {theme.ACCENT}; color: {theme.ACCENT_TEXT}; }}"
         )
         self._header.clicked.connect(self._toggle)
+        # Keep an eye on header resizes so any attached subbar can be
+        # positioned inside the header without affecting layout metrics.
+        try:
+            self._header.installEventFilter(self)
+        except Exception:
+            pass
         self._refresh_header()
         header_row_layout.addWidget(self._header, 1)
         outer.addWidget(self._header_row)
@@ -168,8 +179,13 @@ class CollapsibleSection(QWidget):
         self._refresh_header()
         self._body_band.setVisible(self._expanded)
         self._body.setVisible(self._expanded)
+        # Subbars attached via `set_subbar()` are intended to remain
+        # visible on the section header even when the body is collapsed.
         if self._subbar is not None:
-            self._subbar.setVisible(self._expanded)
+            if self._subbar_persistent:
+                self._subbar.setVisible(True)
+            else:
+                self._subbar.setVisible(self._expanded)
         self._apply_size_policy()
         self.expandedChanged.emit(self._expanded)
         # Persist the new state immediately
@@ -201,10 +217,31 @@ class CollapsibleSection(QWidget):
         Intended for the fuchsia loading bar so it shows during loading
         regardless of whether the Filter section is open or closed.
         """
+        # Make the subbar a child of the header so it does not add any
+        # vertical layout space. Position it at the bottom edge of the
+        # header and keep it visible even when the section body is closed.
         self._subbar = widget
-        widget.setParent(self)
-        widget.setVisible(self._expanded)
-        self.layout().insertWidget(1, widget)
+        self._subbar_persistent = True
+        try:
+            widget.setParent(self._header)
+            widget.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            widget.setVisible(True)
+            widget.raise_()
+            # Position immediately; header resize events will keep it in place.
+            try:
+                h = self._header.height()
+                sh = widget.height()
+                widget.setGeometry(0, max(0, h - sh), max(1, self._header.width()), sh)
+            except Exception:
+                pass
+        except Exception:
+            # Fallback to the previous behaviour if anything goes wrong.
+            widget.setParent(self)
+            widget.setVisible(self._expanded)
+            try:
+                self.layout().insertWidget(1, widget)
+            except Exception:
+                pass
 
     def set_subtitle(self, subtitle: str) -> None:
         """Set a subtitle shown after the title (e.g. the active keyword).
@@ -237,3 +274,20 @@ class CollapsibleSection(QWidget):
     def is_expanded(self) -> bool:
         """Return current expanded/collapsed state."""
         return self._expanded
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        # Keep an attached subbar positioned at the bottom of the header
+        # when the header is resized. This avoids adding layout vertical
+        # space while keeping the animation visually attached to the title.
+        try:
+            if obj is self._header and event.type() == QEvent.Resize:
+                if self._subbar is not None and self._subbar.parent() is self._header:
+                    try:
+                        h = self._header.height()
+                        sh = self._subbar.height()
+                        self._subbar.setGeometry(0, max(0, h - sh), max(1, self._header.width()), sh)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        return super().eventFilter(obj, event)
