@@ -1,112 +1,134 @@
-"""Inspector — simple reusable inspector composition surface.
+"""Inspector — thin composition shell hosting a shared `TabbedPanel`.
 
 Responsibilities:
- - Own a QScrollArea and a vertical layout for composing CollapsibleSections
- - Provide consistent spacing and a small public API: add_group() and clear()
+ - Own a single `TabbedPanel` and expose small pass-through helpers
+   (`add_tab`, Qt-style `setCurrentIndex`/`currentIndex`) so visualizers
+   compose tabs without reaching into `TabbedPanel` directly.
+ - Keep scrollbar-gutter reservation (widening/narrowing the splitter pane
+   by `theme.SCROLLBAR_W`) attached to the *active* tab's scroll host,
+   re-binding automatically whenever the active tab changes. A tab's
+   content is expected to be a `TabPanel` (or any widget exposing
+   `content_scrollbar()`); tabs without a scroll host simply do not
+   participate in gutter reservation.
 
-The Inspector intentionally knows nothing about the content it hosts.
+The Inspector intentionally knows nothing about what a tab's content
+contains beyond the optional `content_scrollbar()` duck-typed hook.
 """
 from __future__ import annotations
 
-from typing import List
+from typing import Dict, Optional
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QFrame, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 from styles import theme
-from visualizers.components.tab_panel import TabPanel
+from visualizers.components.tabbed_panel import Tab, TabbedPanel
 
 
 class Inspector(QWidget):
-    """A minimal inspector composition surface.
+    """A minimal inspector composition surface built on `TabbedPanel`."""
 
-    Public API:
-      - add_group(title: str, widget: QWidget) -> CollapsibleSection
-      - clear()
-    """
-
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
 
-        # The TabPanel is the single canonical content widget for the inspector.
-        # The TabPanel owns a fixed header and an internal QScrollArea for the
-        # content region. Keep a reference to that internal scroll area here
-        # for compatibility with existing callers.
-        self._panel = TabPanel(self)
-        self._panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        # Expose the internal content scroll area for backwards compatibility
-        # so code that listens to scrollbar signals can connect to it.
-        try:
-            self.scroll = self._panel._content_scroll
-        except Exception:
-            self.scroll = None
+        self._tabbed = TabbedPanel(self)
+        self._tabbed.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._tabbed.currentChanged.connect(self._on_current_tab_changed)
 
-        # Layout for this Inspector widget — host the TabPanel directly.
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
-        outer.addWidget(self._panel)
+        outer.addWidget(self._tabbed)
 
-    def panel(self) -> TabPanel:
-        """Return the TabPanel owned by this Inspector."""
-        return self._panel
+        # id(splitter) -> gutter tracking state; see attach_scrollbar_gutter.
+        self._gutter_states: Dict[int, dict] = {}
+
+    # ------------------------------------------------------------ tab building
+    def add_tab(self, content: QWidget, title: str) -> Tab:
+        """Add *content* (typically a `TabPanel`) as a new tab; return its `Tab`."""
+        return self._tabbed.add_tab(content, title)
+
+    def tabbed_panel(self) -> TabbedPanel:
+        """Return the underlying `TabbedPanel` for rare direct access."""
+        return self._tabbed
 
     def set_minimum_width(self, width: int) -> None:
-        """Set the minimum width of the inspector panel widget."""
-        try:
-            self._panel.setMinimumWidth(int(width))
-        except Exception:
-            pass
+        """Set the minimum width of the inspector's tabbed panel."""
+        self._tabbed.setMinimumWidth(int(width))
 
-    def connect_scrollbar_range_changed(self, slot) -> None:
-        """Connect *slot(min, max)* to the internal vertical scrollbar's
-        `rangeChanged` signal without exposing the scrollbar widget.
-        """
-        try:
-            self.scroll.verticalScrollBar().rangeChanged.connect(slot)
-        except Exception:
-            pass
+    # ------------------------------------------------------------ Qt-style API
+    def setCurrentIndex(self, index: int) -> None:
+        self._tabbed.setCurrentIndex(index)
+
+    def currentIndex(self) -> int:
+        return self._tabbed.currentIndex()
+
+    # ------------------------------------------------------------ scrollbar gutter
+    def _active_scrollbar(self):
+        """Return the active tab's vertical scrollbar, if it exposes one."""
+        widget = self._tabbed.currentWidget()
+        get_scrollbar = getattr(widget, "content_scrollbar", None)
+        if callable(get_scrollbar):
+            return get_scrollbar()
+        return None
 
     def attach_scrollbar_gutter(self, splitter, inspector_index: int = 1) -> None:
-        """Attach gutter-reservation behavior to *splitter* driven by this
-        Inspector's internal vertical scrollbar.
+        """Attach gutter-reservation behavior to *splitter*, driven by the
+        active tab's scrollbar.
 
-        When the scrollbar appears the splitter's pane at *inspector_index*
-        is widened by `theme.SCROLLBAR_W`; when it disappears the width is
-        released. Multiple calls with the same *splitter* are idempotent.
+        When the active tab's vertical scrollbar becomes visible, the
+        splitter pane at *inspector_index* is widened by
+        `theme.SCROLLBAR_W`; when it becomes invisible the width is
+        released. Tracking automatically re-binds to whichever tab is
+        active, so a hidden tab's scrollbar can never influence the
+        gutter. Multiple calls with the same *splitter* are idempotent.
         """
-        try:
-            if self.scroll is None:
+        key = id(splitter)
+        if key in self._gutter_states:
+            return
+        state = {
+            "splitter": splitter,
+            "inspector_index": inspector_index,
+            "visible": False,
+            "scrollbar": None,
+            "slot": None,
+        }
+        self._gutter_states[key] = state
+        self._bind_gutter(state)
+
+    def _bind_gutter(self, state: dict) -> None:
+        old_scrollbar = state["scrollbar"]
+        if old_scrollbar is not None and state["slot"] is not None:
+            try:
+                old_scrollbar.rangeChanged.disconnect(state["slot"])
+            except TypeError:
+                pass
+
+        scrollbar = self._active_scrollbar()
+        state["scrollbar"] = scrollbar
+        if scrollbar is None:
+            state["slot"] = None
+            return
+
+        def _on_range(_min: int, _max: int, state=state) -> None:
+            visible = _max > 0
+            if state["visible"] == visible:
                 return
-            # State dict keyed by splitter id to avoid duplicate attachments
-            if not hasattr(self, "_gutter_state"):
-                self._gutter_state = {}
-
-            key = id(splitter)
-            if key in self._gutter_state:
+            splitter = state["splitter"]
+            idx = state["inspector_index"]
+            sizes = list(splitter.sizes())
+            if len(sizes) <= idx:
+                state["visible"] = visible
                 return
-            self._gutter_state[key] = False
+            sb_w = theme.SCROLLBAR_W
+            sizes[idx] = sizes[idx] + sb_w if visible else max(0, sizes[idx] - sb_w)
+            state["visible"] = visible
+            splitter.setSizes(sizes)
 
-            def _on_range(_min: int, _max: int) -> None:
-                visible = (_max > 0)
-                if self._gutter_state.get(key, False) == visible:
-                    return
-                sizes = list(splitter.sizes())
-                if len(sizes) <= inspector_index:
-                    self._gutter_state[key] = visible
-                    return
-                sb_w = theme.SCROLLBAR_W
-                if visible:
-                    sizes[inspector_index] += sb_w
-                else:
-                    sizes[inspector_index] = max(0, sizes[inspector_index] - sb_w)
-                self._gutter_state[key] = visible
-                try:
-                    splitter.setSizes(sizes)
-                except Exception:
-                    pass
+        state["slot"] = _on_range
+        scrollbar.rangeChanged.connect(_on_range)
+        _on_range(scrollbar.minimum(), scrollbar.maximum())
 
-            self.scroll.verticalScrollBar().rangeChanged.connect(_on_range)
-        except Exception:
-            pass
+    def _on_current_tab_changed(self, _index: int) -> None:
+        for state in self._gutter_states.values():
+            self._bind_gutter(state)
 

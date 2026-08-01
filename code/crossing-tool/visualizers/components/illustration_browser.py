@@ -798,7 +798,15 @@ class IllustrationBrowser(QWidget):
             _refresh_color()
             combo.setFocusPolicy(Qt.NoFocus)
             combo.setMaxVisibleItems(6)
-            combo.setSizeAdjustPolicy(QComboBox.AdjustToContentsOnFirstShow)
+            # AdjustToMinimumContentsLength decouples the combo's own width
+            # from the length of its longest item — without this, a long
+            # movie title or keyword label (Item/Keyword combos scan the
+            # loaded catalog) makes QComboBox report a huge sizeHint()/
+            # minimumSizeHint() that forces the whole Filter row (and thus
+            # the Inspector) wider once the catalog populates. Matches the
+            # same fix already used for shot_visualizer.py's movie_combo.
+            combo.setMinimumContentsLength(8)
+            combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLength)
             # Attach the canonical popup view and styling
             attach_combo_popup(combo)
             layout.addWidget(combo)

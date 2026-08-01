@@ -59,7 +59,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from styles import theme
-from styles.theme import GripSplitter, JumpScrollBar, save_window_geometry, restore_window_geometry
+from styles.theme import JumpScrollBar, save_window_geometry, restore_window_geometry
 from visualizers.components.combo_popup import attach_combo_popup
 
 # Fix Qt plugin conflict with OpenCV — del env var before first PyQt5 import
@@ -84,8 +84,6 @@ from PyQt5.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QStackedWidget,
-    QTabWidget,
-    QTabBar,
     QVBoxLayout,
     QWidget,
 )
@@ -111,6 +109,7 @@ from visualizers.components.collapsible_section import CollapsibleSection
 from visualizers.components.illustration_browser import IllustrationBrowser
 from visualizers.components.illustration_source import SilhouetteSource, EngravingSource
 from visualizers.components.inspector import Inspector
+from visualizers.components.tab_panel import TabPanel
 from visualizers.components.hover_icon_button import HoverIconButton, build_icon_pair
 
 
@@ -1518,72 +1517,6 @@ class _WrapLabel(QLabel):
                 self.setMinimumHeight(needed)
 
 
-class _TabWidgetCompat(QWidget):
-    """Compatibility wrapper that exposes a minimal QTabWidget-like API
-    (`setCurrentIndex`, `currentIndex`, `currentChanged`) while hosting
-    the new shared `Inspector` shell as its visual content.
-
-    This keeps existing code that calls `setCurrentIndex()` working without
-    changing the Inspector-based composition.
-    """
-    currentChanged = pyqtSignal(int)
-
-    def __init__(self, inspector: Inspector, tabbar: QTabBar, stack: QStackedWidget, parent=None):
-        super().__init__(parent)
-        self._inspector = inspector
-        self._tabbar = tabbar
-        self._stack = stack
-
-        # Reparent the inspector widget into this wrapper so the wrapper is
-        # the actual widget returned to window shell code (splitter, sizing).
-        try:
-            self._inspector.setParent(self)
-        except Exception:
-            pass
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(self._inspector)
-
-        # Mirror tab changes: update stacked pages and re-emit a
-        # QTabWidget-compatible `currentChanged` signal.
-        try:
-            self._tabbar.currentChanged.connect(self._on_tab_changed)
-        except Exception:
-            pass
-
-    def _on_tab_changed(self, idx: int) -> None:
-        try:
-            self._stack.setCurrentIndex(idx)
-        except Exception:
-            pass
-        try:
-            self.currentChanged.emit(idx)
-        except Exception:
-            pass
-
-    # QTabWidget-compatible API ------------------------------------------------
-    def setCurrentIndex(self, idx: int) -> None:
-        try:
-            self._tabbar.setCurrentIndex(int(idx))
-        except Exception:
-            try:
-                self._stack.setCurrentIndex(int(idx))
-            except Exception:
-                pass
-
-    def currentIndex(self) -> int:
-        try:
-            return int(self._tabbar.currentIndex())
-        except Exception:
-            try:
-                return int(self._stack.currentIndex())
-            except Exception:
-                return -1
-
-
-
 class IllustrationPane(QWidget):
     """Reference framework composition for silhouette/engraving browsing.
 
@@ -1640,65 +1573,39 @@ class IllustrationPane(QWidget):
             self._on_media_type_pref_changed
         )
 
-        # Side-panel toggle state (Tab key)
-        self._panels_hidden: bool = False
-        self._saved_panel_sizes: list = []
-
         self._build_ui()
-        QTimer.singleShot(0, self._fit_panel_width)
 
     # ------------------------------------------------------------------
     # UI construction
 
     def _build_ui(self) -> None:
-        root = QHBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
-
-        self._panel_splitter = GripSplitter(Qt.Horizontal)
-
-        # ── Pane 0: Browser (sacred content surface) ──────────────────────
+        # NOTE: this pane has no splitter/layout of its own. `_browser_stack`
+        # and the inspector widget (from `_build_inspector_pane()`) are
+        # returned individually via `IllustrationWindow.create_browser()`/
+        # `create_inspector()`, and it is the shared `WindowVisualizer` shell
+        # that parents them into its own splitter and owns all width
+        # negotiation. This pane must not maintain a competing splitter.
         self._browser_stack = QStackedWidget()
         self._browser_stack.addWidget(self._browser_sil)   # index 0
         self._browser_stack.addWidget(self._browser_eng)   # index 1
-        self._panel_splitter.addWidget(self._browser_stack)
 
         # Double-click dispatches to the source-appropriate primary action.
         self._browser_sil.itemActivated.connect(self._open_in_shotlist)
         self._browser_eng.itemActivated.connect(self._open_engraving_in_viewer)
 
-        # ── Pane 1: Filter — cascade combos + pagination + sort ───────────
-
-        self._panel_splitter.addWidget(self._build_inspector_pane())
-
-        self._panel_splitter.setStretchFactor(0, 1)
-        self._panel_splitter.setStretchFactor(1, 0)
-        self._panel_splitter.setCollapsible(0, False)
-
-
-        root.addWidget(self._panel_splitter)
+        self._build_inspector_pane()
 
     # --
 
     def _build_inspector_pane(self) -> QWidget:
         """Right pane: two source tabs (Silhouettes / Engravings), each with
-        Filter / Sort / Info / Tools collapsible sections.
-
-        This builds a small adapter that uses the shared `Inspector` surface:
-        a pinned `QTabBar` in the header and a `QStackedWidget` for pages.
+        its own Filter/[Sort]/[Mode]/Info/Tools `TabPanel`, backed by the
+        shared `TabbedPanel` so only the active tab is ever mounted (a
+        hidden tab cannot influence sizeHint/scrollbar/gutter behavior).
         """
         inspector = Inspector(self)
         inspector.set_minimum_width(_SIDE_PANE_W)
 
-        # Top tab bar (pinned to the Inspector header)
-        tabbar = QTabBar()
-        tabbar.setExpanding(False)
-        tabbar.setUsesScrollButtons(False)
-        tabbar.setDrawBase(False)
-        tabbar.setFocusPolicy(Qt.NoFocus)
-        tabbar.setStyleSheet(theme.tab_strip_stylesheet())
-
-        # Pages: each page is the same scroll-area returned by _build_source_panel
         sil_panel, self._sil_sort_combo, self._sil_meta_rows = self._build_source_panel(
             self._browser_sil, "ill_sil", _SIL_INFO_KEYS, has_sort=True, has_tools=True
         )
@@ -1707,104 +1614,22 @@ class IllustrationPane(QWidget):
             has_sort=False, has_mode_filter=True, has_eng_tools=True
         )
 
-        # Host that keeps only the active page mounted so hidden pages do
-        # not influence sizeHint/minimumSize. This ensures the shared
-        # TabPanel scroll host only measures the active page.
-        class _SinglePageHost(QWidget):
-            def __init__(self, parent=None):
-                super().__init__(parent)
-                self._lay = QVBoxLayout(self)
-                self._lay.setContentsMargins(0, 0, 0, 0)
-                self._lay.setSpacing(0)
-                self._pages = {}
-                self._current = None
+        inspector.add_tab(sil_panel, " Silhouettes ")
+        inspector.add_tab(eng_panel, " Engravings ")
 
-            def register_page(self, idx: int, widget: QWidget) -> None:
-                # keep a reference but do not parent yet; parenting occurs
-                # when the page becomes active so hidden pages don't affect
-                # layout metrics.
-                self._pages[int(idx)] = widget
-
-            def setCurrentIndex(self, idx: int) -> None:
-                try:
-                    # remove old
-                    if self._current is not None:
-                        try:
-                            self._lay.removeWidget(self._current)
-                        except Exception:
-                            pass
-                        try:
-                            self._current.setParent(None)
-                            self._current.hide()
-                        except Exception:
-                            pass
-                    # add new
-                    neww = self._pages.get(int(idx))
-                    if neww is None:
-                        self._current = None
-                        return
-                    try:
-                        neww.setParent(self)
-                    except Exception:
-                        pass
-                    self._lay.addWidget(neww)
-                    neww.show()
-                    self._current = neww
-                except Exception:
-                    pass
-
-            def currentIndex(self) -> int:
-                for k, v in self._pages.items():
-                    if v is self._current:
-                        return int(k)
-                return -1
-
-        host = _SinglePageHost(parent=self)
-        host.register_page(0, sil_panel)
-        host.register_page(1, eng_panel)
-
-        # Add header and content to the Inspector panel
-        inspector.panel().add_widget(tabbar, alignment=Qt.AlignTop)
-        inspector.panel().add_widget(host)
-
-        # Wrap the Inspector with a QTabWidget-compatible adapter so code
-        # that expects a QTabWidget-like API (setCurrentIndex(), currentIndex(),
-        # currentChanged) continues to work. Keep the wrapper parented to
-        # the IllustrationPane so WindowVisualizer receives a proper shell.
-        adapter = _TabWidgetCompat(inspector, tabbar, host, parent=self)
-        self._side_scroll = adapter
         self._sort_combo = self._sil_sort_combo
         self._meta_rows = self._sil_meta_rows
 
+        inspector.tabbed_panel().currentChanged.connect(self._on_source_tab_changed)
+        self._side_scroll = inspector
 
-        # Wire tab interactions: update the stacked pages and preserve the
-        # original source-switch semantics used elsewhere in the pane.
-        tabbar.addTab(" Silhouettes ")
-        tabbar.addTab(" Engravings ")
-        tabbar.currentChanged.connect(self._on_source_tab_changed)
-        # Ensure the initial page is mounted into the host
-        try:
-            host.setCurrentIndex(0)
-        except Exception:
-            pass
-
-        return adapter
+        return inspector
 
     # ------------------------------------------------------------------ helpers
 
-    # _make_tab_widget removed: shell composition now uses shared Inspector
-    # and a minimal adapter (QTabBar + QStackedWidget) created in
-    # `_build_inspector_pane()` to preserve the pinned header behaviour.
-
-    def _make_panel_scroll(self) -> tuple:
-        """Return (QWidget panel, QVBoxLayout) for a source page.
-
-        The returned `panel` is a plain widget that will be hosted inside the
-        shared `TabPanel` content area (so it must not be its own QScrollArea).
-        """
-        _TAB_ACTIVE = theme.TAB_BG
+    def _make_source_tab_panel(self) -> TabPanel:
+        """Return a `TabPanel` styled/sized for one Illustration source tab."""
         _content_style = (
-            f"QWidget {{ background: {_TAB_ACTIVE}; }}"
             f" QComboBox {{ background-color: {theme.BTN_BG}; color: {theme.TEXT}; }}"
             f" QComboBox::drop-down {{ border: none; }}"
             f" QComboBox QAbstractItemView, QComboBox QListView {{"
@@ -1823,20 +1648,16 @@ class IllustrationPane(QWidget):
             f" QPushButton:disabled {{ color: {theme.TEXT_DIM};"
             f" background-color: {theme.BTN_BG}; }}"
         )
-        panel = QWidget()
-        panel.setStyleSheet(_content_style)
+        panel = TabPanel()
+        # TabPanel already paints the canonical pane background/border;
+        # layer the combo/button rules used throughout this source panel
+        # on top rather than replacing the stylesheet outright.
+        panel.setStyleSheet(panel.styleSheet() + _content_style)
         panel.setMinimumWidth(_SIDE_PANE_W)
-        layout = QVBoxLayout(panel)
-        # Keep the local content layout edge-to-edge horizontally but use
-        # the canonical inspector spacing between collapsible sections so
-        # panels built here (Silhouettes/Engravings) match the spacing of
-        # TabPanel-managed sections (e.g. Metadata/Movie inspector).
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(theme.INSPECTOR_GAP)
-        return panel, layout
+        return panel
 
-    def _make_sort_combo(self, pv: QVBoxLayout, pref_key: str) -> QComboBox:
-        """Build, wire, and add a Sort section+combo to *pv*; return the combo."""
+    def _make_sort_combo(self, panel: TabPanel, pref_key: str) -> QComboBox:
+        """Build, wire, and add a Sort section+combo to *panel*; return the combo."""
         sort_sec = CollapsibleSection("Sort", pref_key=pref_key)
         combo = QComboBox()
         combo.setFocusPolicy(Qt.NoFocus)
@@ -1860,18 +1681,18 @@ class IllustrationPane(QWidget):
         combo.currentIndexChanged.connect(self._on_sort_changed)
         _refresh_color()
         sort_sec.add_widget(combo)
-        pv.addWidget(sort_sec)
+        panel.add_widget(sort_sec)
         return combo
 
     # Popup attachment handled by visualizers.components.combo_popup.attach_combo_popup
 
-    def _make_info_grid(self, pv: QVBoxLayout, pref_key: str,
+    def _make_info_grid(self, panel: TabPanel, pref_key: str,
                         info_keys: tuple) -> dict:
         """Build and add an Info collapsible section; return {key: QLabel} dict."""
         info_sec = CollapsibleSection("Info", pref_key=pref_key)
         block = MetadataBlock(list(info_keys))
         info_sec.add_widget(block)
-        pv.addWidget(info_sec)
+        panel.add_widget(info_sec)
         return block.labels()
 
     def _build_source_panel(
@@ -1884,12 +1705,13 @@ class IllustrationPane(QWidget):
         has_tools: bool = False,
         has_eng_tools: bool = False,
     ) -> tuple:
-        """Build a complete Filter/[Sort]/[Mode]/Info/[Tools] panel for *browser*.
+        """Build a complete Filter/[Sort]/[Mode]/Info/[Tools] `TabPanel` for
+        *browser*.
 
-        Returns (QScrollArea, sort_combo, meta_rows).  sort_combo is None when
+        Returns (TabPanel, sort_combo, meta_rows).  sort_combo is None when
         has_sort is False.
         """
-        panel, pv = self._make_panel_scroll()
+        panel = self._make_source_tab_panel()
 
         # ── Filter ────────────────────────────────────────────────────────
         filter_sec = CollapsibleSection("Filter",
@@ -1905,28 +1727,27 @@ class IllustrationPane(QWidget):
         browser.keywordChanged.connect(
             lambda kw, sec=filter_sec: sec.set_subtitle(kw.capitalize() if kw else "")
         )
-        pv.addWidget(filter_sec)
+        panel.add_widget(filter_sec)
         filter_sec.set_subbar(browser._loading_bar)
 
         # ── Sort (optional) ───────────────────────────────────────────────
         sort_combo = None
         if has_sort:
-            sort_combo = self._make_sort_combo(pv, f"{pref_prefix}_section_sort")
+            sort_combo = self._make_sort_combo(panel, f"{pref_prefix}_section_sort")
 
         # ── Mode filter (engravings) ──────────────────────────────────────
         if has_mode_filter:
-            self._build_mode_filter_section(pv, browser)
+            self._build_mode_filter_section(panel, browser)
 
         # ── Info ──────────────────────────────────────────────────────────
-        meta_rows = self._make_info_grid(pv, f"{pref_prefix}_section_info", info_keys)
+        meta_rows = self._make_info_grid(panel, f"{pref_prefix}_section_info", info_keys)
 
         # ── Tools ─────────────────────────────────────────────────────────
         if has_tools:
-            self._build_tools_section(pv)
+            self._build_tools_section(panel)
         if has_eng_tools:
-            self._build_engraving_tools_section(pv)
+            self._build_engraving_tools_section(panel)
 
-        pv.addStretch()
         return panel, sort_combo, meta_rows
 
     # ------------------------------------------------------------------ shared button helpers
@@ -1955,8 +1776,8 @@ class IllustrationPane(QWidget):
         """
         return build_icon_pair(svg_name, size, normal_color=theme.TEXT, hover_color=theme.ACCENT_TEXT)
 
-    def _build_tools_section(self, pv: QVBoxLayout) -> None:
-        """Add the Tools collapsible section to *pv*."""
+    def _build_tools_section(self, panel: TabPanel) -> None:
+        """Add the Tools collapsible section to *panel*."""
         tools_sec = CollapsibleSection("Tools", pref_key="ill_section_tools")
         _icon_sz = QSize(14, 14)
         _open_icon, _open_icon_hover = self._make_btn_icon("open-in-window", 14)
@@ -2062,7 +1883,7 @@ class IllustrationPane(QWidget):
             "Enter \u2014 toggle best\n"
             "Shift+Enter \u2014 shotlist"
         )
-        pv.addWidget(tools_sec)
+        panel.add_widget(tools_sec)
 
     # ------------------------------------------------------------------ source switching
 
@@ -2105,7 +1926,7 @@ class IllustrationPane(QWidget):
     
 
     def _build_mode_filter_section(
-        self, pv: QVBoxLayout, browser: "IllustrationBrowser"
+        self, panel: TabPanel, browser: "IllustrationBrowser"
     ) -> None:
         """Add a Mode collapsible section with Isolated+Frame / Frame / Isolated combo."""
         mode_sec = CollapsibleSection("Mode", pref_key="ill_eng_section_mode")
@@ -2134,9 +1955,9 @@ class IllustrationPane(QWidget):
 
         combo.currentIndexChanged.connect(_on_mode_changed)
         mode_sec.add_widget(combo)
-        pv.addWidget(mode_sec)
+        panel.add_widget(mode_sec)
 
-    def _build_engraving_tools_section(self, pv: QVBoxLayout) -> None:
+    def _build_engraving_tools_section(self, panel: TabPanel) -> None:
         """Add the Engravings Tools section (Viewer + Best buttons)."""
         tools_sec = CollapsibleSection("Tools", pref_key="ill_eng_section_tools")
         _icon_sz = QSize(14, 14)
@@ -2184,7 +2005,7 @@ class IllustrationPane(QWidget):
         self._eng_delete_btn.setStyleSheet(_abtn)
         self._eng_delete_btn.clicked.connect(self._delete_engraving)
         tools_sec.add_widget(self._eng_delete_btn)
-        pv.addWidget(tools_sec)
+        panel.add_widget(tools_sec)
 
     # ------------------------------------------------------------------
     # Sort controls
@@ -2261,10 +2082,23 @@ class IllustrationPane(QWidget):
         def _fmt(v):
             return f"{v:.3f}" if v is not None else "—"
 
-        film = rec.get("filename_stem") or rec.get("filename") or "—"
-        shot_id = str(rec.get("shot_id", "—"))
-        if len(shot_id) > 28:
-            shot_id = "…" + shot_id[-26:]
+        def _clip_middle(text: str, max_len: int = 28) -> str:
+            """Shrink *text* to a single-line-safe length.
+
+            Filesystem-derived strings (raw filenames, ids) are frequently
+            joined with underscores/dots and contain no space/hyphen break
+            points, so `QLabel.setWordWrap(True)` cannot wrap them — Qt's
+            word-wrap only breaks at legal boundaries, never mid-word. An
+            unbroken run of this length reports a `minimumSizeHint()` wide
+            enough to fit the whole string on one line, which forces the
+            Inspector pane wider than intended. Truncating keeps the value
+            informative (start/end are usually the most identifying parts)
+            while keeping the label's width bounded like every other field.
+            """
+            return text if len(text) <= max_len else "…" + text[-(max_len - 1):]
+
+        film = _clip_middle(rec.get("filename_stem") or rec.get("filename") or "—")
+        shot_id = _clip_middle(str(rec.get("shot_id", "—")))
 
         # Keys shared by all sources
         _set("label", rec.get("label", "—"))
@@ -2304,7 +2138,7 @@ class IllustrationPane(QWidget):
 
         # Engraving-only keys
         _set("mode",      rec.get("mode", "—"))
-        _set("object_id", rec.get("object_id", "—"))
+        _set("object_id", _clip_middle(str(rec.get("object_id", "—"))))
 
         # Engraving tools buttons
         if hasattr(self, "_eng_view_btn"):
@@ -2814,39 +2648,7 @@ class IllustrationPane(QWidget):
                     self._browser.select_index(abs_idx)
                     break
 
-    # ------------------------------------------------------------------
-    # Layout helpers
 
-    def _fit_panel_width(self) -> None:
-        """Set the Inspector pane to its opening minimum width."""
-        total = self._panel_splitter.width()
-        if total <= 0:
-            QTimer.singleShot(100, self._fit_panel_width)
-            return
-        pw = _SIDE_PANE_W
-        bw = max(1, total - pw)
-        self._panel_splitter.setSizes([bw, pw])
-
-    def _toggle_panels(self) -> None:
-        """Toggle between BROWSER mode (panels hidden) and TOOLS mode (panels visible).
-
-        TAB key binding.  In BROWSER mode the Filter and Inspector widgets are
-        invisible so the Browser fills the entire window.  In TOOLS mode they
-        reappear at exactly the widths and collapse state they had before.
-        The state (mode + sizes) is persisted to prefs so it survives restarts.
-        """
-        if self._panels_hidden:
-            # ── Restore TOOLS mode ──────────────────────────────────────────
-            self._side_scroll.setVisible(True)
-            if self._saved_panel_sizes and len(self._saved_panel_sizes) == 2:
-                self._panel_splitter.setSizes(self._saved_panel_sizes)
-            else:
-                QTimer.singleShot(0, self._fit_panel_width)
-            self._panels_hidden = False
-        else:
-            self._saved_panel_sizes = list(self._panel_splitter.sizes())
-            self._side_scroll.setVisible(False)
-            self._panels_hidden = True
 # Main window
 # ---------------------------------------------------------------------------
 
@@ -2958,72 +2760,48 @@ class IllustrationWindow(WindowVisualizer):
         # Return the side inspector/filter pane created by the catalog.
         return getattr(self, "_catalog", None)._side_scroll
 
-    def _fit_splitter_width(self) -> None:
-        # Delegate to the IllustrationPane's panel fitter.
-        try:
-            self._catalog._fit_panel_width()
-        except Exception:
-            QTimer.singleShot(100, self._fit_splitter_width)
-
-    def _toggle_inspector(self) -> None:
-        # Keep WindowVisualizer behavior, but synchronize the catalog's
-        # internal panel state so the IllustrationPane remains consistent.
-        try:
-            if hasattr(self, '_catalog') and getattr(self._catalog, '_panel_splitter', None):
-                # Save current sizes so the catalog can restore them later.
-                self._catalog._saved_panel_sizes = list(self._catalog._panel_splitter.sizes())
-        except Exception:
-            pass
-
-        # Perform the shell-level toggle (show/hide inspector)
-        super()._toggle_inspector()
-
-        # After toggle, update the catalog state to reflect shell visibility.
-        try:
-            hidden = getattr(self, '_inspector_hidden', False)
-            if hasattr(self, '_catalog'):
-                self._catalog._panels_hidden = hidden
-                if hidden:
-                    try:
-                        self._catalog._side_scroll.setVisible(False)
-                    except Exception:
-                        pass
-                else:
-                    try:
-                        self._catalog._side_scroll.setVisible(True)
-                        if getattr(self._catalog, '_saved_panel_sizes', None):
-                            self._catalog._panel_splitter.setSizes(self._catalog._saved_panel_sizes)
-                        else:
-                            QTimer.singleShot(0, self._catalog._fit_panel_width)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-
     def _restore_saved_state(self) -> None:
-        """Restore panel mode, splitter sizes and fullscreen state from prefs.
+        """Restore inspector visibility, splitter sizes and fullscreen state
+        from prefs.
 
         Deferred to a single-shot timer so it runs after the initial layout
-        pass (_fit_panel_width) has already set default pane widths.
+        pass (`WindowVisualizer._fit_splitter_width`) has already set
+        default pane widths.
         """
         from tool import prefs as _prefs
 
-        # ── Panel sizes ──────────────────────────────────────────────────────
+        # ── Splitter sizes ───────────────────────────────────────────────────
         saved_sizes = _prefs.get("window_illustration_panel_sizes")
         if saved_sizes and len(saved_sizes) == 2:
-            self._catalog._saved_panel_sizes = [int(v) for v in saved_sizes]
+            # Clamp the restored inspector width instead of trusting the
+            # saved value verbatim. A stale value (e.g. saved by a
+            # since-fixed startup-width bug, or saved from a wider
+            # window/screen than this one) must not be able to reopen the
+            # inspector wider than is sane for the CURRENT window — floor
+            # is the pane's own content-driven minimum (same floor
+            # `_fit_splitter_width()` already uses), ceiling is half of
+            # the current window width (the inspector is a side panel and
+            # should never out-grow the browser it's paired with). This is
+            # local to Illustration only; it does not touch how the
+            # splitter itself behaves, only which numbers get fed to it.
+            inspector_w = int(saved_sizes[1])
+            floor_w = max(_SIDE_PANE_W, self._inspector_shell.sizeHint().width())
+            ceiling_w = max(floor_w, self.width() // 2)
+            inspector_w = min(max(inspector_w, floor_w), ceiling_w)
+            browser_w = max(1, self.width() - inspector_w)
+            self._saved_splitter_sizes = [browser_w, inspector_w]
 
         # ── Mode (BROWSER / TOOLS) ───────────────────────────────────────────
         in_browser_mode = bool(_prefs.get("window_illustration_browser_mode"))
         if in_browser_mode:
-            self._catalog._panels_hidden = True
-            self._catalog._side_scroll.setVisible(False)
+            self._inspector_hidden = True
+            self._inspector_shell.setVisible(False)
             # Browser fills the window; no setSizes needed
         else:
-            if self._catalog._saved_panel_sizes:
-                self._catalog._panel_splitter.setSizes(self._catalog._saved_panel_sizes)
+            if self._saved_splitter_sizes:
+                self._splitter.setSizes(self._saved_splitter_sizes)
             else:
-                self._catalog._fit_panel_width()
+                self._fit_splitter_width()
 
         # ── Fullscreen ───────────────────────────────────────────────────────
         if _prefs.get("window_illustration_fullscreen"):
@@ -3032,14 +2810,15 @@ class IllustrationWindow(WindowVisualizer):
     def closeEvent(self, event) -> None:
         from tool import prefs as _prefs
         _prefs.set("window_illustration_fullscreen", self.isFullScreen())
-        _prefs.set("window_illustration_browser_mode", self._catalog._panels_hidden)
-        # Save the TOOLS-mode panel sizes.  When in BROWSER mode the splitter
-        # sizes are meaningless (panels are invisible), so save the pre-browser
-        # sizes that _toggle_panels stored in _saved_panel_sizes instead.
-        if self._catalog._panels_hidden and self._catalog._saved_panel_sizes:
-            panel_sizes = self._catalog._saved_panel_sizes
+        _prefs.set("window_illustration_browser_mode", self._inspector_hidden)
+        # Save the TOOLS-mode splitter sizes. When the inspector is hidden
+        # the splitter sizes are meaningless (inspector pane is invisible),
+        # so save the pre-hide sizes that _toggle_inspector stored in
+        # _saved_splitter_sizes instead.
+        if self._inspector_hidden and self._saved_splitter_sizes:
+            panel_sizes = self._saved_splitter_sizes
         else:
-            panel_sizes = list(self._catalog._panel_splitter.sizes())
+            panel_sizes = list(self._splitter.sizes())
         _prefs.set("window_illustration_panel_sizes", panel_sizes)
         self._ipc_server.stop()
         self._ipc_server.wait(1000)

@@ -35,6 +35,7 @@ from tool import prefs as _prefs
 from visualizers.window_visualizer import WindowVisualizer
 from visualizers.components.collapsible_section import CollapsibleSection
 from visualizers.components.inspector import Inspector
+from visualizers.components.tab_panel import TabPanel
 from visualizers.components.metadata_block import MetadataBlock
 from visualizers.components.thumbnail_manager import ThumbnailManager
 from visualizers.components.flow_widget import FlowWidget
@@ -54,7 +55,6 @@ from PyQt5.QtWidgets import (
     QGridLayout,
     QScrollArea,
     QStackedWidget,
-    QTabBar,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -573,7 +573,7 @@ class MetadataVisualizer(WindowVisualizer):
         self._saved_splitter_sizes: list[int] = []
         self._last_visible_splitter_sizes: list[int] = []
         self._selected_records: dict[str, dict | None] = {"movie": None, "gameplay": None}
-        self._current_thumbnail_path: Path | None = None
+        self._current_thumbnail_paths: dict[str, Path | None] = {"movie": None, "gameplay": None}
         self._inspector_collapse_w = 0
         self._inspector_restore_w = 0
         self._inspector_scrollbar_visible = False
@@ -623,55 +623,66 @@ class MetadataVisualizer(WindowVisualizer):
         # (comparative debug instrumentation removed)
 
     def _build_inspector(self) -> QWidget:
-        inspector = Inspector(self)
+        """Build the shared `Inspector`: one `Tab`/`TabPanel` per media type.
 
-        # Configure content size
+        Each tab owns its own Thumbnail/Info/Tools sections bound to that
+        media type's data — there is no shared, swapped-in-place content.
+        Only the active tab is ever mounted (see `TabbedPanel`), so a
+        hidden tab's Info block cannot affect the inspector's size hint.
+        """
+        inspector = Inspector(self)
         inspector.set_minimum_width(_INSPECTOR_MIN_W)
 
-        # Top source tabs (non-collapsible)
-        tabs = QTabBar()
-        tabs.setExpanding(False)
-        tabs.setUsesScrollButtons(False)
-        tabs.setDrawBase(False)
-        tabs.setFocusPolicy(Qt.NoFocus)
-        tabs.setStyleSheet(theme.tab_strip_stylesheet())
-        self._source_tabs = tabs
+        self._thumbnail_labels: dict[str, QLabel] = {}
+        self._thumbnail_sections: dict[str, CollapsibleSection] = {}
+        self._info_blocks: dict[str, MetadataBlock] = {}
+        self._tools_sections: dict[str, CollapsibleSection] = {}
+        self._zoom_in_btns: dict[str, QPushButton] = {}
+        self._zoom_out_btns: dict[str, QPushButton] = {}
 
-        tabs.addTab(" Movies ")
-        tabs.addTab(" Gameplay ")
+        for media_type, title in (("movie", " Movies "), ("gameplay", " Gameplay ")):
+            inspector.add_tab(self._build_source_tab_panel(media_type), title)
 
-        tabs.currentChanged.connect(self._on_source_tab_changed)
+        self._inspector = inspector
+        inspector.tabbed_panel().currentChanged.connect(self._on_source_tab_changed)
 
-        inspector.panel().add_widget(tabs, alignment=Qt.AlignTop)
+        return inspector
+
+    def _build_source_tab_panel(self, media_type: str) -> TabPanel:
+        """Build one Inspector tab (Thumbnail/Info/Tools) for *media_type*."""
+        panel = TabPanel()
 
         # Thumbnail section
         thumbnail_wrap = QWidget()
         thumbnail_layout = QVBoxLayout(thumbnail_wrap)
         thumbnail_layout.setContentsMargins(0, 0, 0, 0)
         thumbnail_layout.setSpacing(0)
-        self._thumbnail_label = QLabel("No thumbnail")
-        self._thumbnail_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        thumbnail_label = QLabel("No thumbnail")
+        thumbnail_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         # Let the TabPanel paint the canonical pane background; keep the
         # thumbnail label itself transparent so the panel shows through.
         # Ensure no internal margins/padding so the image sits flush with
         # the section body edges.
-        self._thumbnail_label.setStyleSheet(
+        thumbnail_label.setStyleSheet(
             f"color: {theme.TEXT_DIM}; background: transparent; margin: 0px; padding: 0px; border: none;"
         )
-        self._thumbnail_label.setMinimumHeight(140)
-        self._thumbnail_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        thumbnail_layout.addWidget(self._thumbnail_label)
-        self._thumbnail_section = inspector.panel().add_section("Thumbnail", thumbnail_wrap, pref_key="metadata_section_thumbnail")
+        thumbnail_label.setMinimumHeight(140)
+        thumbnail_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        thumbnail_layout.addWidget(thumbnail_label)
+        self._thumbnail_sections[media_type] = panel.add_section(
+            "Thumbnail", thumbnail_wrap, pref_key="metadata_section_thumbnail"
+        )
+        self._thumbnail_labels[media_type] = thumbnail_label
 
         # Info section
         info_wrap = QWidget()
         info_layout = QVBoxLayout(info_wrap)
         info_layout.setContentsMargins(0, 0, 0, 0)
         info_layout.setSpacing(0)
-
-        self._info_block = MetadataBlock(_INFO_ROWS)
-        info_layout.addWidget(self._info_block)
-        self._info_section = inspector.panel().add_section("Info", info_wrap, pref_key="metadata_section_info")
+        info_block = MetadataBlock(_INFO_ROWS)
+        info_layout.addWidget(info_block)
+        panel.add_section("Info", info_wrap, pref_key="metadata_section_info")
+        self._info_blocks[media_type] = info_block
 
         # Tools section
         tools_wrap = QWidget()
@@ -692,34 +703,31 @@ class MetadataVisualizer(WindowVisualizer):
             + f"QPushButton {{ font-family: '{theme.FAMILY_UI}'; font-weight: {theme.WEIGHT_UI}; }}"
         )
 
-        self._zoom_in_btn = QPushButton("Zoom +")
-        self._zoom_in_btn.setFocusPolicy(Qt.NoFocus)
-        self._zoom_in_btn.setStyleSheet(action_style)
-        self._zoom_in_btn.clicked.connect(self._zoom_in_current_page)
-        tools_grid.addWidget(self._zoom_in_btn, 0, 0)
+        zoom_in_btn = QPushButton("Zoom +")
+        zoom_in_btn.setFocusPolicy(Qt.NoFocus)
+        zoom_in_btn.setStyleSheet(action_style)
+        zoom_in_btn.clicked.connect(lambda _checked=False, mt=media_type: self._change_zoom(mt, _ZOOM_STEP))
+        tools_grid.addWidget(zoom_in_btn, 0, 0)
+        self._zoom_in_btns[media_type] = zoom_in_btn
 
-        self._zoom_out_btn = QPushButton("Zoom -")
-        self._zoom_out_btn.setFocusPolicy(Qt.NoFocus)
-        self._zoom_out_btn.setStyleSheet(action_style)
-        self._zoom_out_btn.clicked.connect(self._zoom_out_current_page)
-        tools_grid.addWidget(self._zoom_out_btn, 0, 1)
+        zoom_out_btn = QPushButton("Zoom -")
+        zoom_out_btn.setFocusPolicy(Qt.NoFocus)
+        zoom_out_btn.setStyleSheet(action_style)
+        zoom_out_btn.clicked.connect(lambda _checked=False, mt=media_type: self._change_zoom(mt, -_ZOOM_STEP))
+        tools_grid.addWidget(zoom_out_btn, 0, 1)
+        self._zoom_out_btns[media_type] = zoom_out_btn
 
-        self._shotlist_btn = QPushButton("Shotlist")
-        self._shotlist_btn.setFocusPolicy(Qt.NoFocus)
-        self._shotlist_btn.setStyleSheet(action_style)
-        self._shotlist_btn.setToolTip("Open the selected movie or gameplay entry in Shotlist")
-        self._shotlist_btn.clicked.connect(self._open_selected_in_shotlist)
-        tools_grid.addWidget(self._shotlist_btn, 1, 0, 1, 2)
+        shotlist_btn = QPushButton("Shotlist")
+        shotlist_btn.setFocusPolicy(Qt.NoFocus)
+        shotlist_btn.setStyleSheet(action_style)
+        shotlist_btn.setToolTip("Open the selected movie or gameplay entry in Shotlist")
+        shotlist_btn.clicked.connect(lambda _checked=False, mt=media_type: self._open_shotlist_for(mt))
+        tools_grid.addWidget(shotlist_btn, 1, 0, 1, 2)
 
         tools_layout.addLayout(tools_grid)
-        self._tools_section = inspector.panel().add_section("Tools", tools_wrap, pref_key="metadata_section_tools")
+        self._tools_sections[media_type] = panel.add_section("Tools", tools_wrap, pref_key="metadata_section_tools")
 
-        # (debug instrumentation removed)
-
-        return inspector
-
-    # (debug instrumentation removed)
-
+        return panel
 
     # WindowVisualizer hook: create the inspector shell widget
     def create_inspector(self) -> QWidget:
@@ -740,18 +748,12 @@ class MetadataVisualizer(WindowVisualizer):
 
         self._browser_stack.addWidget(self._movie_page)
         self._browser_stack.addWidget(self._gameplay_page)
-        # Keep the zoom buttons in sync with the active page and zoom state.
-        try:
-            self._browser_stack.currentChanged.connect(lambda _idx: self._update_zoom_buttons())
-        except Exception:
-            pass
-        try:
-            self._movie_page._zoom_manager.zoomChanged.connect(lambda _z: self._update_zoom_buttons())
-            self._gameplay_page._zoom_manager.zoomChanged.connect(lambda _z: self._update_zoom_buttons())
-        except Exception:
-            pass
+        # Each tab's zoom buttons reflect only its own page's zoom state.
+        self._movie_page._zoom_manager.zoomChanged.connect(lambda _z: self._update_zoom_buttons("movie"))
+        self._gameplay_page._zoom_manager.zoomChanged.connect(lambda _z: self._update_zoom_buttons("gameplay"))
         # Initial button state
-        QTimer.singleShot(0, self._update_zoom_buttons)
+        QTimer.singleShot(0, lambda: self._update_zoom_buttons("movie"))
+        QTimer.singleShot(0, lambda: self._update_zoom_buttons("gameplay"))
         return self._browser_stack
 
     def _fit_splitter_width(self) -> None:
@@ -766,17 +768,15 @@ class MetadataVisualizer(WindowVisualizer):
         # Defer reflow & thumbnail update so layouts and splitter sizes
         # have settled; avoids initial clipping until the user drags.
         QTimer.singleShot(0, self._request_browser_reflow)
-        QTimer.singleShot(0, self._update_thumbnail_preview)
+        QTimer.singleShot(0, lambda: self._update_thumbnail_preview(self._active_media_type()))
 
     def _sync_inspector_scrollbar_width(self) -> None:
         return
 
     def _inspector_collapse_threshold(self) -> int:
-        fixed_w = 0
-        if hasattr(self, "_source_tabs"):
-            fixed_w = max(fixed_w, self._source_tabs.sizeHint().width())
-        if hasattr(self, "_tools_section"):
-            fixed_w = max(fixed_w, self._tools_section.sizeHint().width())
+        fixed_w = self._inspector.tabbed_panel().tab_bar().sizeHint().width()
+        for section in self._tools_sections.values():
+            fixed_w = max(fixed_w, section.sizeHint().width())
 
         self._inspector_collapse_w = max(_INSPECTOR_MIN_W, int(round(fixed_w * 0.5)))
         return self._inspector_collapse_w
@@ -789,85 +789,41 @@ class MetadataVisualizer(WindowVisualizer):
         if isinstance(page, _MetadataBrowserPage):
             page.request_reflow()
 
-    def _active_page(self) -> _MetadataBrowserPage | None:
-        page = self._browser_stack.currentWidget()
-        return page if isinstance(page, _MetadataBrowserPage) else None
+    def _active_media_type(self) -> str:
+        return self._media_type_for_index(self._inspector.currentIndex())
 
-    def _zoom_in_current_page(self) -> None:
-        page = self._active_page()
-        if page is not None:
-            page._change_zoom(_ZOOM_STEP)
+    def _media_type_for_index(self, index: int) -> str:
+        return "movie" if index == 0 else "gameplay"
 
-        # Update buttons state after change
-        QTimer.singleShot(0, self._update_zoom_buttons)
+    def _page_for(self, media_type: str) -> _MetadataBrowserPage:
+        return self._movie_page if media_type == "movie" else self._gameplay_page
 
-    def _zoom_out_current_page(self) -> None:
-        page = self._active_page()
-        if page is not None:
-            page._change_zoom(-_ZOOM_STEP)
+    def _change_zoom(self, media_type: str, delta: float) -> None:
+        self._page_for(media_type)._change_zoom(delta)
+        QTimer.singleShot(0, lambda: self._update_zoom_buttons(media_type))
 
-        # Update buttons state after change
-        QTimer.singleShot(0, self._update_zoom_buttons)
+    def _update_zoom_buttons(self, media_type: str) -> None:
+        """Enable/disable *media_type*'s zoom buttons based on its page's limits."""
+        zm = self._page_for(media_type)._zoom_manager
+        eps = 1e-9
+        self._zoom_in_btns[media_type].setEnabled(zm.zoom() < zm._max - eps)
+        self._zoom_out_btns[media_type].setEnabled(zm.zoom() > zm._min + eps)
 
-    def _update_zoom_buttons(self) -> None:
-        """Enable/disable zoom buttons based on the active page's limits."""
-        page = self._active_page()
-        if page is None:
-            try:
-                self._zoom_in_btn.setEnabled(False)
-                self._zoom_out_btn.setEnabled(False)
-            except Exception:
-                pass
-            return
-
-        zm = getattr(page, "_zoom_manager", None)
-        try:
-            if zm is None:
-                z = page.zoom()
-                step = _ZOOM_STEP
-                zmin = _ZOOM_MIN
-                zmax = _ZOOM_MAX
-            else:
-                z = zm.zoom()
-                step = getattr(zm, "_step", _ZOOM_STEP)
-                zmin = getattr(zm, "_min", _ZOOM_MIN)
-                zmax = getattr(zm, "_max", _ZOOM_MAX)
-
-            eps = 1e-9
-            # Disable only when already at the hard limits.
-            self._zoom_in_btn.setEnabled(z < zmax - eps)
-            self._zoom_out_btn.setEnabled(z > zmin + eps)
-        except Exception:
-            try:
-                self._zoom_in_btn.setEnabled(True)
-                self._zoom_out_btn.setEnabled(True)
-            except Exception:
-                pass
-
-    def _current_page_record(self) -> dict | None:
-        page = self._active_page()
-        return page.current_record() if page is not None else None
-
-    def _current_page_thumbnail_path(self) -> Path | None:
-        page = self._active_page()
-        return page.current_thumbnail_path() if page is not None else None
-
-    def _update_thumbnail_preview(self) -> None:
-        if not hasattr(self, "_thumbnail_label"):
-            return
-        path = self._current_page_thumbnail_path()
-        self._current_thumbnail_path = path
+    def _update_thumbnail_preview(self, media_type: str) -> None:
+        thumbnail_label = self._thumbnail_labels[media_type]
+        path = self._page_for(media_type).current_thumbnail_path()
+        self._current_thumbnail_paths[media_type] = path
         if path is None or not path.exists():
-            self._thumbnail_label.setPixmap(QPixmap())
-            self._thumbnail_label.setText("No thumbnail")
-            self._thumbnail_label.setFixedHeight(140)
+            thumbnail_label.setPixmap(QPixmap())
+            thumbnail_label.setText("No thumbnail")
+            thumbnail_label.setFixedHeight(140)
             return
 
         pixmap = QPixmap(str(path))
         if pixmap.isNull():
-            self._thumbnail_label.setPixmap(QPixmap())
-            self._thumbnail_label.setText("No thumbnail")
-            self._thumbnail_label.setFixedHeight(140)
+            thumbnail_label.setPixmap(QPixmap())
+            thumbnail_label.setText("No thumbnail")
+            thumbnail_label.setFixedHeight(140)
             return
 
         # Compute available width inside the section *body* so the image
@@ -875,51 +831,38 @@ class MetadataVisualizer(WindowVisualizer):
         # Use the scroll area's viewport width but subtract the content
         # widget's left/right contents margins so the image does not bleed
         # into the pane inset owned by the content widget.
+        thumbnail_section = self._thumbnail_sections[media_type]
         available_w = None
-        try:
-            from PyQt5.QtWidgets import QScrollArea
-            node = self._thumbnail_section
-            while node is not None:
-                node = node.parentWidget()
-                if node is None:
-                    break
-                if isinstance(node, QScrollArea):
-                    vp_w = max(1, node.viewport().width())
-                    try:
-                        content = node.widget()
-                        if content is not None and content.layout() is not None:
-                            m = content.layout().contentsMargins()
-                            vp_w = max(1, vp_w - (m.left() + m.right()))
-                    except Exception:
-                        pass
-                    available_w = vp_w
-                    break
-        except Exception:
-            available_w = None
+        node = thumbnail_section
+        while node is not None:
+            node = node.parentWidget()
+            if node is None:
+                break
+            if isinstance(node, QScrollArea):
+                vp_w = max(1, node.viewport().width())
+                content = node.widget()
+                if content is not None and content.layout() is not None:
+                    m = content.layout().contentsMargins()
+                    vp_w = max(1, vp_w - (m.left() + m.right()))
+                available_w = vp_w
+                break
 
         if available_w is None:
-            try:
-                body = getattr(self._thumbnail_section, "_body")
-                available_w = max(1, body.contentsRect().width())
-            except Exception:
-                available_w = max(1, self._thumbnail_section.contentsRect().width())
+            available_w = max(1, thumbnail_section.contentsRect().width())
 
         # Scale the pixmap to the available width and constrain the QLabel
         # so it cannot grow beyond that width. Keep a fixed height to
         # reserve vertical space equal to the scaled image height.
         scaled = pixmap.scaledToWidth(available_w, Qt.SmoothTransformation)
-        self._thumbnail_label.setText("")
-        self._thumbnail_label.setPixmap(scaled)
-        try:
-            self._thumbnail_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            self._thumbnail_label.setMaximumWidth(available_w)
-        except Exception:
-            pass
-        self._thumbnail_label.setFixedHeight(max(1, scaled.height()))
+        thumbnail_label.setText("")
+        thumbnail_label.setPixmap(scaled)
+        thumbnail_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        thumbnail_label.setMaximumWidth(available_w)
+        thumbnail_label.setFixedHeight(max(1, scaled.height()))
 
-    def _open_selected_in_shotlist(self) -> None:
-        record = self._current_page_record()
-        self._open_record_in_shotlist("movie" if self._browser_stack.currentIndex() == 0 else "gameplay", record)
+    def _open_shotlist_for(self, media_type: str) -> None:
+        record = self._page_for(media_type).current_record()
+        self._open_record_in_shotlist(media_type, record)
 
     def _open_record_in_shotlist(self, fallback_media_type: str, record: object) -> None:
         if not isinstance(record, dict):
@@ -932,7 +875,7 @@ class MetadataVisualizer(WindowVisualizer):
 
     def _on_splitter_moved(self, _pos: int, _index: int) -> None:
         self._request_browser_reflow()
-        self._update_thumbnail_preview()
+        self._update_thumbnail_preview(self._active_media_type())
 
     def _toggle_inspector(self) -> None:
         if self._inspector_hidden:
@@ -947,7 +890,7 @@ class MetadataVisualizer(WindowVisualizer):
             self._inspector_hidden = False
             self._inspector_auto_collapsed = False
             QTimer.singleShot(0, self._request_browser_reflow)
-            QTimer.singleShot(0, self._update_thumbnail_preview)
+            QTimer.singleShot(0, lambda: self._update_thumbnail_preview(self._active_media_type()))
             return
 
         self._saved_splitter_sizes = self._splitter.sizes()
@@ -958,7 +901,7 @@ class MetadataVisualizer(WindowVisualizer):
         self._inspector_hidden = True
         self._inspector_auto_collapsed = False
         QTimer.singleShot(0, self._request_browser_reflow)
-        QTimer.singleShot(0, self._update_thumbnail_preview)
+        QTimer.singleShot(0, lambda: self._update_thumbnail_preview(self._active_media_type()))
 
     def _toggle_fullscreen(self) -> None:
         if self.isFullScreen():
@@ -966,29 +909,15 @@ class MetadataVisualizer(WindowVisualizer):
         else:
             self.showFullScreen()
         QTimer.singleShot(0, self._request_browser_reflow)
-        QTimer.singleShot(0, self._update_thumbnail_preview)
+        QTimer.singleShot(0, lambda: self._update_thumbnail_preview(self._active_media_type()))
 
     def _on_page_selection_changed(self, media_type: str, record: object) -> None:
         self._selected_records[media_type] = record if isinstance(record, dict) else None
-        source_tabs = getattr(self, "_source_tabs", None)
-        if source_tabs is None:
-            return
-        current_page = "movie" if source_tabs.currentIndex() == 0 else "gameplay"
-        if current_page == media_type:
-            self._show_record(record if isinstance(record, dict) else None)
-
-        # (click-triggered metadata dump probe removed)
+        self._show_record(media_type, record if isinstance(record, dict) else None)
 
     def _sync_inspector_to_current_tab(self) -> None:
-        source_tabs = getattr(self, "_source_tabs", None)
-        if source_tabs is None:
-            return
-        current_index = source_tabs.currentIndex()
-        current_page = "movie" if current_index == 0 else "gameplay"
-        self._browser_stack.setCurrentIndex(current_index)
-        self._show_record(self._selected_records.get(current_page))
         self._request_browser_reflow()
-        self._update_thumbnail_preview()
+        self._update_thumbnail_preview(self._active_media_type())
 
     def _on_source_tab_changed(self, index: int) -> None:
         self._browser_stack.setCurrentIndex(index)
@@ -997,18 +926,19 @@ class MetadataVisualizer(WindowVisualizer):
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
         QTimer.singleShot(0, self._request_browser_reflow)
-        QTimer.singleShot(0, self._update_thumbnail_preview)
+        QTimer.singleShot(0, lambda: self._update_thumbnail_preview(self._active_media_type()))
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
         QTimer.singleShot(0, self._request_browser_reflow)
-        QTimer.singleShot(0, self._update_thumbnail_preview)
+        QTimer.singleShot(0, lambda: self._update_thumbnail_preview(self._active_media_type()))
 
-    def _show_record(self, record: dict | None) -> None:
+    def _show_record(self, media_type: str, record: dict | None) -> None:
+        info_block = self._info_blocks[media_type]
         if record is None:
             for key in _INFO_ROWS:
-                self._info_block.set(key, "—")
-            self._update_thumbnail_preview()
+                info_block.set(key, "—")
+            self._update_thumbnail_preview(media_type)
             return
 
         values = {
@@ -1034,12 +964,11 @@ class MetadataVisualizer(WindowVisualizer):
         try:
             # Use the batch `load` API so previous row heights are cleared
             # and recomputation happens once.
-            self._info_block.load(formatted)
+            info_block.load(formatted)
         except Exception:
             for key in _INFO_ROWS:
-                value = formatted.get(key)
-                self._info_block.set(key, value)
-        self._update_thumbnail_preview()
+                info_block.set(key, formatted.get(key))
+        self._update_thumbnail_preview(media_type)
 
     # Keyboard handling (Esc, Ctrl+Q/W, Tab, Shift+Tab) is provided by
     # WindowVisualizer; do not reimplement it here.
