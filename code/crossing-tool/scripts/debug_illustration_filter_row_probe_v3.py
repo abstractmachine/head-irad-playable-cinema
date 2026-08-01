@@ -39,7 +39,7 @@ Usage:
 from __future__ import annotations
 
 PROBE_NAME = "Illustration Filter-Row Width Leak Probe"
-PROBE_VERSION = "DEBUG_LAYOUT_PROBE_V11"
+PROBE_VERSION = "DEBUG_LAYOUT_PROBE_V12"
 # Bump this tag (V8, V9, ...) every time this script is revised so old
 # terminal output can never be mistaken for a new run. V4 fixed a probe-only
 # bug (not an app bug): the injected fake catalog items were not reaching

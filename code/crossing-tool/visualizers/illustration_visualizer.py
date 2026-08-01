@@ -119,6 +119,14 @@ from visualizers.components.hover_icon_button import HoverIconButton, build_icon
 
 _PANEL_W    = 310
 _SIDE_PANE_W = 230   # combined inspector + filter side pane
+# Splitter-pane floor for the inspector, matching Metadata's own
+# `_INSPECTOR_MIN_W` (metadata_visualizer.py) so both visualizers' inspectors
+# collapse to the same effective minimum width instead of Illustration being
+# a wider special case. Kept as its own local constant (not imported from
+# metadata_visualizer.py) so the two visualizers stay independently
+# maintainable; if the values ever need to diverge again this is the only
+# place to change for Illustration.
+_INSPECTOR_MIN_W = 280
 _DEFAULT_MODEL = "sam3.pt"
 
 # (display label, data key) pairs for the cascading sort dropdowns.
@@ -2733,6 +2741,29 @@ class IllustrationWindow(WindowVisualizer):
         # Return the side inspector/filter pane created by the catalog.
         return getattr(self, "_catalog", None)._side_scroll
 
+    def _fit_splitter_width(self) -> None:
+        """Same shape as `WindowVisualizer._fit_splitter_width()`, but with
+        Illustration's inspector floor matched to Metadata's effective
+        minimum width (`_INSPECTOR_MIN_W`) instead of the base class's
+        generic 320px floor.
+
+        `WindowVisualizer` itself cannot be changed (its floor is a shared
+        default used by other visualizers too), so this override stays
+        local to Illustration. The content-driven growth behavior (still
+        using `sizeHint().width()` when it legitimately needs more than the
+        floor) is preserved unchanged — only the floor constant differs.
+        """
+        total = self._splitter.width()
+        if total <= 0:
+            QTimer.singleShot(100, self._fit_splitter_width)
+            return
+        try:
+            inspector_w = max(_INSPECTOR_MIN_W, self._inspector_shell.sizeHint().width())
+        except Exception:
+            inspector_w = _INSPECTOR_MIN_W
+        self._inspector_shell.setMinimumWidth(inspector_w)
+        self._splitter.setSizes([max(1, total - inspector_w), inspector_w])
+
     def _restore_saved_state(self) -> None:
         """Restore inspector visibility, splitter sizes and fullscreen state
         from prefs.
@@ -2758,7 +2789,7 @@ class IllustrationWindow(WindowVisualizer):
             # local to Illustration only; it does not touch how the
             # splitter itself behaves, only which numbers get fed to it.
             inspector_w = int(saved_sizes[1])
-            floor_w = max(_SIDE_PANE_W, self._inspector_shell.sizeHint().width())
+            floor_w = max(_INSPECTOR_MIN_W, self._inspector_shell.sizeHint().width())
             ceiling_w = max(floor_w, self.width() // 2)
             inspector_w = min(max(inspector_w, floor_w), ceiling_w)
             browser_w = max(1, self.width() - inspector_w)

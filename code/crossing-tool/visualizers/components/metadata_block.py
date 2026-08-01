@@ -49,11 +49,29 @@ def table_row_edges(row_idx: int, last_idx: int) -> tuple[str, str]:
     # For QTableWidget-based tables (Layers), the bottom border drives the
     # row separator on every row.
     top = ""
-    bottom = ""
     # Add a bottom divider between rows (but not after the last row) so the
     # seam color (TAB_BG) appears only between cells, not around the table.
+    #
+    # The last row still declares a border-bottom of the same thickness as
+    # every other row -- it is just painted in the cell's own background
+    # color (CELL_BG) instead of the seam color (TAB_BG), so no visible
+    # divider is drawn below it. This is not cosmetic padding: Qt's
+    # style-sheet engine derives a single scalar "frame width" from
+    # whichever border side(s) a widget declares and uses it when computing
+    # that widget's heightForWidth()/sizeHint()/contentsRect() box model. A
+    # row with NO border declared at all gets frameWidth()==0 there, while
+    # every bordered row gets frameWidth()==INSPECTOR_DIVIDER_THICKNESS --
+    # confirmed empirically to change both the wrap width available to the
+    # value label and its painted content rect. Omitting the border
+    # entirely on the last row therefore made its value cell size/position
+    # its text differently from every other row (measurably higher and
+    # further left, and wrapping at a different width) for identical
+    # content. Declaring the same border-bottom width everywhere keeps the
+    # box model identical across every row; only the color differs.
     if row_idx < last_idx:
         bottom = f"border-bottom: {INSPECTOR_DIVIDER_THICKNESS}px solid {theme.TAB_BG};"
+    else:
+        bottom = f"border-bottom: {INSPECTOR_DIVIDER_THICKNESS}px solid {theme.CELL_BG};"
     return top, bottom
 
 
