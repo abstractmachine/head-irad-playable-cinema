@@ -73,10 +73,6 @@ def _zoom_key(media_type: str) -> str:
     return f"metadata_browser_zoom_{media_type}"
 
 
-def _wrap_anywhere(text: str) -> str:
-    return "\u200b".join(text)
-
-
 _INFO_ROWS = [
     "title",
     "filename",
@@ -109,17 +105,20 @@ def _resolve_thumbnail(project_path: str, media_type: str, filename: str) -> Pat
 
 
 def _format_value(value) -> str:
+    # Character wrapping for unbroken strings is InspectorValue's
+    # responsibility (applied automatically in MetadataBlock.set()/.load()).
+    # This function only handles value-shape formatting (list/dict/str), not
+    # presentation.
     if value is None or value == "":
         return "—"
     if isinstance(value, (list, tuple)):
-        text = ", ".join(_format_value(item) for item in value if item not in (None, "")) or "—"
-        return _wrap_anywhere(text)
+        return ", ".join(_format_value(item) for item in value if item not in (None, "")) or "—"
     if isinstance(value, dict):
         try:
-            return _wrap_anywhere(json.dumps(value, ensure_ascii=True, sort_keys=True))
+            return json.dumps(value, ensure_ascii=True, sort_keys=True)
         except Exception:
-            return _wrap_anywhere(str(value))
-    return _wrap_anywhere(str(value))
+            return str(value)
+    return str(value)
 
 
 

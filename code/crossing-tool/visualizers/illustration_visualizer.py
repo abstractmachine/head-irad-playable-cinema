@@ -970,13 +970,14 @@ class SAMExplorer(QMainWindow):
         shot = scene_shots[self._shot_idx] if self._shot_idx < len(scene_shots) else {}
         shot_id = shot.get("shot_id", "—")
 
-        if len(shot_id) > 28:
-            shot_id = "…" + shot_id[-26:]
-
         model_lbl = self._effective_model or self._model_name
         blob_lbl = str(len(self._blobs)) if self._blobs else "—"
 
-        self._frame_info.set("film", (film_title or "—")[:28])
+        # film/shot values are handed to InspectorValue as-is — its own
+        # character wrap (see visualizers/components/inspector_value.py)
+        # keeps unbroken strings from forcing the Inspector wider, so no
+        # local truncation is needed here.
+        self._frame_info.set("film", film_title or "—")
         self._frame_info.set("scene", f"Scene {scene}")
         self._frame_info.set("shot", shot_id)
         self._frame_info.set("frame", self._frame_source or "—")
@@ -1498,23 +1499,6 @@ class _BatchEngravingWorker(QThread):
 
 
 # Use shared HoverIconButton from visualizers.components.hover_icon_button
-
-
-class _WrapLabel(QLabel):
-    """QLabel that self-corrects its minimum height on every resize.
-
-    Standard word-wrap QLabels inside QGridLayout / QScrollArea often report
-    a stale sizeHint because heightForWidth() is not reliably called by the
-    layout engine once the widget is already sized.  This subclass forces a
-    recalculation in resizeEvent so the grid row is always tall enough.
-    """
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if self.wordWrap():
-            needed = self.heightForWidth(event.size().width())
-            if needed > 0:
-                self.setMinimumHeight(needed)
 
 
 class IllustrationPane(QWidget):
@@ -2082,23 +2066,12 @@ class IllustrationPane(QWidget):
         def _fmt(v):
             return f"{v:.3f}" if v is not None else "—"
 
-        def _clip_middle(text: str, max_len: int = 28) -> str:
-            """Shrink *text* to a single-line-safe length.
-
-            Filesystem-derived strings (raw filenames, ids) are frequently
-            joined with underscores/dots and contain no space/hyphen break
-            points, so `QLabel.setWordWrap(True)` cannot wrap them — Qt's
-            word-wrap only breaks at legal boundaries, never mid-word. An
-            unbroken run of this length reports a `minimumSizeHint()` wide
-            enough to fit the whole string on one line, which forces the
-            Inspector pane wider than intended. Truncating keeps the value
-            informative (start/end are usually the most identifying parts)
-            while keeping the label's width bounded like every other field.
-            """
-            return text if len(text) <= max_len else "…" + text[-(max_len - 1):]
-
-        film = _clip_middle(rec.get("filename_stem") or rec.get("filename") or "—")
-        shot_id = _clip_middle(str(rec.get("shot_id", "—")))
+        # Values below are handed to InspectorValue as-is (via _set/_meta_rows,
+        # which are backed by MetadataBlock -> InspectorValue). InspectorValue
+        # applies its own character wrap for unbroken strings (filenames, ids)
+        # so no local truncation/clipping is needed here.
+        film = rec.get("filename_stem") or rec.get("filename") or "—"
+        shot_id = str(rec.get("shot_id", "—"))
 
         # Keys shared by all sources
         _set("label", rec.get("label", "—"))
@@ -2138,7 +2111,7 @@ class IllustrationPane(QWidget):
 
         # Engraving-only keys
         _set("mode",      rec.get("mode", "—"))
-        _set("object_id", _clip_middle(str(rec.get("object_id", "—"))))
+        _set("object_id", str(rec.get("object_id", "—")))
 
         # Engraving tools buttons
         if hasattr(self, "_eng_view_btn"):

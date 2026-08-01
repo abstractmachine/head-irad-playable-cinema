@@ -32,6 +32,7 @@ from PyQt5.QtWidgets import (
 
 from styles import theme
 from styles.theme import JumpScrollBar
+from visualizers.components.inspector_value import InspectorValue
 
 
 INSPECTOR_ROW_HEIGHT = 24
@@ -334,7 +335,7 @@ class MetadataBlock(QWidget):
 
         self._layout = layout
         self._rows = list(rows)
-        self._labels: dict[str, QLabel] = {}
+        self._labels: dict[str, InspectorValue] = {}
         last_idx = len(self._rows) - 1
         for row_idx, key in enumerate(self._rows):
             top, bottom = table_row_edges(row_idx, last_idx)
@@ -345,19 +346,12 @@ class MetadataBlock(QWidget):
             key_lbl.setMinimumHeight(INSPECTOR_ROW_HEIGHT)
             layout.addWidget(key_lbl, row_idx, 0)
 
-            val_lbl = QLabel("—")
+            val_lbl = InspectorValue("—")
             val_lbl.setStyleSheet(table_value_cell_style(top, bottom))
-            val_lbl.setWordWrap(True)
-            val_lbl.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-            val_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
-            sp = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-            sp.setHeightForWidth(True)
-            val_lbl.setSizePolicy(sp)
             val_lbl.setMinimumHeight(INSPECTOR_ROW_HEIGHT)
             layout.addWidget(val_lbl, row_idx, 1)
 
             self._labels[key] = val_lbl
-
         # Deferred timer used to coalesce multiple set() calls into a single
         # recalculation. When loading a new record, the first set() call in
         # the batch will reset per-row state to the canonical baseline so
@@ -369,6 +363,19 @@ class MetadataBlock(QWidget):
         # Schedule an initial row recalculation after construction so that
         # sizeHints produced during style/layout initialization are respected.
         QTimer.singleShot(0, self._recalc_rows)
+
+        # Connect every value cell's valueChanged signal to the shared
+        # recalculation scheduler. This is what guarantees row heights are
+        # always recomputed from *current* content: it fires no matter which
+        # path changed the text — this block's own set()/load()/clear(), or a
+        # caller holding a direct label reference from labels() (e.g. a
+        # visualizer that keeps `block.labels()` and calls `.setText()` on
+        # individual labels directly). Without this, a label updated outside
+        # set()/load()/clear() would never trigger _recalc_rows() again, so a
+        # row that had grown tall for a long value would never shrink back
+        # down when a shorter value replaced it.
+        for lbl in self._labels.values():
+            lbl.valueChanged.connect(self._schedule_recalc)
 
     def _reset_row_state(self) -> None:
         """Reset per-row sizing state to the canonical baseline.
@@ -476,52 +483,53 @@ class MetadataBlock(QWidget):
         # can use the current column widths.
         QTimer.singleShot(0, self._recalc_rows)
 
-    def labels(self) -> dict[str, QLabel]:
+    def _schedule_recalc(self) -> None:
+        """Coalesce content changes into a single row-height recalculation.
+
+        Connected to every value cell's `valueChanged` signal (see
+        InspectorValue), so it fires whenever any row's displayed text
+        changes, regardless of which code path changed it. The first change
+        in a batch resets per-row minimum/maximum height back to the
+        canonical baseline so a previous record's height cannot linger on a
+        row whose new content is shorter; the recalculation itself is
+        deferred so all changes in the same batch (e.g. every field of a
+        newly selected record) are applied before heights are computed once
+        from the *current* content of every row.
+        """
+        try:
+            if not self._defer_timer.isActive():
+                self._reset_row_state()
+            self._defer_timer.start(0)
+        except Exception:
+            QTimer.singleShot(0, self._recalc_rows)
+
+    def labels(self) -> dict[str, InspectorValue]:
         """Return the mutable key → value-label mapping used by callers."""
         return dict(self._labels)
 
     def set(self, key: str, value: str) -> None:
-        """Set the displayed value for *key*.  No-op if *key* is unknown."""
+        """Set the displayed value for *key*.  No-op if *key* is unknown.
+
+        Row-height recalculation is scheduled automatically via the value
+        cell's `valueChanged` signal (see `_schedule_recalc`).
+        """
         if key in self._labels:
             self._labels[key].setText(value)
-            # Coalesce multiple sets into a single recalculation. The first
-            # set in a batch resets per-row state so previous heights don't
-            # leak into the new record.
-            try:
-                if not self._defer_timer.isActive():
-                    self._reset_row_state()
-                self._defer_timer.start(0)
-            except Exception:
-                QTimer.singleShot(0, self._recalc_rows)
 
     def clear(self) -> None:
         """Reset all rows to the placeholder dash (—)."""
-        # Reset row sizing state before applying placeholders so the table
-        # starts from the canonical baseline.
-        self._reset_row_state()
         for lbl in self._labels.values():
             lbl.setText("—")
-        try:
-            if not self._defer_timer.isActive():
-                self._defer_timer.start(0)
-        except Exception:
-            QTimer.singleShot(0, self._recalc_rows)
 
     def load(self, mapping: dict[str, str]) -> None:
         """Load a mapping of key → value as a single record update.
 
-        This method resets per-row sizing state to the canonical baseline,
-        applies all values, and then recomputes row heights once.
+        Each value cell's `setText()` call emits `valueChanged`, which
+        schedules exactly one row-height recalculation (see
+        `_schedule_recalc`) after every row in this batch has been applied.
         """
-        # Reset per-row sizing state first so no previous heights persist.
-        self._reset_row_state()
         for key in self._rows:
             value = mapping.get(key, "—")
             lbl = self._labels.get(key)
             if lbl is not None:
                 lbl.setText(value if value is not None else "—")
-        try:
-            # Defer one tick so layout settles before computing heightForWidth
-            self._defer_timer.start(0)
-        except Exception:
-            QTimer.singleShot(0, self._recalc_rows)
