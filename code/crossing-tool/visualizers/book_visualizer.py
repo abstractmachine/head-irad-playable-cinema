@@ -5,7 +5,7 @@ Launched via:
     crossing visualizer book
 
 Layout:
-  LEFT  — open-book spread view (one spread at a time) + fuchsia page bar
+  LEFT  — open-book spread view (one spread at a time) + yellow page bar
   RIGHT — panel: book selector, page info, Import / New buttons
 
 Spread layout (book-style):
@@ -965,7 +965,7 @@ class _CutOverlay(QWidget):
         if tool == _TOOL_CUT:
             self.setCursor(Qt.CrossCursor)
         elif tool == _TOOL_ERASE:
-            self.setCursor(self._make_cross_cursor("#ff00ff"))   # fuchsia
+            self.setCursor(self._make_cross_cursor("#ffff00"))   # yellow
         elif tool == _TOOL_TEXT:
             self.setCursor(self._make_cross_cursor("#00ffff"))   # cyan
         else:
@@ -2493,7 +2493,7 @@ class _CutOverlay(QWidget):
             # point handles — always shown for selected; only when handles ON for others
             if self._show_outlines or is_sel:
                 for i, pt in enumerate(pts):
-                    # all handles fuchsia when layer selected; grey otherwise
+                    # all handles accent color when layer selected; grey otherwise
                     hcolor = SEL_COLOR if is_sel else CUT_COLOR
                     if closed:
                         p.setBrush(hcolor)
@@ -2545,15 +2545,15 @@ class _CutOverlay(QWidget):
                 p.setBrush(QColor(100, 40, 40, 80))
                 p.drawRect(QRectF(-sw / 2, -sh / 2, sw, sh))
             elif is_generating:
-                # Generating state: fuchsia placeholder + spinner arc
-                p.setPen(QPen(QColor("#ff00ff"), 1, Qt.DashLine))
+                # Generating state: accent color placeholder + spinner arc
+                p.setPen(QPen(QColor("#ffff00"), 1, Qt.DashLine))
                 p.setBrush(QColor(120, 0, 120, 60))
                 p.drawRect(QRectF(-sw / 2, -sh / 2, sw, sh))
                 # Spinner arc (drawn in unscaled/unflipped space)
                 r_spin = min(sw, sh) * 0.18
                 r_spin = max(8.0, min(32.0, r_spin))
                 arc_rect = QRectF(-r_spin, -r_spin, r_spin * 2, r_spin * 2)
-                spin_pen = QPen(QColor("#ff00ff"), max(2.0, r_spin * 0.18))
+                spin_pen = QPen(QColor("#ffff00"), max(2.0, r_spin * 0.18))
                 spin_pen.setCapStyle(Qt.RoundCap)
                 p.setPen(spin_pen)
                 p.setBrush(Qt.NoBrush)
@@ -2659,7 +2659,7 @@ class _CutOverlay(QWidget):
 
 
 # ---------------------------------------------------------------------------
-# _PageBar — horizontal fuchsia position indicator
+# _PageBar — horizontal yellow position indicator
 # ---------------------------------------------------------------------------
 
 class _PageBar(QWidget):

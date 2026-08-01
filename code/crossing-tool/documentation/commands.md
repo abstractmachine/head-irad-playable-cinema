@@ -255,7 +255,7 @@ The **project** visualizer lets you:
 - Select models for each role (annotate, segmentation, embed) from installed local models
 - Launch any of the four other visualizers from a 2×2 grid (Metadata, Shotlist, Mosaic, Composition)
 
-The **metadata** visualizer shows all movies and gameplay as scrollable card tiles in two columns. Each card displays a thumbnail, title, year/director (movies) or game (gameplay), and a short overview. Cards highlight fuchsia on hover; clicking a card opens that film in the Shotlist Visualizer. If the Shotlist Visualizer is already open it receives the film via an IPC socket (no second window is opened); if not, a new window is launched.
+The **metadata** visualizer shows all movies and gameplay as scrollable card tiles in two columns. Each card displays a thumbnail, title, year/director (movies) or game (gameplay), and a short overview. Cards highlight yellow on hover; clicking a card opens that film in the Shotlist Visualizer. If the Shotlist Visualizer is already open it receives the film via an IPC socket (no second window is opened); if not, a new window is launched.
 
 The **shotlist** visualizer always populates its film selector with the full list of all films in the project for the active media type, regardless of how many were specified on the command line.
 

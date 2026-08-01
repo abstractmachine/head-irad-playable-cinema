@@ -480,7 +480,7 @@ class PaletteVisualizerWindow(QMainWindow):
 
         vbox.addLayout(bar)
 
-        # 1px fuchsia progress bar sits between the toolbar and the grid
+        # 1px yellow progress bar sits between the toolbar and the grid
         self._progress = QProgressBar()
         self._progress.setFixedHeight(1)
         self._progress.setTextVisible(False)

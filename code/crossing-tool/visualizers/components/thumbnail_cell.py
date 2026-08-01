@@ -13,8 +13,8 @@ Features
 - Configurable fixed size
 - ``clicked(index)`` signal on single left-click
 - ``doubleClicked(index)`` signal on double left-click
-- ``set_selected(bool)`` — fuchsia border around the cell
-- ``set_highlighted(bool)`` — thicker fuchsia border (marks the "best" item)
+- ``set_selected(bool)`` — accent color border around the cell
+- ``set_highlighted(bool)`` — thicker accent color border (marks the "best" item)
 - ``set_image(QImage)`` — update the displayed thumbnail
 - Drag-and-drop: set ``drag_path`` and ``drag_meta`` before the user drags
 
@@ -98,13 +98,13 @@ class ThumbnailCell(QLabel):
         self.setText("")
 
     def set_selected(self, selected: bool) -> None:
-        """Toggle the selection border (fuchsia, 2 px)."""
+        """Toggle the selection border (accent color, 2 px)."""
         if self._selected != selected:
             self._selected = selected
             self._apply_style()
 
     def set_highlighted(self, highlighted: bool) -> None:
-        """Toggle the highlight border (fuchsia, 3 px — marks the best item)."""
+        """Toggle the highlight border (accent color, 3 px — marks the best item)."""
         if self._highlighted != highlighted:
             self._highlighted = highlighted
             self._apply_style()

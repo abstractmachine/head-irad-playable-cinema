@@ -214,7 +214,7 @@ class CollapsibleSection(QWidget):
 
         The widget is placed in the outer layout (not inside the collapsible
         body) so it remains visible even when the section is collapsed.
-        Intended for the fuchsia loading bar so it shows during loading
+        Intended for the accent color loading bar so it shows during loading
         regardless of whether the Filter section is open or closed.
         """
         # Make the subbar a child of the header so it does not add any

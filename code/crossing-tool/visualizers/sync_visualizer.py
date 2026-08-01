@@ -150,9 +150,9 @@ _PREFS_STAR_B       = "sync_visualizer_star_color_b"   # hex string
 # Port geometry
 _PORT_SIZE       = 12   # px — triangle width/height
 _PORT_COLOR_IDLE   = QColor(_NODE_BODY_BG)   # same as node content background
-_PORT_COLOR_ACTIVE = QColor("#ff00ff")        # fuchsia while dragging / hover target
+_PORT_COLOR_ACTIVE = QColor("#ffff00")        # yellow while dragging / hover target
 _PORT_COLOR_CONN   = QColor(_NODE_BODY_BG)   # same as node content background
-_CABLE_COLOR_DRAG  = QColor("#ff00ff")
+_CABLE_COLOR_DRAG  = QColor("#ffff00")        # yellow while dragging
 _CABLE_COLOR_CONN  = QColor(_NODE_BODY_BG)   # same as node content background
 _CABLE_WIDTH       = 2
 
@@ -162,7 +162,7 @@ _TB_ICON_BTN_SS = (
     "  background: transparent; border: none; padding: 0;"
     "}"
     "QPushButton:hover {"
-    "  background: #ff00ff; border-radius: 3px;"
+    "  background: #ffff00; border-radius: 3px;"
     "}"
 )
 _TB_TEXT_BTN_SS = (
@@ -171,7 +171,7 @@ _TB_TEXT_BTN_SS = (
     "  border: none; padding: 0 4px;"
     "}"
     "QPushButton:hover {"
-    "  background: #ff00ff; border-radius: 3px; color: #ffffff;"
+    "  background: #ffff00; border-radius: 3px; color: #ffffff;"
     "}"
 )
 # Close button has an extra font-size rule
@@ -181,7 +181,7 @@ _TB_CLOSE_BTN_SS = (
     "  border: none; font-size: 14px; padding: 0;"
     "}"
     "QPushButton:hover {"
-    "  background: #ff00ff; border-radius: 3px; color: #ffffff;"
+    "  background: #ffff00; border-radius: 3px; color: #ffffff;"
     "}"
 )
 
@@ -226,7 +226,7 @@ def _svg_icon(name: str, size: int = 16, color: str = "#ffffff") -> QIcon:
 
 class _TbBtn(QPushButton):
     """Title-bar button that manually swaps its icon on enter/leave
-    so hover-fuchsia is driven by mouse proximity, not Qt focus state.
+    so hover-accent-color is driven by mouse proximity, not Qt focus state.
     Call set_icon_name() once after construction.
     """
 

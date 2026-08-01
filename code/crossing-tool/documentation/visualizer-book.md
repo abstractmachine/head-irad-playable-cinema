@@ -20,7 +20,7 @@ Displays a two-page spread at full width. Pages are shown book-style:
 - Pages 2–3, 4–5, etc. appear as left/right pairs
 - The last page appears alone on the left (back cover) if the total page count is even
 
-A fuchsia progress bar at the bottom of the spread area indicates the current position within the book.
+A yellow progress bar at the bottom of the spread area indicates the current position within the book.
 
 ### Middle — Asset Browser Panel
 

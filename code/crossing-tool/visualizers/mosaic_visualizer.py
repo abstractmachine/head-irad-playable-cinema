@@ -106,7 +106,7 @@ class _StatusLabel(QLabel):
         self.clear()
 
     def set_busy_style(self, busy: bool) -> None:  # noqa: N802
-        """Toggle a fuchsia background to indicate an in-progress export."""
+        """Toggle a yellow background to indicate an in-progress export."""
         if busy:
             self.setStyleSheet(
                 f"QLabel {{ color: {theme.TEXT}; background-color: {theme.ACCENT}; "
@@ -1462,7 +1462,7 @@ class MosaicVisualizer(QMainWindow):
         self.canvas.installEventFilter(self)
         self.canvas.viewport().installEventFilter(self)
 
-        # 1px fuchsia progress bar sits between canvas and the rest of the layout
+        # 1px yellow progress bar sits between canvas and the rest of the layout
         self._progress = QProgressBar()
         self._progress.setFixedHeight(1)
         self._progress.setTextVisible(False)

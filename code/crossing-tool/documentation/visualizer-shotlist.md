@@ -22,7 +22,7 @@ A collapsible, content-width side panel listing one row per scene. Click a row t
 
 ### Shot panel
 
-A collapsible, content-width side panel listing shots in the film with columns: `✓` (annotated), `Shot` number, `Start` timecode, `Best` frame, `Stop` timecode, `Ignore` flag. The active shot is highlighted in fuchsia. Collapse or expand it via its splitter grip handle (it is not manually resizable).
+A collapsible, content-width side panel listing shots in the film with columns: `✓` (annotated), `Shot` number, `Start` timecode, `Best` frame, `Stop` timecode, `Ignore` flag. The active shot is highlighted in yellow. Collapse or expand it via its splitter grip handle (it is not manually resizable).
 
 ### Inspector
 

@@ -53,7 +53,7 @@ Type a search term and click one of the search mode buttons:
 
 #### Vocabulary
 
-A live list of the most frequent terms in the selected field for the current scope. Click any term to instantly run a search for it. The active term is highlighted in fuchsia.
+A live list of the most frequent terms in the selected field for the current scope. Click any term to instantly run a search for it. The active term is highlighted in yellow.
 
 ## Keyboard Shortcuts
 

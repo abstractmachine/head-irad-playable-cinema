@@ -404,7 +404,7 @@ class IllustrationBrowser(QWidget):
 
         When no media type is selected the browser clears immediately (no I/O).
         Otherwise a ``_CatalogLoader`` thread is started so the scan runs off
-        the main thread — the UI stays responsive and a fuchsia progress bar is
+        the main thread — the UI stays responsive and an accent progress bar is
         shown until the results arrive.
 
         Data-access responsibility remains in the source. The browser triggers

@@ -12,7 +12,7 @@ Design language:
   - Lines/text : white       (#ffffff)
   - UI borders  : 25% grey   (#404040)  — splitter handles, group-box and
                               section frames  (controlled by UI_BORDER)
-  - Highlight   : fuchsia    (#ff00ff)
+  - Highlight   : yellow    (#ffff00)
   - Typography  : Hanken Grotesk for UI chrome, Roboto Mono for data / info fields
   - Single base font size; individual components may adjust later.
 
@@ -451,7 +451,7 @@ def apply_theme(app) -> None:
     # Inactive, Disabled).  Qt's Fusion style reads QPalette when drawing
     # combo-popup items, and popup windows use the Inactive group because
     # keyboard focus stays on the parent window.  Without setting All, only
-    # the Active group is fuchsia and the popup still shows the system default.
+    # the Active group is yellow and the popup still shows the system default.
     _pal = app.palette()
     _pal.setColor(QPalette.All, QPalette.Highlight,       QColor(ACCENT))
     _pal.setColor(QPalette.All, QPalette.HighlightedText, QColor(ACCENT_TEXT))
@@ -665,7 +665,7 @@ from PyQt5.QtCore import pyqtSignal                                  # noqa: E40
 class JumpScrollBar(QScrollBar):
     """Scrollbar (vertical or horizontal) with UX improvements over the default:
 
-    1. Hovering *anywhere* on the bar immediately highlights the handle fuchsia
+    1. Hovering *anywhere* on the bar immediately highlights the handle yellow
        (not just when the cursor is directly on the handle thumb).
     2. Clicking in the track (not on the handle) jumps the viewport to that
        position instantly instead of doing a page-step.  Click+drag is also
