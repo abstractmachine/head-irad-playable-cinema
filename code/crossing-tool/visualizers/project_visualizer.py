@@ -16,16 +16,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from styles import theme
-from styles.theme import JumpScrollBar
 from visualizers.window_visualizer import WindowVisualizer
 from visualizers.components.collapsible_section import CollapsibleSection
+from visualizers.components.inspector import Inspector
 from visualizers.components.metadata_block import INSPECTOR_ROW_HEIGHT, table_key_cell_style
+from visualizers.components.tab_panel import TabPanel
 
 from PyQt5.QtCore import Qt, QEvent, QTimer
 from PyQt5.QtWidgets import (
-    QApplication, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QFrame,
-    QGridLayout, QHBoxLayout, QLineEdit, QListView, QMessageBox, QPushButton,
-    QScrollArea, QSizePolicy, QSpinBox, QTabWidget, QVBoxLayout, QWidget, QLabel,
+    QApplication, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
+    QGridLayout, QHBoxLayout, QLineEdit, QMessageBox, QPushButton,
+    QSizePolicy, QSpinBox, QVBoxLayout, QWidget, QLabel,
 )
 
 from tool import prefs as _prefs
@@ -72,51 +73,6 @@ def _local_models(project_path: str) -> list[str]:
     ]
 
 
-def _style_canonical_combo(combo: QComboBox) -> None:
-    """Apply the canonical visualizer combo font and popup styling."""
-    combo.setFocusPolicy(Qt.NoFocus)
-    combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLength)
-    combo.setFont(theme.font_ui())
-    combo.setStyleSheet(
-        f"QComboBox {{"
-        f"  background: {theme.BTN_BG}; color: {theme.TEXT};"
-        f"  border: none; border-radius: 3px; padding: 0px 6px;"
-        f"  min-height: 24px; max-height: 24px;"
-        f"  font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
-        f"  font-weight: {theme.WEIGHT_UI};"
-        f"}}"
-        f"QComboBox::drop-down {{ border: none; }}"
-        f"QComboBox QAbstractItemView, QComboBox QListView {{"
-        f"  background: {theme.INPUT_BG}; color: {theme.TEXT};"
-        f"  border: 0px; margin: 0px; padding: 0px; outline: 0px;"
-        f"  selection-background-color: {theme.ACCENT};"
-        f"  selection-color: {theme.ACCENT_TEXT};"
-        f"  font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
-        f"}}"
-        f"QComboBox QAbstractItemView::item, QComboBox QListView::item {{"
-        f"  padding: 0px 8px; min-height: 24px; border: 0px;"
-        f"}}"
-    )
-    view = QListView(combo)
-    view.setUniformItemSizes(True)
-    view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-    view.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-    view.setFrameShape(QFrame.NoFrame)
-    view.setLineWidth(0)
-    view.setMidLineWidth(0)
-    view.setContentsMargins(0, 0, 0, 0)
-    view.setFont(theme.font_ui())
-    view.setStyleSheet(
-        f"QListView {{ background: {theme.INPUT_BG}; color: {theme.TEXT};"
-        f" border: 0px; margin: 0px; padding: 0px; outline: 0px;"
-        f" font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt; }}"
-        f"QListView::item {{ background: {theme.INPUT_BG}; padding: 0px 8px;"
-        f" min-height: 24px; border: 0px; }}"
-        f"QListView::item:selected {{ background: {theme.ACCENT}; color: {theme.ACCENT_TEXT}; }}"
-    )
-    combo.setView(view)
-
-
 def _style_canonical_form_label(label: QWidget) -> None:
     label.setStyleSheet(table_key_cell_style("", ""))
     label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -145,17 +101,6 @@ def _normalize_form_labels(form: QFormLayout) -> None:
 # ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
-
-_VISUALIZER_TITLE = {
-    "shotlist":    "Shotlist Visualizer",
-    "mosaic":      "Mosaic Visualizer",
-    "metadata":    "Metadata Visualizer",
-    "cloud":       "Cloud Visualizer",
-    "illustration": "Illustration Visualizer",
-    "palette":     "Palette Visualizer",
-    "flipbook":    "Flipbook Visualizer",
-    "sync":        "Sync Visualizer",
-}
 
 
 class ProjectVisualizer(WindowVisualizer):
@@ -419,7 +364,7 @@ class ProjectVisualizer(WindowVisualizer):
             combo.currentTextChanged.connect(
                 lambda text, k=key: _prefs.set(k, text) if text else None
             )
-            _style_canonical_combo(combo)
+            theme.style_canonical_combo(combo)
             self._model_combos[role] = combo
             form.addRow(role.capitalize(), combo)
 
@@ -460,7 +405,7 @@ class ProjectVisualizer(WindowVisualizer):
 
         self.media_type_combo = QComboBox()
         self.media_type_combo.addItems(["movie", "gameplay"])
-        _style_canonical_combo(self.media_type_combo)
+        theme.style_canonical_combo(self.media_type_combo)
         form.addRow("Type", self.media_type_combo)
 
         self.media_game_edit = QLineEdit()
@@ -565,78 +510,21 @@ class ProjectVisualizer(WindowVisualizer):
         return sec
 
     def create_inspector(self) -> QWidget:
-        outer = QWidget()
-        outer.setStyleSheet(f"background: {theme.CANVAS_BG};")
+        inspector = Inspector(self)
 
-        outer_layout = QVBoxLayout(outer)
-        outer_layout.setContentsMargins(0, 0, 0, 0)
-        outer_layout.setSpacing(0)
+        panel = TabPanel()
+        panel.add_widget(self._build_folder_section())
+        panel.add_widget(self._build_backup_section())
+        panel.add_widget(self._build_defaults_section())
+        panel.add_widget(self._build_models_section())
+        panel.add_widget(self._build_import_section())
+        panel.add_widget(self._build_visualizers_section())
 
-        tabs = QTabWidget()
-        tabs.setDocumentMode(True)
-        tabs.tabBar().setDrawBase(False)
-        tabs.tabBar().setExpanding(False)
-        tabs.tabBar().setUsesScrollButtons(False)
-        tabs.setFocusPolicy(Qt.NoFocus)
-        tabs.tabBar().setFocusPolicy(Qt.NoFocus)
-        tabs.setStyleSheet(theme.tab_strip_stylesheet())
+        inspector.add_tab(panel, " Project ")
 
-        project_tab = QWidget()
-        project_tab.setStyleSheet(f"background: {theme.TAB_BG};")
-        project_tab_layout = QVBoxLayout(project_tab)
-        project_tab_layout.setContentsMargins(0, 0, 0, 0)
-        project_tab_layout.setSpacing(0)
+        self._inspector = inspector
+        return inspector
 
-        scroll = QScrollArea()
-        scroll.setFocusPolicy(Qt.NoFocus)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll.setVerticalScrollBar(JumpScrollBar())
-        scroll.setStyleSheet(
-            f"QScrollArea {{ background: {theme.TAB_BG}; border: none; }}"
-            f"QScrollBar:vertical {{ background: {theme.CANVAS_BG}; width: {theme.SCROLLBAR_W}px; }}"
-            f"QScrollBar::groove:vertical {{ background: transparent; border: none; }}"
-            f"QScrollBar::handle:vertical {{"
-            f"  background: transparent; border-left: 2px solid {theme.ACCENT};"
-            f"  border-radius: 0; min-height: 20px; }}"
-            f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}"
-            f"QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}"
-        )
-        project_tab_layout.addWidget(scroll)
-
-        content = QWidget()
-        content.setStyleSheet(f"background: {theme.TAB_BG};")
-        scroll.setWidget(content)
-
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(
-            theme.SECTION_GAP, theme.SECTION_GAP, theme.SECTION_GAP, theme.SECTION_GAP
-        )
-        layout.setSpacing(theme.SECTION_GAP)
-        layout.setAlignment(Qt.AlignTop)
-
-        folder_sec = self._build_folder_section()
-        backup_sec = self._build_backup_section()
-        defaults_sec = self._build_defaults_section()
-        models_sec = self._build_models_section()
-        import_sec = self._build_import_section()
-        visualizers_sec = self._build_visualizers_section()
-
-        layout.addWidget(folder_sec)
-        layout.addWidget(backup_sec)
-        layout.addWidget(defaults_sec)
-        layout.addWidget(models_sec)
-        layout.addWidget(import_sec)
-        layout.addWidget(visualizers_sec)
-
-        tabs.addTab(project_tab, " Project ")
-        outer_layout.addWidget(tabs)
-
-        self._inspector_scroll = scroll
-        self._inspector_tabs = tabs
-        return outer
 
     def create_browser(self) -> QWidget:
         w = QWidget()
