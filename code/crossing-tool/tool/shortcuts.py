@@ -4,27 +4,83 @@ Import the named constants instead of raw ``Qt.Key_*`` values so that any
 future re-mapping only needs to change this file.
 
 ``VisualizerWindow`` is the shared QMainWindow base every visualizer window
-should inherit from.  Tab / Shift+Tab are intercepted at the QApplication
-level (before Qt's focus-cycling machinery claims them) and forwarded to
-the active window's ``keyPressEvent``.
+should inherit from.  ``KeyboardManager`` is the single application-level
+event filter that centralizes keyboard behavior common to every visualizer:
+
+- Escape: close the active visualizer
+- Tab / Shift+Tab: canonical panel toggle / fullscreen (intercepted before
+  Qt's focus-cycling machinery claims them, then forwarded to the active
+  window's ``keyPressEvent``, which implements the actual behavior)
+- Shift+Left / Shift+Right: page navigation (also forwarded)
+- F1-F10: switch to another visualizer (see `FUNCTION_KEY_BINDINGS` below),
+  regardless of which visualizer window currently has focus
+
+It is installed once per QApplication by ``VisualizerWindow.__init__``.
+This is intentionally the ONE shared/global keyboard mechanism — it must
+stay small and must never grow into a second, competing shortcut system.
+Visualizer-specific keys (arrow-key navigation, tool toggles, etc.) still
+belong in each visualizer's own ``keyPressEvent``/``eventFilter``.
 """
+
+from typing import Optional
 
 from PyQt5.QtCore import Qt, QEvent, QObject
 from PyQt5.QtWidgets import QApplication, QMainWindow
 
 
-class _AppTabFilter(QObject):
-    """Application-level event filter that routes certain global shortcuts to
-    the active VisualizerWindow before Qt's focus engine or child widgets
-    consume them.
+# ── Function-key visualizer switching ────────────────────────────────────
+# The ONE place the F1-F10 -> visualizer mapping is defined. Both
+# `KeyboardManager` (global key interception, below) and the Project
+# Inspector's on-button shortcut labels (`shortcut_label_for`) derive from
+# this list, so the two can never drift out of sync. Edit this list to
+# change the mapping — nothing else needs to change.
+FUNCTION_KEY_BINDINGS: list[tuple[int, str]] = [
+    (Qt.Key_F1,  "project"),
+    (Qt.Key_F2,  "shotlist"),
+    (Qt.Key_F3,  "mosaic"),
+    (Qt.Key_F4,  "cloud"),
+    (Qt.Key_F5,  "segmentation"),
+    (Qt.Key_F6,  "illustration"),
+    (Qt.Key_F7,  "flipbook"),
+    (Qt.Key_F8,  "palette"),
+    (Qt.Key_F9,  "book"),
+    (Qt.Key_F10, "sync"),
+]
+
+# Key (int) -> subcommand, used by KeyboardManager for dispatch.
+FUNCTION_KEY_VISUALIZERS: dict = dict(FUNCTION_KEY_BINDINGS)
+
+# subcommand -> "F1".."F10", used by UI code (e.g. Project Inspector
+# buttons) to display the binding without hardcoding it a second time.
+_VISUALIZER_SHORTCUT_LABELS: dict = {
+    sub: f"F{i}" for i, (_key, sub) in enumerate(FUNCTION_KEY_BINDINGS, start=1)
+}
+
+
+def shortcut_label_for(subcommand: str) -> Optional[str]:
+    """Return the canonical function-key label (e.g. ``"F9"``) bound to
+    *subcommand* in `FUNCTION_KEY_BINDINGS`, or None if it has no binding.
+    """
+    return _VISUALIZER_SHORTCUT_LABELS.get(subcommand)
+
+
+class KeyboardManager(QObject):
+    """Application-level event filter that centralizes keyboard behavior
+    common to every visualizer window.
 
     Keys intercepted (with no Ctrl/Meta/Alt):
     - Escape: close the active visualizer immediately
-    - Tab / Shift+Tab: panel toggle / fullscreen
-    - Shift+Left / Shift+Right: page navigation
+    - Tab / Shift+Tab: panel toggle / fullscreen (forwarded to the active
+      VisualizerWindow's own keyPressEvent, which implements the actual
+      behavior)
+    - Shift+Left / Shift+Right: page navigation (also forwarded)
+    - F1-F10: switch to the visualizer bound in `FUNCTION_KEY_BINDINGS`,
+      via `visualizers._window_helpers.switch_to_visualizer` — works
+      regardless of which window currently has focus, since this filter
+      is installed on the QApplication itself.
 
     Installed once on the QApplication instance (stored as
-    ``app._visualizer_tab_filter``) so multiple windows share a single filter.
+    ``app._keyboard_manager``) so multiple windows share a single filter.
     """
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
@@ -33,6 +89,12 @@ class _AppTabFilter(QObject):
             mod = event.modifiers()
             if mod & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier):
                 return False
+            if key in FUNCTION_KEY_VISUALIZERS:
+                # Local import: tool/ must not import visualizers/ at module
+                # scope (layering — visualizers/ already imports tool/).
+                from visualizers._window_helpers import switch_to_visualizer
+                switch_to_visualizer(FUNCTION_KEY_VISUALIZERS[key])
+                return True
             if key == Qt.Key_Escape:
                 app = QApplication.instance()
                 win = app.activeWindow() if app else None
@@ -56,18 +118,19 @@ class _AppTabFilter(QObject):
 class VisualizerWindow(QMainWindow):
     """Base window class for all crossing-tool visualizers.
 
-    Installs a single application-level event filter (_AppTabFilter) the
+    Installs a single application-level event filter (KeyboardManager) the
     first time any VisualizerWindow is constructed.  This filter intercepts
-    Tab / Shift+Tab before Qt routes them as focus-change events, then
-    forwards them to the active window's keyPressEvent.
+    Tab / Shift+Tab / F1-F10 before Qt routes them as focus-change events
+    (or before any window-specific handling could see them), forwarding
+    Tab/Shift+Tab to the active window's keyPressEvent.
     """
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         app = QApplication.instance()
-        if app is not None and not hasattr(app, '_visualizer_tab_filter'):
-            app._visualizer_tab_filter = _AppTabFilter(app)
-            app.installEventFilter(app._visualizer_tab_filter)
+        if app is not None and not hasattr(app, '_keyboard_manager'):
+            app._keyboard_manager = KeyboardManager(app)
+            app.installEventFilter(app._keyboard_manager)
 
 # ── Title-list navigation (movies or gameplay, consistent across all visualizers) ──
 KEY_PREV_TITLE = Qt.Key_Home

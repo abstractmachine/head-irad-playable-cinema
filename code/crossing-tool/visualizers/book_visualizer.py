@@ -3070,16 +3070,13 @@ class BookVisualizerWindow(WindowVisualizer):
         self._saved_inspector_split_sizes: Optional[list[int]] = None
 
     def showEvent(self, event) -> None:  # noqa: N802
+        # WindowVisualizer.showEvent() (called via super()) also grabs
+        # keyboard focus for the window itself (self.focus_target()),
+        # which is what LEFT/RIGHT/H/S/T etc. below need to reliably work.
         super().showEvent(event)
         # Ensure the spread renders on first show (the initial _do_render call in
         # __init__ fires before the widget has a valid size, so we retry here).
         QTimer.singleShot(0, self._spread_view._do_render)
-        # Keyboard shortcuts (LEFT/RIGHT page navigation, H/S/T, etc.) are
-        # handled by this window's own keyPressEvent, so the window itself
-        # must hold keyboard focus by default rather than whichever toolbar
-        # button Qt happens to focus first (matches the same
-        # self.setFocus() convention used by Metadata/Shot visualizers).
-        self.setFocus()
         # post-show actions (no debug reporting)
 
     def closeEvent(self, event) -> None:  # noqa: N802

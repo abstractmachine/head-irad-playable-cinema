@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import QApplication
 
 
 _VISUALIZER_TITLE = {
+    "project":      "Project Visualizer",
     "shotlist":     "Shotlist Visualizer",
     "mosaic":       "Mosaic Visualizer",
     "metadata":     "Metadata Visualizer",
@@ -80,3 +81,44 @@ def raise_existing_window(subcommand: str) -> bool:
         return True
 
     return False
+
+
+def switch_to_visualizer(subcommand: str) -> None:
+    """Raise *subcommand*'s window if it's already open in this process;
+    otherwise launch it via the Project Visualizer's existing launcher
+    machinery (`ProjectVisualizer._launch`), creating an in-process (not
+    shown, unless *subcommand* is ``"project"`` itself) Project window
+    first if none exists yet.
+
+    This is the single shared entry point used by F1-F10 visualizer
+    switching (see `tool.shortcuts.KeyboardManager`) so it reuses exactly
+    the same "raise or launch" behavior as the Project Inspector's
+    launcher buttons instead of duplicating that logic.
+    """
+    if raise_existing_window(subcommand):
+        return
+
+    app = QApplication.instance()
+    if app is None:
+        return
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    project_win = next(
+        (w for w in app.topLevelWidgets() if isinstance(w, ProjectVisualizer)), None,
+    )
+    if project_win is None:
+        project_win = ProjectVisualizer()
+        # Keep a strong reference on the QApplication so PyQt doesn't
+        # garbage-collect this hub window while it's only being used
+        # internally to launch another visualizer (same pattern already
+        # used for `app._keyboard_manager`).
+        app._project_window = project_win
+
+    if subcommand == "project":
+        project_win.show()
+        project_win.raise_()
+        project_win.activateWindow()
+        return
+
+    project_win._launch(subcommand)

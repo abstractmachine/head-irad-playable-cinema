@@ -142,6 +142,25 @@ class WindowVisualizer(VisualizerWindow):
     def create_inspector(self) -> Optional[QWidget]:
         raise NotImplementedError()
 
+    # Focus -----------------------------------------------------------
+    def focus_target(self) -> QWidget:
+        """Widget that should hold keyboard focus whenever this window is
+        shown. Defaults to the window itself, which is what every
+        keyPressEvent-based shortcut (Tab/Shift+Tab/Esc here, plus each
+        visualizer's own arrow-key/letter shortcuts) needs in order to
+        reliably receive key presses. Without this, whichever child widget
+        Qt's default focus algorithm happens to pick first (e.g. a toolbar
+        button) can silently swallow key presses instead — this is what
+        broke Book Visualizer's LEFT/RIGHT page navigation previously.
+        Override this in a subclass that needs a specific child widget
+        (e.g. a drawing canvas) to hold focus instead.
+        """
+        return self
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self.focus_target().setFocus()
+
     # Geometry -------------------------------------------------------
     def closeEvent(self, event) -> None:
         if self._pref_key:

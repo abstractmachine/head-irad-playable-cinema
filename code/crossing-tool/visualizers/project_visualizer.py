@@ -31,6 +31,7 @@ from PyQt5.QtWidgets import (
 )
 
 from tool import prefs as _prefs
+from tool.shortcuts import shortcut_label_for
 
 _CLI_PATH = Path(__file__).parent.parent / "cli.py"
 
@@ -497,7 +498,13 @@ class ProjectVisualizer(WindowVisualizer):
             ],
             [(0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 1), (3, 0), (3, 1), (4, 0), (4, 1)],
         ):
-            btn = QPushButton(label)
+            # Shortcut label (e.g. "F9") comes solely from the shared
+            # tool.shortcuts.FUNCTION_KEY_BINDINGS mapping, never hardcoded
+            # here, so the button text can't drift out of sync with the
+            # actual F-key binding.
+            shortcut = shortcut_label_for(sub)
+            btn_text = f"{label}   {shortcut}" if shortcut else label
+            btn = QPushButton(btn_text)
             btn.setEnabled(enabled)
             btn.setStyleSheet(theme.action_button_stylesheet())
             if enabled:
