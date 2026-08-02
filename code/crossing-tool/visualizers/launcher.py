@@ -1,28 +1,79 @@
 """Central visualizer launcher.
 
-This module provides a canonical standalone visualizer startup path.
+This module provides the canonical standalone visualizer startup paths.
 
-Step 1: support the Illustration visualizer only. Callers should use
-`launch_visualizer()` to reproduce the exact behaviour the CLI currently
-uses (raise existing in-process window, create/reuse QApplication,
-apply theme, construct the window, show it and exec the event loop).
+Two shared entry points live here:
 
-Do not migrate callers in this change; this module is introduced as an
-implementation detail so visualizers can be launched from one place later.
+- `run_visualizer_window()` — the plain launch pattern used by most
+  visualizers: raise an existing in-process window if one exists, otherwise
+  get-or-create the `QApplication`, apply the shared theme, construct the
+  window, show it, and (only if this call created the `QApplication`) run
+  the event loop. Visualizer modules should keep only their own thin
+  `run_visualizer()` wrapper that builds the window with its
+  project/media-specific arguments and calls this helper.
+
+- `launch_visualizer()` — the Illustration-specific path. Illustration must
+  never have its `QWidget` hierarchy constructed inside a process that
+  already has a running `QApplication` (e.g. when opened from another
+  visualizer's in-process window), so instead of constructing in-process it
+  spawns an independent OS process. Visualizers with the same requirement
+  can be added here later; do not use this for visualizers that are fine
+  being constructed in-process (use `run_visualizer_window()` instead).
 """
 from __future__ import annotations
 
 import sys
-from typing import Optional
+from typing import Callable, Optional
 from pathlib import Path
 import subprocess as _sp
 
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QApplication, QWidget
 
 from styles import theme
 
 # The window-raise helper is safe to import at module level.
 from visualizers._window_helpers import raise_existing_window
+
+
+def run_visualizer_window(
+    subcommand: str,
+    build_window: Callable[[], QWidget],
+    *,
+    check_existing: bool = True,
+    post_show: Optional[Callable[[QWidget], None]] = None,
+) -> Optional[QWidget]:
+    """Shared standalone launch path for visualizers with no cross-process
+    spawn requirement.
+
+    Raises an already-open in-process window matching *subcommand* (unless
+    *check_existing* is False). Otherwise gets or creates the `QApplication`
+    (applying the shared theme only when this call creates it), calls
+    `build_window()` to construct the visualizer's main window, shows it,
+    calls *post_show* with the window if supplied (for the rare bit of
+    per-visualizer setup that must happen after `show()` but before the
+    event loop runs), and — only if this call created the `QApplication` —
+    runs the event loop and exits the process when it finishes.
+
+    Returns the constructed window, or None if an existing window was
+    raised instead.
+    """
+    if check_existing and raise_existing_window(subcommand):
+        return None
+
+    app = QApplication.instance()
+    created_app = app is None
+    if created_app:
+        app = QApplication(sys.argv)
+        theme.apply_theme(app)
+
+    win = build_window()
+    win.show()
+    if post_show is not None:
+        post_show(win)
+
+    if created_app:
+        sys.exit(app.exec_())
+    return win
 
 
 def launch_visualizer(
@@ -36,11 +87,10 @@ def launch_visualizer(
     initial_label: Optional[str] = None,
     initial_shot: Optional[str] = None,
 ) -> None:
-    """Launch a visualizer in a standalone process-like path.
-
-    For this first step only `subcommand == "illustration"` is supported
-    and the behaviour matches the previous CLI entrypoint in
-    `visualizers.illustration_visualizer.run_visualizer()`.
+    """Launch a visualizer that must never be constructed in-process when
+    another `QApplication` is already running (spawns an independent OS
+    process in that case instead). Currently only `subcommand == "illustration"`
+    needs this; other visualizers should use `run_visualizer_window()`.
     """
     from tool import prefs as _prefs
 

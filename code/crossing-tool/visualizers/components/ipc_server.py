@@ -6,14 +6,13 @@ Subclasses parse small routing messages and emit UI-thread signals.
 This class transports messages only. It does not implement project/business
 operations; those remain in services and CLI commands.
 
-Both existing IPC implementations follow the same structure:
+`_IllIpcServer` (illustration_visualizer.py) subclasses this base directly.
 
-- ``_IpcServer``    (shot_visualizer.py)       — navigate to shot on load
-- ``_IllIpcServer`` (illustration_visualizer.py) — navigate to label/field
-
-Migration of existing callers to subclass IpcServer is deferred to a later
-phase.  The Shot Visualizer is explicitly out of scope for the initial
-framework migration.
+`_IpcServer` (shot_visualizer.py) still duplicates the same run-loop locally
+rather than subclassing this base — its message shape (a 4-value signal
+mapped 1:1 from fixed dict keys) is structurally identical, but migrating it
+is deferred; Shot Visualizer is out of scope for the initial framework
+migration.
 
 Usage::
 

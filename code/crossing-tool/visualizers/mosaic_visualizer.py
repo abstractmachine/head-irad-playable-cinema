@@ -2711,11 +2711,6 @@ class MosaicVisualizer(QMainWindow):
         else:
             super().keyPressEvent(event)
 
-
-# ---------------------------------------------------------------------------
-# Public launcher
-# ---------------------------------------------------------------------------
-
     def closeEvent(self, event) -> None:
         save_window_geometry(self, "window_mosaic")
         super().closeEvent(event)
@@ -2727,12 +2722,8 @@ class MosaicVisualizer(QMainWindow):
 
 def run_visualizer(project_path: str, media_type: str = "movie") -> None:
     """Create the QApplication (if needed) and launch the visualizer window."""
-    from visualizers._window_helpers import raise_existing_window
-    if raise_existing_window("mosaic"):
-        return
-
-    app = QApplication.instance() or QApplication(sys.argv)
-    theme.apply_theme(app)
-    win = MosaicVisualizer(project_path, media_type=media_type)
-    win.show()
-    sys.exit(app.exec_())
+    from visualizers.launcher import run_visualizer_window
+    run_visualizer_window(
+        "mosaic",
+        lambda: MosaicVisualizer(project_path, media_type=media_type),
+    )

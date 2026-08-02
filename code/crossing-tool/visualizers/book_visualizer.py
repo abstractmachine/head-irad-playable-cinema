@@ -5257,13 +5257,6 @@ class BookVisualizerWindow(WindowVisualizer):
 
 def run_visualizer(project_path: str) -> None:
     """Launch the Book Visualizer window."""
-    from visualizers._window_helpers import raise_existing_window
-    if raise_existing_window("book"):
-        return
-
-    app = QApplication.instance() or QApplication(sys.argv)
-    theme.apply_theme(app)
-    window = BookVisualizerWindow(project_path)
-    window.show()
-    app.exec_()
+    from visualizers.launcher import run_visualizer_window
+    run_visualizer_window("book", lambda: BookVisualizerWindow(project_path))
 

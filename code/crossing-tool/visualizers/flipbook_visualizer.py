@@ -619,17 +619,14 @@ def run_visualizer(
     media_type: str = "movie",
 ) -> None:
     """Create QApplication (if needed) and open the flipbook visualizer."""
-    global _FONT_FAMILY
-    from visualizers._window_helpers import raise_existing_window
-    if raise_existing_window("flipbook"):
-        return
+    from visualizers.launcher import run_visualizer_window
 
-    app = QApplication.instance() or QApplication(sys.argv)
-    theme.apply_theme(app)
-    _FONT_FAMILY = _load_flipbook_font()
-    win = FlipbookVisualizerWindow(project_path, media_type=media_type)
-    win.show()
-    sys.exit(app.exec_())
+    def _build() -> FlipbookVisualizerWindow:
+        global _FONT_FAMILY
+        _FONT_FAMILY = _load_flipbook_font()
+        return FlipbookVisualizerWindow(project_path, media_type=media_type)
+
+    run_visualizer_window("flipbook", _build)
 
 
 if __name__ == "__main__":

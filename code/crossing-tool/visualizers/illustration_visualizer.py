@@ -111,6 +111,7 @@ from visualizers.components.illustration_source import SilhouetteSource, Engravi
 from visualizers.components.inspector import Inspector
 from visualizers.components.tab_panel import TabPanel
 from visualizers.components.hover_icon_button import HoverIconButton, build_icon_pair
+from visualizers.components.ipc_server import IpcServer
 
 
 # ---------------------------------------------------------------------------
@@ -1303,68 +1304,30 @@ def _ill_ipc_socket_path(project_path: str) -> Path:
     return Path(tempfile.gettempdir()) / f"crossing_illustration_{h}.sock"
 
 
-class _IllIpcServer(QThread):
+class _IllIpcServer(IpcServer):
     """Listens on a Unix-domain socket and emits navigate_requested.
 
     The navigate message now includes `media_type` so callers can request
-    a mode switch on the running instance before navigation.
+    a mode switch on the running instance before navigation. The socket
+    accept/read/dispatch loop is provided by the shared `IpcServer` base;
+    this subclass only supplies the socket path and message handling.
     """
 
     # film, field, label, shot_id, media_type
     navigate_requested = pyqtSignal(str, str, str, str, str)
 
     def __init__(self, project_path: str, parent=None) -> None:
-        super().__init__(parent)
-        self._project_path = project_path
-        self._running = True
+        super().__init__(_ill_ipc_socket_path(project_path), parent)
 
-    def run(self) -> None:
-        import json as _json
-        import socket as _socket
-        sock_path = _ill_ipc_socket_path(self._project_path)
-        try:
-            sock_path.unlink()
-        except FileNotFoundError:
-            pass
-        srv = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
-        try:
-            srv.bind(str(sock_path))
-            srv.listen(5)
-            srv.settimeout(1.0)
-            while self._running:
-                try:
-                    conn, _ = srv.accept()
-                except _socket.timeout:
-                    continue
-                try:
-                    data = b""
-                    while True:
-                        chunk = conn.recv(4096)
-                        if not chunk:
-                            break
-                        data += chunk
-                    msg = _json.loads(data.decode())
-                    if msg.get("action") == "navigate":
-                        self.navigate_requested.emit(
-                            msg.get("film", ""),
-                            msg.get("field", ""),
-                            msg.get("label", ""),
-                            msg.get("shot_id", ""),
-                            msg.get("media_type", ""),
-                        )
-                except Exception:
-                    pass
-                finally:
-                    conn.close()
-        finally:
-            srv.close()
-            try:
-                sock_path.unlink()
-            except FileNotFoundError:
-                pass
-
-    def stop(self) -> None:
-        self._running = False
+    def _handle_message(self, msg: dict) -> None:
+        if msg.get("action") == "navigate":
+            self.navigate_requested.emit(
+                msg.get("film", ""),
+                msg.get("field", ""),
+                msg.get("label", ""),
+                msg.get("shot_id", ""),
+                msg.get("media_type", ""),
+            )
 
 
 def _ill_ipc_send_navigate(

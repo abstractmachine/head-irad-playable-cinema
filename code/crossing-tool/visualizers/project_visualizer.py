@@ -752,11 +752,8 @@ class ProjectVisualizer(WindowVisualizer):
 
 def run_visualizer() -> None:
     """Create QApplication (if needed) and launch the project window."""
-    app = QApplication.instance() or QApplication(sys.argv)
-    theme.apply_theme(app)
-    win = ProjectVisualizer()
-    win.show()
-    sys.exit(app.exec_())
+    from visualizers.launcher import run_visualizer_window
+    run_visualizer_window("project", lambda: ProjectVisualizer(), check_existing=False)
 
 
 if __name__ == "__main__":

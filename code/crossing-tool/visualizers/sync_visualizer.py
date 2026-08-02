@@ -4364,12 +4364,14 @@ def run_visualizer() -> None:
     if raise_existing_window("sync"):
         return
     _cleanup_audio_loopbacks()  # clear any stale loops from crashed/previous runs
-    app = QApplication.instance() or QApplication(sys.argv)
-    theme.apply_theme(app)
-    win = SyncVisualizerWindow()
-    win.show()
-    win._apply_startup_fullscreen()
-    sys.exit(app.exec_())
+
+    from visualizers.launcher import run_visualizer_window
+    run_visualizer_window(
+        "sync",
+        lambda: SyncVisualizerWindow(),
+        check_existing=False,
+        post_show=lambda win: win._apply_startup_fullscreen(),
+    )
 
 
 if __name__ == "__main__":

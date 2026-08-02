@@ -975,13 +975,5 @@ class MetadataVisualizer(WindowVisualizer):
 
 def run_visualizer(project_path: str) -> None:
     """Create the QApplication (if needed) and launch the metadata visualizer."""
-    from visualizers._window_helpers import raise_existing_window
-
-    if raise_existing_window("metadata"):
-        return
-
-    app = QApplication.instance() or QApplication(sys.argv)
-    theme.apply_theme(app)
-    win = MetadataVisualizer(project_path)
-    win.show()
-    sys.exit(app.exec_())
+    from visualizers.launcher import run_visualizer_window
+    run_visualizer_window("metadata", lambda: MetadataVisualizer(project_path))
