@@ -5,9 +5,9 @@ Launched via:
     crossing visualizer flipbook
     crossing visualizer flipbook --media gameplay
 
-Layout:
-  TOP  — movie selector dropdown + page-count status label + Export PDF button
-  MAIN — scrollable grid of page thumbnails (bg fill + motif word)
+Layout (canonical WindowVisualizer shell):
+  BROWSER   — scrollable, zoomable grid of page thumbnails (bg fill + motif word)
+  INSPECTOR — movie selector, info, Export PDF, zoom
 
 Each page thumbnail is:
   - filled with the shot's palette background color
@@ -19,13 +19,15 @@ Covers (front and back) are included as the first and last pages.
 Keyboard:
   Home          — previous title
   End           — next title
+  Tab           — show/hide inspector
+  Shift+Tab     — toggle fullscreen
+  Ctrl+wheel / Ctrl+Plus/Minus/0 — zoom the page grid
   Escape / Ctrl+Q / Ctrl+W — close
   Ctrl+P        — export PDF for current movie
 """
 
 from __future__ import annotations
 
-import math
 import os
 import sys
 from pathlib import Path
@@ -34,19 +36,24 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from styles import theme
-from styles.theme import save_window_geometry, restore_window_geometry
 
 from PyQt5.QtCore import Qt, QEvent, QSize
 from tool.shortcuts import KEY_PREV_TITLE, KEY_NEXT_TITLE
+from visualizers.window_visualizer import WindowVisualizer
+from visualizers.components.aspect_grid import AspectGridWidget
+from visualizers.components.zoom_manager import ZoomManager
+from visualizers.components.inspector import Inspector
+from visualizers.components.tab_panel import TabPanel
+from visualizers.components.combo_popup import attach_combo_popup
+from visualizers.components.metadata_block import MetadataBlock
 from PyQt5.QtWidgets import (
     QApplication,
     QComboBox,
+    QFrame,
     QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -64,6 +71,24 @@ if "QT_QPA_PLATFORM_PLUGIN_PATH" in os.environ:
 _ASPECT = 16 / 9      # page width : height ratio  (cinema widescreen)
 _GAP    = 6           # px — gap between page thumbnails
 _MARGIN = 12          # px — grid outer margin
+
+# Zoom range/step mirror Metadata's browser page (see metadata_visualizer.py)
+# so Ctrl+wheel / Ctrl+Plus/Minus/0 feel identical across visualizers.
+_ZOOM_MIN     = 0.60
+_ZOOM_MAX     = 3.00
+_ZOOM_STEP    = 0.20
+_ZOOM_DEFAULT = 1.00
+
+
+def _zoom_key(media_type: str) -> str:
+    return f"flipbook_browser_zoom_{media_type}"
+
+
+# Rows shown in the Info section's two-column (tag / info) table — see
+# `create_inspector()`.  "status" carries transient loading/export messages;
+# the rest is the per-movie summary that used to live in a status label
+# below the movie combo.
+_INFO_ROWS = ["status", "shots", "motifs", "pages"]
 
 
 # ---------------------------------------------------------------------------
@@ -196,87 +221,94 @@ class _PageCell(QWidget):
 
 
 # ---------------------------------------------------------------------------
-# Grid container (manual flow layout)
+# Browser page: scrollable, zoomable grid of page thumbnails for one movie
 # ---------------------------------------------------------------------------
 
-class _GridWidget(QWidget):
-    """Holds page cells in a wrap-around grid that reflows on resize."""
+class _FlipbookBrowserPage(QWidget):
+    """Owns the page-thumbnail grid for the currently selected movie.
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    Composed from the same shared building blocks Metadata's browser page
+    uses — `AspectGridWidget` for the best-fit grid reflow (extracted from
+    what used to be this file's own `_GridWidget._reflow()`, near-identical
+    to Palette's) and `ZoomManager` for zoom state/persistence/Ctrl+wheel
+    and Ctrl+Plus/Minus/0 handling. See visualizers/components/
+    {aspect_grid,zoom_manager}.py.
+    """
+
+    def __init__(self, media_type: str, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
+        self._media_type = media_type
         self._cells: list[_PageCell] = []
 
+        from tool import prefs as _prefs
+        initial_zoom = float(_prefs.get(_zoom_key(media_type), _ZOOM_DEFAULT) or _ZOOM_DEFAULT)
+        self._zoom_manager = ZoomManager(
+            self,
+            initial_zoom,
+            _ZOOM_MIN,
+            _ZOOM_MAX,
+            _ZOOM_STEP,
+            persist_cb=lambda v: _prefs.set(_zoom_key(self._media_type), v),
+        )
+
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setStyleSheet(f"QWidget {{ background: {theme.CANVAS_BG}; }}")
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._scroll.setFocusPolicy(Qt.NoFocus)
+        self._scroll.setStyleSheet(f"QScrollArea {{ background: {theme.CANVAS_BG}; border: none; }}")
+        self._scroll.setVerticalScrollBar(theme.JumpScrollBar())
+        self._scroll.viewport().installEventFilter(self)
+
+        self._grid_widget = AspectGridWidget(aspect=_ASPECT, gap=_GAP, margin=_MARGIN)
+        self._grid_widget.setStyleSheet(f"background: {theme.CANVAS_BG};")
+        self._grid_widget.set_zoom(self._zoom_manager.zoom())
+        self._scroll.setWidget(self._grid_widget)
+        outer.addWidget(self._scroll)
+
+    # ------------------------------------------------------------------ zoom
+    def zoom_manager(self) -> ZoomManager:
+        return self._zoom_manager
+
+    def request_reflow(self) -> None:
+        """Called by ZoomManager (as a fallback hook) after a zoom change."""
+        self._grid_widget.set_zoom(self._zoom_manager.zoom())
+
+    # ------------------------------------------------------------------ data
     def load_pages(self, pages: list[dict]) -> None:
-        for cell in self._cells:
-            cell.setParent(None)   # type: ignore[arg-type]
-            cell.deleteLater()
-        self._cells = []
-
+        cells = []
         for page in pages:
-            cell = _PageCell(page, self)
-            cell.show()
-            self._cells.append(cell)
+            cell = _PageCell(page)
+            cells.append(cell)
+        self._cells = cells
+        self._grid_widget.set_cells(cells)
 
-        self._reflow()
+    # ------------------------------------------------------------ zoom input
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if obj is self._scroll.viewport() and event.type() == QEvent.Wheel:
+            if self._zoom_manager.handle_wheel_event(event):
+                return True
+        return super().eventFilter(obj, event)
 
-    def _reflow(self) -> None:
-        n = len(self._cells)
-        if n == 0:
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        if self._zoom_manager.handle_key_event(event, _ZOOM_DEFAULT):
             return
-
-        W = max(1, self.width()  - 2 * _MARGIN)
-        H = max(1, self.height() - 2 * _MARGIN)
-
-        # Find the column count that maximises cell area at fixed aspect ratio.
-        best_area = 0.0
-        best_cols = 1
-        best_cw   = 0.0
-        best_ch   = 0.0
-
-        for cols in range(1, n + 1):
-            rows = math.ceil(n / cols)
-            cw = (W - (cols - 1) * _GAP) / cols
-            ch = cw / _ASPECT
-            if rows * ch + (rows - 1) * _GAP > H:
-                ch = (H - (rows - 1) * _GAP) / rows
-                cw = ch * _ASPECT
-            if cw <= 0 or ch <= 0:
-                continue
-            area = cw * ch
-            if area > best_area:
-                best_area = area
-                best_cols = cols
-                best_cw   = cw
-                best_ch   = ch
-
-        if best_area <= 0:
-            return
-
-        cell_w = max(1, int(best_cw))
-        cell_h = max(1, int(best_ch))
-        rows   = math.ceil(n / best_cols)
-
-        grid_w = best_cols * cell_w + (best_cols - 1) * _GAP
-        grid_h = rows      * cell_h + (rows      - 1) * _GAP
-        x0 = _MARGIN + max(0, (W - grid_w) // 2)
-        y0 = _MARGIN + max(0, (H - grid_h) // 2)
-
-        for i, cell in enumerate(self._cells):
-            row, col = divmod(i, best_cols)
-            x = x0 + col * (cell_w + _GAP)
-            y = y0 + row * (cell_h + _GAP)
-            cell.setGeometry(x, y, cell_w, cell_h)
-
-    def resizeEvent(self, event) -> None:  # noqa: N802
-        super().resizeEvent(event)
-        self._reflow()
+        super().keyPressEvent(event)
 
 
 # ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
 
-class FlipbookVisualizerWindow(QMainWindow):
+class FlipbookVisualizerWindow(WindowVisualizer):
     """Main window for the Flipbook Visualizer."""
 
     def __init__(
@@ -284,8 +316,6 @@ class FlipbookVisualizerWindow(QMainWindow):
         project_path: str,
         media_type: str = "movie",
     ) -> None:
-        super().__init__()
-        self.setWindowTitle("Crossing — Flipbook Visualizer")
         self._project_path = project_path
         self._media_type   = media_type
 
@@ -294,87 +324,98 @@ class FlipbookVisualizerWindow(QMainWindow):
         self._current_idx: int = 0
         self._updating_combo: bool = False
 
-        self._build_ui()
-        self._load_all_movies()
-        restore_window_geometry(self, "window_flipbook")
+        super().__init__(pref_key="window_flipbook")
+        self.setWindowTitle("Crossing — Flipbook Visualizer")
+        self.setMinimumSize(640, 400)
+        self.resize(1200, 700)
 
-    def closeEvent(self, event) -> None:  # noqa: N802
-        save_window_geometry(self, "window_flipbook")
-        super().closeEvent(event)
+        self._load_all_movies()
 
     # ------------------------------------------------------------------
-    # UI construction
+    # WindowVisualizer hooks
 
-    def _build_ui(self) -> None:
-        central = QWidget()
-        self.setCentralWidget(central)
+    def create_browser(self) -> QWidget:
+        self._browser_page = _FlipbookBrowserPage(self._media_type)
+        return self._browser_page
 
-        vbox = QVBoxLayout(central)
-        vbox.setContentsMargins(0, 6, 0, 0)
-        vbox.setSpacing(4)
+    def create_inspector(self) -> QWidget:
+        panel = TabPanel()
 
-        # Top bar
-        bar = QHBoxLayout()
-        bar.setContentsMargins(10, 0, 10, 0)
-        bar.setSpacing(6)
-
-        lbl = QLabel("Movie:")
-        lbl.setStyleSheet(
-            f"color: {theme.TEXT}; font-family: '{theme.FAMILY_UI}';"
-            f" font-size: {theme.BASE_PT}pt;"
-        )
-        bar.addWidget(lbl)
+        # ── Movie section ────────────────────────────────────────────────
+        movie_wrap = QWidget()
+        movie_layout = QVBoxLayout(movie_wrap)
+        movie_layout.setContentsMargins(0, 0, 0, 0)
+        movie_layout.setSpacing(theme.SECTION_GAP)
 
         self._combo = QComboBox()
         self._combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._combo.setFocusPolicy(Qt.NoFocus)
+        self._combo.setMaxVisibleItems(10)
+        self._combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLength)
+        attach_combo_popup(self._combo)
+        self._combo.setStyleSheet(
+            f"QComboBox {{ background: {theme.BTN_BG}; color: {theme.TEXT};"
+            f" border: none; border-radius: 3px; padding: 0px 6px;"
+            f" min-height: {theme.BTN_H}px; max-height: {theme.BTN_H}px; }}"
+            f"QComboBox::drop-down {{ border: none; }}"
+        )
         self._combo.currentIndexChanged.connect(self._on_combo_changed)
         self._combo.installEventFilter(self)
-        bar.addWidget(self._combo, 1)
+        movie_layout.addWidget(self._combo)
 
-        title_lbl = QLabel("Title:")
-        title_lbl.setStyleSheet(
-            f"color: {theme.TEXT}; font-family: '{theme.FAMILY_UI}';"
-            f" font-size: {theme.BASE_PT}pt;"
-        )
-        bar.addWidget(title_lbl)
+        panel.add_section("Movie", movie_wrap, pref_key="flipbook_section_movie")
 
-        self._title_edit = QLineEdit()
-        self._title_edit.setPlaceholderText("Film title motif — press Enter to save")
-        self._title_edit.setStyleSheet(
-            f"color: {theme.TEXT}; font-family: '{theme.FAMILY_UI}';"
-            f" font-size: {theme.BASE_PT}pt;"
-            f" background: {theme.CANVAS_BG}; border: 1px solid {theme.TEXT_DIM};"
-            f" padding: 2px 6px;"
-        )
-        self._title_edit.returnPressed.connect(self._on_title_edited)
-        self._title_edit.installEventFilter(self)
-        bar.addWidget(self._title_edit, 2)
+        # ── Info section ─────────────────────────────────────────────────
+        info_wrap = QWidget()
+        info_layout = QVBoxLayout(info_wrap)
+        info_layout.setContentsMargins(0, 0, 0, 0)
+        info_layout.setSpacing(0)
+        self._info_block = MetadataBlock(_INFO_ROWS)
+        info_layout.addWidget(self._info_block)
+        panel.add_section("Info", info_wrap, pref_key="flipbook_section_info")
 
-        self._status_label = QLabel("")
-        self._status_label.setStyleSheet(
-            f"color: {theme.TEXT_DIM}; font-family: '{theme.FAMILY_UI}';"
-            f" font-size: {theme.BASE_PT}pt;"
+        # ── Tools section (zoom + export) ──────────────────────────────
+        tools_wrap = QWidget()
+        tools_layout = QVBoxLayout(tools_wrap)
+        tools_layout.setContentsMargins(0, 0, 0, 0)
+        tools_layout.setSpacing(theme.SECTION_GAP)
+
+        action_btn_style = theme.action_button_stylesheet()
+
+        zoom_row = QHBoxLayout()
+        zoom_row.setContentsMargins(0, 0, 0, 0)
+        zoom_row.setSpacing(theme.SECTION_GAP)
+
+        zoom_out_btn = QPushButton("Zoom Out")
+        zoom_out_btn.setStyleSheet(action_btn_style)
+        zoom_out_btn.setFocusPolicy(Qt.NoFocus)
+        zoom_out_btn.clicked.connect(
+            lambda: self._browser_page.zoom_manager().change_zoom(-_ZOOM_STEP)
         )
-        bar.addWidget(self._status_label)
+        zoom_row.addWidget(zoom_out_btn, 1)
+
+        zoom_in_btn = QPushButton("Zoom In")
+        zoom_in_btn.setStyleSheet(action_btn_style)
+        zoom_in_btn.setFocusPolicy(Qt.NoFocus)
+        zoom_in_btn.clicked.connect(
+            lambda: self._browser_page.zoom_manager().change_zoom(_ZOOM_STEP)
+        )
+        zoom_row.addWidget(zoom_in_btn, 1)
+
+        tools_layout.addLayout(zoom_row)
 
         self._export_btn = QPushButton("Export PDF")
-        self._export_btn.setStyleSheet(
-            f"color: {theme.TEXT}; font-family: '{theme.FAMILY_UI}';"
-            f" font-size: {theme.BASE_PT}pt;"
-        )
+        self._export_btn.setStyleSheet(action_btn_style)
+        self._export_btn.setFocusPolicy(Qt.NoFocus)
         self._export_btn.setToolTip("Render the current movie's flipbook as a PDF")
         self._export_btn.clicked.connect(self._on_export_pdf)
-        bar.addWidget(self._export_btn)
+        tools_layout.addWidget(self._export_btn)
 
-        vbox.addLayout(bar)
+        panel.add_section("Tools", tools_wrap, pref_key="flipbook_section_tools")
 
-        self._grid = _GridWidget()
-        self._grid.setStyleSheet(f"background: {theme.CANVAS_BG};")
-        self._grid.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        vbox.addWidget(self._grid, 1)
-
-        self.setMinimumSize(640, 400)
-        self.resize(1200, 700)
+        self._inspector = Inspector()
+        self._inspector.add_tab(panel, "Flipbook")
+        return self._inspector
 
     # ------------------------------------------------------------------
     # Data loading
@@ -411,8 +452,8 @@ class FlipbookVisualizerWindow(QMainWindow):
         if books:
             self._show_movie(0)
         else:
-            self._status_label.setText(
-                "No annotated movies found. Run: crossing annotate shot --all"
+            self._info_block.set(
+                "status", "No annotated movies found. Run: crossing annotate shot --all"
             )
 
     def _ensure_loaded(self, idx: int) -> bool:
@@ -434,10 +475,10 @@ class FlipbookVisualizerWindow(QMainWindow):
             self._books[idx] = (label, data)
             return True
         except FileNotFoundError as exc:
-            self._status_label.setText(str(exc))
+            self._info_block.set("status", str(exc))
             return False
         except Exception as exc:
-            self._status_label.setText(f"Error: {exc}")
+            self._info_block.set("status", f"Error: {exc}")
             return False
 
     # ------------------------------------------------------------------
@@ -460,47 +501,17 @@ class FlipbookVisualizerWindow(QMainWindow):
             if p.get("kind") == "shot" and p.get("motif", "") not in ("—", "", None)
         )
 
-        self._status_label.setText(
-            f"{n_shots} shots  ·  {has_motif} with motif  ·  {n_total} pages total"
-        )
-        self._grid.load_pages(pages)
-
-        # Populate the title edit with the current film title motif value
-        film_motif = data.get("film_motif") or {}
-        current_title = film_motif.get("value", "").strip() or data.get("title", "")
-        self._title_edit.blockSignals(True)
-        self._title_edit.setText(current_title)
-        self._title_edit.setPlaceholderText(data.get("title", "") or "Film title motif")
-        self._title_edit.blockSignals(False)
+        self._info_block.load({
+            "status": "—",
+            "shots":  str(n_shots),
+            "motifs": str(has_motif),
+            "pages":  str(n_total),
+        })
+        self._browser_page.load_pages(pages)
 
         self._updating_combo = True
         self._combo.setCurrentIndex(idx)
         self._updating_combo = False
-
-    # ------------------------------------------------------------------
-    # Title edit
-
-    def _on_title_edited(self) -> None:
-        """Save the edited film title motif and reload the current movie."""
-        value = self._title_edit.text().strip()
-        if not value or not self._books:
-            return
-        idx = self._current_idx
-        label, data = self._books[idx]
-        filename = data.get("filename", "")
-        if not filename:
-            return
-        try:
-            from data.film_motif import set_film_title
-            set_film_title(self._project_path, filename, self._media_type, value)
-            # Force reload so the front cover reflects the new value
-            data["loaded"] = False
-            self._books[idx] = (label, data)
-            self._show_movie(idx)
-        except Exception as exc:
-            self._status_label.setText(f"Error saving title: {exc}")
-        finally:
-            self.setFocus()
 
     # ------------------------------------------------------------------
     # PDF export
@@ -522,12 +533,12 @@ class FlipbookVisualizerWindow(QMainWindow):
         output_path = get_flipbook_output_path(self._project_path, filename)
 
         self._export_btn.setEnabled(False)
-        self._status_label.setText("Exporting PDF…")
+        self._info_block.set("status", "Exporting PDF…")
         QApplication.processEvents()
 
         try:
             export_flipbook_pdf(pages, output_path, title=title, verbose=False)
-            self._status_label.setText(f"Saved: {output_path}")
+            self._info_block.set("status", f"Saved: {output_path}")
 
             # Try to open the PDF in the desktop viewer
             try:
@@ -541,7 +552,7 @@ class FlipbookVisualizerWindow(QMainWindow):
                 self, "Export failed",
                 f"Could not save PDF:\n{exc}",
             )
-            self._status_label.setText("Export failed.")
+            self._info_block.set("status", "Export failed.")
         finally:
             self._export_btn.setEnabled(True)
 
@@ -549,8 +560,7 @@ class FlipbookVisualizerWindow(QMainWindow):
     # Signal handlers
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
-        """Intercept Home/End/PgUp/PgDn on the movie combo, and
-        Tab/Backtab on the title edit."""
+        """Intercept Home/End/PgUp/PgDn on the movie combo."""
         if event.type() == QEvent.KeyPress:
             if obj is self._combo:
                 key = event.key()
@@ -564,13 +574,6 @@ class FlipbookVisualizerWindow(QMainWindow):
                     return True
                 if key in (Qt.Key_PageUp, Qt.Key_PageDown):
                     return True  # PgUp/PgDn are not used in this visualizer
-            if obj is self._title_edit:
-                if event.key() in (Qt.Key_Tab, Qt.Key_Backtab):
-                    self._on_title_edited()
-                    return True
-                if event.key() in (Qt.Key_Q, Qt.Key_W) and event.modifiers() & Qt.ControlModifier:
-                    self.close()
-                    return True
         return super().eventFilter(obj, event)
 
     def _on_combo_changed(self, idx: int) -> None:
@@ -580,34 +583,28 @@ class FlipbookVisualizerWindow(QMainWindow):
 
     # ------------------------------------------------------------------
     # Keyboard navigation
+    #
+    # Escape / Ctrl+Q/W / Tab (show-hide inspector) / Shift+Tab (fullscreen)
+    # are handled by WindowVisualizer.keyPressEvent(); Ctrl+P (export) and
+    # Home/End (previous/next title) are specific to this visualizer.
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
         key = event.key()
         mod = event.modifiers()
 
-        if key == Qt.Key_Escape or (
-            key in (Qt.Key_Q, Qt.Key_W) and mod & Qt.ControlModifier
-        ):
-            self.close()
-            return
-
         if key == Qt.Key_P and mod & Qt.ControlModifier:
             self._on_export_pdf()
-            return
-
-        if key == Qt.Key_Tab:
-            self._title_edit.setFocus()
-            self._title_edit.selectAll()
             return
 
         if key == KEY_PREV_TITLE:
             if self._current_idx > 0:
                 self._show_movie(self._current_idx - 1)
-        elif key == KEY_NEXT_TITLE:
+            return
+        if key == KEY_NEXT_TITLE:
             if self._current_idx < len(self._books) - 1:
                 self._show_movie(self._current_idx + 1)
-        else:
-            super().keyPressEvent(event)
+            return
+        super().keyPressEvent(event)
 
 
 # ---------------------------------------------------------------------------

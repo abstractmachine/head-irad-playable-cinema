@@ -4362,6 +4362,115 @@ def _flipbook_visualizer(args):
 
 
 # ---------------------------------------------------------------------------
+# generate palette
+# ---------------------------------------------------------------------------
+
+def cmd_palette(args):
+    """Generate a colour-swatch contact-sheet PDF (all shots on one page)."""
+    _require_path()
+    project_path = prefs.get("path")
+    media_type   = normalize_media_type(getattr(args, "media", "movie")) or "movie"
+    force        = getattr(args, "force", False)
+    verbose      = getattr(args, "verbose", False)
+    open_result  = not getattr(args, "no_open", False)
+    notify_each  = getattr(args, "notify_items", False)
+    notify       = getattr(args, "notify", False) or notify_each
+
+    if getattr(args, "visualizer", False):
+        _palette_visualizer(args)
+        return
+
+    import subprocess
+    from generators.palette import (
+        generate_palette_pdf_for_movie,
+        generate_palette_pdf_for_all_movies,
+    )
+    from data.shotlist import resolve_filename
+
+    # Determine scope
+    do_all   = getattr(args, "all", False)
+    movie    = getattr(args, "movie", None)
+    tmdb_id  = getattr(args, "tmdb", None)
+
+    if do_all:
+        print(f"Generating palette PDFs for all {media_type}…")
+
+        def _palette_on_item(title, item_summary, exc):
+            if not notify_each:
+                return
+            from services.notify import discord_notify
+            if exc is None:
+                shots = item_summary.get("shots", "?")
+                discord_notify(f"✓ Palette: {title}  ({shots} shots)", project_path)
+            else:
+                discord_notify(f"✗ Palette failed: {title}  — {exc}", project_path)
+
+        summary = generate_palette_pdf_for_all_movies(
+            project_path, media_type=media_type,
+            force=force, verbose=verbose,
+            on_item_done=_palette_on_item if notify_each else None,
+        )
+        print()
+        print(f"  processed: {summary['total_processed']}")
+        print(f"  skipped:   {summary['total_skipped']}")
+        print(f"  failed:    {summary['total_failed']}")
+        if summary["errors"]:
+            for fn, err in summary["errors"]:
+                print(f"  ✗ {fn}: {err}", file=sys.stderr)
+        if notify:
+            from services.notify import discord_notify
+            discord_notify(
+                f"✓ Palette batch complete: "
+                f"processed={summary['total_processed']}  "
+                f"skipped={summary['total_skipped']}  "
+                f"failed={summary['total_failed']}",
+                project_path,
+            )
+        return
+
+    # Single movie
+    if not movie and not tmdb_id:
+        print("✗ palette: specify --title, --tmdb, or --all.", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        filename = resolve_filename(project_path, tmdb_id, movie, media_type)
+    except Exception as exc:
+        print(f"✗ Could not resolve movie: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        result = generate_palette_pdf_for_movie(
+            project_path, filename, media_type,
+            force=force, verbose=verbose,
+        )
+        out = result["output_path"]
+        print(f"✓ Saved: {out}  ({result['shots']} shots)")
+        if open_result:
+            try:
+                subprocess.Popen(["xdg-open", str(out)])
+            except Exception:
+                pass
+        if notify:
+            from services.notify import discord_notify
+            discord_notify(
+                f"✓ Palette: {Path(out).name}  ({result['shots']} shots)",
+                project_path,
+            )
+    except FileExistsError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    except FileNotFoundError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        print(f"✗ Palette failed: {exc}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
 # index command family
 # ---------------------------------------------------------------------------
 
@@ -8262,6 +8371,37 @@ def build_parser():
         help="Open the interactive flipbook visualizer instead of saving",
     )
     _add_notify_args(p_flipbook)
+
+    # generate palette
+    p_palette = generate_sub.add_parser(
+        "palette",
+        help="Generate a colour-swatch contact-sheet PDF (all shots on one page)",
+    )
+    p_palette.set_defaults(func=cmd_palette)
+    p_palette.add_argument(
+        "--title", dest="movie", default=None, metavar="TITLE",
+        help="Title or filename slug fragment to generate the palette PDF for",
+    )
+    p_palette.add_argument(
+        "--all", action="store_true", dest="all",
+        help="Generate palette PDFs for all movies",
+    )
+    _add_tmdb_arg(p_palette, help="TMDB ID to identify the movie")
+    _add_media_arg(p_palette)
+    p_palette.add_argument(
+        "--force", action="store_true",
+        help="Overwrite existing palette PDF",
+    )
+    _add_verbose_arg(p_palette, help="Print rendering progress")
+    p_palette.add_argument(
+        "--no-open", action="store_true", dest="no_open",
+        help="Do not open the PDF after saving",
+    )
+    p_palette.add_argument(
+        "--visualizer", action="store_true",
+        help="Open the interactive palette visualizer instead of saving",
+    )
+    _add_notify_args(p_palette)
 
     # generate film-title
     p_film_title = generate_sub.add_parser(

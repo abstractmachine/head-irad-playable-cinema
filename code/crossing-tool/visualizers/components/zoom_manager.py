@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
-from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt5.QtCore import QObject, Qt, pyqtSignal
 
 
 class ZoomManager(QObject):
@@ -94,3 +94,48 @@ class ZoomManager(QObject):
             self._page.request_reflow()
         except Exception:
             pass
+
+    # ------------------------------------------------------------ input glue
+    def handle_wheel_event(self, event: Any) -> bool:
+        """Handle a Ctrl+wheel gesture as a zoom change.
+
+        Mirrors the Ctrl+wheel handling used by Metadata's browser page.
+        Returns True (and accepts *event*) if the event was a Ctrl+wheel
+        zoom gesture; returns False otherwise so callers can fall back to
+        normal event handling.
+        """
+        if not (event.modifiers() & Qt.ControlModifier):
+            return False
+        delta = event.angleDelta().y()
+        try:
+            notches = int(delta / 120)
+        except Exception:
+            notches = 1 if delta > 0 else (-1 if delta < 0 else 0)
+        if notches != 0:
+            self.set_zoom(self._zoom + notches * self._step)
+        else:
+            self.change_zoom(self._step if delta > 0 else -self._step)
+        event.accept()
+        return True
+
+    def handle_key_event(self, event: Any, default_zoom: float) -> bool:
+        """Handle Ctrl+Plus/Minus/0 as zoom keyboard shortcuts.
+
+        Mirrors the keyboard zoom handling used by Metadata's browser page.
+        Returns True if *event* was one of the zoom shortcuts; False
+        otherwise so callers can fall back to normal key handling.
+        """
+        mod = event.modifiers()
+        if not (mod & Qt.ControlModifier):
+            return False
+        key = event.key()
+        if key in (Qt.Key_Plus, Qt.Key_Equal):
+            self.change_zoom(self._step)
+            return True
+        if key in (Qt.Key_Minus, Qt.Key_Underscore):
+            self.change_zoom(-self._step)
+            return True
+        if key == Qt.Key_0:
+            self.set_zoom(default_zoom)
+            return True
+        return False

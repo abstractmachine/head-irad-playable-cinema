@@ -5,25 +5,30 @@ Launched via:
     crossing visualizer palette
     crossing visualizer palette --media gameplay
 
-Layout:
-  TOP  — movie selector dropdown + shot-count status label
-  MAIN — scrollable grid of shot colour swatches
+Layout (canonical WindowVisualizer shell):
+  BROWSER   — scrollable, zoomable grid of shot colour swatches
+  INSPECTOR — movie selector, info, warnings/palette-strip toggles,
+              Export PDF, zoom
 
 Each swatch is a filled rectangle in the shot's background colour, with the
 best-frame number printed in the shot's foreground colour.  Swatches are
-sized at the default 16 × 9 aspect ratio and reflow automatically when the
-window is resized.
+sized at a fixed 16 × 9 aspect ratio and reflow to best fill the browser
+area, the same way Metadata's thumbnail grid does — see
+`visualizers.components.aspect_grid.AspectGridWidget`.
 
 Keyboard:
   Home          — previous title
   End           — next title
+  Tab           — show/hide inspector
+  Shift+Tab     — toggle fullscreen
+  Ctrl+wheel / Ctrl+Plus/Minus/0 — zoom the swatch grid
   Escape / Ctrl+Q / Ctrl+W — close
+  Ctrl+P        — export the current movie's palette as a PDF
 """
 
 from __future__ import annotations
 
 import json
-import math
 import os
 import sys
 from pathlib import Path
@@ -32,18 +37,26 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from styles import theme
-from styles.theme import save_window_geometry, restore_window_geometry
 
 from PyQt5.QtCore import Qt, QEvent, QThread, pyqtSignal
 from tool.shortcuts import KEY_PREV_TITLE, KEY_NEXT_TITLE
+from visualizers.window_visualizer import WindowVisualizer
+from visualizers.components.aspect_grid import AspectGridWidget
+from visualizers.components.zoom_manager import ZoomManager
+from visualizers.components.inspector import Inspector
+from visualizers.components.tab_panel import TabPanel
+from visualizers.components.combo_popup import attach_combo_popup
+from visualizers.components.metadata_block import MetadataBlock
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QFrame,
     QHBoxLayout,
-    QLabel,
-    QMainWindow,
+    QMessageBox,
     QProgressBar,
+    QPushButton,
+    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -105,6 +118,24 @@ class PaletteLoaderWorker(QThread):
 _ASPECT = 16 / 9  # swatch width : height ratio
 _GAP    = 4       # px — gap between swatches
 _MARGIN = 10      # px — grid outer margin
+
+# Zoom range/step mirror Metadata's browser page (see metadata_visualizer.py)
+# so Ctrl+wheel / Ctrl+Plus/Minus/0 feel identical across visualizers.
+_ZOOM_MIN     = 0.60
+_ZOOM_MAX     = 3.00
+_ZOOM_STEP    = 0.20
+_ZOOM_DEFAULT = 1.00
+
+
+def _zoom_key(media_type: str) -> str:
+    return f"palette_browser_zoom_{media_type}"
+
+
+# Rows shown in the Info section's two-column (tag / info) table — see
+# `create_inspector()`.  "status" carries transient loading/export messages;
+# the rest is the per-movie summary that used to live in a status label
+# below the movie combo.
+_INFO_ROWS = ["status", "shots", "method", "created"]
 
 
 # ---------------------------------------------------------------------------
@@ -281,18 +312,70 @@ class _ShotCell(QWidget):
 
 
 # ---------------------------------------------------------------------------
-# Grid container (manual flow layout)
+# Browser page: scrollable, zoomable grid of shot swatches for one movie
 # ---------------------------------------------------------------------------
 
-class _GridWidget(QWidget):
-    """Holds shot cells in a wrap-around grid that reflows on resize."""
+class _PaletteBrowserPage(QWidget):
+    """Owns the shot-swatch grid for the currently selected movie.
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    Composed from the same shared building blocks Metadata's browser page
+    uses — `AspectGridWidget` for the best-fit grid reflow (extracted from
+    what used to be this file's own `_GridWidget._reflow()`, near-identical
+    to Flipbook's) and `ZoomManager` for zoom state/persistence/Ctrl+wheel
+    and Ctrl+Plus/Minus/0 handling. See visualizers/components/
+    {aspect_grid,zoom_manager}.py.
+    """
+
+    def __init__(self, media_type: str, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
+        self._media_type = media_type
         self._cells: list[_ShotCell] = []
         self._show_warnings: bool = False
         self._show_palette:  bool = False
 
+        from tool import prefs as _prefs
+        initial_zoom = float(_prefs.get(_zoom_key(media_type), _ZOOM_DEFAULT) or _ZOOM_DEFAULT)
+        self._zoom_manager = ZoomManager(
+            self,
+            initial_zoom,
+            _ZOOM_MIN,
+            _ZOOM_MAX,
+            _ZOOM_STEP,
+            persist_cb=lambda v: _prefs.set(_zoom_key(self._media_type), v),
+        )
+
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setStyleSheet(f"QWidget {{ background: {theme.CANVAS_BG}; }}")
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._scroll.setFocusPolicy(Qt.NoFocus)
+        self._scroll.setStyleSheet(f"QScrollArea {{ background: {theme.CANVAS_BG}; border: none; }}")
+        self._scroll.setVerticalScrollBar(theme.JumpScrollBar())
+        self._scroll.viewport().installEventFilter(self)
+
+        self._grid_widget = AspectGridWidget(aspect=_ASPECT, gap=_GAP, margin=_MARGIN)
+        self._grid_widget.setStyleSheet(f"background: {theme.CANVAS_BG};")
+        self._grid_widget.set_zoom(self._zoom_manager.zoom())
+        self._scroll.setWidget(self._grid_widget)
+        outer.addWidget(self._scroll)
+
+    # ------------------------------------------------------------------ zoom
+    def zoom_manager(self) -> ZoomManager:
+        return self._zoom_manager
+
+    def request_reflow(self) -> None:
+        """Called by ZoomManager (as a fallback hook) after a zoom change."""
+        self._grid_widget.set_zoom(self._zoom_manager.zoom())
+
+    # ------------------------------------------------------------------ data
     def load_shots(
         self,
         shots: list[dict],
@@ -300,71 +383,14 @@ class _GridWidget(QWidget):
         filename: str = "",
         media_type: str = "movie",
     ) -> None:
-        for cell in self._cells:
-            cell.setParent(None)  # type: ignore[arg-type]
-            cell.deleteLater()
-        self._cells = []
-
+        cells = []
         for shot in shots:
-            cell = _ShotCell(shot, project_path, filename, media_type, self)
+            cell = _ShotCell(shot, project_path, filename, media_type)
             cell.set_warnings_visible(self._show_warnings)
             cell.set_palette_visible(self._show_palette)
-            cell.show()
-            self._cells.append(cell)
-
-        self._reflow()
-
-    def _reflow(self) -> None:
-        n = len(self._cells)
-        if n == 0:
-            return
-
-        W = max(1, self.width()  - 2 * _MARGIN)
-        H = max(1, self.height() - 2 * _MARGIN)
-
-        # Find the column count that maximises cell area while fitting all
-        # shots inside the available W × H area at a fixed aspect ratio.
-        best_area = 0.0
-        best_cols = 1
-        best_cw   = 0.0
-        best_ch   = 0.0
-
-        for cols in range(1, n + 1):
-            rows = math.ceil(n / cols)
-            # Width-first: fill columns across W
-            cw = (W - (cols - 1) * _GAP) / cols
-            ch = cw / _ASPECT
-            # If the resulting rows don't fit vertically, scale from height
-            if rows * ch + (rows - 1) * _GAP > H:
-                ch = (H - (rows - 1) * _GAP) / rows
-                cw = ch * _ASPECT
-            if cw <= 0 or ch <= 0:
-                continue
-            area = cw * ch
-            if area > best_area:
-                best_area = area
-                best_cols = cols
-                best_cw   = cw
-                best_ch   = ch
-
-        if best_area <= 0:
-            return
-
-        cell_w = max(1, int(best_cw))
-        cell_h = max(1, int(best_ch))
-        rows   = math.ceil(n / best_cols)
-
-        # Centre the grid in the available area
-        grid_w = best_cols * cell_w + (best_cols - 1) * _GAP
-        grid_h = rows      * cell_h + (rows      - 1) * _GAP
-        x0 = _MARGIN + (W - grid_w) // 2
-        y0 = _MARGIN + (H - grid_h) // 2
-
-        for i, cell in enumerate(self._cells):
-            row, col = divmod(i, best_cols)
-            x = x0 + col * (cell_w + _GAP)
-            y = y0 + row * (cell_h + _GAP)
-            cell.setGeometry(x, y, cell_w, cell_h)
+            cells.append(cell)
+        self._cells = cells
+        self._grid_widget.set_cells(cells)
 
     def set_warnings_visible(self, visible: bool) -> None:
         self._show_warnings = visible
@@ -376,16 +402,24 @@ class _GridWidget(QWidget):
         for cell in self._cells:
             cell.set_palette_visible(visible)
 
-    def resizeEvent(self, event) -> None:  # noqa: N802
-        super().resizeEvent(event)
-        self._reflow()
+    # ------------------------------------------------------------ zoom input
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if obj is self._scroll.viewport() and event.type() == QEvent.Wheel:
+            if self._zoom_manager.handle_wheel_event(event):
+                return True
+        return super().eventFilter(obj, event)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        if self._zoom_manager.handle_key_event(event, _ZOOM_DEFAULT):
+            return
+        super().keyPressEvent(event)
 
 
 # ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
 
-class PaletteVisualizerWindow(QMainWindow):
+class PaletteVisualizerWindow(WindowVisualizer):
     """Main window for the Palette Visualizer."""
 
     def __init__(
@@ -393,8 +427,6 @@ class PaletteVisualizerWindow(QMainWindow):
         project_path: str,
         media_type: str = "movie",
     ) -> None:
-        super().__init__()
-        self.setWindowTitle("Crossing — Palette Visualizer")
         self._project_path = project_path
         self._media_type   = media_type
 
@@ -404,104 +436,158 @@ class PaletteVisualizerWindow(QMainWindow):
         self._updating_combo: bool = False
         self._loader: Optional[PaletteLoaderWorker] = None
 
-        self._build_ui()
+        super().__init__(pref_key="window_palette")
+        self.setWindowTitle("Crossing — Palette Visualizer")
+        self.setMinimumSize(600, 400)
+        self.resize(1200, 700)
+
         self._start_loading()
-        restore_window_geometry(self, "window_palette")
 
     def closeEvent(self, event) -> None:  # noqa: N802
         if self._loader is not None and self._loader.isRunning():
             self._loader.cancel()
             self._loader.wait()
-        save_window_geometry(self, "window_palette")
         super().closeEvent(event)
 
     # ------------------------------------------------------------------
-    # UI construction
+    # WindowVisualizer hooks
 
-    def _build_ui(self) -> None:
-        central = QWidget()
-        self.setCentralWidget(central)
+    def create_browser(self) -> QWidget:
+        self._browser_page = _PaletteBrowserPage(self._media_type)
+        return self._browser_page
 
-        vbox = QVBoxLayout(central)
-        vbox.setContentsMargins(0, 6, 0, 0)
-        vbox.setSpacing(4)
+    def create_inspector(self) -> QWidget:
+        panel = TabPanel()
 
-        # Top bar: label + combo + status
-        bar = QHBoxLayout()
-        bar.setContentsMargins(10, 0, 10, 0)
-        bar.setSpacing(6)
-
-        lbl = QLabel("Movie:")
-        lbl.setStyleSheet(
-            f"color: {theme.TEXT}; font-family: '{theme.FAMILY_UI}';"
-            f" font-size: {theme.BASE_PT}pt;"
-        )
-        bar.addWidget(lbl)
+        # ── Movie section ────────────────────────────────────────────────
+        movie_wrap = QWidget()
+        movie_layout = QVBoxLayout(movie_wrap)
+        movie_layout.setContentsMargins(0, 0, 0, 0)
+        movie_layout.setSpacing(theme.SECTION_GAP)
 
         self._combo = QComboBox()
         self._combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._combo.setFocusPolicy(Qt.NoFocus)
+        self._combo.setMaxVisibleItems(10)
+        self._combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLength)
+        attach_combo_popup(self._combo)
+        self._combo.setStyleSheet(
+            f"QComboBox {{ background: {theme.BTN_BG}; color: {theme.TEXT};"
+            f" border: none; border-radius: 3px; padding: 0px 6px;"
+            f" min-height: {theme.BTN_H}px; max-height: {theme.BTN_H}px; }}"
+            f"QComboBox::drop-down {{ border: none; }}"
+        )
         self._combo.currentIndexChanged.connect(self._on_combo_changed)
         self._combo.installEventFilter(self)
-        bar.addWidget(self._combo, 1)
+        movie_layout.addWidget(self._combo)
 
-        self._status_label = QLabel("")
-        self._status_label.setStyleSheet(
-            f"color: {theme.TEXT_DIM}; font-family: '{theme.FAMILY_UI}';"
-            f" font-size: {theme.BASE_PT}pt;"
+        # Slim progress bar shown while palettes are loading in the background.
+        self._progress = QProgressBar()
+        self._progress.setFixedHeight(3)
+        self._progress.setTextVisible(False)
+        self._progress.setRange(0, 1)
+        self._progress.setValue(0)
+        self._progress.setStyleSheet(
+            f"QProgressBar {{ background-color: {theme.UI_BORDER}; border: none;"
+            f" border-radius: 0px; max-height: 3px; }}"
+            f"QProgressBar::chunk {{ background-color: {theme.ACCENT}; border-radius: 0px; }}"
         )
-        bar.addWidget(self._status_label)
+        movie_layout.addWidget(self._progress)
+
+        panel.add_section("Movie", movie_wrap, pref_key="palette_section_movie")
+
+        # ── Info section ─────────────────────────────────────────────────
+        info_wrap = QWidget()
+        info_layout = QVBoxLayout(info_wrap)
+        info_layout.setContentsMargins(0, 0, 0, 0)
+        info_layout.setSpacing(0)
+        self._info_block = MetadataBlock(_INFO_ROWS)
+        info_layout.addWidget(self._info_block)
+        panel.add_section("Info", info_wrap, pref_key="palette_section_info")
+
+        # ── Display section ──────────────────────────────────────────────
+        display_wrap = QWidget()
+        display_layout = QVBoxLayout(display_wrap)
+        display_layout.setContentsMargins(0, 0, 0, 0)
+        display_layout.setSpacing(theme.SECTION_GAP)
 
         self._warn_checkbox = QCheckBox("Dark-scene warnings")
         self._warn_checkbox.setChecked(False)
+        self._warn_checkbox.setFixedHeight(theme.BTN_H)
+        self._warn_checkbox.setFocusPolicy(Qt.NoFocus)
         self._warn_checkbox.setToolTip(
             "Show a coloured dot on shots where the palette extraction\n"
             "was difficult (very dark frame or low contrast).\n"
             "Orange = a rescue pass was applied.  Yellow = still low contrast."
         )
         self._warn_checkbox.setStyleSheet(
-            f"color: {theme.TEXT_DIM}; font-family: '{theme.FAMILY_UI}';"
-            f" font-size: {theme.BASE_PT}pt;"
+            f"QCheckBox {{ color: {theme.TEXT};"
+            f" min-height: {theme.BTN_H}px; max-height: {theme.BTN_H}px; padding: 0px; }}"
+            f"QCheckBox::indicator {{ width: {theme.BTN_ICON}px; height: {theme.BTN_ICON}px; }}"
         )
         self._warn_checkbox.toggled.connect(self._grid_warnings_toggle)
-        bar.addWidget(self._warn_checkbox)
+        display_layout.addWidget(self._warn_checkbox)
 
         self._palette_checkbox = QCheckBox("Show palette strip")
         self._palette_checkbox.setChecked(False)
+        self._palette_checkbox.setFixedHeight(theme.BTN_H)
+        self._palette_checkbox.setFocusPolicy(Qt.NoFocus)
         self._palette_checkbox.setToolTip(
             "Show a thin strip of palette colours at the bottom of each swatch.\n"
             "Only visible for shots indexed with the figure-ground pipeline."
         )
         self._palette_checkbox.setStyleSheet(
-            f"color: {theme.TEXT_DIM}; font-family: '{theme.FAMILY_UI}';"
-            f" font-size: {theme.BASE_PT}pt;"
+            f"QCheckBox {{ color: {theme.TEXT};"
+            f" min-height: {theme.BTN_H}px; max-height: {theme.BTN_H}px; padding: 0px; }}"
+            f"QCheckBox::indicator {{ width: {theme.BTN_ICON}px; height: {theme.BTN_ICON}px; }}"
         )
         self._palette_checkbox.toggled.connect(self._grid_palette_toggle)
-        bar.addWidget(self._palette_checkbox)
+        display_layout.addWidget(self._palette_checkbox)
 
-        vbox.addLayout(bar)
+        panel.add_section("Display", display_wrap, pref_key="palette_section_display")
 
-        # 1px yellow progress bar sits between the toolbar and the grid
-        self._progress = QProgressBar()
-        self._progress.setFixedHeight(1)
-        self._progress.setTextVisible(False)
-        self._progress.setRange(0, 1)
-        self._progress.setValue(0)
-        self._progress.setStyleSheet(
-            f"QProgressBar {{ background-color: {theme.UI_BORDER}; border: none; "
-            f"border-radius: 0px; max-height: 1px; }}"
-            f"QProgressBar::chunk {{ background-color: {theme.ACCENT}; "
-            f"border-radius: 0px; }}"
+        # ── Tools section (zoom + export) ───────────────────────────────
+        tools_wrap = QWidget()
+        tools_layout = QVBoxLayout(tools_wrap)
+        tools_layout.setContentsMargins(0, 0, 0, 0)
+        tools_layout.setSpacing(theme.SECTION_GAP)
+
+        action_btn_style = theme.action_button_stylesheet()
+
+        zoom_row = QHBoxLayout()
+        zoom_row.setContentsMargins(0, 0, 0, 0)
+        zoom_row.setSpacing(theme.SECTION_GAP)
+
+        zoom_out_btn = QPushButton("Zoom Out")
+        zoom_out_btn.setStyleSheet(action_btn_style)
+        zoom_out_btn.setFocusPolicy(Qt.NoFocus)
+        zoom_out_btn.clicked.connect(
+            lambda: self._browser_page.zoom_manager().change_zoom(-_ZOOM_STEP)
         )
-        vbox.addWidget(self._progress)
+        zoom_row.addWidget(zoom_out_btn, 1)
 
-        self._grid = _GridWidget()
-        self._grid.setStyleSheet(f"background: {theme.CANVAS_BG};")
-        self._grid.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        zoom_in_btn = QPushButton("Zoom In")
+        zoom_in_btn.setStyleSheet(action_btn_style)
+        zoom_in_btn.setFocusPolicy(Qt.NoFocus)
+        zoom_in_btn.clicked.connect(
+            lambda: self._browser_page.zoom_manager().change_zoom(_ZOOM_STEP)
+        )
+        zoom_row.addWidget(zoom_in_btn, 1)
 
-        vbox.addWidget(self._grid, 1)
+        tools_layout.addLayout(zoom_row)
 
-        self.setMinimumSize(600, 400)
-        self.resize(1200, 700)
+        self._export_btn = QPushButton("Export PDF")
+        self._export_btn.setStyleSheet(action_btn_style)
+        self._export_btn.setFocusPolicy(Qt.NoFocus)
+        self._export_btn.setToolTip("Render the current movie's palette swatches as a PDF")
+        self._export_btn.clicked.connect(self._on_export_pdf)
+        tools_layout.addWidget(self._export_btn)
+
+        panel.add_section("Tools", tools_wrap, pref_key="palette_section_tools")
+
+        self._inspector = Inspector()
+        self._inspector.add_tab(panel, "Palette")
+        return self._inspector
 
     # ------------------------------------------------------------------
     # Data loading
@@ -512,14 +598,14 @@ class PaletteVisualizerWindow(QMainWindow):
             / "data" / "palettes" / self._media_type
         )
         if not palette_dir.exists():
-            self._status_label.setText(
-                "No palette cache found. Run: crossing index palette create --all"
+            self._info_block.set(
+                "status", "No palette cache found. Run: crossing index palette create --all"
             )
             return
 
         self._progress.setRange(0, 0)  # indeterminate while scanning
         self._progress.setValue(0)
-        self._status_label.setText("Loading palettes…")
+        self._info_block.set("status", "Loading palettes…")
 
         self._loader = PaletteLoaderWorker(palette_dir, parent=self)
         self._loader.palette_ready.connect(self._on_palette_ready)
@@ -542,7 +628,7 @@ class PaletteVisualizerWindow(QMainWindow):
         self._progress.setRange(0, 1)
         self._progress.setValue(0)
         if count == 0:
-            self._status_label.setText("No palette files found.")
+            self._info_block.set("status", "No palette files found.")
 
     # ------------------------------------------------------------------
     # Display
@@ -560,11 +646,14 @@ class PaletteVisualizerWindow(QMainWindow):
         created   = data.get("created_at", "")[:10]
         method_label = data.get("method", "border_center_dominant")
 
-        self._status_label.setText(
-            f"{processed}/{total} shots with palette  ·  {method_label}  ·  {created}"
-        )
+        self._info_block.load({
+            "status":  "—",
+            "shots":   f"{processed}/{total}",
+            "method":  method_label,
+            "created": created,
+        })
 
-        self._grid.load_shots(
+        self._browser_page.load_shots(
             shots,
             self._project_path,
             data.get("movie", {}).get("filename", ""),
@@ -601,30 +690,78 @@ class PaletteVisualizerWindow(QMainWindow):
         return super().eventFilter(obj, event)
 
     def _grid_warnings_toggle(self, checked: bool) -> None:
-        self._grid.set_warnings_visible(checked)
+        self._browser_page.set_warnings_visible(checked)
 
     def _grid_palette_toggle(self, checked: bool) -> None:
-        self._grid.set_palette_visible(checked)
+        self._browser_page.set_palette_visible(checked)
+
+    # ------------------------------------------------------------------
+    # PDF export
+
+    def _on_export_pdf(self) -> None:
+        if not self._palettes:
+            return
+        idx = self._current_idx
+        label, data = self._palettes[idx]
+        shots = data.get("shots", [])
+        if not shots:
+            return
+
+        from generators.palette import get_palette_output_path, export_palette_pdf
+
+        movie = data.get("movie", {})
+        filename = movie.get("filename", "")
+        title    = movie.get("title", label)
+        output_path = get_palette_output_path(self._project_path, filename)
+
+        self._export_btn.setEnabled(False)
+        self._info_block.set("status", "Exporting PDF…")
+        QApplication.processEvents()
+
+        try:
+            export_palette_pdf(shots, output_path, title=title, verbose=False)
+            self._info_block.set("status", f"Saved: {output_path}")
+
+            # Try to open the PDF in the desktop viewer
+            try:
+                import subprocess
+                subprocess.Popen(["xdg-open", str(output_path)])
+            except Exception:
+                pass
+
+        except Exception as exc:
+            QMessageBox.critical(
+                self, "Export failed",
+                f"Could not save PDF:\n{exc}",
+            )
+            self._info_block.set("status", "Export failed.")
+        finally:
+            self._export_btn.setEnabled(True)
 
     # ------------------------------------------------------------------
     # Keyboard navigation
+    #
+    # Escape / Ctrl+Q/W / Tab (show-hide inspector) / Shift+Tab (fullscreen)
+    # are handled by WindowVisualizer.keyPressEvent(); Ctrl+P (export) and
+    # Home/End (previous/next title) are specific to this visualizer.
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
         key = event.key()
         mod = event.modifiers()
 
-        if key in (Qt.Key_Q, Qt.Key_W) and mod & Qt.ControlModifier:
-            self.close()
+        if key == Qt.Key_P and mod & Qt.ControlModifier:
+            self._on_export_pdf()
             return
 
         if key == KEY_PREV_TITLE:
             if self._current_idx > 0:
                 self._show_movie(self._current_idx - 1)
-        elif key == KEY_NEXT_TITLE:
+            return
+        if key == KEY_NEXT_TITLE:
             if self._current_idx < len(self._palettes) - 1:
                 self._show_movie(self._current_idx + 1)
-        else:
-            super().keyPressEvent(event)
+            return
+        super().keyPressEvent(event)
 
 
 # ---------------------------------------------------------------------------
