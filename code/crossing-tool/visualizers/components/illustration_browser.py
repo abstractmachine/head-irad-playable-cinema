@@ -768,7 +768,7 @@ class IllustrationBrowser(QWidget):
         # so it matches the Sort and Info sections visually.
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
+        layout.setSpacing(theme.SECTION_GAP)
 
         combo_style = (
             f"QComboBox {{ background: {theme.BTN_BG}; color: {theme.TEXT};"

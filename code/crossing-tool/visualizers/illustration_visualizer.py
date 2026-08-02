@@ -1727,7 +1727,7 @@ class IllustrationPane(QWidget):
         _row = QWidget()
         _rl  = QHBoxLayout(_row)
         _rl.setContentsMargins(0, 0, 0, 0)
-        _rl.setSpacing(2)
+        _rl.setSpacing(theme.SECTION_GAP)
 
         self._best_btn = QPushButton("Best")
         self._best_btn.setCheckable(True)
@@ -1762,7 +1762,7 @@ class IllustrationPane(QWidget):
         _eng_row = QWidget()
         _eng_rl  = QHBoxLayout(_eng_row)
         _eng_rl.setContentsMargins(0, 0, 0, 0)
-        _eng_rl.setSpacing(2)
+        _eng_rl.setSpacing(theme.SECTION_GAP)
         self._eng_gen_btn = HoverIconButton("Engrave", _e_icon, _e_icon_hover)
         self._eng_gen_btn.setIconSize(_icon_sz)
         self._eng_gen_btn.setFocusPolicy(Qt.NoFocus)
@@ -1894,7 +1894,7 @@ class IllustrationPane(QWidget):
         _row = QWidget()
         _rl  = QHBoxLayout(_row)
         _rl.setContentsMargins(0, 0, 0, 0)
-        _rl.setSpacing(2)
+        _rl.setSpacing(theme.SECTION_GAP)
 
         self._eng_best_btn = QPushButton("Best")
         self._eng_best_btn.setCheckable(True)

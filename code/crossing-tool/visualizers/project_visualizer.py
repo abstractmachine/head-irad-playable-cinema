@@ -140,6 +140,7 @@ class ProjectVisualizer(WindowVisualizer):
         self.path_edit.setReadOnly(True)
         self.path_edit.setPlaceholderText("(no project folder set)")
         self.path_edit.setText(_prefs.get("path") or "")
+        self.path_edit.setFont(theme.font_ui(bold=True))
         row.addWidget(self.path_edit, 1)
 
         outer.addLayout(row)
@@ -182,6 +183,7 @@ class ProjectVisualizer(WindowVisualizer):
         self.backup_path_edit.setReadOnly(True)
         self.backup_path_edit.setPlaceholderText("(no backup folder set)")
         self.backup_path_edit.setText(_prefs.get("backup_path") or "")
+        self.backup_path_edit.setFont(theme.font_ui(bold=True))
         row.addWidget(self.backup_path_edit, 1)
 
         outer.addLayout(row)
@@ -338,6 +340,7 @@ class ProjectVisualizer(WindowVisualizer):
                 w.setDecimals(dec)
                 w.setValue(float(current))
                 w.valueChanged.connect(lambda v, k=key: _prefs.set(k, v))
+            w.setFont(theme.font_ui(bold=True))
             self._default_widgets[key] = w
             form.addRow(label, w)
 
@@ -477,7 +480,7 @@ class ProjectVisualizer(WindowVisualizer):
         grid_widget = QWidget()
         grid = QGridLayout(grid_widget)
         grid.setContentsMargins(0, 0, 0, 0)
-        grid.setSpacing(2)
+        grid.setSpacing(theme.SECTION_GAP)
 
         for (label, sub, enabled), (row, col) in zip(
             [
@@ -485,12 +488,12 @@ class ProjectVisualizer(WindowVisualizer):
                 ("Shotlist",     "shotlist",     True),
                 ("Mosaic",       "mosaic",       True),
                 ("Cloud",        "cloud",        True),
-                ("Book",         "book",         True),
-                ("Illustration", "illustration", True),
-                ("Palette",      "palette",      True),
-                ("Flipbook",     "flipbook",     True),
-                ("Sync",         "sync",         True),
                 ("Segmentation", "segmentation", True),
+                ("Illustration", "illustration", True),
+                ("Flipbook",     "flipbook",     True),
+                ("Palette",      "palette",      True),
+                ("Book",         "book",         True),
+                ("Sync",         "sync",         True),
             ],
             [(0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 1), (3, 0), (3, 1), (4, 0), (4, 1)],
         ):
@@ -514,12 +517,12 @@ class ProjectVisualizer(WindowVisualizer):
         inspector = Inspector(self)
 
         panel = TabPanel()
+        panel.add_widget(self._build_visualizers_section())
         panel.add_widget(self._build_folder_section())
         panel.add_widget(self._build_backup_section())
-        panel.add_widget(self._build_defaults_section())
         panel.add_widget(self._build_models_section())
+        panel.add_widget(self._build_defaults_section())
         panel.add_widget(self._build_import_section())
-        panel.add_widget(self._build_visualizers_section())
 
         inspector.add_tab(panel, " Project ")
 
