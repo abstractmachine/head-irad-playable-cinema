@@ -387,6 +387,9 @@ def action_button_stylesheet() -> str:
         f"  background-color: {BTN_BG}; color: {TEXT};"
         f"  border: none; border-radius: 3px; padding: 0 8px;"
         f"  min-height: {BTN_H}px; max-height: {BTN_H}px;"
+        # Match the CollapsibleSection title font weight so button text
+        # feels visually consistent with the rest of the inspector chrome.
+        f"  font-family: '{FAMILY_UI}'; font-weight: {WEIGHT_UI};"
         f"}}"
         f"QPushButton:hover    {{ background-color: {ACCENT}; color: {ACCENT_TEXT}; }}"
         # Invert the hover foreground/background while the button is pressed:
@@ -428,62 +431,6 @@ def tab_strip_stylesheet() -> str:
         f"QTabBar::tab:hover {{ background: {ACCENT}; color: {ACCENT_TEXT}; }}"
         f"QTabBar::tab:selected:hover {{ background: {TAB_BG}; color: {TEXT}; }}"
     )
-
-
-def style_canonical_combo(combo) -> None:
-    """Apply the canonical visualizer combo box font, sizing, and popup styling.
-
-    Fixes the "QComboBox with a long item text silently inflates its
-    container's minimum width" class of bug: pins the combo's own width via
-    `AdjustToMinimumContentsLength` instead of letting it scale with the
-    longest item, and gives the popup list a themed, borderless look
-    matching the rest of the framework. Any visualizer combo box should use
-    this instead of inventing its own popup styling.
-    """
-    from PyQt5.QtCore import Qt
-    from PyQt5.QtWidgets import QComboBox, QFrame, QListView
-
-    combo.setFocusPolicy(Qt.NoFocus)
-    combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLength)
-    combo.setFont(font_ui())
-    combo.setStyleSheet(
-        f"QComboBox {{"
-        f"  background: {BTN_BG}; color: {TEXT};"
-        f"  border: none; border-radius: 3px; padding: 0px 6px;"
-        f"  min-height: 24px; max-height: 24px;"
-        f"  font-family: '{FAMILY_UI}'; font-size: {BASE_PT}pt;"
-        f"  font-weight: {WEIGHT_UI};"
-        f"}}"
-        f"QComboBox::drop-down {{ border: none; }}"
-        f"QComboBox QAbstractItemView, QComboBox QListView {{"
-        f"  background: {INPUT_BG}; color: {TEXT};"
-        f"  border: 0px; margin: 0px; padding: 0px; outline: 0px;"
-        f"  selection-background-color: {ACCENT};"
-        f"  selection-color: {ACCENT_TEXT};"
-        f"  font-family: '{FAMILY_UI}'; font-size: {BASE_PT}pt;"
-        f"}}"
-        f"QComboBox QAbstractItemView::item, QComboBox QListView::item {{"
-        f"  padding: 0px 8px; min-height: 24px; border: 0px;"
-        f"}}"
-    )
-    view = QListView(combo)
-    view.setUniformItemSizes(True)
-    view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-    view.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-    view.setFrameShape(QFrame.NoFrame)
-    view.setLineWidth(0)
-    view.setMidLineWidth(0)
-    view.setContentsMargins(0, 0, 0, 0)
-    view.setFont(font_ui())
-    view.setStyleSheet(
-        f"QListView {{ background: {INPUT_BG}; color: {TEXT};"
-        f" border: 0px; margin: 0px; padding: 0px; outline: 0px;"
-        f" font-family: '{FAMILY_UI}'; font-size: {BASE_PT}pt; }}"
-        f"QListView::item {{ background: {INPUT_BG}; padding: 0px 8px;"
-        f" min-height: 24px; border: 0px; }}"
-        f"QListView::item:selected {{ background: {ACCENT}; color: {ACCENT_TEXT}; }}"
-    )
-    combo.setView(view)
 
 
 def apply_theme(app) -> None:

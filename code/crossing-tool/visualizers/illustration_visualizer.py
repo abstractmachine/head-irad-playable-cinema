@@ -1594,19 +1594,14 @@ class IllustrationPane(QWidget):
             f"   selection-color: {theme.ACCENT_TEXT}; }}"
             f" QComboBox QAbstractItemView::item, QComboBox QListView::item {{"
             f"   padding: 0px 8px; min-height: 24px; border: 0px; }}"
-            f" QPushButton {{ background-color: {theme.BTN_BG}; border: none;"
-            f" padding: 0 10px; border-radius: 3px;"
-            f" min-height: {theme.BTN_H}px; max-height: {theme.BTN_H}px; }}"
-            f" QPushButton:hover    {{ background-color: {theme.BTN_HOVER}; }}"
-            f" QPushButton:pressed  {{ background-color: {theme.BTN_PRESSED}; }}"
-            f" QPushButton:checked  {{ background-color: {theme.ACCENT}; color: {theme.ACCENT_TEXT}; }}"
-            f" QPushButton:disabled {{ color: {theme.TEXT_DIM};"
-            f" background-color: {theme.BTN_BG}; }}"
         )
         panel = TabPanel()
         # TabPanel already paints the canonical pane background/border;
-        # layer the combo/button rules used throughout this source panel
-        # on top rather than replacing the stylesheet outright.
+        # layer the combo rules used throughout this source panel on top
+        # rather than replacing the stylesheet outright. Buttons in this
+        # panel each set their own stylesheet via `self._btn_style()`
+        # (theme.action_button_stylesheet()), so no button rules are
+        # layered here.
         panel.setStyleSheet(panel.styleSheet() + _content_style)
         panel.setMinimumWidth(_SIDE_PANE_W)
         return panel
@@ -1708,22 +1703,13 @@ class IllustrationPane(QWidget):
     # ------------------------------------------------------------------ shared button helpers
 
     def _btn_style(self) -> str:
-        """Single canonical stylesheet for all action buttons in this visualizer."""
-        return (
-            f"QPushButton {{"
-            f"  background-color: {theme.BTN_BG}; color: {theme.TEXT};"
-            f"  border: none; border-radius: 3px; padding: 0 8px;"
-            f"  min-height: {theme.BTN_H}px; max-height: {theme.BTN_H}px;"
-            f"}}"
-            f"QPushButton:hover   {{ background-color: {theme.ACCENT}; color: {theme.ACCENT_TEXT}; }}"
-            f"QPushButton:pressed {{ background-color: {theme.BTN_PRESSED}; }}"
-            f"QPushButton:checked {{ background-color: {theme.ACCENT}; color: {theme.ACCENT_TEXT}; }}"
-            f"QPushButton[accent_text='true']:checked"
-            f" {{ background-color: {theme.BTN_BG}; color: {theme.ACCENT}; }}"
-            f"QPushButton:disabled {{ background-color: {theme.BTN_BG};"
-            f" color: rgba(255,255,255,0.15); }}"
-            f"QPushButton:focus {{ outline: none; }}"
-        )
+        """Single canonical stylesheet for all action buttons in this visualizer.
+
+        Delegates to the shared `theme.action_button_stylesheet()` so the
+        font weight, hover, pressed, checked, and disabled states match
+        Metadata and Project rather than diverging with a local copy.
+        """
+        return theme.action_button_stylesheet()
 
     def _make_btn_icon(self, svg_name: str, size: int = 14) -> tuple:
         """Return (normal_icon, hover_icon) for *svg_name* by delegating
@@ -1737,21 +1723,7 @@ class IllustrationPane(QWidget):
         _icon_sz = QSize(14, 14)
         _open_icon, _open_icon_hover = self._make_btn_icon("open-in-window", 14)
 
-        _abtn = (
-            f"QPushButton {{"
-            f"  background-color: {theme.BTN_BG}; color: {theme.TEXT};"
-            f"  border: none; border-radius: 3px; padding: 0 8px;"
-            f"  min-height: {theme.BTN_H}px; max-height: {theme.BTN_H}px;"
-            f"}}"
-            f"QPushButton:hover   {{ background-color: {theme.ACCENT}; color: {theme.ACCENT_TEXT}; }}"
-            f"QPushButton:pressed {{ background-color: {theme.BTN_PRESSED}; }}"
-            f"QPushButton:checked {{ background-color: {theme.ACCENT}; color: {theme.ACCENT_TEXT}; }}"
-            f"QPushButton[accent_text='true']:checked"
-            f" {{ background-color: {theme.BTN_BG}; color: {theme.ACCENT}; }}"
-            f"QPushButton:disabled {{ background-color: {theme.BTN_BG};"
-            f" color: rgba(255,255,255,0.15); }}"
-            f"QPushButton:focus {{ outline: none; }}"
-        )
+        _abtn = self._btn_style()
         _row = QWidget()
         _rl  = QHBoxLayout(_row)
         _rl.setContentsMargins(0, 0, 0, 0)

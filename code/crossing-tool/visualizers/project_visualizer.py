@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from styles import theme
 from visualizers.window_visualizer import WindowVisualizer
 from visualizers.components.collapsible_section import CollapsibleSection
+from visualizers.components.combo_popup import style_canonical_combo
 from visualizers.components.inspector import Inspector
 from visualizers.components.metadata_block import INSPECTOR_ROW_HEIGHT, table_key_cell_style
 from visualizers.components.tab_panel import TabPanel
@@ -364,7 +365,7 @@ class ProjectVisualizer(WindowVisualizer):
             combo.currentTextChanged.connect(
                 lambda text, k=key: _prefs.set(k, text) if text else None
             )
-            theme.style_canonical_combo(combo)
+            style_canonical_combo(combo)
             self._model_combos[role] = combo
             form.addRow(role.capitalize(), combo)
 
@@ -405,7 +406,7 @@ class ProjectVisualizer(WindowVisualizer):
 
         self.media_type_combo = QComboBox()
         self.media_type_combo.addItems(["movie", "gameplay"])
-        theme.style_canonical_combo(self.media_type_combo)
+        style_canonical_combo(self.media_type_combo)
         form.addRow("Type", self.media_type_combo)
 
         self.media_game_edit = QLineEdit()

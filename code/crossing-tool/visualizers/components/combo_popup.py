@@ -52,3 +52,29 @@ def attach_combo_popup(combo: QComboBox) -> QListView:
         except Exception:
             pass
     return _sv
+
+
+def style_canonical_combo(combo: QComboBox) -> None:
+    """Apply the canonical visualizer combo box font, sizing, and popup styling.
+
+    Fixes the "QComboBox with a long item text silently inflates its
+    container's minimum width" class of bug: pins the combo's own width via
+    `AdjustToMinimumContentsLength` instead of letting it scale with the
+    longest item. The popup list is styled via the shared
+    `attach_combo_popup()` above, so this and every other canonical combo in
+    the app share one popup implementation. Any visualizer combo box should
+    use this instead of inventing its own popup styling.
+    """
+    combo.setFocusPolicy(Qt.NoFocus)
+    combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLength)
+    combo.setStyleSheet(
+        f"QComboBox {{"
+        f"  background: {theme.BTN_BG}; color: {theme.TEXT};"
+        f"  border: none; border-radius: 3px; padding: 0px 6px;"
+        f"  min-height: 24px; max-height: 24px;"
+        f"  font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
+        f"  font-weight: {theme.WEIGHT_UI};"
+        f"}}"
+        f"QComboBox::drop-down {{ border: none; }}"
+    )
+    attach_combo_popup(combo)

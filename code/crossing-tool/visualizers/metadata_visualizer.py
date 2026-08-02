@@ -695,12 +695,6 @@ class MetadataVisualizer(WindowVisualizer):
         tools_grid.setColumnStretch(1, 1)
 
         action_style = theme.action_button_stylesheet()
-        # Ensure inspector action buttons use the same UI font weight as
-        # CollapsibleSection titles so button text feels visually consistent.
-        action_style = (
-            action_style
-            + f"QPushButton {{ font-family: '{theme.FAMILY_UI}'; font-weight: {theme.WEIGHT_UI}; }}"
-        )
 
         zoom_in_btn = QPushButton("Zoom +")
         zoom_in_btn.setFocusPolicy(Qt.NoFocus)
