@@ -149,7 +149,6 @@ def _normalize_form_labels(form: QFormLayout) -> None:
 _VISUALIZER_TITLE = {
     "shotlist":    "Shotlist Visualizer",
     "mosaic":      "Mosaic Visualizer",
-    "composition": "Composition Visualizer",
     "metadata":    "Metadata Visualizer",
     "cloud":       "Cloud Visualizer",
     "illustration": "Illustration Visualizer",
@@ -717,9 +716,6 @@ class ProjectVisualizer(WindowVisualizer):
         elif subcommand == "mosaic":
             from visualizers.mosaic_visualizer import MosaicVisualizer
             return MosaicVisualizer(project_path, media_type=media_type)
-        elif subcommand == "composition":
-            from visualizers.composition_visualizer import ComposeVisualizer
-            return ComposeVisualizer(project_path)
         elif subcommand == "book":
             from visualizers.book_visualizer import BookVisualizerWindow
             return BookVisualizerWindow(project_path)

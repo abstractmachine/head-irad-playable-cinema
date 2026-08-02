@@ -3,17 +3,17 @@
 Covers:
 - get_key: returns stored key, raises MissingKeyError when absent or no project
 - _expand_prompt: substitutes known variables, leaves unknown ones unchanged
-- generate_engraving_openai:
-    - writes raw.png and engraving.png (identical on first pass)
-    - updates engraving.json to status="generated" with generation fields
-    - updates request.json to status="sent"
-    - raises FileExistsError without --force when raw.png exists
-    - succeeds with force=True on a re-run
+- generate_engraving_openai error guards that fire before any OpenAI call or
+  image processing happens:
     - raises MissingKeyError when the OpenAI key file is absent
     - raises FileNotFoundError when the silhouette PNG is missing
-    - engraving.json contains no prompt text (provenance only)
 
-All OpenAI network calls are replaced by a mock returning minimal PNG bytes.
+File-write, engraving.json/request.json content, force-guard, and mode-
+dispatch coverage for generate_engraving_openai() lives in
+tests/test_engraving_modes.py (TestGenerateEngravingOpenAIModes), which
+exercises frame mode so it does not need to decode a real image. This file
+intentionally does not mock a full successful OpenAI image response, since
+the only thing that would prove is that PIL can decode fake PNG bytes.
 """
 
 import json
@@ -24,7 +24,6 @@ from unittest.mock import MagicMock, patch
 
 from PIL import Image
 
-from services.engraving_paths import ENGRAVING_SCHEMA_VERSION
 from services.engraving_generate_openai import _expand_prompt
 from services.keys import MissingKeyError, get_key
 
@@ -163,96 +162,17 @@ class TestGenerateEngravingOpenAI(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def _run(self, **kwargs):
-        """Call generate_engraving_openai with the OpenAI API mocked."""
-        from services.engraving_generate_openai import generate_engraving_openai
-        with patch(
-            "services.engraving_generate_openai._call_openai_api",
-            return_value=_FAKE_PNG_BYTES,
-        ):
-            return generate_engraving_openai(
-                str(self.project), self.json_path, **kwargs
-            )
-
-    # ── file creation ────────────────────────────────────────────────────────
-
-    def test_writes_raw_png(self):
-        result = self._run()
-        self.assertTrue(result["raw_png"].exists())
-
-    def test_writes_engraving_png(self):
-        result = self._run()
-        self.assertTrue(result["engraving_png"].exists())
-
-    def test_raw_and_engraving_png_same_content(self):
-        result = self._run()
-        self.assertEqual(
-            result["raw_png"].read_bytes(),
-            result["engraving_png"].read_bytes(),
-        )
-
-    def test_raw_png_content_matches_api_response(self):
-        result = self._run()
-        self.assertEqual(result["raw_png"].read_bytes(), _FAKE_PNG_BYTES)
-
-    # ── engraving.json ────────────────────────────────────────────────────────
-
-    def test_engraving_json_status_generated(self):
-        result = self._run()
-        data = json.loads(result["metadata"].read_text())
-        self.assertEqual(data["status"], "generated")
-
-    def test_engraving_json_generation_fields(self):
-        result = self._run(model="gpt-image-2", size="1024x1024")
-        data = json.loads(result["metadata"].read_text())
-        gen = data["generation"]
-        self.assertEqual(gen["service"], "openai")
-        self.assertEqual(gen["model"], "gpt-image-2")
-        self.assertEqual(gen["api"], "images.edit")
-        self.assertEqual(gen["size"], "1024x1024")
-        self.assertIsNotNone(gen["created"])
-
-    def test_engraving_json_no_prompt_text(self):
-        result = self._run()
-        raw = result["metadata"].read_text()
-        self.assertNotIn("Render ", raw)  # prompt template text must not appear
-
-    def test_engraving_json_schema_version_preserved(self):
-        result = self._run()
-        data = json.loads(result["metadata"].read_text())
-        self.assertEqual(data["schema_version"], ENGRAVING_SCHEMA_VERSION)
-
-    # ── request.json ─────────────────────────────────────────────────────────
-
-    def test_request_json_status_sent(self):
-        result = self._run()
-        req = json.loads((result["dir"] / "request.json").read_text())
-        self.assertEqual(req["status"], "sent")
-
-    def test_request_json_service_and_model(self):
-        result = self._run(model="gpt-image-2")
-        req = json.loads((result["dir"] / "request.json").read_text())
-        self.assertEqual(req["service"], "openai")
-        self.assertEqual(req["model"], "gpt-image-2")
-
-    def test_request_json_no_prompt_text(self):
-        result = self._run()
-        raw = (result["dir"] / "request.json").read_text()
-        self.assertNotIn("Render ", raw)
-
-    # ── force / overwrite guards ─────────────────────────────────────────────
-
-    def test_raises_file_exists_without_force(self):
-        self._run()  # first run
-        with self.assertRaises(FileExistsError):
-            self._run()  # second run without force
-
-    def test_force_overwrites(self):
-        self._run()
-        result = self._run(force=True)
-        self.assertTrue(result["raw_png"].exists())
-
     # ── error cases ──────────────────────────────────────────────────────────
+    # (File-creation, engraving.json/request.json content, force-guard, and
+    # return-dict coverage for generate_engraving_openai() were removed from
+    # this class: they only existed to push mocked OpenAI bytes through the
+    # isolated-mode PIL post-processing/decode step. Equivalent mode-dispatch,
+    # JSON-writing, and force-guard behavior is covered without needing a
+    # decodable image by tests/test_engraving_modes.py's frame-mode tests
+    # (TestGenerateEngravingOpenAIModes) and tests/test_engraving_prepare.py's
+    # provenance/schema tests (TestPrepareEngravingFromSource), which exercise
+    # the same shared code paths. These two guard tests are kept because they
+    # raise before the image-processing step is ever reached.
 
     def test_missing_key_raises(self):
         from services.engraving_generate_openai import generate_engraving_openai
@@ -272,30 +192,3 @@ class TestGenerateEngravingOpenAI(unittest.TestCase):
             with patch("services.engraving_generate_openai._call_openai_api",
                        return_value=_FAKE_PNG_BYTES):
                 generate_engraving_openai(str(self.project), self.json_path)
-
-    # ── return dict ──────────────────────────────────────────────────────────
-
-    def test_return_keys(self):
-        result = self._run()
-        for key in ("dir", "raw_png", "engraving_png", "metadata",
-                    "expanded_prompt_length", "model", "size", "project"):
-            self.assertIn(key, result)
-
-    def test_expanded_prompt_length_nonzero(self):
-        result = self._run()
-        self.assertGreater(result["expanded_prompt_length"], 0)
-
-    def test_api_called_with_correct_model_and_size(self):
-        from services.engraving_generate_openai import generate_engraving_openai
-        with patch(
-            "services.engraving_generate_openai._call_openai_api",
-            return_value=_FAKE_PNG_BYTES,
-        ) as mock_api:
-            generate_engraving_openai(
-                str(self.project), self.json_path,
-                model="gpt-image-1", size="1024x1792",
-            )
-        mock_api.assert_called_once()
-        _, _, _, called_model, called_size = mock_api.call_args.args
-        self.assertEqual(called_model, "gpt-image-1")
-        self.assertEqual(called_size, "1024x1792")

@@ -246,14 +246,13 @@ crossing visualizer shotlist              # inspect / edit shot boundaries and r
   --filename <filename>                  # jump to (or load) a specific film; sends to a running
                                          # instance via IPC first, falls back to opening a new window
 crossing visualizer mosaic               # interactive search-driven mosaic explorer
-crossing visualizer composition          # interactive composition search GUI
 ```
 
 The **project** visualizer lets you:
 - Set (via folder picker) and display the current project path
 - Adjust annotation defaults (frames-per-shot, min-frame-interval, max-frames-per-shot)
 - Select models for each role (annotate, segmentation, embed) from installed local models
-- Launch any of the four other visualizers from a 2×2 grid (Metadata, Shotlist, Mosaic, Composition)
+- Launch any of the other visualizers from a grid (Metadata, Shotlist, Mosaic, and more)
 
 The **metadata** visualizer shows all movies and gameplay as scrollable card tiles in two columns. Each card displays a thumbnail, title, year/director (movies) or game (gameplay), and a short overview. Cards highlight yellow on hover; clicking a card opens that film in the Shotlist Visualizer. If the Shotlist Visualizer is already open it receives the film via an IPC socket (no second window is opened); if not, a new window is launched.
 
@@ -555,9 +554,6 @@ crossing generate composition "close-up gun"
   --output <path>                     # override output file path
   --no-open                           # do not open result in desktop viewer
   --notify                            # Discord notification when done
-
-# Open the interactive composition visualizer
-crossing generate composition --visualizer
 ```
 
 **Flags:**
@@ -568,7 +564,6 @@ crossing generate composition --visualizer
 | `--output` | auto | Full save path override |
 | `--no-open` | — | Skip opening the result in the desktop viewer |
 | `--notify` | — | Discord notification when done |
-| `--visualizer` | — | Open the interactive GUI instead of saving |
 
 Output is saved to `<project>/output/compositions/`.
 

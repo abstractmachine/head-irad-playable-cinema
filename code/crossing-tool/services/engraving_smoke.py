@@ -10,7 +10,7 @@ Usage::
     result = prepare_engraving_from_source(
         project_path="/path/to/project",
         source_json="/path/to/data/silhouettes/catalog/movie/.../horse/object_0007.json",
-        mode="silhouette",  # or "full"
+        mode="isolated",  # or "frame"
     )
 """
 
@@ -46,7 +46,7 @@ def prepare_engraving_from_source(
     project_path: str,
     source_json: str | Path,
     *,
-    mode: str = "silhouette",
+    mode: str = "isolated",
     force: bool = False,
 ) -> dict:
     """Prepare the canonical engraving folder from a silhouette object JSON.
@@ -58,7 +58,7 @@ def prepare_engraving_from_source(
     source_json:
         Path to an ``object_NNNN.json`` file inside the silhouette catalog.
     mode:
-        ``"silhouette"`` or ``"full"``.  Selects the engraving mode and the
+        ``"isolated"`` or ``"frame"``.  Selects the engraving mode and the
         corresponding prompt file set.
     force:
         Overwrite existing ``engraving.json`` if present.

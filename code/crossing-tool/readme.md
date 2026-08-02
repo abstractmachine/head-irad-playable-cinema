@@ -35,7 +35,6 @@ A CLI + GUI tool for relating moving images across media — connecting gameplay
 | `crossing visualizer shotlist` | Inspect and edit shot boundaries, and review LLM annotations alongside video frames |
 | `crossing visualizer mosaic` | Interactive search-driven mosaic explorer |
 | `crossing visualizer cloud` | Interactive word-cloud explorer with Save PDF button |
-| `crossing visualizer composition` | Interactive composition search GUI |
 
 ---
 

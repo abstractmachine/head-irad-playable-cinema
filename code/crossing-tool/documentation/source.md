@@ -42,7 +42,6 @@ crossing-tool/
 └── visualizers/
     ├── annotation_visualizer.py    # Backward-compat shim → shot_visualizer
     ├── cloud_visualizer.py         # Qt word-cloud explorer with Save PDF
-    ├── composition_visualizer.py   # Qt composition explorer GUI
     ├── metadata_visualizer.py      # Qt metadata card browser
     ├── mosaic_visualizer.py        # Qt mosaic search explorer
     ├── project_visualizer.py       # Qt launcher and configuration hub

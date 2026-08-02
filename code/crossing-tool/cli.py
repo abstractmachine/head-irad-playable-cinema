@@ -3516,13 +3516,8 @@ def cmd_composition(args):
     output_path  = getattr(args, "output", None)
     open_result  = not getattr(args, "no_open", False)
 
-    if getattr(args, "visualizer", False):
-        from visualizers.composition_visualizer import run_visualizer
-        run_visualizer(project_path, initial_query=query)
-        return
-
     if not query:
-        print("✗ composition: a search query is required outside of --visualizer mode.", file=sys.stderr)
+        print("✗ composition: a search query is required.", file=sys.stderr)
         sys.exit(1)
 
     from services.search import search_shots
@@ -7129,10 +7124,6 @@ def cmd_visualizer(args):
             args.query = None
             args.tmdb = None
             _shot_visualizer(args)
-    elif sub == "composition":
-        _require_path()
-        args.query = getattr(args, "query", "") or ""
-        cmd_composition(args)
     elif sub == "mosaic":
         _require_path()
         _mosaic_visualizer(args)
@@ -8036,7 +8027,7 @@ def build_parser():
         help="Build a single tableau image from a search criteria string",
     )
     p_composition.set_defaults(func=cmd_composition)
-    p_composition.add_argument("query", nargs="?", default="", help="Background search criteria (e.g. \"gun\" or \"sunset\"); optional when --visualizer is used")
+    p_composition.add_argument("query", nargs="?", default="", help="Background search criteria (e.g. \"gun\" or \"sunset\")")
     p_composition.add_argument(
         "--orientation", choices=["portrait", "landscape"], default="portrait",
         help="Canvas preset: portrait 1240×1754 or landscape 1920×1080 (default: portrait)",
@@ -8044,7 +8035,6 @@ def build_parser():
     p_composition.add_argument("--output", default=None, metavar="PATH", help="Override output file path")
     p_composition.add_argument("--no-open", action="store_true", dest="no_open", help="Do not open result in desktop viewer")
     _add_notify_args(p_composition, batch=False)
-    p_composition.add_argument("--visualizer", action="store_true", help="Open the interactive composition visualizer instead of saving")
 
     # generate mosaic
     p_mosaic = generate_sub.add_parser(
@@ -9634,7 +9624,7 @@ def build_parser():
     # visualizer command group — shortcut to all visualizer GUIs
     p_visualizer = sub.add_parser(
         "visualizer",
-        help="Open a visualizer GUI (project, shotlist, composition, mosaic, cloud, illustration, sync)",
+        help="Open a visualizer GUI (project, shotlist, mosaic, cloud, illustration, sync)",
     )
     p_visualizer.set_defaults(func=cmd_visualizer, visualizer_subcommand="project")
     visualizer_sub = p_visualizer.add_subparsers(dest="visualizer_subcommand", required=False)
@@ -9676,17 +9666,6 @@ def build_parser():
         help="Disable continue mode on open",
     )
     _add_verbose_arg(p_vis_shot, help="Enable verbose logging in the shotlist visualizer")
-
-    p_vis_composition = visualizer_sub.add_parser(
-        "composition",
-        help="Open the interactive composition visualizer",
-    )
-    p_vis_composition.add_argument(
-        "query", nargs="?", default="",
-        help="Optional initial search query",
-    )
-    _add_media_arg(p_vis_composition)
-    p_vis_composition.set_defaults(visualizer=True, no_open=False, orientation="portrait", output=None, notify=False)
 
     p_vis_mosaic = visualizer_sub.add_parser(
         "mosaic",

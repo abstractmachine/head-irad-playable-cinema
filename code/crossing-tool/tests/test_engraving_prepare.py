@@ -229,7 +229,7 @@ class TestEngravingDirForSource(unittest.TestCase):
         self.assertIn("catalog", parts)
         self.assertIn("movie", parts)
         self.assertIn("horse", parts)
-        # The mode ("silhouette") is the final path component; object_id is its parent
+        # The mode ("isolated") is the final path component; object_id is its parent
         self.assertEqual(d.parent.name, "object_0001")
 
     def test_label_folder_mirrors_silhouette_dir(self):
@@ -352,7 +352,7 @@ class TestPrepareEngravingFromSource(unittest.TestCase):
         result = self._run()
         data = json.loads(result["metadata"].read_text())
         self.assertEqual(data["schema_version"], ENGRAVING_SCHEMA_VERSION)
-        self.assertEqual(data["status"], "prepared")
+        self.assertEqual(data["status"], "pending")
         for key in ("source", "silhouette", "generation", "prompt", "outputs"):
             self.assertIn(key, data)
 

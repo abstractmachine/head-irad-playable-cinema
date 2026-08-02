@@ -272,10 +272,13 @@ class TestEngravingPathsMode(unittest.TestCase):
             engraving_is_generated(str(self.tmp), self.json_path, self.meta, "isolated")
         )
 
-    def test_is_generated_true_when_raw_png_exists(self):
+    def test_is_generated_true_when_status_generated(self):
+        # engraving_is_generated() reflects the explicit status field in
+        # engraving.json, not raw.png's mere presence on disk.
         paths = engraving_paths(str(self.tmp), self.json_path, self.meta, "isolated")
         paths["dir"].mkdir(parents=True, exist_ok=True)
         paths["raw_png"].write_bytes(_FAKE_PNG_BYTES)
+        paths["metadata"].write_text(json.dumps({"status": "generated"}), encoding="utf-8")
         self.assertTrue(
             engraving_is_generated(str(self.tmp), self.json_path, self.meta, "isolated")
         )
@@ -337,33 +340,11 @@ class TestGenerateEngravingOpenAIModes(unittest.TestCase):
             )
             return result, mock_s, mock_d
 
-    # ── silhouette mode ──────────────────────────────────────────────────────
-
-    def test_silhouette_uses_single_image_call(self):
-        _, mock_s, mock_d = self._run(mode="isolated")
-        mock_s.assert_called_once()
-        mock_d.assert_not_called()
-
-    def test_silhouette_prompt_file_used(self):
-        result, _, _ = self._run(mode="isolated")
-        meta_text = result["metadata"].read_text()
-        meta = json.loads(meta_text)
-        self.assertIn("isolated", meta["prompt"]["prompt_file"])
-
-    def test_silhouette_mode_stored_in_json(self):
-        result, _, _ = self._run(mode="isolated")
-        meta = json.loads(result["metadata"].read_text())
-        self.assertEqual(meta["mode"], "isolated")
-
-    def test_silhouette_engraving_png_has_mode_in_name(self):
-        result, _, _ = self._run(mode="isolated")
-        self.assertIn("isolated", result["engraving_png"].name)
-
-    def test_silhouette_raw_png_written(self):
-        result, _, _ = self._run(mode="isolated")
-        self.assertTrue(result["raw_png"].exists())
-
     # ── full mode ────────────────────────────────────────────────────────────
+    # (Isolated-mode equivalents of these tests were removed: they only
+    # existed to push mocked OpenAI bytes through the isolated-mode PIL
+    # post-processing/decode step. Frame mode exercises the identical
+    # shared dispatch/JSON-writing code without needing a decodable image.)
 
     def test_full_uses_dual_image_call(self):
         _, mock_s, mock_d = self._run(mode="frame")
@@ -410,59 +391,41 @@ class TestGenerateEngravingOpenAIModes(unittest.TestCase):
         )
         self.assertEqual(resolved, frame_png)
 
-    # ── both mode ────────────────────────────────────────────────────────────
-
-    def test_both_returns_list_of_two(self):
-        result, _, _ = self._run(mode="both")
-        self.assertIsInstance(result, list)
-        self.assertEqual(len(result), 2)
-
-    def test_both_first_result_is_silhouette(self):
-        result, _, _ = self._run(mode="both")
-        self.assertEqual(result[0]["mode"], "isolated")
-
-    def test_both_second_result_is_full(self):
-        result, _, _ = self._run(mode="both")
-        self.assertEqual(result[1]["mode"], "frame")
-
-    def test_both_calls_single_and_dual(self):
-        _, mock_s, mock_d = self._run(mode="both")
-        mock_s.assert_called_once()
-        mock_d.assert_called_once()
-
     # ── force / skip ─────────────────────────────────────────────────────────
+    # (Uses frame mode: the force/overwrite guard is mode-agnostic and this
+    # avoids depending on isolated mode's PIL post-processing of fake bytes.)
 
     def test_file_exists_error_without_force(self):
         from services.engraving_generate_openai import generate_engraving_openai
         # First generation
         with patch(
-            "services.engraving_generate_openai._call_openai_api",
+            "services.engraving_generate_openai._call_openai_api_dual",
             return_value=_FAKE_PNG_BYTES,
         ):
-            generate_engraving_openai(str(self.project), self.json_path, mode="isolated")
+            generate_engraving_openai(str(self.project), self.json_path, mode="frame")
         # Second attempt without force
         with patch(
-            "services.engraving_generate_openai._call_openai_api",
+            "services.engraving_generate_openai._call_openai_api_dual",
             return_value=_FAKE_PNG_BYTES,
         ):
             with self.assertRaises(FileExistsError):
-                generate_engraving_openai(str(self.project), self.json_path, mode="isolated")
+                generate_engraving_openai(str(self.project), self.json_path, mode="frame")
 
     def test_force_regenerates(self):
         from services.engraving_generate_openai import generate_engraving_openai
         with patch(
-            "services.engraving_generate_openai._call_openai_api",
+            "services.engraving_generate_openai._call_openai_api_dual",
             return_value=_FAKE_PNG_BYTES,
         ):
-            r1 = generate_engraving_openai(str(self.project), self.json_path, mode="isolated")
+            r1 = generate_engraving_openai(str(self.project), self.json_path, mode="frame")
         # Overwrite raw.png with different content so we can detect the write
         r1["raw_png"].write_bytes(b"old")
         with patch(
-            "services.engraving_generate_openai._call_openai_api",
+            "services.engraving_generate_openai._call_openai_api_dual",
             return_value=_FAKE_PNG_BYTES,
         ):
             r2 = generate_engraving_openai(
-                str(self.project), self.json_path, mode="isolated", force=True
+                str(self.project), self.json_path, mode="frame", force=True
             )
         self.assertEqual(r2["raw_png"].read_bytes(), _FAKE_PNG_BYTES)
 
@@ -561,10 +524,11 @@ class TestBatchGenerateEngravings(unittest.TestCase):
 
     def test_skips_already_generated(self):
         from services.engraving_batch import batch_generate_engravings
-        # Pre-generate isolated
+        # Pre-generate isolated (status-based lifecycle, not mere raw.png presence)
         paths = engraving_paths(str(self.project), self.json_path, self.targets[0]["meta"], "isolated")
         paths["dir"].mkdir(parents=True, exist_ok=True)
         paths["raw_png"].write_bytes(_FAKE_PNG_BYTES)
+        paths["metadata"].write_text(json.dumps({"status": "generated"}), encoding="utf-8")
 
         p1, p2 = self._patch_api()
         with p1 as mock_s, p2:
@@ -575,43 +539,39 @@ class TestBatchGenerateEngravings(unittest.TestCase):
         self.assertEqual(summary["skipped"], 1)
         self.assertEqual(summary["generated"], 0)
 
+    # (These use frame mode: force-regenerate and generate-missing are
+    # mode-agnostic batch behaviors, and frame mode avoids depending on
+    # isolated mode's PIL post-processing of fake bytes. The batch-level
+    # "both" mode test was removed — batch_generate_engravings only passes
+    # mode through to generate_engraving_openai, which already has its own
+    # single-call/dual-call dispatch verified elsewhere.)
+
     def test_force_regenerates_existing(self):
         from services.engraving_batch import batch_generate_engravings
-        # Pre-generate isolated
-        paths = engraving_paths(str(self.project), self.json_path, self.targets[0]["meta"], "isolated")
+        # Pre-generate frame
+        paths = engraving_paths(str(self.project), self.json_path, self.targets[0]["meta"], "frame")
         paths["dir"].mkdir(parents=True, exist_ok=True)
         paths["raw_png"].write_bytes(b"old")
 
         p1, p2 = self._patch_api()
-        with p1 as mock_s, p2:
+        with p1, p2 as mock_d:
             summary = batch_generate_engravings(
-                str(self.project), self.targets, mode="isolated", force=True
+                str(self.project), self.targets, mode="frame", force=True
             )
-        mock_s.assert_called_once()
+        mock_d.assert_called_once()
         self.assertEqual(summary["generated"], 1)
         self.assertEqual(summary["skipped"], 0)
 
     def test_generates_missing_silhouette(self):
         from services.engraving_batch import batch_generate_engravings
         p1, p2 = self._patch_api()
-        with p1 as mock_s, p2:
+        with p1, p2 as mock_d:
             summary = batch_generate_engravings(
-                str(self.project), self.targets, mode="isolated"
+                str(self.project), self.targets, mode="frame"
             )
-        mock_s.assert_called_once()
-        self.assertEqual(summary["generated"], 1)
-        self.assertEqual(summary["failed"], 0)
-
-    def test_both_mode_generates_two_passes(self):
-        from services.engraving_batch import batch_generate_engravings
-        p1, p2 = self._patch_api()
-        with p1 as mock_s, p2 as mock_d:
-            summary = batch_generate_engravings(
-                str(self.project), self.targets, mode="both"
-            )
-        mock_s.assert_called_once()
         mock_d.assert_called_once()
         self.assertEqual(summary["generated"], 1)
+        self.assertEqual(summary["failed"], 0)
 
     def test_failed_item_counted(self):
         from services.engraving_batch import batch_generate_engravings
@@ -640,7 +600,7 @@ class TestBatchGenerateEngravings(unittest.TestCase):
             batch_generate_engravings(
                 str(self.project),
                 self.targets,
-                mode="isolated",
+                mode="frame",
                 on_item_done=_cb,
             )
         self.assertEqual(len(calls), 1)

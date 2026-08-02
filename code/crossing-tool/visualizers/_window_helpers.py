@@ -8,7 +8,6 @@ from PyQt5.QtWidgets import QApplication
 _VISUALIZER_TITLE = {
     "shotlist":     "Shotlist Visualizer",
     "mosaic":       "Mosaic Visualizer",
-    "composition":  "Composition Visualizer",
     "metadata":     "Metadata Visualizer",
     "cloud":        "Cloud Visualizer",
     "illustration": "Illustration Visualizer",
