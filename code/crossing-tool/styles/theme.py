@@ -466,7 +466,7 @@ def apply_theme(app) -> None:
 # ---------------------------------------------------------------------------
 
 from PyQt5.QtWidgets import QSplitter, QSplitterHandle  # noqa: E402
-from PyQt5.QtCore import Qt                              # noqa: E402
+from PyQt5.QtCore import Qt, pyqtSignal                  # noqa: E402
 from PyQt5.QtGui import QPainter, QColor                # noqa: E402
 
 
@@ -584,7 +584,23 @@ class _GripHandle(QSplitterHandle):
         self._last_right_size = right_size
 
     def _toggle_right_pane(self) -> None:
-        """Collapse or expand the pane immediately to the right of this handle.
+        """Collapse or expand the pane immediately to the right of this handle."""
+        sp  = self.splitter()
+        idx = self._handle_index()
+        if idx < 0:
+            return
+        sizes = sp.sizes()
+        currently_collapsed = idx >= len(sizes) or sizes[idx] == 0
+        self.set_collapsed(not currently_collapsed)
+
+    def set_collapsed(self, collapsed: bool) -> None:
+        """Collapse (True) or expand (False) the pane to the right of this
+        handle, using the same space-exchange logic as a manual click —
+        callable programmatically so code can drive the exact same
+        collapse/expand behaviour a user click would (e.g. restoring a
+        persisted collapsed state). Emits the splitter's `paneToggled`
+        signal exactly like a click does, so listeners can't tell the
+        difference.
 
         Space is always exchanged with the nearest visible, resizable pane to
         the left — already-collapsed neighbours and hard fixed-width panes
@@ -598,6 +614,9 @@ class _GripHandle(QSplitterHandle):
         sizes      = list(sp.sizes())
         right_size = sizes[idx]
 
+        if collapsed == (right_size == 0):
+            return  # already in the requested state
+
         # Find the nearest left pane that is currently visible (size > 0)
         # and actually resizable (not a hard fixed-width pane).
         left_idx = idx - 1
@@ -609,7 +628,7 @@ class _GripHandle(QSplitterHandle):
         if left_idx < 0:
             return   # nothing visible & resizable to exchange space with
 
-        if right_size == 0:
+        if not collapsed:
             # Expand — take space from the leftmost visible neighbour
             w_min  = getattr(sp.widget(idx), "minimumWidth", lambda: 160)()
             target = self._saved_size if self._saved_size > 0 else max(w_min, 160)
@@ -630,6 +649,13 @@ class _GripHandle(QSplitterHandle):
         sp.blockSignals(True)
         sp.setSizes(sizes)
         sp.blockSignals(False)
+
+        # Notify any interested listener (opt-in — e.g. persisting one
+        # specific pane's collapsed state) that this pane's collapsed state
+        # changed. Splitters with nothing connected are unaffected.
+        paneToggled = getattr(sp, "paneToggled", None)
+        if paneToggled is not None:
+            paneToggled.emit(idx, not collapsed)
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -652,8 +678,27 @@ class _GripHandle(QSplitterHandle):
 class GripSplitter(QSplitter):
     """QSplitter that uses grip-dot handles instead of a solid bar."""
 
+    # Emitted whenever a pane's collapsed state changes, whether via a
+    # handle click/drag-snap or a programmatic `set_pane_collapsed()` call —
+    # (pane_index, now_expanded). Purely opt-in: splitters with no connected
+    # listeners behave exactly as before.
+    paneToggled = pyqtSignal(int, bool)
+
     def createHandle(self):
         return _GripHandle(self.orientation(), self)
+
+    def set_pane_collapsed(self, index: int, collapsed: bool) -> None:
+        """Programmatically collapse/expand the pane at *index* using the
+        same space-exchange logic as clicking the handle to its immediate
+        left (that handle owns the collapse logic for this pane).
+        """
+        handle = self.handle(index)
+        if isinstance(handle, _GripHandle):
+            handle.set_collapsed(collapsed)
+
+    def is_pane_collapsed(self, index: int) -> bool:
+        sizes = self.sizes()
+        return 0 <= index < len(sizes) and sizes[index] == 0
 
 
 # ---------------------------------------------------------------------------

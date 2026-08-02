@@ -2916,6 +2916,11 @@ class _LayerPanel(QWidget):
 _BROWSER_PANEL_W   = 420   # px — preferred width of the engraving browser column
 _BROWSER_THUMB_SZ  = 80    # px per thumbnail cell
 
+# Prefs key persisting the Engravings side panel's own independent
+# grip-collapse state (0-width via GripSplitter.set_pane_collapsed(), not
+# the tab-driven full show/hide) across tab switches and app restarts.
+_ENGRAVING_PANEL_COLLAPSED_PREF = "book_engraving_panel_collapsed"
+
 
 class _IllustrationBrowserPanel(QWidget):
     """Book-side engraving browser composed from framework components.
@@ -3119,6 +3124,21 @@ class BookVisualizerWindow(WindowVisualizer):
 
         self._side_panel = SidePanel(self._sil_browser, _BROWSER_PANEL_W)
         self._side_panel.setVisible(False)
+
+        # Restore the panel's own persisted collapsed state — its
+        # independent grip-click collapse (see GripSplitter.paneToggled),
+        # orthogonal to the tab-driven show/hide above — so it survives
+        # switching away from Book and app restarts. See
+        # `_on_side_panel_toggled()` / `_expand_engraving_browser()`.
+        try:
+            from tool import prefs
+            self._engraving_panel_collapsed = bool(
+                prefs.get(_ENGRAVING_PANEL_COLLAPSED_PREF, False)
+            )
+        except Exception:
+            self._engraving_panel_collapsed = False
+        self._splitter.paneToggled.connect(self._on_side_panel_toggled)
+
         return self._side_panel
 
     def create_inspector(self) -> QWidget:
@@ -3512,12 +3532,37 @@ class BookVisualizerWindow(WindowVisualizer):
         if panel is None:
             return
         panel.set_active(True, self._splitter)
+        # Re-apply the panel's own persisted grip-collapse state: if the
+        # user had manually collapsed it before switching away, keep it
+        # collapsed instead of snapping back to its last full width.
+        if getattr(self, "_engraving_panel_collapsed", False):
+            idx = self._splitter.indexOf(panel)
+            if idx >= 0:
+                self._splitter.set_pane_collapsed(idx, True)
 
     def _collapse_engraving_browser(self) -> None:
         panel = getattr(self, "_side_panel", None)
         if panel is None:
             return
         panel.set_active(False, self._splitter)
+
+    def _on_side_panel_toggled(self, idx: int, now_expanded: bool) -> None:
+        """Persist the Engravings side panel's own independent collapse state.
+
+        `GripSplitter.paneToggled` fires for ANY pane in this window's
+        splitter (e.g. also the Inspector's own grip) — only react when the
+        toggled pane is the Engravings side panel itself, so unrelated
+        inspector collapse state is never touched.
+        """
+        panel = getattr(self, "_side_panel", None)
+        if panel is None or self._splitter.indexOf(panel) != idx:
+            return
+        self._engraving_panel_collapsed = not now_expanded
+        try:
+            from tool import prefs
+            prefs.set(_ENGRAVING_PANEL_COLLAPSED_PREF, self._engraving_panel_collapsed)
+        except Exception:
+            pass
 
     def _on_engraving_sort_changed(self, _idx: int) -> None:
         mode = self._eng_sort_combo.currentData() or "catalog"
