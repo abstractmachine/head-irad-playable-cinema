@@ -1,10 +1,29 @@
 """Lightweight window shell shared by modern visualizers.
 
 WindowVisualizer owns only the application window and its canonical
-three-pane shell: Browser | GripSplitter | Inspector.  It implements
+shell: Browser | [side panel] | GripSplitter | Inspector. It implements
 geometry persistence, keyboard shortcuts (Tab, Shift+Tab, Esc, Ctrl+Q/W),
 and small helper hooks for subclasses to provide the actual browser and
 inspector widgets via `create_browser()` and `create_inspector()`.
+
+A subclass may optionally provide a third, independent splitter pane
+between the Browser and the Inspector via `create_side_panel()` — for
+non-inspector "browser/tableau" content such as Book Visualizer's
+Engravings catalog (see `visualizers.components.side_panel.SidePanel`).
+This pane owns its own splitter/collapse behavior, uncoupled from the
+Inspector's; it must never be nested inside the Inspector itself. When a
+subclass does not override `create_side_panel()` (the default), the shell
+behaves exactly like the classic two-pane Browser | Inspector layout.
+
+Whatever `create_inspector()` returns may opt into shared scrollbar-gutter
+reservation (the inspector pane widens/narrows by `theme.SCROLLBAR_W` as
+its content's vertical scrollbar appears/disappears, so neighbouring
+panes shift left and snap back) by setting a `gutter_tab_host` attribute
+on itself, pointing at whichever `TabbedPanel` drives the active tab's
+content — see `visualizers.components.scrollbar_gutter`. `Inspector`
+does this automatically; a visualizer that owns a `TabbedPanel` directly
+without wrapping it in an `Inspector` (e.g. Book Visualizer) can set this
+attribute itself to participate in the same canonical behavior.
 
 Keep this file intentionally small and generic — no project- or media-
 specific logic belongs here.
@@ -52,17 +71,25 @@ class WindowVisualizer(VisualizerWindow):
             self._browser = QWidget()
         self._browser.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
+        self._side_panel = self.create_side_panel()
+
         self._inspector_shell = self.create_inspector()
         if self._inspector_shell is None:
             self._inspector_shell = QWidget()
 
         self._splitter.addWidget(self._browser)
+        if self._side_panel is not None:
+            self._splitter.addWidget(self._side_panel)
         self._splitter.addWidget(self._inspector_shell)
+
         self._splitter.setStretchFactor(0, 1)
-        self._splitter.setStretchFactor(1, 0)
+        for i in range(1, self._splitter.count()):
+            self._splitter.setStretchFactor(i, 0)
         try:
             # handle may not exist in tests/mocks; guard defensively
-            self._splitter.handle(1).installEventFilter(self)
+            # The Inspector is always the last pane, regardless of whether an
+            # optional side panel is present.
+            self._splitter.handle(self._splitter.count() - 1).installEventFilter(self)
         except Exception:
             pass
 
@@ -70,14 +97,24 @@ class WindowVisualizer(VisualizerWindow):
 
         layout.addWidget(self._splitter)
 
-        # Attach shared inspector scrollbar gutter behavior when possible.
-        try:
-            # Import locally to avoid module-level circular imports.
-            from visualizers.components.inspector import Inspector
-            if isinstance(self._inspector_shell, Inspector):
-                self._inspector_shell.attach_scrollbar_gutter(self._splitter, inspector_index=1)
-        except Exception:
-            pass
+        # Attach shared scrollbar-gutter behavior when the inspector shell
+        # exposes a "tab host" to drive it (see
+        # visualizers.components.scrollbar_gutter). `Inspector` sets this
+        # attribute on itself, but any widget returned by create_inspector()
+        # may set `gutter_tab_host` to whichever TabbedPanel it owns
+        # directly — this is what lets a non-Inspector inspector shell
+        # (e.g. Book Visualizer's control panel) participate in the same
+        # canonical gutter-reservation behavior as Metadata/Illustration/
+        # Project without wrapping its content in an Inspector.
+        tab_host = getattr(self._inspector_shell, "gutter_tab_host", None)
+        if tab_host is not None:
+            try:
+                from visualizers.components.scrollbar_gutter import attach_scrollbar_gutter
+                attach_scrollbar_gutter(
+                    tab_host, self._splitter, pane_index=self._splitter.count() - 1
+                )
+            except Exception:
+                pass
 
         QTimer.singleShot(0, self._fit_splitter_width)
 
@@ -87,6 +124,20 @@ class WindowVisualizer(VisualizerWindow):
     # Subclass hooks -------------------------------------------------
     def create_browser(self) -> Optional[QWidget]:
         raise NotImplementedError()
+
+    def create_side_panel(self) -> Optional[QWidget]:
+        """Optional hook: an independent, non-inspector splitter pane placed
+        between the Browser and the Inspector (e.g. a browser/tableau side
+        panel such as Book Visualizer's Engravings catalog).
+
+        Returns None by default — no extra pane is added, and the shell
+        behaves exactly like the classic two-pane Browser | Inspector
+        layout. A subclass that needs one should typically wrap its content
+        in `visualizers.components.side_panel.SidePanel` so it can be shown
+        and fully hidden (not just collapsed to zero width) independent of
+        the Inspector.
+        """
+        return None
 
     def create_inspector(self) -> Optional[QWidget]:
         raise NotImplementedError()
@@ -134,23 +185,38 @@ class WindowVisualizer(VisualizerWindow):
         except Exception:
             inspector_w = 320
         self._inspector_shell.setMinimumWidth(inspector_w)
-        self._splitter.setSizes([max(1, total - inspector_w), inspector_w])
+
+        if self._side_panel is not None and self._side_panel.isVisible():
+            try:
+                side_w = max(1, self._side_panel.sizeHint().width())
+            except Exception:
+                side_w = 1
+            browser_w = max(1, total - inspector_w - side_w)
+            self._splitter.setSizes([browser_w, side_w, inspector_w])
+        else:
+            browser_w = max(1, total - inspector_w)
+            sizes = [browser_w, inspector_w]
+            if self._side_panel is not None:
+                sizes = [browser_w, 0, inspector_w]
+            self._splitter.setSizes(sizes)
 
     def _sync_inspector_min_width(self) -> None:
         if self._inspector_hidden:
             self._inspector_shell.setMinimumWidth(0)
             return
         sizes = self._splitter.sizes()
-        if len(sizes) != 2:
+        if not sizes:
             return
-        inspector_w = max(0, sizes[1])
+        # The Inspector is always the last pane, whether or not an optional
+        # side panel is present.
+        inspector_w = max(0, sizes[-1])
         self._inspector_shell.setMinimumWidth(inspector_w)
 
     def _toggle_inspector(self) -> None:
         if self._inspector_hidden:
             self._inspector_shell.setVisible(True)
             self._inspector_hidden = False
-            if self._saved_splitter_sizes and len(self._saved_splitter_sizes) == 2:
+            if self._saved_splitter_sizes and len(self._saved_splitter_sizes) == self._splitter.count():
                 self._splitter.setSizes(self._saved_splitter_sizes)
             else:
                 QTimer.singleShot(0, self._fit_splitter_width)
@@ -163,9 +229,12 @@ class WindowVisualizer(VisualizerWindow):
         self._inspector_shell.setMinimumWidth(0)
 
     def eventFilter(self, obj, event) -> bool:
-        # Ensure splitter handle clicks keep min width in sync
+        # Ensure splitter handle clicks keep min width in sync. The
+        # Inspector's handle is always the last one, whether or not an
+        # optional side panel pane is present.
         try:
-            if obj is self._splitter.handle(1) and event.type() == QEvent.MouseButtonRelease:
+            inspector_handle = self._splitter.handle(self._splitter.count() - 1)
+            if obj is inspector_handle and event.type() == QEvent.MouseButtonRelease:
                 self._inspector_shell.setMinimumWidth(0)
                 QTimer.singleShot(0, self._sync_inspector_min_width)
         except Exception:

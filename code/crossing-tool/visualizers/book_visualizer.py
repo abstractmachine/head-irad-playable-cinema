@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import shutil as _shutil
 import sys
 import uuid
 from pathlib import Path
@@ -37,12 +38,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 _CLI_PATH = Path(__file__).parent.parent / "cli.py"
 
 from styles import theme
-from styles.theme import GripSplitter, save_window_geometry, restore_window_geometry
+from styles.theme import save_window_geometry, restore_window_geometry
 from visualizers.window_visualizer import WindowVisualizer
 from visualizers.components.collapsible_section import CollapsibleSection
+from visualizers.components.combo_popup import attach_combo_popup
 from visualizers.components.hover_icon_button import HoverIconButton, build_icon_pair
 from visualizers.components.illustration_browser import IllustrationBrowser
 from visualizers.components.illustration_source import EngravingSource
+from visualizers.components.side_panel import SidePanel
+from visualizers.components.tab_panel import TabPanel
+from visualizers.components.tabbed_panel import TabbedPanel
 from visualizers.components.metadata_block import (
     InspectorTable,
     MetadataBlock,
@@ -51,28 +56,23 @@ from visualizers.components.metadata_block import (
     inspector_action_icon_size,
 )
 
-from PyQt5.QtCore import Qt, QByteArray, QEvent, pyqtSignal, QMimeData, QPoint, QRect, QRectF, QSize, QThread, QTimer, QPointF
+from PyQt5.QtCore import Qt, QEvent, pyqtSignal, QRect, QRectF, QSize, QThread, QTimer, QPointF
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
     QFileDialog,
-    QFrame,
-    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
     QLabel,
     QLineEdit,
-    QListView,
     QMainWindow,
     QMessageBox,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -139,46 +139,6 @@ _SELECTION_COLORS = [
     "#00ff44",  # mint
     "#aa88ff",  # lavender
 ]
-
-_PANEL_STYLESHEET = (
-    f"QWidget {{ background: {theme.PANEL_BG}; }}"
-    f" QPushButton {{ background-color: {theme.BTN_BG}; border: none;"
-    f" padding: 0 10px; border-radius: 3px;"
-    f" min-height: {theme.BTN_H}px; max-height: {theme.BTN_H}px; }}"
-    f" QPushButton:hover    {{ background-color: {theme.BTN_HOVER}; }}"
-    f" QPushButton:pressed  {{ background-color: {theme.BTN_PRESSED}; }}"
-    f" QPushButton:checked  {{ background-color: {theme.ACCENT}; color: {theme.TEXT}; }}"
-    f" QPushButton:disabled {{ color: {theme.TEXT_DIM};"
-    f" background-color: {theme.BTN_BG}; }}"
-)
-
-_TAB_CONTENT_STYLESHEET = (
-    f"QWidget {{ background: {theme.TAB_BG}; }}"
-    f" QPushButton {{ background-color: {theme.BTN_BG}; border: none;"
-    f" padding: 0 10px; border-radius: 3px;"
-    f" min-height: {theme.BTN_H}px; max-height: {theme.BTN_H}px; }}"
-    f" QPushButton:hover    {{ background-color: {theme.BTN_HOVER}; }}"
-    f" QPushButton:pressed  {{ background-color: {theme.BTN_PRESSED}; }}"
-    f" QPushButton:checked  {{ background-color: {theme.ACCENT}; color: {theme.TEXT}; }}"
-    f" QPushButton:disabled {{ color: {theme.TEXT_DIM};"
-    f" background-color: {theme.BTN_BG}; }}"
-)
-
-_WORKSPACE_TABS_STYLESHEET = (
-    f"QTabWidget {{ background: {theme.CANVAS_BG}; border: none; }}"
-    f"QTabWidget::pane {{ background: {theme.TAB_BG}; border: none; }}"
-    f"QTabBar {{ background: {theme.CANVAS_BG}; border: none; }}"
-    f"QTabBar::tab {{"
-    f" background: {theme.CANVAS_BG}; color: {theme.TEXT_DIM};"
-    f" padding: 2px 12px; border: none;"
-    f" font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
-    f" font-weight: {theme.WEIGHT_UI};"
-    f" min-height: 20px;"
-    f" min-width: 0px;"
-    f"}}"
-    f"QTabBar::tab:selected {{ background: {theme.TAB_BG}; color: {theme.TEXT}; }}"
-    f"QTabBar::tab:hover {{ background: {theme.TAB_BG}; color: {theme.TEXT}; }}"
-)
 
 
 # ---------------------------------------------------------------------------
@@ -2950,427 +2910,6 @@ class _LayerPanel(QWidget):
 
 
 # ---------------------------------------------------------------------------
-# _IllustrationsDrawer — collapsible asset browser for per-book illustrations
-# ---------------------------------------------------------------------------
-
-import shutil as _shutil
-
-
-def _illustrations_dir(project_path: Path, slug: str) -> Path:
-    """Return (and create if needed) the illustrations folder for *slug*."""
-    from data.book import book_dir
-    d = book_dir(project_path, slug) / "illustrations"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-def _scan_illustrations(illus_dir: Path) -> dict:
-    """Return {category: [Path, …]} by scanning one level of subfolders.
-
-    Files at the root level go under the empty-string category "".
-    """
-    if not illus_dir.exists():
-        return {}
-    result: dict = {}
-    for entry in sorted(illus_dir.iterdir()):
-        if entry.is_dir():
-            pngs = sorted(p for p in entry.iterdir() if p.suffix.lower() == ".png")
-            result[entry.name] = pngs
-        elif entry.is_file() and entry.suffix.lower() == ".png":
-            result.setdefault("", []).append(entry)
-    return result
-
-
-class _ThumbnailTile(QWidget):
-    """Single illustration thumbnail: image + filename label."""
-
-    _TILE_W = 96
-    _TILE_H = 96
-    _LABEL_H = 16
-
-    def __init__(self, png_path: Path, source_rel: str = "", parent: Optional[QWidget] = None) -> None:
-        super().__init__(parent)
-        self._path = png_path
-        self._source_rel = source_rel   # e.g. "illustrations/animals/deer.png"
-        self.setFixedSize(self._TILE_W, self._TILE_H + self._LABEL_H + 4)
-        self.setToolTip(str(png_path))
-        self.setAttribute(Qt.WA_StyledBackground, True)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(2, 2, 2, 2)
-        layout.setSpacing(1)
-
-        self._img_lbl = QLabel()
-        self._img_lbl.setAlignment(Qt.AlignCenter)
-        self._img_lbl.setFixedSize(self._TILE_W - 4, self._TILE_H - 4)
-        self._img_lbl.setStyleSheet("background: transparent;")
-        layout.addWidget(self._img_lbl)
-
-        self._name_lbl = QLabel(png_path.stem)
-        self._name_lbl.setAlignment(Qt.AlignCenter)
-        self._name_lbl.setStyleSheet(
-            f"color: {theme.TEXT_DIM}; font-size: {max(7, theme.BASE_PT - 2)}pt;"
-            f" background: transparent;"
-        )
-        self._name_lbl.setFixedHeight(self._LABEL_H)
-        layout.addWidget(self._name_lbl)
-
-        self._load_pixmap()
-
-    def _load_pixmap(self) -> None:
-        pix = QPixmap(str(self._path))
-        if not pix.isNull():
-            w = self._TILE_W - 8
-            h = self._TILE_H - 8
-            pix = pix.scaled(w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self._img_lbl.setPixmap(pix)
-
-    def mouseMoveEvent(self, event) -> None:  # noqa: N802
-        if event.buttons() & Qt.LeftButton and self._source_rel:
-            drag = QDrag(self)
-            mime = QMimeData()
-            mime.setData(
-                "application/x-crossing-illus-source",
-                QByteArray(self._source_rel.encode("utf-8")),
-            )
-            drag.setMimeData(mime)
-            pix = self._img_lbl.pixmap()
-            if pix and not pix.isNull():
-                scaled = pix.scaled(48, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                drag.setPixmap(scaled)
-                drag.setHotSpot(QPoint(scaled.width() // 2, scaled.height() // 2))
-            drag.exec_(Qt.CopyAction)
-
-
-class _CategorySection(QWidget):
-    """Category header + 2-column grid of thumbnail tiles.  Accepts PNG drops."""
-
-    file_dropped = pyqtSignal(str, str)   # (category, src_path)
-
-    def __init__(self, category: str, paths: list, base_source_rel: str = "", parent: Optional[QWidget] = None) -> None:
-        super().__init__(parent)
-        self._category = category
-        self._base_source_rel = base_source_rel  # e.g. "illustrations/animals/"
-        self.setAcceptDrops(True)
-        self.setAttribute(Qt.WA_StyledBackground, True)
-
-        self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(0, 0, 0, 4)
-        self._layout.setSpacing(2)
-
-        if category:
-            hdr = QLabel(category)
-            hdr.setStyleSheet(
-                f"color: {theme.TEXT}; font-size: {theme.BASE_PT}pt;"
-                f" font-weight: bold; background: transparent; padding: 2px 0;"
-            )
-            self._layout.addWidget(hdr)
-
-        self._grid_widget = QWidget()
-        self._grid_widget.setStyleSheet("background: transparent;")
-        self._grid = QGridLayout(self._grid_widget)
-        self._grid.setContentsMargins(0, 0, 0, 0)
-        self._grid.setSpacing(4)
-        self._layout.addWidget(self._grid_widget)
-
-        self._populate(paths)
-
-    def _populate(self, paths: list) -> None:
-        # Clear existing tiles
-        while self._grid.count():
-            item = self._grid.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        for i, p in enumerate(paths):
-            src_rel = self._base_source_rel + p.name if self._base_source_rel else f"illustrations/{p.name}"
-            tile = _ThumbnailTile(p, source_rel=src_rel)
-            self._grid.addWidget(tile, i // 2, i % 2)
-
-    def refresh(self, paths: list) -> None:
-        self._populate(paths)
-
-    # -- drag and drop acceptance ------------------------------------------
-    def dragEnterEvent(self, event) -> None:  # noqa: N802
-        if event.mimeData().hasUrls():
-            urls = event.mimeData().urls()
-            if any(u.toLocalFile().lower().endswith(".png") for u in urls):
-                event.acceptProposedAction()
-                return
-        event.ignore()
-
-    def dragMoveEvent(self, event) -> None:  # noqa: N802
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
-        else:
-            event.ignore()
-
-    def dropEvent(self, event) -> None:  # noqa: N802
-        for url in event.mimeData().urls():
-            src = url.toLocalFile()
-            if src.lower().endswith(".png"):
-                self.file_dropped.emit(self._category, src)
-        event.acceptProposedAction()
-
-
-class _IllustrationsDrawer(QWidget):
-    """Collapsible illustrations browser for the current book.
-
-    Scans ``output/books/<slug>/illustrations/`` and shows PNG thumbnails
-    grouped by subfolder.  Auto-refreshes via polling every 2 s.
-    """
-
-    _POLL_MS = 2000
-
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
-        super().__init__(parent)
-        self._project_path: Optional[Path] = None
-        self._slug: Optional[str] = None
-        self._last_state: dict = {}    # category → [str(path), …] — for change detection
-        self._expanded: bool = True
-        self._sections: dict = {}      # category → _CategorySection widget
-
-        self.setAcceptDrops(True)
-        self._build_ui()
-
-        self._poll_timer = QTimer(self)
-        self._poll_timer.setInterval(self._POLL_MS)
-        self._poll_timer.timeout.connect(self._poll)
-        self._poll_timer.start()
-
-    # ------------------------------------------------------------------
-    # UI construction
-
-    def _build_ui(self) -> None:
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-
-        # ── header row: toggle + title + add-folder button ──────────
-        hdr = QWidget()
-        hdr.setStyleSheet(f"background: {theme.BTN_BG}; border-radius: 3px;")
-        hdr.setFixedHeight(26)
-        hdr_lay = QHBoxLayout(hdr)
-        hdr_lay.setContentsMargins(6, 0, 4, 0)
-        hdr_lay.setSpacing(4)
-
-        self._toggle_btn = QPushButton("▼  Illustrations")
-        self._toggle_btn.setStyleSheet(
-            f"QPushButton {{ background: transparent; border: none; color: {theme.TEXT};"
-            f" font-size: {theme.BASE_PT}pt; font-weight: bold; text-align: left; }}"
-        )
-        self._toggle_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self._toggle_btn.setFocusPolicy(Qt.NoFocus)
-        self._toggle_btn.clicked.connect(self._toggle)
-        hdr_lay.addWidget(self._toggle_btn)
-
-        self._add_folder_btn = QPushButton("+")
-        self._add_folder_btn.setToolTip("Add a new category folder")
-        self._add_folder_btn.setFixedSize(22, 22)
-        self._add_folder_btn.setStyleSheet(
-            f"QPushButton {{ background: {theme.BTN_BG}; border: none; color: {theme.TEXT};"
-            f" font-size: {theme.BASE_PT + 2}pt; border-radius: 3px; }}"
-            f"QPushButton:hover {{ background: {theme.BTN_HOVER}; }}"
-        )
-        self._add_folder_btn.setFocusPolicy(Qt.NoFocus)
-        self._add_folder_btn.clicked.connect(self._on_add_folder)
-        hdr_lay.addWidget(self._add_folder_btn)
-
-        outer.addWidget(hdr)
-
-        # ── body: scrollable category grid ────────────────────────────
-        self._body = QWidget()
-        self._body.setStyleSheet(f"background: {theme.PANEL_BG};")
-        body_outer = QVBoxLayout(self._body)
-        body_outer.setContentsMargins(0, 4, 0, 0)
-        body_outer.setSpacing(0)
-
-        self._scroll = QScrollArea()
-        self._scroll.setFocusPolicy(Qt.NoFocus)
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setFrameShape(QFrame.NoFrame)
-        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._scroll.setMinimumHeight(120)
-        self._scroll.setMaximumHeight(400)
-        self._scroll.setStyleSheet(
-            f"QScrollArea {{ background: {theme.PANEL_BG}; border: none; }}"
-        )
-
-        self._content = QWidget()
-        self._content.setStyleSheet(f"background: {theme.PANEL_BG};")
-        self._content_layout = QVBoxLayout(self._content)
-        self._content_layout.setContentsMargins(4, 4, 4, 4)
-        self._content_layout.setSpacing(8)
-
-        self._empty_label = QLabel("No illustrations yet.\nDrop PNGs here.")
-        self._empty_label.setAlignment(Qt.AlignCenter)
-        self._empty_label.setStyleSheet(
-            f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt; background: transparent;"
-        )
-        self._empty_label.setWordWrap(True)
-        self._content_layout.addWidget(self._empty_label)
-        self._content_layout.addStretch()
-
-        self._scroll.setWidget(self._content)
-        body_outer.addWidget(self._scroll)
-        outer.addWidget(self._body)
-
-        self.setAcceptDrops(True)
-
-    # ------------------------------------------------------------------
-    # Public API
-
-    def set_book(self, project_path: Optional[Path], slug: Optional[str]) -> None:
-        self._project_path = project_path
-        self._slug = slug
-        self._last_state = {}
-        self._rebuild()
-
-    # ------------------------------------------------------------------
-    # Toggle
-
-    def _toggle(self) -> None:
-        self._expanded = not self._expanded
-        self._body.setVisible(self._expanded)
-        arrow = "▼" if self._expanded else "▶"
-        self._toggle_btn.setText(f"{arrow}  Illustrations")
-
-    # ------------------------------------------------------------------
-    # Folder creation
-
-    def _on_add_folder(self) -> None:
-        if not self._project_path or not self._slug:
-            return
-        name, ok = QInputDialog.getText(self, "New Category", "Category name:")
-        if not ok or not name.strip():
-            return
-        name = name.strip()
-        illus_dir = _illustrations_dir(self._project_path, self._slug)
-        new_dir = illus_dir / name
-        try:
-            new_dir.mkdir(parents=True, exist_ok=True)
-        except OSError as e:
-            QMessageBox.warning(self, "Error", f"Could not create folder:\n{e}")
-            return
-        self._rebuild()
-
-    # ------------------------------------------------------------------
-    # Polling
-
-    def _poll(self) -> None:
-        if not self._project_path or not self._slug:
-            return
-        illus_dir = _illustrations_dir(self._project_path, self._slug)
-        current = _scan_illustrations(illus_dir)
-        serialised = {cat: [str(p) for p in paths] for cat, paths in current.items()}
-        if serialised != self._last_state:
-            self._last_state = serialised
-            self._rebuild_from(current)
-
-    def _rebuild(self) -> None:
-        if not self._project_path or not self._slug:
-            self._rebuild_from({})
-            return
-        illus_dir = _illustrations_dir(self._project_path, self._slug)
-        data = _scan_illustrations(illus_dir)
-        self._last_state = {cat: [str(p) for p in paths] for cat, paths in data.items()}
-        self._rebuild_from(data)
-
-    def _rebuild_from(self, data: dict) -> None:
-        # Remove old section widgets
-        for sec in self._sections.values():
-            self._content_layout.removeWidget(sec)
-            sec.deleteLater()
-        self._sections = {}
-
-        # Remove trailing stretch
-        while self._content_layout.count():
-            item = self._content_layout.takeAt(self._content_layout.count() - 1)
-            if item.widget():
-                item.widget().deleteLater()
-
-        if not data:
-            self._empty_label = QLabel("No illustrations yet.\nDrop PNGs here.")
-            self._empty_label.setAlignment(Qt.AlignCenter)
-            self._empty_label.setStyleSheet(
-                f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt;"
-                f" background: transparent;"
-            )
-            self._empty_label.setWordWrap(True)
-            self._content_layout.addWidget(self._empty_label)
-        else:
-            for cat, paths in sorted(data.items()):
-                base = f"illustrations/{cat}/" if cat else "illustrations/"
-                sec = _CategorySection(cat, paths, base_source_rel=base)
-                sec.file_dropped.connect(self._on_file_dropped)
-                self._sections[cat] = sec
-                self._content_layout.addWidget(sec)
-
-        self._content_layout.addStretch()
-
-    # ------------------------------------------------------------------
-    # Drop handling (on the drawer itself — root level)
-
-    def dragEnterEvent(self, event) -> None:  # noqa: N802
-        if event.mimeData().hasUrls():
-            if any(u.toLocalFile().lower().endswith(".png")
-                   for u in event.mimeData().urls()):
-                event.acceptProposedAction()
-                return
-        event.ignore()
-
-    def dragMoveEvent(self, event) -> None:  # noqa: N802
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
-        else:
-            event.ignore()
-
-    def dropEvent(self, event) -> None:  # noqa: N802
-        pngs = [u.toLocalFile() for u in event.mimeData().urls()
-                if u.toLocalFile().lower().endswith(".png")]
-        if not pngs:
-            event.ignore()
-            return
-        self._receive_drops(pngs)
-        event.acceptProposedAction()
-
-    def _receive_drops(self, png_paths: list, category: str = "") -> None:
-        """Copy *png_paths* into the given category (or prompt if no categories)."""
-        if not self._project_path or not self._slug:
-            return
-        illus_dir = _illustrations_dir(self._project_path, self._slug)
-
-        # Resolve target category folder
-        if not category:
-            # Use first existing category or root
-            existing = sorted(
-                d.name for d in illus_dir.iterdir() if d.is_dir()
-            ) if illus_dir.exists() else []
-            if existing:
-                cat_name, ok = QInputDialog.getItem(
-                    self, "Choose Category",
-                    "Copy into category:", existing, 0, False
-                )
-                if not ok:
-                    return
-                dest_dir = illus_dir / cat_name
-            else:
-                dest_dir = illus_dir
-        else:
-            dest_dir = illus_dir / category
-
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        for src in png_paths:
-            src_path = Path(src)
-            dest = dest_dir / src_path.name
-            if dest != src_path:
-                _shutil.copy2(str(src_path), str(dest))
-        self._rebuild()
-
-    def _on_file_dropped(self, category: str, src: str) -> None:
-        self._receive_drops([src], category)
-
-
-# ---------------------------------------------------------------------------
 # Engraving Browser sidebar — framework-backed browser for Book Visualizer
 # ---------------------------------------------------------------------------
 
@@ -3569,71 +3108,39 @@ class BookVisualizerWindow(WindowVisualizer):
 
         return left_col
 
-    def create_inspector(self) -> QWidget:
-        # Build the combined inspector: illustration browser + control panel
-        panel_split = GripSplitter(Qt.Horizontal)
-        self._panel_splitter = panel_split
-        self._engraving_split_sizes: Optional[list[int]] = None
-
-        # Middle: engraving browser
+    def create_side_panel(self) -> QWidget:
+        # Engraving browser: an independent, non-inspector side panel with
+        # its own splitter/collapse ownership (visualizers.components.side_panel).
+        # It is only relevant while the Engravings workspace tab is active,
+        # so it starts hidden — the Book tab (the default) has no use for it.
         self._sil_browser = _IllustrationBrowserPanel(self._project_path)
         self._sil_browser.silhouette_insert_requested.connect(self._insert_silhouette)
         self._sil_browser.thumbnail_selected.connect(self._on_browser_thumbnail_selected)
-        panel_split.addWidget(self._sil_browser)
 
-        # Right: control panel
+        self._side_panel = SidePanel(self._sil_browser, _BROWSER_PANEL_W)
+        self._side_panel.setVisible(False)
+        return self._side_panel
+
+    def create_inspector(self) -> QWidget:
         self._control_panel = self._build_control_panel()
-        panel_split.addWidget(self._control_panel)
-
-        panel_split.setStretchFactor(0, 0)
-        panel_split.setStretchFactor(1, 0)
-        panel_split.setSizes([_BROWSER_PANEL_W, _PANEL_WIDTH])
-        self._engraving_split_sizes = [_BROWSER_PANEL_W, _PANEL_WIDTH]
-        QTimer.singleShot(0, self._collapse_engraving_browser)
-        return panel_split
-
-        self.setMinimumSize(700, 480)
-        self.resize(1500, 800)
+        return self._control_panel
 
     def _build_control_panel(self) -> QWidget:
-        # Outer container with fixed width
+        # Outer container with a preferred/minimum width (not a hard fixed
+        # width — must stay genuinely resizable so the shared scrollbar-
+        # gutter behavior below can actually widen/narrow it; see
+        # gutter_tab_host below).
         outer = QWidget()
-        outer.setFixedWidth(_PANEL_WIDTH)
-        # normal construction of control panel wrapper
-        outer.setStyleSheet(_PANEL_STYLESHEET)
+        outer.setMinimumWidth(_PANEL_WIDTH)
 
         outer_layout = QVBoxLayout(outer)
         outer_layout.setContentsMargins(0, 0, 0, 0)
         outer_layout.setSpacing(0)
 
-        # Scrollable interior
-        scroll = QScrollArea()
-        scroll.setFocusPolicy(Qt.NoFocus)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet(f"QScrollArea {{ background: {theme.PANEL_BG}; border: none; }}")
-
-        panel = QWidget()
-        panel.setStyleSheet(_TAB_CONTENT_STYLESHEET)
-        scroll.setWidget(panel)
+        panel = TabPanel()
 
         section_gap = theme.SECTION_GAP
-        action_btn_style = (
-            f"QPushButton {{"
-            f"  background-color: {theme.BTN_BG}; color: {theme.TEXT};"
-            f"  border: none; border-radius: 3px; padding: 0 8px;"
-            f"  min-height: {theme.BTN_H}px; max-height: {theme.BTN_H}px;"
-            f"}}"
-            f"QPushButton:hover   {{ background-color: {theme.ACCENT}; color: {theme.ACCENT_TEXT}; }}"
-            f"QPushButton:pressed {{ background-color: {theme.BTN_PRESSED}; }}"
-            f"QPushButton:checked {{ background-color: {theme.ACCENT}; color: {theme.ACCENT_TEXT}; }}"
-            f"QPushButton:disabled {{ background-color: {theme.BTN_BG};"
-            f" color: rgba(255,255,255,0.15); }}"
-        )
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(section_gap, section_gap, section_gap, section_gap)
-        layout.setSpacing(section_gap)
+        action_btn_style = theme.action_button_stylesheet()
 
         # ── Info section ──────────────────────────────────────────────
         book_sec = CollapsibleSection("Info", pref_key="book_section_info")
@@ -3646,36 +3153,8 @@ class BookVisualizerWindow(WindowVisualizer):
         self._combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._combo.setFocusPolicy(Qt.NoFocus)
         self._combo.setMaxVisibleItems(10)
-        self._combo.setSizeAdjustPolicy(QComboBox.AdjustToContentsOnFirstShow)
-
-        _book_sv = QListView(self._combo)
-        _book_sv.setUniformItemSizes(True)
-        _book_sv.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        _book_sv.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        _book_sv.setFrameShape(QFrame.NoFrame)
-        _book_sv.setLineWidth(0)
-        _book_sv.setMidLineWidth(0)
-        _book_sv.setContentsMargins(0, 0, 0, 0)
-        _book_sv.setStyleSheet(
-            f"QListView {{ background: {theme.INPUT_BG}; color: {theme.TEXT};"
-            f" border: 0px; margin: 0px; padding: 0px; outline: 0px; }}"
-            f"QListView::item {{ background: {theme.INPUT_BG}; padding: 0px 8px;"
-            f" min-height: 24px; border: 0px; }}"
-            f"QListView::item:selected {{ background: {theme.ACCENT}; color: {theme.ACCENT_TEXT}; }}"
-        )
-        self._combo.setView(_book_sv)
-        _book_sv.setViewportMargins(0, 0, 0, 0)
-        _book_sc = _book_sv.parentWidget()
-        if _book_sc is not None:
-            _book_sc.setFrameStyle(QFrame.NoFrame)
-            _book_sc.setLineWidth(0)
-            _book_sc.setMidLineWidth(0)
-            _book_sc.setStyleSheet(
-                f"QFrame {{ background: {theme.INPUT_BG}; border: 0px; margin: 0px; padding: 0px; }}"
-            )
-            if _book_sc.layout():
-                _book_sc.layout().setContentsMargins(0, 0, 0, 0)
-                _book_sc.layout().setSpacing(0)
+        self._combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLength)
+        attach_combo_popup(self._combo)
 
         def _refresh_book_combo_color(_idx: int = 0) -> None:
             _has_choice = bool(self._combo.currentText().strip())
@@ -3772,7 +3251,7 @@ class BookVisualizerWindow(WindowVisualizer):
         book_layout.addWidget(self._loading_label)
 
         book_sec.add_widget(book_wrap)
-        layout.addWidget(book_sec)
+        panel.add_widget(book_sec)
 
         # ── Tools section ─────────────────────────────────────────────
         tools_sec = CollapsibleSection("Tools", pref_key="book_section_tools")
@@ -3893,7 +3372,7 @@ class BookVisualizerWindow(WindowVisualizer):
         )
         tools_layout.addWidget(self._text_vis_chk)
         tools_sec.add_widget(tools_wrap)
-        layout.addWidget(tools_sec)
+        panel.add_widget(tools_sec)
 
         # ── Layers section ────────────────────────────────────────────
         layers_sec = CollapsibleSection("Layers", pref_key="book_section_layers")
@@ -3932,48 +3411,32 @@ class BookVisualizerWindow(WindowVisualizer):
 
         layers_sec.add_widget(layers_wrap)
         layers_sec.set_fill_vertical(True)
-        layers_index = layout.count()
-        layout.addWidget(layers_sec)
+        panel.add_widget(layers_sec)
 
-        def _sync_layers_section_stretch(expanded: bool) -> None:
-            layout.setStretch(layers_index, 1 if expanded else 0)
-
-        layers_sec.expandedChanged.connect(_sync_layers_section_stretch)
-        _sync_layers_section_stretch(layers_sec.is_expanded())
-        layout.addStretch()
-
-        self._workspace_tabs = QTabWidget()
-        self._workspace_tabs.setDocumentMode(True)
-        self._workspace_tabs.tabBar().setDrawBase(False)
-        self._workspace_tabs.tabBar().setExpanding(False)
-        self._workspace_tabs.tabBar().setUsesScrollButtons(False)
-        self._workspace_tabs.setFocusPolicy(Qt.NoFocus)
-        self._workspace_tabs.tabBar().setFocusPolicy(Qt.NoFocus)
-        self._workspace_tabs.setStyleSheet(_WORKSPACE_TABS_STYLESHEET)
-
-        book_workspace = QWidget()
-        book_workspace_layout = QVBoxLayout(book_workspace)
-        book_workspace_layout.setContentsMargins(0, 0, 0, 0)
-        book_workspace_layout.setSpacing(0)
-        book_workspace_layout.addWidget(scroll)
+        self._workspace_tabs = TabbedPanel()
+        self._workspace_tabs.add_tab(panel, " Book ")
+        self._book_workspace_idx = 0
 
         engr_workspace = self._build_engraving_workspace_panel()
-        self._book_workspace_idx = self._workspace_tabs.addTab(book_workspace, " Book ")
-        self._engr_workspace_idx = self._workspace_tabs.addTab(engr_workspace, " Engravings ")
+        self._workspace_tabs.add_tab(engr_workspace, " Engravings ")
+        self._engr_workspace_idx = 1
+
         self._workspace_tabs.currentChanged.connect(self._on_workspace_tab_changed)
         self._workspace_tabs.setCurrentIndex(self._book_workspace_idx)
 
         outer_layout.addWidget(self._workspace_tabs)
+
+        # Duck-typed hook consumed by WindowVisualizer.__init__: attaches the
+        # shared scrollbar-gutter behavior (visualizers.components.
+        # scrollbar_gutter) using this TabbedPanel as the tab host, so the
+        # Book/Engravings tabs' content scrollbars widen/narrow this pane
+        # exactly like Metadata/Illustration/Project's Inspector-based panes.
+        outer.gutter_tab_host = self._workspace_tabs
         return outer
 
     def _build_engraving_workspace_panel(self) -> QWidget:
         """Build the Engravings inspector domain: Filter, Sort, and Info."""
-        panel = QWidget()
-        panel.setStyleSheet(_TAB_CONTENT_STYLESHEET)
-        section_gap = theme.SECTION_GAP
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(section_gap, section_gap, section_gap, section_gap)
-        layout.setSpacing(section_gap)
+        panel = TabPanel()
 
         filter_sec = CollapsibleSection("Filter", pref_key="book_eng_section_filter")
         fwrap = QWidget()
@@ -3984,7 +3447,7 @@ class BookVisualizerWindow(WindowVisualizer):
         fwrap_lay.addWidget(self._sil_browser.status_bar)
         fwrap_lay.addWidget(self._sil_browser.pagination_panel)
         filter_sec.add_widget(fwrap)
-        layout.addWidget(filter_sec)
+        panel.add_widget(filter_sec)
 
         sort_sec = CollapsibleSection("Sort", pref_key="book_eng_section_sort")
         self._eng_sort_combo = QComboBox()
@@ -3993,17 +3456,15 @@ class BookVisualizerWindow(WindowVisualizer):
         self._eng_sort_combo.addItem("Alphabetical", userData="alphabetical")
         self._eng_sort_combo.currentIndexChanged.connect(self._on_engraving_sort_changed)
         sort_sec.add_widget(self._eng_sort_combo)
-        layout.addWidget(sort_sec)
+        panel.add_widget(sort_sec)
 
         info_sec = CollapsibleSection("Info", pref_key="book_eng_section_info")
         self._eng_info_block = MetadataBlock([
             "label", "movie", "field", "shot", "dpi", "width", "height"
         ])
         info_sec.add_widget(self._eng_info_block)
-        # Keep section header -> first row gap on the shared 2px grid.
-        layout.addWidget(info_sec)
+        panel.add_widget(info_sec)
 
-        layout.addStretch()
         return panel
 
     def _on_workspace_tab_changed(self, idx: int) -> None:
@@ -4021,75 +3482,42 @@ class BookVisualizerWindow(WindowVisualizer):
     def _toggle_inspectors(self) -> None:
         """Toggle between full-canvas mode and inspector-visible mode.
 
-        Mirrors Illustration Visualizer's Tab behavior: hide/show the
-        side inspectors as a single operation.
+        Mirrors Illustration Visualizer's Tab behavior: hide/show the side
+        inspector as a single operation. The Engravings side panel owns its
+        own splitter pane independent of the Inspector (see
+        `visualizers.components.side_panel.SidePanel`), so it is shown or
+        hidden here explicitly rather than being carried along by the
+        Inspector's own show/hide.
         """
-        # Save internal panel sizes, delegate shell show/hide to WindowVisualizer,
-        # and restore internal sizes when the inspector is shown again. Do not
-        # modify the outer shell splitter here.
-        panel = getattr(self, "_panel_splitter", None)
+        was_hidden = getattr(self, "_inspector_hidden", False)
 
-        # toggle inspectors: preserve behavior without debug prints
-
-        try:
-            self._saved_panel_sizes = list(panel.sizes()) if panel is not None else None
-        except Exception:
-            self._saved_panel_sizes = None
-
-        # Delegate show/hide to the shell (WindowVisualizer manages outer splitter)
+        # Delegate Inspector show/hide to the shell (WindowVisualizer owns
+        # the outer splitter).
         super()._toggle_inspector()
 
-        # If inspector is now visible, restore the internal panel sizes.
-        try:
-            if not getattr(self, "_inspector_hidden", False) and panel is not None and self._saved_panel_sizes:
-                self._panel_splitter.setSizes(self._saved_panel_sizes)
-        except Exception:
-            pass
-
-        # Ensure internal engravings panel state matches the active tab.
-        if getattr(self, "_workspace_tabs", None) and self._workspace_tabs.currentIndex() != getattr(self, "_engr_workspace_idx", -1):
+        if was_hidden:
+            # Inspector just became visible again — restore the side panel
+            # to match whichever workspace tab is active.
+            if getattr(self, "_workspace_tabs", None) and self._workspace_tabs.currentIndex() == getattr(self, "_engr_workspace_idx", -1):
+                self._expand_engraving_browser()
+            else:
+                self._collapse_engraving_browser()
+        else:
+            # Inspector just became hidden — full-canvas mode hides the
+            # side panel too, so only the canvas remains visible.
             self._collapse_engraving_browser()
 
-        # end toggle inspectors
-
     def _expand_engraving_browser(self) -> None:
-        panel = getattr(self, "_panel_splitter", None)
-        # expand engraving browser (no debug prints)
+        panel = getattr(self, "_side_panel", None)
         if panel is None:
             return
-        sizes = list(panel.sizes())
-        # only expand when currently collapsed (left size == 0)
-        if len(sizes) != 2 or sizes[0] > 0:
-            return
-        # Restore saved internal sizes if available, otherwise use defaults.
-        if self._engraving_split_sizes and len(self._engraving_split_sizes) == 2:
-            panel.setSizes(list(self._engraving_split_sizes))
-            return
-        # Fallback defaults for internal panel widths
-        mid = max(280, 360)
-        right = max(_PANEL_WIDTH, 300)
-        panel.setSizes([mid, right])
-
-        # end expand engraving browser
+        panel.set_active(True, self._splitter)
 
     def _collapse_engraving_browser(self) -> None:
-        panel = getattr(self, "_panel_splitter", None)
-        # collapse engraving browser (no debug prints)
+        panel = getattr(self, "_side_panel", None)
         if panel is None:
             return
-        sizes = list(panel.sizes())
-        if len(sizes) != 2:
-            return
-        mid, right = sizes[0], sizes[1]
-        if mid > 0:
-            self._engraving_split_sizes = [int(mid), int(right)]
-        if mid == 0:
-            return
-        total = max(1, int(mid + right))
-        # collapse the engraving pane internally — do not touch outer splitter
-        panel.setSizes([0, total])
-
-        # end collapse engraving browser
+        panel.set_active(False, self._splitter)
 
     def _on_engraving_sort_changed(self, _idx: int) -> None:
         mode = self._eng_sort_combo.currentData() or "catalog"
@@ -4416,10 +3844,6 @@ class BookVisualizerWindow(WindowVisualizer):
 
         self._save_current_layers()
         self._sil_browser._browser.reload()
-
-    def _delete_engraving_files(self, eng_id: str) -> None:
-        """Deprecated in Book Visualizer: project-level delete is unsupported."""
-        return
 
     # ------------------------------------------------------------------
     # Layer persistence
