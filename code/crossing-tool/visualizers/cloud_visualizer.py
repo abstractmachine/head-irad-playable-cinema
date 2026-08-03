@@ -43,7 +43,9 @@ from PyQt5.QtWidgets import (
     QDialog,
     QFileDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -483,9 +485,14 @@ class CloudVisualizer(WindowVisualizer):
         self.min_count_spin.setValue(2)
         opt_layout.addWidget(self.min_count_spin)
 
-        style_lbl = QLabel("Style")
-        style_lbl.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt;")
-        opt_layout.addWidget(style_lbl)
+        panel.add_section("Options", opt_wrap, pref_key="cloud_section_options")
+
+        # ── Styles section ───────────────────────────────────────────
+        style_wrap = QWidget()
+        style_layout = QVBoxLayout(style_wrap)
+        style_layout.setContentsMargins(0, 0, 0, 0)
+        style_layout.setSpacing(theme.SECTION_GAP)
+
         self.style_combo = QComboBox()
         from generators.cloud import STYLE_NAMES, PREFS_KEY_STYLE, DEFAULT_STYLE
         for name in STYLE_NAMES:
@@ -497,16 +504,47 @@ class CloudVisualizer(WindowVisualizer):
         if idx >= 0:
             self.style_combo.setCurrentIndex(idx)
         self.style_combo.currentIndexChanged.connect(self._on_style_changed)
-        self.style_combo.currentIndexChanged.connect(self._update_edit_btn)
-        opt_layout.addWidget(self.style_combo)
+        self.style_combo.currentIndexChanged.connect(self._update_style_buttons)
+        style_layout.addWidget(self.style_combo)
+
+        btn_grid = QGridLayout()
+        btn_grid.setContentsMargins(0, 0, 0, 0)
+        btn_grid.setSpacing(theme.SECTION_GAP)
+
+        self.new_style_btn = QPushButton("New")
+        self.new_style_btn.setStyleSheet(theme.action_button_stylesheet())
+        self.new_style_btn.setFocusPolicy(Qt.NoFocus)
+        self.new_style_btn.clicked.connect(self._on_new_style)
+        btn_grid.addWidget(self.new_style_btn, 0, 0)
+
+        self.duplicate_style_btn = QPushButton("Duplicate")
+        self.duplicate_style_btn.setStyleSheet(theme.action_button_stylesheet())
+        self.duplicate_style_btn.setFocusPolicy(Qt.NoFocus)
+        self.duplicate_style_btn.clicked.connect(self._on_duplicate_style)
+        btn_grid.addWidget(self.duplicate_style_btn, 0, 1)
+
+        self.rename_style_btn = QPushButton("Rename")
+        self.rename_style_btn.setStyleSheet(theme.action_button_stylesheet())
+        self.rename_style_btn.setFocusPolicy(Qt.NoFocus)
+        self.rename_style_btn.clicked.connect(self._on_rename_style)
+        btn_grid.addWidget(self.rename_style_btn, 1, 0)
+
+        self.delete_style_btn = QPushButton("Delete")
+        self.delete_style_btn.setStyleSheet(theme.action_button_stylesheet())
+        self.delete_style_btn.setFocusPolicy(Qt.NoFocus)
+        self.delete_style_btn.clicked.connect(self._on_delete_style)
+        btn_grid.addWidget(self.delete_style_btn, 1, 1)
 
         self.edit_colors_btn = QPushButton("Edit Colors")
         self.edit_colors_btn.setStyleSheet(theme.action_button_stylesheet())
         self.edit_colors_btn.setFocusPolicy(Qt.NoFocus)
         self.edit_colors_btn.clicked.connect(self._on_edit_colors)
-        opt_layout.addWidget(self.edit_colors_btn)
-        self._update_edit_btn()
-        panel.add_section("Options", opt_wrap, pref_key="cloud_section_options")
+        btn_grid.addWidget(self.edit_colors_btn, 2, 0, 1, 2)
+
+        style_layout.addLayout(btn_grid)
+
+        self._update_style_buttons()
+        panel.add_section("Styles", style_wrap, pref_key="cloud_section_styles")
 
         # ── Page Ratio section ───────────────────────────────────────
         ratio_wrap = QWidget()
@@ -664,13 +702,104 @@ class CloudVisualizer(WindowVisualizer):
         from generators.cloud import PREFS_KEY_STYLE
         _prefs.set(PREFS_KEY_STYLE, self.style_combo.currentData())
 
-    def _update_edit_btn(self, _index: int = 0) -> None:
-        """Enable the Edit Colors button only when a file-backed style is active."""
+    def _update_style_buttons(self, _index: int = 0) -> None:
+        """Enable Edit Colors/Rename/Delete only when a file-backed
+        (non-default) style is active; New and Duplicate are always
+        available."""
         from generators.cloud import get_style_path
         style = self.style_combo.currentData()
-        self.edit_colors_btn.setEnabled(
-            bool(style and get_style_path(style) is not None)
+        has_file = bool(style and get_style_path(style) is not None)
+        self.edit_colors_btn.setEnabled(has_file)
+        self.rename_style_btn.setEnabled(has_file)
+        self.delete_style_btn.setEnabled(has_file)
+
+    def _reload_style_combo(self, select_name: Optional[str] = None) -> None:
+        """Repopulate style_combo from the (already reloaded) style registry.
+
+        Selects `select_name` if given, else keeps the previous selection if
+        it still exists, else falls back to "default".
+        """
+        from generators.cloud import STYLE_NAMES, DEFAULT_STYLE
+        keep = select_name or self.style_combo.currentData() or DEFAULT_STYLE
+        self.style_combo.blockSignals(True)
+        self.style_combo.clear()
+        for name in STYLE_NAMES:
+            self.style_combo.addItem(name, userData=name)
+        idx = self.style_combo.findData(keep)
+        if idx < 0:
+            idx = self.style_combo.findData(DEFAULT_STYLE)
+        if idx >= 0:
+            self.style_combo.setCurrentIndex(idx)
+        self.style_combo.blockSignals(False)
+        self._on_style_changed(self.style_combo.currentIndex())
+        self._update_style_buttons()
+
+    def _on_new_style(self) -> None:
+        """Create a new style preset, seeded from the built-in default colours."""
+        name, ok = QInputDialog.getText(self, "New Style", "Style name:")
+        if not ok:
+            return
+        try:
+            from generators.cloud import create_style
+            create_style(name, base_style="default")
+        except Exception as exc:
+            QMessageBox.warning(self, "Cannot create style", str(exc))
+            return
+        self._reload_style_combo(select_name=name.strip())
+
+    def _on_duplicate_style(self) -> None:
+        """Duplicate the currently selected style's colours under a new name."""
+        base = self.style_combo.currentData() or "default"
+        name, ok = QInputDialog.getText(self, "Duplicate Style", "New name:")
+        if not ok:
+            return
+        try:
+            from generators.cloud import create_style
+            create_style(name, base_style=base)
+        except Exception as exc:
+            QMessageBox.warning(self, "Cannot duplicate style", str(exc))
+            return
+        self._reload_style_combo(select_name=name.strip())
+
+    def _on_rename_style(self) -> None:
+        """Rename the currently selected (non-default) style preset."""
+        old_name = self.style_combo.currentData()
+        if not old_name:
+            return
+        new_name, ok = QInputDialog.getText(
+            self, "Rename Style", "New name:", text=old_name
         )
+        if not ok:
+            return
+        try:
+            from generators.cloud import rename_style
+            rename_style(old_name, new_name)
+        except Exception as exc:
+            QMessageBox.warning(self, "Cannot rename style", str(exc))
+            return
+        self._reload_style_combo(select_name=new_name.strip())
+
+    def _on_delete_style(self) -> None:
+        """Delete the currently selected (non-default) style preset."""
+        name = self.style_combo.currentData()
+        if not name:
+            return
+        reply = QMessageBox.question(
+            self,
+            "Delete Style",
+            f'Delete style "{name}"? This cannot be undone.',
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        try:
+            from generators.cloud import delete_style
+            delete_style(name)
+        except Exception as exc:
+            QMessageBox.warning(self, "Cannot delete style", str(exc))
+            return
+        self._reload_style_combo(select_name="default")
 
     def _on_edit_colors(self) -> None:
         """Open the colour editor for the currently selected style."""

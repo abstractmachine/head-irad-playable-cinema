@@ -172,6 +172,88 @@ def get_style_path(name: str) -> "Path | None":
     return p if p.exists() else None
 
 
+_STYLE_NAME_RE = re.compile(r"^[A-Za-z0-9 _\-]+$")
+
+
+def _validate_style_name(name: str) -> str:
+    """Validate a proposed style name and return it stripped.
+
+    Raises ``ValueError`` with a user-facing message on any problem.
+    """
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Style name cannot be empty.")
+    if name.lower() == DEFAULT_STYLE:
+        raise ValueError('"default" is a reserved, built-in style name.')
+    if not _STYLE_NAME_RE.match(name):
+        raise ValueError(
+            "Style name may only contain letters, numbers, spaces, "
+            "hyphens and underscores."
+        )
+    return name
+
+
+def create_style(name: str, *, base_style: str = DEFAULT_STYLE) -> Path:
+    """Create a new style preset file named ``name``.
+
+    Colours are seeded from ``base_style`` (its JSON file is copied if it
+    has one, otherwise the built-in default background/palette is used).
+    Reloads the style registry on success.  Raises ``ValueError`` if
+    ``name`` is invalid or a style with that name already exists.
+    """
+    name = _validate_style_name(name)
+    dest = _STYLES_DIR / f"{name}.json"
+    if dest.exists():
+        raise ValueError(f'A style named "{name}" already exists.')
+
+    base_path = get_style_path(base_style)
+    if base_path is not None:
+        raw = json.loads(base_path.read_text())
+    else:
+        raw = {
+            "description": "",
+            "background": list(_BG_COLOR),
+            "palette": [list(c) for c in _PALETTE],
+        }
+
+    _STYLES_DIR.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(raw, indent=2))
+    reload_styles()
+    return dest
+
+
+def rename_style(old_name: str, new_name: str) -> Path:
+    """Rename an existing, file-backed style preset.
+
+    Raises ``ValueError`` if ``old_name`` has no backing file (e.g. it is
+    ``"default"``), if ``new_name`` is invalid, or if a style with
+    ``new_name`` already exists. Reloads the style registry on success.
+    """
+    old_path = get_style_path(old_name)
+    if old_path is None:
+        raise ValueError(f'Style "{old_name}" cannot be renamed (built-in or missing).')
+    new_name = _validate_style_name(new_name)
+    dest = _STYLES_DIR / f"{new_name}.json"
+    if dest.exists() and dest != old_path:
+        raise ValueError(f'A style named "{new_name}" already exists.')
+    old_path.rename(dest)
+    reload_styles()
+    return dest
+
+
+def delete_style(name: str) -> None:
+    """Delete an existing, file-backed style preset.
+
+    Raises ``ValueError`` if ``name`` has no backing file (e.g. it is
+    ``"default"``). Reloads the style registry on success.
+    """
+    path = get_style_path(name)
+    if path is None:
+        raise ValueError(f'Style "{name}" cannot be deleted (built-in or missing).')
+    path.unlink()
+    reload_styles()
+
+
 # Font-size range for word rendering
 _MAX_FONT_SIZE = 120
 _MIN_FONT_SIZE = 14
