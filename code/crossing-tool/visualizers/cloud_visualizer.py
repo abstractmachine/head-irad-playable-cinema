@@ -4,14 +4,17 @@
 Launched via:
     crossing generate cloud --visualizer
 
-Layout:
-  LEFT  — cloud canvas (rendered PDF page displayed as an image)
-  RIGHT — control panel: scope, field, options, Generate and Save PDF buttons
+Layout (canonical WindowVisualizer shell):
+  BROWSER   — cloud canvas (rendered PDF page displayed as an image)
+  INSPECTOR — Scope, Field, Options, Page Ratio and Actions sections
+              (Generate / Save PDF buttons, status)
 
 Keyboard:
   Home          — previous title in list
   End           — next title in list
   PgUp / PgDn   — previous / next annotation field
+  Tab           — show/hide inspector
+  Shift+Tab     — toggle fullscreen
   Escape / Ctrl+Q / Ctrl+W — close
 """
 
@@ -27,23 +30,22 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from styles import theme
-from styles.theme import save_window_geometry, restore_window_geometry
 from tool.shortcuts import KEY_PREV_TITLE, KEY_NEXT_TITLE, KEY_PREV_ITEM, KEY_NEXT_ITEM
+from visualizers.window_visualizer import WindowVisualizer
+from visualizers.components.inspector import Inspector
+from visualizers.components.tab_panel import TabPanel
+from visualizers.components.combo_popup import style_canonical_combo
 
-from PyQt5.QtCore import Qt, QThread, QEvent, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, QEvent, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
-    QApplication,
     QColorDialog,
     QComboBox,
     QDialog,
     QFileDialog,
     QFrame,
-    QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMainWindow,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -52,7 +54,8 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PyQt5.QtGui import QColor, QFont, QImage, QPixmap
+from PyQt5.QtGui import QColor, QFont, QImage, QPainter, QPixmap
+from visualizers.components.sweep_bar import SweepBar
 
 if "QT_QPA_PLATFORM_PLUGIN_PATH" in os.environ:
     del os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"]
@@ -336,90 +339,116 @@ class CloudWorker(QThread):
 
 
 # ---------------------------------------------------------------------------
-# Layout constants
+# Adaptive canvas widget
 # ---------------------------------------------------------------------------
 
-_PANEL_W = 270
+class _CloudCanvas(QWidget):
+    """Displays the generated word-cloud image scaled to fit available space.
+
+    A plain `QLabel.setPixmap()` reports a sizeHint/minimumSizeHint equal to
+    whatever pixmap was last set on it — once a GripSplitter pane uses that
+    as its floor, the window can grow (each resize sets a larger pixmap,
+    raising the floor further) but can never shrink back below it. This
+    widget instead paints its own content on demand (mirroring `_SpreadView`
+    in `book_visualizer.py`) and never reports a size hint tied to the
+    image, so it can always be freely shrunk or grown by the splitter. The
+    source pixmap is kept at native resolution and only ever scaled to fit
+    the widget's *current* size at paint time, preserving aspect ratio and
+    centered (letterboxed).
+    """
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._source: Optional[QPixmap] = None   # native-resolution image
+        self._scaled: Optional[QPixmap] = None   # cached fit-to-current-size scan
+        self._scaled_size = None
+        self._placeholder = "No cloud generated yet."
+
+    def set_image(self, pixmap: QPixmap) -> None:
+        """Set the native-resolution source image and repaint."""
+        self._source = pixmap
+        self._scaled = None
+        self._scaled_size = None
+        self.update()
+
+    def clear(self) -> None:
+        self._source = None
+        self._scaled = None
+        self._scaled_size = None
+        self.update()
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        p = QPainter(self)
+        try:
+            p.fillRect(self.rect(), QColor(theme.CANVAS_BG))
+            if self._source is None:
+                p.setPen(QColor(theme.TEXT_DIM))
+                p.drawText(self.rect(), Qt.AlignCenter, self._placeholder)
+                return
+            size = self.size()
+            if self._scaled is None or self._scaled_size != size:
+                self._scaled = self._source.scaled(
+                    size, Qt.KeepAspectRatio, Qt.SmoothTransformation
+                )
+                self._scaled_size = size
+            x = (self.width()  - self._scaled.width())  // 2
+            y = (self.height() - self._scaled.height()) // 2
+            p.drawPixmap(x, y, self._scaled)
+        finally:
+            p.end()
 
 
 # ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
 
-class CloudVisualizer(QMainWindow):
-    """Word-cloud visualizer — canvas on the left, controls on the right."""
+class CloudVisualizer(WindowVisualizer):
+    """Word-cloud visualizer — canvas browser, controls in the inspector."""
 
     def __init__(self, project_path: str) -> None:
-        super().__init__()
+        # Instance attributes must be set before super().__init__() since the
+        # base class calls create_browser()/create_inspector() synchronously.
         self.project_path  = project_path
         self._worker: Optional[CloudWorker] = None
         self._current_img  = None     # PIL Image
         self._current_path: Optional[str] = None  # last saved path
 
+        super().__init__(pref_key="window_cloud")
         self.setWindowTitle("Cloud")
         self.resize(1400, 900)
-        restore_window_geometry(self, "window_cloud")
 
-        central = QWidget()
-        self.setCentralWidget(central)
-        root = QHBoxLayout(central)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
+        self._populate_movies()
 
-        # ── Left: cloud canvas ──────────────────────────────────────────────
-        self.canvas_label = QLabel()
-        self.canvas_label.setAlignment(Qt.AlignCenter)
-        self.canvas_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.canvas_label.setStyleSheet(f"background: {theme.CANVAS_BG};")
-        self.canvas_label.setText("No cloud generated yet.")
-        root.addWidget(self.canvas_label, stretch=1)
+    def create_browser(self) -> QWidget:
+        self.canvas = _CloudCanvas()
+        return self.canvas
 
-        # ── Divider ─────────────────────────────────────────────────────────
-        divider = QFrame()
-        divider.setFrameShape(QFrame.VLine)
-        divider.setFrameShadow(QFrame.Plain)
-        divider.setFixedWidth(1)
-        divider.setStyleSheet(f"background: {theme.UI_BORDER};")
-        root.addWidget(divider)
+    def create_inspector(self) -> QWidget:
+        panel = TabPanel()
 
-        # ── Right: control panel ─────────────────────────────────────────────
-        panel = QWidget()
-        panel.setFixedWidth(_PANEL_W)
-        panel.setStyleSheet(
-            f"QWidget {{ background: {theme.PANEL_BG}; }}"
-            f" QComboBox {{ background-color: {theme.INPUT_BG}; }}"
-            f" QPushButton {{ background-color: {theme.BTN_BG}; border: none;"
-            f" padding: 0 10px; border-radius: 3px;"
-            f" min-height: {theme.BTN_H}px; max-height: {theme.BTN_H}px; }}"
-            f" QPushButton:hover    {{ background-color: {theme.BTN_HOVER}; }}"
-            f" QPushButton:pressed  {{ background-color: {theme.BTN_PRESSED}; }}"
-            f" QPushButton:disabled {{ color: {theme.TEXT_DIM};"
-            f" background-color: {theme.BTN_BG}; }}"
-        )
-        rp = QVBoxLayout(panel)
-        rp.setContentsMargins(14, 14, 14, 14)
-        rp.setSpacing(14)
-        root.addWidget(panel)
-
-        # ── Scope group ───────────────────────────────────────────────
-        scope_group = QGroupBox("Scope")
-        scope_layout = QVBoxLayout(scope_group)
-        scope_layout.setContentsMargins(8, 12, 8, 8)
-        scope_layout.setSpacing(6)
+        # ── Scope section ────────────────────────────────────────────
+        scope_wrap = QWidget()
+        scope_layout = QVBoxLayout(scope_wrap)
+        scope_layout.setContentsMargins(0, 0, 0, 0)
+        scope_layout.setSpacing(theme.SECTION_GAP)
         self.media_combo = QComboBox()
         self.media_combo.addItems(["movie", "gameplay"])
+        style_canonical_combo(self.media_combo)
         self.media_combo.currentIndexChanged.connect(self._populate_movies)
         scope_layout.addWidget(self.media_combo)
         self.movie_combo = QComboBox()
         self.movie_combo.addItem("--all", userData=None)
+        style_canonical_combo(self.movie_combo)
         self.movie_combo.installEventFilter(self)
         scope_layout.addWidget(self.movie_combo)
-        rp.addWidget(scope_group)
+        panel.add_section("Scope", scope_wrap, pref_key="cloud_section_scope")
 
-        # ── Field group ───────────────────────────────────────────────
-        field_group = QGroupBox("Field")
-        field_layout = QVBoxLayout(field_group)
-        field_layout.setContentsMargins(8, 12, 8, 8)
+        # ── Field section ────────────────────────────────────────────
+        field_wrap = QWidget()
+        field_layout = QVBoxLayout(field_wrap)
+        field_layout.setContentsMargins(0, 0, 0, 0)
+        field_layout.setSpacing(theme.SECTION_GAP)
         self.field_combo = QComboBox()
         self.field_combo.addItem("all fields", userData=None)
         for f in (
@@ -427,15 +456,16 @@ class CloudVisualizer(QMainWindow):
             "humans", "wearing", "animals", "text", "motif",
         ):
             self.field_combo.addItem(f, userData=f)
+        style_canonical_combo(self.field_combo)
         self.field_combo.installEventFilter(self)
         field_layout.addWidget(self.field_combo)
-        rp.addWidget(field_group)
+        panel.add_section("Field", field_wrap, pref_key="cloud_section_field")
 
-        # ── Options group ─────────────────────────────────────────────
-        opt_group = QGroupBox("Options")
-        opt_layout = QVBoxLayout(opt_group)
-        opt_layout.setContentsMargins(8, 12, 8, 8)
-        opt_layout.setSpacing(6)
+        # ── Options section ──────────────────────────────────────────
+        opt_wrap = QWidget()
+        opt_layout = QVBoxLayout(opt_wrap)
+        opt_layout.setContentsMargins(0, 0, 0, 0)
+        opt_layout.setSpacing(theme.SECTION_GAP)
 
         max_lbl = QLabel("Max words")
         max_lbl.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt;")
@@ -460,6 +490,7 @@ class CloudVisualizer(QMainWindow):
         from generators.cloud import STYLE_NAMES, PREFS_KEY_STYLE, DEFAULT_STYLE
         for name in STYLE_NAMES:
             self.style_combo.addItem(name, userData=name)
+        style_canonical_combo(self.style_combo)
         from tool import prefs as _prefs
         saved_style = _prefs.get(PREFS_KEY_STYLE) or DEFAULT_STYLE
         idx = self.style_combo.findData(saved_style)
@@ -470,21 +501,24 @@ class CloudVisualizer(QMainWindow):
         opt_layout.addWidget(self.style_combo)
 
         self.edit_colors_btn = QPushButton("Edit Colors")
+        self.edit_colors_btn.setStyleSheet(theme.action_button_stylesheet())
+        self.edit_colors_btn.setFocusPolicy(Qt.NoFocus)
         self.edit_colors_btn.clicked.connect(self._on_edit_colors)
         opt_layout.addWidget(self.edit_colors_btn)
         self._update_edit_btn()
-        rp.addWidget(opt_group)
+        panel.add_section("Options", opt_wrap, pref_key="cloud_section_options")
 
-        # ── Page Ratio group ──────────────────────────────────────────
-        ratio_group = QGroupBox("Page Ratio")
-        ratio_layout = QVBoxLayout(ratio_group)
-        ratio_layout.setContentsMargins(8, 12, 8, 8)
-        ratio_layout.setSpacing(6)
+        # ── Page Ratio section ───────────────────────────────────────
+        ratio_wrap = QWidget()
+        ratio_layout = QVBoxLayout(ratio_wrap)
+        ratio_layout.setContentsMargins(0, 0, 0, 0)
+        ratio_layout.setSpacing(theme.SECTION_GAP)
 
         self.ratio_combo = QComboBox()
         self.ratio_combo.addItem("16:9",  userData=(16, 9))
         self.ratio_combo.addItem("2:3",   userData=(2, 3))
         self.ratio_combo.addItem("Custom", userData=None)
+        style_canonical_combo(self.ratio_combo)
         self.ratio_combo.currentIndexChanged.connect(self._on_ratio_changed)
         ratio_layout.addWidget(self.ratio_combo)
 
@@ -506,45 +540,41 @@ class CloudVisualizer(QMainWindow):
         ratio_layout.addLayout(custom_row)
 
         self._on_ratio_changed(0)   # set initial enabled state
-        rp.addWidget(ratio_group)
+        panel.add_section("Page Ratio", ratio_wrap, pref_key="cloud_section_ratio")
 
-        # ── Actions group ─────────────────────────────────────────────
-        actions_group = QGroupBox("Actions")
-        actions_layout = QVBoxLayout(actions_group)
-        actions_layout.setContentsMargins(8, 12, 8, 8)
-        actions_layout.setSpacing(6)
-
-        btn_grid = QGridLayout()
-        btn_grid.setSpacing(4)
-        btn_grid.setContentsMargins(4, 4, 4, 4)
+        # ── Tools section ──────────────────────────────────────────
+        actions_wrap = QWidget()
+        actions_layout = QVBoxLayout(actions_wrap)
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.setSpacing(theme.SECTION_GAP)
 
         self.generate_btn = QPushButton("Generate")
+        self.generate_btn.setStyleSheet(theme.action_button_stylesheet())
+        self.generate_btn.setFocusPolicy(Qt.NoFocus)
         self.generate_btn.clicked.connect(self._on_generate)
-        btn_grid.addWidget(self.generate_btn, 0, 0)
+        actions_layout.addWidget(self.generate_btn)
 
         self.save_btn = QPushButton("Save PDF")
+        self.save_btn.setStyleSheet(theme.action_button_stylesheet())
+        self.save_btn.setFocusPolicy(Qt.NoFocus)
         self.save_btn.setEnabled(False)
         self.save_btn.clicked.connect(self._on_save_pdf)
-        btn_grid.addWidget(self.save_btn, 0, 1)
+        actions_layout.addWidget(self.save_btn)
 
-        btn_container = QFrame()
-        btn_container.setStyleSheet(
-            f"QFrame {{ background: {theme.INPUT_BG}; border-radius: 3px; }}"
-        )
-        btn_container.setLayout(btn_grid)
-        actions_layout.addWidget(btn_container)
+        tools_sec = panel.add_section("Tools", actions_wrap, pref_key="cloud_section_tools")
 
-        self.status_label = QLabel("Choose options and press Generate.")
-        self.status_label.setWordWrap(True)
-        self.status_label.setStyleSheet(
-            f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT - 1}pt; background: transparent;"
-        )
-        actions_layout.addWidget(self.status_label)
-        rp.addWidget(actions_group)
+        # Accent sweep-bar shown on the section title while Generate is
+        # running in the background — same loading behavior as Illustration's
+        # Silhouettes/Engravings tabs and Palette's Movie section.
+        self._loading_bar = SweepBar(self)
+        self._loading_timer = QTimer(self)
+        self._loading_timer.setInterval(20)   # ~50 fps
+        self._loading_timer.timeout.connect(self._loading_bar.tick)
+        tools_sec.set_subbar(self._loading_bar)
 
-        rp.addStretch(1)
-
-        self._populate_movies()
+        self._inspector = Inspector()
+        self._inspector.add_tab(panel, "Cloud")
+        return self._inspector
 
     # ── Generate ─────────────────────────────────────────────────────────────
 
@@ -607,11 +637,8 @@ class CloudVisualizer(QMainWindow):
 
         self.generate_btn.setEnabled(False)
         self.save_btn.setEnabled(False)
-        scope_label = scope or f"{media_type} (all)"
-        field_label = field or "all fields"
-        self.status_label.setText(
-            f"Generating cloud: {scope_label} · {field_label} [{style}]…"
-        )
+        self._loading_bar.start()
+        self._loading_timer.start()
 
         self._worker = CloudWorker(
             self.project_path,
@@ -655,10 +682,7 @@ class CloudVisualizer(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(self, "Cannot open editor", str(exc))
             return
-        if dlg.exec_() == QDialog.Accepted:
-            self.status_label.setText(
-                f"Style \u2018{style}\u2019 colours updated \u2014 press GENERATE to apply."
-            )
+        dlg.exec_()
 
     def _populate_movies(self) -> None:
         """Populate movie_combo from project metadata for the selected media type."""
@@ -678,22 +702,24 @@ class CloudVisualizer(QMainWindow):
                 if label and stem:
                     self.movie_combo.addItem(label, userData=stem)
         except Exception as exc:
-            self.status_label.setText(f"Warning: could not load movie list — {exc}")
+            QMessageBox.warning(self, "Could not load movie list", str(exc))
         finally:
             self.movie_combo.blockSignals(False)
 
     def _on_result_ready(self, img, path: str) -> None:
+        self._loading_timer.stop()
+        self._loading_bar.stop()
         self._current_img  = img
         self._current_path = path
         self._refresh_display()
         self.generate_btn.setEnabled(True)
         self.save_btn.setEnabled(True)
-        self.status_label.setText(f"Cloud ready — saved to {Path(path).name}")
 
     def _on_error(self, message: str) -> None:
+        self._loading_timer.stop()
+        self._loading_bar.stop()
         self.generate_btn.setEnabled(True)
         first_line = message.splitlines()[0]
-        self.status_label.setText(f"Error: {first_line}")
         QMessageBox.warning(self, "Cloud generation failed", first_line)
 
     # ── Save PDF ──────────────────────────────────────────────────────────────
@@ -721,7 +747,6 @@ class CloudVisualizer(QMainWindow):
         try:
             import shutil
             shutil.copy2(self._current_path, dest)
-            self.status_label.setText(f"Saved: {dest}")
         except Exception as exc:
             QMessageBox.critical(self, "Save failed", str(exc))
 
@@ -735,20 +760,7 @@ class CloudVisualizer(QMainWindow):
         w, h = img.size
         qimg = QImage(rgb, w, h, 3 * w, QImage.Format_RGB888)
         pixmap = QPixmap.fromImage(qimg)
-        label_size = self.canvas_label.size()
-        scaled = pixmap.scaled(
-            label_size, Qt.KeepAspectRatio, Qt.SmoothTransformation
-        )
-        self.canvas_label.setPixmap(scaled)
-        self.canvas_label.setText("")
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        self._refresh_display()
-
-    def closeEvent(self, event) -> None:
-        save_window_geometry(self, "window_cloud")
-        super().closeEvent(event)
+        self.canvas.set_image(pixmap)
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
         """Intercept Home/End/PgUp/PgDn on combo boxes to override native
@@ -778,9 +790,6 @@ class CloudVisualizer(QMainWindow):
 
     def keyPressEvent(self, event) -> None:
         key = event.key()
-        if key in (Qt.Key_Q, Qt.Key_W) and event.modifiers() & Qt.ControlModifier:
-            self.close()
-            return
         if key == KEY_PREV_TITLE:
             idx = self.movie_combo.currentIndex()
             if idx > 0:

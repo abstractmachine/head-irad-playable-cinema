@@ -4,18 +4,18 @@
   "background": {
     "label": "aged paper",
     "rgb": [
-      170,
-      0,
-      255
+      246,
+      255,
+      216
     ]
   },
   "palette": [
     {
       "label": "deep ink",
       "rgb": [
-        255,
-        255,
-        255
+        0,
+        0,
+        0
       ]
     },
     {

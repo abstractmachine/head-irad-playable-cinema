@@ -896,6 +896,18 @@ def save_window_geometry(
     else:
         g = win.geometry()
         x, y, w, h = g.x(), g.y(), g.width(), g.height()
+    # Never persist a size larger than the actual screen — a transient
+    # window-manager/DPI-scaling glitch reporting a bogus geometry must not
+    # get written out verbatim, or the window would restore stuck at that
+    # unusable size next launch (see restore_window_geometry()'s matching
+    # clamp).
+    try:
+        from PyQt5.QtWidgets import QApplication
+        screen = QApplication.primaryScreen().availableGeometry()
+        w = max(200, min(w, screen.width()))
+        h = max(150, min(h, screen.height()))
+    except Exception:
+        pass
     _prefs.set(key, [
         x, y, w, h,
         1 if is_fs else 0, 1 if panel_hidden else 0,
@@ -930,6 +942,14 @@ def restore_window_geometry(win, key: str):
     from PyQt5.QtWidgets import QApplication
     x, y, w, h = (int(v) for v in geom[:4])
     screen = QApplication.primaryScreen().availableGeometry()
+    # Clamp width/height to the actual screen size (with a sane floor) before
+    # positioning. A saved size larger than the screen — e.g. from a
+    # transient window-manager/DPI-scaling glitch that got persisted — would
+    # otherwise leave the window effectively stuck: far too large to see its
+    # own edges/title bar controls, with no way to drag it back to a
+    # reasonable size.
+    w = max(200, min(w, screen.width()))
+    h = max(150, min(h, screen.height()))
     x = max(screen.left(), min(x, screen.right()  - 100))
     y = max(screen.top(),  min(y, screen.bottom() - 100))
     win.setGeometry(x, y, w, h)

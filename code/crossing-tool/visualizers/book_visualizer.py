@@ -752,8 +752,17 @@ class _SpreadView(QWidget):
                     pi = layer.get("page")
                     if pi is not None and layer.get("id") != self._drag_layer_id:
                         layers_by_page.setdefault(pi, []).append(layer)
-            left_img  = self._render_page_with_reveals(self._left_i,  cell_w, cell_h, layers_by_page, 0) if self._left_i  is not None else None
-            right_img = self._render_page_with_reveals(self._right_i, cell_w, cell_h, layers_by_page, 0) if self._right_i is not None else None
+            try:
+                left_img  = self._render_page_with_reveals(self._left_i,  cell_w, cell_h, layers_by_page, 0) if self._left_i  is not None else None
+                right_img = self._render_page_with_reveals(self._right_i, cell_w, cell_h, layers_by_page, 0) if self._right_i is not None else None
+            except Exception:
+                # Never let a rendering failure (e.g. malformed layer geometry
+                # or an unreadable image-layer source on this one spread)
+                # propagate out of here — that would leave a stale/blank
+                # canvas with no way to recover short of switching books,
+                # since paintEvent()'s own on-demand render (below) calls
+                # this same method and needs it to always return cleanly.
+                return
             self._cache[key] = (left_img, right_img)
             # Keep cache bounded
             while len(self._cache) > 10:
@@ -773,8 +782,25 @@ class _SpreadView(QWidget):
 
         key = (self._slug, self._left_i, self._right_i, self.width(), self.height())
         if key not in self._cache:
-            p.end()
-            return
+            # No cached render for the *current* size — this happens when an
+            # earlier _do_render() call (e.g. the one triggered synchronously
+            # while restoring the last-open book at startup, before the
+            # window/splitter layout has settled to its final geometry) ran
+            # against a transient width/height that never repeats, so no
+            # resize-driven re-render ever lands on today's actual size (see
+            # repo memory: Book startup blank-canvas bug). Render on-demand
+            # against the size Qt is *actually* painting now instead of
+            # giving up, so the spread is never permanently blank. Guard
+            # against any unexpected exception so the QPainter opened above
+            # is always cleanly ended (an unhandled exception here would
+            # otherwise leave `p` dangling and can wedge future repaints).
+            try:
+                self._do_render()
+            except Exception:
+                pass
+            if key not in self._cache:
+                p.end()
+                return
 
         left_img, right_img = self._cache[key]
         if left_img is None and right_img is None:
@@ -3074,6 +3100,16 @@ class BookVisualizerWindow(WindowVisualizer):
         # keyboard focus for the window itself (self.focus_target()),
         # which is what LEFT/RIGHT/H/S/T etc. below need to reliably work.
         super().showEvent(event)
+        # setFocus() alone only records the *intended* focus widget — it
+        # doesn't request OS/window-manager-level activation. Without an
+        # explicit raise_()/activateWindow() here, some window managers can
+        # map this window without actually giving it input focus (especially
+        # right after an in-process launch), which is what made LEFT/RIGHT
+        # page navigation and page-bar clicks silently do nothing until the
+        # user manually clicked something in the window (which incidentally
+        # granted focus as a side effect of that click).
+        self.raise_()
+        self.activateWindow()
         # Ensure the spread renders on first show (the initial _do_render call in
         # __init__ fires before the widget has a valid size, so we retry here).
         QTimer.singleShot(0, self._spread_view._do_render)

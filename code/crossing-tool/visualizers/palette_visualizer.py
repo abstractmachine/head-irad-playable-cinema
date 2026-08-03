@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from styles import theme
 
-from PyQt5.QtCore import Qt, QEvent, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QEvent, QThread, QTimer, pyqtSignal
 from tool.shortcuts import KEY_PREV_TITLE, KEY_NEXT_TITLE
 from visualizers.window_visualizer import WindowVisualizer
 from visualizers.components.aspect_grid import AspectGridWidget
@@ -47,6 +47,7 @@ from visualizers.components.inspector import Inspector
 from visualizers.components.tab_panel import TabPanel
 from visualizers.components.combo_popup import attach_combo_popup
 from visualizers.components.metadata_block import MetadataBlock
+from visualizers.components.sweep_bar import SweepBar
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -54,7 +55,6 @@ from PyQt5.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QMessageBox,
-    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -481,20 +481,17 @@ class PaletteVisualizerWindow(WindowVisualizer):
         self._combo.installEventFilter(self)
         movie_layout.addWidget(self._combo)
 
-        # Slim progress bar shown while palettes are loading in the background.
-        self._progress = QProgressBar()
-        self._progress.setFixedHeight(3)
-        self._progress.setTextVisible(False)
-        self._progress.setRange(0, 1)
-        self._progress.setValue(0)
-        self._progress.setStyleSheet(
-            f"QProgressBar {{ background-color: {theme.UI_BORDER}; border: none;"
-            f" border-radius: 0px; max-height: 3px; }}"
-            f"QProgressBar::chunk {{ background-color: {theme.ACCENT}; border-radius: 0px; }}"
-        )
-        movie_layout.addWidget(self._progress)
+        movie_sec = panel.add_section("Movie", movie_wrap, pref_key="palette_section_movie")
 
-        panel.add_section("Movie", movie_wrap, pref_key="palette_section_movie")
+        # Accent sweep-bar shown on the section title while palettes are
+        # loading in the background — same loading behavior as Illustration's
+        # Silhouettes/Engravings tabs, visible even when the section is
+        # collapsed.
+        self._loading_bar = SweepBar(self)
+        self._loading_timer = QTimer(self)
+        self._loading_timer.setInterval(20)   # ~50 fps
+        self._loading_timer.timeout.connect(self._loading_bar.tick)
+        movie_sec.set_subbar(self._loading_bar)
 
         # ── Info section ─────────────────────────────────────────────────
         info_wrap = QWidget()
@@ -603,8 +600,8 @@ class PaletteVisualizerWindow(WindowVisualizer):
             )
             return
 
-        self._progress.setRange(0, 0)  # indeterminate while scanning
-        self._progress.setValue(0)
+        self._loading_bar.start()
+        self._loading_timer.start()
         self._info_block.set("status", "Loading palettes…")
 
         self._loader = PaletteLoaderWorker(palette_dir, parent=self)
@@ -625,8 +622,8 @@ class PaletteVisualizerWindow(WindowVisualizer):
 
     def _on_load_done(self, count: int) -> None:
         """Slot: all palette JSONs have been loaded."""
-        self._progress.setRange(0, 1)
-        self._progress.setValue(0)
+        self._loading_timer.stop()
+        self._loading_bar.stop()
         if count == 0:
             self._info_block.set("status", "No palette files found.")
 

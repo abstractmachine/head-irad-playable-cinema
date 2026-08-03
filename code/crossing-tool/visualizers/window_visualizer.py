@@ -200,13 +200,36 @@ class WindowVisualizer(VisualizerWindow):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        if not self.isFullScreen():
-            self._normal_geometry = self.geometry()
+        self._capture_normal_geometry()
 
     def moveEvent(self, event) -> None:
         super().moveEvent(event)
-        if not self.isFullScreen():
-            self._normal_geometry = self.geometry()
+        self._capture_normal_geometry()
+
+    def _capture_normal_geometry(self) -> None:
+        """Cache the current windowed geometry for later persistence.
+
+        Clamps width/height to the current screen's available size first.
+        Some window-manager/DPI-scaling glitches can transiently report a
+        geometry far larger than any real screen; caching that unchecked
+        would later get written out via closeEvent()/save_window_geometry()
+        and reproduced on the next launch, leaving the window effectively
+        stuck (too large to see its own edges to resize back down).
+        """
+        if self.isFullScreen():
+            return
+        geo = self.geometry()
+        try:
+            from PyQt5.QtWidgets import QApplication
+            screen = QApplication.primaryScreen().availableGeometry()
+            w = max(200, min(geo.width(),  screen.width()))
+            h = max(150, min(geo.height(), screen.height()))
+            if w != geo.width() or h != geo.height():
+                geo.setWidth(w)
+                geo.setHeight(h)
+        except Exception:
+            pass
+        self._normal_geometry = geo
 
     # Geometry -------------------------------------------------------
     def closeEvent(self, event) -> None:
