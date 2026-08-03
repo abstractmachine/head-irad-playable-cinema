@@ -437,7 +437,7 @@ class PaletteVisualizerWindow(WindowVisualizer):
         self._loader: Optional[PaletteLoaderWorker] = None
 
         super().__init__(pref_key="window_palette")
-        self.setWindowTitle("Crossing — Palette Visualizer")
+        self.setWindowTitle("Palette")
         self.setMinimumSize(600, 400)
         self.resize(1200, 700)
 

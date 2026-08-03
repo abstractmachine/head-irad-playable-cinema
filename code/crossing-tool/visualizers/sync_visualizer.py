@@ -103,7 +103,7 @@ if "QT_QPA_PLATFORM_PLUGIN_PATH" in os.environ:
 # Constants
 # ---------------------------------------------------------------------------
 
-_WINDOW_TITLE    = "Sync Visualizer"
+_WINDOW_TITLE    = "Sync"
 _WINDOW_W        = 1100
 _WINDOW_H        = 700
 _PANEL_W         = 220
@@ -4039,7 +4039,7 @@ class SyncPreferencesDialog(QDialog):
 
     def __init__(self, parent: QWidget = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Sync Visualizer \u2014 Preferences")
+        self.setWindowTitle("Sync \u2014 Preferences")
         self.setModal(False)
         self.setFixedSize(360, 240)
         self.setStyleSheet(

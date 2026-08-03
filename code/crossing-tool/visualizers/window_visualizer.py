@@ -2,9 +2,10 @@
 
 WindowVisualizer owns only the application window and its canonical
 shell: Browser | [side panel] | GripSplitter | Inspector. It implements
-geometry persistence, keyboard shortcuts (Tab, Shift+Tab, Esc, Ctrl+Q/W),
-and small helper hooks for subclasses to provide the actual browser and
-inspector widgets via `create_browser()` and `create_inspector()`.
+geometry persistence (including fullscreen state and inspector-panel
+visibility), keyboard shortcuts (Tab, Shift+Tab, Esc, Ctrl+Q/W), and small
+helper hooks for subclasses to provide the actual browser and inspector
+widgets via `create_browser()` and `create_inspector()`.
 
 A subclass may optionally provide a third, independent splitter pane
 between the Browser and the Inspector via `create_side_panel()` — for
@@ -54,6 +55,21 @@ class WindowVisualizer(VisualizerWindow):
 
         self._inspector_hidden = False
         self._saved_splitter_sizes: list[int] = []
+
+        # Last known windowed (non-fullscreen) geometry, kept up to date via
+        # resizeEvent()/moveEvent() below. Tracked separately from Qt's own
+        # normalGeometry() (which is not always reliable across window
+        # managers) so it can be persisted even if this window is closed
+        # while fullscreen — see closeEvent() / save_window_geometry().
+        self._normal_geometry = None
+
+        # Set by restore_window_geometry() in __init__ below when this
+        # window should start fullscreen. Consumed by show() so the window
+        # goes straight to fullscreen on first display instead of briefly
+        # appearing as a normal (or maximized-looking) window first — that
+        # intermediate state is what let some window managers ignore the
+        # follow-up fullscreen request.
+        self._pending_fullscreen = False
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -119,7 +135,14 @@ class WindowVisualizer(VisualizerWindow):
         QTimer.singleShot(0, self._fit_splitter_width)
 
         if self._pref_key:
-            restore_window_geometry(self, self._pref_key)
+            panel_hidden, want_fullscreen = restore_window_geometry(self, self._pref_key)
+            self._pending_fullscreen = want_fullscreen
+            if panel_hidden:
+                # Schedule after the _fit_splitter_width() call above (same
+                # singleShot(0) queue, so it runs right after) — otherwise
+                # that call's unconditional setMinimumWidth(inspector_w)
+                # would immediately undo the hide performed here.
+                QTimer.singleShot(0, self._toggle_inspector)
 
     # Subclass hooks -------------------------------------------------
     def create_browser(self) -> Optional[QWidget]:
@@ -161,10 +184,42 @@ class WindowVisualizer(VisualizerWindow):
         super().showEvent(event)
         self.focus_target().setFocus()
 
+    def show(self) -> None:
+        # If restore_window_geometry() (see __init__) determined this window
+        # should start fullscreen, go there directly instead of showing
+        # normal first and upgrading to fullscreen a moment later — some
+        # window managers ignore (or briefly show as merely maximized) a
+        # fullscreen request that follows too closely after an initial
+        # normal show(), which is what caused windows to reopen looking
+        # maximized instead of truly fullscreen.
+        if self._pending_fullscreen:
+            self._pending_fullscreen = False
+            self.showFullScreen()
+        else:
+            super().show()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if not self.isFullScreen():
+            self._normal_geometry = self.geometry()
+
+    def moveEvent(self, event) -> None:
+        super().moveEvent(event)
+        if not self.isFullScreen():
+            self._normal_geometry = self.geometry()
+
     # Geometry -------------------------------------------------------
     def closeEvent(self, event) -> None:
         if self._pref_key:
-            save_window_geometry(self, self._pref_key)
+            normal_geometry = None
+            if self.isFullScreen() and self._normal_geometry is not None:
+                r = self._normal_geometry
+                normal_geometry = (r.x(), r.y(), r.width(), r.height())
+            save_window_geometry(
+                self, self._pref_key,
+                panel_hidden=self._inspector_hidden,
+                normal_geometry=normal_geometry,
+            )
         super().closeEvent(event)
 
     # Shortcuts / behavior ------------------------------------------
@@ -183,6 +238,12 @@ class WindowVisualizer(VisualizerWindow):
             if self.isFullScreen():
                 self.showNormal()
             else:
+                # Capture the windowed geometry right before entering
+                # fullscreen so it's available to save even if this window
+                # is later closed (or quits) while still fullscreen —
+                # resizeEvent()/moveEvent() normally keep this up to date,
+                # but capturing it explicitly here removes any doubt.
+                self._normal_geometry = self.geometry()
                 self.showFullScreen()
             return
         if key == Qt.Key_Tab and not (

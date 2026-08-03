@@ -51,6 +51,7 @@ from PyQt5.QtWidgets import (
     QComboBox,
     QFrame,
     QHBoxLayout,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -85,10 +86,13 @@ def _zoom_key(media_type: str) -> str:
 
 
 # Rows shown in the Info section's two-column (tag / info) table — see
-# `create_inspector()`.  "status" carries transient loading/export messages;
-# the rest is the per-movie summary that used to live in a status label
-# below the movie combo.
-_INFO_ROWS = ["status", "shots", "motifs", "pages"]
+# `create_inspector()`. "title" is an editable QLineEdit (the film title
+# motif) embedded directly into the table via
+# `MetadataBlock.set_row_widget()` so it matches the other rows' styling;
+# "status" carries transient loading/export messages; the rest is the
+# per-movie summary that used to live in a status label below the movie
+# combo.
+_INFO_ROWS = ["title", "status", "shots", "motifs", "pages"]
 
 
 # ---------------------------------------------------------------------------
@@ -325,7 +329,7 @@ class FlipbookVisualizerWindow(WindowVisualizer):
         self._updating_combo: bool = False
 
         super().__init__(pref_key="window_flipbook")
-        self.setWindowTitle("Crossing — Flipbook Visualizer")
+        self.setWindowTitle("Flipbook")
         self.setMinimumSize(640, 400)
         self.resize(1200, 700)
 
@@ -369,9 +373,20 @@ class FlipbookVisualizerWindow(WindowVisualizer):
         info_wrap = QWidget()
         info_layout = QVBoxLayout(info_wrap)
         info_layout.setContentsMargins(0, 0, 0, 0)
-        info_layout.setSpacing(0)
+        info_layout.setSpacing(theme.SECTION_GAP)
+
         self._info_block = MetadataBlock(_INFO_ROWS)
         info_layout.addWidget(self._info_block)
+
+        self._title_edit = QLineEdit()
+        self._title_edit.setFrame(False)
+        self._title_edit.setPlaceholderText("Film title motif — press Enter to save")
+        self._title_edit.setStyleSheet(
+            "border: none; " + self._info_block.value_cell_stylesheet("title")
+        )
+        self._title_edit.returnPressed.connect(self._on_title_edited)
+        self._info_block.set_row_widget("title", self._title_edit)
+
         panel.add_section("Info", info_wrap, pref_key="flipbook_section_info")
 
         # ── Tools section (zoom + export) ──────────────────────────────
@@ -509,6 +524,14 @@ class FlipbookVisualizerWindow(WindowVisualizer):
         })
         self._browser_page.load_pages(pages)
 
+        # Populate the title edit with the current film title motif value
+        # (the semantic condensation title shown on the front cover), so
+        # editing/saving here always reflects what's actually on the page.
+        film_motif = data.get("film_motif") or {}
+        current_title = film_motif.get("value", "").strip() or data.get("title", "")
+        self._title_edit.setText(current_title)
+        self._title_edit.setPlaceholderText(data.get("title", "") or "Film title motif")
+
         self._updating_combo = True
         self._combo.setCurrentIndex(idx)
         self._updating_combo = False
@@ -555,6 +578,40 @@ class FlipbookVisualizerWindow(WindowVisualizer):
             self._info_block.set("status", "Export failed.")
         finally:
             self._export_btn.setEnabled(True)
+
+    # ------------------------------------------------------------------
+    # Title edit
+
+    def _on_title_edited(self) -> None:
+        """Validate and save the edited film title motif, then exit editing.
+
+        Fires on Enter/Return (`QLineEdit.returnPressed`, which covers both
+        the main-keyboard Enter and the numpad Enter key). Regardless of
+        whether there was anything valid to save, keyboard focus is always
+        returned to the window afterwards so Tab/Shift+Tab and other
+        window-level shortcuts work immediately without an extra click.
+        """
+        try:
+            value = self._title_edit.text().strip()
+            if not value or not self._books:
+                return
+            idx = self._current_idx
+            label, data = self._books[idx]
+            filename = data.get("filename", "")
+            if not filename:
+                return
+            from data.film_motif import set_film_title
+            set_film_title(self._project_path, filename, self._media_type, value)
+            # Force reload so the front cover reflects the new value
+            data["loaded"] = False
+            self._books[idx] = (label, data)
+            self._show_movie(idx)
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()  # full traceback visible in the terminal
+            self._info_block.set("status", f"Error saving title: {exc}")
+        finally:
+            self.focus_target().setFocus()
 
     # ------------------------------------------------------------------
     # Signal handlers

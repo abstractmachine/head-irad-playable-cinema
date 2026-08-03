@@ -580,7 +580,7 @@ class MetadataVisualizer(WindowVisualizer):
         # Counter for click-driven metadata dumps
         self._metadata_click_count = 0
 
-        self.setWindowTitle("Crossing — Metadata Visualizer")
+        self.setWindowTitle("Metadata")
 
         # Browser and inspector are created via WindowVisualizer hooks.
         # `create_browser` and `create_inspector` will be called from

@@ -1447,7 +1447,7 @@ class MosaicVisualizer(QMainWindow):
         self._best_lookup: dict = {}
         self._query_best_active: bool = False
 
-        self.setWindowTitle("Crossing — Mosaic Visualizer")
+        self.setWindowTitle("Mosaic")
         self.resize(1440, 900)
         restore_window_geometry(self, "window_mosaic")
 

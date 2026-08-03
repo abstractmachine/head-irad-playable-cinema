@@ -3057,7 +3057,7 @@ class BookVisualizerWindow(WindowVisualizer):
 
         # Let WindowVisualizer manage geometry persistence for this window.
         super().__init__(pref_key="window_book")
-        self.setWindowTitle("Crossing — Book Visualizer")
+        self.setWindowTitle("Book")
         # normal initialization (no debug reporting)
 
         # Post-layout adjustments

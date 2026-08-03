@@ -356,7 +356,7 @@ class CloudVisualizer(QMainWindow):
         self._current_img  = None     # PIL Image
         self._current_path: Optional[str] = None  # last saved path
 
-        self.setWindowTitle("Crossing — Cloud Visualizer")
+        self.setWindowTitle("Cloud")
         self.resize(1400, 900)
         restore_window_geometry(self, "window_cloud")
 

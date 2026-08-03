@@ -30,6 +30,7 @@ import subprocess as _sp
 from PyQt5.QtWidgets import QApplication, QWidget
 
 from styles import theme
+from tool.shortcuts import install_keyboard_manager
 
 # The window-raise helper is safe to import at module level.
 from visualizers._window_helpers import raise_existing_window
@@ -46,16 +47,21 @@ def run_visualizer_window(
     spawn requirement.
 
     Raises an already-open in-process window matching *subcommand* (unless
-    *check_existing* is False). Otherwise gets or creates the `QApplication`
-    (applying the shared theme only when this call creates it), calls
-    `build_window()` to construct the visualizer's main window, shows it,
-    calls *post_show* with the window if supplied (for the rare bit of
-    per-visualizer setup that must happen after `show()` but before the
-    event loop runs), and — only if this call created the `QApplication` —
-    runs the event loop and exits the process when it finishes.
+    *check_existing* is False). Otherwise checks the cross-process
+    single-instance guard (`visualizers.components.singleton_guard`): if
+    another OS process already owns *subcommand* for the current project,
+    that process is pinged to raise its window and this call returns
+    without creating a duplicate. Otherwise gets or creates the
+    `QApplication` (applying the shared theme only when this call creates
+    it), calls `build_window()` to construct the visualizer's main window,
+    shows it, calls *post_show* with the window if supplied (for the rare
+    bit of per-visualizer setup that must happen after `show()` but before
+    the event loop runs), and — only if this call created the
+    `QApplication` — runs the event loop and exits the process when it
+    finishes.
 
     Returns the constructed window, or None if an existing window was
-    raised instead.
+    raised instead (in-process or in another process).
     """
     if check_existing and raise_existing_window(subcommand):
         return None
@@ -65,6 +71,18 @@ def run_visualizer_window(
     if created_app:
         app = QApplication(sys.argv)
         theme.apply_theme(app)
+    # Guaranteed regardless of which visualizer class is built below —
+    # Cloud/Mosaic/Shotlist/Sync are plain QMainWindow (not VisualizerWindow
+    # subclasses), so they'd otherwise never get F1-F10/F12/Tab/Shift+Tab when
+    # they happen to be the first window opened in a fresh process.
+    install_keyboard_manager(app)
+
+    from tool import prefs as _prefs
+    from visualizers.components.singleton_guard import claim_or_ping_and_bind
+    if not claim_or_ping_and_bind(subcommand, _prefs.get("path") or "", app):
+        if created_app:
+            sys.exit(0)
+        return None
 
     win = build_window()
     win.show()

@@ -30,6 +30,7 @@ Usage (in each visualizer's public launcher function)::
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
 # ---------------------------------------------------------------------------
 # Color tokens
@@ -866,46 +867,84 @@ class JumpScrollBar(QScrollBar):
 # Window geometry persistence helpers
 # ---------------------------------------------------------------------------
 
-def save_window_geometry(win, key: str) -> None:
-    """Save *win*'s current screen geometry to prefs under *key*."""
+def save_window_geometry(
+    win, key: str, panel_hidden: bool = False, normal_geometry=None,
+) -> None:
+    """Save *win*'s current screen geometry to prefs under *key*.
+
+    *panel_hidden* records whether the window's inspector/side panel was
+    hidden (toggled via plain Tab) so it can be restored in the same state
+    next time this window is opened. Callers with no such panel concept
+    can omit it (defaults to False, i.e. "visible").
+
+    *normal_geometry*, if given, is an (x, y, w, h) tuple persisted as the
+    windowed-mode geometry INSTEAD of `win.geometry()`. Pass this when *win*
+    is currently fullscreen: `win.geometry()` returns the screen-covering
+    fullscreen rect in that case, which would otherwise clobber the
+    previously-known windowed size/position the next time the window is
+    un-fullscreened. Callers that don't track a window's pre-fullscreen
+    geometry themselves can omit this; the saved windowed geometry will
+    simply be whatever `win.geometry()` returns at save time.
+    """
     from tool import prefs as _prefs
-    g = win.geometry()
-    # Persist fullscreen state along with geometry so apps restarted
-    # after being closed in fullscreen can return to fullscreen.
     try:
         is_fs = bool(win.isFullScreen())
     except Exception:
         is_fs = False
-    _prefs.set(key, [g.x(), g.y(), g.width(), g.height(), 1 if is_fs else 0])
+    if normal_geometry is not None:
+        x, y, w, h = normal_geometry
+    else:
+        g = win.geometry()
+        x, y, w, h = g.x(), g.y(), g.width(), g.height()
+    _prefs.set(key, [
+        x, y, w, h,
+        1 if is_fs else 0, 1 if panel_hidden else 0,
+    ])
 
 
-def restore_window_geometry(win, key: str) -> None:
-    """Restore *win*'s geometry from prefs.  No-op if nothing was saved yet.
+def restore_window_geometry(win, key: str):
+    """Restore *win*'s windowed geometry from prefs.  No-op if nothing was
+    saved yet.
 
     Clamps the position so the window is never placed fully off-screen.
+    Always sets the windowed (non-fullscreen) geometry — callers that
+    should actually start fullscreen must call `win.showFullScreen()`
+    themselves based on the returned flag rather than relying on this
+    function to do it (see `is_fullscreen` below); calling `showFullScreen()`
+    only after the window has already been shown normal is what causes the
+    "opens maximized instead of truly fullscreen" bug this return value
+    exists to let callers avoid.
+
+    Returns a `(panel_hidden, is_fullscreen)` tuple:
+      - `panel_hidden` is the saved panel-hidden flag (True/False), or None
+        if nothing was saved yet / the stored format predates it.
+      - `is_fullscreen` is True if the window should start fullscreen.
+    Returns `(None, False)` if nothing was saved yet.
     """
     from tool import prefs as _prefs
     geom = _prefs.get(key)
-    # Support legacy stored geometry as [x,y,w,h] or the new format
-    # [x,y,w,h,fullscreen_flag].
-    if not (isinstance(geom, (list, tuple)) and len(geom) in (4, 5)):
-        return
+    # Support legacy stored geometry as [x,y,w,h], [x,y,w,h,fullscreen_flag],
+    # or the current [x,y,w,h,fullscreen_flag,panel_hidden_flag] format.
+    if not (isinstance(geom, (list, tuple)) and len(geom) in (4, 5, 6)):
+        return None, False
     from PyQt5.QtWidgets import QApplication
     x, y, w, h = (int(v) for v in geom[:4])
     screen = QApplication.primaryScreen().availableGeometry()
     x = max(screen.left(), min(x, screen.right()  - 100))
     y = max(screen.top(),  min(y, screen.bottom() - 100))
     win.setGeometry(x, y, w, h)
-    # If the stored tuple included a fullscreen flag, restore it.
+    is_fullscreen = False
     try:
-        if len(geom) == 5 and int(geom[4]):
-            # Defer calling showFullScreen until the event loop can process
-            # initial layout; callers often call restore_window_geometry in
-            # constructors so schedule a single-shot to enter fullscreen.
-            from PyQt5.QtCore import QTimer
-            QTimer.singleShot(0, lambda: win.showFullScreen())
+        is_fullscreen = bool(len(geom) >= 5 and int(geom[4]))
     except Exception:
-        pass
+        is_fullscreen = False
+    panel_hidden = None
+    if len(geom) == 6:
+        try:
+            panel_hidden = bool(int(geom[5]))
+        except Exception:
+            panel_hidden = None
+    return panel_hidden, is_fullscreen
 
 
 # ---------------------------------------------------------------------------

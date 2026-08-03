@@ -101,6 +101,88 @@ def _normalize_form_labels(form: QFormLayout) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Launcher button
+# ---------------------------------------------------------------------------
+
+
+class _LauncherButton(QPushButton):
+    """Visualizer launcher button whose name and F-key shortcut hint are
+    laid out with a `QHBoxLayout` stretch (Qt's "horizontal spacer") so the
+    shortcut always sits flush against the button's right edge, regardless
+    of how long the visualizer name is. A single text string with fixed
+    padding spaces (the previous approach) doesn't line up across buttons
+    whose names differ in length.
+
+    Painting the name/shortcut as child QLabels means they don't
+    automatically pick up `theme.action_button_stylesheet()`'s hover/
+    pressed/disabled QSS colors the way plain button text would, so this
+    class mirrors those same state colors manually. Font weight is also
+    set explicitly per label for the same reason: the name is bold, the
+    shortcut hint stays normal weight.
+    """
+
+    def __init__(self, label: str, shortcut: str | None, parent=None) -> None:
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 0, 8, 0)
+        layout.setSpacing(6)
+
+        self._name_label = QLabel(label)
+        self._name_label.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._name_label.setFont(theme.font_ui(bold=True))
+        layout.addWidget(self._name_label)
+
+        layout.addStretch(1)
+
+        self._shortcut_label = None
+        if shortcut:
+            self._shortcut_label = QLabel(shortcut)
+            self._shortcut_label.setAttribute(Qt.WA_TransparentForMouseEvents)
+            self._shortcut_label.setFont(theme.font_ui(bold=False))
+            layout.addWidget(self._shortcut_label)
+
+        self._apply_colors()
+
+    def _apply_colors(self) -> None:
+        if not self.isEnabled():
+            color = dim_color = "rgba(255,255,255,0.15)"
+        elif self.isDown():
+            color = dim_color = theme.ACCENT
+        elif self.underMouse():
+            color = dim_color = theme.ACCENT_TEXT
+        else:
+            color = theme.TEXT
+            dim_color = theme.TEXT_DIM
+        self._name_label.setStyleSheet(f"color: {color}; background: transparent;")
+        if self._shortcut_label is not None:
+            self._shortcut_label.setStyleSheet(f"color: {dim_color}; background: transparent;")
+
+    def setEnabled(self, enabled: bool) -> None:  # noqa: N802
+        super().setEnabled(enabled)
+        self._apply_colors()
+
+    def enterEvent(self, event) -> None:
+        super().enterEvent(event)
+        self._apply_colors()
+
+    def leaveEvent(self, event) -> None:
+        super().leaveEvent(event)
+        self._apply_colors()
+
+    def mousePressEvent(self, event) -> None:
+        super().mousePressEvent(event)
+        self._apply_colors()
+
+    def mouseReleaseEvent(self, event) -> None:
+        super().mouseReleaseEvent(event)
+        self._apply_colors()
+
+    def mouseMoveEvent(self, event) -> None:
+        super().mouseMoveEvent(event)
+        self._apply_colors()
+
+
+# ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
 
@@ -110,7 +192,7 @@ class ProjectVisualizer(WindowVisualizer):
     def __init__(self) -> None:
         # Provide pref key to the shell so geometry is saved/restored there
         super().__init__(pref_key="window_project")
-        self.setWindowTitle("Crossing — Project Visualizer")
+        self.setWindowTitle("Crossing — Project")
         self._procs: dict[str, subprocess.Popen] = {}
         self._windows: dict[str, object] = {}  # in-process visualizer windows
         self._backup_proc: subprocess.Popen | None = None
@@ -122,7 +204,21 @@ class ProjectVisualizer(WindowVisualizer):
         # visual sizing hint
         self.setMinimumSize(900, 560)
 
+        # Other visualizers construct a ProjectVisualizer purely as an
+        # internal, never-shown "hub" (to call `_launch()` on) when this
+        # process doesn't already have one. That hub must NOT count as a
+        # real, already-open "Project" window — otherwise a later F1 press
+        # would incorrectly reveal it instead of raising/pinging whichever
+        # process (this one or another) actually has Project legitimately
+        # open. This flag flips True the first time the window is actually
+        # shown (see `showEvent`), regardless of which path did the showing.
+        self._shown_as_project = False
+
     # geometry handled by WindowVisualizer (pref_key passed at construction)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._shown_as_project = True
 
     # ------------------------------------------------------------------
     # Project path
@@ -503,8 +599,7 @@ class ProjectVisualizer(WindowVisualizer):
             # here, so the button text can't drift out of sync with the
             # actual F-key binding.
             shortcut = shortcut_label_for(sub)
-            btn_text = f"{label}   {shortcut}" if shortcut else label
-            btn = QPushButton(btn_text)
+            btn = _LauncherButton(label, shortcut)
             btn.setEnabled(enabled)
             btn.setStyleSheet(theme.action_button_stylesheet())
             if enabled:
@@ -556,8 +651,22 @@ class ProjectVisualizer(WindowVisualizer):
         if raise_existing_window(subcommand):
             return
 
-        # Open the visualizer in-process so future raises are always reliable.
         project_path = _prefs.get("path")
+
+        # Cross-process single-instance guard: if *subcommand* is already
+        # open in a *different* OS process (e.g. launched directly via
+        # `crossing visualizer <name>`), ping that process to raise its
+        # window instead of creating a duplicate here. Illustration and
+        # Shotlist are excluded — they already have their own bespoke
+        # cross-process IPC (navigation payloads, not just raising).
+        from visualizers.components.singleton_guard import (
+            claim_or_ping_and_bind, SELF_MANAGED_SUBCOMMANDS,
+        )
+        if subcommand not in SELF_MANAGED_SUBCOMMANDS:
+            if not claim_or_ping_and_bind(subcommand, project_path, QApplication.instance()):
+                return  # another process owns it; it was pinged to raise itself
+
+        # Open the visualizer in-process so future raises are always reliable.
         try:
             win = self._create_in_process_window(subcommand, project_path)
         except Exception as exc:

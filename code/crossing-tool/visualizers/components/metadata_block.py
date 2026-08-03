@@ -525,6 +525,43 @@ class MetadataBlock(QWidget):
         """Return the mutable key → value-label mapping used by callers."""
         return dict(self._labels)
 
+    def value_cell_stylesheet(self, key: str) -> str:
+        """Return the canonical value-cell CSS for *key*'s row.
+
+        Lets a caller that replaces a row's value cell with a custom widget
+        (see `set_row_widget`) keep that widget visually consistent with the
+        other read-only rows in this table (background, font, and divider
+        matching this row's position).
+        """
+        if key not in self._rows:
+            return table_value_cell_style("", "")
+        row_idx = self._rows.index(key)
+        last_idx = len(self._rows) - 1
+        top, bottom = table_row_edges(row_idx, last_idx)
+        return table_value_cell_style(top, bottom)
+
+    def set_row_widget(self, key: str, widget: QWidget) -> None:
+        """Replace *key*'s value cell with a custom *widget*.
+
+        Used for rows that need interactive content (e.g. an editable
+        `QLineEdit`) instead of the default read-only `InspectorValue`
+        label. The row no longer participates in `set()`/`load()`/
+        `clear()` afterwards — callers own *widget*'s content directly.
+        """
+        if key not in self._rows:
+            return
+        row_idx = self._rows.index(key)
+        old_item = self._layout.itemAtPosition(row_idx, 1)
+        if old_item is not None:
+            old_widget = old_item.widget()
+            if old_widget is not None:
+                self._layout.removeWidget(old_widget)
+                old_widget.deleteLater()
+        widget.setMinimumHeight(INSPECTOR_ROW_HEIGHT)
+        self._layout.addWidget(widget, row_idx, 1)
+        self._labels.pop(key, None)
+        QTimer.singleShot(0, self._recalc_rows)
+
     def set(self, key: str, value: str) -> None:
         """Set the displayed value for *key*.  No-op if *key* is unknown.
 

@@ -51,6 +51,7 @@ from tool.shortcuts import (
     KEY_PREV_SHOT, KEY_NEXT_SHOT,
     KEY_PREV_FRAME, KEY_NEXT_FRAME,
     KEY_PLAY_PAUSE,
+    install_keyboard_manager,
 )
 from visualizers.components.collapsible_section import CollapsibleSection
 from visualizers.components.metadata_block import INSPECTOR_ROW_HEIGHT, MetadataBlock
@@ -922,7 +923,7 @@ class ShotlistVisualizer(QMainWindow):
         self.playback_timer.setInterval(interval)
 
         self.setWindowTitle(
-            f"Shotlist Visualizer \u2014 {_display_name(self.filename)}  "
+            f"Shotlist \u2014 {_display_name(self.filename)}  "
             f"({resolved_index + 1}/{len(self.filenames)})"
         )
 
@@ -1117,7 +1118,7 @@ class ShotlistVisualizer(QMainWindow):
         self.playback_timer.setInterval(interval)
 
         self.setWindowTitle(
-            f"Shotlist Visualizer \u2014 {_display_name(self.filename)}  "
+            f"Shotlist \u2014 {_display_name(self.filename)}  "
             f"({index + 1}/{len(self.filenames)})"
         )
 
@@ -3449,6 +3450,12 @@ def main():
     # Launch Qt application
     app = QApplication(sys.argv)
     theme.apply_theme(app)
+    # Shotlist predates the shared tool.shortcuts.VisualizerWindow mechanism
+    # and builds its own QApplication directly (bypassing visualizers.launcher
+    # too), so KeyboardManager must be installed explicitly here — otherwise
+    # F1-F10/F12/Tab/Shift+Tab silently do nothing whenever Shotlist happens to be
+    # the first crossing-tool window opened in a fresh process.
+    install_keyboard_manager(app)
     if not hasattr(app, "_shotlist_shortcut_filter"):
         app._shotlist_shortcut_filter = _ShotlistShortcutFilter(app)
         app.installEventFilter(app._shotlist_shortcut_filter)

@@ -516,7 +516,7 @@ class SAMExplorer(QMainWindow):
         model_name: str = _DEFAULT_MODEL,
     ) -> None:
         super().__init__()
-        self.setWindowTitle("Crossing — Segmentation Visualizer")
+        self.setWindowTitle("Segmentation")
 
         self._project_path = project_path
         self._media_type = media_type
@@ -2597,7 +2597,7 @@ class IllustrationWindow(WindowVisualizer):
 
         # Let WindowVisualizer manage geometry persistence for this window.
         super().__init__(pref_key="window_illustration")
-        self.setWindowTitle("Crossing — Illustration Visualizer")
+        self.setWindowTitle("Illustration")
 
         # IllustrationPane is the visual catalog; create_browser will have
         # already instantiated it and returned its browser widget. Configure
@@ -2617,8 +2617,17 @@ class IllustrationWindow(WindowVisualizer):
             self, film: str, field: str, label: str, shot_id: str, media_type: str
     ) -> None:
             """Raise this window, switch media type if requested, then navigate."""
-            self.show()
-            self.showNormal()
+            # Preserve fullscreen state instead of unconditionally calling
+            # showNormal() — this window lives in its own OS process, so
+            # this IPC-triggered raise is the cross-process equivalent of
+            # `raise_existing_window()`'s in-process raise, which uses this
+            # same fullscreen-preserving pattern.
+            was_fullscreen = self.isFullScreen()
+            if was_fullscreen:
+                self.showFullScreen()
+            else:
+                self.show()
+                self.showNormal()
             self.raise_()
             self.activateWindow()
 
