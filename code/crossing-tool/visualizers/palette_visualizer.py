@@ -555,7 +555,7 @@ class PaletteVisualizerWindow(WindowVisualizer):
         zoom_row.setContentsMargins(0, 0, 0, 0)
         zoom_row.setSpacing(theme.SECTION_GAP)
 
-        zoom_out_btn = QPushButton("Zoom Out")
+        zoom_out_btn = QPushButton("Zoom -")
         zoom_out_btn.setStyleSheet(action_btn_style)
         zoom_out_btn.setFocusPolicy(Qt.NoFocus)
         zoom_out_btn.clicked.connect(
@@ -563,7 +563,7 @@ class PaletteVisualizerWindow(WindowVisualizer):
         )
         zoom_row.addWidget(zoom_out_btn, 1)
 
-        zoom_in_btn = QPushButton("Zoom In")
+        zoom_in_btn = QPushButton("Zoom +")
         zoom_in_btn.setStyleSheet(action_btn_style)
         zoom_in_btn.setFocusPolicy(Qt.NoFocus)
         zoom_in_btn.clicked.connect(

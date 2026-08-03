@@ -138,7 +138,7 @@ def install_keyboard_manager(app) -> None:
     Without calling this from *every* such entry point, F1-F10/F12/Tab/
     Shift+Tab would silently do nothing whenever the first window opened in
     a fresh process happens to be one that doesn't itself subclass
-    `VisualizerWindow` (Cloud/Mosaic/Shotlist/Sync are plain QMainWindow).
+    `VisualizerWindow` (Shotlist/Sync are still plain QMainWindow).
     """
     if app is not None and not hasattr(app, '_keyboard_manager'):
         app._keyboard_manager = KeyboardManager(app)
