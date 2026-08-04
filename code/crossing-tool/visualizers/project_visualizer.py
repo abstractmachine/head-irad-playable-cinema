@@ -21,6 +21,7 @@ from visualizers.components.collapsible_section import CollapsibleSection
 from visualizers.components.combo_popup import style_canonical_combo
 from visualizers.components.inspector import Inspector
 from visualizers.components.metadata_block import INSPECTOR_ROW_HEIGHT, table_key_cell_style
+from visualizers.components.sweep_bar import SweepBar
 from visualizers.components.tab_panel import TabPanel
 
 from PyQt5.QtCore import Qt, QEvent, QTimer
@@ -285,10 +286,10 @@ class ProjectVisualizer(WindowVisualizer):
 
         outer.addLayout(row)
 
-        browse_btn = QPushButton("Browse…")
-        browse_btn.clicked.connect(self._on_backup_browse)
-        browse_btn.setStyleSheet(theme.action_button_stylesheet())
-        browse_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.backup_browse_btn = QPushButton("Browse…")
+        self.backup_browse_btn.clicked.connect(self._on_backup_browse)
+        self.backup_browse_btn.setStyleSheet(theme.action_button_stylesheet())
+        self.backup_browse_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         self.backup_btn = QPushButton("Backup")
         self.backup_btn.clicked.connect(self._on_backup_run)
@@ -298,13 +299,22 @@ class ProjectVisualizer(WindowVisualizer):
         buttons_row = QHBoxLayout()
         buttons_row.setContentsMargins(0, 0, 0, 0)
         buttons_row.setSpacing(theme.SECTION_GAP)
-        buttons_row.addWidget(browse_btn, 1)
+        buttons_row.addWidget(self.backup_browse_btn, 1)
         buttons_row.addWidget(self.backup_btn, 1)
         outer.addLayout(buttons_row)
 
         outer_widget = QWidget()
         outer_widget.setLayout(outer)
         sec.add_widget(outer_widget)
+
+        # Accent sweep-bar shown on the section title while a backup is
+        # running in the background — same canonical loading indicator used
+        # by Cloud's Tools section and Illustration's Silhouettes/Engravings.
+        self._backup_loading_bar = SweepBar(self)
+        self._backup_loading_timer = QTimer(self)
+        self._backup_loading_timer.setInterval(20)   # ~50 fps
+        self._backup_loading_timer.timeout.connect(self._backup_loading_bar.tick)
+        sec.set_subbar(self._backup_loading_bar)
 
         self._refresh_backup_button()
         return sec
@@ -342,7 +352,8 @@ class ProjectVisualizer(WindowVisualizer):
         import fcntl
         import pty
         if self._backup_proc is not None and self._backup_proc.poll() is None:
-            return  # Already running
+            self._stop_backup_proc()
+            return  # Clicking while running stops the backup instead.
 
         project_path = _prefs.get("path")
         if not project_path:
@@ -371,16 +382,28 @@ class ProjectVisualizer(WindowVisualizer):
 
         self._backup_stdout_buf = b""
         self._backup_anim_frame = 0
-        self.backup_btn.setEnabled(False)
-        self.backup_btn.setStyleSheet(
-            "QPushButton { background-color: #CC00CC; color: white; font-weight: bold; }"
-        )
+        self.backup_browse_btn.setEnabled(False)
         self.backup_btn.setText("Backing Up")
+        self._backup_loading_bar.start()
+        self._backup_loading_timer.start()
 
         self._backup_poll_timer = QTimer(self)
         self._backup_poll_timer.setInterval(500)
         self._backup_poll_timer.timeout.connect(self._poll_backup_proc)
         self._backup_poll_timer.start()
+
+    def _stop_backup_proc(self) -> None:
+        """Terminate a running backup process (user clicked Backup while it was running).
+
+        UI cleanup (re-enabling Browse, resetting the button text, stopping
+        the section's loading animation) happens on the next
+        ``_poll_backup_proc`` tick once ``poll()`` reports the process exited.
+        """
+        if self._backup_proc is not None:
+            try:
+                self._backup_proc.terminate()
+            except Exception:
+                pass
 
     def _poll_backup_proc(self) -> None:
         """Called every 500 ms to drain pty output and detect completion."""
@@ -405,9 +428,10 @@ class ProjectVisualizer(WindowVisualizer):
             except OSError:
                 pass
             self._backup_proc = None
-            self.backup_btn.setEnabled(True)
+            self._backup_loading_timer.stop()
+            self._backup_loading_bar.stop()
+            self.backup_browse_btn.setEnabled(True)
             self.backup_btn.setText("Backup")
-            self.backup_btn.setStyleSheet("")
 
     # ------------------------------------------------------------------
     # Defaults
@@ -747,7 +771,7 @@ class ProjectVisualizer(WindowVisualizer):
             return SyncVisualizerWindow()
         elif subcommand == "segmentation":
             model_name = _prefs.get("model_segmentation", "sam3.pt") or "sam3.pt"
-            from visualizers.illustration_visualizer import SAMExplorer
+            from visualizers.segmentation_visualizer import SAMExplorer
             return SAMExplorer(project_path, model_name=model_name)
         return None  # caller falls through to subprocess
 

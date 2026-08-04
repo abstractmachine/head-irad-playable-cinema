@@ -3100,6 +3100,16 @@ class BookVisualizerWindow(WindowVisualizer):
         # keyboard focus for the window itself (self.focus_target()),
         # which is what LEFT/RIGHT/H/S/T etc. below need to reliably work.
         super().showEvent(event)
+        # Closing this window (closeEvent -> _close_doc()) frees the open
+        # fitz document and clears the canvas to avoid holding large
+        # rendered-page pixmaps in memory while hidden — but per the
+        # in-process launcher convention (see raise_existing_window()),
+        # closing only hides the window; the same instance is re-shown on
+        # the next launch instead of being reconstructed. Without this,
+        # re-showing the window left the canvas permanently blank (no doc
+        # open) until the user manually switched to another book and back.
+        if self._doc is None and self._books:
+            self._show_book(self._current_book_idx)
         # setFocus() alone only records the *intended* focus widget — it
         # doesn't request OS/window-manager-level activation. Without an
         # explicit raise_()/activateWindow() here, some window managers can

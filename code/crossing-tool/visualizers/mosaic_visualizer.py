@@ -43,6 +43,7 @@ from visualizers.components.zoom_manager import ZoomManager
 from visualizers.components.metadata_block import (
     INSPECTOR_ROW_HEIGHT,
     MetadataBlock,
+    status_label_stylesheet,
     table_row_edges,
 )
 
@@ -1110,9 +1111,7 @@ class MosaicVisualizer(WindowVisualizer):
 
         self.search_status_label = QLabel("Enter a query and press Search")
         self.search_status_label.setWordWrap(True)
-        self.search_status_label.setStyleSheet(
-            f"color: {theme.TEXT_DIM}; font-size: {theme.BASE_PT}pt;"
-        )
+        self.search_status_label.setStyleSheet(status_label_stylesheet())
         query_layout.addWidget(self.search_status_label)
 
         panel.add_section("Search Query", query_wrap, pref_key="mosaic_section_search")

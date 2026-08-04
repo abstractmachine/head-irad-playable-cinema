@@ -7245,6 +7245,9 @@ def cmd_visualizer(args):
     elif sub == "illustration":
         _require_path()
         _illustration_visualizer(args)
+    elif sub == "segmentation":
+        _require_path()
+        _segmentation_visualizer(args)
     elif sub == "palette":
         _require_path()
         _palette_visualizer(args)
@@ -7282,6 +7285,16 @@ def _illustration_visualizer(args):
         prefs.get("path"),
         media_type=normalize_media_type(raw_media) if raw_media else None,
         field=getattr(args, "field", None),
+    )
+
+
+def _segmentation_visualizer(args):
+    """Launch the Segmentation Visualizer GUI."""
+    _require_visualizer_deps()
+    from visualizers.segmentation_visualizer import run_visualizer
+    run_visualizer(
+        prefs.get("path"),
+        media_type=normalize_media_type(getattr(args, "media", "movie")) or "movie",
     )
 
 
@@ -9834,6 +9847,12 @@ def build_parser():
         default=None,
         help="Optional initial field filter",
     )
+
+    p_vis_segmentation = visualizer_sub.add_parser(
+        "segmentation",
+        help="Open the Segmentation Visualizer (concept-driven SAM mask overlay browser)",
+    )
+    _add_media_arg(p_vis_segmentation)
 
     p_vis_palette = visualizer_sub.add_parser(
         "palette",

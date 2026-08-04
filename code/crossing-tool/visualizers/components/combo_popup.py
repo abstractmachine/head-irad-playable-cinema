@@ -54,6 +54,28 @@ def attach_combo_popup(combo: QComboBox) -> QListView:
     return _sv
 
 
+def canonical_combo_stylesheet(text_color: str | None = None) -> str:
+    """Return the canonical QComboBox stylesheet string.
+
+    *text_color* overrides the displayed text color (e.g. `theme.TEXT_DIM`
+    for a placeholder/empty state); defaults to `theme.TEXT`. Exposed
+    separately from `style_canonical_combo()` so callers can re-color a
+    combo in place (e.g. when toggling a dimmed placeholder item) without
+    re-attaching the popup view each time.
+    """
+    color = text_color or theme.TEXT
+    return (
+        f"QComboBox {{"
+        f"  background: {theme.BTN_BG}; color: {color};"
+        f"  border: none; border-radius: 3px; padding: 0px 6px;"
+        f"  min-height: 24px; max-height: 24px;"
+        f"  font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
+        f"  font-weight: {theme.WEIGHT_UI};"
+        f"}}"
+        f"QComboBox::drop-down {{ border: none; }}"
+    )
+
+
 def style_canonical_combo(combo: QComboBox) -> None:
     """Apply the canonical visualizer combo box font, sizing, and popup styling.
 
@@ -67,14 +89,5 @@ def style_canonical_combo(combo: QComboBox) -> None:
     """
     combo.setFocusPolicy(Qt.NoFocus)
     combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLength)
-    combo.setStyleSheet(
-        f"QComboBox {{"
-        f"  background: {theme.BTN_BG}; color: {theme.TEXT};"
-        f"  border: none; border-radius: 3px; padding: 0px 6px;"
-        f"  min-height: 24px; max-height: 24px;"
-        f"  font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
-        f"  font-weight: {theme.WEIGHT_UI};"
-        f"}}"
-        f"QComboBox::drop-down {{ border: none; }}"
-    )
+    combo.setStyleSheet(canonical_combo_stylesheet())
     attach_combo_popup(combo)

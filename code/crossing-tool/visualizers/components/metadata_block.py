@@ -117,6 +117,29 @@ def table_widget_item_style() -> str:
     )
 
 
+def status_label_stylesheet() -> str:
+    """Return the canonical style for a standalone progress/status text field.
+
+    Used for transient one-line messages placed directly in an Inspector
+    section body — e.g. Segmentation's "Run Segmentation" progress line,
+    Mosaic's search status line — as opposed to a persisted key/value row
+    (see `MetadataBlock`/`table_value_cell_style` for that case).
+
+    Matches the height, background, and font of a table cell so these
+    messages read as part of the same visual system as Info/Layers tables,
+    while keeping the dimmed `TEXT_DIM` color that marks this as transient
+    status/progress text rather than a persisted value.
+    """
+    return (
+        f"background: {theme.CELL_BG}; color: {theme.TEXT_DIM};"
+        f" font-family: '{theme.FAMILY_MONO}';"
+        f" font-size: {theme.BASE_PT}pt;"
+        f" font-weight: {theme.WEIGHT_MONO};"
+        f" min-height: {INSPECTOR_ROW_HEIGHT}px;"
+        f" padding: 0px {theme.INSPECTOR_GAP}px 0px 3px;"
+    )
+
+
 def table_action_cell_style(selected: bool, add_left_divider: bool = False) -> str:
     """Return canonical style for centered action controls inside table cells."""
     bg = theme.ACCENT if selected else theme.CELL_BG
