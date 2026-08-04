@@ -4,18 +4,40 @@
 Launched via:
     crossing visualizer sync
 
-Keyboard shortcuts:
-    h             — toggle right-side panel + node chrome (presentation mode)
-    f             — toggle fullscreen on the current monitor (edge-to-edge, no OS chrome)
-    Escape / Ctrl+Q / Ctrl+W — close
+On the canonical WindowVisualizer window shell (Browser | Inspector):
+  BROWSER    — SyncWorkspace: absolute-positioned node canvas (drop area for
+               nodes, cable connections). Keeps its real-time, node-graph-
+               specific interaction model entirely as-is; it only gains
+               Ctrl+wheel / Ctrl+Plus/Minus zoom via the shared ZoomManager
+               (also exposed as Zoom +/- buttons in the Inspector), plus
+               click-drag-to-pan on empty background so content pushed
+               outside the visible frame (e.g. after zooming in) can be
+               brought back into view. Panning is bounds-clamped so the
+               graph can't be dragged completely out of view (the bound is
+               derived from the nodes' current bounding box, so it expands
+               automatically as nodes are moved further out); a Recenter
+               button (Inspector, Tools section) re-centers the graph on
+               the viewport in one click.
+  INSPECTOR  — Modules (draggable palette items) and Tools (zoom, recenter,
+               clear, Preferences) sections. Clear removes every node/
+               connection on the canvas and resets zoom + view — a stand-in
+               "start fresh" action until there's a full Load/Save-by-name
+               flow (for now there's only ever a single unnamed graph).
 
-Layout:
-  LEFT   — central workspace (drop area for nodes)
-  RIGHT  — palette panel with draggable input blocks
+Keyboard shortcuts:
+    h                                      — toggle Inspector + node chrome
+                                              (presentation mode)
+    Tab / Shift+Tab / Esc / Ctrl+Q/Ctrl+W  — canonical (see WindowVisualizer)
+    Ctrl+wheel / Ctrl+Plus/Minus/0 (over canvas) — zoom workspace canvas
+
+Mouse:
+    Click-drag on empty canvas background — pan the workspace (moves every
+    node together, bounds-clamped; no-op over ports/nodes, which keep their
+    own drag/resize/cable-connect behavior unchanged).
 
 State is persisted to prefs across sessions:
-  - window geometry and fullscreen state
-  - panel visibility
+  - window geometry, fullscreen state, panel visibility (via WindowVisualizer)
+  - workspace canvas zoom level
   - all dropped node positions, sizes, and device strings
 """
 
@@ -73,7 +95,6 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QMainWindow,
     QMenu,
     QPushButton,
     QScrollArea,
@@ -82,6 +103,11 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from visualizers.window_visualizer import WindowVisualizer
+from visualizers.components.inspector import Inspector
+from visualizers.components.tab_panel import TabPanel
+from visualizers.components.zoom_manager import ZoomManager
 
 try:
     from PyQt5.QtSvg import QSvgRenderer
@@ -106,7 +132,10 @@ if "QT_QPA_PLATFORM_PLUGIN_PATH" in os.environ:
 _WINDOW_TITLE    = "Sync"
 _WINDOW_W        = 1100
 _WINDOW_H        = 700
-_PANEL_W         = 220
+
+# Floating Inspector overlay (see SyncVisualizerWindow / _InspectorGripHandle)
+_INSPECTOR_MIN_W  = 320   # px floor, same default the old splitter-fit logic used
+_INSPECTOR_GRIP_W = 10    # px — matches QSplitter::handle width (styles/theme.py QSS)
 
 _WORKSPACE_BG    = "#808080"   # 50% gray workspace canvas
 _NODE_TITLE_BG   = "#666666"   # 40% gray node title bar
@@ -136,9 +165,6 @@ _VIDEO_RECONNECT_S   = 2    # seconds between reconnect probe attempts
 _MIME_TYPE       = "application/x-crossing-sync-palette-item"
 
 # Prefs keys
-_PREFS_GEOM      = "sync_visualizer_geometry"       # [x, y, w, h]
-_PREFS_FULLSCR   = "sync_visualizer_fullscreen"     # bool
-_PREFS_PANEL     = "sync_visualizer_panel_visible"  # bool
 _PREFS_NODES     = "sync_visualizer_nodes"          # list of dicts
 _PREFS_CONNS     = "sync_visualizer_connections"    # list of dicts
 _PREFS_WORKSPACE_BG = "sync_visualizer_workspace_bg"   # hex string
@@ -146,6 +172,47 @@ _PREFS_NODE_BG      = "sync_visualizer_node_bg"        # hex string (with option
 _PREFS_NODE_TEXT    = "sync_visualizer_node_text"      # hex string
 _PREFS_STAR_A       = "sync_visualizer_star_color_a"   # hex string
 _PREFS_STAR_B       = "sync_visualizer_star_color_b"   # hex string
+
+# Workspace canvas zoom (Ctrl+wheel / Ctrl+Plus/Minus / Zoom +/- buttons).
+# DEVELOPER NOTE: default (1.0 = 100%, native pixel size) is also the zoom-
+# in ceiling — elements must never be scaled larger than their native
+# resolution (no upscaling/pixel-doubling), so _ZOOM_MAX == _ZOOM_DEFAULT
+# intentionally. Zooming out spans 10 total levels from there down to the
+# floor (1.0, 0.9, 0.8, ... 0.1 — 9 zoom-out steps of _ZOOM_STEP past the
+# default, 10 distinct levels counting the default itself), making elements
+# as small as 10% of native size at the floor.
+_PREFS_ZOOM      = "sync_visualizer_zoom"   # float
+_ZOOM_MIN        = 0.1
+_ZOOM_MAX        = 1.0
+_ZOOM_STEP       = 0.1
+_ZOOM_DEFAULT    = 1.0
+
+# World bounds ("browser" extent) — the union of every visible node's
+# geometry, inflated so it's never smaller than _WORLD_MIN_W x _WORLD_MIN_H
+# (measured at zoom 1.0, scaling with the current zoom exactly like node
+# geometry does). Recomputed fresh from live node positions on every call
+# (see SyncWorkspace._world_rect()) — never persisted — so it automatically
+# grows to follow nodes dragged past its edges and shrinks back down to the
+# minimum once they move back inside or are removed. Used only for pan-
+# clamping math (_clamp_pan_delta()) — no longer drawn on screen.
+_WORLD_MIN_W = 1000
+_WORLD_MIN_H = 1000
+
+# Canvas pan bounds — dragging the empty background can't push the world
+# bounds' (see above) own top-left corner past a safe zone inset this
+# fraction of the viewport's OWN width (horizontally) / height (vertically)
+# from each edge — i.e. a 5% margin of the window area, measured from the
+# corner itself, not a single shared pixel amount derived from whichever
+# dimension happens to be smaller. The corner can be dragged right up to
+# that 5% inset line but never past it (never "over the edge"); the world
+# bounds' bottom-right corner is unconstrained and free to sit offscreen —
+# expected whenever the world bounds is larger than the viewport (widely
+# spread nodes, or zoomed in a lot). Expressed as a fraction of each axis's
+# own viewport dimension (not a fixed pixel count) so a world bounds rect
+# that's smaller than the viewport (e.g. zoomed far out) still has plenty
+# of room to be dragged anywhere, including to the middle, well before this
+# clamp would ever kick in. See SyncWorkspace._pan_margin_x() / _pan_margin_y().
+_PAN_MARGIN_FRACTION = 0.05
 
 # Port geometry
 _PORT_SIZE       = 12   # px — triangle width/height
@@ -156,13 +223,16 @@ _CABLE_COLOR_DRAG  = QColor("#ffff00")        # yellow while dragging
 _CABLE_COLOR_CONN  = QColor(_NODE_BODY_BG)   # same as node content background
 _CABLE_WIDTH       = 2
 
-# Title-bar button styles — shared across all nodes
+# Title-bar button styles — shared across all nodes. Hover keeps the same
+# yellow (#ffff00 / theme.ACCENT) background highlight but switches text to
+# theme.ACCENT_TEXT (the canonical "text on ACCENT background" token) for
+# contrast — icons are recoloured to match by _TbBtn.enterEvent()/leaveEvent().
 _TB_ICON_BTN_SS = (
     "QPushButton {"
     "  background: transparent; border: none; padding: 0;"
     "}"
     "QPushButton:hover {"
-    "  background: #ffff00; border-radius: 3px;"
+    f"  background: {theme.ACCENT}; border-radius: 3px;"
     "}"
 )
 _TB_TEXT_BTN_SS = (
@@ -171,7 +241,7 @@ _TB_TEXT_BTN_SS = (
     "  border: none; padding: 0 4px;"
     "}"
     "QPushButton:hover {"
-    "  background: #ffff00; border-radius: 3px; color: #ffffff;"
+    f"  background: {theme.ACCENT}; border-radius: 3px; color: {theme.ACCENT_TEXT};"
     "}"
 )
 # Close button has an extra font-size rule
@@ -181,7 +251,7 @@ _TB_CLOSE_BTN_SS = (
     "  border: none; font-size: 14px; padding: 0;"
     "}"
     "QPushButton:hover {"
-    "  background: #ffff00; border-radius: 3px; color: #ffffff;"
+    f"  background: {theme.ACCENT}; border-radius: 3px; color: {theme.ACCENT_TEXT};"
     "}"
 )
 
@@ -257,7 +327,10 @@ class _TbBtn(QPushButton):
             self.setIconSize(QSize(self._icon_size, self._icon_size))
 
     def enterEvent(self, event) -> None:
-        self._refresh_icon("#ffffff")
+        # theme.ACCENT_TEXT — same "text on ACCENT background" token used by
+        # the hover `color:` rule in _TB_*_BTN_SS, so the icon stays legible
+        # against the yellow hover background instead of staying white.
+        self._refresh_icon(theme.ACCENT_TEXT)
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:
@@ -364,18 +437,29 @@ class _ResizeHandle(QWidget):
         if event.button() == Qt.LeftButton:
             self._press_x = event.globalPos().x()
             self.resize_started.emit(self._corner)
+            # Accept so this press doesn't bubble up to SyncWorkspace as an
+            # "empty background" click — that would spuriously start a
+            # canvas pan on top of this resize drag (see _EdgeResizeHandle
+            # for the same fix, and SyncNode.eventFilter for the analogous
+            # title-bar-drag case).
+            event.accept()
+            return
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
         if event.buttons() & Qt.LeftButton and self._press_x is not None:
             self.resize_dragged.emit(self._corner,
                                      event.globalPos().x() - self._press_x)
+            event.accept()
+            return
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:
         if self._press_x is not None:
             self.resize_released.emit(self._corner)
             self._press_x = None
+            event.accept()
+            return
         super().mouseReleaseEvent(event)
 
 
@@ -411,18 +495,26 @@ class _EdgeResizeHandle(QWidget):
         if event.button() == Qt.LeftButton:
             self._press_pos = event.globalPos()
             self.resize_started.emit(self._edge)
+            # See _ResizeHandle.mousePressEvent — accept so this doesn't
+            # bubble up to SyncWorkspace and spuriously start a canvas pan.
+            event.accept()
+            return
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
         if event.buttons() & Qt.LeftButton and self._press_pos is not None:
             d = event.globalPos() - self._press_pos
             self.resize_dragged.emit(self._edge, d.x(), d.y())
+            event.accept()
+            return
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:
         if self._press_pos is not None:
             self.resize_released.emit(self._edge)
             self._press_pos = None
+            event.accept()
+            return
         super().mouseReleaseEvent(event)
 
 
@@ -504,6 +596,38 @@ class _VideoReaderThread:
     def request_stop(self) -> None:
         self._stopping = True
 
+    def _emit_or_stop(self, signal_name: str, *args) -> bool:
+        """Look up `self._signals.<signal_name>` and emit it with *args*;
+        return True on success.
+
+        The owning widget (and with it, via Qt parent-child ownership, this
+        thread's `_VideoReaderSignals` carrier) can be deleted from the main
+        thread while this background thread is still mid-capture — e.g. if
+        `request_stop()` was called right as a `select()`/`os.read()` call
+        began, the thread may not notice `_stopping` again for several more
+        seconds, longer than the caller's `wait()` grace period. BOTH
+        looking up an attribute on an already-deleted QObject wrapper AND
+        emitting one of its signals raise RuntimeError ("wrapped C/C++
+        object ... has been deleted") — which is why the attribute lookup
+        happens here, inside the try/except, rather than at each call site
+        (e.g. `self._emit_or_stop(self._signals.frame_ready, ...)` would
+        already raise while resolving the argument, before this method's own
+        try/except ever ran).  Catching it here, flagging `_stopping`, and
+        returning False lets every call site simply `break` (or `return`)
+        out of its current loop — the existing `while not self._stopping`
+        loop structure then unwinds naturally and still reaches the ffmpeg
+        teardown below, instead of the exception propagating uncaught out of
+        `_run()` and skipping cleanup (which would also leak the ffmpeg
+        subprocess and its V4L2 device handle).
+        """
+        try:
+            signal = getattr(self._signals, signal_name)
+            signal.emit(*args)
+            return True
+        except RuntimeError:
+            self._stopping = True
+            return False
+
     # ------------------------------------------------------------------
     # Thread body
     # ------------------------------------------------------------------
@@ -516,7 +640,8 @@ class _VideoReaderThread:
             if proc is None:
                 # ffmpeg not installed or device path is wrong
                 if not ever_connected:
-                    self._signals.device_lost.emit()
+                    if not self._emit_or_stop("device_lost"):
+                        return
                     ever_connected = True
                 self._sleep_reconnect()
                 continue
@@ -559,9 +684,11 @@ class _VideoReaderThread:
                     if not got_frame:
                         got_frame = True
                         if ever_connected:
-                            self._signals.device_recovered.emit()
+                            if not self._emit_or_stop("device_recovered"):
+                                break
                         ever_connected = True
-                    self._signals.frame_ready.emit(frame.copy())
+                    if not self._emit_or_stop("frame_ready", frame.copy()):
+                        break
 
             # ---- teardown ------------------------------------------------
             # SIGTERM first: lets ffmpeg call ioctl(VIDIOC_STREAMOFF) and
@@ -591,9 +718,11 @@ class _VideoReaderThread:
                 return
 
             if ever_connected and got_frame:
-                self._signals.device_lost.emit()
+                if not self._emit_or_stop("device_lost"):
+                    return
             elif not ever_connected:
-                self._signals.device_lost.emit()
+                if not self._emit_or_stop("device_lost"):
+                    return
                 ever_connected = True
 
             # Fast retry if we never got a frame this session (device still
@@ -995,7 +1124,16 @@ class SyncNode(QWidget):
             if t == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
                 self._drag_global_start = event.globalPos()
                 self._drag_node_start   = self.pos()
-            elif t == QEvent.MouseMove and self._drag_global_start is not None:
+                # Consume the event: if it fell through to the title bar's
+                # own (unhandled) mousePressEvent, Qt's default QWidget
+                # behavior ignores it, which bubbles the SAME press up to
+                # SyncWorkspace.mousePressEvent as an "empty background"
+                # click and spuriously starts a canvas pan at the same time
+                # as this node-move drag — the jumpy, double-drag glitch
+                # this guards against (see also _ResizeHandle /
+                # _EdgeResizeHandle, which have the identical fix).
+                return True
+            if t == QEvent.MouseMove and self._drag_global_start is not None:
                 if event.buttons() & Qt.LeftButton:
                     delta   = event.globalPos() - self._drag_global_start
                     new_pos = self._drag_node_start + delta
@@ -1008,9 +1146,11 @@ class SyncNode(QWidget):
                     self.move(new_pos)
                     if isinstance(self.parent(), SyncWorkspace):
                         self.parent().update()
-            elif t == QEvent.MouseButtonRelease:
+                return True
+            if t == QEvent.MouseButtonRelease and self._drag_global_start is not None:
                 self._drag_global_start = None
                 self._drag_node_start   = None
+                return True
         return super().eventFilter(obj, event)
 
 
@@ -1195,6 +1335,15 @@ class SyncWorkspace(QWidget):
         self._nodes: list[SyncNode] = []
         self._chrome_visible: bool  = True
 
+        # Widgets that float on top of the canvas but aren't part of the
+        # node graph itself (e.g. the Inspector, reparented into an overlay
+        # by SyncVisualizerWindow so the canvas's own scrollable/pannable
+        # extent spans the full window instead of being narrowed by it —
+        # see SyncVisualizerWindow._make_inspector_overlay()). Registered via
+        # register_chrome_overlay() so mousePressEvent() can tell a click on
+        # one of these apart from a click on truly empty canvas background.
+        self._chrome_overlays: list[QWidget] = []
+
         # Connections: list of {source_node, source_port, target_node, target_port}
         self._connections: list[dict] = []
 
@@ -1207,9 +1356,48 @@ class SyncWorkspace(QWidget):
         self._drag_hover_node: SyncNode | None = None
         self._drag_hover_port: str | None      = None
 
+        # Canvas pan — click-drag on empty background (no port under the
+        # cursor) translates every node together, so content placed outside
+        # the visible frame (e.g. after zooming in) can be dragged back into
+        # view. Purely a bulk move of node geometry, same spirit as the
+        # ratio-rescale used for zoom in request_reflow().
+        self._pan_active: bool            = False
+        self._pan_last_pos: QPoint | None = None
+
+        # Canvas zoom — the "browser" pane's Ctrl+wheel / Ctrl+Plus/Minus
+        # zoom, shared with every other browser page via ZoomManager. This
+        # scales node geometry (see request_reflow()) but never touches the
+        # node-graph interaction model itself (drag/resize/cable/port hit-
+        # testing all keep operating on real on-screen widget geometry).
+        from tool import prefs as _prefs
+        initial_zoom = float(_prefs.get(_PREFS_ZOOM, _ZOOM_DEFAULT) or _ZOOM_DEFAULT)
+        self._zoom_manager = ZoomManager(
+            self, initial_zoom, _ZOOM_MIN, _ZOOM_MAX, _ZOOM_STEP,
+            persist_cb=lambda v: _prefs.set(_PREFS_ZOOM, v),
+        )
+        self._last_zoom = initial_zoom
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def register_chrome_overlay(self, widget: QWidget) -> None:
+        """Register *widget* as a floating panel that sits on top of this
+        canvas (e.g. the Inspector) so mousePressEvent() knows a click on it
+        is not an empty-background click, and so it's kept raised above any
+        node subsequently added (see childEvent() below).
+        """
+        self._chrome_overlays.append(widget)
+        widget.raise_()
+
+    def childEvent(self, event) -> None:
+        super().childEvent(event)
+        # Any newly added child (a node, a port, etc.) is raised to the top
+        # of the stacking order by Qt on show() — keep registered chrome
+        # overlays (the Inspector) above it instead.
+        if event.type() == QEvent.ChildAdded:
+            for overlay in self._chrome_overlays:
+                overlay.raise_()
 
     def nodes(self) -> list[SyncNode]:
         return list(self._nodes)
@@ -1299,6 +1487,195 @@ class SyncWorkspace(QWidget):
             tgt = id_map.get(c.get("target_node"))
             if src and tgt:
                 self._add_connection(src, c["source_port"], tgt, c["target_port"])
+
+    # ------------------------------------------------------------------
+    # Zoom — Ctrl+wheel / Ctrl+Plus/Minus/0 (ZoomManager), plus Zoom +/-
+    # buttons in the Inspector's Tools section (SyncVisualizerWindow).
+    # ------------------------------------------------------------------
+
+    def wheelEvent(self, event) -> None:
+        if self._zoom_manager.handle_wheel_event(event):
+            return
+        super().wheelEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        if self._zoom_manager.handle_key_event(event, _ZOOM_DEFAULT):
+            return
+        super().keyPressEvent(event)
+
+    def request_reflow(self) -> None:
+        """Called by ZoomManager after a zoom change: rescale every node's
+        on-screen geometry by the ratio between the old and new zoom,
+        anchored on the current viewport center — whatever point is in the
+        middle of the visible browser window stays there, so zooming in/out
+        always feels like "zooming into" that center point rather than the
+        workspace's coordinate-space origin.
+
+        Each node type already reflows its own content to whatever width/
+        height it's given — the same mechanism already used by manual
+        corner-handle resizing — so nothing about any node subclass needs to
+        change for this to work; only the outer geometry is rescaled here.
+        """
+        new_zoom = self._zoom_manager.zoom()
+        old_zoom = self._last_zoom
+        if old_zoom <= 0 or abs(new_zoom - old_zoom) < 1e-9:
+            return
+        ratio = new_zoom / old_zoom
+        anchor = self.rect().center()
+        for node in self._nodes:
+            g = node.geometry()
+            new_x = anchor.x() + (g.x() - anchor.x()) * ratio
+            new_y = anchor.y() + (g.y() - anchor.y()) * ratio
+            node.setGeometry(
+                round(new_x), round(new_y),
+                max(1, round(g.width() * ratio)), max(1, round(g.height() * ratio)),
+            )
+        self._last_zoom = new_zoom
+        self.update()
+
+    # ------------------------------------------------------------------
+    # Pan bounds + recenter — keep the node graph from being dragged
+    # completely out of view, and a one-click way to bring it all back.
+    # ------------------------------------------------------------------
+
+    def _nodes_bounding_rect(self) -> "QRect | None":
+        """Union of every visible node's geometry, in workspace coordinates.
+        Recomputed fresh on every call — always reflects the current node
+        positions, so any bound derived from it "expands" automatically as
+        nodes are dragged further out."""
+        visible = [n for n in self._nodes if n.isVisible()]
+        if not visible:
+            return None
+        rect = visible[0].geometry()
+        for n in visible[1:]:
+            rect = rect.united(n.geometry())
+        return rect
+
+    def _world_rect(self) -> "QRect":
+        """Current "browser" bounds: the node bounding box (see
+        _nodes_bounding_rect()), inflated — grown symmetrically around its
+        own center — so it's never smaller than _WORLD_MIN_W x _WORLD_MIN_H
+        at the current zoom (that minimum is defined at zoom 1.0 and scales
+        with zoom exactly like node geometry does). With no nodes at all,
+        falls back to the minimum box centered in the viewport.
+
+        Recomputed fresh from live node positions every call — nothing here
+        is persisted — so it automatically grows to follow nodes dragged
+        past its edges and shrinks back down to the minimum once nodes move
+        back inside or are removed, with no separate state to drift out of
+        sync (same "always derive it live" approach as _nodes_bounding_rect()
+        and recenter_view()).
+        """
+        zoom = self._zoom_manager.zoom()
+        min_w = max(1, round(_WORLD_MIN_W * zoom))
+        min_h = max(1, round(_WORLD_MIN_H * zoom))
+        min_rect = QRect(0, 0, min_w, min_h)
+        bbox = self._nodes_bounding_rect()
+        if bbox is None:
+            min_rect.moveCenter(self.rect().center())
+            return min_rect
+        min_rect.moveCenter(bbox.center())
+        return bbox.united(min_rect)
+
+    def _pan_margin_x(self) -> int:
+        """Horizontal margin (px) that dragging the empty background can't
+        push the world bounds past, on the left/right edges — a true 5% of
+        this viewport's OWN width (see _PAN_MARGIN_FRACTION), independent of
+        the vertical margin, so a wide-but-short window doesn't end up with
+        a horizontal margin skewed by its (smaller) height."""
+        return round(_PAN_MARGIN_FRACTION * self.width())
+
+    def _pan_margin_y(self) -> int:
+        """Vertical counterpart of _pan_margin_x() — 5% of this viewport's
+        OWN height, for the top/bottom edges."""
+        return round(_PAN_MARGIN_FRACTION * self.height())
+
+    def _clamp_pan_delta(self, delta: QPoint) -> QPoint:
+        """Shrink *delta* (if needed) so panning by it can't push the world
+        bounds (see _world_rect()) past a safe zone inset _pan_margin_x() px
+        from the left/right edges and _pan_margin_y() px from the top/bottom
+        edges (a 5% margin of the browser area, never crossed "over the
+        edge").
+
+        Two cases, per axis, since the world bounds' minimum size
+        (_WORLD_MIN_W/_WORLD_MIN_H) is often BIGGER than the viewport at
+        normal zoom levels, so "always keep both edges inset" can't be a
+        blanket rule — it would freeze panning entirely whenever the world
+        bounds doesn't fit:
+          - World bounds fits within the safe zone (common once zoomed out
+            enough): its near (top-left) corner is clamped directly to the
+            margin line — it can be dragged right up to the inset line but
+            never past it, and the far corner then also stays inset
+            automatically (this is the "5% padding, corner never offscreen"
+            behavior the browser border shows at max zoom-out).
+          - World bounds is bigger than the safe zone (typical at normal/
+            high zoom): fall back to "some part stays reachable" — whichever
+            edge is nearer to re-entering gets pinned at the margin line, so
+            the graph is never dragged completely out of reach, but its far
+            side is free to sit offscreen (there's no way to keep a corner
+            inset while also fully containing an oversized box).
+        """
+        bbox = self._world_rect()
+        dx, dy = delta.x(), delta.y()
+        new_bbox = bbox.translated(dx, dy)
+        vp_w, vp_h = self.width(), self.height()
+        margin_x = self._pan_margin_x()
+        margin_y = self._pan_margin_y()
+
+        if bbox.width() <= vp_w - 2 * margin_x:
+            # Fits — clamp the near (top-left) corner directly.
+            if new_bbox.left() < margin_x:
+                dx += margin_x - new_bbox.left()
+            elif new_bbox.right() > vp_w - margin_x:
+                dx -= new_bbox.right() - (vp_w - margin_x)
+        else:
+            # Too big to fit — keep some part reachable instead.
+            if new_bbox.right() < margin_x:
+                dx += margin_x - new_bbox.right()
+            elif new_bbox.left() > vp_w - margin_x:
+                dx -= new_bbox.left() - (vp_w - margin_x)
+
+        if bbox.height() <= vp_h - 2 * margin_y:
+            if new_bbox.top() < margin_y:
+                dy += margin_y - new_bbox.top()
+            elif new_bbox.bottom() > vp_h - margin_y:
+                dy -= new_bbox.bottom() - (vp_h - margin_y)
+        else:
+            if new_bbox.bottom() < margin_y:
+                dy += margin_y - new_bbox.bottom()
+            elif new_bbox.top() > vp_h - margin_y:
+                dy -= new_bbox.top() - (vp_h - margin_y)
+
+        return QPoint(dx, dy)
+
+    def recenter_view(self) -> None:
+        """Move every node together so the middle of their bounding box
+        lands on the middle of the visible viewport. Unlike drag-panning,
+        this is an explicit user action so it isn't bounds-clamped."""
+        bbox = self._nodes_bounding_rect()
+        if bbox is None:
+            return
+        delta = self.rect().center() - bbox.center()
+        if delta.isNull():
+            return
+        for node in self._nodes:
+            node.move(node.x() + delta.x(), node.y() + delta.y())
+        self.update()
+
+    def clear_all(self) -> None:
+        """Erase every node/connection and reset the view — the "start
+        fresh" action while there's still only a single unnamed graph (no
+        Load/Save-by-name flow yet, see module docstring). Each node's own
+        `_on_close()` runs first, so type-specific teardown still happens
+        (stopping camera capture, unloading pactl loopback modules,
+        cancelling worker threads, etc.) exactly as if the node had been
+        closed individually via its title-bar close button.
+        """
+        for node in list(self._nodes):
+            node._on_close()
+        self._zoom_manager.set_zoom(_ZOOM_DEFAULT)
+        self.recenter_view()
+        self.update()
 
     def set_chrome_visible(self, visible: bool) -> None:
         self._chrome_visible = visible
@@ -1429,9 +1806,44 @@ class SyncWorkspace(QWidget):
                     self._drag_cur_pos       = event.pos()
                     self.update()
                     return
-        super().mousePressEvent(event)
+        # A click that isn't on a port can still land on top of a node's own
+        # body (e.g. a plain QLabel/QWidget area that doesn't accept mouse
+        # presses itself) — Qt's default behavior then bubbles the
+        # (unhandled) press up to this parent's mousePressEvent exactly as
+        # if it were an "empty background" click. That must NOT start a
+        # canvas pan (same glitch the title-bar/resize-handle event filters
+        # already guard against for their own widgets — see eventFilter()
+        # above) — only truly empty canvas space (no node underneath the
+        # cursor at all) may start panning.
+        for node in self._nodes:
+            if node.isVisible() and node.geometry().contains(event.pos()):
+                super().mousePressEvent(event)
+                return
+        # Same reasoning for a floating chrome overlay (e.g. the Inspector,
+        # which now sits on top of the canvas rather than narrowing it —
+        # see register_chrome_overlay()): a click on its own non-interactive
+        # background must not start a pan either.
+        for overlay in self._chrome_overlays:
+            if overlay.isVisible() and overlay.geometry().contains(event.pos()):
+                super().mousePressEvent(event)
+                return
+        # Empty background (no node, port, or chrome overlay under the
+        # cursor) — start panning the canvas instead of doing nothing.
+        self._pan_active   = True
+        self._pan_last_pos = event.pos()
+        self.setCursor(Qt.ClosedHandCursor)
 
     def mouseMoveEvent(self, event) -> None:
+        if self._pan_active:
+            delta = event.pos() - self._pan_last_pos
+            if not delta.isNull():
+                delta = self._clamp_pan_delta(delta)
+                if not delta.isNull():
+                    for node in self._nodes:
+                        node.move(node.x() + delta.x(), node.y() + delta.y())
+                    self.update()
+                self._pan_last_pos = event.pos()
+            return
         if self._drag_src_node is not None:
             self._drag_cur_pos = event.pos()
             # Find compatible target port under cursor for hover highlight
@@ -1459,6 +1871,11 @@ class SyncWorkspace(QWidget):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:
+        if self._pan_active:
+            self._pan_active   = False
+            self._pan_last_pos = None
+            self.unsetCursor()
+            return
         if self._drag_src_node is None:
             super().mouseReleaseEvent(event)
             return
@@ -1609,6 +2026,7 @@ class SyncWorkspace(QWidget):
             return
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+
         pen_w = _CABLE_WIDTH
 
         # Draw completed cables
@@ -2765,7 +3183,7 @@ class FrameMatchNode(SyncNode):
             f"QListWidget::item:selected, QListWidget::item:hover"
             f"  {{ background: {theme.ACCENT}; color: #ffffff; }}"
             f"QScrollBar:vertical {{ width: 8px; background: transparent; margin: 0; }}"
-            f"QScrollBar::handle:vertical {{ background: {theme.UI_BORDER};"
+            f"QScrollBar::handle:vertical {{ background: {theme.SCROLLBAR_IDLE_COLOR};"
             f"  border-radius: 3px; min-height: 20px; }}"
             f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical"
             f"  {{ height: 0; }}"
@@ -3327,8 +3745,8 @@ class FramesViewerNode(SyncNode):
         self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self._scroll.setStyleSheet(
             "QScrollArea { background: transparent; border: none; }"
-            "QScrollBar:vertical { width: 6px; background: #303030; }"
-            "QScrollBar::handle:vertical { background: #606060; border-radius: 3px; }"
+            f"QScrollBar:vertical {{ width: 6px; background: #303030; }}"
+            f"QScrollBar::handle:vertical {{ background: {theme.SCROLLBAR_IDLE_COLOR}; border-radius: 3px; }}"
             "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
         )
 
@@ -3695,6 +4113,10 @@ class ModuleItem(QWidget):
         self._input_shape     = input_shape
         self._output_shape    = output_shape
         self._drag_start_pos: QPoint | None = None
+        # Hover / click-drag highlight state — see _current_fill_color() and
+        # _refresh_visual_state() below for the canonical color pairs used.
+        self._hovering = False
+        self._pressed  = False
 
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setCursor(Qt.OpenHandCursor)
@@ -3707,25 +4129,61 @@ class ModuleItem(QWidget):
         layout.setContentsMargins(_pad, 0, _pad, 0)
         layout.setSpacing(6)
 
-        icon_color = "#404040"  # panel bg — reads as cut-out on white
         self._icon_lbl = QLabel(self)
         icon_lbl = self._icon_lbl
         icon_lbl.setFixedSize(18, 18)
         icon_lbl.setStyleSheet("background: transparent;")
         self._icon_name = icon_name
-        if icon_name:
-            pix = _svg_icon(icon_name, 16, icon_color).pixmap(16, 16)
-            if not pix.isNull():
-                icon_lbl.setPixmap(pix)
         layout.addWidget(icon_lbl)
 
-        text_lbl = QLabel(label, self)
-        text_lbl.setStyleSheet(
-            f"color: {_WORKSPACE_BG}; background: transparent; font-weight: 600;"
-        )
-        text_lbl.setFont(theme.font_ui())
-        layout.addWidget(text_lbl)
+        self._text_lbl = QLabel(label, self)
+        self._text_lbl.setFont(theme.font_ui())
+        layout.addWidget(self._text_lbl)
         layout.addStretch()
+
+        self._refresh_visual_state()
+
+    def _current_fill_color(self) -> QColor:
+        """Module background color for the current interaction state —
+        idle (white), hover (canonical BTN_HOVER, same as QPushButton/
+        QListWidget hover), or click-drag (canonical ACCENT, same
+        "active/selected" highlight used everywhere else — see
+        styles.theme). Click-drag takes priority over hover.
+        """
+        if self._pressed:
+            return QColor(theme.ACCENT)
+        if self._hovering:
+            return QColor(theme.BTN_HOVER)
+        return _MODULE_BG_COLOR
+
+    def _current_text_color(self) -> str:
+        """Icon/label color for the current interaction state — idle
+        (dark, reads as 'cut out' of the white shape), hover (canonical
+        TEXT, matching the hover background's contrast), or click-drag
+        (canonical ACCENT_TEXT, the standard text color paired with
+        ACCENT everywhere else).
+        """
+        if self._pressed:
+            return theme.ACCENT_TEXT
+        if self._hovering:
+            return theme.TEXT
+        return "#404040"  # panel bg — reads as cut-out on white
+
+    def _refresh_visual_state(self) -> None:
+        """Repaint the module background and recolor the icon/label to
+        match the current hover/click-drag state. Called on every state
+        transition (enter/leave/press/release) instead of only on hover, so
+        both interaction states stay in sync with paintEvent()'s fill.
+        """
+        color = self._current_text_color()
+        if self._icon_name:
+            pix = _svg_icon(self._icon_name, 16, color).pixmap(16, 16)
+            if not pix.isNull():
+                self._icon_lbl.setPixmap(pix)
+        self._text_lbl.setStyleSheet(
+            f"color: {color}; background: transparent; font-weight: 600;"
+        )
+        self.update()
 
     # ------------------------------------------------------------------
     # Custom shape drawing
@@ -3796,7 +4254,7 @@ class ModuleItem(QWidget):
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        painter.fillPath(self._build_path(), _MODULE_BG_COLOR)
+        painter.fillPath(self._build_path(), self._current_fill_color())
         # For object-shaped connectors, cut a V-notch to make } / { silhouette
         if self._output_shape == "object" or self._input_shape == "object":
             cy    = self.height() / 2
@@ -3832,20 +4290,20 @@ class ModuleItem(QWidget):
     # ------------------------------------------------------------------
 
     def enterEvent(self, event) -> None:
-        if self._icon_name:
-            pix = _svg_icon(self._icon_name, 16, theme.ACCENT).pixmap(16, 16)
-            self._icon_lbl.setPixmap(pix)
+        self._hovering = True
+        self._refresh_visual_state()
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:
-        if self._icon_name:
-            pix = _svg_icon(self._icon_name, 16, "#404040").pixmap(16, 16)
-            self._icon_lbl.setPixmap(pix)
+        self._hovering = False
+        self._refresh_visual_state()
         super().leaveEvent(event)
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton:
             self._drag_start_pos = event.pos()
+            self._pressed = True
+            self._refresh_visual_state()
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
@@ -3864,112 +4322,17 @@ class ModuleItem(QWidget):
         drag.exec_(Qt.CopyAction)
         self.setCursor(Qt.OpenHandCursor)
         self._drag_start_pos = None
+        # drag.exec_() is blocking and the drop target (not this widget)
+        # typically consumes the release — mouseReleaseEvent below often
+        # never fires here, so clear the pressed state explicitly.
+        self._pressed = False
+        self._refresh_visual_state()
 
     def mouseReleaseEvent(self, event) -> None:
         self._drag_start_pos = None
+        self._pressed = False
+        self._refresh_visual_state()
         super().mouseReleaseEvent(event)
-
-
-# ---------------------------------------------------------------------------
-# SyncPalettePanel — right-side panel
-# ---------------------------------------------------------------------------
-
-class SyncPalettePanel(QWidget):
-    """Right-side panel with draggable module palette items."""
-
-    # signal emitted when user clicks the Preferences button
-    prefs_requested = pyqtSignal()
-
-    def __init__(self, parent: QWidget = None) -> None:
-        super().__init__(parent)
-        self.setFixedWidth(_PANEL_W)
-
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(8, 12, 8, 12)
-        outer.setSpacing(8)
-
-        items_widget = QWidget(self)
-        items_widget.setAttribute(Qt.WA_TranslucentBackground)
-        group_layout = QVBoxLayout(items_widget)
-        group_layout.setContentsMargins(6, 6, 6, 6)
-        group_layout.setSpacing(4)
-        group_layout.addWidget(
-            ModuleItem(
-                label="Live Video",
-                item_type="live_video",
-                icon_name="video-camera-solid",
-                input_shape=None,
-                output_shape="half_circle",
-                parent=items_widget,
-            )
-        )
-        group_layout.addWidget(
-            ModuleItem(
-                label="Frame Vector",
-                item_type="frame_vector",
-                icon_name="calculator-solid",
-                input_shape="half_circle",
-                output_shape="triangle",
-                parent=items_widget,
-            )
-        )
-        group_layout.addWidget(
-            ModuleItem(
-                label="Frame Match",
-                item_type="frame_match",
-                icon_name="search",
-                input_shape="triangle",
-                output_shape="object",
-                parent=items_widget,
-            )
-        )
-        group_layout.addWidget(
-            ModuleItem(
-                label="Frames Viewer",
-                item_type="frames_viewer",
-                icon_name="media-image",
-                input_shape="object",
-                output_shape=None,
-                parent=items_widget,
-            )
-        )
-
-        outer.addWidget(items_widget)
-        outer.addStretch()
-
-        self._prefs_btn = QPushButton("Preferences", self)
-        self._prefs_btn.setFlat(True)
-        self._prefs_btn.setCursor(Qt.PointingHandCursor)
-        self._prefs_btn.setFocusPolicy(Qt.NoFocus)
-        self._prefs_btn.setFont(theme.font_ui())
-        self._prefs_btn.setFixedHeight(_MODULE_H)
-        # Equal 14px margin on both sides (outer 8 + inner items_widget 6).
-        _btn_w = _PANEL_W - 14 - 14
-        self._prefs_btn.setFixedWidth(_btn_w)
-        self._prefs_btn.setStyleSheet(
-            f"QPushButton {{"
-            f"  background: #111111; color: #ffffff;"
-            f"  border: none; border-radius: {_MODULE_CORNER}px;"
-            f"  padding: 0; text-align: center;"
-            f"}}"
-            f"QPushButton:hover {{"
-            f"  background: #ff00ff; color: #ffffff;"
-            f"}}"
-        )
-        self._prefs_btn.clicked.connect(self.prefs_requested)
-        # Wrap in row with 6px extra left indent so button starts at x=14 (= outer 8 + inner 6)
-        btn_row = QHBoxLayout()
-        btn_row.setContentsMargins(6, 0, 0, 0)
-        btn_row.setSpacing(0)
-        btn_row.addWidget(self._prefs_btn)
-        outer.addLayout(btn_row)
-
-    _PANEL_COLOR = QColor("#404040")
-
-    def paintEvent(self, event) -> None:
-        p = QPainter(self)
-        p.fillRect(self.rect(), self._PANEL_COLOR)
-        p.end()
 
 
 # ---------------------------------------------------------------------------
@@ -3977,28 +4340,23 @@ class SyncPalettePanel(QWidget):
 # ---------------------------------------------------------------------------
 
 class _ColorPickBtn(QPushButton):
-    """Plain button that shows a hex label and opens the standard QColorDialog."""
-    changed = pyqtSignal(QColor)
+    """Plain button that shows a hex label and opens the standard QColorDialog.
 
-    _SS = (
-        "QPushButton {"
-        "  background: transparent; color: #ffffff;"
-        "  border: 1px solid #666666; border-radius: 3px; padding: 1px 8px;"
-        "}"
-        "QPushButton:hover { border-color: #ffffff; color: #ff00ff; }"
-        "QPushButton:focus { outline: none; }"
-    )
+    Uses the canonical Inspector button styling (theme.action_button_stylesheet())
+    — same idle/hover/pressed background+foreground convention as every other
+    Inspector action button — rather than a one-off style.
+    """
+    changed = pyqtSignal(QColor)
 
     def __init__(self, color: QColor, allow_alpha: bool = False,
                  parent: QWidget = None) -> None:
         super().__init__(parent)
         self._color       = QColor(color)
         self._allow_alpha = allow_alpha
-        self.setFixedHeight(22)
         self.setMinimumWidth(90)
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.NoFocus)
-        self.setStyleSheet(self._SS)
+        self.setStyleSheet(theme.action_button_stylesheet())
         self._refresh()
         self.clicked.connect(self._pick)
 
@@ -4047,16 +4405,6 @@ class SyncPreferencesDialog(QDialog):
             f"QLabel   {{ color: {theme.TEXT}; background: transparent; }}"
         )
 
-        _btn_ss = (
-            f"QPushButton {{"
-            f"  background: transparent; color: {theme.TEXT};"
-            f"  border: 1px solid {theme.UI_BORDER}; padding: 2px 12px; border-radius: 3px;"
-            f"}}"
-            f"QPushButton:hover {{"
-            f"  background: rgba(40,40,40,200); color: {theme.ACCENT};"
-            f"}}"
-        )
-
         grid = QGridLayout(self)
         grid.setContentsMargins(16, 16, 16, 16)
         grid.setSpacing(10)
@@ -4084,7 +4432,7 @@ class SyncPreferencesDialog(QDialog):
         defaults_btn = QPushButton("Defaults", self)
         close_btn    = QPushButton("Close",    self)
         for b in (apply_btn, defaults_btn, close_btn):
-            b.setStyleSheet(_btn_ss)
+            b.setStyleSheet(theme.action_button_stylesheet())
             b.setFocusPolicy(Qt.NoFocus)
         apply_btn.clicked.connect(self._apply)
         defaults_btn.clicked.connect(self._reset_defaults)
@@ -4168,94 +4516,442 @@ def _apply_color_prefs() -> None:
 # SyncVisualizerWindow — main window
 # ---------------------------------------------------------------------------
 
-# Prefs key for QByteArray geometry blob (saveGeometry / restoreGeometry)
-_PREFS_GEOM_DATA = "sync_visualizer_geometry_data"  # list[int] — bytes of QByteArray
+class _InspectorGripHandle(QWidget):
+    """Grip-dot handle for the floating Inspector overlay.
+
+    Visually and behaviorally the same as the canonical grip splitter
+    handle every other visualizer's Inspector gets for free from a real
+    `styles.theme.GripSplitter` pane boundary (`styles.theme._GripHandle`)
+    — same dot styling, same click-to-collapse convention, same drag-to-
+    resize convention — but standing alone here since the Inspector isn't
+    a real splitter pane in Sync (see `SyncVisualizerWindow`'s docstring:
+    the canvas must stay pannable/renderable underneath the Inspector's
+    footprint, which a real non-overlapping splitter pane can't do). A
+    plain click (press+release without a drag) calls
+    `_toggle_inspector_collapsed()`, collapsing/un-collapsing the Inspector
+    while the grip itself stays put — distinct from Tab/`h`, which hide
+    the Inspector *and* this handle entirely (`_toggle_inspector()`).
+    Dragging resizes the overlay by adjusting
+    `SyncVisualizerWindow._inspector_width` via `_resize_inspector_overlay()`.
+    """
+
+    _DOT_COLOUR      = QColor(theme.SPLITTER)
+    _HOVER_COLOUR    = QColor(theme.ACCENT)
+    _DOT_R           = 2
+    _DOT_GAP         = 6
+    _N_DOTS          = 5
+    _CLICK_THRESHOLD = 4
+
+    def __init__(self, window: "SyncVisualizerWindow", parent: QWidget) -> None:
+        super().__init__(parent)
+        self._window = window
+        self._hovered = False
+        self._press_parent_x: int | None = None
+        self._press_width = 0
+        self._dragged = False
+        self.setFixedWidth(_INSPECTOR_GRIP_W)
+        self.setCursor(Qt.SplitHCursor)
+
+    def enterEvent(self, event) -> None:
+        self._hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._hovered = False
+        self.update()
+        super().leaveEvent(event)
+
+    def _parent_x(self, event) -> int:
+        # Mapped through the parent (the workspace, which never itself
+        # moves during a drag) rather than using event.globalPos() or a
+        # fixed local offset — this handle is itself repositioned on every
+        # resize step *during* the drag (see _position_inspector_overlay()),
+        # so a delta computed from raw local event.pos() values across
+        # successive move events would be measuring against a
+        # continuously-shifting origin. mapToParent() re-derives "current
+        # mouse position in workspace coordinates" fresh at each event,
+        # immune to how much the handle has already moved this drag.
+        return self.mapToParent(event.pos()).x()
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self._press_parent_x = self._parent_x(event)
+            self._press_width = self._window._inspector_width
+            self._dragged = False
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._press_parent_x is not None and (event.buttons() & Qt.LeftButton):
+            delta = self._press_parent_x - self._parent_x(event)
+            if delta != 0:
+                self._dragged = True
+            self._window._resize_inspector_overlay(self._press_width + delta)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton and self._press_parent_x is not None:
+            moved = abs(self._parent_x(event) - self._press_parent_x)
+            if not self._dragged and moved <= self._CLICK_THRESHOLD:
+                self._window._toggle_inspector_collapsed()
+        self._press_parent_x = None
+        self._dragged = False
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event) -> None:
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor(theme.CANVAS_BG))
+        p.setRenderHint(QPainter.Antialiasing)
+        colour = self._HOVER_COLOUR if self._hovered else self._DOT_COLOUR
+        p.setBrush(colour)
+        p.setPen(Qt.NoPen)
+        w, h = self.width(), self.height()
+        cx = w // 2
+        span = (self._N_DOTS - 1) * self._DOT_GAP
+        y0 = (h - span) // 2
+        for i in range(self._N_DOTS):
+            cy = y0 + i * self._DOT_GAP
+            p.drawEllipse(cx - self._DOT_R, cy - self._DOT_R,
+                          self._DOT_R * 2, self._DOT_R * 2)
+        p.end()
 
 
-class SyncVisualizerWindow(QMainWindow):
-    """Main window for the Sync Visualizer.
+class _InspectorWidthBridge:
+    """Adapter exposing a `QSplitter`-shaped `sizes()`/`setSizes()` pair so
+    the shared `visualizers.components.scrollbar_gutter.ScrollbarGutter`
+    can widen/narrow the Sync Inspector's floating overlay by
+    `theme.SCROLLBAR_W` exactly like it would a real splitter pane, when
+    the active tab's content scrollbar appears/disappears — the Inspector
+    isn't a real splitter pane here (see `SyncVisualizerWindow`), so this
+    bridges the gap without duplicating `ScrollbarGutter`'s own
+    visibility-tracking logic.
+    """
+
+    def __init__(self, window: "SyncVisualizerWindow") -> None:
+        self._window = window
+
+    def sizes(self) -> list:
+        return [0, self._window._inspector_width]
+
+    def setSizes(self, sizes) -> None:
+        if len(sizes) > 1:
+            self._window._resize_inspector_overlay(sizes[1])
+
+
+class SyncVisualizerWindow(WindowVisualizer):
+    """Main window for the Sync Visualizer, on the canonical window shell
+    (Browser | Inspector) — except the Inspector is detached from the
+    shared splitter right after construction and turned into a floating
+    panel raised on top of the canvas instead (see
+    `_make_inspector_overlay()`). This is Sync-specific: the node canvas
+    must be freely pannable/droppable underneath the Inspector's footprint
+    exactly as if it weren't there, rather than having its own scrollable
+    area narrowed by the Inspector's width the way a real splitter pane
+    would. `WindowVisualizer` itself stays generic — this override lives
+    entirely here.
+
+    A real `QSplitter` pane can't overlap its neighbour, so the Inspector
+    can't be a genuine splitter pane and still have the canvas pan/render
+    underneath it — but every other visualizer's Inspector gets a grip
+    splitter handle (click to collapse, drag to resize) for free from
+    being one. `_InspectorGripHandle` stands in for that here: same dot
+    styling and click/drag conventions as `styles.theme._GripHandle`, just
+    not literally a `QSplitterHandle` — it drives `_inspector_width`
+    directly instead of a splitter pane's size.
+
+    The grip handle's click and Tab/`h` are deliberately independent
+    states: clicking the grip only *collapses* the Inspector
+    (`_inspector_collapsed`, width shrinks to 0 but the grip stays visible/
+    clickable to re-expand — see `_toggle_inspector_collapsed()`), while
+    Tab/`h` *hide* the Inspector entirely, grip handle included
+    (`_inspector_hidden` — see `_toggle_inspector()`). Either state alone
+    is enough to shrink the Inspector to width 0; both are independently
+    toggled and neither resets the other.
 
     Keyboard:
-      h  — toggle right panel + node chrome (presentation mode)
-      f  — toggle fullscreen on the current monitor (edge-to-edge)
-      Esc / Ctrl+Q / Ctrl+W — close
+      h                                      — toggle Inspector + node chrome
+                                                (presentation mode)
+      Tab / Shift+Tab / Esc / Ctrl+Q/Ctrl+W  — canonical, see WindowVisualizer
 
-    Geometry is persisted via Qt's saveGeometry()/restoreGeometry(), which
-    handles the X11 titlebar-offset issue and fullscreen/normal transitions
-    correctly on all platforms.
+    The node-based canvas (SyncWorkspace) is the Browser pane and keeps its
+    real-time, node-graph-specific interaction model (drag, resize, cable
+    connections, drop-from-palette) entirely as-is — only the window chrome
+    and side panel now use the shared framework. Window geometry, fullscreen
+    state and panel visibility are persisted by WindowVisualizer itself
+    (pref_key="window_sync"); only the node graph and workspace zoom are
+    persisted here.
     """
 
     def __init__(self) -> None:
-        super().__init__()
+        self._prefs_dialog: SyncPreferencesDialog | None = None
+        # Distinct from `_inspector_hidden` (WindowVisualizer's Tab/'h'
+        # state, which hides the Inspector AND its grip handle entirely):
+        # this tracks the grip handle's own click-to-collapse state, which
+        # shrinks the Inspector to width 0 while keeping the grip visible
+        # and clickable to re-expand. See `_toggle_inspector_collapsed()`.
+        self._inspector_collapsed = False
+        super().__init__(pref_key="window_sync")
         self.setWindowTitle(_WINDOW_TITLE)
         self.resize(_WINDOW_W, _WINDOW_H)
-
-        self._chrome_hidden = False
-        self._fs_active     = False
-        self._windowed_geom: QRect | None = None
-
-        # ── Central layout ─────────────────────────────────────────────────
-        central = QWidget(self)
-        hlayout = QHBoxLayout(central)
-        hlayout.setContentsMargins(0, 0, 0, 0)
-        hlayout.setSpacing(0)
-
-        self._workspace = SyncWorkspace(central)
-        hlayout.addWidget(self._workspace, 1)
-
-        self._sep = QFrame(central)
-        self._sep.setFrameShape(QFrame.VLine)
-        self._sep.setStyleSheet(f"color: {theme.UI_BORDER};")
-        self._sep.setFixedWidth(1)
-        hlayout.addWidget(self._sep)
-
-        self._palette = SyncPalettePanel(central)
-        hlayout.addWidget(self._palette)
-        self._palette.prefs_requested.connect(self._open_prefs)
-        self._prefs_dialog: SyncPreferencesDialog | None = None
-
-        self.setCentralWidget(central)
+        self._make_inspector_overlay()
         self._restore_state()
 
+    def create_browser(self) -> QWidget:
+        self._workspace = SyncWorkspace()
+        return self._workspace
+
+    def create_inspector(self) -> QWidget:
+        panel = TabPanel()
+
+        # ── Modules section — draggable palette items ───────────────────
+        modules_wrap = QWidget()
+        modules_layout = QVBoxLayout(modules_wrap)
+        modules_layout.setContentsMargins(0, 0, 0, 0)
+        modules_layout.setSpacing(4)
+        modules_layout.addWidget(ModuleItem(
+            label="Live Video", item_type="live_video",
+            icon_name="video-camera-solid",
+            input_shape=None, output_shape="half_circle",
+        ))
+        modules_layout.addWidget(ModuleItem(
+            label="Frame Vector", item_type="frame_vector",
+            icon_name="calculator-solid",
+            input_shape="half_circle", output_shape="triangle",
+        ))
+        modules_layout.addWidget(ModuleItem(
+            label="Frame Match", item_type="frame_match",
+            icon_name="search",
+            input_shape="triangle", output_shape="object",
+        ))
+        modules_layout.addWidget(ModuleItem(
+            label="Frames Viewer", item_type="frames_viewer",
+            icon_name="media-image",
+            input_shape="object", output_shape=None,
+        ))
+        panel.add_section("Modules", modules_wrap, pref_key="sync_section_modules")
+
+        # ── Tools section — browser zoom controls + Preferences ─────────
+        tools_wrap = QWidget()
+        tools_layout = QVBoxLayout(tools_wrap)
+        tools_layout.setContentsMargins(0, 0, 0, 0)
+        tools_layout.setSpacing(theme.SECTION_GAP)
+
+        zoom_grid = QGridLayout()
+        zoom_grid.setContentsMargins(0, 0, 0, 0)
+        zoom_grid.setSpacing(theme.SECTION_GAP)
+
+        self.zoom_in_btn = QPushButton("Zoom +")
+        self.zoom_in_btn.setStyleSheet(theme.action_button_stylesheet())
+        self.zoom_in_btn.setFocusPolicy(Qt.NoFocus)
+        self.zoom_in_btn.setToolTip("Zoom in on the workspace canvas")
+        self.zoom_in_btn.clicked.connect(lambda: self._change_zoom(_ZOOM_STEP))
+        zoom_grid.addWidget(self.zoom_in_btn, 0, 0)
+
+        self.zoom_out_btn = QPushButton("Zoom -")
+        self.zoom_out_btn.setStyleSheet(theme.action_button_stylesheet())
+        self.zoom_out_btn.setFocusPolicy(Qt.NoFocus)
+        self.zoom_out_btn.setToolTip("Zoom out on the workspace canvas")
+        self.zoom_out_btn.clicked.connect(lambda: self._change_zoom(-_ZOOM_STEP))
+        zoom_grid.addWidget(self.zoom_out_btn, 0, 1)
+
+        tools_layout.addLayout(zoom_grid)
+
+        recenter_clear_row = QHBoxLayout()
+        recenter_clear_row.setContentsMargins(0, 0, 0, 0)
+        recenter_clear_row.setSpacing(theme.SECTION_GAP)
+
+        recenter_btn = QPushButton("Recenter")
+        recenter_btn.setStyleSheet(theme.action_button_stylesheet())
+        recenter_btn.setFocusPolicy(Qt.NoFocus)
+        recenter_btn.setToolTip("Recenter the canvas on all nodes")
+        recenter_btn.clicked.connect(self._workspace.recenter_view)
+        recenter_clear_row.addWidget(recenter_btn)
+
+        clear_btn = QPushButton("Clear")
+        clear_btn.setStyleSheet(theme.action_button_stylesheet())
+        clear_btn.setFocusPolicy(Qt.NoFocus)
+        clear_btn.setToolTip("Remove all modules and reset the canvas view")
+        clear_btn.clicked.connect(self._on_clear_clicked)
+        recenter_clear_row.addWidget(clear_btn)
+
+        tools_layout.addLayout(recenter_clear_row)
+
+        prefs_btn = QPushButton("Preferences")
+        prefs_btn.setStyleSheet(theme.action_button_stylesheet())
+        prefs_btn.setFocusPolicy(Qt.NoFocus)
+        prefs_btn.clicked.connect(self._open_prefs)
+        tools_layout.addWidget(prefs_btn)
+
+        panel.add_section("Tools", tools_wrap, pref_key="sync_section_tools")
+
+        self._inspector = Inspector()
+        self._inspector.add_tab(panel, "Sync")
+        self._update_zoom_buttons()
+        return self._inspector
+
     # ------------------------------------------------------------------
-    # Track windowed geometry (only when not in fullscreen mode)
+    # Inspector overlay — detach the Inspector from the shared splitter and
+    # float it on top of the canvas instead, so the canvas's own scrollable/
+    # pannable extent always spans the full window (never narrowed by the
+    # Inspector's width) and nodes can be panned/dropped underneath its
+    # footprint exactly as if it weren't there. A grip handle
+    # (`_InspectorGripHandle`) is attached to the overlay's left edge so it
+    # still has the click-to-collapse/drag-to-resize behavior every other
+    # Inspector gets for free from a real splitter pane. See the class
+    # docstring.
     # ------------------------------------------------------------------
 
-    def moveEvent(self, event) -> None:
-        super().moveEvent(event)
-        if not self._fs_active:
-            self._windowed_geom = QRect(self.geometry())
+    def _make_inspector_overlay(self) -> None:
+        """Reparent the Inspector shell out of `self._splitter` (which now
+        has only the Browser pane left, so it always fills the full window
+        width on its own) onto the workspace as a raised, manually
+        positioned child instead, and attach a grip handle so it keeps the
+        canonical click-to-collapse/drag-to-resize behavior. Called once,
+        right after the shared `WindowVisualizer.__init__()` has built the
+        (now-abandoned) splitter-pane version of the Inspector.
+        """
+        shell = self._inspector_shell
+        shell.setParent(self._workspace)
+        shell.show()
+        self._workspace.register_chrome_overlay(shell)
+
+        self._inspector_width = max(_INSPECTOR_MIN_W, shell.sizeHint().width())
+
+        self._inspector_grip = _InspectorGripHandle(self, self._workspace)
+        self._inspector_grip.show()
+        self._workspace.register_chrome_overlay(self._inspector_grip)
+
+        # Widen the overlay by theme.SCROLLBAR_W whenever the active tab's
+        # content scrollbar is visible — the same canonical scrollbar-
+        # gutter-reservation behavior every other Inspector gets for free
+        # from a real splitter pane (see
+        # visualizers.components.scrollbar_gutter); bridged here since the
+        # Inspector isn't a real splitter pane in Sync.
+        tab_host = getattr(shell, "gutter_tab_host", None)
+        if tab_host is not None:
+            try:
+                from visualizers.components.scrollbar_gutter import attach_scrollbar_gutter
+                attach_scrollbar_gutter(tab_host, _InspectorWidthBridge(self), pane_index=1)
+            except Exception:
+                pass
+
+        self._position_inspector_overlay()
+
+    def _clamp_inspector_width(self, width: int) -> int:
+        """Clamp a candidate Inspector overlay width to `_INSPECTOR_MIN_W`
+        and a fraction of the current canvas width, so dragging the grip
+        handle (or a scrollbar-gutter widen) can never swallow the entire
+        canvas or shrink the Inspector down past its own minimum.
+        """
+        max_w = max(_INSPECTOR_MIN_W, self._workspace.width() - 200)
+        return max(_INSPECTOR_MIN_W, min(int(width), max_w))
+
+    def _resize_inspector_overlay(self, width: int) -> None:
+        """Set the floating Inspector overlay's width (clamped) and
+        reposition it immediately. Used both by dragging
+        `_InspectorGripHandle` and by the scrollbar-gutter bridge
+        (`_InspectorWidthBridge`).
+        """
+        self._inspector_width = self._clamp_inspector_width(width)
+        self._position_inspector_overlay()
+
+    def _position_inspector_overlay(self) -> None:
+        """(Re)place the floating Inspector panel and its grip handle
+        flush against the right edge of the canvas, spanning its full
+        height.
+
+        Two independent states affect this:
+          - `_inspector_hidden` (Tab / 'h'): the Inspector AND the grip
+            handle are both hidden entirely — a clean, edge-to-edge canvas
+            with no visible remnant.
+          - `_inspector_collapsed` (grip handle click): only the Inspector
+            itself shrinks to width 0; the grip handle stays flush against
+            the right edge, visible and clickable to re-expand — same as
+            clicking a real grip splitter handle on a collapsed pane
+            elsewhere.
+
+        Retries shortly if the workspace doesn't have a real size yet
+        (e.g. still inside __init__, before the window's first show/
+        layout pass).
+        """
+        if not self._inspector_hidden and self._workspace.width() <= 0:
+            QTimer.singleShot(50, self._position_inspector_overlay)
+            return
+        shell = self._inspector_shell
+        grip = self._inspector_grip
+        grip_w = grip.width()
+        collapsed = self._inspector_hidden or self._inspector_collapsed
+        w = 0 if collapsed else self._inspector_width
+        shell.setVisible(not collapsed)
+        shell.setGeometry(self._workspace.width() - w, 0, w, self._workspace.height())
+        grip.setVisible(not self._inspector_hidden)
+        grip.setGeometry(self._workspace.width() - w - grip_w, 0, grip_w, self._workspace.height())
+        grip.raise_()
+        shell.raise_()
+
+    def _fit_splitter_width(self) -> None:
+        """Override: the Browser pane is the splitter's only real pane now
+        (see `_make_inspector_overlay()`), so there's no splitter-side
+        Inspector width to fit — just (re)position the floating overlay.
+        """
+        self._position_inspector_overlay()
+
+    def _toggle_inspector(self) -> None:
+        """Override: show/hide the floating Inspector overlay *and* its
+        grip handle entirely, instead of adjusting splitter pane sizes
+        (there's no splitter pane for it to occupy anymore). Called by
+        Tab (WindowVisualizer) and by 'h' (presentation mode, below) — not
+        by the grip handle's own click, which only collapses/un-collapses
+        it instead (see `_toggle_inspector_collapsed()`).
+        """
+        self._inspector_hidden = not self._inspector_hidden
+        self._position_inspector_overlay()
+
+    def _toggle_inspector_collapsed(self) -> None:
+        """Grip handle click: collapse/un-collapse the floating Inspector
+        (shrink it to width 0) while the grip handle itself stays visible
+        and flush against the right edge, clickable to re-expand — same
+        as clicking a real grip splitter handle on a collapsed pane
+        elsewhere. Distinct from `_toggle_inspector()` (Tab / 'h'), which
+        hides the Inspector AND the grip handle entirely.
+        """
+        self._inspector_collapsed = not self._inspector_collapsed
+        self._position_inspector_overlay()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        if not self._fs_active:
-            self._windowed_geom = QRect(self.geometry())
+        self._position_inspector_overlay()
 
     # ------------------------------------------------------------------
-    # State persistence
+    # Zoom helpers — Zoom +/- buttons (Ctrl+wheel / Ctrl+Plus/Minus/0 over
+    # the canvas are handled directly by SyncWorkspace's own ZoomManager).
     # ------------------------------------------------------------------
 
-    def _save_state(self) -> None:
-        from tool import prefs as _prefs
-        g = self._windowed_geom if self._windowed_geom is not None else self.geometry()
-        _prefs.set(_PREFS_GEOM,    [g.x(), g.y(), g.width(), g.height()])
-        _prefs.set(_PREFS_FULLSCR, self._fs_active)
-        _prefs.set(_PREFS_PANEL,   self._palette.isVisible())
-        _prefs.set(_PREFS_NODES,   self._workspace.nodes_state())
-        _prefs.set(_PREFS_CONNS,   self._workspace.connections_state())
+    def _change_zoom(self, delta: float) -> None:
+        self._workspace._zoom_manager.change_zoom(delta)
+        self._update_zoom_buttons()
+
+    def _update_zoom_buttons(self) -> None:
+        """Enable/disable the Zoom +/- buttons based on the canvas's zoom limits."""
+        zm = self._workspace._zoom_manager
+        eps = 1e-9
+        self.zoom_in_btn.setEnabled(zm.zoom() < _ZOOM_MAX - eps)
+        self.zoom_out_btn.setEnabled(zm.zoom() > _ZOOM_MIN + eps)
+
+    def _on_clear_clicked(self) -> None:
+        self._workspace.clear_all()
+        self._update_zoom_buttons()
+
+    # ------------------------------------------------------------------
+    # State persistence — node graph only. Window geometry, fullscreen
+    # state and panel visibility are persisted by WindowVisualizer itself
+    # (pref_key="window_sync"); workspace zoom is persisted immediately on
+    # change by SyncWorkspace's ZoomManager (persist_cb).
+    # ------------------------------------------------------------------
 
     def _restore_state(self) -> None:
         from tool import prefs as _prefs
         _apply_color_prefs()
-
-        geom = _prefs.get(_PREFS_GEOM)
-        if isinstance(geom, (list, tuple)) and len(geom) == 4:
-            x, y, w, h = (int(v) for v in geom)
-            avail = QApplication.primaryScreen().availableGeometry()
-            x = max(avail.left(), min(x, avail.right()  - 100))
-            y = max(avail.top(),  min(y, avail.bottom() - 100))
-            self.setGeometry(x, y, w, h)
-        self._windowed_geom = QRect(self.geometry())
 
         nodes_state = _prefs.get(_PREFS_NODES)
         if isinstance(nodes_state, list):
@@ -4265,17 +4961,10 @@ class SyncVisualizerWindow(QMainWindow):
         if isinstance(conns_state, list):
             self._workspace.restore_connections(conns_state)
 
-        if _prefs.get(_PREFS_PANEL) is False:
-            self._palette.setVisible(False)
-            self._sep.setVisible(False)
-            self._workspace.set_chrome_visible(False)
-            self._chrome_hidden = True
-
-        self._restore_fs = bool(_prefs.get(_PREFS_FULLSCR))
-
-    def _apply_startup_fullscreen(self) -> None:
-        if getattr(self, "_restore_fs", False):
-            self._enter_fullscreen()
+    def _save_state(self) -> None:
+        from tool import prefs as _prefs
+        _prefs.set(_PREFS_NODES, self._workspace.nodes_state())
+        _prefs.set(_PREFS_CONNS, self._workspace.connections_state())
 
     def _open_prefs(self) -> None:
         if self._prefs_dialog is None:
@@ -4291,63 +4980,25 @@ class SyncVisualizerWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         self._save_state()
         _cleanup_audio_loopbacks()
-        if self._fs_active:
-            self.setWindowFlag(Qt.FramelessWindowHint, False)
         super().closeEvent(event)
 
     # ------------------------------------------------------------------
-    # Keyboard shortcuts
+    # Keyboard — 'h' is Sync-specific (presentation mode); Tab/Shift+Tab/
+    # Esc/Ctrl+Q/Ctrl+W are handled by WindowVisualizer.
     # ------------------------------------------------------------------
 
     def keyPressEvent(self, event) -> None:
-        k       = event.key()
-        is_ctrl = bool(event.modifiers() & Qt.ControlModifier)
+        if event.key() == Qt.Key_H and not (event.modifiers() & Qt.ControlModifier):
+            self._toggle_presentation_mode()
+            return
+        super().keyPressEvent(event)
 
-        if k == Qt.Key_H and not is_ctrl:
-            self._toggle_chrome()
-        elif k == Qt.Key_F and not is_ctrl:
-            self._toggle_fullscreen()
-        elif k == Qt.Key_Escape or (is_ctrl and k in (Qt.Key_Q, Qt.Key_W)):
-            self.close()
-        else:
-            super().keyPressEvent(event)
-
-    # ------------------------------------------------------------------
-    # h — toggle chrome (panel + node title bars + resize handles)
-    # ------------------------------------------------------------------
-
-    def _toggle_chrome(self) -> None:
-        self._chrome_hidden = not self._chrome_hidden
-        self._palette.setVisible(not self._chrome_hidden)
-        self._sep.setVisible(not self._chrome_hidden)
-        self._workspace.set_chrome_visible(not self._chrome_hidden)
-
-    # ------------------------------------------------------------------
-    # f — FramelessWindowHint + setGeometry(screen) — reliable on X11/KWin
-    # ------------------------------------------------------------------
-
-    def _toggle_fullscreen(self) -> None:
-        if self._fs_active:
-            self._exit_fullscreen()
-        else:
-            self._enter_fullscreen()
-
-    def _enter_fullscreen(self) -> None:
-        self._windowed_geom = QRect(self.geometry())
-        screen = QApplication.screenAt(self.geometry().center())
-        if screen is None:
-            screen = QApplication.primaryScreen()
-        self._fs_active = True
-        self.setWindowFlag(Qt.FramelessWindowHint, True)
-        self.setGeometry(screen.geometry())
-        self.show()
-
-    def _exit_fullscreen(self) -> None:
-        self._fs_active = False
-        self.setWindowFlag(Qt.FramelessWindowHint, False)
-        self.show()
-        if self._windowed_geom is not None:
-            self.setGeometry(self._windowed_geom)
+    def _toggle_presentation_mode(self) -> None:
+        """'h' — toggle the Inspector and node chrome together, preserved
+        from the pre-migration behavior: a quick way to hide all UI chrome
+        for a clean, edge-to-edge view of the live node canvas."""
+        self._toggle_inspector()
+        self._workspace.set_chrome_visible(not self._inspector_hidden)
 
 
 # ---------------------------------------------------------------------------
@@ -4370,7 +5021,6 @@ def run_visualizer() -> None:
         "sync",
         lambda: SyncVisualizerWindow(),
         check_existing=False,
-        post_show=lambda win: win._apply_startup_fullscreen(),
     )
 
 

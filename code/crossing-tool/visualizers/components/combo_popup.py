@@ -19,6 +19,7 @@ def attach_combo_popup(combo: QComboBox) -> QListView:
     _sv.setUniformItemSizes(True)
     _sv.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
     _sv.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+    _sv.setVerticalScrollBar(theme.JumpScrollBar())
     _sv.setFrameShape(QFrame.NoFrame)
     _sv.setLineWidth(0)
     _sv.setMidLineWidth(0)

@@ -71,10 +71,9 @@ def run_visualizer_window(
     if created_app:
         app = QApplication(sys.argv)
         theme.apply_theme(app)
-    # Guaranteed regardless of which visualizer class is built below —
-    # Shotlist/Sync are still plain QMainWindow (not VisualizerWindow
-    # subclasses), so they'd otherwise never get F1-F10/F12/Tab/Shift+Tab when
-    # they happen to be the first window opened in a fresh process.
+    # Guaranteed regardless of which visualizer class is built below, so
+    # every window gets F1-F10/F12/Tab/Shift+Tab even when it happens to be
+    # the first window opened in a fresh process.
     install_keyboard_manager(app)
 
     from tool import prefs as _prefs

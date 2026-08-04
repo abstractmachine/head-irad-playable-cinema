@@ -185,6 +185,7 @@ class StyleEditorDialog(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setVerticalScrollBar(theme.JumpScrollBar())
         scroll.setWidget(inner)
         scroll.setMinimumHeight(min(280, len(self._entries) * 34 + 20))
         layout.addWidget(scroll)

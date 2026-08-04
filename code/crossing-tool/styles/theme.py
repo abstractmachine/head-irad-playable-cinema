@@ -13,6 +13,14 @@ Design language:
   - UI borders  : 25% grey   (#404040)  — splitter handles, group-box and
                               section frames  (controlled by UI_BORDER)
   - Highlight   : yellow    (#ffff00)
+  - Scrollbars  : same background as tab/panel chrome (TAB_BG) idle (thin
+                              half-width indicator line), yellow full-width
+                              fill while active (hovered, dragging, or
+                              briefly after any scroll input). The
+                              scrollbar's own footprint/width NEVER changes
+                              between these two states — only the handle
+                              drawn inside it does. See SCROLLBAR_* and
+                              JumpScrollBar.
   - Typography  : Hanken Grotesk for UI chrome, Roboto Mono for data / info fields
   - Single base font size; individual components may adjust later.
 
@@ -38,6 +46,7 @@ from typing import Optional
 
 BG           = "#808080"   # 50% grey — main window / widget background
 PANEL_BG     = "#555555"   # slightly darker for control-panel areas
+TAB_BG       = "#555555"   # panel/tab background (same as PANEL_BG)
 INPUT_BG     = "#606060"   # input fields, list backgrounds
 TITLE_BG     = "#4A4A4A"   # header/title background (slightly darker than PANEL_BG)
 CELL_BG      = "#606060"   # table cell backgrounds (same as TITLE_BG for now)
@@ -48,10 +57,40 @@ BUTTON_HEIGHT = 24         # fixed height for all inspector/action buttons (px)
 BUTTON_ICON_SIZE = max(12, BUTTON_HEIGHT - 10)  # canonical icon size for square toolbar/header buttons
 BTN_H        = BUTTON_HEIGHT
 BTN_ICON     = BUTTON_ICON_SIZE
-# Canonical vertical scrollbar width (px) — shared by the global QSS default
-# (plain QScrollBar/QScrollArea/QTextEdit etc.) and JumpScrollBar, so every
-# vertical scrollbar in the app is the same thickness.
+# ── DEVELOPER NOTE — canonical, fine-tuned; do not change casually ────────
+# Canonical scrollbar container thickness (px) — shared by the global QSS
+# default (plain QScrollBar/QScrollArea/QTextEdit etc.) and JumpScrollBar, so
+# every scrollbar in the app has the identical footprint. THIS NEVER CHANGES
+# with hover/press/drag/activity state — only the *handle* drawn inside it
+# does (see SCROLLBAR_HANDLE_IDLE_W below). Resizing the container itself on
+# hover was tried once and reverted: it makes neighboring layout (splitter
+# panes, inspector width reservations — see ScrollbarGutter, Inspector,
+# shot_visualizer's minimum-width math) reflow/jump every time the cursor
+# crosses a scrollbar, which reads as a jarring glitch. If you are a codebot
+# tempted to make a scrollbar "thicker on hover" for affordance, do it by
+# changing the HANDLE's look within this fixed footprint (as already done
+# below), never by changing SCROLLBAR_W or adding a `:hover`/`:pressed` rule
+# on QScrollBar:vertical/QScrollBar:horizontal that sets width/height.
 SCROLLBAR_W  = 8
+# Idle-state handle indicator thickness (px) — exactly half of SCROLLBAR_W.
+# Drawn as a thin border-line flush to the outer edge of the (constant-width)
+# scrollbar container. On hover/press/drag or within SCROLLBAR_ACTIVITY_MS of
+# the last scroll input, the handle switches instead to a solid fill at the
+# FULL container width (100% of the gutter) — see SCROLLBAR_IDLE_COLOR/ACCENT
+# and JumpScrollBar._style(). Both states live inside the same fixed
+# SCROLLBAR_W footprint; only the handle's own look changes, never the
+# container's.
+SCROLLBAR_HANDLE_IDLE_W = SCROLLBAR_W // 2
+# How long (ms) a scrollbar keeps its active look after the last scroll
+# input, if the cursor isn't still hovering/pressing it directly.
+SCROLLBAR_ACTIVITY_MS = 500
+# Scrollbar highlight when idle (not hovered/active/dragging) — the exact
+# same token used for tab/panel background chrome (TAB_BG), so scrollbars
+# visually recede into that chrome until activated; switches to ACCENT only
+# while active (see QSS below + JumpScrollBar). Deliberately an alias, not a
+# separate hardcoded value — if TAB_BG's tone changes, scrollbars should
+# always follow it, never drift out of sync.
+SCROLLBAR_IDLE_COLOR = TAB_BG
 # Inspector grid contract (all visualizers):
 # - Use edge-to-edge section bodies (no extra nested wrapper insets)
 # - Use SECTION_GAP for panel/section interior spacing
@@ -67,7 +106,6 @@ ACCENT       = "#ffff00"   # selections, active, checked states
 ACCENT_TEXT  = "#333333"   # text on ACCENT background (black on yellow; use #ffffff for dark accents)
 ACCENT_FILL_ALPHA = 64     # alpha for accent-colored area fills (25% of 255)
 CANVAS_BG    = "#3a3a3a"   # video / image display areas (dark so content pops)
-TAB_BG       = "#555555"   # panel/tab background (same as PANEL_BG)
 # ---------------------------------------------------------------------------
 # Typography
 # ---------------------------------------------------------------------------
@@ -238,6 +276,16 @@ QSlider::sub-page:horizontal {{
 }}
 
 /* ── Scroll bars ───────────────────────────────────────────── */
+/* DEVELOPER NOTE (canonical, fine-tuned — do not change casually): the
+   scrollbar's own footprint (width when vertical, height when horizontal)
+   is ALWAYS SCROLLBAR_W and NEVER changes on hover/press/drag/activity —
+   only the *handle* drawn inside it does (a thin SCROLLBAR_HANDLE_IDLE_W
+   line when idle, a solid fill at the full SCROLLBAR_W width when
+   hovered/pressed/active). Do NOT add a `:hover`/`:pressed` rule that
+   changes width/height on QScrollBar:vertical or QScrollBar:horizontal
+   themselves — that reintroduces a layout-reflow glitch (neighboring
+   panes visibly jump every time the cursor crosses the scrollbar) that
+   was deliberately fixed. Only style QScrollBar::handle:*. */
 QScrollBar:vertical {{
     background: {CANVAS_BG};
     width: {SCROLLBAR_W}px;
@@ -246,32 +294,32 @@ QScrollBar::handle:vertical {{
     background: transparent;
     border-top: none;
     border-bottom: none;
-    border-left: 2px solid {ACCENT};
+    border-left: {SCROLLBAR_HANDLE_IDLE_W}px solid {SCROLLBAR_IDLE_COLOR};
     border-right: none;
     border-radius: 0;
     min-height: 20px;
 }}
 QScrollBar::handle:vertical:hover, QScrollBar::handle:vertical:pressed {{
     background: {ACCENT};
-    border-left: 2px solid {ACCENT};
+    border-left: none;
 }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
 QScrollBar:horizontal {{
     background: {CANVAS_BG};
-    height: 8px;
+    height: {SCROLLBAR_W}px;
 }}
 QScrollBar::handle:horizontal {{
     background: transparent;
     border-left: none;
     border-right: none;
     border-top: none;
-    border-bottom: 2px solid {ACCENT};
+    border-bottom: {SCROLLBAR_HANDLE_IDLE_W}px solid {SCROLLBAR_IDLE_COLOR};
     border-radius: 0;
     min-width: 20px;
 }}
 QScrollBar::handle:horizontal:hover, QScrollBar::handle:horizontal:pressed {{
     background: {ACCENT};
-    border-bottom: 2px solid {ACCENT};
+    border-bottom: none;
 }}
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
 
@@ -708,14 +756,27 @@ class GripSplitter(QSplitter):
 
 from PyQt5.QtWidgets import QScrollBar, QStyle, QStyleOptionSlider  # noqa: E402
 from PyQt5.QtGui import QCursor                                      # noqa: E402
-from PyQt5.QtCore import pyqtSignal                                  # noqa: E402
+from PyQt5.QtCore import pyqtSignal, QTimer                          # noqa: E402
 
 
 class JumpScrollBar(QScrollBar):
     """Scrollbar (vertical or horizontal) with UX improvements over the default:
 
-    1. Hovering *anywhere* on the bar immediately highlights the handle yellow
-       (not just when the cursor is directly on the handle thumb).
+    1. Idle, the handle is a thin SCROLLBAR_HANDLE_IDLE_W (half of
+       SCROLLBAR_W) indicator line using the same background as tab/panel
+       chrome (SCROLLBAR_IDLE_COLOR, aliased to TAB_BG). It becomes
+       "active" — ACCENT-colored, expanding to a solid fill at the FULL
+       SCROLLBAR_W width (100% of the gutter) — while the cursor is
+       directly over it, while its handle is being dragged, or for
+       SCROLLBAR_ACTIVITY_MS after ANY value change for any reason (mouse
+       wheel over the scrolled content, trackpad/tablet scroll gestures,
+       keyboard, click-to-jump, programmatic scrolling — value changes are
+       all that matters, not how they happened). It shrinks back to the
+       idle line once that activity window elapses, unless still
+       hovered/dragging. The scrollbar's own footprint (SCROLLBAR_W) NEVER
+       changes between these two states — only the handle drawn inside it
+       does; changing the container's own size on hover was tried once and
+       reverted because it makes neighboring layout visibly jump/reflow.
     2. Clicking in the track (not on the handle) jumps the viewport to that
        position instantly instead of doing a page-step.  Click+drag is also
        supported for continuous scrubbing.
@@ -738,6 +799,7 @@ class JumpScrollBar(QScrollBar):
     def __init__(self, orientation: Qt.Orientation = Qt.Vertical, parent=None) -> None:
         super().__init__(orientation, parent)
         self._drag_active = False
+        self._active = False
         # Enable hover tracking so enter/leave events fire reliably.
         try:
             self.setMouseTracking(True)
@@ -747,7 +809,8 @@ class JumpScrollBar(QScrollBar):
         # Ensure the physical scrollbar thickness matches the canonical
         # token so it is consistent across all visualizers. Use fixed size
         # along the scroll axis to avoid platform defaults overriding the
-        # stylesheet width.
+        # stylesheet width. This NEVER changes afterward — not even in
+        # _set_active() — only the handle's own look does.
         try:
             if orientation == Qt.Vertical:
                 self.setFixedWidth(SCROLLBAR_W)
@@ -755,9 +818,17 @@ class JumpScrollBar(QScrollBar):
                 self.setFixedHeight(SCROLLBAR_W)
         except Exception:
             pass
-        self.setStyleSheet(self._style(hover=False))
+        self.setStyleSheet(self._style(active=False))
 
-    def _style(self, hover: bool) -> str:
+        # Activity timer — restarted on every value change (see
+        # _on_value_changed); reverts to idle after SCROLLBAR_ACTIVITY_MS of
+        # no further changes, unless still hovered/dragging.
+        self._activity_timer = QTimer(self)
+        self._activity_timer.setSingleShot(True)
+        self._activity_timer.timeout.connect(self._on_activity_timeout)
+        self.valueChanged.connect(self._on_value_changed)
+
+    def _style(self, active: bool) -> str:
         horiz        = self.orientation() == Qt.Horizontal
         orient       = "horizontal" if horiz else "vertical"
         size_prop    = "height" if horiz else "width"
@@ -767,28 +838,55 @@ class JumpScrollBar(QScrollBar):
         # existing left-edge indicator (adjacent to the content they scroll).
         border_side  = "border-bottom" if horiz else "border-left"
         min_len_prop = "min-width" if horiz else "min-height"
-        handle_bg    = ACCENT if hover else "transparent"
+        handle_bg    = ACCENT if active else "transparent"
+        # Idle: a thin SCROLLBAR_HANDLE_IDLE_W (half of SCROLLBAR_W) border
+        # line. Active: no border needed — the ACCENT background above
+        # already fills the handle's full width/height (100% of the
+        # gutter), since the container itself is always SCROLLBAR_W.
+        border_rule  = "none" if active else f"{SCROLLBAR_HANDLE_IDLE_W}px solid {SCROLLBAR_IDLE_COLOR}"
         # Ensure the scroll bar itself and its groove have no border so it
-        # visually sits flush with adjacent chrome. The handle still draws
-        # an accent indicator but without an outer frame.
+        # visually sits flush with adjacent chrome. Note {size_prop} below is
+        # always SCROLLBAR_W — the container's footprint never changes
+        # between idle/active; only the handle rule above does.
         return (
             f"QScrollBar:{orient} {{ background: {CANVAS_BG}; {size_prop}: {SCROLLBAR_W}px; border: none; }}"
             f"QScrollBar::groove:{orient} {{ background: transparent; border: none; }}"
             f"QScrollBar::handle:{orient} {{"
             f"    background: {handle_bg};"
-            f"   {border_side}: 2px solid {ACCENT};"
+            f"   {border_side}: {border_rule};"
             f"    border-radius: 0; {min_len_prop}: 20px; }}"
             f"QScrollBar::add-line:{orient}, QScrollBar::sub-line:{orient} {{ {size_prop}: 0; border: none; }}"
             f"QScrollBar::add-page:{orient}, QScrollBar::sub-page:{orient} {{ background: none; }}"
         )
 
+    def _set_active(self, active: bool) -> None:
+        """Switch between the idle (thin half-width line) and active
+        (ACCENT full-width fill) handle look. No-op if already in the
+        requested state. Never touches the scrollbar's own fixed
+        SCROLLBAR_W footprint — only the stylesheet's handle rule."""
+        if active == self._active:
+            return
+        self._active = active
+        self.setStyleSheet(self._style(active))
+
+    def _on_value_changed(self, _value: int) -> None:
+        # Any value change — wheel, trackpad/tablet gesture, keyboard,
+        # click-to-jump, drag-scrub, or programmatic — counts as "activity"
+        # and (re)starts the decay window.
+        self._set_active(True)
+        self._activity_timer.start(SCROLLBAR_ACTIVITY_MS)
+
+    def _on_activity_timeout(self) -> None:
+        if not self._drag_active and not self.underMouse():
+            self._set_active(False)
+
     def showEvent(self, event) -> None:
         super().showEvent(event)
         # If the scrollbar becomes visible while the cursor is already over it
         # (common with ScrollBarAsNeeded), Qt won't fire enterEvent.  Apply the
-        # hover style immediately so the user gets visual feedback right away.
+        # active style immediately so the user gets visual feedback right away.
         if self.underMouse():
-            self.setStyleSheet(self._style(hover=True))
+            self._set_active(True)
 
     def _groove(self):
         opt = QStyleOptionSlider()
@@ -805,12 +903,16 @@ class JumpScrollBar(QScrollBar):
         return pos.y() - groove.y(), groove.height()
 
     def enterEvent(self, event) -> None:
-        self.setStyleSheet(self._style(hover=True))
+        self._set_active(True)
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:
-        if not self._drag_active:
-            self.setStyleSheet(self._style(hover=False))
+        # Leave the active look in place if a scroll-activity decay is still
+        # pending (e.g. the cursor moved off the bar right after a wheel
+        # scroll) — the activity timer will revert it once that window
+        # elapses. Otherwise, behave as before: revert immediately.
+        if not self._drag_active and not self._activity_timer.isActive():
+            self._set_active(False)
         super().leaveEvent(event)
 
     def mousePressEvent(self, event) -> None:
@@ -854,8 +956,11 @@ class JumpScrollBar(QScrollBar):
         if self._drag_active and event.button() == Qt.LeftButton:
             self._drag_active = False
             self.releaseMouse()
-            if not self.rect().contains(self.mapFromGlobal(QCursor.pos())):
-                self.setStyleSheet(self._style(hover=False))
+            # Dragging changes value continuously, so the activity timer is
+            # normally still running here — let it decay naturally instead
+            # of snapping back to idle the instant the cursor leaves.
+            if not self._activity_timer.isActive() and not self.rect().contains(self.mapFromGlobal(QCursor.pos())):
+                self._set_active(False)
             self.mouseReleased.emit()
             return
         super().mouseReleaseEvent(event)
