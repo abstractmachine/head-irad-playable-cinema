@@ -7,14 +7,19 @@ visibility), keyboard shortcuts (Tab, Shift+Tab, Esc, Ctrl+Q/W), and small
 helper hooks for subclasses to provide the actual browser and inspector
 widgets via `create_browser()` and `create_inspector()`.
 
-A subclass may optionally provide a third, independent splitter pane
-between the Browser and the Inspector via `create_side_panel()` — for
-non-inspector "browser/tableau" content such as Book Visualizer's
-Engravings catalog (see `visualizers.components.side_panel.SidePanel`).
-This pane owns its own splitter/collapse behavior, uncoupled from the
-Inspector's; it must never be nested inside the Inspector itself. When a
-subclass does not override `create_side_panel()` (the default), the shell
-behaves exactly like the classic two-pane Browser | Inspector layout.
+A subclass may optionally provide one or more additional, independent
+splitter panes between the Browser and the Inspector via
+`create_side_panels()` — for non-inspector "browser/tableau" content such
+as Book Visualizer's Engravings catalog (see
+`visualizers.components.side_panel.SidePanel`) or Shotlist's fixed-width
+Scene/Shot tables. Each pane owns its own splitter/collapse behavior,
+uncoupled from the Inspector's and from every other side pane (they are
+flat siblings in the same splitter, not nested) — this is what gives each
+pane independent click-to-collapse for free. When a subclass does not
+override `create_side_panels()`/`create_side_panel()` (the default), the
+shell behaves exactly like the classic two-pane Browser | Inspector
+layout. `create_side_panel()` (singular) remains supported for a single
+pane — it is what `create_side_panels()` delegates to by default.
 
 Whatever `create_inspector()` returns may opt into shared scrollbar-gutter
 reservation (the inspector pane widens/narrows by `theme.SCROLLBAR_W` as
@@ -87,15 +92,18 @@ class WindowVisualizer(VisualizerWindow):
             self._browser = QWidget()
         self._browser.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        self._side_panel = self.create_side_panel()
+        self._side_panels: list[QWidget] = [p for p in self.create_side_panels() if p is not None]
+        # Back-compat alias: the first (and, for every existing subclass,
+        # only) side panel — Book Visualizer reads/writes this directly.
+        self._side_panel = self._side_panels[0] if self._side_panels else None
 
         self._inspector_shell = self.create_inspector()
         if self._inspector_shell is None:
             self._inspector_shell = QWidget()
 
         self._splitter.addWidget(self._browser)
-        if self._side_panel is not None:
-            self._splitter.addWidget(self._side_panel)
+        for panel in self._side_panels:
+            self._splitter.addWidget(panel)
         self._splitter.addWidget(self._inspector_shell)
 
         self._splitter.setStretchFactor(0, 1)
@@ -159,11 +167,35 @@ class WindowVisualizer(VisualizerWindow):
         in `visualizers.components.side_panel.SidePanel` so it can be shown
         and fully hidden (not just collapsed to zero width) independent of
         the Inspector.
+
+        For more than one such pane (e.g. Shotlist's fixed-width Scene and
+        Shot tables), override `create_side_panels()` instead — this
+        singular hook stays supported as the N==1 case, since
+        `create_side_panels()` delegates to it by default.
         """
         return None
 
+    def create_side_panels(self) -> list:
+        """Optional hook: zero or more independent, non-inspector splitter
+        panes placed between the Browser and the Inspector, in order.
+
+        Each returned widget becomes its own flat sibling pane in the same
+        splitter as the Browser/Inspector (never nested inside one
+        another) — this is what gives each pane independent click-to-
+        collapse for free, the same property already relied on by
+        Shotlist's pre-existing flat Scene/Shot/Inspector pane layout.
+
+        Default implementation wraps the legacy singular
+        `create_side_panel()` hook for backward compatibility (Book
+        Visualizer). Override this one directly when more than one side
+        pane is needed.
+        """
+        single = self.create_side_panel()
+        return [single] if single is not None else []
+
     def create_inspector(self) -> Optional[QWidget]:
         raise NotImplementedError()
+
 
     # Focus -----------------------------------------------------------
     def focus_target(self) -> QWidget:
@@ -289,19 +321,20 @@ class WindowVisualizer(VisualizerWindow):
             inspector_w = 320
         self._inspector_shell.setMinimumWidth(inspector_w)
 
-        if self._side_panel is not None and self._side_panel.isVisible():
-            try:
-                side_w = max(1, self._side_panel.sizeHint().width())
-            except Exception:
-                side_w = 1
-            browser_w = max(1, total - inspector_w - side_w)
-            self._splitter.setSizes([browser_w, side_w, inspector_w])
-        else:
-            browser_w = max(1, total - inspector_w)
-            sizes = [browser_w, inspector_w]
-            if self._side_panel is not None:
-                sizes = [browser_w, 0, inspector_w]
-            self._splitter.setSizes(sizes)
+        side_widths = []
+        for panel in self._side_panels:
+            if panel.isVisible():
+                try:
+                    w = max(1, panel.sizeHint().width())
+                except Exception:
+                    w = 1
+            else:
+                w = 0
+            side_widths.append(w)
+
+        browser_w = max(1, total - inspector_w - sum(side_widths))
+        self._splitter.setSizes([browser_w] + side_widths + [inspector_w])
+
 
     def _sync_inspector_min_width(self) -> None:
         if self._inspector_hidden:
