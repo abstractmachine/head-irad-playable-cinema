@@ -519,9 +519,8 @@ def generate_motifs_for_movie(
             print(f"  fail  shot {i + 1}: {exc}", flush=True)
 
     # Save the updated annotation JSON with shot.motif attached
-    json_path.write_text(
-        json.dumps(entries, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    from data.annotate import atomic_write_text
+    atomic_write_text(json_path, json.dumps(entries, indent=2, ensure_ascii=False))
 
     return {
         "filename":  filename,

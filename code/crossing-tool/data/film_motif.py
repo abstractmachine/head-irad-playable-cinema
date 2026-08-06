@@ -441,7 +441,8 @@ def set_film_title(
     }
     path = get_film_title_path(project_path, filename, media_type)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(title_motif, indent=2, ensure_ascii=False), encoding="utf-8")
+    from data.annotate import atomic_write_text
+    atomic_write_text(path, json.dumps(title_motif, indent=2, ensure_ascii=False))
     return title_motif
 
 
@@ -602,7 +603,8 @@ def generate_film_title(
     # Write title to the dedicated film title file
     title_path = get_film_title_path(project_path, filename, media_type)
     title_path.parent.mkdir(parents=True, exist_ok=True)
-    title_path.write_text(json.dumps(film_motif, indent=2, ensure_ascii=False), encoding="utf-8")
+    from data.annotate import atomic_write_text
+    atomic_write_text(title_path, json.dumps(film_motif, indent=2, ensure_ascii=False))
 
     if verbose:
         print(f"  → {title}: {value}")

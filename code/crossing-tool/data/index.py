@@ -72,10 +72,10 @@ def _save_fields_yaml(project_path: str, data: dict) -> None:
         raise ImportError(
             "PyYAML is required. Install with: pip install pyyaml"
         ) from exc
+    from data.annotate import atomic_write_text
     fields_path = Path(project_path) / "preferences" / "data" / "fields.yaml"
     fields_path.parent.mkdir(parents=True, exist_ok=True)
-    with fields_path.open("w", encoding="utf-8") as f:
-        yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+    atomic_write_text(fields_path, yaml.dump(data, default_flow_style=False, allow_unicode=True))
 
 
 def load_fields(project_path: str) -> list[str]:

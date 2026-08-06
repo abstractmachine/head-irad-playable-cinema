@@ -461,10 +461,11 @@ def load_json_metadata(project_path: str, media_type: str) -> list[dict]:
 
 def save_json_metadata(project_path: str, media_type: str, records: list[dict]) -> Path:
     """Write *records* to the JSON metadata file (overwrites atomically)."""
+    from data.annotate import atomic_write_text
     path = _json_path(project_path, media_type)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"version": _JSON_VERSION, "media": records}
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    atomic_write_text(path, json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
     return path
 
 
