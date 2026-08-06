@@ -1,4 +1,6 @@
 import json
+import os
+import tempfile
 from pathlib import Path
 
 # Keys that belong to the user's home-directory prefs (~/.crossing/prefs.json).
@@ -13,6 +15,23 @@ _PROJECT_PREFS_REL = Path("preferences") / "preferences.json"
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+def _atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None:
+    """Write *text* to *path* via a same-directory temp file + atomic replace."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding=encoding) as f:
+            f.write(text)
+        os.replace(tmp_name, path)
+    except BaseException:
+        # Never leave a stray temp file behind if the write or replace failed.
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
 def _user_load() -> dict:
     if _USER_FILE.exists():
         return json.loads(_USER_FILE.read_text())
@@ -20,8 +39,7 @@ def _user_load() -> dict:
 
 
 def _user_save(data: dict) -> None:
-    _USER_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _USER_FILE.write_text(json.dumps(data, indent=2))
+    _atomic_write_text(_USER_FILE, json.dumps(data, indent=2))
 
 
 def _project_file() -> Path | None:
@@ -42,8 +60,7 @@ def _project_save(data: dict) -> None:
     pf = _project_file()
     if pf is None:
         return
-    pf.parent.mkdir(parents=True, exist_ok=True)
-    pf.write_text(json.dumps(data, indent=2))
+    _atomic_write_text(pf, json.dumps(data, indent=2))
 
 
 # ---------------------------------------------------------------------------
