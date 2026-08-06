@@ -11,10 +11,10 @@ Usage
 -----
 ::
 
-    python scripts/migrate_motifs.py --project /path/to/project
-    python scripts/migrate_motifs.py --project /path/to/project --media gameplay
-    python scripts/migrate_motifs.py --project /path/to/project --dry-run
-    python scripts/migrate_motifs.py --project /path/to/project --clean
+    python scripts/archive/migrate_motifs.py --project /path/to/project
+    python scripts/archive/migrate_motifs.py --project /path/to/project --media gameplay
+    python scripts/archive/migrate_motifs.py --project /path/to/project --dry-run
+    python scripts/archive/migrate_motifs.py --project /path/to/project --clean
 
 Flags
 -----

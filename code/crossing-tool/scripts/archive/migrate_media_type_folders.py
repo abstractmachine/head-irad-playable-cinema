@@ -25,10 +25,10 @@ Usage
 ::
 
     # Preview — print what would change, write nothing
-    python scripts/migrate_media_type_folders.py --project /path/to/project --dry-run
+    python scripts/archive/migrate_media_type_folders.py --project /path/to/project --dry-run
 
     # Apply
-    python scripts/migrate_media_type_folders.py --project /path/to/project
+    python scripts/archive/migrate_media_type_folders.py --project /path/to/project
 
 Flags
 -----

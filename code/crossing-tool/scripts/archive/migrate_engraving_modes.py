@@ -11,9 +11,9 @@ so stored metadata stays consistent with the folder name.
 
 Usage
 -----
-    python scripts/migrate_engraving_modes.py              # dry-run (safe)
-    python scripts/migrate_engraving_modes.py --apply      # apply changes
-    python scripts/migrate_engraving_modes.py --project /path/to/project
+    python scripts/archive/migrate_engraving_modes.py              # dry-run (safe)
+    python scripts/archive/migrate_engraving_modes.py --apply      # apply changes
+    python scripts/archive/migrate_engraving_modes.py --project /path/to/project
 
 The script is idempotent: already-migrated directories are skipped.
 """

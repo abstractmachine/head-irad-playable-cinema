@@ -34,7 +34,7 @@ Then the same kind of load-state check is run against Metadata for
 comparison.
 
 Usage:
-    QT_QPA_PLATFORM=offscreen python3 scripts/debug_illustration_filter_row_probe_v3.py
+    QT_QPA_PLATFORM=offscreen python3 scripts/archive/debug_illustration_filter_row_probe_v3.py
 """
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
 
 from PyQt5.QtWidgets import QApplication, QComboBox, QLabel, QWidget  # noqa: E402

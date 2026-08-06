@@ -10,9 +10,9 @@ Free-text fields (setting, text) are left unchanged.
 
 Usage
 -----
-    python scripts/repair_annotations.py                       # project = cwd
-    python scripts/repair_annotations.py --project /path/to/project
-    python scripts/repair_annotations.py --dry-run             # preview only
+    python scripts/archive/repair_annotations.py                       # project = cwd
+    python scripts/archive/repair_annotations.py --project /path/to/project
+    python scripts/archive/repair_annotations.py --dry-run             # preview only
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 
 # Allow running from the repo root without installing the package.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from data.annotate import normalize_label_list, _LABEL_LIST_FIELDS
 from data.index import load_atomic_fields

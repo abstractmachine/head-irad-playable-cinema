@@ -21,14 +21,14 @@ consistent run-to-run) and reports the FIRST widget (in top-down traversal
 order) whose minimumSizeHint().width() or sizeHint().width() increased.
 
 Usage:
-    QT_QPA_PLATFORM=offscreen python3 scripts/debug_illustration_inspector_layout.py
+    QT_QPA_PLATFORM=offscreen python3 scripts/archive/debug_illustration_inspector_layout.py
 """
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLayout, QLabel, QPushButton, QScrollArea,
