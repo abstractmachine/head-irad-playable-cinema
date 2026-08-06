@@ -22,6 +22,8 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
+from generators._common import FONTS_DIR as _FONTS_DIR, load_font_with_fallback
+
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -216,14 +218,7 @@ _TILE_BG       = (38, 38, 38)    # placeholder color for missing images
 _CAPTION_COLOR = (195, 195, 195) # caption text color
 
 # Font search: prefer bundled Hanken Grotesk, fall back to system fonts
-_FONTS_DIR = Path(__file__).parent.parent / "styles" / "fonts"
-_FONT_CANDIDATES = [
-    str(_FONTS_DIR / "Hanken_Grotesk" / "HankenGrotesk-VariableFont_wght.ttf"),
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-    "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-    "/usr/share/fonts/TTF/DejaVuSans.ttf",
-]
+# (paths and fallback chain live in generators._common)
 
 # Clarendon OTF files — same paths used by the live scene-card renderer
 _CLARENDON_DIR   = _FONTS_DIR / "libre_clarendon" / "fonts"
@@ -232,24 +227,13 @@ _CLARENDON_LIGHT = _CLARENDON_DIR / "LibreClarendonNormal-42Light.otf"
 
 
 def _load_font(size: int) -> Any:
-    for path in _FONT_CANDIDATES:
-        try:
-            return ImageFont.truetype(path, size)
-        except (IOError, OSError):
-            continue
-    try:
-        return ImageFont.load_default()
-    except Exception:
-        return None
+    return load_font_with_fallback(size)
 
 
 def _load_clarendon(bold: bool, size: int) -> Any:
     """Load Clarendon Bold or Light at *size* px, falling back to _load_font."""
     path = _CLARENDON_BOLD if bold else _CLARENDON_LIGHT
-    try:
-        return ImageFont.truetype(str(path), size)
-    except (IOError, OSError):
-        return _load_font(size)
+    return load_font_with_fallback(size, preferred_paths=[str(path)])
 
 
 def make_intertitle_item(

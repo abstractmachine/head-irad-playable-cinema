@@ -135,6 +135,25 @@ def _ctx() -> tuple[str, str] | str:
     return project_path, ""
 
 
+def _resolve_single_film(project_path: str, film: str, media_type: str) -> "tuple[dict, str] | str":
+    """Resolve *film* (title/filename/TMDb id substring) to exactly one metadata entry.
+
+    Returns an error JSON string instead of raising so that tools can do:
+        result = _resolve_single_film(project_path, film, media_type)
+        if isinstance(result, str): return result
+        entry, filename = result
+    """
+    from data.metadata import get_metadata as _get_metadata
+    entries = _get_metadata(project_path, query=film, media_type=media_type)
+    if not entries:
+        return _err(f"No film found matching {film!r}.")
+    if len(entries) > 1:
+        titles = [e.get("title", e.get("filename", "")) for e in entries]
+        return _err(f"Ambiguous: {len(entries)} films match {film!r}.", f"Matches: {titles}")
+    entry = entries[0]
+    return entry, entry["filename"]
+
+
 def _output_dir(project_path: str, subdir: str) -> Path:
     """Return and create an output subdirectory under <project>/output/."""
     d = Path(project_path) / "output" / subdir
@@ -423,17 +442,12 @@ def get_shotlist(
     project_path, _ = result
 
     try:
-        from data.metadata import get_metadata as _get_metadata
         from data.shotlist import read_shotlist
 
-        entries = _get_metadata(project_path, query=film, media_type=media_type)
-        if not entries:
-            return _err(f"No film found matching {film!r}.")
-        if len(entries) > 1:
-            titles = [e.get("title", e.get("filename", "")) for e in entries]
-            return _err(f"Ambiguous: {len(entries)} films match {film!r}.", f"Matches: {titles}")
-        entry = entries[0]
-        filename = entry["filename"]
+        result = _resolve_single_film(project_path, film, media_type)
+        if isinstance(result, str):
+            return result
+        entry, filename = result
 
         shots = read_shotlist(project_path, filename, media_type)
         if scene:
@@ -499,17 +513,12 @@ def get_subtitles(
     project_path, _ = result
 
     try:
-        from data.metadata import get_metadata as _get_metadata
         from data.subtitles import subtitle_path_for, _parse_srt
 
-        entries = _get_metadata(project_path, query=film, media_type=media_type)
-        if not entries:
-            return _err(f"No film found matching {film!r}.")
-        if len(entries) > 1:
-            titles = [e.get("title", e.get("filename", "")) for e in entries]
-            return _err(f"Ambiguous: {len(entries)} films match {film!r}.", f"Matches: {titles}")
-        entry = entries[0]
-        filename = entry["filename"]
+        result = _resolve_single_film(project_path, film, media_type)
+        if isinstance(result, str):
+            return result
+        entry, filename = result
 
         srt_path = subtitle_path_for(project_path, media_type, filename)
         if srt_path is None:
@@ -570,17 +579,12 @@ def list_motifs(
     project_path, _ = result
 
     try:
-        from data.metadata import get_metadata as _get_metadata
         from data.motif import load_motif_doc, load_motif_words
 
-        entries = _get_metadata(project_path, query=film, media_type=media_type)
-        if not entries:
-            return _err(f"No film found matching {film!r}.")
-        if len(entries) > 1:
-            titles = [e.get("title", e.get("filename", "")) for e in entries]
-            return _err(f"Ambiguous: {len(entries)} films match {film!r}.", f"Matches: {titles}")
-        entry = entries[0]
-        filename = entry["filename"]
+        result = _resolve_single_film(project_path, film, media_type)
+        if isinstance(result, str):
+            return result
+        entry, filename = result
 
         motifs = load_motif_words(project_path, filename, media_type)
         doc = load_motif_doc(project_path, filename, media_type)
@@ -627,17 +631,12 @@ def list_palettes(
     project_path, _ = result
 
     try:
-        from data.metadata import get_metadata as _get_metadata
         from data.palette import get_palette_path
 
-        entries = _get_metadata(project_path, query=film, media_type=media_type)
-        if not entries:
-            return _err(f"No film found matching {film!r}.")
-        if len(entries) > 1:
-            titles = [e.get("title", e.get("filename", "")) for e in entries]
-            return _err(f"Ambiguous: {len(entries)} films match {film!r}.", f"Matches: {titles}")
-        entry = entries[0]
-        filename = entry["filename"]
+        result = _resolve_single_film(project_path, film, media_type)
+        if isinstance(result, str):
+            return result
+        entry, filename = result
 
         palette_path = get_palette_path(project_path, filename, media_type)
         if not palette_path.exists():
@@ -1055,20 +1054,14 @@ def debug_frame_bytes(
     try:
         import io as _io
         from PIL import Image as _PIL
-        from data.metadata import get_metadata as _get_metadata
         from data.shotlist import read_shotlist
         from services.frame_match import best_frame_path as _bf_path
         from generators.mosaic import _find_video_path, extract_frame_pil, frame_from_pct
 
-        entries = _get_metadata(project_path, query=film, media_type=media_type)
-        if not entries:
-            return _err(f"No film found matching {film!r}.")
-        if len(entries) > 1:
-            titles = [e.get("title", e.get("filename", "")) for e in entries]
-            return _err(f"Ambiguous: {len(entries)} films match. Matches: {titles}")
-
-        entry    = entries[0]
-        filename = entry["filename"]
+        result = _resolve_single_film(project_path, film, media_type)
+        if isinstance(result, str):
+            return result
+        entry, filename = result
 
         shots     = read_shotlist(project_path, filename, media_type)
         shot_data = next((s for s in shots if s.get("shot_id") == shot_id), None)
@@ -1547,17 +1540,13 @@ def generate_flipbook(
     project_path, _ = result
 
     try:
-        from data.metadata import get_metadata as _get_metadata
         from generators.flipbook import generate_flipbook_for_movie
 
-        entries = _get_metadata(project_path, query=film, media_type=media_type)
-        if not entries:
-            return _err(f"No film found matching {film!r}.")
-        if len(entries) > 1:
-            titles = [e.get("title", e.get("filename", "")) for e in entries]
-            return _err(f"Ambiguous: {len(entries)} films match {film!r}.", f"Matches: {titles}")
+        result = _resolve_single_film(project_path, film, media_type)
+        if isinstance(result, str):
+            return result
+        entry, filename = result
 
-        filename = entries[0]["filename"]
         res = generate_flipbook_for_movie(
             project_path, filename, media_type, force=force
         )

@@ -61,19 +61,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from services.silhouette import _BORDER_CHECK_PX, _MAX_ASPECT_RATIO
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
 CATALOG_VERSION = "1"
 
-# Quality filters — shared with services.silhouette but duplicated here
-# to keep this module self-contained for the catalog pipeline.
+# Quality filters that intentionally differ from services.silhouette (looser
+# area bounds tuned for the catalog pipeline) — see _passes_quality_filters().
+# _BORDER_CHECK_PX and _MAX_ASPECT_RATIO are identical to services.silhouette
+# and imported from there instead of being redefined.
 _MIN_MASK_AREA_FRACTION = 0.002   # 0.2 % of frame (slightly looser than polygon pipeline)
 _MAX_MASK_AREA_FRACTION = 0.70    # 70 %
-_MAX_ASPECT_RATIO       = 6.0     # reject extremely elongated bboxes
-_BORDER_CHECK_PX        = 3       # pixels from each edge considered "touching border"
-_CLIP_CONFIDENCE_FLOOR  = 0.20    # minimum tight-crop CLIP score to accept a mask
 _IOU_DEDUP_THRESHOLD    = 0.70    # IoU above which two masks are considered duplicates
 _MAX_OBJECTS_PER_SHOT   = 8       # cap on accepted objects extracted from a single shot
 _PNG_CROP_PAD_PX        = 6       # pixel padding around tight bbox when saving PNG
@@ -502,7 +503,7 @@ def extract_objects_for_shot(
     reranked = rerank_by_tight_crop(top_n, image_pil, label, clip_model, clip_processor, clip_device)
 
     # Filter by confidence floor
-    confident = [(m, broad, tight) for m, broad, tight in reranked if tight >= _CLIP_CONFIDENCE_FLOOR]
+    confident = [(m, broad, tight) for m, broad, tight in reranked if tight >= _CLIP_SCORE_FLOOR]
     skipped_confidence = len(reranked) - len(confident)
 
     if not confident:

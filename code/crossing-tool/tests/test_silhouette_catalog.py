@@ -20,6 +20,8 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 from PIL import Image
 
+import services.silhouette as silhouette
+import services.silhouette_catalog as silhouette_catalog
 from services.silhouette_catalog import (
     CATALOG_VERSION,
     _safe_label,
@@ -80,6 +82,45 @@ def _make_catalog_entry(label_dir: Path, index: int, shot_id: str = "tmdb_1@f0-f
     }
     json_path.write_text(json.dumps(meta), encoding="utf-8")
     return json_path
+
+
+# ---------------------------------------------------------------------------
+# Shared-constant dedup (accidental duplication with services.silhouette)
+# ---------------------------------------------------------------------------
+
+class TestSharedThresholdConstants(unittest.TestCase):
+    """_BORDER_CHECK_PX / _MAX_ASPECT_RATIO are imported from services.silhouette
+    instead of being redefined here (they were identical, accidental
+    duplicates). _MIN_MASK_AREA_FRACTION / _MAX_MASK_AREA_FRACTION remain
+    intentionally different (documented as "slightly looser" for the catalog
+    pipeline) and are NOT deduped.
+    """
+
+    def test_border_check_px_is_shared(self):
+        self.assertIs(silhouette_catalog._BORDER_CHECK_PX, silhouette._BORDER_CHECK_PX)
+
+    def test_max_aspect_ratio_is_shared(self):
+        self.assertIs(silhouette_catalog._MAX_ASPECT_RATIO, silhouette._MAX_ASPECT_RATIO)
+
+    def test_area_fraction_thresholds_intentionally_differ(self):
+        # Catalog pipeline is deliberately looser/tighter than the polygon
+        # pipeline in services.silhouette -- must not be merged.
+        self.assertNotEqual(
+            silhouette_catalog._MIN_MASK_AREA_FRACTION,
+            silhouette._MIN_MASK_AREA_FRACTION,
+        )
+        self.assertNotEqual(
+            silhouette_catalog._MAX_MASK_AREA_FRACTION,
+            silhouette._MAX_MASK_AREA_FRACTION,
+        )
+
+    def test_no_redundant_clip_confidence_floor_constant(self):
+        # Regression: this module used to define its own _CLIP_CONFIDENCE_FLOOR
+        # (== 0.20) which happened to match services.silhouette._CLIP_SCORE_FLOOR
+        # by coincidence -- the mask filter used one, the error message the
+        # other, so they could silently drift apart. Now only _CLIP_SCORE_FLOOR
+        # (imported from services.silhouette) is used for both.
+        self.assertFalse(hasattr(silhouette_catalog, "_CLIP_CONFIDENCE_FLOOR"))
 
 
 # ---------------------------------------------------------------------------

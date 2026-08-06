@@ -56,6 +56,8 @@ from typing import Any, Optional
 
 from PIL import Image, ImageDraw, ImageFont
 
+from generators._common import load_font_with_fallback
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -85,14 +87,6 @@ _FONT_REGULAR = str(_LC_DIR / "LibreClarendonNormal-68Regular.otf") # interior s
 _FONT_FLIPBOOK = _FONT_REGULAR
 _FONT_COVER    = _FONT_BOLD
 
-_FONT_FALLBACKS = [
-    str(_FONTS_DIR / "Hanken_Grotesk" / "HankenGrotesk-VariableFont_wght.ttf"),
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-    "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-    "/usr/share/fonts/TTF/DejaVuSans.ttf",
-]
-
 # Horizontal margin as a fraction of page width for word rendering
 _MARGIN_FRAC = 0.10
 
@@ -103,15 +97,7 @@ _MARGIN_FRAC = 0.10
 
 def _load_font(size: int, preferred_path: str) -> ImageFont.FreeTypeFont:
     """Load a Pillow font at *size*, falling back gracefully."""
-    for path in [preferred_path] + _FONT_FALLBACKS:
-        try:
-            return ImageFont.truetype(path, size)
-        except (IOError, OSError):
-            continue
-    try:
-        return ImageFont.load_default()
-    except Exception:
-        return None  # type: ignore[return-value]
+    return load_font_with_fallback(size, preferred_paths=[preferred_path])
 
 
 def _measure_text(draw: ImageDraw.ImageDraw, text: str, font: Any) -> tuple[int, int]:

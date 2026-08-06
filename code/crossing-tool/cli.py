@@ -385,6 +385,21 @@ def _resolve_normalize_matches(project_path: str, media_type: str, query: str) -
     ]
 
 
+def _resolve_single_normalize_match_or_exit(project_path: str, media_type: str, query: str) -> list[dict]:
+    """Resolve *query* to exactly one metadata entry, printing an error and exiting on 0 or >1 matches."""
+    targets = _resolve_normalize_matches(project_path, media_type, query)
+    if not targets:
+        print(f"✗ No {media_type} entries match '{query}'.", file=sys.stderr)
+        sys.exit(1)
+    if len(targets) > 1:
+        print(f"✗ '{query}' matches {len(targets)} {media_type} entries — be more specific:", file=sys.stderr)
+        for row in targets:
+            ident = row.get("media_id") or row.get("tmdb") or "?"
+            print(f"  [{ident}]  {row.get('filename', '')}  —  {row.get('title', '')}", file=sys.stderr)
+        sys.exit(1)
+    return targets
+
+
 def cmd_media_channels(args):
     from data.metadata import get_metadata, set_metadata
     from services.audio_channels import inspect_audio_channel_count, suggest_audio_channels_mapping
@@ -427,16 +442,7 @@ def cmd_media_channels(args):
         if do_all:
             targets = [r for r in get_metadata(project_path, media_type=media_type) if r.get("filename")]
         else:
-            targets = _resolve_normalize_matches(project_path, media_type, query)
-            if not targets:
-                print(f"✗ No {media_type} entries match '{query}'.", file=sys.stderr)
-                sys.exit(1)
-            if len(targets) > 1:
-                print(f"✗ '{query}' matches {len(targets)} {media_type} entries — be more specific:", file=sys.stderr)
-                for row in targets:
-                    ident = row.get("media_id") or row.get("tmdb") or "?"
-                    print(f"  [{ident}]  {row.get('filename', '')}  —  {row.get('title', '')}", file=sys.stderr)
-                sys.exit(1)
+            targets = _resolve_single_normalize_match_or_exit(project_path, media_type, query)
 
         for row in targets:
             filename = row.get("filename", "")
@@ -600,16 +606,7 @@ def cmd_media_normalize(args):
         if normalize_all:
             targets = [r for r in get_metadata(project_path, media_type=media_type) if r.get("filename")]
         else:
-            targets = _resolve_normalize_matches(project_path, media_type, query)
-            if not targets:
-                print(f"✗ No {media_type} entries match '{query}'.", file=sys.stderr)
-                sys.exit(1)
-            if len(targets) > 1:
-                print(f"✗ '{query}' matches {len(targets)} {media_type} entries — be more specific:", file=sys.stderr)
-                for row in targets:
-                    ident = row.get("media_id") or row.get("tmdb") or "?"
-                    print(f"  [{ident}]  {row.get('filename', '')}  —  {row.get('title', '')}", file=sys.stderr)
-                sys.exit(1)
+            targets = _resolve_single_normalize_match_or_exit(project_path, media_type, query)
 
         for row in targets:
             filename = row.get("filename", "")

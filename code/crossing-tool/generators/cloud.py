@@ -32,6 +32,8 @@ from typing import Any
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from generators._common import FONTS_DIR as _FONTS_DIR, load_font_with_fallback
+
 
 # ---------------------------------------------------------------------------
 # Stopwords (basic English set, extended with common annotation noise words)
@@ -62,7 +64,6 @@ inside outside around
 # Font / visual constants
 # ---------------------------------------------------------------------------
 
-_FONTS_DIR = Path(__file__).parent.parent / "styles" / "fonts"
 _LC = _FONTS_DIR / "libre_clarendon" / "fonts"
 
 # Libre Clarendon Normal — weight chosen per font size for visual impact.
@@ -73,15 +74,6 @@ _LC_BY_WEIGHT = [
     (80,  str(_LC / "LibreClarendonNormal-110Medium.otf")),  # size ≤ 80 → Medium
     (100, str(_LC / "LibreClarendonNormal-162Bold.otf")),    # size ≤ 100 → Bold
     (999, str(_LC / "LibreClarendonNormal-212Black.otf")),   # size  > 100 → Black
-]
-
-# Fallback chain used when Libre Clarendon files are not present
-_FONT_FALLBACKS = [
-    str(_FONTS_DIR / "Hanken_Grotesk" / "HankenGrotesk-VariableFont_wght.ttf"),
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-    "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-    "/usr/share/fonts/TTF/DejaVuSans.ttf",
 ]
 
 _BG_COLOR = (18, 18, 18)
@@ -272,21 +264,12 @@ _DEFAULT_HEIGHT = 840
 
 def _load_font(size: int) -> Any:
     # Pick the Libre Clarendon weight appropriate for this size
+    preferred = None
     for threshold, path in _LC_BY_WEIGHT:
         if size <= threshold:
-            try:
-                return ImageFont.truetype(path, size)
-            except (IOError, OSError):
-                break  # file missing — fall through to fallbacks
-    for path in _FONT_FALLBACKS:
-        try:
-            return ImageFont.truetype(path, size)
-        except (IOError, OSError):
-            continue
-    try:
-        return ImageFont.load_default()
-    except Exception:
-        return None
+            preferred = path
+            break
+    return load_font_with_fallback(size, preferred_paths=[preferred] if preferred else None)
 
 
 # ---------------------------------------------------------------------------

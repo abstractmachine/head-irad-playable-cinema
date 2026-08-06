@@ -14,7 +14,8 @@ The preprocessing PNG is used directly — no scribble conversion, no mask.
 Prompt is loaded from <project>/prompts/engravings/<latest>.txt as a
 ``string.Template``; ``$variable`` placeholders are expanded from the
 *context* dict (e.g. ``$label``, ``$field``, ``$movie``, ``$shot_id``,
-``$description``).  Unknown placeholders are left unchanged (safe_substitute).
+``$description``, ``$motif``).  Unknown placeholders are left unchanged
+(safe_substitute).
 """
 
 from __future__ import annotations
@@ -140,8 +141,9 @@ def _expand_prompt(template_text: str, context: dict | None) -> str:
 
     Uses ``string.Template.safe_substitute`` so that unknown placeholders
     (variables not present in *context*) are left literally unchanged rather
-    than raising.  The five canonical variables default to an empty string so
-    they render as blank lines rather than un-expanded ``$label`` literals.
+    than raising.  The six canonical variables (label, field, movie, shot_id,
+    description, motif) default to an empty string so they render as blank
+    lines rather than un-expanded ``$label`` literals.
     """
     defaults = {
         "label":            "",
@@ -149,6 +151,7 @@ def _expand_prompt(template_text: str, context: dict | None) -> str:
         "movie":            "",
         "shot_id":          "",
         "description":      "",
+        "motif":            "",
         # Size-aware variables (v4+) — available for display/metadata but not injected
         "page_dpi":         "",
         "page_width_mm":    "",
@@ -210,9 +213,9 @@ def generate_engraving(
     Steps
     -----
     1. Load the latest engraving prompt template; expand ``$variable``
-       placeholders from *context* (label, field, movie, shot_id, description)
-       using ``string.Template.safe_substitute`` — missing variables default
-       to empty strings, unknown placeholders are left unchanged.
+       placeholders from *context* (label, field, movie, shot_id, description,
+       motif) using ``string.Template.safe_substitute`` — missing variables
+       default to empty strings, unknown placeholders are left unchanged.
     2. Composite the preprocessing PNG (RGBA) onto white → RGB reference image.
     3. Run FLUX.1-Kontext-dev → write ``{engraving_id}_raw.png``.
     4. Apply binary threshold → write ``{engraving_id}_output.png``
