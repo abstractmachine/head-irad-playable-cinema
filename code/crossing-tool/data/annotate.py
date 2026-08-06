@@ -18,6 +18,7 @@ FRAMES_PER_SHOT = 10
 
 import json
 import math
+import os
 import shutil
 import subprocess
 import tempfile
@@ -26,6 +27,26 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import traceback
 from datetime import datetime
+
+
+def atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None:
+    """Write *text* to *path* via a same-directory temp file + atomic replace.
+
+    Shared by every writer of the canonical annotation JSON file so a crash
+    mid-write never leaves a truncated/corrupt file on disk.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding=encoding) as f:
+            f.write(text)
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 def _safe_model_dir(project_path: str, model_name: str) -> Path:
@@ -1455,10 +1476,7 @@ def migrate_annotations_to_stable_ids(
         raise ValueError(f"Cannot parse annotation JSON for migration: {exc}") from exc
 
     migrated = _migrate_legacy_shot_ids(raw, shots, media_id)
-    agg_path.write_text(
-        json.dumps(migrated, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    atomic_write_text(agg_path, json.dumps(migrated, indent=2, ensure_ascii=False))
     return True
 
 
@@ -1643,10 +1661,7 @@ def annotate_file_shots(
                     if isinstance(_e, dict) and isinstance(_e.get("shot"), dict)
                 ):
                     _raw = _migrate_legacy_shot_ids(_raw, shots, media_id)
-                    aggregated.write_text(
-                        json.dumps(_raw, indent=2, ensure_ascii=False),
-                        encoding="utf-8",
-                    )
+                    atomic_write_text(aggregated, json.dumps(_raw, indent=2, ensure_ascii=False))
             except Exception as _mig_exc:
                 import sys as _sys
                 print(f"  [annotate] WARNING: migration failed for {aggregated.name}: {_mig_exc}", file=_sys.stderr)
@@ -2059,9 +2074,9 @@ def annotate_file_shots(
                 _sid = _r.get("shot", {}).get("shot_id") if isinstance(_r.get("shot"), dict) else None
                 if _sid is not None:
                     _write_map[str(_sid)] = _r
-            aggregated.write_text(
+            atomic_write_text(
+                aggregated,
                 json.dumps([_write_map[k] for k in sorted(_write_map)], indent=2),
-                encoding="utf-8",
             )
         except Exception:
             pass
@@ -2093,9 +2108,9 @@ def annotate_file_shots(
             _sid = _r.get("shot", {}).get("shot_id") if isinstance(_r.get("shot"), dict) else None
             if _sid is not None:
                 _write_map[str(_sid)] = _r
-        aggregated.write_text(
+        atomic_write_text(
+            aggregated,
             json.dumps([_write_map[k] for k in sorted(_write_map)], indent=2),
-            encoding="utf-8",
         )
     except Exception:
         pass
@@ -2339,7 +2354,7 @@ def reindex_annotations_for_merge(
     ]
 
     try:
-        path.write_text(json.dumps(new_entries, indent=2, ensure_ascii=False), encoding="utf-8")
+        atomic_write_text(path, json.dumps(new_entries, indent=2, ensure_ascii=False))
     except Exception:
         pass
 
@@ -2378,7 +2393,7 @@ def reindex_annotations_for_split(
     ]
 
     try:
-        path.write_text(json.dumps(new_entries, indent=2, ensure_ascii=False), encoding="utf-8")
+        atomic_write_text(path, json.dumps(new_entries, indent=2, ensure_ascii=False))
     except Exception:
         pass
 

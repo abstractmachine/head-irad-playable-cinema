@@ -540,11 +540,9 @@ def _load_annotation_entries(agg_path: Path) -> List[Dict[str, Any]]:
 
 
 def _save_annotation_entries(agg_path: Path, entries: List[Dict[str, Any]]) -> None:
-    agg_path.parent.mkdir(parents=True, exist_ok=True)
-    agg_path.write_text(
-        json.dumps(entries, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    from data.annotate import atomic_write_text
+
+    atomic_write_text(agg_path, json.dumps(entries, indent=2, ensure_ascii=False))
 
 
 # ---------------------------------------------------------------------------

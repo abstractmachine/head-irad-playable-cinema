@@ -63,7 +63,7 @@ from visualizers.components.ipc_server import IpcServer
 from data.shotlist import read_shotlist, write_shotlist, get_shotlist_path, attach_shot_ids
 from data.metadata import get_metadata
 from data.media_id import compute_media_id
-from data.annotate import reindex_annotations_for_merge, reindex_annotations_for_split
+from data.annotate import atomic_write_text, reindex_annotations_for_merge, reindex_annotations_for_split
 from data.index import (
     load_mapping,
     serialize_annotation_item,
@@ -2116,10 +2116,7 @@ class ShotlistVisualizer(WindowVisualizer):
             entry_idx = self._annotation_entry_index.get(shot_id)
             if entry_idx is not None and 0 <= entry_idx < len(entries):
                 entries[entry_idx]["shot"]["best_frame"] = shot.get("best_frame")
-                path.write_text(
-                    json.dumps(entries, indent=2, ensure_ascii=False),
-                    encoding="utf-8",
-                )
+                atomic_write_text(path, json.dumps(entries, indent=2, ensure_ascii=False))
         except Exception as exc:
             QMessageBox.critical(self, "Save failed", str(exc))
     
@@ -2759,8 +2756,7 @@ class ShotlistVisualizer(WindowVisualizer):
             else:
                 existing.append(ann)
                 self._annotation_entry_index[shot_id] = len(existing) - 1
-            with open(path, "w", encoding="utf-8") as fh:
-                fh.write(_json.dumps(existing, indent=2, ensure_ascii=False))
+            atomic_write_text(path, _json.dumps(existing, indent=2, ensure_ascii=False))
             self._edited_shots.add(idx)
             self._refresh_shot_row(idx)
         except Exception as exc:
@@ -2904,8 +2900,7 @@ class ShotlistVisualizer(WindowVisualizer):
 
             # Serialise with json_repair-safe format
             out_text = _json.dumps(existing, indent=2, ensure_ascii=False)
-            with open(path, "w", encoding="utf-8") as fh:
-                fh.write(out_text)
+            atomic_write_text(path, out_text)
 
             self.annotation_index[shot_id] = data
             self._edited_shots.add(idx)
@@ -3028,8 +3023,7 @@ class ShotlistVisualizer(WindowVisualizer):
                 if not (isinstance(e.get("shot"), dict)
                         and str(e["shot"].get("shot_id", "")) == shot_id)
             ]
-            with open(path, "w", encoding="utf-8") as fh:
-                _json.dump(entries, fh, indent=2, ensure_ascii=False)
+            atomic_write_text(path, _json.dumps(entries, indent=2, ensure_ascii=False))
             self.annotation_index.pop(shot_id, None)
             self._annotation_entry_index.pop(shot_id, None)
             self._embedding_row_index.pop(shot_id, None)

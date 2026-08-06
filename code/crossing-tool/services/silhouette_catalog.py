@@ -590,10 +590,9 @@ def extract_objects_for_shot(
             "png":                png_name,
             "timestamp":          timestamp,
         }
-        json_path.write_text(
-            json.dumps(meta, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        from data.annotate import atomic_write_text
+
+        atomic_write_text(json_path, json.dumps(meta, indent=2, ensure_ascii=False))
 
         # Inline semantic enrichment — uses the already-loaded CLIP model so
         # there is no extra model load.  Best-effort: any failure is logged
@@ -610,10 +609,7 @@ def extract_objects_for_shot(
                 project_path=project_path,
             )
             meta.update(sem)
-            json_path.write_text(
-                json.dumps(meta, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
+            atomic_write_text(json_path, json.dumps(meta, indent=2, ensure_ascii=False))
         except Exception as _sem_exc:
             if verbose:
                 print(f"    (semantic enrichment skipped: {_sem_exc})")

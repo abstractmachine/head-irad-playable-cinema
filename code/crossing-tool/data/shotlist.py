@@ -1,6 +1,7 @@
 """Shotlist operations: reading, annotating, and querying shot and scene data."""
 
 import csv
+import io
 from pathlib import Path
 from typing import Any
 
@@ -192,10 +193,12 @@ def write_shotlist(project_path: str, filename: str, media_type: str, shots: lis
     # Add captions
     fieldnames.extend(["Shot_Caption", "Scene_Caption"])
 
-    with open(shotlist_path, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(shots)
+    from data.annotate import atomic_write_text
+    buf = io.StringIO(newline="")
+    writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(shots)
+    atomic_write_text(shotlist_path, buf.getvalue())
 
 
 def annotate_shot(project_path: str, filename: str, shot_index: int, caption: str, media_type: str = "movie") -> None:
@@ -311,10 +314,12 @@ def migrate_shotlist_fields(project_path: str, media_type: str | None = None, dr
                     fieldnames.extend(["start_frame", "end_frame", "shot_id"])
                 fieldnames.extend(["Shot_Caption", "Scene_Caption"])
 
-                with open(csv_path, "w", encoding="utf-8", newline="") as f:
-                    writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
-                    writer.writeheader()
-                    writer.writerows(shots)
+                from data.annotate import atomic_write_text
+                buf = io.StringIO(newline="")
+                writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
+                writer.writeheader()
+                writer.writerows(shots)
+                atomic_write_text(csv_path, buf.getvalue())
 
             results.append({
                 "path": str(csv_path),

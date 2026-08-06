@@ -48,9 +48,10 @@ def load_book(project_path: str, slug: str) -> dict:
 
 def save_book(project_path: str, slug: str, data: dict) -> None:
     """Write *data* to a book's book.json."""
+    from data.annotate import atomic_write_text
     path = book_json_path(project_path, slug)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    atomic_write_text(path, json.dumps(data, indent=2, ensure_ascii=False))
 
 
 # ---------------------------------------------------------------------------

@@ -676,10 +676,9 @@ def enrich_catalog(
             semantic_fields["semantics_prompt_file"] = prompt_filename
 
             meta.update(semantic_fields)
-            json_path.write_text(
-                json.dumps(meta, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
+            from data.annotate import atomic_write_text
+
+            atomic_write_text(json_path, json.dumps(meta, indent=2, ensure_ascii=False))
             processed += 1
 
             if verbose:

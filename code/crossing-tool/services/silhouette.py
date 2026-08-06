@@ -1144,9 +1144,10 @@ def load_silhouette_manifest(project_path: str, media_type: str) -> dict:
 
 def save_silhouette_manifest(project_path: str, media_type: str, manifest: dict) -> None:
     """Persist the silhouette manifest."""
+    from data.annotate import atomic_write_text
+
     mpath = _manifest_path(project_path, media_type)
-    mpath.parent.mkdir(parents=True, exist_ok=True)
-    mpath.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    atomic_write_text(mpath, json.dumps(manifest, indent=2, ensure_ascii=False))
 
 
 def _upsert_manifest_entry(manifest: dict, entry: dict) -> None:
@@ -1387,11 +1388,9 @@ def build_silhouette(
             score=clip_score,
         )
 
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        from data.annotate import atomic_write_text
+
+        atomic_write_text(out_path, json.dumps(payload, indent=2, ensure_ascii=False))
 
         # ----- update manifest -----
         manifest = load_silhouette_manifest(project_path, media_type)

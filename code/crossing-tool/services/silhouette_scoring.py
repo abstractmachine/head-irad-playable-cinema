@@ -238,7 +238,9 @@ def compute_scores_for_catalog(
                 "quality_generated": datetime.now(timezone.utc).isoformat(),
             })
 
-            json_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+            from data.annotate import atomic_write_text
+
+            atomic_write_text(json_path, json.dumps(meta, indent=2, ensure_ascii=False))
             processed += 1
             if verbose:
                 print(f"Scored: {json_path}  usefulness={usefulness:.3f}")

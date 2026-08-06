@@ -49,10 +49,9 @@ def set_human_best(json_path: str | Path, *, human_best: bool = True) -> None:
         data[HUMAN_BEST_FIELD] = True
     else:
         data.pop(HUMAN_BEST_FIELD, None)
-    json_path.write_text(
-        json.dumps(data, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    from data.annotate import atomic_write_text
+
+    atomic_write_text(json_path, json.dumps(data, indent=2, ensure_ascii=False))
 
 
 def clear_human_best_for_label(

@@ -186,6 +186,7 @@ def _load_layers(project_path: str, slug: str) -> list:
 
 
 def _save_layers(project_path: str, slug: str, layers: list) -> None:
+    from data.annotate import atomic_write_text
     p = _layers_path(project_path, slug)
     p.parent.mkdir(parents=True, exist_ok=True)
     # Strip transient UI state before persisting
@@ -193,8 +194,7 @@ def _save_layers(project_path: str, slug: str, layers: list) -> None:
     for layer in layers:
         entry = {k: v for k, v in layer.items() if k != "selected"}
         to_save.append(entry)
-    with open(p, "w", encoding="utf-8") as f:
-        json.dump(to_save, f, indent=2)
+    atomic_write_text(p, json.dumps(to_save, indent=2))
 
 
 # ---------------------------------------------------------------------------
@@ -219,10 +219,10 @@ def _load_text_sels(project_path: str, slug: str) -> list:
 
 
 def _save_text_sels(project_path: str, slug: str, sels: list) -> None:
+    from data.annotate import atomic_write_text
     p = _text_sel_path(project_path, slug)
     p.parent.mkdir(parents=True, exist_ok=True)
-    with open(p, "w", encoding="utf-8") as f:
-        json.dump(sels, f, ensure_ascii=False, indent=2)
+    atomic_write_text(p, json.dumps(sels, ensure_ascii=False, indent=2))
 
 
 # ---------------------------------------------------------------------------
@@ -250,10 +250,10 @@ def _load_mask(project_path: str, slug: str) -> set:
 
 
 def _save_mask(project_path: str, slug: str, masked_pages: set) -> None:
+    from data.annotate import atomic_write_text
     p = _mask_path(project_path, slug)
     p.parent.mkdir(parents=True, exist_ok=True)
-    with open(p, "w", encoding="utf-8") as f:
-        json.dump(sorted(masked_pages), f, indent=2)
+    atomic_write_text(p, json.dumps(sorted(masked_pages), indent=2))
 
 
 # ---------------------------------------------------------------------------
