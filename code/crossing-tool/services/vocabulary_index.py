@@ -334,7 +334,8 @@ def build_vocabulary_index(
             "fields": {},
         }
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(index, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        from data.annotate import atomic_write_text
+        atomic_write_text(out_path, json.dumps(index, indent=2, ensure_ascii=False) + "\n")
         return index
 
     # For atomic fields we reuse the existing normalization logic.
@@ -445,7 +446,8 @@ def build_vocabulary_index(
     }
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(index, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    from data.annotate import atomic_write_text
+    atomic_write_text(out_path, json.dumps(index, indent=2, ensure_ascii=False) + "\n")
 
     return index
 

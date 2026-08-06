@@ -261,9 +261,8 @@ def build_frame_embeddings(
         missing_count=missing_count,
         now=now,
     )
-    with manifest_path.open("w", encoding="utf-8") as fh:
-        json.dump(manifest, fh, indent=2)
-        fh.write("\n")
+    from data.annotate import atomic_write_text
+    atomic_write_text(manifest_path, json.dumps(manifest, indent=2) + "\n")
 
     return {
         "filename": filename,
