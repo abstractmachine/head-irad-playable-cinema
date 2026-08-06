@@ -59,3 +59,4 @@ py-modules = ["cli"]
 
 [tool.setuptools.packages.find]
 where = ["."]
+exclude = ["build*", "tests*", "documentation*", "preferences*", "scripts*"]

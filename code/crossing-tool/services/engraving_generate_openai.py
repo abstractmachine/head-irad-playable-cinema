@@ -64,13 +64,24 @@ def _expand_prompt(template: str, meta: dict) -> str:
     """Expand ``$variable`` placeholders in *template* from silhouette *meta*.
 
     Variables expanded:
-        $label, $field, $shot_id, $media_id, $filename_stem, $filename,
-        $frame, $motif, $human_best
+        $label, $field, $movie, $shot_id, $description, $media_id,
+        $filename_stem, $filename, $frame, $motif, $human_best
+
+    ``$movie`` and ``$description`` are part of the canonical variable set
+    documented in ``services/engraving_prompt.py`` (shared by both the FLUX
+    and OpenAI backends). *meta* — the raw silhouette catalog record — does
+    not currently carry either value, so they default to an empty string
+    here just like the FLUX backend's ``_expand_prompt`` does. This keeps
+    the two backends consistent: a template using ``$movie``/``$description``
+    renders blank instead of leaking the literal placeholder text into the
+    compiled prompt sent to the API.
     """
     context = {
         "label":         meta.get("label", ""),
         "field":         meta.get("field", ""),
+        "movie":         meta.get("movie", ""),
         "shot_id":       meta.get("shot_id", ""),
+        "description":   meta.get("description", ""),
         "media_id":      meta.get("media_id", ""),
         "filename_stem": meta.get("filename_stem", ""),
         "filename":      meta.get("filename", ""),
