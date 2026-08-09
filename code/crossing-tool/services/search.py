@@ -461,6 +461,60 @@ def _vocabulary_from_cache(
         return [item["value"] for item in items]
 
 
+def vocabulary_from_index(
+    field: str,
+    project_path: str,
+    media_type: str = "movie",
+    show_count: bool = True,
+    sort: str = "alphabetical",
+) -> dict:
+    """Return an index-only vocabulary result without scanning annotations.
+
+    The returned dict has a ``status`` of ``ready``, ``missing``, ``stale``,
+    or ``field_missing``.  ``items`` is present only for a ready result.
+    """
+    from services.vocabulary_index import (
+        get_vocabulary,
+        load_vocabulary_index,
+        vocabulary_cache_is_stale,
+    )
+
+    try:
+        load_vocabulary_index(project_path, media_type)
+    except FileNotFoundError:
+        return {"status": "missing"}
+
+    if vocabulary_cache_is_stale(project_path, media_type):
+        return {"status": "stale"}
+
+    try:
+        if field == "--all":
+            index = load_vocabulary_index(project_path, media_type)
+            merged_counts: dict[str, int] = {}
+            for indexed_field in index.get("fields", {}):
+                for item in get_vocabulary(
+                    indexed_field, project_path, media_type, sort="count"
+                ):
+                    value = item["value"]
+                    merged_counts[value] = merged_counts.get(value, 0) + item["count"]
+            items = [
+                {"value": value, "count": count}
+                for value, count in merged_counts.items()
+            ]
+            if sort == "alphabetical":
+                items.sort(key=lambda item: item["value"].lower())
+            else:
+                items.sort(key=lambda item: (-item["count"], item["value"].lower()))
+        else:
+            items = get_vocabulary(field, project_path, media_type, sort=sort)
+    except KeyError:
+        return {"status": "field_missing"}
+
+    if not show_count:
+        items = [item["value"] for item in items]
+    return {"status": "ready", "items": items}
+
+
 def vocabulary_from_field(
     field: str,
     scopes: list[str] | None,

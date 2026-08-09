@@ -10,9 +10,10 @@ focus purely on shell construction.
 
 import pytest
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QKeyEvent
+from PyQt5.QtGui import QKeyEvent, QPixmap
 from PyQt5.QtWidgets import QApplication
 
+from styles import theme
 from visualizers.shot_visualizer import ShotlistVisualizer
 from visualizers.components.ipc_server import IpcServer
 
@@ -95,6 +96,26 @@ def test_ipc_server_uses_shared_base(app, fake_prefs, fake_movie, tmp_path):
     win = _make_window(app, tmp_path)
     try:
         assert isinstance(win._ipc_server, IpcServer)
+    finally:
+        win.close()
+
+
+def test_subtitles_are_doubled_and_inset_inside_scaled_frame(
+    app, fake_prefs, fake_movie, tmp_path
+):
+    win = _make_window(app, tmp_path)
+    try:
+        win.frame_label.resize(800, 600)
+        scaled_frame = QPixmap(700, 400)
+
+        win._position_subtitle_overlay(scaled_frame)
+
+        margins = win._subtitle_overlay_layout.contentsMargins()
+        line_spacing = win.subtitle_label.fontMetrics().lineSpacing()
+        assert win.subtitle_label.font().pointSize() == theme.SUBTITLE_PT * 2
+        assert margins.left() == 58
+        assert margins.right() == 58
+        assert margins.bottom() == 100 + line_spacing
     finally:
         win.close()
 

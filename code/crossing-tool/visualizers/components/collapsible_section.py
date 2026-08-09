@@ -26,6 +26,7 @@ from typing import Optional
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent
 from PyQt5.QtWidgets import (
     QHBoxLayout,
+    QLabel,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -125,12 +126,22 @@ class CollapsibleSection(QWidget):
             f"  border: none;"
             f"  border-radius: 2px;"
             f"  text-align: left;"
-            f"  padding: 0 8px;"
+            f"  padding: 0 8px 0 {theme.TRIANGLE_TEXT_LEFT}px;"
             f"  font-family: '{theme.FAMILY_UI}';"
             f"  font-size: {theme.BASE_PT}pt;"
             f"  font-weight: {theme.WEIGHT_UI};"
             f"}}"
             f"QPushButton:hover {{ background: {theme.ACCENT}; color: {theme.ACCENT_TEXT}; }}"
+        )
+        self._header_arrow = QLabel(self._header)
+        self._header_arrow.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._header_arrow.setAlignment(Qt.AlignCenter)
+        self._header_arrow.setGeometry(
+            theme.TRIANGLE_LEFT, 0, theme.TRIANGLE_WIDTH, _HEADER_H
+        )
+        self._header_arrow.setStyleSheet(
+            f"background: transparent; color: {theme.TRIANGLE}; border: none;"
+            f" font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
         )
         self._header.clicked.connect(self._toggle)
         # Keep an eye on header resizes so any attached subbar can be
@@ -168,11 +179,12 @@ class CollapsibleSection(QWidget):
 
     def _refresh_header(self) -> None:
         arrow = "▼" if self._expanded else "▶"
+        self._header_arrow.setText(arrow)
         subtitle = getattr(self, "_subtitle", "")
         if subtitle:
-            self._header.setText(f"{arrow}   {self._title}: {subtitle}")
+            self._header.setText(f"{self._title}: {subtitle}")
         else:
-            self._header.setText(f"{arrow}   {self._title}")
+            self._header.setText(self._title)
 
     def _toggle(self) -> None:
         self._expanded = not self._expanded

@@ -23,7 +23,7 @@ A scrollable, zoomable mosaic of video frame thumbnails. Each tile is captioned 
 
 #### Scope
 
-Select the media type (`movie`, `gameplay`) and optionally restrict results to a single title. Use **--all** to search across the entire library.
+Select the media type (`movie`, `gameplay`) and optionally restrict results to a single title. Use **<all>** to search across the entire library.
 
 #### Annotation Field
 
@@ -53,7 +53,9 @@ Type a search term and click one of the search mode buttons:
 
 #### Vocabulary
 
-A live list of the most frequent terms in the selected field for the current scope. Click any term to instantly run a search for it. The active term is highlighted in yellow.
+A worker-loaded list of the most frequent indexed terms in the selected annotation field. The list defaults to **<all>** when Mosaic opens and whenever the Annotation Field changes. Use the Vocabulary dropdown to show **<all>** terms or jump to one initial letter. Click any term to place it in the Search Query field.
+
+Large **<all>** lists are built in background-sized GUI batches: the dropdown and Vocabulary loading indicator remain visible, while the completed table is laid out once to avoid repeatedly resizing the Inspector. If the vocabulary index is missing or stale, Mosaic shows that state instead of scanning annotations; use **Rebuild Vocabulary** in the Tools section to rebuild it through the canonical CLI index command.
 
 ## Keyboard Shortcuts
 

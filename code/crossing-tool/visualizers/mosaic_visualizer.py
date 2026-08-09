@@ -37,7 +37,7 @@ from tool.shortcuts import KEY_PREV_TITLE, KEY_NEXT_TITLE, KEY_PREV_ITEM, KEY_NE
 from visualizers.window_visualizer import WindowVisualizer
 from visualizers.components.inspector import Inspector
 from visualizers.components.tab_panel import TabPanel
-from visualizers.components.combo_popup import style_canonical_combo
+from visualizers.components.combo_popup import add_combo_all_item, style_canonical_combo
 from visualizers.components.sweep_bar import SweepBar
 from visualizers.components.zoom_manager import ZoomManager
 from visualizers.components.metadata_block import (
@@ -74,6 +74,9 @@ if "QT_QPA_PLATFORM_PLUGIN_PATH" in os.environ:
     del os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"]
 
 from typing import Optional
+
+
+_CLI_PATH = Path(__file__).parent.parent / "cli.py"
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +166,7 @@ class VocabularyTable(QWidget):
     """
 
     item_clicked = pyqtSignal(str)
+    population_finished = pyqtSignal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -171,8 +175,18 @@ class VocabularyTable(QWidget):
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(0)
         self._rows: list = []
+        self._pending_items: list = []
+        self._pending_index = 0
+        self._population_timer = QTimer(self)
+        self._population_timer.setSingleShot(True)
+        self._population_timer.timeout.connect(self._append_batch)
+        self._population_deferred_layout = False
 
     def clear(self) -> None:
+        self._population_timer.stop()
+        self._finish_deferred_layout()
+        self._pending_items = []
+        self._pending_index = 0
         for row in self._rows:
             self._layout.removeWidget(row)
             row.deleteLater()
@@ -191,15 +205,45 @@ class VocabularyTable(QWidget):
         self._layout.addWidget(lbl)
         self._rows.append(lbl)
 
-    def set_items(self, items: list) -> None:
+    def set_items(self, items: list, *, incremental: bool = False) -> None:
         self.clear()
-        last_idx = len(items) - 1
-        for row_idx, entry in enumerate(items):
+        self._pending_items = list(items)
+        if incremental:
+            self._population_deferred_layout = True
+            self.setUpdatesEnabled(False)
+            self.setVisible(False)
+            self._layout.setEnabled(False)
+            self._population_timer.start(0)
+        else:
+            self._append_batch(len(self._pending_items))
+
+    def _finish_deferred_layout(self) -> None:
+        if not self._population_deferred_layout:
+            return
+        self._population_deferred_layout = False
+        self._layout.setEnabled(True)
+        self.setVisible(True)
+        self.setUpdatesEnabled(True)
+        self.updateGeometry()
+        self.update()
+
+    def _append_batch(self, batch_size: int = 40) -> None:
+        last_idx = len(self._pending_items) - 1
+        stop = min(self._pending_index + batch_size, len(self._pending_items))
+        for row_idx in range(self._pending_index, stop):
+            entry = self._pending_items[row_idx]
             top, bottom = table_row_edges(row_idx, last_idx)
             row = _VocabRow(entry["value"], entry["count"], top, bottom)
             row.clicked.connect(self.item_clicked)
             self._layout.addWidget(row)
             self._rows.append(row)
+        self._pending_index = stop
+        if self._pending_index < len(self._pending_items):
+            self._population_timer.start(0)
+        else:
+            self._pending_items = []
+            self._finish_deferred_layout()
+            self.population_finished.emit()
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +261,8 @@ ANNOTATION_FIELDS = [
     "text",
     "description",
 ]
+
+VOCABULARY_RENDER_THRESHOLD = 200
 
 DEFAULT_TILE_SIZE = 200
 MIN_TILE_SIZE = 80
@@ -476,42 +522,117 @@ class SearchWorker(QThread):
 # ---------------------------------------------------------------------------
 
 class VocabularyWorker(QThread):
-    """Fetches vocabulary for one annotation field in a background thread.
+    """Fetch indexed vocabulary for one annotation field in a background thread.
 
     Signals
     -------
-    items_ready(list)   list of {"value": str, "count": int} dicts
+    result_ready(dict)  index status and, when ready, vocabulary items
     error(str)          emitted on failure
     """
 
-    items_ready = pyqtSignal(list)
+    result_ready = pyqtSignal(dict)
     error       = pyqtSignal(str)
 
-    def __init__(self, field: str, scope: Optional[str], project_path: str, media_type: str = "movie", parent=None):
+    def __init__(
+        self,
+        field: str,
+        scope: Optional[str],
+        project_path: str,
+        media_type: str = "movie",
+        prefix: Optional[str] = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.field        = field
         self.scope        = scope
         self.project_path = project_path
         self.media_type   = media_type
+        self.prefix       = prefix
 
     def run(self) -> None:
         try:
-            from services.search import vocabulary_from_field
-            scopes  = None if (not self.scope or self.scope == "--all") else [self.scope]
-            use_all = scopes is None
-            result  = vocabulary_from_field(
+            from services.search import vocabulary_from_index
+            result = vocabulary_from_index(
                 field        = self.field,
-                scopes       = scopes,
-                use_all      = use_all,
                 show_count   = True,
                 project_path = self.project_path,
                 media_type   = self.media_type,
                 sort         = "count",
             )
-            self.items_ready.emit(result)
+            if result.get("status") == "ready" and self.scope and self.scope != "--all":
+                result = {"status": "scope_unsupported"}
+            elif result.get("status") == "ready":
+                all_items = result.get("items", [])
+                initials = sorted(
+                    {
+                        value[:1].lower() if value[:1].isalpha() else "#"
+                        for value in (str(item.get("value", "")) for item in all_items)
+                        if value
+                    },
+                    key=lambda value: (value == "#", value),
+                )
+                is_large = len(all_items) > VOCABULARY_RENDER_THRESHOLD
+                selected_prefix = self.prefix or "--all"
+                if selected_prefix != "--all":
+                    items = [
+                        item for item in all_items
+                        if (
+                            str(item.get("value", ""))[:1].lower()
+                            if str(item.get("value", ""))[:1].isalpha()
+                            else "#"
+                        ) == selected_prefix
+                    ]
+                else:
+                    items = all_items
+                result = {
+                    "status": "ready",
+                    "items": items,
+                    "total": len(all_items),
+                    "initials": initials,
+                    "selected_prefix": selected_prefix,
+                    "is_large": is_large,
+                }
+            self.result_ready.emit(result)
         except Exception as exc:
             import traceback
             self.error.emit(f"{exc}\n{traceback.format_exc()}")
+
+
+class VocabularyIndexWorker(QThread):
+    """Rebuild the vocabulary index through the canonical CLI command."""
+
+    finished_signal = pyqtSignal(str)
+    error = pyqtSignal(str)
+
+    def __init__(self, media_type: str, parent=None) -> None:
+        super().__init__(parent)
+        self.media_type = media_type
+
+    def run(self) -> None:
+        try:
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(_CLI_PATH),
+                    "index",
+                    "vocabulary",
+                    "--media",
+                    self.media_type,
+                    "--force",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            output = "\n".join(
+                part.strip() for part in (completed.stdout, completed.stderr) if part.strip()
+            )
+            if completed.returncode != 0:
+                self.error.emit(output or "Vocabulary index rebuild failed.")
+                return
+            self.finished_signal.emit(output)
+        except Exception as exc:
+            self.error.emit(str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -969,6 +1090,9 @@ class MosaicVisualizer(WindowVisualizer):
         self._worker: Optional[SearchWorker] = None
         self._pdf_worker: Optional[PdfExportWorker] = None
         self._vocab_worker: Optional[VocabularyWorker] = None
+        self._vocab_rebuild_worker: Optional[VocabularyIndexWorker] = None
+        self._vocab_request_id = 0
+        self._initial_vocab_load_started = False
         self._export_worker: Optional[ExportWorker] = None
         self._video_worker: Optional[VideoMosaicWorker] = None
         self._current_results: list = []   # results for the last completed search
@@ -980,6 +1104,12 @@ class MosaicVisualizer(WindowVisualizer):
         self.resize(1440, 900)
 
         self._populate_movies()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        if not self._initial_vocab_load_started:
+            self._initial_vocab_load_started = True
+            self._on_field_changed()
 
     def create_browser(self) -> QWidget:
         self.canvas = MosaicCanvas()
@@ -1027,7 +1157,7 @@ class MosaicVisualizer(WindowVisualizer):
         self.media_type_combo.installEventFilter(self)
         scope_layout.addWidget(self.media_type_combo)
         self.movie_combo = QComboBox()
-        self.movie_combo.addItem("--all")
+        add_combo_all_item(self.movie_combo)
         style_canonical_combo(self.movie_combo)
         self.movie_combo.currentIndexChanged.connect(self._on_field_changed)
         self.movie_combo.installEventFilter(self)
@@ -1041,7 +1171,10 @@ class MosaicVisualizer(WindowVisualizer):
         field_layout.setSpacing(theme.SECTION_GAP)
         self.field_combo = QComboBox()
         for f in ANNOTATION_FIELDS:
-            self.field_combo.addItem(f)
+            if f == "--all":
+                add_combo_all_item(self.field_combo, user_data="--all")
+            else:
+                self.field_combo.addItem(f, userData=f)
         style_canonical_combo(self.field_combo)
         self.field_combo.currentIndexChanged.connect(self._on_field_changed)
         self.field_combo.installEventFilter(self)
@@ -1204,6 +1337,15 @@ class MosaicVisualizer(WindowVisualizer):
 
         tools_layout.addLayout(zoom_grid)
 
+        self.vocab_rebuild_btn = QPushButton("Rebuild Vocabulary")
+        self.vocab_rebuild_btn.setStyleSheet(theme.action_button_stylesheet())
+        self.vocab_rebuild_btn.setFocusPolicy(Qt.NoFocus)
+        self.vocab_rebuild_btn.setToolTip(
+            "Rebuild the vocabulary index from project annotations"
+        )
+        self.vocab_rebuild_btn.clicked.connect(self._on_vocab_rebuild)
+        tools_layout.addWidget(self.vocab_rebuild_btn)
+
         panel.add_section("Tools", tools_wrap, pref_key="mosaic_section_tools")
 
         # ── Vocabulary section — two-column (word, count) table sized to
@@ -1213,9 +1355,16 @@ class MosaicVisualizer(WindowVisualizer):
         vocab_wrap = QWidget()
         vocab_layout = QVBoxLayout(vocab_wrap)
         vocab_layout.setContentsMargins(0, 0, 0, 0)
-        vocab_layout.setSpacing(0)
+        vocab_layout.setSpacing(theme.SECTION_GAP)
+        self.vocab_nav_combo = QComboBox()
+        style_canonical_combo(self.vocab_nav_combo)
+        self.vocab_nav_combo.setToolTip("Show vocabulary values by initial letter")
+        self.vocab_nav_combo.currentIndexChanged.connect(self._on_vocab_nav_changed)
+        self.vocab_nav_combo.setVisible(False)
+        vocab_layout.addWidget(self.vocab_nav_combo)
         self.vocab_table = VocabularyTable()
         self.vocab_table.item_clicked.connect(self._on_vocab_item_clicked)
+        self.vocab_table.population_finished.connect(self._on_vocab_population_finished)
         vocab_layout.addWidget(self.vocab_table)
         vocab_sec = panel.add_section("Vocabulary", vocab_wrap, pref_key="mosaic_section_vocab")
 
@@ -1285,7 +1434,7 @@ class MosaicVisualizer(WindowVisualizer):
         self._update_best_button()
         self.movie_combo.blockSignals(True)
         self.movie_combo.clear()
-        self.movie_combo.addItem("--all")
+        add_combo_all_item(self.movie_combo)
         self.movie_combo.blockSignals(False)
         self._populate_movies()
 
@@ -1377,8 +1526,8 @@ class MosaicVisualizer(WindowVisualizer):
 
         scope_data = self.movie_combo.currentData()
         scope      = scope_data if scope_data else None
-        field_text = self.field_combo.currentText()
-        field      = None if field_text == "--all" else field_text
+        field_data = self.field_combo.currentData()
+        field      = None if field_data == "--all" else field_data
         limit_text = self.limit_combo.currentText()
         limit      = None if limit_text == "all" else int(limit_text)
         limit_per_movie = self.limit_per_movie_cb.isChecked()
@@ -1530,20 +1679,30 @@ class MosaicVisualizer(WindowVisualizer):
     # Vocabulary panel
 
     def _on_field_changed(self) -> None:
-        field = self.field_combo.currentText()
+        field = self.field_combo.currentData()
         self.vocab_table.clear()
+        self.vocab_nav_combo.blockSignals(True)
+        self.vocab_nav_combo.clear()
+        self.vocab_nav_combo.setVisible(False)
+        self.vocab_nav_combo.blockSignals(False)
         self._vocab_loading_timer.stop()
         self._vocab_loading_bar.stop()
-        if not field or field in ("--all", "text", "description"):
+        if not field or field in ("text", "description"):
             return
 
-        # Cancel any in-flight vocab worker
-        if self._vocab_worker and self._vocab_worker.isRunning():
-            self._vocab_worker.wait(1000)
+        self._start_vocabulary_load()
+
+    def _start_vocabulary_load(self, prefix: Optional[str] = None) -> None:
+        field = self.field_combo.currentData()
+        if not field or field in ("text", "description"):
+            return
 
         scope_data = self.movie_combo.currentData()
         scope      = scope_data if scope_data else None
 
+        self._vocab_request_id += 1
+        request_id = self._vocab_request_id
+        self.vocab_table.clear()
         self._vocab_loading_bar.start()
         self._vocab_loading_timer.start()
 
@@ -1552,20 +1711,105 @@ class MosaicVisualizer(WindowVisualizer):
             scope        = scope,
             project_path = self.project_path,
             media_type   = self.media_type,
+            prefix       = prefix,
+            parent       = self,
         )
-        self._vocab_worker.items_ready.connect(self._on_vocab_items)
-        self._vocab_worker.error.connect(self._on_vocab_error)
+        self._vocab_worker.result_ready.connect(
+            lambda result, rid=request_id: self._on_vocab_result(result, rid)
+        )
+        self._vocab_worker.error.connect(
+            lambda message, rid=request_id: self._on_vocab_error(message, rid)
+        )
+        self._vocab_worker.finished.connect(self._vocab_worker.deleteLater)
         self._vocab_worker.start()
 
-    def _on_vocab_items(self, items: list) -> None:
-        self._vocab_loading_timer.stop()
-        self._vocab_loading_bar.stop()
-        self.vocab_table.set_items(items)
+    def _on_vocab_result(self, result: dict, request_id: Optional[int] = None) -> None:
+        if request_id is not None and request_id != self._vocab_request_id:
+            return
 
-    def _on_vocab_error(self, message: str) -> None:
+        status = result.get("status")
+        if status == "ready":
+            items = result.get("items", [])
+            self.vocab_nav_combo.blockSignals(True)
+            self.vocab_nav_combo.clear()
+            add_combo_all_item(self.vocab_nav_combo, user_data="--all")
+            for initial in result.get("initials", []):
+                self.vocab_nav_combo.addItem(initial, initial)
+            selected_prefix = result.get("selected_prefix", "--all")
+            selected_index = self.vocab_nav_combo.findData(selected_prefix)
+            self.vocab_nav_combo.setCurrentIndex(max(0, selected_index))
+            self.vocab_nav_combo.setVisible(True)
+            self.vocab_nav_combo.blockSignals(False)
+            self.vocab_table.set_items(
+                items,
+                incremental=len(items) > VOCABULARY_RENDER_THRESHOLD,
+            )
+        elif status == "missing":
+            self._stop_vocab_loading()
+            self.vocab_nav_combo.setVisible(False)
+            self.vocab_table.set_message("Vocabulary index is missing. Rebuild it to continue.")
+        elif status == "stale":
+            self._stop_vocab_loading()
+            self.vocab_nav_combo.setVisible(False)
+            self.vocab_table.set_message("Vocabulary index is stale. Rebuild it to continue.")
+        elif status == "scope_unsupported":
+            self._stop_vocab_loading()
+            self.vocab_nav_combo.setVisible(False)
+            self.vocab_table.set_message("Indexed vocabulary is available for --all titles.")
+        else:
+            self._stop_vocab_loading()
+            self.vocab_nav_combo.setVisible(False)
+            self.vocab_table.set_message("This field is not in the vocabulary index.")
+
+    def _on_vocab_error(self, message: str, request_id: Optional[int] = None) -> None:
+        if request_id is not None and request_id != self._vocab_request_id:
+            return
+        self._stop_vocab_loading()
+        self.vocab_nav_combo.setVisible(False)
+        preview = message.splitlines()[0][:120]
+        self.vocab_table.set_message(f"Error loading vocabulary: {preview}")
+
+    def _on_vocab_nav_changed(self, _index: int) -> None:
+        prefix = self.vocab_nav_combo.currentData()
+        if prefix:
+            self._start_vocabulary_load(prefix)
+
+    def _on_vocab_population_finished(self) -> None:
+        self._stop_vocab_loading()
+
+    def _stop_vocab_loading(self) -> None:
         self._vocab_loading_timer.stop()
         self._vocab_loading_bar.stop()
-        self.vocab_table.set_message("Error loading vocabulary")
+
+    def _on_vocab_rebuild(self) -> None:
+        if self._vocab_rebuild_worker and self._vocab_rebuild_worker.isRunning():
+            return
+
+        self.vocab_rebuild_btn.setEnabled(False)
+        self.vocab_rebuild_btn.setText("Rebuilding...")
+        self.vocab_table.set_message("Rebuilding vocabulary index...")
+        self._vocab_loading_bar.start()
+        self._vocab_loading_timer.start()
+
+        self._vocab_rebuild_worker = VocabularyIndexWorker(self.media_type, self)
+        self._vocab_rebuild_worker.finished_signal.connect(self._on_vocab_rebuild_done)
+        self._vocab_rebuild_worker.error.connect(self._on_vocab_rebuild_error)
+        self._vocab_rebuild_worker.start()
+
+    def _reset_vocab_rebuild_ui(self) -> None:
+        self._vocab_loading_timer.stop()
+        self._vocab_loading_bar.stop()
+        self.vocab_rebuild_btn.setText("Rebuild Vocabulary")
+        self.vocab_rebuild_btn.setEnabled(True)
+
+    def _on_vocab_rebuild_done(self, _output: str) -> None:
+        self._reset_vocab_rebuild_ui()
+        self._on_field_changed()
+
+    def _on_vocab_rebuild_error(self, message: str) -> None:
+        self._reset_vocab_rebuild_ui()
+        preview = message.splitlines()[0][:120]
+        self.vocab_table.set_message(f"Rebuild failed: {preview}")
 
     def _on_vocab_item_clicked(self, value: str) -> None:
         if value:

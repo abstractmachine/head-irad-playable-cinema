@@ -34,7 +34,7 @@ from tool.shortcuts import KEY_PREV_TITLE, KEY_NEXT_TITLE, KEY_PREV_ITEM, KEY_NE
 from visualizers.window_visualizer import WindowVisualizer
 from visualizers.components.inspector import Inspector
 from visualizers.components.tab_panel import TabPanel
-from visualizers.components.combo_popup import style_canonical_combo
+from visualizers.components.combo_popup import add_combo_all_item, style_canonical_combo
 
 from PyQt5.QtCore import Qt, QThread, QEvent, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
@@ -441,7 +441,7 @@ class CloudVisualizer(WindowVisualizer):
         self.media_combo.currentIndexChanged.connect(self._populate_movies)
         scope_layout.addWidget(self.media_combo)
         self.movie_combo = QComboBox()
-        self.movie_combo.addItem("--all", userData=None)
+        add_combo_all_item(self.movie_combo)
         style_canonical_combo(self.movie_combo)
         self.movie_combo.installEventFilter(self)
         scope_layout.addWidget(self.movie_combo)
@@ -819,7 +819,7 @@ class CloudVisualizer(WindowVisualizer):
         media_type = self.media_combo.currentText()
         self.movie_combo.blockSignals(True)
         self.movie_combo.clear()
-        self.movie_combo.addItem("--all", userData=None)
+        add_combo_all_item(self.movie_combo)
         try:
             from data.metadata import get_metadata
             rows = get_metadata(self.project_path, media_type=media_type)

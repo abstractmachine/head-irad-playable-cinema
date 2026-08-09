@@ -74,11 +74,12 @@ def test_activity_timeout_reverts_to_idle_when_not_hovered_or_dragging(app):
         sb.deleteLater()
 
 
-def test_activity_timeout_keeps_active_while_dragging(app):
+def test_activity_timeout_keeps_active_while_dragging(app, monkeypatch):
     sb = JumpScrollBar()
     try:
         sb.setRange(0, 100)
         sb._drag_active = True
+        monkeypatch.setattr(sb, "_left_button_down", lambda: True)
         sb.setValue(50)
 
         sb._activity_timer.stop()
@@ -87,6 +88,28 @@ def test_activity_timeout_keeps_active_while_dragging(app):
         assert sb._active is True   # still dragging, so stays active
     finally:
         sb._drag_active = False
+        sb.deleteLater()
+
+
+def test_activity_timeout_clears_stale_drag_after_lost_release(app, monkeypatch):
+    sb = JumpScrollBar()
+    released = []
+    sb.mouseReleased.connect(lambda: released.append(True))
+    try:
+        sb.setRange(0, 100)
+        sb._drag_active = True
+        monkeypatch.setattr(sb, "_left_button_down", lambda: False)
+        monkeypatch.setattr(sb, "_cursor_over_bar", lambda: False)
+        sb.setValue(50)
+
+        sb._activity_timer.stop()
+        sb._on_activity_timeout()
+
+        assert sb._drag_active is False
+        assert sb._active is False
+        assert ACCENT not in sb.styleSheet()
+        assert released == [True]
+    finally:
         sb.deleteLater()
 
 

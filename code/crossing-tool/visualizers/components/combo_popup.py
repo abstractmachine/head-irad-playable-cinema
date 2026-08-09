@@ -1,9 +1,26 @@
 from __future__ import annotations
 
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import QComboBox, QListView, QFrame
 
 from styles import theme
+
+
+ALL_DISPLAY_TEXT = "<all>"
+
+
+def add_combo_all_item(combo: QComboBox, user_data=None) -> None:
+    """Add a dimmed ``<all>`` display item while preserving caller data."""
+    combo.addItem(ALL_DISPLAY_TEXT, userData=user_data)
+    combo.setItemData(combo.count() - 1, QColor(theme.TEXT_DIM), Qt.ForegroundRole)
+    if combo.property("crossingCanonicalCombo"):
+        _refresh_combo_text_color(combo)
+
+
+def _refresh_combo_text_color(combo: QComboBox) -> None:
+    color = theme.TEXT_DIM if combo.currentText() == ALL_DISPLAY_TEXT else theme.TEXT
+    combo.setStyleSheet(canonical_combo_stylesheet(color))
 
 
 def attach_combo_popup(combo: QComboBox) -> QListView:
@@ -90,5 +107,7 @@ def style_canonical_combo(combo: QComboBox) -> None:
     """
     combo.setFocusPolicy(Qt.NoFocus)
     combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLength)
-    combo.setStyleSheet(canonical_combo_stylesheet())
+    combo.setProperty("crossingCanonicalCombo", True)
+    combo.currentIndexChanged.connect(lambda _index, target=combo: _refresh_combo_text_color(target))
+    _refresh_combo_text_color(combo)
     attach_combo_popup(combo)

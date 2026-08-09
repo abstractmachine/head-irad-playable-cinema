@@ -99,6 +99,7 @@ INSPECTOR_GAP = 3          # canonical inspector spacing/margins (px)
 SECTION_GAP  = INSPECTOR_GAP
 TEXT         = "#ffffff"   # primary text — white
 TEXT_DIM     = "#909090"   # secondary / hint text
+TRIANGLE     = "#bfbfbf"   # 75% grey — disclosure and dropdown indicators
 BORDER       = "#ffffff"   # interactive element borders (buttons, inputs) — white
 UI_BORDER    = "#404040"   # structural chrome borders (group boxes, frames) — 25% grey
 SPLITTER     = "#737373"   # splitter drag handles — 45% grey (barely visible on BG)
@@ -106,6 +107,9 @@ ACCENT       = "#ffff00"   # selections, active, checked states
 ACCENT_TEXT  = "#333333"   # text on ACCENT background (black on yellow; use #ffffff for dark accents)
 ACCENT_FILL_ALPHA = 64     # alpha for accent-colored area fills (25% of 255)
 CANVAS_BG    = "#3a3a3a"   # video / image display areas (dark so content pops)
+TRIANGLE_LEFT = 8          # shared left edge for section/combo triangles
+TRIANGLE_WIDTH = 14        # shared indicator footprint
+TRIANGLE_TEXT_LEFT = 30    # left inset for text following a triangle
 # ---------------------------------------------------------------------------
 # Typography
 # ---------------------------------------------------------------------------
@@ -482,6 +486,69 @@ def tab_strip_stylesheet() -> str:
     )
 
 
+_COMBO_INDICATOR_MARKER = "/* crossing-combo-indicator */"
+
+
+def combo_indicator_stylesheet() -> str:
+    """Return the shared left-side triangle treatment for combo boxes."""
+    return (
+        f"{_COMBO_INDICATOR_MARKER}"
+        f"QComboBox {{ padding-left: {TRIANGLE_TEXT_LEFT}px; }}"
+        f"QComboBox::drop-down {{"
+        f" subcontrol-origin: padding; subcontrol-position: center left;"
+        f" width: 0px; border: none;"
+        f"}}"
+        f"QComboBox::down-arrow {{ image: none; width: 0px; height: 0px; }}"
+    )
+
+
+class _ComboIndicatorFilter:
+    """Factory namespace for keeping indicator QSS on every combo box."""
+
+    @staticmethod
+    def create(parent):
+        from PyQt5.QtCore import QEvent, QObject, Qt
+        from PyQt5.QtWidgets import QComboBox, QLabel
+
+        class ComboIndicatorFilter(QObject):
+            @staticmethod
+            def _ensure_indicator(combo):
+                indicator = combo.findChild(QLabel, "crossingComboIndicator")
+                if indicator is None:
+                    indicator = QLabel("▶", combo)
+                    indicator.setObjectName("crossingComboIndicator")
+                    indicator.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+                    indicator.setAlignment(Qt.AlignCenter)
+                    indicator.setStyleSheet(
+                        f"background: transparent; color: {TRIANGLE}; border: none;"
+                        f" font-family: '{FAMILY_UI}'; font-size: {BASE_PT}pt;"
+                    )
+                    indicator.show()
+                indicator.setGeometry(
+                    TRIANGLE_LEFT, 0, TRIANGLE_WIDTH, combo.height()
+                )
+                indicator.raise_()
+
+            def eventFilter(self, watched, event):  # noqa: N802
+                if isinstance(watched, QComboBox):
+                    if event.type() in (QEvent.Polish, QEvent.StyleChange):
+                        if (
+                            not watched.property("crossingComboIndicatorApplying")
+                            and _COMBO_INDICATOR_MARKER not in watched.styleSheet()
+                        ):
+                            watched.setProperty("crossingComboIndicatorApplying", True)
+                            watched.setStyleSheet(
+                                watched.styleSheet() + combo_indicator_stylesheet()
+                            )
+                            watched.setProperty("crossingComboIndicatorApplying", False)
+                        self._ensure_indicator(watched)
+                    elif event.type() == QEvent.Resize:
+                        self._ensure_indicator(watched)
+                return False
+
+        return ComboIndicatorFilter(parent)
+
+
 def apply_theme(app) -> None:
     """Apply the canonical visualizer style contract to *app*.
 
@@ -508,6 +575,9 @@ def apply_theme(app) -> None:
     _pal.setColor(QPalette.All, QPalette.Highlight,       QColor(ACCENT))
     _pal.setColor(QPalette.All, QPalette.HighlightedText, QColor(ACCENT_TEXT))
     app.setPalette(_pal)
+    combo_indicator_filter = _ComboIndicatorFilter.create(app)
+    app.installEventFilter(combo_indicator_filter)
+    app._crossing_combo_indicator_filter = combo_indicator_filter
 
 
 # ---------------------------------------------------------------------------
@@ -754,7 +824,7 @@ class GripSplitter(QSplitter):
 # JumpScrollBar — vertical scrollbar with hover highlight + click-to-jump
 # ---------------------------------------------------------------------------
 
-from PyQt5.QtWidgets import QScrollBar, QStyle, QStyleOptionSlider  # noqa: E402
+from PyQt5.QtWidgets import QApplication, QScrollBar, QStyle, QStyleOptionSlider  # noqa: E402
 from PyQt5.QtGui import QCursor                                      # noqa: E402
 from PyQt5.QtCore import pyqtSignal, QTimer                          # noqa: E402
 
@@ -876,8 +946,21 @@ class JumpScrollBar(QScrollBar):
         self._set_active(True)
         self._activity_timer.start(SCROLLBAR_ACTIVITY_MS)
 
+    def _cursor_over_bar(self) -> bool:
+        return self.rect().contains(self.mapFromGlobal(QCursor.pos()))
+
+    def _left_button_down(self) -> bool:
+        return bool(QApplication.mouseButtons() & Qt.LeftButton)
+
     def _on_activity_timeout(self) -> None:
-        if not self._drag_active and not self.underMouse():
+        # Splitter hide/show and geometry changes can prevent the matching
+        # release/leave event from reaching this widget. Reconcile against
+        # live input state so stale Qt hover/drag flags cannot pin ACCENT on.
+        if self._drag_active and not self._left_button_down():
+            self._drag_active = False
+            self.releaseMouse()
+            self.mouseReleased.emit()
+        if not self._drag_active and not self._cursor_over_bar():
             self._set_active(False)
 
     def showEvent(self, event) -> None:
@@ -885,7 +968,7 @@ class JumpScrollBar(QScrollBar):
         # If the scrollbar becomes visible while the cursor is already over it
         # (common with ScrollBarAsNeeded), Qt won't fire enterEvent.  Apply the
         # active style immediately so the user gets visual feedback right away.
-        if self.underMouse():
+        if self._cursor_over_bar():
             self._set_active(True)
 
     def _groove(self):
@@ -959,7 +1042,7 @@ class JumpScrollBar(QScrollBar):
             # Dragging changes value continuously, so the activity timer is
             # normally still running here — let it decay naturally instead
             # of snapping back to idle the instant the cursor leaves.
-            if not self._activity_timer.isActive() and not self.rect().contains(self.mapFromGlobal(QCursor.pos())):
+            if not self._activity_timer.isActive() and not self._cursor_over_bar():
                 self._set_active(False)
             self.mouseReleased.emit()
             return

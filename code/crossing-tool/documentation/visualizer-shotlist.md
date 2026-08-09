@@ -14,7 +14,7 @@ crossing visualizer shotlist
 
 ### Browser — Video Playback
 
-The full-window playback area. Displays the current frame of the active shot with the subtitle overlay on top. A timeline scrubber at the bottom lets you scrub the whole film — the scrubber's handle length reflects how much of the film the current shot spans. The Browser is for viewing, scrubbing, and navigating playback only; it holds no annotation or inspector-style controls.
+The full-window playback area. Displays the current frame of the active shot with subtitles overlaid inside the bottom of the image. Subtitle text uses twice the standard subtitle size and leaves one line of space below the final line, including when the image is letterboxed. A timeline scrubber at the bottom lets you scrub the whole film — the scrubber's handle length reflects how much of the film the current shot spans. The Browser is for viewing, scrubbing, and navigating playback only; it holds no annotation or inspector-style controls.
 
 ### Scene panel
 

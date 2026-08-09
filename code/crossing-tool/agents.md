@@ -212,6 +212,17 @@ before writing anything that "feels shared."
   background gets a `SweepBar` on its title (`section.set_subbar(bar)`), started/
   stopped around the async operation — in **every** completion path (success AND
   error), not just success.
+- **Large widget-list population**: a worker can make data retrieval cheap while the
+  GUI still freezes constructing thousands of row widgets. Use Mosaic's
+  `VocabularyTable` pattern for size-to-content Inspector lists: fetch and prepare
+  data in a worker; create rows in bounded `QTimer` batches so the event loop keeps
+  running; while batching, hide only the table and disable its updates/layout; then
+  re-enable layout and reveal the completed table exactly once. Keep navigation and
+  the section-header `SweepBar` visible throughout. This avoids an outer `TabPanel`
+  scroll-area relayout/repaint after every batch — the reason collapsing a section
+  can otherwise make the same population appear dramatically faster. Do not apply
+  this blindly to virtualized item views (`QListView`/`QTableView`), which should use
+  their model APIs instead of constructing one QWidget per row.
 - **Metadata tables** use `MetadataBlock`, not ad-hoc `QLabel` grids.
 - **Colors/spacing/typography are always tokens from `styles/theme.py`**, never
   hardcoded hex/pixel literals: `BG`/`PANEL_BG`/`TAB_BG`/`CELL_BG`/`CANVAS_BG`

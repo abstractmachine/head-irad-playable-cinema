@@ -1136,21 +1136,23 @@ class ShotlistVisualizer(WindowVisualizer):
         # unaffected by subtitle content or height.
         self.subtitle_label = QLabel()
         self.subtitle_label.setAlignment(Qt.AlignCenter)
-        self.subtitle_label.setFont(theme.font_subtitle())
+        subtitle_font = theme.font_subtitle()
+        subtitle_font.setPointSize(theme.SUBTITLE_PT * 2)
+        self.subtitle_label.setFont(subtitle_font)
         self.subtitle_label.setWordWrap(True)
         self.subtitle_label.setStyleSheet(
             f"color: {theme.TEXT}; background-color: transparent; padding: 2px 8px;"
-            f" font-size: {theme.SUBTITLE_PT}pt;"
+            f" font-size: {theme.SUBTITLE_PT * 2}pt;"
         )
 
         _sub_overlay = QWidget()
         _sub_overlay.setAttribute(Qt.WA_TransparentForMouseEvents)
         _sub_overlay.setStyleSheet("background: transparent;")
-        _sub_ol = QVBoxLayout(_sub_overlay)
-        _sub_ol.setContentsMargins(0, 0, 0, 8)
-        _sub_ol.setSpacing(0)
-        _sub_ol.addStretch()
-        _sub_ol.addWidget(self.subtitle_label)
+        self._subtitle_overlay_layout = QVBoxLayout(_sub_overlay)
+        self._subtitle_overlay_layout.setContentsMargins(0, 0, 0, 0)
+        self._subtitle_overlay_layout.setSpacing(0)
+        self._subtitle_overlay_layout.addStretch()
+        self._subtitle_overlay_layout.addWidget(self.subtitle_label)
 
         video_container = QWidget()
         video_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
@@ -1741,6 +1743,19 @@ class ShotlistVisualizer(WindowVisualizer):
             Qt.SmoothTransformation
         )
         self.frame_label.setPixmap(scaled_pixmap)
+        self._position_subtitle_overlay(scaled_pixmap)
+
+    def _position_subtitle_overlay(self, scaled_pixmap: QPixmap) -> None:
+        """Keep subtitles inside the displayed frame with one text-line below."""
+        if not hasattr(self, "_subtitle_overlay_layout") or scaled_pixmap.isNull():
+            return
+        horizontal_letterbox = max(0, (self.frame_label.width() - scaled_pixmap.width()) // 2)
+        vertical_letterbox = max(0, (self.frame_label.height() - scaled_pixmap.height()) // 2)
+        horizontal_inset = horizontal_letterbox + 8
+        bottom_inset = vertical_letterbox + self.subtitle_label.fontMetrics().lineSpacing()
+        self._subtitle_overlay_layout.setContentsMargins(
+            horizontal_inset, 0, horizontal_inset, bottom_inset
+        )
     
     def toggle_play_pause(self):
         """Toggle video playback."""
