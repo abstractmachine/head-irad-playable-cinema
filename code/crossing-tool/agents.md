@@ -345,8 +345,10 @@ mirroring `_ctx()`'s own "tuple on success, JSON error string on failure" conven
 
 **Access policy** (by convention + a shared `_output_dir()` helper, not sandboxed):
 tools read freely from `data/`, `media/`, `preferences/`; generation tools write
-**only** under `output/<subdir>/` (flipbooks, mosaics, clouds, compositions, catalogs,
-plus a `output/claude/YYYY-MM-DD/` scratch space). No tool ever writes to
+**only** under `output/<subdir>/` (flipbooks, mosaics, clouds, compositions, catalogs).
+The generic derived-workspace conventions are `output/agent/` for scratch or working
+artifacts and `output/review/` for reviewable or provisional artifacts; these names do
+not imply a queue or promotion workflow. No tool ever writes to
 `data/annotations/`, `data/shotlists/`, `data/metadata/`, or `preferences/` — anything
 destructive or expensive (annotation, motif generation, palette building, shotlist
 editing, metadata editing, subtitle download, model management, vocabulary rebuild,

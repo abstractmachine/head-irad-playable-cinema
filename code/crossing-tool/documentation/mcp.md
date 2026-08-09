@@ -139,11 +139,11 @@ Writes a structured JSON index of all films to `output/catalogs/`. Pass `include
   clouds/          ← generate_cloud
   compositions/    ← generate_composition
   catalogs/        ← generate_catalog
-  claude/          ← Claude Work folder (scratch space for Claude artifacts)
-    YYYY-MM-DD/    ← date-scoped subfolder, created on first write
+  agent/           ← scratch or working derived artifacts
+  review/          ← reviewable or provisional derived artifacts
 ```
 
-The `claude/` folder is a designated safe scratch space. Claude may write freely to it via generation tools. It is never read back into source data.
+MCP reads canonical project data but does not write back to it. All MCP-generated artifacts are derived outputs under `output/`. When scratch or working artifacts are needed, they belong in `output/agent/`; reviewable or provisional artifacts belong in `output/review/`. These folders are workspace conventions, not review queues or promotion workflows.
 
 ---
 

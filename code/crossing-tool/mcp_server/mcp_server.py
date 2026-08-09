@@ -54,8 +54,8 @@ Output folder convention
     clouds/              ← generate_cloud
     compositions/        ← generate_composition
     catalogs/            ← generate_catalog
-    claude/              ← Claude Work folder (scratch space for Claude artifacts)
-      YYYY-MM-DD/        ← date-scoped subfolder created on first write
+        agent/               ← scratch or working derived artifacts
+        review/              ← reviewable or provisional derived artifacts
 """
 
 from __future__ import annotations
@@ -157,14 +157,6 @@ def _resolve_single_film(project_path: str, film: str, media_type: str) -> "tupl
 def _output_dir(project_path: str, subdir: str) -> Path:
     """Return and create an output subdirectory under <project>/output/."""
     d = Path(project_path) / "output" / subdir
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-def _claude_dir(project_path: str) -> Path:
-    """Return the date-scoped Claude Work folder, creating it if needed."""
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    d = Path(project_path) / "output" / "claude" / today
     d.mkdir(parents=True, exist_ok=True)
     return d
 
