@@ -2,7 +2,7 @@
 
 ![Illustration Visualizer screenshot](./images/visualizers/visualizer-illustration.png)
 
-The `Illustration` visualizer is a catalog browser for extracted object silhouettes. It displays all transparent PNG cutouts in the silhouette cache, filtered by vocabulary label, with quality controls and a link to open the source shot in the Shotlist Visualizer.
+The `Illustration` visualizer browses extracted object silhouettes and generated engravings. It reads compact browse indexes so large catalogs open without scanning every metadata sidecar.
 
 Open it with:
 
@@ -14,7 +14,7 @@ crossing visualizer illustration
 
 ### Left — Thumbnail Grid
 
-Displays all silhouette objects for the selected label. Objects are rendered on a neutral background as transparent PNGs. Results are paged in batches of 100; click **Load 100 more ↓** to continue.
+Displays a viewport-sized page of silhouettes or engravings. Page cells are populated incrementally so large catalogs do not block the window.
 
 Click any thumbnail to select it and view its metadata in the Object panel.
 
@@ -74,6 +74,14 @@ When a thumbnail is selected, shows its metadata:
 
 The **SAM-3 Explorer →** button at the bottom-right opens an interactive shot inspection panel. Browse movies → scenes → shots, enter a concept word, and click **Run SAM-3** to see segmentation masks overlaid on the best frame for that shot.
 
-## Requirements
+## Browse Index
 
-Silhouette data must be extracted first using `crossing silhouette build`. Data is read from `data/silhouettes/`.
+Use **Rebuild Index** in either source tab after catalog changes. The action rebuilds both source indexes for the selected media type. The equivalent CLI command is:
+
+```bash
+crossing index illustration --media movie
+```
+
+Missing or stale indexes are reported in the pagination area; the visualizer does not silently scan canonical catalog directories.
+
+Indexes use a streaming format with precomputed filter values so opening filter menus remains responsive while large catalogs load. Only the visible source loads at startup; the other source loads when its tab is first selected. Indexes created by older versions are marked stale and require one rebuild.

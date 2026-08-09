@@ -10,9 +10,8 @@ only knows how to browse and select them.
 
 Configured once at construction time.  Two built-in sources are supported:
 
-    ``"silhouettes"``  — scans the silhouette catalog via
-                         ``services.silhouette_catalog.scan_catalog``
-    ``"engravings"``   — scans ``data/engravings/catalog/`` directly
+    ``"silhouettes"``  — reads the compact silhouette browse index
+    ``"engravings"``   — reads the compact engraving browse index
 
 Filter hierarchy
 ----------------
@@ -137,6 +136,7 @@ class _CatalogLoader(QThread):
         self._cancelled   = False
         self.result_items: list = []
         self.result_cache: dict = {}
+        self.result_status: dict = {"status": "missing"}
 
     def cancel(self) -> None:
         """Signal that the result should be discarded even if the scan
@@ -184,12 +184,13 @@ class _CatalogLoader(QThread):
         # _load() is a pure read — no side-effects on the source object.
         items = self._source._load(self._media_type)
         if not self._cancelled:
-            # Build the filter cache while still in the background thread.
-            cache = self._build_filter_cache(items)
+            status = self._source.load_status()
+            cache = status.get("filter_cache") or self._build_filter_cache(items)
             # Store results on self so the main-thread slot can read them
             # without any cross-thread argument marshalling by PyQt5.
             self.result_items = items
             self.result_cache = cache
+            self.result_status = status
             self.loaded.emit()   # zero-arg signal — no data copied
 
 # ---------------------------------------------------------------------------
@@ -284,6 +285,7 @@ class IllustrationBrowser(QWidget):
         page_size:  int = _PAGE_SIZE,
         detach_controls: bool = False,
         light_bg: bool = False,
+        auto_load: bool = True,
         parent: Optional[QWidget] = None,
     ) -> None:
         """Create an IllustrationBrowser.
@@ -307,6 +309,7 @@ class IllustrationBrowser(QWidget):
         # _page_size is now a dynamic property — see @property below.
         # The constructor argument is kept for API compatibility but not stored.
         self._detach_controls  = detach_controls
+        self._load_requested   = False
 
         # All items for the current media_type — reloaded by reload()
         self._all_items: list[dict] = []
@@ -322,6 +325,12 @@ class IllustrationBrowser(QWidget):
 
         # ThumbnailCell widgets for the current grid page
         self._cells: list[ThumbnailCell] = []
+        self._pending_page_records: list[dict] = []
+        self._pending_cell_index: int = 0
+        self._pending_abs_start: int = 0
+        self._grid_population_timer = QTimer(self)
+        self._grid_population_timer.setSingleShot(True)
+        self._grid_population_timer.timeout.connect(self._append_cell_batch)
         # Actual column count last used when building the grid — used by
         # navigate_grid so arrow keys always match the visible layout.
         self._grid_cols: int = 1
@@ -335,6 +344,9 @@ class IllustrationBrowser(QWidget):
         # Pre-computed filter data built by _CatalogLoader in the background.
         # Keys: "films", "fields", "letters", "counts".
         self._filter_cache: dict = {}
+        self._index_status: dict = {
+            "status": "loading" if media_type and auto_load else "idle"
+        }
         # Debounce timer: fires after the user stops resizing the window.
         self._resize_timer = QTimer(self)
         self._resize_timer.setSingleShot(True)
@@ -344,8 +356,9 @@ class IllustrationBrowser(QWidget):
         self._updating: bool = False
 
         self._build_ui()
-        # Defer first load until Qt finishes the initial layout pass
-        QTimer.singleShot(0, self.reload)
+        if auto_load:
+            # Defer first load until Qt finishes the initial layout pass.
+            QTimer.singleShot(0, self.reload)
 
     # ------------------------------------------------------------------ public API
 
@@ -360,7 +373,11 @@ class IllustrationBrowser(QWidget):
         Data-access responsibility remains in the source. The browser triggers
         reloads but does not scan directories or parse metadata files itself.
         """
+        self._load_requested = True
         self._stop_catalog_loader()
+        self._index_status = {
+            "status": "loading" if self._media_type else "idle"
+        }
         # Always clear combos and grid immediately so the UI reflects the new
         # (possibly empty) state even before the background scan finishes.
         self._all_items      = []
@@ -368,6 +385,7 @@ class IllustrationBrowser(QWidget):
         self._selected_index = -1
         self._page_index     = 0
         self._rebuild_item_combo()
+        self._update_pagination()
 
         if not self._media_type:
             self._loading_timer.stop()
@@ -388,6 +406,7 @@ class IllustrationBrowser(QWidget):
         loader = self._catalog_loader
         items  = loader.result_items
         cache  = loader.result_cache
+        self._index_status = loader.result_status
         self._loading_timer.stop()
         self._loading_bar.stop()
         self._stop_loader()          # cancel any stale thumbnail loader
@@ -1165,8 +1184,14 @@ class IllustrationBrowser(QWidget):
 
     def _rebuild_grid(self) -> None:
         """Clear the grid and populate it with ThumbnailCell widgets for the
-        current page of filtered items."""
+        current page of filtered items in bounded event-loop batches."""
         self._stop_loader()
+        self._grid_population_timer.stop()
+        self._pending_page_records = []
+        self._pending_cell_index = 0
+        self._grid_layout.setEnabled(True)
+        self._grid_widget.setUpdatesEnabled(True)
+        self._grid_widget.setVisible(True)
 
         # Remove all existing cells from the layout and destroy them.
         while self._grid_layout.count():
@@ -1176,52 +1201,89 @@ class IllustrationBrowser(QWidget):
                 w.deleteLater()
         self._cells = []
 
-        page_records = self._current_page_records()
-        cols      = self._cols()
-        self._grid_cols = cols   # remember for navigate_grid
-        abs_start = self._page_index * self._page_size
-
-        for i, rec in enumerate(page_records):
-            label       = rec.get("label", "")
-            stem        = rec.get("filename_stem", "")
-            frame       = rec.get("frame", "")
-            is_best     = bool(rec.get("human_best"))
-            abs_idx     = abs_start + i
-            is_selected = abs_idx == self._selected_index
-
-            tip = f"{label}  {_clean_stem(stem)}"
-            if frame:
-                tip += f"  f:{frame}"
-
-            cell = ThumbnailCell(index=i, size=self._thumb_size, tooltip=tip)
-            cell.set_light_bg(self._light_bg)
-            cell.set_selected(is_selected)
-            cell.set_highlighted(is_best)
-            cell.clicked.connect(self._on_cell_clicked)
-            cell.doubleClicked.connect(self._on_cell_double_clicked)
-
-            # Build drag-and-drop payload via source thumbnail resolution so
-            # non-JSON-backed sources (e.g. engraving output paths) can drag
-            # their actual image file instead of a derived sidecar path.
-            drag_path = self._source.thumbnail_path(rec)
-            if drag_path is None:
-                path_raw = rec.get("path")
-                if path_raw:
-                    drag_path = Path(str(path_raw)).with_suffix(".png")
-            if drag_path is not None:
-                cell.drag_path = str(drag_path)
-                cell.drag_meta = {
-                    k: str(v) if isinstance(v, Path) else v
-                    for k, v in rec.items()
-                    if not isinstance(v, (dict, list))
-                }
-
-            self._grid_layout.addWidget(cell, i // cols, i % cols)
-            self._cells.append(cell)
-
+        self._pending_page_records = self._current_page_records()
+        self._grid_cols = self._cols()
+        self._pending_abs_start = self._page_index * self._page_size
         self._update_status()
         self._update_pagination()
+
+        if not self._pending_page_records:
+            if self._catalog_loader is None or not self._catalog_loader.isRunning():
+                self._loading_timer.stop()
+                self._loading_bar.stop()
+            return
+
+        self._loading_bar.start()
+        self._loading_timer.start()
+        self._grid_widget.setUpdatesEnabled(False)
+        self._grid_widget.setVisible(False)
+        self._grid_layout.setEnabled(False)
+        self._grid_population_timer.start(0)
+
+    def _append_cell_batch(self, batch_size: int = 20) -> None:
+        """Append one bounded batch of current-page cells on the GUI thread."""
+        stop = min(
+            self._pending_cell_index + batch_size,
+            len(self._pending_page_records),
+        )
+        for index in range(self._pending_cell_index, stop):
+            rec = self._pending_page_records[index]
+            self._append_cell(index, rec)
+        self._pending_cell_index = stop
+        if stop < len(self._pending_page_records):
+            self._grid_population_timer.start(0)
+            return
+
+        self._pending_page_records = []
+        self._grid_layout.setEnabled(True)
+        self._grid_widget.setVisible(True)
+        self._grid_widget.setUpdatesEnabled(True)
+        self._grid_widget.updateGeometry()
+        self._grid_widget.update()
+        self._loading_timer.stop()
+        self._loading_bar.stop()
         self._start_loader()
+
+    def _append_cell(self, index: int, rec: dict) -> None:
+        """Create and attach one cell from the pending current page."""
+        label       = rec.get("label", "")
+        stem        = rec.get("filename_stem", "")
+        frame       = rec.get("frame", "")
+        is_best     = bool(rec.get("human_best"))
+        abs_idx     = self._pending_abs_start + index
+        is_selected = abs_idx == self._selected_index
+
+        tip = f"{label}  {_clean_stem(stem)}"
+        if frame:
+            tip += f"  f:{frame}"
+
+        cell = ThumbnailCell(index=index, size=self._thumb_size, tooltip=tip)
+        cell.set_light_bg(self._light_bg)
+        cell.set_selected(is_selected)
+        cell.set_highlighted(is_best)
+        cell.clicked.connect(self._on_cell_clicked)
+        cell.doubleClicked.connect(self._on_cell_double_clicked)
+
+        # Build drag-and-drop payload via source thumbnail resolution so
+        # non-JSON-backed sources (e.g. engraving output paths) can drag
+        # their actual image file instead of a derived sidecar path.
+        drag_path = self._source.thumbnail_path(rec)
+        if drag_path is None:
+            path_raw = rec.get("path")
+            if path_raw:
+                drag_path = Path(str(path_raw)).with_suffix(".png")
+        if drag_path is not None:
+            cell.drag_path = str(drag_path)
+            cell.drag_meta = {
+                k: str(v) if isinstance(v, Path) else v
+                for k, v in rec.items()
+                if not isinstance(v, (dict, list))
+            }
+
+        self._grid_layout.addWidget(
+            cell, index // self._grid_cols, index % self._grid_cols
+        )
+        self._cells.append(cell)
 
     def _start_loader(self) -> None:
         """Start a ThumbnailLoader for the current page records."""
@@ -1259,7 +1321,14 @@ class IllustrationBrowser(QWidget):
         total      = len(self._filtered_items)
         page_count = max(1, math.ceil(total / self._page_size))
         if total == 0:
-            self._page_lbl.setText("No items")
+            status = self._index_status.get("status")
+            messages = {
+                "loading": "Loading",
+                "missing": "Index missing",
+                "stale": "Index stale",
+                "error": "Index error",
+            }
+            self._page_lbl.setText(messages.get(status, "No items"))
             self._prev_btn.setEnabled(False)
             self._next_btn.setEnabled(False)
         else:

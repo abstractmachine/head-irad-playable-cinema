@@ -34,7 +34,7 @@ except ImportError:
 
 # Fix Qt plugin conflict with OpenCV
 # Import PyQt5 first, then remove OpenCV's Qt plugin path
-from PyQt5.QtCore import Qt, QTimer, QEvent, QThread, QObject, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, QEvent, QThread, QObject, QPointF, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel,
@@ -43,7 +43,7 @@ from PyQt5.QtWidgets import (
     QTextEdit, QGridLayout, QStackedLayout,
 )
 from styles.theme import JumpScrollBar
-from PyQt5.QtGui import QFont, QPixmap, QImage, QColor, QPalette, QBrush
+from PyQt5.QtGui import QFont, QPixmap, QImage, QColor, QPalette, QBrush, QMouseEvent
 from PyQt5.QtCore import pyqtSignal as _pyqtSignal
 from tool.shortcuts import (
     KEY_PREV_TITLE, KEY_NEXT_TITLE,
@@ -70,6 +70,85 @@ from data.index import (
     get_embeddings_path,
     load_embeddings,
 )
+
+
+class _TimelineScrollBar(JumpScrollBar):
+    def __init__(self, parent=None) -> None:
+        super().__init__(Qt.Horizontal, parent)
+        self._hit_area = None
+
+    def _on_value_changed(self, _value: int) -> None:
+        """Keep timeline emphasis hover/drag-driven during video playback."""
+        self._activity_timer.stop()
+        self._set_active(self._drag_active or self._cursor_over_bar())
+
+    def _cursor_over_bar(self) -> bool:
+        if self._hit_area is None:
+            return super()._cursor_over_bar()
+        local = self._hit_area.mapFromGlobal(self.cursor().pos())
+        return self._hit_area.rect().contains(local)
+
+    def leaveEvent(self, event) -> None:
+        super().leaveEvent(event)
+        # Moving from the visible bar into the larger host must still count
+        # as hovering the timeline, even though the child itself was left.
+        if self._cursor_over_bar():
+            self._set_active(True)
+
+
+class _TimelineHitArea(QWidget):
+    """Fifteen-bar-high mouse target around the unchanged timeline control."""
+
+    def __init__(self, scrollbar: _TimelineScrollBar, parent=None) -> None:
+        super().__init__(parent)
+        self._scrollbar = scrollbar
+        self._scrollbar.setParent(self)
+        self._scrollbar._hit_area = self
+        self.setFixedHeight(theme.SCROLLBAR_W * 15)
+        self.setMouseTracking(True)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._scrollbar.setGeometry(
+            0,
+            self.height() - theme.SCROLLBAR_W,
+            self.width(),
+            theme.SCROLLBAR_W,
+        )
+
+    def enterEvent(self, event) -> None:
+        self._scrollbar._set_active(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._scrollbar._activity_timer.stop()
+        if not self._scrollbar._drag_active:
+            self._scrollbar._set_active(False)
+        super().leaveEvent(event)
+
+    def _forward_mouse_event(self, event) -> None:
+        local = QPointF(
+            event.pos().x(),
+            min(theme.SCROLLBAR_W - 1, max(0, event.pos().y() - self._scrollbar.y())),
+        )
+        forwarded = QMouseEvent(
+            event.type(),
+            local,
+            event.button(),
+            event.buttons(),
+            event.modifiers(),
+        )
+        QApplication.sendEvent(self._scrollbar, forwarded)
+        event.accept()
+
+    def mousePressEvent(self, event) -> None:
+        self._forward_mouse_event(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        self._forward_mouse_event(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        self._forward_mouse_event(event)
 
 
 # ---------------------------------------------------------------------------
@@ -1168,7 +1247,7 @@ class ShotlistVisualizer(WindowVisualizer):
         # Timeline scrubber — a real scrollbar whose handle length reflects
         # the current shot's frame span relative to the whole film's length,
         # the same idea as the Book Visualizer's bottom position bar.
-        self.timeline_slider = JumpScrollBar(Qt.Horizontal)
+        self.timeline_slider = _TimelineScrollBar()
         self.timeline_slider.setMinimum(0)
         self.timeline_slider.setMaximum(max(0, self.total_frames - 1))
         self.timeline_slider.setPageStep(1)
@@ -1179,7 +1258,9 @@ class ShotlistVisualizer(WindowVisualizer):
         self.timeline_slider.mousePressed.connect(self._on_timeline_press)
         self.timeline_slider.mouseReleased.connect(self._on_timeline_release)
         self.timeline_slider.setToolTip("Scrub timeline  [←/→ frame  Shift+←/→ 1s]")
-        browser_layout.addWidget(self.timeline_slider)
+        self.timeline_hit_area = _TimelineHitArea(self.timeline_slider)
+        self.timeline_hit_area.setToolTip(self.timeline_slider.toolTip())
+        browser_layout.addWidget(self.timeline_hit_area)
 
         return browser
 

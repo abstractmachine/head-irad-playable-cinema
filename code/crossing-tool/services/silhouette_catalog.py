@@ -622,6 +622,12 @@ def extract_objects_for_shot(
     if not saved_paths:
         return {"saved": [], "skipped": skipped_quality + skipped_confidence, "reason": "PNG extraction failed for all masks"}
 
+    try:
+        from services.illustration_index import invalidate_index
+        invalidate_index(project_path, "silhouettes", media_type)
+    except Exception:
+        pass
+
     return {
         "saved": saved_paths,
         "skipped": skipped_quality + skipped_confidence + (len(deduped) - len(saved_paths)),
@@ -1121,6 +1127,13 @@ def clear_catalog(
                 if not any(item_dir.iterdir()):
                     item_dir.rmdir()
                     deleted_dirs += 1
+
+    if deleted_files and not dry_run:
+        try:
+            from services.illustration_index import invalidate_index
+            invalidate_index(project_path, "silhouettes", media_type)
+        except Exception:
+            pass
 
     return {
         "deleted_files": deleted_files,

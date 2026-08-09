@@ -52,6 +52,11 @@ def set_human_best(json_path: str | Path, *, human_best: bool = True) -> None:
     from data.annotate import atomic_write_text
 
     atomic_write_text(json_path, json.dumps(data, indent=2, ensure_ascii=False))
+    try:
+        from services.illustration_index import invalidate_for_record
+        invalidate_for_record(json_path, "silhouettes")
+    except Exception:
+        pass
 
 
 def clear_human_best_for_label(

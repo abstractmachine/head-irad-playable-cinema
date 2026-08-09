@@ -11,15 +11,8 @@ IllustrationBrowser only calls:
 
 The browser never calls ``scan_catalog``, walks directories, or reads JSON.
 
-Built-in sources
-----------------
-SilhouetteSource
-    Loads from the silhouette catalog via
-    ``services.silhouette_catalog.scan_catalog``.
-
-EngravingSource
-    Walks ``data/engravings/catalog/<media_type>/`` and builds flat records
-    from ``engraving.json`` sidecars.
+Built-in sources load compact, derived browse indexes. Missing or stale
+indexes remain explicit and never trigger a hidden canonical-directory scan.
 
 Adding a new illustration type
 ------------------------------
@@ -57,6 +50,7 @@ class IllustrationSource(ABC):
     def __init__(self, project_path: str) -> None:
         self._project_path = project_path
         self._records: list[dict] = []
+        self._load_status: dict = {"status": "missing"}
 
     def reload(self, media_type: str = "movie") -> None:
         """Reload all records for *media_type*.
@@ -73,6 +67,10 @@ class IllustrationSource(ABC):
         mutating source-owned storage.
         """
         return list(self._records)
+
+    def load_status(self) -> dict:
+        """Return status from the most recent index load."""
+        return dict(self._load_status)
 
     @abstractmethod
     def _load(self, media_type: str) -> list[dict]:
@@ -97,9 +95,8 @@ class IllustrationSource(ABC):
 class SilhouetteSource(IllustrationSource):
     """Source for silhouette catalog records.
 
-    Delegates to ``services.silhouette_catalog.scan_catalog`` which returns a
-    flat list of object metadata dicts, each augmented with a ``path`` key
-    pointing to the JSON sidecar file.  The sibling ``.png`` is the
+    Loads the compact silhouette browse index. Each record includes a ``path``
+    key pointing to its canonical JSON sidecar; the sibling ``.png`` is the
     transparent extracted object.
 
     Sort support
@@ -122,10 +119,10 @@ class SilhouetteSource(IllustrationSource):
     # ------------------------------------------------------------------ sort
 
     def set_sort_keys(self, sort_keys: list[str]) -> None:
-        """Sort the cached records by *sort_keys* without reloading from disk.
+        """Set sort keys for the next worker-driven indexed reload.
 
-        Call this when the user changes the sort controls.  Follow with
-        ``IllustrationBrowser.refresh()`` to display the new order.
+        Call this when the user changes the sort controls, then reload the
+        browser so large catalog sorts stay off the GUI thread.
 
         Parameters
         ----------
@@ -135,7 +132,6 @@ class SilhouetteSource(IllustrationSource):
             Defaults to ``["confidence"]`` when the list is empty.
         """
         self._sort_keys = list(sort_keys)   # empty list = no sort
-        self._records = self._apply_sort(list(self._records))
 
     @staticmethod
     def _numeric_score(rec: dict, key: str) -> float:
@@ -232,16 +228,12 @@ class SilhouetteSource(IllustrationSource):
 
     def _load(self, media_type: str) -> list[dict]:
         if not media_type:
+            self._load_status = {"status": "missing"}
             return []
-        try:
-            from services.silhouette_catalog import scan_catalog
-            records = [
-                r for r in scan_catalog(self._project_path, media_type=media_type)
-                if "error" not in r
-            ]
-            return self._apply_sort(records)
-        except Exception:
-            return []
+        from services.illustration_index import load_index
+
+        self._load_status = load_index(self._project_path, "silhouettes", media_type)
+        return self._apply_sort(self._load_status.get("items", []))
 
     def thumbnail_path(self, record: dict) -> Optional[Path]:
         """Return the sibling PNG for a silhouette JSON sidecar record."""
@@ -259,9 +251,8 @@ class SilhouetteSource(IllustrationSource):
 class EngravingSource(IllustrationSource):
     """Source for engraving catalog records.
 
-    Walks ``data/engravings/catalog/<media_type>/`` recursively, reading every
-    ``engraving.json`` sidecar.  Derives identity fields (label, filename_stem,
-    mode, object_id) from the directory structure::
+    Loads the compact engraving browse index. Canonical assets retain this
+    directory structure::
 
         catalog/<media_type>/<filename_stem>/<label>/<object_id>/<mode>/
             engraving.json
@@ -312,74 +303,13 @@ class EngravingSource(IllustrationSource):
         self._apply_mode_filter()
 
     def _load(self, media_type: str) -> list[dict]:
-        import json as _json
-
-        base = (
-            Path(self._project_path)
-            / "data" / "engravings" / "catalog"
-            / media_type
-        )
-        if not base.is_dir():
+        if not media_type:
+            self._load_status = {"status": "missing"}
             return []
+        from services.illustration_index import load_index
 
-        results: list[dict] = []
-        for eng_json_path in sorted(base.rglob("engraving.json")):
-            try:
-                meta = _json.loads(eng_json_path.read_text(encoding="utf-8"))
-
-                # Derive identity fields from the directory structure:
-                #   catalog/<media_type>/<filename_stem>/<label>/<object_id>/<mode>/
-                mode_dir      = eng_json_path.parent
-                label_dir     = mode_dir.parent.parent
-                film_dir      = label_dir.parent
-
-                label         = label_dir.name
-                filename_stem = film_dir.name
-                mode          = mode_dir.name
-                object_id     = mode_dir.parent.name
-
-                raw_png_path = mode_dir / "raw.png"
-                raw_png      = str(raw_png_path) if raw_png_path.exists() else ""
-
-                # Prefer the named output PNG; fall back to raw.png
-                output_png = str(meta.get("output_png", ""))
-                if output_png and not Path(output_png).exists():
-                    named = [
-                        p for p in mode_dir.glob("*.png")
-                        if p.name != "raw.png"
-                    ]
-                    output_png = str(named[0]) if named else raw_png
-
-                # Use the explicit status field as the authoritative lifecycle state.
-                # Only "generated" engravings have a viewable image.
-                # Migration of legacy files (no status) happens transparently
-                # inside read_engraving_meta when the status is first read.
-                from services.engraving_paths import read_engraving_meta
-                eng_meta = read_engraving_meta(eng_json_path)
-                if (eng_meta or {}).get("status") != "generated":
-                    continue
-
-                record: dict = {
-                    "label":          label,
-                    "field":          "--all",   # no annotation taxonomy
-                    "filename_stem":  filename_stem,
-                    "media_type":     media_type,
-                    "mode":           mode,
-                    "object_id":      object_id,
-                    "output_png":     output_png or raw_png,
-                    "raw_png":        raw_png,
-                    "path":           eng_json_path,
-                }
-                # Merge scalar fields from engraving.json (model, steps, etc.)
-                for k, v in meta.items():
-                    if k not in record and not isinstance(v, (dict, list)):
-                        record[k] = v
-
-                results.append(record)
-            except Exception:
-                continue
-
-        return results
+        self._load_status = load_index(self._project_path, "engravings", media_type)
+        return self._load_status.get("items", [])
 
     def thumbnail_path(self, record: dict) -> Optional[Path]:
         """Return the best available output PNG for an engraving record."""

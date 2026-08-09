@@ -250,4 +250,10 @@ def compute_scores_for_catalog(
             if verbose:
                 print(f"Error scoring {rec.get('path')}: {exc}")
 
+    if processed:
+        try:
+            from services.illustration_index import invalidate_index
+            invalidate_index(project_path, "silhouettes", media_type)
+        except Exception:
+            pass
     return {"processed": processed, "skipped": skipped, "errors": errors}

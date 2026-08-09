@@ -442,6 +442,10 @@ crossing index vocabulary
 crossing index vocabulary --media gameplay
 crossing index vocabulary --all              # both movies and gameplay
   --force                                    # rebuild even if cache exists
+
+# Rebuild both compact browse indexes used by the Illustration visualizer
+crossing index illustration
+crossing index illustration --media gameplay
 ```
 
 ## Generate

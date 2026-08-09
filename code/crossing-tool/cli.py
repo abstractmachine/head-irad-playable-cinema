@@ -4492,6 +4492,8 @@ def cmd_index(args):
         _index_stats(args)
     elif sub == "silhouette":
         _index_silhouette(args)
+    elif sub == "illustration":
+        _index_illustration(args)
     elif sub == "palette":
         _index_palette(args)
     elif sub == "motif":
@@ -5627,6 +5629,21 @@ def _index_silhouette(args):
     else:
         print("✗ index silhouette: specify a subcommand (extract, audit, clear, score, enrich, backfill-scanned)", file=sys.stderr)
         sys.exit(1)
+
+
+def _index_illustration(args):
+    """Rebuild both derived browse indexes used by Illustration."""
+    from services.illustration_index import rebuild_all
+
+    project_path = prefs.get("path")
+    media_type = normalize_media_type(getattr(args, "media", "movie"))
+    results = rebuild_all(project_path, media_type)
+    for source in ("silhouettes", "engravings"):
+        result = results[source]
+        if result.get("status") != "ready":
+            print(f"✗ {source}: index changed while rebuilding", file=sys.stderr)
+            sys.exit(1)
+        print(f"{source.capitalize()}: {result['count']} indexed")
 
 
 def _silhouette_catalog_extract(args):
@@ -8574,6 +8591,13 @@ def build_parser():
         "--force", action="store_true",
         help="Rebuild even if a cached index already exists",
     )
+
+    p_index_illustration = index_sub.add_parser(
+        "illustration",
+        help="Rebuild the Silhouette and Engraving browse indexes",
+    )
+    p_index_illustration.set_defaults(func=cmd_index)
+    _add_media_arg(p_index_illustration)
 
     p_index_stats = index_sub.add_parser(
         "stats",

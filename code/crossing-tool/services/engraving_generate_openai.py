@@ -406,6 +406,11 @@ def generate_engraving_openai(
         json.dumps(eng_meta, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+    try:
+        from services.illustration_index import invalidate_index
+        invalidate_index(project, "engravings", meta.get("media_type", "movie"))
+    except Exception:
+        pass
 
     # ── Step 7: update request.json ──────────────────────────────────────────
     request_rec = json.loads(paths["request"].read_text(encoding="utf-8"))

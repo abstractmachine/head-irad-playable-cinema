@@ -287,6 +287,31 @@ class _EngravingWorker(QThread):
             self.finished.emit(False, str(exc))
 
 
+class _IllustrationIndexWorker(QThread):
+    """Rebuild both Illustration browse indexes away from the GUI thread."""
+    finished = pyqtSignal(bool, str)
+
+    def __init__(self, project_path: str, media_type: str, parent=None) -> None:
+        super().__init__(parent)
+        self._project_path = project_path
+        self._media_type = media_type
+
+    def run(self) -> None:
+        try:
+            from services.illustration_index import rebuild_all
+            results = rebuild_all(self._project_path, self._media_type)
+            failed = [
+                source for source, result in results.items()
+                if result.get("status") != "ready"
+            ]
+            if failed:
+                self.finished.emit(False, f"Index changed during rebuild: {', '.join(failed)}")
+            else:
+                self.finished.emit(True, "")
+        except Exception as exc:
+            self.finished.emit(False, str(exc))
+
+
 class _BatchEngravingWorker(QThread):
     """Run ``engraving batch`` in a background thread with line-by-line stdout.
 
@@ -382,7 +407,8 @@ class IllustrationPane(QWidget):
             source=self._sil_source, media_type=media_type, **_browser_kwargs
         )
         self._browser_eng = IllustrationBrowser(
-            source=self._eng_source, media_type=media_type, light_bg=True, **_browser_kwargs
+            source=self._eng_source, media_type=media_type, light_bg=True,
+            auto_load=False, **_browser_kwargs
         )
         # Active browser alias — updated on tab switch.
         self._browser = self._browser_sil
@@ -657,6 +683,8 @@ class IllustrationPane(QWidget):
         self._eng_batch_btn.setStyleSheet(_abtn)
         self._eng_batch_btn.clicked.connect(self._toggle_batch_generation)
         tools_sec.add_widget(self._eng_batch_btn)
+        self._sil_rebuild_index_btn = self._make_rebuild_index_button()
+        tools_sec.add_widget(self._sil_rebuild_index_btn)
 
         # Animation timer for "Generating…" dots
         self._eng_anim_timer = QTimer(self)
@@ -694,6 +722,8 @@ class IllustrationPane(QWidget):
             self._browser    = self._browser_eng
             self._meta_rows  = self._eng_meta_rows
             self._sort_combo = self._eng_sort_combo
+            if not self._browser_eng._load_requested:
+                self._browser_eng.reload()
         self._browser_stack.setCurrentIndex(idx)
         rec = self._browser.currentItem()
         if rec:
@@ -802,7 +832,58 @@ class IllustrationPane(QWidget):
         self._eng_delete_btn.setStyleSheet(_abtn)
         self._eng_delete_btn.clicked.connect(self._delete_engraving)
         tools_sec.add_widget(self._eng_delete_btn)
+        self._eng_rebuild_index_btn = self._make_rebuild_index_button()
+        tools_sec.add_widget(self._eng_rebuild_index_btn)
         panel.add_widget(tools_sec)
+
+    def _make_rebuild_index_button(self) -> QPushButton:
+        button = QPushButton("Rebuild Index")
+        button.setFocusPolicy(Qt.NoFocus)
+        button.setFixedHeight(theme.BTN_H)
+        button.setStyleSheet(self._btn_style())
+        button.clicked.connect(self._start_index_rebuild)
+        return button
+
+    def _start_index_rebuild(self) -> None:
+        """Rebuild both source indexes for the currently selected media type."""
+        if getattr(self, "_index_worker", None) is not None:
+            return
+        media_type = self._browser._media_type
+        if not media_type:
+            return
+        for button in (self._sil_rebuild_index_btn, self._eng_rebuild_index_btn):
+            button.setEnabled(False)
+            button.setText("Rebuilding...")
+        for browser in (self._browser_sil, self._browser_eng):
+            browser._loading_bar.start()
+            browser._loading_timer.start()
+        self._index_worker = _IllustrationIndexWorker(
+            self._project_path, media_type, parent=self
+        )
+        self._index_worker.finished.connect(self._on_index_rebuild_finished)
+        self._index_worker.start()
+
+    def _on_index_rebuild_finished(self, ok: bool, error: str) -> None:
+        self._index_worker = None
+        for button in (self._sil_rebuild_index_btn, self._eng_rebuild_index_btn):
+            button.setEnabled(True)
+            button.setText("Rebuild Index" if ok else "Rebuild Failed")
+            button.setToolTip(error if not ok else "")
+        if ok:
+            inactive = (
+                self._browser_eng
+                if self._browser is self._browser_sil
+                else self._browser_sil
+            )
+            inactive._stop_catalog_loader()
+            inactive._load_requested = False
+            inactive._loading_timer.stop()
+            inactive._loading_bar.stop()
+            self._browser.reload()
+            return
+        for browser in (self._browser_sil, self._browser_eng):
+            browser._loading_timer.stop()
+            browser._loading_bar.stop()
 
     # ------------------------------------------------------------------
     # Sort controls
@@ -817,7 +898,7 @@ class IllustrationPane(QWidget):
         source = self._browser._source
         if hasattr(source, "set_sort_keys"):
             source.set_sort_keys(keys)
-        self._browser.refresh()
+        self._browser.reload()
 
     # ------------------------------------------------------------------
     # Selection
@@ -1307,6 +1388,15 @@ class IllustrationPane(QWidget):
     def _on_delete_finished(self) -> None:
         """Called when the background delete completes; clears state and reloads."""
         self._delete_worker = None
+        try:
+            from services.illustration_index import invalidate_index
+            invalidate_index(
+                self._project_path,
+                "engravings",
+                self._browser_eng._media_type or "movie",
+            )
+        except Exception:
+            pass
         self._clear_meta()
         self._browser_eng.reload()
 

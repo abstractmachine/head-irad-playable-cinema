@@ -9,8 +9,9 @@ focus purely on shell construction.
 """
 
 import pytest
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QPoint, Qt
 from PyQt5.QtGui import QKeyEvent, QPixmap
+from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import QApplication
 
 from styles import theme
@@ -116,6 +117,55 @@ def test_subtitles_are_doubled_and_inset_inside_scaled_frame(
         assert margins.left() == 58
         assert margins.right() == 58
         assert margins.bottom() == 100 + line_spacing
+    finally:
+        win.close()
+
+
+def test_timeline_has_fifteen_times_taller_hit_area(app, fake_prefs, fake_movie, tmp_path):
+    win = _make_window(app, tmp_path)
+    win.show()
+    app.processEvents()
+    pressed = []
+    released = []
+    win.timeline_slider.mousePressed.connect(lambda: pressed.append(True))
+    win.timeline_slider.mouseReleased.connect(lambda: released.append(True))
+    try:
+        hit_area = win.timeline_hit_area
+        scrollbar = win.timeline_slider
+
+        assert hit_area.height() == theme.SCROLLBAR_W * 15
+        assert scrollbar.height() == theme.SCROLLBAR_W
+        assert scrollbar.y() == theme.SCROLLBAR_W * 14
+
+        click_pos = QPoint(hit_area.width() * 3 // 4, theme.SCROLLBAR_W)
+        QTest.mouseClick(hit_area, Qt.LeftButton, pos=click_pos)
+
+        assert scrollbar.value() >= scrollbar.maximum() * 2 // 3
+        assert pressed == [True]
+        assert released == [True]
+
+        start_pos = QPoint(hit_area.width() // 4, theme.SCROLLBAR_W)
+        end_pos = QPoint(hit_area.width() * 3 // 4, theme.SCROLLBAR_W)
+        QTest.mouseMove(hit_area, start_pos)
+        assert scrollbar._active is True
+
+        QTest.mousePress(hit_area, Qt.LeftButton, pos=start_pos)
+        assert scrollbar._drag_active is True
+        QTest.mouseMove(hit_area, end_pos)
+        QTest.mouseRelease(hit_area, Qt.LeftButton, pos=end_pos)
+
+        assert scrollbar.value() >= scrollbar.maximum() * 2 // 3
+        assert scrollbar._drag_active is False
+        assert pressed == [True, True]
+        assert released == [True, True]
+
+        # Playback advances the timeline programmatically on every frame.
+        # Once the cursor leaves the enlarged hit area, those value changes
+        # must not pin the scrubber in its highlighted state.
+        QTest.mouseMove(win.frame_label, QPoint(10, 10))
+        app.processEvents()
+        scrollbar.setValue(max(0, scrollbar.value() - 1))
+        assert scrollbar._active is False
     finally:
         win.close()
 
