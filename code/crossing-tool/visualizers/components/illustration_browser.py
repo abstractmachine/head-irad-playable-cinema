@@ -77,6 +77,10 @@ from visualizers.components.thumbnail_loader import ThumbnailLoader
 from visualizers.components.combo_popup import attach_combo_popup
 from visualizers.components.sweep_bar import SweepBar
 
+
+def _timing_print(start: float | None, thread: str, message: str, phase=None) -> None:
+    return
+
 # ---------------------------------------------------------------------------
 # Combo popup border fix
 # ---------------------------------------------------------------------------
@@ -128,11 +132,13 @@ class _CatalogLoader(QThread):
         self,
         source: IllustrationSource,
         media_type: str,
+        timing_start: float | None = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
         self._source      = source
         self._media_type  = media_type
+        self._timing_start = timing_start
         self._cancelled   = False
         self.result_items: list = []
         self.result_cache: dict = {}
@@ -181,17 +187,123 @@ class _CatalogLoader(QThread):
         }
 
     def run(self) -> None:
-        # _load() is a pure read — no side-effects on the source object.
-        items = self._source._load(self._media_type)
+        phase_start = time.perf_counter()
+        _timing_print(self._timing_start, "WORKER", "catalog worker entered")
+        self._source.reload(self._media_type)
+        items = self._source.items()
+        _timing_print(
+            self._timing_start,
+            "WORKER",
+            f"catalog source load complete records={len(items)}",
+            phase_start,
+        )
         if not self._cancelled:
+            cache_start = time.perf_counter()
             status = self._source.load_status()
-            cache = status.get("filter_cache") or self._build_filter_cache(items)
+            facets = self._source.facets()
+            cache = {
+                "films": facets.get("titles", []),
+                "fields": set(facets.get("fields", [])),
+                "letters": facets.get("letters", []),
+                "counts": {
+                    row["label"]: row["count"]
+                    for row in facets.get("labels", [])
+                },
+            }
+            _timing_print(
+                self._timing_start,
+                "WORKER",
+                "catalog facets resolved "
+                f"titles={len(cache.get('films', []))} "
+                f"fields={len(cache.get('fields', []))} "
+                f"labels={len(cache.get('counts', {}))}",
+                cache_start,
+            )
             # Store results on self so the main-thread slot can read them
             # without any cross-thread argument marshalling by PyQt5.
             self.result_items = items
             self.result_cache = cache
             self.result_status = status
             self.loaded.emit()   # zero-arg signal — no data copied
+
+
+class _KeywordLoader(QThread):
+    """Derive one keyword list and its scoped records off the GUI thread."""
+
+    loaded = pyqtSignal()
+
+    def __init__(
+        self,
+        items,
+        scope: Optional[str],
+        field: str,
+        letter: str,
+        timing_start: float | None = None,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self._items = items
+        self._scope = scope
+        self._field = field
+        self._letter = letter
+        self._timing_start = timing_start
+        self._cancelled = False
+        self.result_records: list[dict] = []
+        self.result_counts: dict[str, int] = {}
+        self.result_labels: list[str] = []
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def run(self) -> None:
+        phase_start = time.perf_counter()
+        if isinstance(self._items, IllustrationSource):
+            facets = self._items.facets(
+                title=self._scope, field=self._field, letter=self._letter
+            )
+            if self._cancelled:
+                return
+            self.result_counts = {
+                row["label"]: row["count"] for row in facets.get("labels", [])
+            }
+            self.result_labels = [row["label"] for row in facets.get("labels", [])]
+            self.loaded.emit()
+            return
+        records: list[dict] = []
+        counts: dict[str, int] = {}
+        for index, record in enumerate(self._items):
+            if index % 1024 == 0 and self._cancelled:
+                return
+            if self._scope and _clean_stem(record.get("filename_stem", "")) != self._scope:
+                continue
+            if self._field != "--all" and (record.get("field") or "--all") != self._field:
+                continue
+            label = record.get("label", "")
+            if self._letter == "#":
+                if not label or label[0].isalpha():
+                    continue
+            elif self._letter != "--all" and label[:1].upper() != self._letter:
+                continue
+            records.append(record)
+            if label:
+                counts[label] = counts.get(label, 0) + 1
+            if index % 10_000 == 9_999:
+                time.sleep(0)
+
+        if self._cancelled:
+            return
+        self.result_records = records
+        self.result_counts = counts
+        self.result_labels = sorted(counts, key=str.casefold)
+        _timing_print(
+            self._timing_start,
+            "WORKER",
+            "default keyword/filter traversal complete "
+            f"records_scanned={len(self._items)} records_matched={len(records)} "
+            f"labels={len(self.result_labels)}",
+            phase_start,
+        )
+        self.loaded.emit()
 
 # ---------------------------------------------------------------------------
 # Module-level constants
@@ -286,6 +398,7 @@ class IllustrationBrowser(QWidget):
         detach_controls: bool = False,
         light_bg: bool = False,
         auto_load: bool = True,
+        timing_start: float | None = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         """Create an IllustrationBrowser.
@@ -306,6 +419,9 @@ class IllustrationBrowser(QWidget):
         self._media_type       = media_type
         self._thumb_size       = thumb_size
         self._light_bg         = light_bg
+        self._timing_start     = timing_start
+        self._timing_ready     = False
+        self._timing_first_thumbnail = False
         # _page_size is now a dynamic property — see @property below.
         # The constructor argument is kept for API compatibility but not stored.
         self._detach_controls  = detach_controls
@@ -316,6 +432,7 @@ class IllustrationBrowser(QWidget):
 
         # Filtered items — rebuilt by _apply_filters()
         self._filtered_items: list[dict] = []
+        self._total_items: int = 0
 
         # Selection: index into _filtered_items, -1 = no selection
         self._selected_index: int = -1
@@ -338,6 +455,16 @@ class IllustrationBrowser(QWidget):
         # Background thumbnail loader — cancelled before each grid rebuild
         self._loader: Optional[ThumbnailLoader] = None
         self._catalog_loader: Optional[_CatalogLoader] = None
+        self._keyword_loader: Optional[_KeywordLoader] = None
+        self._keyword_scope_items: Optional[list[dict]] = None
+        self._pending_keyword_labels: list[str] = []
+        self._pending_keyword_counts: dict[str, int] = {}
+        self._pending_keyword_index = 0
+        self._pending_keyword_previous = "--all"
+        self._pending_keyword_cascade = -1
+        self._keyword_population_timer = QTimer(self)
+        self._keyword_population_timer.setSingleShot(True)
+        self._keyword_population_timer.timeout.connect(self._append_keyword_batch)
         # Monotonic counter: incremented every time a new cascade starts.
         # Deferred steps compare against it so stale lambdas self-cancel.
         self._cascade_id: int = 0
@@ -352,10 +479,16 @@ class IllustrationBrowser(QWidget):
         self._resize_timer.setSingleShot(True)
         self._resize_timer.timeout.connect(self._on_resize_settled)
 
+        self._timing_heartbeat = QTimer(self)
+        self._timing_heartbeat.setInterval(50)
+        self._timing_heartbeat.timeout.connect(self._on_timing_heartbeat)
+        self._timing_last_heartbeat = time.perf_counter()
+
         # Guard against recursive combo-signal handling
         self._updating: bool = False
 
         self._build_ui()
+        _timing_print(self._timing_start, "GUI", "Silhouettes browser UI constructed")
         if auto_load:
             # Defer first load until Qt finishes the initial layout pass.
             QTimer.singleShot(0, self.reload)
@@ -373,7 +506,15 @@ class IllustrationBrowser(QWidget):
         Data-access responsibility remains in the source. The browser triggers
         reloads but does not scan directories or parse metadata files itself.
         """
+        phase_start = time.perf_counter()
+        _timing_print(self._timing_start, "GUI", "Silhouettes reload requested")
         self._load_requested = True
+        self._timing_ready = False
+        self._timing_first_thumbnail = False
+        self._timing_last_heartbeat = time.perf_counter()
+        if self._timing_start is not None:
+            self._timing_heartbeat.start()
+        self._stop_keyword_loader()
         self._stop_catalog_loader()
         self._index_status = {
             "status": "loading" if self._media_type else "idle"
@@ -381,6 +522,8 @@ class IllustrationBrowser(QWidget):
         # Always clear combos and grid immediately so the UI reflects the new
         # (possibly empty) state even before the background scan finishes.
         self._all_items      = []
+        self._filtered_items = []
+        self._total_items    = 0
         self._filter_cache   = {}  # invalidate stale cache
         self._selected_index = -1
         self._page_index     = 0
@@ -396,13 +539,18 @@ class IllustrationBrowser(QWidget):
         self._loading_bar.start()
         self._loading_timer.start()
         self._catalog_loader = _CatalogLoader(
-            self._source, self._media_type, parent=self
+            self._source, self._media_type,
+            timing_start=self._timing_start, parent=self,
         )
         self._catalog_loader.loaded.connect(self._on_catalog_loaded)
         self._catalog_loader.start()
+        _timing_print(
+            self._timing_start, "GUI", "catalog worker started", phase_start
+        )
 
     def _on_catalog_loaded(self) -> None:
         """Slot called on the main thread when the background scan finishes."""
+        phase_start = time.perf_counter()
         loader = self._catalog_loader
         items  = loader.result_items
         cache  = loader.result_cache
@@ -410,26 +558,33 @@ class IllustrationBrowser(QWidget):
         self._loading_timer.stop()
         self._loading_bar.stop()
         self._stop_loader()          # cancel any stale thumbnail loader
-        # Sync the source's internal record cache so that refresh() and
-        # set_sort_keys() (called by sort controls) see the loaded data.
-        # _CatalogLoader._load() is a pure read and does NOT update _records,
-        # so we must push the result back here.
-        # Allow sources to post-process freshly loaded records (e.g. apply an
-        # in-memory mode filter) before _all_items is updated.
-        if hasattr(self._source, "_on_records_loaded"):
-            self._source._on_records_loaded(items)
-            items = self._source.items()  # get post-processed items
-        else:
-            self._source._records = list(items)
         self._all_items      = items
         self._filter_cache   = cache  # pre-computed in background thread
+        self._total_items    = int(self._index_status.get("count", len(items)))
         self._selected_index = -1
         self._page_index     = 0
+        _timing_print(
+            self._timing_start,
+            "GUI",
+            f"catalog result received records={len(items)} status={self._index_status.get('status')}",
+            phase_start,
+        )
         # Run the combo cascade directly (no extra timer hop — saves the
         # ~2.5 s gap we observed between preamble and _rebuild_item_combo).
         self._rebuild_item_combo()
         self.catalogReloaded.emit()
         pass  # timer fires directly on _loading_bar.tick via connect
+
+    def _on_timing_heartbeat(self) -> None:
+        now = time.perf_counter()
+        gap = now - self._timing_last_heartbeat
+        self._timing_last_heartbeat = now
+        if gap > 0.100:
+            _timing_print(
+                self._timing_start,
+                "GUI",
+                f"heartbeat gap={gap:.3f}s",
+            )
 
     def _stop_catalog_loader(self) -> None:
         """Disconnect and cancel any in-flight catalog load."""
@@ -445,15 +600,50 @@ class IllustrationBrowser(QWidget):
         # _rebuild_item_combo cascades through the full filter hierarchy and
         # calls _apply_filters() at the end — no explicit call needed here.
 
+    def _stop_keyword_loader(self, wait_ms: int = 0) -> None:
+        self._keyword_population_timer.stop()
+        loader = self._keyword_loader
+        if loader is None:
+            return
+        try:
+            loader.loaded.disconnect(self._on_keywords_loaded)
+        except (TypeError, RuntimeError):
+            pass
+        loader.cancel()
+        if wait_ms and loader.isRunning():
+            loader.wait(wait_ms)
+        if loader.isRunning():
+            loader.finished.connect(loader.deleteLater)
+        else:
+            loader.deleteLater()
+        self._keyword_loader = None
+
     def currentItem(self) -> Optional[dict]:
         """Return the browser-owned selected record, or ``None``.
 
         Inspector and action panels should read selection through this API,
         not by storing duplicate copies of selected state.
         """
-        if 0 <= self._selected_index < len(self._filtered_items):
-            return self._filtered_items[self._selected_index]
+        page_index = self._selected_index - self._page_index * self._page_size
+        if 0 <= page_index < len(self._filtered_items):
+            return self._filtered_items[page_index]
         return None
+
+    def clear_view(self) -> None:
+        """Clear current-page presentation while an indexed navigation reloads."""
+        self._filtered_items = []
+        self._total_items = 0
+        self._selected_index = -1
+        self._page_index = 0
+        self._rebuild_grid()
+
+    def select_current_page_record(self, field: str, value: str) -> bool:
+        """Select the first current-page record whose field matches value."""
+        for page_index, record in enumerate(self._filtered_items):
+            if str(record.get(field, "")) == str(value):
+                self._on_cell_clicked(page_index)
+                return True
+        return False
 
     # ------------------------------------------------------------------ keyboard navigation (public helpers)
 
@@ -483,7 +673,6 @@ class IllustrationBrowser(QWidget):
         This method refreshes browser presentation state only. It does not
         perform project operations or mutate source-of-truth metadata.
         """
-        self._all_items      = self._source.items()
         self._selected_index = -1
         self._page_index     = 0
         self._rebuild_item_combo()
@@ -524,7 +713,7 @@ class IllustrationBrowser(QWidget):
         # match the parent directory name (= engraving label) to avoid picking
         # the wrong object_0001 from a different label in the same film.
         if object_id and (keyword is None or keyword):
-            for r in self._all_items:
+            for r in self._source.records(title=item, label=keyword, limit=10_000):
                 sil_path = Path(str(r.get("path", "")))
                 if (_clean_stem(r.get("filename_stem", "")) == (item or "") and
                         sil_path.stem == object_id and
@@ -543,16 +732,10 @@ class IllustrationBrowser(QWidget):
 
         # ── single-pass filter ─────────────────────────────────────────────
         scope = self._item_combo.currentData()
-        records = self._all_items
-        if scope:
-            records = [r for r in records
-                       if _clean_stem(r.get("filename_stem", "")) == scope]
-        if keyword:
-            records = [r for r in records if r.get("label", "") == keyword]
-
-        self._filtered_items = records
         self._selected_index = -1
         self._page_index     = 0
+        result = self._query_current_page(label=keyword or "--all")
+        records = result["records"]
 
         # ── update keyword combo to reflect the selection ──────────────────
         self._keyword_combo.blockSignals(True)
@@ -576,7 +759,7 @@ class IllustrationBrowser(QWidget):
 
         # ── select the specific item if object_id supplied ─────────────────
         if object_id:
-            for abs_idx, r in enumerate(self._filtered_items):
+            for abs_idx, r in enumerate(records):
                 if Path(str(r.get("path", ""))).stem == object_id:
                     self.select_index(abs_idx)
                     break
@@ -591,8 +774,9 @@ class IllustrationBrowser(QWidget):
         """Set filter levels in cascade order (item → field → letter → keyword).
 
         When *item* is set alongside lower levels, the lower levels are deferred
-        by 250 ms so the async combo-rebuild cascade triggered by changing the
-        item combo has time to complete before we try to set keyword etc.
+        while the async combo-rebuild cascade triggered by changing the item
+        combo completes. Keyword selection retries while its worker or bounded
+        GUI population is active instead of assuming a fixed completion time.
         """
         if item is not None:
             for i in range(self._item_combo.count()):
@@ -630,7 +814,15 @@ class IllustrationBrowser(QWidget):
             for i in range(self._keyword_combo.count()):
                 if self._keyword_combo.itemData(i) == keyword:
                     self._keyword_combo.setCurrentIndex(i)
-                    break
+                    return
+            if (
+                self._keyword_loader is not None
+                or self._keyword_population_timer.isActive()
+                or not self._keyword_combo.isEnabled()
+            ):
+                QTimer.singleShot(
+                    50, lambda: self.navigate_to_filters(keyword=keyword)
+                )
 
     def reset_filters(self) -> None:
         """Reset Title / Field / Letter / Keyword to placeholders.
@@ -652,7 +844,7 @@ class IllustrationBrowser(QWidget):
         Navigates to the correct page automatically and emits
         ``selectionChanged``.
         """
-        if not (0 <= abs_idx < len(self._filtered_items)):
+        if not (0 <= abs_idx < self._total_items):
             return
         page = abs_idx // self._page_size
         if page != self._page_index:
@@ -703,10 +895,9 @@ class IllustrationBrowser(QWidget):
         operations where only the highlight border needs to change.
         """
         for i, cell in enumerate(self._cells):
-            abs_idx = self._page_index * self._page_size + i
-            if abs_idx < len(self._filtered_items):
+            if i < len(self._filtered_items):
                 cell.set_highlighted(
-                    bool(self._filtered_items[abs_idx].get("human_best"))
+                    bool(self._filtered_items[i].get("human_best"))
                 )
 
     # ------------------------------------------------------------------ UI construction
@@ -952,6 +1143,7 @@ class IllustrationBrowser(QWidget):
 
     def _rebuild_item_combo(self) -> None:
         """Rebuild the Item (film) combo from all loaded items."""
+        phase_start = time.perf_counter()
         self._cascade_id += 1
         _cid = self._cascade_id
         if self._filter_cache:
@@ -975,25 +1167,22 @@ class IllustrationBrowser(QWidget):
         self._item_combo.setCurrentIndex(max(0, idx))
         self._item_combo.blockSignals(False)
         self._item_combo.currentIndexChanged.emit(self._item_combo.currentIndex())
+        _timing_print(
+            self._timing_start,
+            "GUI",
+            f"Title combo populated titles={self._item_combo.count() - 1}",
+            phase_start,
+        )
         QTimer.singleShot(0, lambda: self._rebuild_field_combo() if self._cascade_id == _cid else None)
 
     def _rebuild_field_combo(self) -> None:
         """Rebuild the Field combo for the current item scope."""
+        phase_start = time.perf_counter()
         self._cascade_id += 1
         _cid = self._cascade_id
         scope = self._item_combo.currentData()  # None → all
-        if not scope and self._filter_cache:
-            present = self._filter_cache["fields"]
-        else:
-            records = (
-                [r for r in self._all_items
-                 if _clean_stem(r.get("filename_stem", "")) == scope]
-                if scope else self._all_items
-            )
-            present = set()
-            for r in records:
-                f = r.get("field") or "--all"
-                present.add(f)
+        facets = self._source.facets(title=scope)
+        present = set(facets.get("fields", []))
 
         prev = self._field_combo.currentData()
         self._field_combo.blockSignals(True)
@@ -1008,38 +1197,23 @@ class IllustrationBrowser(QWidget):
         self._field_combo.setCurrentIndex(max(0, idx))
         self._field_combo.blockSignals(False)
         self._field_combo.currentIndexChanged.emit(self._field_combo.currentIndex())
+        _timing_print(
+            self._timing_start,
+            "GUI",
+            f"Field combo populated fields={self._field_combo.count() - 1}",
+            phase_start,
+        )
         QTimer.singleShot(0, lambda: self._rebuild_letter_combo() if self._cascade_id == _cid else None)
 
     def _rebuild_letter_combo(self) -> None:
         """Rebuild the Letter combo for the current item+field scope."""
+        phase_start = time.perf_counter()
         self._cascade_id += 1
         _cid = self._cascade_id
         scope = self._item_combo.currentData()
         field = self._field_combo.currentData() or "--all"
-        if not scope and field == "--all" and self._filter_cache:
-            # Use pre-computed letters from the background pass
-            letters = self._filter_cache["letters"]
-        else:
-            records = self._all_items
-            if scope:
-                records = [
-                    r for r in records
-                    if _clean_stem(r.get("filename_stem", "")) == scope
-                ]
-            if field != "--all":
-                records = [
-                    r for r in records
-                    if (r.get("field") or "--all") == field
-                ]
-            # Group non-alphabetic label initials under '#'
-            letters_set: set[str] = set()
-            for r in records:
-                lbl = r.get("label", "")
-                if lbl:
-                    ch = lbl[0].upper()
-                    letters_set.add(ch if ch.isalpha() else "#")
-            alpha_letters = sorted(letters_set - {"#"}, key=str.casefold)
-            letters = (["#"] if "#" in letters_set else []) + alpha_letters
+        facets = self._source.facets(title=scope, field=field)
+        letters = facets.get("letters", [])
         prev = self._letter_combo.currentData()
         self._letter_combo.blockSignals(True)
         self._letter_combo.clear()
@@ -1050,6 +1224,12 @@ class IllustrationBrowser(QWidget):
         self._letter_combo.setCurrentIndex(max(0, idx))
         self._letter_combo.blockSignals(False)
         self._letter_combo.currentIndexChanged.emit(self._letter_combo.currentIndex())
+        _timing_print(
+            self._timing_start,
+            "GUI",
+            f"Letter combo populated letters={self._letter_combo.count() - 1}",
+            phase_start,
+        )
         QTimer.singleShot(0, lambda: self._rebuild_keyword_combo() if self._cascade_id == _cid else None)
 
     def _rebuild_keyword_combo(self) -> None:
@@ -1059,94 +1239,110 @@ class IllustrationBrowser(QWidget):
         scope  = self._item_combo.currentData()
         field  = self._field_combo.currentData()  or "--all"
         letter = self._letter_combo.currentData() or "--all"
-
-        if not scope and field == "--all" and self._filter_cache:
-            # All filters at top level: derive counts from the pre-built cache.
-            all_counts = self._filter_cache["counts"]
-            if letter == "--all":
-                counts = all_counts
-            elif letter == "#":
-                counts = {lbl: n for lbl, n in all_counts.items()
-                          if lbl and not lbl[0].isalpha()}
-            else:
-                counts = {lbl: n for lbl, n in all_counts.items()
-                          if lbl[:1].upper() == letter}
-        else:
-            records = self._all_items
-            if scope:
-                records = [
-                    r for r in records
-                    if _clean_stem(r.get("filename_stem", "")) == scope
-                ]
-            if field != "--all":
-                records = [
-                    r for r in records
-                    if (r.get("field") or "--all") == field
-                ]
-            if letter != "--all":
-                if letter == "#":
-                    records = [
-                        r for r in records
-                        if r.get("label", "") and not r["label"][0].isalpha()
-                    ]
-                else:
-                    records = [
-                        r for r in records
-                        if r.get("label", "")[:1].upper() == letter
-                    ]
-            counts: dict[str, int] = {}
-            for r in records:
-                lbl = r.get("label", "")
-                if lbl:
-                    counts[lbl] = counts.get(lbl, 0) + 1
-        labels = sorted(counts.keys(), key=str.casefold)
-
-        prev = self._keyword_combo.currentData()
+        self._stop_keyword_loader()
+        self._keyword_scope_items = None
+        self._pending_keyword_previous = self._keyword_combo.currentData() or "--all"
         self._keyword_combo.blockSignals(True)
         self._keyword_combo.clear()
         self._keyword_combo.addItem("<Keyword>", userData="--all")
-        for lbl in labels:
-            self._keyword_combo.addItem(f"{lbl}  ({counts[lbl]})", userData=lbl)
-        idx = self._keyword_combo.findData(prev)
-        self._keyword_combo.setCurrentIndex(max(0, idx))
         self._keyword_combo.blockSignals(False)
+        self._keyword_combo.setEnabled(False)
+        self._loading_bar.start()
+        self._loading_timer.start()
+        self._keyword_loader = _KeywordLoader(
+            self._source, scope, field, letter,
+            timing_start=self._timing_start, parent=self,
+        )
+        self._keyword_loader.loaded.connect(self._on_keywords_loaded)
+        self._keyword_loader.finished.connect(self._keyword_loader.deleteLater)
+        self._keyword_loader.start()
+        _timing_print(
+            self._timing_start,
+            "GUI",
+            "Keyword worker started "
+            f"scope={scope or '<all>'} field={field} letter={letter}",
+        )
+
+    def _on_keywords_loaded(self) -> None:
+        loader = self._keyword_loader
+        if loader is None:
+            return
+        sender = self.sender()
+        if sender is not None and sender is not loader:
+            return
+        phase_start = time.perf_counter()
+        self._keyword_scope_items = None
+        self._pending_keyword_labels = loader.result_labels
+        self._pending_keyword_counts = loader.result_counts
+        self._pending_keyword_index = 0
+        self._pending_keyword_cascade = self._cascade_id
+        self._keyword_loader = None
+        self._keyword_population_timer.start(0)
+        _timing_print(
+            self._timing_start,
+            "GUI",
+            f"Keyword worker result received labels={len(self._pending_keyword_labels)} "
+            "from indexed facets",
+            phase_start,
+        )
+
+    def _append_keyword_batch(self, batch_size: int = 100) -> None:
+        phase_start = time.perf_counter()
+        if self._pending_keyword_cascade != self._cascade_id:
+            return
+        stop = min(
+            self._pending_keyword_index + batch_size,
+            len(self._pending_keyword_labels),
+        )
+        for index in range(self._pending_keyword_index, stop):
+            label = self._pending_keyword_labels[index]
+            self._keyword_combo.addItem(
+                f"{label}  ({self._pending_keyword_counts[label]})", userData=label
+            )
+        self._pending_keyword_index = stop
+        if stop < len(self._pending_keyword_labels):
+            if self._pending_keyword_index == batch_size:
+                _timing_print(
+                    self._timing_start,
+                    "GUI",
+                    f"Keyword combo first batch rows={stop}",
+                    phase_start,
+                )
+            self._keyword_population_timer.start(0)
+            return
+
+        index = self._keyword_combo.findData(self._pending_keyword_previous)
+        self._keyword_combo.blockSignals(True)
+        self._keyword_combo.setCurrentIndex(max(0, index))
+        self._keyword_combo.blockSignals(False)
+        self._keyword_combo.setEnabled(True)
+        self._pending_keyword_labels = []
+        self._pending_keyword_counts = {}
         self._keyword_combo.currentIndexChanged.emit(self._keyword_combo.currentIndex())
-        QTimer.singleShot(0, lambda: self._apply_filters() if self._cascade_id == _cid else None)
+        _timing_print(
+            self._timing_start,
+            "GUI",
+            f"Keyword combo populated labels={self._keyword_combo.count() - 1}",
+            phase_start,
+        )
 
     def _apply_filters(self) -> None:
         """Apply all five filter levels and rebuild the grid."""
+        phase_start = time.perf_counter()
         _cid = self._cascade_id   # capture — don't increment here
         scope   = self._item_combo.currentData()
         field   = self._field_combo.currentData()  or "--all"
         letter  = self._letter_combo.currentData() or "--all"
         keyword = self._keyword_combo.currentData() or "--all"
 
-        records = self._all_items
-        if scope:
-            records = [
-                r for r in records
-                if _clean_stem(r.get("filename_stem", "")) == scope
-            ]
-        if field != "--all":
-            records = [
-                r for r in records
-                if (r.get("field") or "--all") == field
-            ]
-        if letter != "--all":
-            if letter == "#":
-                records = [
-                    r for r in records
-                    if r.get("label", "") and not r["label"][0].isalpha()
-                ]
-            else:
-                records = [
-                    r for r in records
-                    if r.get("label", "")[:1].upper() == letter
-                ]
-        if keyword != "--all":
-            records = [r for r in records if r.get("label", "") == keyword]
-
-        self._filtered_items = records
+        result = self._query_current_page()
+        records = result["records"]
+        _timing_print(
+            self._timing_start,
+            "GUI",
+            f"default filters applied records={len(records)} keyword={keyword}",
+            phase_start,
+        )
         # Emit the active keyword so the Filter section title stays current.
         kw_data = self._keyword_combo.currentData()
         self.keywordChanged.emit(kw_data if (kw_data and kw_data != "--all") else "")
@@ -1179,12 +1375,25 @@ class IllustrationBrowser(QWidget):
         return max(1, cols * rows)
 
     def _current_page_records(self) -> list[dict]:
-        start = self._page_index * self._page_size
-        return self._filtered_items[start: start + self._page_size]
+        return list(self._filtered_items)
+
+    def _query_current_page(self, label: Optional[str] = None) -> dict:
+        result = self._source.page(
+            title=self._item_combo.currentData(),
+            field=self._field_combo.currentData() or "--all",
+            letter=self._letter_combo.currentData() or "--all",
+            label=label or self._keyword_combo.currentData() or "--all",
+            offset=self._page_index * self._page_size,
+            limit=self._page_size,
+        )
+        self._filtered_items = list(result.get("records", []))
+        self._total_items = int(result.get("total", 0))
+        return result
 
     def _rebuild_grid(self) -> None:
         """Clear the grid and populate it with ThumbnailCell widgets for the
         current page of filtered items in bounded event-loop batches."""
+        phase_start = time.perf_counter()
         self._stop_loader()
         self._grid_population_timer.stop()
         self._pending_page_records = []
@@ -1192,25 +1401,46 @@ class IllustrationBrowser(QWidget):
         self._grid_layout.setEnabled(True)
         self._grid_widget.setUpdatesEnabled(True)
         self._grid_widget.setVisible(True)
+        if self._index_status.get("status") == "ready":
+            self._query_current_page()
 
         # Remove all existing cells from the layout and destroy them.
+        destroy_start = time.perf_counter()
+        destroyed = self._grid_layout.count()
         while self._grid_layout.count():
             item = self._grid_layout.takeAt(0)
             w = item.widget()
             if w:
                 w.deleteLater()
         self._cells = []
+        _timing_print(
+            self._timing_start,
+            "GUI",
+            f"old thumbnail cells destroyed cells={destroyed}",
+            destroy_start,
+        )
 
+        page_start = time.perf_counter()
         self._pending_page_records = self._current_page_records()
         self._grid_cols = self._cols()
         self._pending_abs_start = self._page_index * self._page_size
         self._update_status()
         self._update_pagination()
+        _timing_print(
+            self._timing_start,
+            "GUI",
+            f"pagination resolved total_records={self._total_items} "
+            f"page_items={len(self._pending_page_records)} page_size={self._page_size} "
+            f"columns={self._grid_cols}",
+            page_start,
+        )
 
         if not self._pending_page_records:
             if self._catalog_loader is None or not self._catalog_loader.isRunning():
                 self._loading_timer.stop()
                 self._loading_bar.stop()
+                if self._index_status.get("status") != "loading":
+                    self._timing_mark_ready("no visible thumbnails")
             return
 
         self._loading_bar.start()
@@ -1219,9 +1449,17 @@ class IllustrationBrowser(QWidget):
         self._grid_widget.setVisible(False)
         self._grid_layout.setEnabled(False)
         self._grid_population_timer.start(0)
+        _timing_print(
+            self._timing_start,
+            "GUI",
+            f"thumbnail cell population started page_items={len(self._pending_page_records)}",
+            phase_start,
+        )
 
     def _append_cell_batch(self, batch_size: int = 20) -> None:
         """Append one bounded batch of current-page cells on the GUI thread."""
+        phase_start = time.perf_counter()
+        start = self._pending_cell_index
         stop = min(
             self._pending_cell_index + batch_size,
             len(self._pending_page_records),
@@ -1230,6 +1468,13 @@ class IllustrationBrowser(QWidget):
             rec = self._pending_page_records[index]
             self._append_cell(index, rec)
         self._pending_cell_index = stop
+        if start == 0:
+            _timing_print(
+                self._timing_start,
+                "GUI",
+                f"first thumbnail cell batch created cells={stop - start}",
+                phase_start,
+            )
         if stop < len(self._pending_page_records):
             self._grid_population_timer.start(0)
             return
@@ -1240,9 +1485,30 @@ class IllustrationBrowser(QWidget):
         self._grid_widget.setUpdatesEnabled(True)
         self._grid_widget.updateGeometry()
         self._grid_widget.update()
+        _timing_print(
+            self._timing_start,
+            "GUI",
+            f"visible thumbnail cells complete cells={len(self._cells)}",
+            phase_start,
+        )
+        QTimer.singleShot(0, self._timing_layout_repaint_complete)
         self._loading_timer.stop()
         self._loading_bar.stop()
         self._start_loader()
+
+    def _timing_layout_repaint_complete(self) -> None:
+        _timing_print(self._timing_start, "GUI", "post-cell layout/repaint tick")
+
+    def _timing_mark_ready(self, detail: str) -> None:
+        if self._timing_start is None or self._timing_ready:
+            return
+        self._timing_ready = True
+        self._timing_heartbeat.stop()
+        _timing_print(
+            self._timing_start,
+            "GUI",
+            f"SILHOUETTES READY {detail}",
+        )
 
     def _append_cell(self, index: int, rec: dict) -> None:
         """Create and attach one cell from the pending current page."""
@@ -1291,10 +1557,18 @@ class IllustrationBrowser(QWidget):
         if not page_records:
             return
         self._loader = ThumbnailLoader(
-            page_records, self._thumb_size, path_for=self._source.thumbnail_path
+            page_records, self._thumb_size,
+            path_for=self._source.thumbnail_path,
+            timing_start=self._timing_start,
         )
         self._loader.thumbReady.connect(self._on_thumb_ready)
+        self._loader.loadFinished.connect(self._on_thumb_load_finished)
         self._loader.start()
+        _timing_print(
+            self._timing_start,
+            "GUI",
+            f"thumbnail decode worker started requested={len(page_records)}",
+        )
 
     def _stop_loader(self) -> None:
         """Cancel any running loader and wait for it to stop."""
@@ -1305,6 +1579,10 @@ class IllustrationBrowser(QWidget):
                 self._loader.thumbReady.disconnect(self._on_thumb_ready)
             except (TypeError, RuntimeError):
                 pass
+            try:
+                self._loader.loadFinished.disconnect(self._on_thumb_load_finished)
+            except (TypeError, RuntimeError):
+                pass
             if self._loader.isRunning():
                 self._loader.cancel()
                 self._loader.wait(300)
@@ -1312,13 +1590,32 @@ class IllustrationBrowser(QWidget):
 
     def _on_thumb_ready(self, idx: int, qimg: QImage) -> None:
         if 0 <= idx < len(self._cells):
+            phase_start = time.perf_counter()
             self._cells[idx].set_image(qimg)
+            if not self._timing_first_thumbnail:
+                self._timing_first_thumbnail = True
+                _timing_print(
+                    self._timing_start,
+                    "GUI",
+                    f"first thumbnail delivered and painted record_index={idx}",
+                    phase_start,
+                )
+
+    def _on_thumb_load_finished(self, loaded: int) -> None:
+        _timing_print(
+            self._timing_start,
+            "GUI",
+            f"visible thumbnail completion received loaded={loaded} cells={len(self._cells)}",
+        )
+        self._timing_mark_ready(
+            f"visible_thumbnails={loaded} cells={len(self._cells)}"
+        )
 
     def _update_status(self) -> None:
         pass  # 'No items' is now shown in the pagination bar via _update_pagination
 
     def _update_pagination(self) -> None:
-        total      = len(self._filtered_items)
+        total      = self._total_items
         page_count = max(1, math.ceil(total / self._page_size))
         if total == 0:
             status = self._index_status.get("status")
@@ -1373,7 +1670,7 @@ class IllustrationBrowser(QWidget):
 
     def _on_next_page(self) -> None:
         page_count = max(
-            1, math.ceil(len(self._filtered_items) / self._page_size)
+            1, math.ceil(self._total_items / self._page_size)
         )
         if self._page_index < page_count - 1:
             self._page_index += 1
@@ -1460,7 +1757,7 @@ class IllustrationBrowser(QWidget):
         Rebuilds the grid if the viewport now fits a different number of
         thumbnails than are currently shown.
         """
-        if not self._filtered_items:
+        if not self._total_items:
             return
         new_size = self._page_size
         if new_size != len(self._cells):

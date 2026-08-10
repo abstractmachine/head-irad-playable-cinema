@@ -380,6 +380,7 @@ class IllustrationPane(QWidget):
 
     def __init__(self, project_path: str, media_type: Optional[str] = None, parent=None) -> None:
         super().__init__(parent)
+        self._illustration_timing_start = None
         self._project_path = project_path
         self._current_rec: Optional[dict] = None
 
@@ -404,7 +405,8 @@ class IllustrationPane(QWidget):
         # ── Browsers (one per source; only the active one is visible) ─────
         _browser_kwargs = dict(thumb_size=_THUMB_SIZE, detach_controls=True)
         self._browser_sil = IllustrationBrowser(
-            source=self._sil_source, media_type=media_type, **_browser_kwargs
+            source=self._sil_source, media_type=media_type,
+            timing_start=self._illustration_timing_start, **_browser_kwargs
         )
         self._browser_eng = IllustrationBrowser(
             source=self._eng_source, media_type=media_type, light_bg=True,
@@ -1066,12 +1068,8 @@ class IllustrationPane(QWidget):
         rec = self._browser.currentItem()
         if rec is None:
             return
-        # Collect all records for the same label (from the filtered list)
         label = rec.get("label", "")
-        all_label_recs = [
-            r for r in self._browser._filtered_items
-            if r.get("label") == label
-        ]
+        all_label_recs = self._sil_source.records(label=label)
         mark_best(rec, all_label_recs)
         self._browser.refresh_highlights()
         self._update_best_btn()
@@ -1093,8 +1091,8 @@ class IllustrationPane(QWidget):
         try:
             from services.engraving_paths import engraving_status as _eng_status
             return sum(
-                1 for r in (self._sil_source.items() if hasattr(self, "_sil_source") else [])
-                if r.get("human_best") and r.get("path") and
+                1 for r in (self._sil_source.records(human_best=True) if hasattr(self, "_sil_source") else [])
+                if r.get("path") and
                 _eng_status(self._project_path, r["path"], r) != "generated"
             )
         except Exception:
@@ -1265,10 +1263,7 @@ class IllustrationPane(QWidget):
 
         # Clear the grid immediately so the user sees empty state
         # rather than stale previous content during the navigation delay.
-        self._browser_sil._filtered_items = []
-        self._browser_sil._selected_index = -1
-        self._browser_sil._page_index     = 0
-        self._browser_sil._rebuild_grid()
+        self._browser_sil.clear_view()
         self._browser_sil._loading_bar.start()
         self._browser_sil._loading_timer.start()
 
@@ -1283,10 +1278,7 @@ class IllustrationPane(QWidget):
                 object_id = object_id or None,
             )
 
-        already_loaded = any(
-            _clean_stem(r.get("filename_stem") or "") == filename_stem
-            for r in self._browser_sil._all_items
-        )
+        already_loaded = self._browser_sil._index_status.get("status") == "ready"
 
         if already_loaded:
             QTimer.singleShot(150, _navigate)
@@ -1320,10 +1312,7 @@ class IllustrationPane(QWidget):
         eng_label = sil_path.parent.name  # label directory = engraving record label
 
         # Clear grid + start loading animation immediately on tab switch.
-        self._browser_eng._filtered_items = []
-        self._browser_eng._selected_index = -1
-        self._browser_eng._page_index     = 0
-        self._browser_eng._rebuild_grid()
+        self._browser_eng.clear_view()
         self._browser_eng._loading_bar.start()
         self._browser_eng._loading_timer.start()
 
@@ -1338,12 +1327,7 @@ class IllustrationPane(QWidget):
         # Switch to Engravings tab (triggers _on_source_tab_changed).
         self._side_scroll.setCurrentIndex(1)
 
-        # Check whether the target is already in the browser's cached items.
-        already_loaded = any(
-            _clean_stem(r.get("filename_stem") or "") == filename_stem
-            and r.get("label") == eng_label
-            for r in self._browser_eng._all_items
-        )
+        already_loaded = self._browser_eng._index_status.get("status") == "ready"
 
         if already_loaded:
             QTimer.singleShot(150, _navigate)
@@ -1520,10 +1504,7 @@ class IllustrationPane(QWidget):
             keyword=label,
         )
         if shot_id:
-            for abs_idx, rec in enumerate(self._browser._filtered_items):
-                if str(rec.get("shot_id", "")) == str(shot_id):
-                    self._browser.select_index(abs_idx)
-                    break
+            self._browser.select_current_page_record("shot_id", shot_id)
 
 
 # Main window
@@ -1556,6 +1537,13 @@ class IllustrationWindow(WindowVisualizer):
         self._initial_label = initial_label
         self._initial_shot = initial_shot
 
+        from tool import prefs as _prefs
+        saved_geometry = _prefs.get("window_illustration")
+        has_saved_geometry = (
+            isinstance(saved_geometry, (list, tuple))
+            and len(saved_geometry) in (4, 5, 6)
+        )
+
         # Let WindowVisualizer manage geometry persistence for this window.
         super().__init__(pref_key="window_illustration")
         self.setWindowTitle("Illustration")
@@ -1564,7 +1552,8 @@ class IllustrationWindow(WindowVisualizer):
         # already instantiated it and returned its browser widget. Configure
         # the window sizing and restore additional state after layout.
         self.setMinimumSize(900, 560)
-        self.resize(1300, 760)
+        if not has_saved_geometry:
+            self.resize(1300, 760)
         QTimer.singleShot(0, self._restore_saved_state)
 
         # (shared gutter helper will be attached by WindowVisualizer)

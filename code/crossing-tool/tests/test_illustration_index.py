@@ -9,6 +9,8 @@ from services.illustration_index import (
     invalidate_for_record,
     invalidate_index,
     load_index,
+    query_facets,
+    query_page,
     rebuild_index,
 )
 
@@ -31,7 +33,9 @@ def test_silhouette_index_reports_missing_ready_and_stale(tmp_path):
 
     loaded = load_index(tmp_path, "silhouettes", "movie")
     assert loaded["status"] == "ready"
-    assert loaded["items"][0]["path"] == metadata_path
+    assert loaded["count"] == 1
+    assert "items" not in loaded
+    assert query_page(tmp_path, "silhouettes", "movie")["records"][0]["path"] == metadata_path
 
     invalidate_index(tmp_path, "silhouettes", "movie")
     assert load_index(tmp_path, "silhouettes", "movie")["status"] == "stale"
@@ -58,19 +62,19 @@ def test_engraving_index_contains_only_generated_records(tmp_path):
     assert result["count"] == 1
     loaded = load_index(tmp_path, "engravings", "movie")
     assert loaded["status"] == "ready"
-    assert loaded["items"][0]["path"] == metadata_path
-    assert loaded["items"][0]["raw_png"] == raw_path
-    assert loaded["items"][0]["model"] == "test-model"
+    record = query_page(tmp_path, "engravings", "movie")["records"][0]
+    assert record["path"] == metadata_path
+    assert record["raw_png"] == raw_path
+    assert record["model"] == "test-model"
 
 
 def test_schema_change_marks_index_stale(tmp_path):
     rebuild_index(tmp_path, "silhouettes", "movie")
     path = index_path(tmp_path, "silhouettes", "movie")
-    lines = path.read_text(encoding="utf-8").splitlines()
-    document = json.loads(lines[0])
-    document["schema_version"] = -1
-    lines[0] = json.dumps(document)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    import sqlite3
+    with sqlite3.connect(path) as connection:
+        connection.execute("UPDATE meta SET value = '-1' WHERE key = 'schema_version'")
+        connection.commit()
 
     assert load_index(tmp_path, "silhouettes", "movie")["status"] == "stale"
 
@@ -90,7 +94,7 @@ def test_legacy_monolithic_index_requires_rebuild(tmp_path):
     assert not legacy_path.exists()
 
 
-def test_index_persists_filter_cache_in_streaming_header(tmp_path):
+def test_index_queries_facets_and_pages_without_materializing_catalog(tmp_path):
     records = [
         {
             "filename_stem": "Film {tmdb-12}",
@@ -107,15 +111,50 @@ def test_index_persists_filter_cache_in_streaming_header(tmp_path):
         rebuild_index(tmp_path, "silhouettes", "movie")
 
     path = index_path(tmp_path, "silhouettes", "movie")
-    lines = path.read_text(encoding="utf-8").splitlines()
-    header = json.loads(lines[0])
     loaded = load_index(tmp_path, "silhouettes", "movie")
+    facets = query_facets(tmp_path, "silhouettes", "movie")
+    animals = query_page(
+        tmp_path, "silhouettes", "movie", field="animals", limit=1
+    )
 
-    assert path.suffix == ".jsonl"
-    assert len(lines) == 3
-    assert header["filter_cache"]["films"] == ["Film"]
-    assert loaded["filter_cache"]["fields"] == {"animals", "objects"}
-    assert loaded["filter_cache"]["counts"] == {"horse": 1, "hat": 1}
+    assert path.suffix == ".sqlite3"
+    assert loaded["count"] == 2
+    assert "items" not in loaded
+    assert facets["titles"] == ["Film"]
+    assert facets["fields"] == ["animals", "objects"]
+    assert facets["labels"] == [
+        {"label": "hat", "count": 1},
+        {"label": "horse", "count": 1},
+    ]
+    assert animals["total"] == 1
+    assert animals["records"][0]["label"] == "horse"
+
+
+def test_silhouette_index_derives_object_id_and_engraved_first_sort(tmp_path):
+    catalog = tmp_path / "data" / "silhouettes" / "catalog" / "movie" / "film" / "horse"
+    catalog.mkdir(parents=True)
+    for object_id in ("object_0001", "object_0002"):
+        (catalog / f"{object_id}.json").write_text(json.dumps({
+            "media_type": "movie", "filename_stem": "film",
+            "label": "horse", "field": "animals",
+        }), encoding="utf-8")
+    engraving = (
+        tmp_path / "data" / "engravings" / "catalog" / "movie" / "film"
+        / "horse" / "object_0002" / "isolated"
+    )
+    engraving.mkdir(parents=True)
+    (engraving / "engraving.json").write_text(
+        json.dumps({"status": "generated"}), encoding="utf-8"
+    )
+
+    rebuild_index(tmp_path, "silhouettes", "movie")
+    result = query_page(
+        tmp_path, "silhouettes", "movie", sort_keys=["engraved_first"]
+    )
+
+    assert [Path(record["path"]).stem for record in result["records"]] == [
+        "object_0002", "object_0001"
+    ]
 
 
 def test_record_path_invalidation_infers_project_and_media_type(tmp_path):

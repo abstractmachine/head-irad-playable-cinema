@@ -78,6 +78,13 @@ class TestGenerateMotifsForMovieWrite:
 
 
 class TestSetFilmTitle:
+    def test_path_is_owned_by_flipbook_output(self, tmp_path):
+        path = get_film_title_path(str(tmp_path), "Film.mp4", "movie")
+
+        assert path == (
+            tmp_path / "output" / "flipbooks" / "movie" / "Film-title.json"
+        )
+
     def test_round_trip(self, tmp_path):
         result = set_film_title(str(tmp_path), "Film.mp4", "movie", "carrying")
         assert result["value"] == "carrying"
@@ -91,6 +98,16 @@ class TestSetFilmTitle:
 
         loaded = load_film_motif(str(tmp_path), "Film.mp4", "movie")
         assert loaded["value"] == "crossing"
+
+    def test_write_removes_legacy_sidecar_and_empty_directories(self, tmp_path):
+        legacy = tmp_path / "data" / "film_titles" / "movie" / "Film.json"
+        legacy.parent.mkdir(parents=True)
+        legacy.write_text(json.dumps({"value": "carrying"}), encoding="utf-8")
+
+        set_film_title(str(tmp_path), "Film.mp4", "movie", "crossing")
+
+        assert not legacy.exists()
+        assert not (tmp_path / "data" / "film_titles").exists()
 
     def test_no_temp_file_left_behind(self, tmp_path):
         set_film_title(str(tmp_path), "Film.mp4", "movie", "carrying")

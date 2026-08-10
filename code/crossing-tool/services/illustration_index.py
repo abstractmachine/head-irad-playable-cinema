@@ -9,14 +9,27 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import re
-import time
+import sqlite3
 from uuid import uuid4
 
 
-INDEX_SCHEMA_VERSION = 2
+INDEX_SCHEMA_VERSION = 3
 SOURCES = ("silhouettes", "engravings")
+_SORT_COLUMNS = {
+    "confidence": "confidence_score",
+    "usefulness": "usefulness_score",
+    "engraving": "engraving_score",
+    "fullness": "fullness_score",
+    "size": "size_score",
+    "completeness": "completeness_score",
+    "isolation": "isolation_score",
+    "semantic_label": "semantic_label_score",
+    "semantic_field": "semantic_field_score",
+    "engraved_first": "engraved_score",
+}
 
 
 def _index_dir(project_path: str | Path) -> Path:
@@ -25,11 +38,14 @@ def _index_dir(project_path: str | Path) -> Path:
 
 def index_path(project_path: str | Path, source: str, media_type: str) -> Path:
     _validate_source(source)
-    return _index_dir(project_path) / f"{media_type}-{source}.jsonl"
+    return _index_dir(project_path) / f"{media_type}-{source}.sqlite3"
 
 
-def _legacy_index_path(project_path: str | Path, source: str, media_type: str) -> Path:
-    return _index_dir(project_path) / f"{media_type}-{source}.json"
+def _obsolete_index_paths(
+    project_path: str | Path, source: str, media_type: str
+) -> tuple[Path, ...]:
+    base = _index_dir(project_path) / f"{media_type}-{source}"
+    return (base.with_suffix(".jsonl"), base.with_suffix(".json"))
 
 
 def _revision_path(project_path: str | Path, source: str, media_type: str) -> Path:
@@ -73,46 +89,35 @@ def invalidate_for_record(record_path: str | Path, source: str) -> bool:
     return False
 
 
-def load_index(project_path: str | Path, source: str, media_type: str) -> dict:
-    """Read one browse index and return ``ready``, ``missing``, ``stale``, or ``error``."""
+def load_index(
+    project_path: str | Path,
+    source: str,
+    media_type: str,
+) -> dict:
+    """Return status and cheap metadata without loading catalog records."""
     project = Path(project_path)
     path = index_path(project, source, media_type)
     if not path.exists():
-        if _legacy_index_path(project, source, media_type).exists():
-            return {"status": "stale", "items": []}
-        return {"status": "missing", "items": []}
+        if any(candidate.exists() for candidate in _obsolete_index_paths(
+            project, source, media_type
+        )):
+            return {"status": "stale", "count": 0}
+        return {"status": "missing", "count": 0}
 
     try:
-        items = []
-        with path.open("r", encoding="utf-8") as handle:
-            document = json.loads(handle.readline())
-            if document.get("schema_version") != INDEX_SCHEMA_VERSION:
-                return {"status": "stale", "items": []}
-            if document.get("revision") != _read_revision(project, source, media_type):
-                return {"status": "stale", "items": []}
-
-            for index, line in enumerate(handle):
-                if not line.strip():
-                    continue
-                record = json.loads(line)
-                for key in ("path", "output_png", "raw_png"):
-                    value = record.get(key)
-                    if value:
-                        record[key] = project / value
-                items.append(record)
-                if index % 256 == 255:
-                    time.sleep(0)
-        filter_cache = document.get("filter_cache") or {}
-        if filter_cache:
-            filter_cache["fields"] = set(filter_cache.get("fields", []))
+        with sqlite3.connect(path) as connection:
+            meta = dict(connection.execute("SELECT key, value FROM meta"))
+        if int(meta.get("schema_version", -1)) != INDEX_SCHEMA_VERSION:
+            return {"status": "stale", "count": 0}
+        if meta.get("revision") != _read_revision(project, source, media_type):
+            return {"status": "stale", "count": 0}
         return {
             "status": "ready",
-            "items": items,
-            "generated_at": document.get("generated_at"),
-            "filter_cache": filter_cache,
+            "count": int(meta.get("record_count", 0)),
+            "generated_at": meta.get("generated_at"),
         }
     except Exception as exc:
-        return {"status": "error", "items": [], "error": str(exc)}
+        return {"status": "error", "count": 0, "error": str(exc)}
 
 
 def rebuild_index(project_path: str | Path, source: str, media_type: str) -> dict:
@@ -128,25 +133,39 @@ def rebuild_index(project_path: str | Path, source: str, media_type: str) -> dic
     if revision != _read_revision(project, source, media_type):
         return {"status": "stale", "count": 0}
 
-    document = {
-        "schema_version": INDEX_SCHEMA_VERSION,
-        "source": source,
-        "media_type": media_type,
-        "revision": revision,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "filter_cache": _build_filter_cache(records),
-    }
-    from data.annotate import atomic_write_text
-
     path = index_path(project, source, media_type)
     path.parent.mkdir(parents=True, exist_ok=True)
-    lines = [json.dumps(document, ensure_ascii=False)]
-    lines.extend(
-        json.dumps(_serialize_record(project, record), ensure_ascii=False)
-        for record in records
-    )
-    atomic_write_text(path, "\n".join(lines) + "\n")
-    _legacy_index_path(project, source, media_type).unlink(missing_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        with sqlite3.connect(temporary) as connection:
+            _create_schema(connection)
+            connection.executemany(
+                """INSERT INTO records (
+                    title, field, initial, label, mode, object_id, human_best,
+                    confidence_score, usefulness_score, engraving_score,
+                    fullness_score, size_score, completeness_score,
+                    isolation_score, semantic_label_score, semantic_field_score,
+                    engraved_score, payload
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (_record_row(project, record) for record in records),
+            )
+            meta = {
+                "schema_version": str(INDEX_SCHEMA_VERSION),
+                "source": source,
+                "media_type": media_type,
+                "revision": revision,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "record_count": str(len(records)),
+            }
+            connection.executemany(
+                "INSERT INTO meta (key, value) VALUES (?, ?)", meta.items()
+            )
+            connection.commit()
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    for obsolete in _obsolete_index_paths(project, source, media_type):
+        obsolete.unlink(missing_ok=True)
     return {"status": "ready", "count": len(records), "path": path}
 
 
@@ -156,6 +175,204 @@ def rebuild_all(project_path: str | Path, media_type: str) -> dict:
         source: rebuild_index(project_path, source, media_type)
         for source in SOURCES
     }
+
+
+def query_facets(
+    project_path: str | Path,
+    source: str,
+    media_type: str,
+    *,
+    title: str | None = None,
+    field: str | None = None,
+    letter: str | None = None,
+    mode: str | None = None,
+) -> dict:
+    """Return distinct facets and label counts for a browse scope."""
+    status = load_index(project_path, source, media_type)
+    if status["status"] != "ready":
+        return {**status, "titles": [], "fields": [], "letters": [], "labels": []}
+    where, params = _where(title=title, field=field, letter=letter, mode=mode)
+    with sqlite3.connect(index_path(project_path, source, media_type)) as connection:
+        titles = [row[0] for row in connection.execute(
+            "SELECT DISTINCT title FROM records ORDER BY title COLLATE NOCASE"
+        )]
+        fields = [row[0] for row in connection.execute(
+            f"SELECT DISTINCT field FROM records {where} ORDER BY field COLLATE NOCASE",
+            params,
+        )]
+        letters = [row[0] for row in connection.execute(
+            f"SELECT DISTINCT initial FROM records {where} ORDER BY initial COLLATE NOCASE",
+            params,
+        )]
+        labels = [
+            {"label": row[0], "count": row[1]}
+            for row in connection.execute(
+                f"SELECT label, COUNT(*) FROM records {where} "
+                "GROUP BY label ORDER BY label COLLATE NOCASE",
+                params,
+            )
+        ]
+    return {**status, "titles": titles, "fields": fields, "letters": letters, "labels": labels}
+
+
+def query_page(
+    project_path: str | Path,
+    source: str,
+    media_type: str,
+    *,
+    title: str | None = None,
+    field: str | None = None,
+    letter: str | None = None,
+    label: str | None = None,
+    mode: str | None = None,
+    object_id: str | None = None,
+    human_best: bool | None = None,
+    sort_keys: list[str] | None = None,
+    offset: int = 0,
+    limit: int = 50,
+) -> dict:
+    """Return one materialized browse page and its matching total count."""
+    status = load_index(project_path, source, media_type)
+    if status["status"] != "ready":
+        return {**status, "total": 0, "records": []}
+    where, params = _where(
+        title=title, field=field, letter=letter, label=label, mode=mode,
+        object_id=object_id, human_best=human_best,
+    )
+    with sqlite3.connect(index_path(project_path, source, media_type)) as connection:
+        total = int(connection.execute(
+            f"SELECT COUNT(*) FROM records {where}", params
+        ).fetchone()[0])
+        rows = connection.execute(
+            f"SELECT payload FROM records {where} {_order_by(sort_keys or [])} "
+            "LIMIT ? OFFSET ?",
+            [*params, max(1, int(limit)), max(0, int(offset))],
+        )
+        records = [_deserialize_record(Path(project_path), row[0]) for row in rows]
+    return {**status, "total": total, "records": records}
+
+
+def query_records(
+    project_path: str | Path,
+    source: str,
+    media_type: str,
+    *,
+    limit: int = 100_000,
+    **filters,
+) -> list[dict]:
+    """Return a deliberately bounded record set for an action workflow."""
+    return query_page(
+        project_path, source, media_type, limit=limit, **filters
+    ).get("records", [])
+
+
+def _create_schema(connection: sqlite3.Connection) -> None:
+    connection.executescript(
+        """
+        PRAGMA journal_mode=OFF;
+        PRAGMA synchronous=OFF;
+        CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE records (
+            id INTEGER PRIMARY KEY,
+            title TEXT NOT NULL,
+            field TEXT NOT NULL,
+            initial TEXT NOT NULL,
+            label TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            object_id TEXT NOT NULL,
+            human_best INTEGER NOT NULL,
+            confidence_score REAL NOT NULL,
+            usefulness_score REAL NOT NULL,
+            engraving_score REAL NOT NULL,
+            fullness_score REAL NOT NULL,
+            size_score REAL NOT NULL,
+            completeness_score REAL NOT NULL,
+            isolation_score REAL NOT NULL,
+            semantic_label_score REAL NOT NULL,
+            semantic_field_score REAL NOT NULL,
+            engraved_score REAL NOT NULL,
+            payload TEXT NOT NULL
+        );
+        CREATE INDEX records_title ON records(title);
+        CREATE INDEX records_field ON records(field);
+        CREATE INDEX records_initial ON records(initial);
+        CREATE INDEX records_label ON records(label);
+        CREATE INDEX records_mode ON records(mode);
+        CREATE INDEX records_filters ON records(title, field, initial, label, mode);
+        """
+    )
+
+
+def _record_row(project: Path, record: dict) -> tuple:
+    title = _clean_stem(record.get("filename_stem", ""))
+    field = str(record.get("field") or "--all")
+    label = str(record.get("label") or "")
+    first = label[:1]
+    initial = first.upper() if first.isalpha() else "#"
+    record_path = Path(str(record.get("path") or ""))
+    object_id = str(record.get("object_id") or record_path.stem)
+    return (
+        title, field, initial, label, str(record.get("mode") or ""),
+        object_id, 1 if record.get("human_best") else 0,
+        _numeric_score(record, "confidence"), _numeric_score(record, "usefulness"),
+        _numeric_score(record, "engraving"), _numeric_score(record, "fullness"),
+        _numeric_score(record, "size"), _numeric_score(record, "completeness"),
+        _numeric_score(record, "isolation"), _numeric_score(record, "semantic_label"),
+        _numeric_score(record, "semantic_field"), float(bool(record.get("engraved"))),
+        json.dumps(
+            _serialize_record(project, record), ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+    )
+
+
+def _numeric_score(record: dict, key: str) -> float:
+    value = record.get(f"{key}_score")
+    if value is None:
+        value = record.get(key)
+    try:
+        if value is not None:
+            return float(value)
+    except (TypeError, ValueError):
+        pass
+    mask_area = record.get("mask_area")
+    if key == "fullness" and mask_area is not None:
+        bbox = record.get("bbox") or []
+        if len(bbox) >= 4:
+            return max(0.0, min(1.0, float(mask_area) / max(1.0, bbox[2] * bbox[3])))
+    if key == "size" and mask_area is not None:
+        frame_size = record.get("frame_size") or []
+        if len(frame_size) >= 2:
+            area = float(mask_area) / max(1.0, frame_size[0] * frame_size[1])
+            return max(0.0, min(1.0, (area - 0.002) / 0.298))
+    return 0.0
+
+
+def _where(**filters) -> tuple[str, list]:
+    clauses: list[str] = []
+    params: list = []
+    columns = {
+        "title": "title", "field": "field", "letter": "initial",
+        "label": "label", "mode": "mode", "object_id": "object_id",
+    }
+    for name, column in columns.items():
+        value = filters.get(name)
+        if value not in (None, "", "--all"):
+            clauses.append(f"{column} = ?")
+            params.append(value)
+    if filters.get("human_best") is not None:
+        clauses.append("human_best = ?")
+        params.append(1 if filters["human_best"] else 0)
+    return ("WHERE " + " AND ".join(clauses) if clauses else ""), params
+
+
+def _order_by(sort_keys: list[str]) -> str:
+    numeric = [_SORT_COLUMNS[key] for key in sort_keys if key in _SORT_COLUMNS]
+    if numeric:
+        return f"ORDER BY ({' + '.join(numeric)}) / {len(numeric)} DESC, id"
+    if "alphabetical" in sort_keys:
+        return "ORDER BY label COLLATE NOCASE, id"
+    return "ORDER BY id"
 
 
 def _serialize_record(project: Path, record: dict) -> dict:
@@ -172,39 +389,52 @@ def _serialize_record(project: Path, record: dict) -> dict:
     return serialized
 
 
-def _build_filter_cache(records: list[dict]) -> dict:
-    films: set[str] = set()
-    fields: set[str] = set()
-    letters: set[str] = set()
-    counts: dict[str, int] = {}
-    for record in records:
-        stem = re.sub(
-            r"\s*\{tmdb-\d+\}", "", str(record.get("filename_stem", ""))
-        ).strip()
-        if stem:
-            films.add(stem)
-        fields.add(record.get("field") or "--all")
-        label = record.get("label", "")
-        if label:
-            initial = label[0].upper()
-            letters.add(initial if initial.isalpha() else "#")
-            counts[label] = counts.get(label, 0) + 1
-    return {
-        "films": sorted(films, key=str.casefold),
-        "fields": sorted(fields, key=str.casefold),
-        "letters": (["#"] if "#" in letters else [])
-        + sorted(letters - {"#"}, key=str.casefold),
-        "counts": counts,
-    }
+def _deserialize_record(project: Path, payload: str) -> dict:
+    record = json.loads(payload)
+    for key in ("path", "output_png", "raw_png"):
+        value = record.get(key)
+        if value:
+            path = Path(value)
+            record[key] = path if path.is_absolute() else project / path
+    return record
+
+
+def _clean_stem(stem: str) -> str:
+    return re.sub(r"\s*\{tmdb-\d+\}", "", str(stem)).strip()
 
 
 def _scan_silhouettes(project: Path, media_type: str) -> list[dict]:
     from services.silhouette_catalog import scan_catalog
 
-    return [
+    records = [
         record for record in scan_catalog(str(project), media_type=media_type)
         if "error" not in record
     ]
+    engraved = _engraved_source_keys(project, media_type)
+    for record in records:
+        path = Path(str(record.get("path") or ""))
+        key = (path.parent.parent.name, path.parent.name, path.stem)
+        record["engraved"] = key in engraved
+    return records
+
+
+def _engraved_source_keys(project: Path, media_type: str) -> set[tuple[str, str, str]]:
+    from services.engraving_paths import read_engraving_meta
+
+    base = project / "data" / "engravings" / "catalog" / media_type
+    keys: set[tuple[str, str, str]] = set()
+    if not base.is_dir():
+        return keys
+    for metadata_path in base.glob("*/*/*/isolated/engraving.json"):
+        metadata = read_engraving_meta(metadata_path)
+        if metadata and metadata.get("status") == "generated":
+            mode_dir = metadata_path.parent
+            keys.add((
+                mode_dir.parents[2].name,
+                mode_dir.parents[1].name,
+                mode_dir.parent.name,
+            ))
+    return keys
 
 
 def _scan_engravings(project: Path, media_type: str) -> list[dict]:

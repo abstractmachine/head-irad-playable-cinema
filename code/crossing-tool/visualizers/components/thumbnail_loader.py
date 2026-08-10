@@ -111,6 +111,7 @@ class ThumbnailLoader(QThread):
         records: list[dict],
         size: int,
         path_for: Optional[Callable[[dict], Optional[Path]]] = None,
+        timing_start: float | None = None,
         parent=None,
     ) -> None:
         super().__init__(parent)

@@ -6,9 +6,9 @@ generation (``data/motif.py``) — one title per film, not one motif per shot.
 
 Storage schema
 --------------
-The title is stored in a dedicated per-film file at:
+The title is stored as Flipbook output in a dedicated per-film file at:
 
-    <project>/data/film_titles/<media_type>/<stem>.json
+    <project>/output/flipbooks/<media_type>/<stem>-title.json
 
 Schema::
 
@@ -389,8 +389,18 @@ def normalize_film_title(text: str) -> str:
 def get_film_title_path(project_path: str, filename: str, media_type: str) -> "Path":
     """Return the canonical path for the per-film title JSON file.
 
-    ``<project>/data/film_titles/<media_type>/<stem>.json``
+    ``<project>/output/flipbooks/<media_type>/<stem>-title.json``
     """
+    stem = Path(filename).stem
+    return (
+        Path(project_path) / "output" / "flipbooks" / media_type
+        / f"{stem}-title.json"
+    )
+
+
+def _legacy_film_title_path(
+    project_path: str, filename: str, media_type: str
+) -> "Path":
     stem = Path(filename).stem
     return Path(project_path) / "data" / "film_titles" / media_type / f"{stem}.json"
 
@@ -402,16 +412,39 @@ def load_film_motif(
 ) -> Optional[dict]:
     """Load the cached film-level title motif dict, or ``None`` if not yet generated.
 
-    Reads from ``<project>/data/film_titles/<media_type>/<stem>.json``.
+    Reads from the Flipbook output path, with read-only compatibility for the
+    former ``data/film_titles`` location.
     """
     path = get_film_title_path(project_path, filename, media_type)
     if not path.exists():
-        return None
+        path = _legacy_film_title_path(project_path, filename, media_type)
+        if not path.exists():
+            return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return None
     return data if isinstance(data, dict) and data.get("value", "").strip() else None
+
+
+def _write_film_title(
+    project_path: str,
+    filename: str,
+    media_type: str,
+    title_data: dict,
+) -> None:
+    path = get_film_title_path(project_path, filename, media_type)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    from data.annotate import atomic_write_text
+    atomic_write_text(path, json.dumps(title_data, indent=2, ensure_ascii=False))
+
+    legacy_path = _legacy_film_title_path(project_path, filename, media_type)
+    legacy_path.unlink(missing_ok=True)
+    for directory in (legacy_path.parent, legacy_path.parent.parent):
+        try:
+            directory.rmdir()
+        except OSError:
+            break
 
 
 def set_film_title(
@@ -439,10 +472,7 @@ def set_film_title(
             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         },
     }
-    path = get_film_title_path(project_path, filename, media_type)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    from data.annotate import atomic_write_text
-    atomic_write_text(path, json.dumps(title_motif, indent=2, ensure_ascii=False))
+    _write_film_title(project_path, filename, media_type, title_motif)
     return title_motif
 
 
@@ -465,7 +495,7 @@ def generate_film_title(
 
     The title is derived from the complete shot motif progression stored in
     the annotation JSON.  It is cached under
-    ``<project>/data/film_motifs/<media_type>/<stem>.json``.
+    ``<project>/output/flipbooks/<media_type>/<stem>-title.json``.
 
     Parameters
     ----------
@@ -600,11 +630,7 @@ def generate_film_title(
         "fallback":      used_fallback,
     }
 
-    # Write title to the dedicated film title file
-    title_path = get_film_title_path(project_path, filename, media_type)
-    title_path.parent.mkdir(parents=True, exist_ok=True)
-    from data.annotate import atomic_write_text
-    atomic_write_text(title_path, json.dumps(film_motif, indent=2, ensure_ascii=False))
+    _write_film_title(project_path, filename, media_type, film_motif)
 
     if verbose:
         print(f"  → {title}: {value}")

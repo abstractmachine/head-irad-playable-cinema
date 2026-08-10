@@ -435,15 +435,18 @@ crossing index audit --tmdb 391
   --verbose
   --media {movies,gameplay}
 
-# Build a per-field vocabulary index (token → shot-count) from annotation JSON.
-# Stores result in data/index/vocabulary_<media_type>.json.
-# Used to speed up `crossing search vocabulary` (future integration).
+# Build two separate derived vocabulary artifacts from annotation JSON:
+# - canonical structured fields in data/vocabulary/vocabulary_<media_type>.json
+# - reviewable description candidates in
+#   data/vocabulary/description_candidates_<media_type>.json
+# Description candidates never enter canonical fields or alter annotations.
 crossing index vocabulary
 crossing index vocabulary --media gameplay
 crossing index vocabulary --all              # both movies and gameplay
   --force                                    # rebuild even if cache exists
 
-# Rebuild both compact browse indexes used by the Illustration visualizer
+# Rebuild both queryable SQLite browse indexes used by Illustration.
+# The UI traverses indexed facets and page slices rather than source datasets.
 crossing index illustration
 crossing index illustration --media gameplay
 ```

@@ -199,6 +199,43 @@ def test_show_goes_straight_to_fullscreen_when_pending(app, fake_prefs):
     win2.close()
 
 
+def test_illustration_preserves_saved_windowed_geometry(app, fake_prefs, monkeypatch, tmp_path):
+    from PyQt5.QtCore import QRect
+    from PyQt5.QtWidgets import QApplication
+    from visualizers.illustration_visualizer import IllustrationWindow, _IllIpcServer
+
+    class _DesktopScreen:
+        @staticmethod
+        def availableGeometry():
+            return QRect(0, 0, 1920, 1080)
+
+    monkeypatch.setattr(
+        QApplication, "primaryScreen", staticmethod(lambda: _DesktopScreen())
+    )
+    monkeypatch.setattr(_IllIpcServer, "start", lambda self: None)
+    monkeypatch.setattr(_IllIpcServer, "stop", lambda self: None)
+    monkeypatch.setattr(_IllIpcServer, "wait", lambda self, timeout=0: True)
+
+    win1 = IllustrationWindow(str(tmp_path), media_type=None)
+    win1.show()
+    _pump(app)
+    win1.setGeometry(70, 80, 1100, 680)
+    _pump(app)
+    win1.close()
+    _pump(app)
+
+    assert fake_prefs["window_illustration"][:4] == [70, 80, 1100, 680]
+
+    win2 = IllustrationWindow(str(tmp_path), media_type=None)
+    win2.show()
+    _pump(app, ticks=10)
+    geometry = win2.geometry()
+    assert (
+        geometry.x(), geometry.y(), geometry.width(), geometry.height()
+    ) == (70, 80, 1100, 680)
+    win2.close()
+
+
 def _make_key_event(key, modifiers):
     from PyQt5.QtGui import QKeyEvent
     from PyQt5.QtCore import QEvent

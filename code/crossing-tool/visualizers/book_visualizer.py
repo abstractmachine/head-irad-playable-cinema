@@ -3015,11 +3015,10 @@ class _IllustrationBrowserPanel(QWidget):
         self.silhouette_insert_requested.emit(str(png), dict(rec))
 
     def _apply_sort_mode(self) -> None:
-        """Apply the active sort mode to the source cache and refresh the grid."""
-        items = self._source.items()
-        if self._sort_mode == "alphabetical":
-            items = sorted(items, key=lambda r: str.casefold(r.get("label") or ""))
-        self._source._records = list(items)
+        """Apply the active indexed sort mode and refresh the grid."""
+        self._source.set_sort_keys(
+            ["alphabetical"] if self._sort_mode == "alphabetical" else []
+        )
         self._browser.refresh()
 
     def set_sort_mode(self, mode: str) -> None:
@@ -3039,7 +3038,7 @@ class _IllustrationBrowserPanel(QWidget):
         self._browser.stepKeyword(delta)
 
     def clear_selection(self) -> None:
-        if 0 <= self._browser._selected_index < len(self._browser._filtered_items):
+        if self._browser.currentItem() is not None:
             page_idx = self._browser._selected_index - self._browser._page_index * self._browser._page_size
             if 0 <= page_idx < len(self._browser._cells):
                 self._browser._cells[page_idx].set_selected(False)

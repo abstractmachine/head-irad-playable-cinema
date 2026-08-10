@@ -4,7 +4,11 @@ from unittest.mock import patch
 import pytest
 from PyQt5.QtWidgets import QApplication
 
-from visualizers.components.illustration_browser import IllustrationBrowser, _CatalogLoader
+from visualizers.components.illustration_browser import (
+    IllustrationBrowser,
+    _CatalogLoader,
+    _KeywordLoader,
+)
 from visualizers.components.illustration_source import IllustrationSource
 from visualizers.illustration_visualizer import IllustrationPane, _IllustrationIndexWorker
 
@@ -109,24 +113,127 @@ def test_hidden_engraving_source_loads_on_first_tab_activation(app, tmp_path):
     pane.deleteLater()
 
 
-def test_catalog_loader_uses_filter_cache_from_index(app, tmp_path):
+def test_catalog_loader_uses_facets_from_index(app, tmp_path):
     source = _MemorySource(str(tmp_path))
-    source._load_status = {
-        "status": "ready",
-        "filter_cache": {
-            "films": ["film"],
-            "fields": ["animals"],
-            "letters": ["H"],
-            "counts": {"horse": 1},
-        },
-    }
-    source._load = lambda media_type: [{"label": "horse"}]
+    source._load = lambda media_type: [{
+        "filename_stem": "film", "field": "animals", "label": "horse"
+    }]
     loader = _CatalogLoader(source, "movie")
 
     with patch.object(loader, "_build_filter_cache", side_effect=AssertionError):
         loader.run()
 
-    assert loader.result_cache == source._load_status["filter_cache"]
+    assert loader.result_cache == {
+        "films": ["film"],
+        "fields": {"animals"},
+        "letters": ["H"],
+        "counts": {"horse": 1},
+    }
+
+
+def test_keyword_worker_returns_counts_and_scoped_records(app):
+    records = [
+        {"filename_stem": "film", "field": "animals", "label": "horse"},
+        {"filename_stem": "film", "field": "animals", "label": "hare"},
+        {"filename_stem": "film", "field": "objects", "label": "hat"},
+        {"filename_stem": "other", "field": "animals", "label": "horse"},
+    ]
+    worker = _KeywordLoader(records, "film", "animals", "H")
+
+    worker.run()
+
+    assert worker.result_records == records[:2]
+    assert worker.result_counts == {"horse": 1, "hare": 1}
+    assert worker.result_labels == ["hare", "horse"]
+
+
+def test_keyword_combo_load_is_animated_and_batched(app, tmp_path):
+    browser = IllustrationBrowser(
+        _MemorySource(str(tmp_path)), media_type=None, auto_load=False
+    )
+    browser._all_items = [
+        {"filename_stem": "film", "field": "animals", "label": f"h{index:03d}"}
+        for index in range(205)
+    ]
+    browser._source._records = list(browser._all_items)
+    browser._item_combo.addItem("film", userData="film")
+    browser._item_combo.setCurrentIndex(1)
+    browser._field_combo.addItem("animals", userData="animals")
+    browser._field_combo.setCurrentIndex(1)
+    browser._letter_combo.addItem("H", userData="H")
+    browser._letter_combo.setCurrentIndex(1)
+
+    with patch.object(_KeywordLoader, "start"):
+        browser._rebuild_keyword_combo()
+
+    assert browser._loading_bar._active is True
+    assert browser._loading_timer.isActive()
+    assert browser._keyword_combo.isEnabled() is False
+
+    worker = browser._keyword_loader
+    worker.run()
+    browser._on_keywords_loaded()
+    browser._keyword_population_timer.stop()
+
+    browser._append_keyword_batch()
+    browser._keyword_population_timer.stop()
+    assert browser._keyword_combo.count() == 101
+    assert browser._keyword_combo.isEnabled() is False
+
+    browser._append_keyword_batch()
+    browser._keyword_population_timer.stop()
+    assert browser._keyword_combo.count() == 201
+
+    browser._append_keyword_batch()
+    assert browser._keyword_combo.count() == 206
+    assert browser._keyword_combo.isEnabled() is True
+    assert browser._keyword_scope_items is None
+    assert browser._loading_bar._active is True
+
+    browser._grid_population_timer.stop()
+    browser._stop_loader()
+    browser.deleteLater()
+
+
+def test_stale_keyword_worker_result_is_ignored(app, tmp_path):
+    browser = IllustrationBrowser(
+        _MemorySource(str(tmp_path)), media_type=None, auto_load=False
+    )
+    current = _KeywordLoader([], None, "--all", "--all", parent=browser)
+    stale = _KeywordLoader([], None, "--all", "A", parent=browser)
+    browser._keyword_loader = current
+
+    with patch.object(browser, "sender", return_value=stale):
+        browser._on_keywords_loaded()
+
+    assert browser._keyword_loader is current
+    assert browser._keyword_population_timer.isActive() is False
+    browser._keyword_loader = None
+    browser.deleteLater()
+
+
+def test_keyword_navigation_retries_until_async_population_finishes(app, tmp_path):
+    browser = IllustrationBrowser(
+        _MemorySource(str(tmp_path)), media_type=None, auto_load=False
+    )
+    browser._keyword_loader = _KeywordLoader([], None, "--all", "H", parent=browser)
+    browser._keyword_combo.setEnabled(False)
+    retries = []
+
+    with patch(
+        "visualizers.components.illustration_browser.QTimer.singleShot",
+        side_effect=lambda delay, callback: retries.append((delay, callback)),
+    ):
+        browser.navigate_to_filters(keyword="horse")
+
+    assert retries[0][0] == 50
+
+    browser._keyword_loader = None
+    browser._keyword_combo.setEnabled(True)
+    browser._keyword_combo.addItem("horse  (2)", userData="horse")
+    retries[0][1]()
+    assert browser._keyword_combo.currentData() == "horse"
+    browser.deleteLater()
 
 
 def test_pagination_distinguishes_loading_from_index_errors(app, tmp_path):

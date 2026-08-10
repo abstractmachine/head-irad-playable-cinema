@@ -51,13 +51,11 @@ class IllustrationSource(ABC):
         self._project_path = project_path
         self._records: list[dict] = []
         self._load_status: dict = {"status": "missing"}
+        self._media_type = "movie"
 
     def reload(self, media_type: str = "movie") -> None:
-        """Reload all records for *media_type*.
-
-        Results are cached internally; call ``items()`` to retrieve them.
-        This is the data-loading boundary used by the browser.
-        """
+        """Refresh index status without materializing the complete catalog."""
+        self._media_type = media_type
         self._records = self._load(media_type)
 
     def items(self) -> list[dict]:
@@ -71,6 +69,59 @@ class IllustrationSource(ABC):
     def load_status(self) -> dict:
         """Return status from the most recent index load."""
         return dict(self._load_status)
+
+    def facets(self, **filters) -> dict:
+        """Return indexed browse facets for the current media type."""
+        records = self._records
+        title = filters.get("title")
+        field = filters.get("field")
+        letter = filters.get("letter")
+        if title:
+            records = [r for r in records if _record_title(r) == title]
+        if field not in (None, "", "--all"):
+            records = [r for r in records if (r.get("field") or "--all") == field]
+        if letter not in (None, "", "--all"):
+            records = [r for r in records if _record_initial(r) == letter]
+        counts: dict[str, int] = {}
+        for record in records:
+            label = record.get("label", "")
+            if label:
+                counts[label] = counts.get(label, 0) + 1
+        return {
+            **self._load_status,
+            "titles": sorted({_record_title(r) for r in self._records}, key=str.casefold),
+            "fields": sorted({r.get("field") or "--all" for r in records}, key=str.casefold),
+            "letters": sorted({_record_initial(r) for r in records if r.get("label")}),
+            "labels": [
+                {"label": label, "count": count}
+                for label, count in sorted(counts.items(), key=lambda item: item[0].casefold())
+            ],
+        }
+
+    def page(self, **filters) -> dict:
+        """Return one filtered page; custom in-memory sources use this fallback."""
+        records = self._filter_records(self._records, filters)
+        offset = max(0, int(filters.get("offset", 0)))
+        limit = max(1, int(filters.get("limit", 50)))
+        self._records = records[offset:offset + limit]
+        return {**self._load_status, "total": len(records), "records": list(self._records)}
+
+    def records(self, **filters) -> list[dict]:
+        """Return a bounded action query."""
+        return self._filter_records(self._records, filters)[:int(filters.get("limit", 100_000))]
+
+    @staticmethod
+    def _filter_records(records: list[dict], filters: dict) -> list[dict]:
+        result = list(records)
+        if filters.get("title"):
+            result = [r for r in result if _record_title(r) == filters["title"]]
+        if filters.get("field") not in (None, "", "--all"):
+            result = [r for r in result if (r.get("field") or "--all") == filters["field"]]
+        if filters.get("letter") not in (None, "", "--all"):
+            result = [r for r in result if _record_initial(r) == filters["letter"]]
+        if filters.get("label") not in (None, "", "--all"):
+            result = [r for r in result if r.get("label") == filters["label"]]
+        return result
 
     @abstractmethod
     def _load(self, media_type: str) -> list[dict]:
@@ -233,7 +284,29 @@ class SilhouetteSource(IllustrationSource):
         from services.illustration_index import load_index
 
         self._load_status = load_index(self._project_path, "silhouettes", media_type)
-        return self._apply_sort(self._load_status.get("items", []))
+        return []
+
+    def facets(self, **filters) -> dict:
+        from services.illustration_index import query_facets
+        return query_facets(
+            self._project_path, "silhouettes", self._media_type, **filters
+        )
+
+    def page(self, **filters) -> dict:
+        from services.illustration_index import query_page
+        result = query_page(
+            self._project_path, "silhouettes", self._media_type,
+            sort_keys=self._sort_keys, **filters,
+        )
+        self._records = list(result.get("records", []))
+        return result
+
+    def records(self, **filters) -> list[dict]:
+        from services.illustration_index import query_records
+        return query_records(
+            self._project_path, "silhouettes", self._media_type,
+            sort_keys=self._sort_keys, **filters,
+        )
 
     def thumbnail_path(self, record: dict) -> Optional[Path]:
         """Return the sibling PNG for a silhouette JSON sidecar record."""
@@ -268,14 +341,15 @@ class EngravingSource(IllustrationSource):
     def __init__(self, project_path: str) -> None:
         super().__init__(project_path)
         self._mode_filter: Optional[str] = None
-        self._all_eng_records: list[dict] = []
+        self._sort_keys: list[str] = []
+
+    def set_sort_keys(self, sort_keys: list[str]) -> None:
+        self._sort_keys = list(sort_keys)
 
     # ------------------------------------------------------------------ mode filter
 
     def reload(self, media_type: str = "movie") -> None:
-        """Reload from storage then re-apply the current mode filter."""
-        self._all_eng_records = self._load(media_type)
-        self._apply_mode_filter()
+        super().reload(media_type)
 
     def set_mode_filter(self, mode: Optional[str]) -> None:
         """Show only records whose ``mode`` field matches *mode*.
@@ -284,23 +358,6 @@ class EngravingSource(IllustrationSource):
         Filtering is a source concern; the browser remains source-agnostic.
         """
         self._mode_filter = mode or None
-        self._apply_mode_filter()
-
-    def _apply_mode_filter(self) -> None:
-        if self._mode_filter:
-            self._records = [
-                r for r in self._all_eng_records
-                if r.get("mode") == self._mode_filter
-            ]
-        else:
-            self._records = list(self._all_eng_records)
-
-    def _on_records_loaded(self, items: list) -> None:
-        """Called by IllustrationBrowser._on_catalog_loaded() after a background
-        scan so the mode filter is applied before the browser updates _all_items.
-        """
-        self._all_eng_records = list(items)
-        self._apply_mode_filter()
 
     def _load(self, media_type: str) -> list[dict]:
         if not media_type:
@@ -309,7 +366,30 @@ class EngravingSource(IllustrationSource):
         from services.illustration_index import load_index
 
         self._load_status = load_index(self._project_path, "engravings", media_type)
-        return self._load_status.get("items", [])
+        return []
+
+    def facets(self, **filters) -> dict:
+        from services.illustration_index import query_facets
+        return query_facets(
+            self._project_path, "engravings", self._media_type,
+            mode=self._mode_filter, **filters,
+        )
+
+    def page(self, **filters) -> dict:
+        from services.illustration_index import query_page
+        result = query_page(
+            self._project_path, "engravings", self._media_type,
+            mode=self._mode_filter, sort_keys=self._sort_keys, **filters,
+        )
+        self._records = list(result.get("records", []))
+        return result
+
+    def records(self, **filters) -> list[dict]:
+        from services.illustration_index import query_records
+        return query_records(
+            self._project_path, "engravings", self._media_type,
+            mode=self._mode_filter, sort_keys=self._sort_keys, **filters,
+        )
 
     def thumbnail_path(self, record: dict) -> Optional[Path]:
         """Return the best available output PNG for an engraving record."""
@@ -320,3 +400,15 @@ class EngravingSource(IllustrationSource):
                 if p.exists():
                     return p
         return None
+
+
+def _record_title(record: dict) -> str:
+    import re
+    return re.sub(
+        r"\s*\{tmdb-\d+\}", "", str(record.get("filename_stem", ""))
+    ).strip()
+
+
+def _record_initial(record: dict) -> str:
+    label = str(record.get("label") or "")
+    return label[:1].upper() if label[:1].isalpha() else "#"

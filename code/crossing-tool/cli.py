@@ -5129,8 +5129,9 @@ def _index_audit(args):
 
 
 def _index_vocabulary(args):
-    """Build a per-field vocabulary index from annotation JSON files."""
+    """Build canonical vocabulary and separate description candidates."""
     from services.vocabulary_index import build_vocabulary_index
+    from services.description_candidates import build_description_candidates
 
     project_path = prefs.get("path")
     media_type   = normalize_media_type(getattr(args, "media", "movie"))
@@ -5157,6 +5158,15 @@ def _index_vocabulary(args):
             print(f"Fields: {', '.join(voc_flds)}")
         print(f"Found {n_tokens} unique tokens")
         print(f"Saved: {out_rel}")
+        candidates = build_description_candidates(
+            project_path, mt, force=force
+        )
+        candidate_count = candidates.get("meta", {}).get("candidate_count", 0)
+        candidate_rel = (
+            Path("data") / "vocabulary" / f"description_candidates_{mt}.json"
+        )
+        print(f"Found {candidate_count} description-derived candidates")
+        print(f"Saved candidates: {candidate_rel}")
 
 
 def _index_annotations(args):
