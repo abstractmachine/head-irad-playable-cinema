@@ -5129,44 +5129,46 @@ def _index_audit(args):
 
 
 def _index_vocabulary(args):
-    """Build canonical vocabulary and separate description candidates."""
+    """Build canonical and/or derived vocabulary families."""
     from services.vocabulary_index import build_vocabulary_index
-    from services.description_candidates import build_description_candidates
+    from services.derived_vocabulary import build_derived_vocabulary
 
     project_path = prefs.get("path")
     media_type   = normalize_media_type(getattr(args, "media", "movie"))
     force        = getattr(args, "force", False)
     do_all       = getattr(args, "all", False)
+    family       = getattr(args, "family", "all")
 
     media_types = ["movie", "gameplay"] if do_all else [media_type]
 
     for mt in media_types:
-        print(f"Building vocabulary index ({mt})...")
-        try:
-            index = build_vocabulary_index(project_path, mt, force=force)
-        except FileNotFoundError as exc:
-            print(f"  ✗ {exc}", file=sys.stderr)
-            continue
-        meta      = index.get("meta", {})
-        n_files   = meta.get("files_processed", "?")
-        n_tokens  = meta.get("total_tokens", 0)
-        voc_flds  = meta.get("vocabulary_fields") or []
-        out_rel   = Path("data") / "vocabulary" / f"vocabulary_{mt}.json"
-        if n_files != "?":
-            print(f"Processed {n_files} files")
-        if voc_flds:
-            print(f"Fields: {', '.join(voc_flds)}")
-        print(f"Found {n_tokens} unique tokens")
-        print(f"Saved: {out_rel}")
-        candidates = build_description_candidates(
-            project_path, mt, force=force
-        )
-        candidate_count = candidates.get("meta", {}).get("candidate_count", 0)
-        candidate_rel = (
-            Path("data") / "vocabulary" / f"description_candidates_{mt}.json"
-        )
-        print(f"Found {candidate_count} description-derived candidates")
-        print(f"Saved candidates: {candidate_rel}")
+        if family in {"canonical", "all"}:
+            print(f"Building canonical vocabulary ({mt})...")
+            try:
+                index = build_vocabulary_index(project_path, mt, force=force)
+            except FileNotFoundError as exc:
+                print(f"  ✗ {exc}", file=sys.stderr)
+                continue
+            meta = index.get("meta", {})
+            n_files = meta.get("files_processed", "?")
+            n_tokens = meta.get("total_tokens", 0)
+            voc_flds = meta.get("vocabulary_fields") or []
+            if n_files != "?":
+                print(f"Processed {n_files} files")
+            if voc_flds:
+                print(f"Fields: {', '.join(voc_flds)}")
+            print(f"Found {n_tokens} canonical tokens")
+            print(f"Saved: data/vocabulary/vocabulary-{mt}.json")
+        if family in {"derived", "all"}:
+            print(f"Building derived vocabulary ({mt})...")
+            try:
+                index = build_derived_vocabulary(project_path, mt, force=force)
+            except FileNotFoundError as exc:
+                print(f"  ✗ {exc}", file=sys.stderr)
+                continue
+            meta = index.get("meta", {})
+            print(f"Found {meta.get('total_tokens', 0)} derived tokens")
+            print(f"Saved: data/vocabulary/vocabulary-{mt}-derived.json")
 
 
 def _index_annotations(args):
@@ -8600,6 +8602,10 @@ def build_parser():
     p_index_vocabulary.add_argument(
         "--force", action="store_true",
         help="Rebuild even if a cached index already exists",
+    )
+    p_index_vocabulary.add_argument(
+        "--family", choices=("canonical", "derived", "all"), default="all",
+        help="Vocabulary family to rebuild (default: all)",
     )
 
     p_index_illustration = index_sub.add_parser(

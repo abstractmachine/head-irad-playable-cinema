@@ -12,7 +12,7 @@ Vocabulary is independent from the semantic embedding index: it depends only
 on raw annotation JSON and the project's field configuration.
 
 Output path:
-    <project>/data/index/vocabulary_<media_type>.json
+    <project>/data/vocabulary/vocabulary-<media_type>.json
 
 Output schema::
 
@@ -79,7 +79,7 @@ from typing import Dict, List
 
 #: Version marker stored in the cache meta.  Bump this string whenever the
 #: lemmatization logic changes so that stale caches are automatically rebuilt.
-CANONICALIZATION_VERSION = "noun_lemma_v1"
+CANONICALIZATION_VERSION = "noun_lemma_v2"
 
 #: Fields where conservative noun lemmatization is applied.
 #: ``setting`` is intentionally absent — its values are phrase-like.
@@ -190,7 +190,16 @@ def canonicalize_vocabulary_value(field: str, value: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _vocab_path(project_path: str, media_type: str) -> Path:
+    return Path(project_path) / "data" / "vocabulary" / f"vocabulary-{media_type}.json"
+
+
+def _legacy_vocab_path(project_path: str, media_type: str) -> Path:
     return Path(project_path) / "data" / "vocabulary" / f"vocabulary_{media_type}.json"
+
+
+def _readable_vocab_path(project_path: str, media_type: str) -> Path:
+    path = _vocab_path(project_path, media_type)
+    return path if path.exists() else _legacy_vocab_path(project_path, media_type)
 
 
 def _ann_dir(project_path: str, media_type: str) -> Path:
@@ -259,7 +268,7 @@ def vocabulary_cache_is_stale(project_path: str, media_type: str = "movie") -> b
     this is called immediately before ``load_vocabulary_index`` (as is the case
     in ``_vocabulary_from_cache`` in ``services/search.py``).
     """
-    path = _vocab_path(project_path, media_type)
+    path = _readable_vocab_path(project_path, media_type)
     if not path.exists():
         return True
     try:
@@ -280,9 +289,9 @@ def build_vocabulary_index(
 ) -> dict:
     """Scan annotation JSON files and build a vocabulary index.
 
-    Only fields listed under the ``vocabulary`` key in ``fields.yaml`` are
-    indexed.  For fields that are also in the ``atomic`` list, comma-joined
-    items are split and normalized using the same logic as annotation repair.
+    Fields listed under the ``vocabulary`` key and configured atomic-label
+    fields are indexed. For atomic fields, comma-joined items are split and
+    normalized using the same logic as annotation repair.
 
     Returns the index dict (also written to disk).
     Skips an up-to-date cache unless *force* is True.
@@ -316,8 +325,9 @@ def build_vocabulary_index(
         vocab_fields = []
         atomic_fields = []
 
-    vocab_set  = frozenset(vocab_fields)
     atomic_set = frozenset(atomic_fields)
+    indexed_fields = list(dict.fromkeys([*vocab_fields, *atomic_fields]))
+    vocab_set = frozenset(indexed_fields)
 
     if not vocab_set:
         # No allowlist configured — index nothing and return an empty cache.
@@ -343,7 +353,7 @@ def build_vocabulary_index(
 
     # field → canonical_token → {"count": int, "aliases": set[str]}  (single pass)
     # Using a plain dict so we can merge plural/singular variants under one key.
-    canonical_counts: Dict[str, Dict[str, dict]] = {f: {} for f in vocab_fields}
+    canonical_counts: Dict[str, Dict[str, dict]] = {f: {} for f in indexed_fields}
 
     json_files = sorted(ann_dir_path.glob("*.json"))
     files_processed = 0
@@ -372,7 +382,7 @@ def build_vocabulary_index(
             if not isinstance(ann, dict):
                 continue
 
-            for field in vocab_fields:
+            for field in indexed_fields:
                 value = ann.get(field)
                 if value is None:
                     continue
@@ -436,7 +446,7 @@ def build_vocabulary_index(
         "meta": {
             "built_at": datetime.now(timezone.utc).isoformat(),
             "media_type": media_type,
-            "vocabulary_fields": vocab_fields,
+                "vocabulary_fields": indexed_fields,
             "canonicalization": CANONICALIZATION_VERSION,
             "files_processed": files_processed,
             "total_tokens": total_tokens,
@@ -462,7 +472,7 @@ def load_vocabulary_index(project_path: str, media_type: str = "movie") -> dict:
     file's (path, mtime_ns, size).  Switching between annotation fields in a
     running visualizer will therefore hit memory after the first load.
     """
-    path = _vocab_path(project_path, media_type)
+    path = _readable_vocab_path(project_path, media_type)
     if not path.exists():
         raise FileNotFoundError(
             f"Vocabulary index not found for '{media_type}'. "
@@ -546,6 +556,10 @@ def get_vocabulary(
 
     if sort == "alphabetical":
         items.sort(key=lambda kv: kv[0].lower())
+    elif sort == "count":
+        items.sort(key=lambda kv: -kv[1])
+    elif sort == "count_alphabetical":
+        items.sort(key=lambda kv: (-kv[1], kv[0].lower()))
 
     return [{"value": token, "count": count} for token, count in items]
 

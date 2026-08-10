@@ -7,10 +7,12 @@ from PyQt5.QtWidgets import QApplication
 import services.search as search_mod
 import services.vocabulary_index as vocabulary_index_mod
 import visualizers.mosaic_visualizer as mosaic_mod
-from data.index import save_vocabulary_fields
+from data.index import save_atomic_fields, save_vocabulary_fields
+from services.derived_vocabulary import build_derived_vocabulary
 from services.vocabulary_index import build_vocabulary_index
 from visualizers.mosaic_visualizer import (
     MosaicVisualizer,
+    SearchWorker,
     VOCABULARY_RENDER_THRESHOLD,
     VocabularyIndexWorker,
     VocabularyWorker,
@@ -100,7 +102,7 @@ def test_index_only_all_field_merges_indexed_vocabulary(tmp_path, monkeypatch):
     )
 
     result = search_mod.vocabulary_from_index(
-        "--all", str(tmp_path), "movie", sort="count"
+        "--all", str(tmp_path), "movie", sort="count", family="canonical"
     )
 
     assert result == {
@@ -110,6 +112,83 @@ def test_index_only_all_field_merges_indexed_vocabulary(tmp_path, monkeypatch):
             {"value": "saddle", "count": 1},
         ],
     }
+
+
+def test_index_only_vocabulary_includes_configured_atomic_fields(tmp_path):
+    save_vocabulary_fields(str(tmp_path), ["animals"])
+    save_atomic_fields(str(tmp_path), ["action"])
+    annotation_dir = tmp_path / "data" / "annotations" / "shots" / "movie"
+    annotation_dir.mkdir(parents=True, exist_ok=True)
+    (annotation_dir / "Film.annotations.json").write_text(
+        json.dumps([
+            {"shot": {"annotation": {"action": ["勇禁"]}}},
+        ]),
+        encoding="utf-8",
+    )
+    build_vocabulary_index(str(tmp_path), "movie")
+
+    result = search_mod.vocabulary_from_index("action", str(tmp_path), "movie")
+
+    assert result == {"status": "ready", "items": [{"value": "勇禁", "count": 1}]}
+
+
+def test_index_only_all_field_merges_canonical_and_derived_vocabulary(tmp_path):
+    save_vocabulary_fields(str(tmp_path), ["animals"])
+    annotation_dir = tmp_path / "data" / "annotations" / "shots" / "movie"
+    annotation_dir.mkdir(parents=True, exist_ok=True)
+    (annotation_dir / "Film.annotations.json").write_text(
+        json.dumps([
+            {"shot": {"annotation": {
+                "animals": ["horse"], "description": "Two wagons pass.",
+            }}},
+            {"shot": {"annotation": {
+                "description": "A wagon waits.", "text": "Zealand poster.",
+            }}},
+            {"shot": {"annotation": {"text": "Zealand sign."}}},
+        ]),
+        encoding="utf-8",
+    )
+    build_vocabulary_index(str(tmp_path), "movie")
+    build_derived_vocabulary(str(tmp_path), "movie")
+
+    result = search_mod.vocabulary_from_index("--all", str(tmp_path), "movie", sort="count")
+
+    assert result == {
+        "status": "ready",
+        "items": [
+            {"value": "wagon", "count": 2},
+            {"value": "zealand", "count": 2},
+            {"value": "horse", "count": 1},
+        ],
+    }
+
+
+def test_index_only_count_alphabetical_sorts_equal_counts_by_value(tmp_path):
+    save_vocabulary_fields(str(tmp_path), ["animals"])
+    annotation_dir = tmp_path / "data" / "annotations" / "shots" / "movie"
+    annotation_dir.mkdir(parents=True, exist_ok=True)
+    (annotation_dir / "Film.annotations.json").write_text(
+        json.dumps([
+            {"shot": {"annotation": {
+                "animals": ["zebra"], "description": "A wagon waits.",
+            }}},
+            {"shot": {"annotation": {
+                "animals": ["zebra"], "description": "The wagon passes.",
+            }}},
+        ]),
+        encoding="utf-8",
+    )
+    build_vocabulary_index(str(tmp_path), "movie")
+    build_derived_vocabulary(str(tmp_path), "movie")
+
+    result = search_mod.vocabulary_from_index(
+        "--all", str(tmp_path), "movie", sort="count_alphabetical"
+    )
+
+    assert result["items"] == [
+        {"value": "wagon", "count": 2},
+        {"value": "zebra", "count": 2},
+    ]
 
 
 def test_vocabulary_worker_rejects_scoped_live_reconstruction(monkeypatch):
@@ -170,6 +249,42 @@ def test_vocabulary_worker_prepares_requested_prefix(monkeypatch):
     assert results[0]["selected_prefix"] == "z"
 
 
+@pytest.mark.parametrize(
+    "sort", ["count", "alphabetical", "count_alphabetical"],
+)
+def test_vocabulary_worker_passes_requested_sort(monkeypatch, sort):
+    calls = []
+    monkeypatch.setattr(
+        search_mod,
+        "vocabulary_from_index",
+        lambda **kwargs: calls.append(kwargs) or {"status": "ready", "items": []},
+    )
+    results = []
+    worker = VocabularyWorker("objects", None, "/project", sort=sort)
+    worker.result_ready.connect(results.append)
+
+    worker.run()
+
+    assert calls[0]["sort"] == sort
+
+
+def test_vocabulary_worker_uses_selected_field_for_family_routing(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        search_mod,
+        "vocabulary_from_index",
+        lambda **kwargs: calls.append(kwargs) or {"status": "ready", "items": []},
+    )
+    worker = VocabularyWorker("description", None, "/project")
+
+    worker.run()
+
+    assert calls == [{
+        "field": "description", "show_count": True, "project_path": "/project",
+        "media_type": "movie", "sort": "count",
+    }]
+
+
 def test_rebuild_worker_invokes_existing_cli_command(monkeypatch):
     calls = []
 
@@ -192,10 +307,41 @@ def test_rebuild_worker_invokes_existing_cli_command(monkeypatch):
         "vocabulary",
         "--media",
         "movie",
+        "--family",
+        "canonical",
         "--force",
     ]
     assert kwargs == {"capture_output": True, "text": True, "check": False}
     assert outputs == ["Saved: vocabulary_movie.json"]
+
+
+def test_rebuild_worker_can_target_derived_vocabulary(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        mosaic_mod.subprocess,
+        "run",
+        lambda command, **kwargs: calls.append(command) or subprocess.CompletedProcess(
+            command, 0, "", ""
+        ),
+    )
+    worker = VocabularyIndexWorker("gameplay", "derived")
+
+    worker.run()
+
+    assert calls[0][-5:] == ["--media", "gameplay", "--family", "derived", "--force"]
+
+
+def test_mosaic_uses_annotation_field_for_derived_vocabulary(tmp_path, app, fake_prefs, monkeypatch):
+    window = MosaicVisualizer(str(tmp_path))
+    requested = []
+    monkeypatch.setattr(window, "_start_vocabulary_load", lambda prefix=None: requested.append(prefix))
+
+    window.field_combo.setCurrentIndex(window.field_combo.findData("description"))
+
+    assert not hasattr(window, "vocab_family_combo")
+    assert window.field_combo.currentData() == "description"
+    assert requested == [None]
+    window.close()
 
 
 def test_mosaic_inspector_shows_stale_and_rebuild_busy_states(
@@ -362,6 +508,26 @@ def test_first_show_loads_all_field_vocabulary_once(
     window.close()
 
 
+def test_vocabulary_reload_clears_and_shows_loading_before_worker_starts(
+    tmp_path, monkeypatch, app, fake_prefs
+):
+    window = MosaicVisualizer(str(tmp_path))
+    window.vocab_table.set_items([{"value": "horse", "count": 1}])
+    started = []
+    monkeypatch.setattr(VocabularyWorker, "start", lambda self: started.append(self))
+
+    window._start_vocabulary_load()
+
+    assert window.vocab_table._rows == []
+    assert window._vocab_loading_bar._active is True
+    assert started == []
+
+    app.processEvents()
+
+    assert len(started) == 1
+    window.close()
+
+
 def test_navigation_change_starts_worker_request(tmp_path, monkeypatch, app, fake_prefs):
     window = MosaicVisualizer(str(tmp_path))
     requested = []
@@ -375,3 +541,82 @@ def test_navigation_change_starts_worker_request(tmp_path, monkeypatch, app, fak
 
     assert requested == ["a"]
     window.close()
+
+
+def test_mosaic_search_clear_button_tracks_browser_results(tmp_path, app, fake_prefs):
+    window = MosaicVisualizer(str(tmp_path))
+    button_grid = window.clear_btn.parentWidget().layout().itemAt(1).layout()
+
+    assert window.clear_btn.text() == "Clear"
+    assert not window.clear_btn.isEnabled()
+    assert button_grid.itemAtPosition(0, 0).widget() is window.search_btn
+    assert button_grid.itemAtPosition(0, 1).widget() is window.best_btn
+    assert button_grid.itemAtPosition(1, 0).widget() is window.shotlist_btn
+    assert button_grid.itemAtPosition(1, 1).widget() is window.clear_btn
+    assert button_grid.itemAtPosition(2, 0).widget() is window.pdf_btn
+    assert button_grid.itemAtPosition(2, 1).widget() is window.video_btn
+    window._current_results = [{"shot_id": "1"}]
+    window._update_result_controls()
+
+    assert window.clear_btn.isEnabled()
+    window._on_clear()
+
+    assert window._current_results == []
+    assert not window.clear_btn.isEnabled()
+    assert window.search_status_label.text() == "Enter a query and press Search"
+    window.close()
+
+
+def test_mosaic_scope_offers_all_media_and_keeps_title_media_type(tmp_path, app, fake_prefs, monkeypatch):
+    def fake_metadata(_project_path, media_type):
+        return [{
+            "title": media_type.title(), "year": "2026", "filename": f"{media_type}.mp4",
+        }]
+
+    monkeypatch.setattr("data.metadata.get_metadata", fake_metadata)
+    window = MosaicVisualizer(str(tmp_path))
+    window.media_type_combo.setCurrentIndex(0)
+
+    assert [window.media_type_combo.itemData(index) for index in range(3)] == [
+        "--all", None, None,
+    ]
+    assert window.media_type_combo.itemText(0) == "<Media>"
+    scopes = [window.movie_combo.itemData(index) for index in range(window.movie_combo.count())]
+    assert ("movie", "movie.mp4") in scopes
+    assert ("gameplay", "gameplay.mp4") in scopes
+    window.movie_combo.setCurrentIndex(scopes.index(("gameplay", "gameplay.mp4")))
+    assert window._current_scope() == ("gameplay", "gameplay.mp4")
+    window.close()
+
+
+def test_mosaic_restores_and_persists_vocabulary_sort(tmp_path, app, fake_prefs, monkeypatch):
+    fake_prefs["mosaic_vocabulary_sort"] = "count_alphabetical"
+    window = MosaicVisualizer(str(tmp_path))
+    requested = []
+    monkeypatch.setattr(window, "_start_vocabulary_load", requested.append)
+
+    assert window.vocab_sort_combo.currentData() == "count_alphabetical"
+    window.vocab_sort_combo.setCurrentIndex(window.vocab_sort_combo.findData("alphabetical"))
+
+    assert fake_prefs["mosaic_vocabulary_sort"] == "alphabetical"
+    assert requested == ["--all"]
+    window.close()
+
+
+def test_all_media_search_worker_queries_movie_and_gameplay(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        search_mod,
+        "search_shots",
+        lambda **kwargs: calls.append(kwargs["media_type"]) or {"results": [{
+            "movie_id": kwargs["media_type"], "shot_id": "1",
+        }]},
+    )
+    results = []
+    worker = SearchWorker("query", None, None, None, False, "/project", media_type="--all")
+    worker.tile_ready.connect(lambda result, _pixmap: results.append(result))
+
+    worker.run()
+
+    assert calls == ["movie", "gameplay"]
+    assert [result["media_type"] for result in results] == ["movie", "gameplay"]

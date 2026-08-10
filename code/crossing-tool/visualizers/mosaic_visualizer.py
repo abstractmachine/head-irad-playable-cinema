@@ -77,6 +77,7 @@ from typing import Optional
 
 
 _CLI_PATH = Path(__file__).parent.parent / "cli.py"
+_VOCAB_SORT_PREF_KEY = "mosaic_vocabulary_sort"
 
 
 # ---------------------------------------------------------------------------
@@ -438,17 +439,25 @@ class SearchWorker(QThread):
                 total_limit = self.limit
                 limit_pi    = None
 
-            result  = search_shots(
-                query          = self.query,
-                scopes         = scopes,
-                field          = field,
-                limit          = total_limit,
-                limit_per_item = limit_pi,
-                use_all        = use_all,
-                project_path   = self.project_path,
-                media_type     = self.media_type,
-            )
-            results = result.get("results", [])
+            media_types = ("movie", "gameplay") if self.media_type == "--all" else (self.media_type,)
+            results = []
+            for media_type in media_types:
+                result = search_shots(
+                    query          = self.query,
+                    scopes         = scopes,
+                    field          = field,
+                    limit          = total_limit,
+                    limit_per_item = limit_pi,
+                    use_all        = use_all,
+                    project_path   = self.project_path,
+                    media_type     = media_type,
+                )
+                results.extend(
+                    {**item, "media_type": media_type}
+                    for item in result.get("results", [])
+                )
+            if total_limit is not None:
+                results = results[:total_limit]
 
             # Load CLIP model once when query-based best-frame matching is needed
             clip_model = clip_processor = clip_device = None
@@ -482,7 +491,7 @@ class SearchWorker(QThread):
                                 filename=r.get("filename", ""),
                                 shot_id=r.get("shot_id", ""),
                                 query=self.query,
-                                media_type=self.media_type,
+                                media_type=r.get("media_type", self.media_type),
                                 model=clip_model,
                                 processor=clip_processor,
                                 device=clip_device,
@@ -540,6 +549,7 @@ class VocabularyWorker(QThread):
         project_path: str,
         media_type: str = "movie",
         prefix: Optional[str] = None,
+        sort: str = "count",
         parent=None,
     ):
         super().__init__(parent)
@@ -548,6 +558,7 @@ class VocabularyWorker(QThread):
         self.project_path = project_path
         self.media_type   = media_type
         self.prefix       = prefix
+        self.sort         = sort
 
     def run(self) -> None:
         try:
@@ -557,7 +568,7 @@ class VocabularyWorker(QThread):
                 show_count   = True,
                 project_path = self.project_path,
                 media_type   = self.media_type,
-                sort         = "count",
+                sort         = self.sort,
             )
             if result.get("status") == "ready" and self.scope and self.scope != "--all":
                 result = {"status": "scope_unsupported"}
@@ -599,14 +610,15 @@ class VocabularyWorker(QThread):
 
 
 class VocabularyIndexWorker(QThread):
-    """Rebuild the vocabulary index through the canonical CLI command."""
+    """Rebuild the field-derived vocabulary family through the CLI command."""
 
     finished_signal = pyqtSignal(str)
     error = pyqtSignal(str)
 
-    def __init__(self, media_type: str, parent=None) -> None:
+    def __init__(self, media_type: str, family: str = "canonical", parent=None) -> None:
         super().__init__(parent)
         self.media_type = media_type
+        self.family = family
 
     def run(self) -> None:
         try:
@@ -618,6 +630,8 @@ class VocabularyIndexWorker(QThread):
                     "vocabulary",
                     "--media",
                     self.media_type,
+                    "--family",
+                    self.family,
                     "--force",
                 ],
                 capture_output=True,
@@ -1150,10 +1164,16 @@ class MosaicVisualizer(WindowVisualizer):
         scope_layout.setContentsMargins(0, 0, 0, 0)
         scope_layout.setSpacing(theme.SECTION_GAP)
         self.media_type_combo = QComboBox()
+        add_combo_all_item(self.media_type_combo, user_data="--all")
+        self.media_type_combo.setItemText(0, "<Media>")
         self.media_type_combo.addItems(["movie", "gameplay"])
         self.media_type_combo.setCurrentText(self.media_type)
         style_canonical_combo(self.media_type_combo)
-        self.media_type_combo.currentTextChanged.connect(self._on_media_type_changed)
+        self.media_type_combo.currentIndexChanged.connect(
+            lambda _index: self._on_media_type_changed(
+                self.media_type_combo.currentData() or self.media_type_combo.currentText()
+            )
+        )
         self.media_type_combo.installEventFilter(self)
         scope_layout.addWidget(self.media_type_combo)
         self.movie_combo = QComboBox()
@@ -1164,7 +1184,7 @@ class MosaicVisualizer(WindowVisualizer):
         scope_layout.addWidget(self.movie_combo)
         panel.add_section("Scope", scope_wrap, pref_key="mosaic_section_scope")
 
-        # ── Annotation Field section ─────────────────────────────────
+        # ── Field section ──────────────────────────────────────────────
         field_wrap = QWidget()
         field_layout = QVBoxLayout(field_wrap)
         field_layout.setContentsMargins(0, 0, 0, 0)
@@ -1179,9 +1199,9 @@ class MosaicVisualizer(WindowVisualizer):
         self.field_combo.currentIndexChanged.connect(self._on_field_changed)
         self.field_combo.installEventFilter(self)
         field_layout.addWidget(self.field_combo)
-        panel.add_section("Annotation Field", field_wrap, pref_key="mosaic_section_field")
+        panel.add_section("Field", field_wrap, pref_key="mosaic_section_field")
 
-        # ── Search Query section — query text + action button grid ──
+        # ── Search section — query text + action button grid ─────────
         query_wrap = QWidget()
         query_layout = QVBoxLayout(query_wrap)
         query_layout.setContentsMargins(0, 0, 0, 0)
@@ -1204,6 +1224,13 @@ class MosaicVisualizer(WindowVisualizer):
         self.search_btn.clicked.connect(self._on_search)
         btn_grid.addWidget(self.search_btn, 0, 0)
 
+        self.clear_btn = QPushButton("Clear")
+        self.clear_btn.setStyleSheet(theme.action_button_stylesheet())
+        self.clear_btn.setFocusPolicy(Qt.NoFocus)
+        self.clear_btn.setEnabled(False)
+        self.clear_btn.setToolTip("Clear the current Mosaic browser results")
+        self.clear_btn.clicked.connect(self._on_clear)
+
         self.best_btn = QPushButton("Best")
         self.best_btn.setStyleSheet(theme.action_button_stylesheet())
         self.best_btn.setFocusPolicy(Qt.NoFocus)
@@ -1221,13 +1248,15 @@ class MosaicVisualizer(WindowVisualizer):
         self.shotlist_btn.clicked.connect(self._on_shotlist_btn_clicked)
         btn_grid.addWidget(self.shotlist_btn, 1, 0)
 
+        btn_grid.addWidget(self.clear_btn, 1, 1)
+
         self.pdf_btn = QPushButton("PDF")
         self.pdf_btn.setStyleSheet(theme.action_button_stylesheet())
         self.pdf_btn.setFocusPolicy(Qt.NoFocus)
         self.pdf_btn.setEnabled(False)
         self.pdf_btn.setToolTip("Export a PDF contact sheet of the current results")
         self.pdf_btn.clicked.connect(self._on_export_pdf)
-        btn_grid.addWidget(self.pdf_btn, 1, 1)
+        btn_grid.addWidget(self.pdf_btn, 2, 0)
 
         self.video_btn = QPushButton("Video")
         self.video_btn.setStyleSheet(theme.action_button_stylesheet())
@@ -1238,7 +1267,7 @@ class MosaicVisualizer(WindowVisualizer):
             "saved to output/mosaics/video/search/"
         )
         self.video_btn.clicked.connect(self._on_save_video)
-        btn_grid.addWidget(self.video_btn, 2, 0)
+        btn_grid.addWidget(self.video_btn, 2, 1)
 
         query_layout.addLayout(btn_grid)
 
@@ -1247,7 +1276,7 @@ class MosaicVisualizer(WindowVisualizer):
         self.search_status_label.setStyleSheet(status_label_stylesheet())
         query_layout.addWidget(self.search_status_label)
 
-        panel.add_section("Search Query", query_wrap, pref_key="mosaic_section_search")
+        panel.add_section("Search", query_wrap, pref_key="mosaic_section_search")
 
         # ── Info section — title/year of the currently-selected frame ──
         info_wrap = QWidget()
@@ -1357,6 +1386,21 @@ class MosaicVisualizer(WindowVisualizer):
         vocab_layout = QVBoxLayout(vocab_wrap)
         vocab_layout.setContentsMargins(0, 0, 0, 0)
         vocab_layout.setSpacing(theme.SECTION_GAP)
+        self.vocab_sort_combo = QComboBox()
+        self.vocab_sort_combo.addItem("Count", userData="count")
+        self.vocab_sort_combo.addItem("Alphabetical", userData="alphabetical")
+        self.vocab_sort_combo.addItem(
+            "Count + Alphabetical", userData="count_alphabetical"
+        )
+        style_canonical_combo(self.vocab_sort_combo)
+        from tool import prefs as _prefs
+        saved_sort = _prefs.get(_VOCAB_SORT_PREF_KEY, "count")
+        saved_index = self.vocab_sort_combo.findData(saved_sort)
+        if saved_index >= 0:
+            self.vocab_sort_combo.setCurrentIndex(saved_index)
+        self.vocab_sort_combo.setToolTip("Sort vocabulary values")
+        self.vocab_sort_combo.currentIndexChanged.connect(self._on_vocab_sort_changed)
+        vocab_layout.addWidget(self.vocab_sort_combo)
         self.vocab_nav_combo = QComboBox()
         style_canonical_combo(self.vocab_nav_combo)
         self.vocab_nav_combo.setToolTip("Show vocabulary values by initial letter")
@@ -1394,7 +1438,7 @@ class MosaicVisualizer(WindowVisualizer):
             return
 
         from visualizers.shot_visualizer import open_at_shot
-        open_at_shot(self.project_path, filename, self.media_type, shot_id=shot_id,
+        open_at_shot(self.project_path, filename, result.get("media_type", self.media_type), shot_id=shot_id,
                      loop=True, no_continue=True, play=True)
 
     def _on_tile_selected(self, result: dict) -> None:
@@ -1432,6 +1476,7 @@ class MosaicVisualizer(WindowVisualizer):
         self.media_type = media_type
         self.canvas.clear()
         self._current_results = []
+        self._update_result_controls()
         self._update_best_button()
         self.movie_combo.blockSignals(True)
         self.movie_combo.clear()
@@ -1442,12 +1487,15 @@ class MosaicVisualizer(WindowVisualizer):
     def _current_scope(self) -> "tuple[str, str | None]":
         """Return (media_type, filename_or_none) for the current scope selection."""
         filename = self.movie_combo.currentData()
+        if isinstance(filename, tuple):
+            return filename
         return self.media_type, filename if filename else None
 
     def _select_scope(self, media_type: str, filename: "str | None") -> None:
         """Programmatically select a scope without triggering signals."""
         self.media_type_combo.blockSignals(True)
-        self.media_type_combo.setCurrentText(media_type)
+        index = self.media_type_combo.findData(media_type)
+        self.media_type_combo.setCurrentIndex(index if index >= 0 else self.media_type_combo.findText(media_type))
         self.media_type = media_type
         self.media_type_combo.blockSignals(False)
         # Repopulate titles for this type, then select the right entry
@@ -1461,15 +1509,23 @@ class MosaicVisualizer(WindowVisualizer):
         """Populate movie_combo from project metadata for the current media type."""
         try:
             from data.metadata import get_metadata
-            rows = get_metadata(self.project_path, media_type=self.media_type)
-            sorted_rows = sorted(rows, key=lambda r: (r.get("title") or "").lower())
-            for row in sorted_rows:
+            media_types = ("movie", "gameplay") if self.media_type == "--all" else (self.media_type,)
+            rows = [
+                (media_type, row)
+                for media_type in media_types
+                for row in get_metadata(self.project_path, media_type=media_type)
+            ]
+            sorted_rows = sorted(rows, key=lambda item: (item[1].get("title") or "").lower())
+            for media_type, row in sorted_rows:
                 title    = row.get("title", "")
                 year     = row.get("year", "")
                 label    = f"{title} ({year})" if year else title
                 filename = row.get("filename", "")
                 if label and filename:
-                    self.movie_combo.addItem(label, userData=filename)
+                    if self.media_type == "--all":
+                        self.movie_combo.addItem(f"{label} [{media_type}]", userData=(media_type, filename))
+                    else:
+                        self.movie_combo.addItem(label, userData=filename)
         except Exception:
             pass
 
@@ -1487,6 +1543,13 @@ class MosaicVisualizer(WindowVisualizer):
         has_query   = bool(self.query_input.text().strip())
         has_results = bool(self._current_results)
         self.best_btn.setEnabled(has_query or has_results)
+
+    def _update_result_controls(self) -> None:
+        has_results = bool(self._current_results)
+        self.clear_btn.setEnabled(has_results)
+        self.pdf_btn.setEnabled(has_results)
+        self.video_btn.setEnabled(has_results)
+        self._update_best_button()
 
     def _on_best_toggle(self) -> None:
         self.best_mode = self.best_btn.isChecked()
@@ -1522,11 +1585,10 @@ class MosaicVisualizer(WindowVisualizer):
 
         self.canvas.clear()
         self._current_results = []
-        self.pdf_btn.setEnabled(False)
-        self.video_btn.setEnabled(False)
+        self._update_result_controls()
 
-        scope_data = self.movie_combo.currentData()
-        scope      = scope_data if scope_data else None
+        scope_media_type, scope_data = self._current_scope()
+        scope = scope_data if scope_data else None
         field_data = self.field_combo.currentData()
         field      = None if field_data == "--all" else field_data
         limit_text = self.limit_combo.currentText()
@@ -1549,7 +1611,7 @@ class MosaicVisualizer(WindowVisualizer):
             project_path   = self.project_path,
             best_mode      = self.best_mode,
             model_name     = model_name,
-            media_type     = self.media_type,
+            media_type     = scope_media_type,
         )
         self._worker.tile_ready.connect(self._on_tile_ready)
         self._worker.finished_signal.connect(self._on_search_done)
@@ -1559,14 +1621,13 @@ class MosaicVisualizer(WindowVisualizer):
     def _on_tile_ready(self, result: dict, pixmap) -> None:
         self._current_results.append(result)
         self.canvas.add_tile(result, pixmap)
+        self._update_result_controls()
 
     def _on_search_done(self, count: int) -> None:
         self._progress.setRange(0, 1)
         self._progress.setValue(0)
         self.search_btn.setEnabled(True)
-        self.pdf_btn.setEnabled(count > 0)
-        self.video_btn.setEnabled(count > 0)
-        self._update_best_button()
+        self._update_result_controls()
         self.search_status_label.setText(f"{count} result(s)")
 
     def _on_search_error(self, message: str) -> None:
@@ -1576,6 +1637,19 @@ class MosaicVisualizer(WindowVisualizer):
         self._update_best_button()
         preview = message.splitlines()[0][:120]
         self.search_status_label.setText(f"Error: {preview}")
+
+    def _on_clear(self) -> None:
+        if not self._current_results:
+            return
+        if self._worker and self._worker.isRunning():
+            self._worker.cancel()
+        self.canvas.clear()
+        self._current_results = []
+        self._selected_result = None
+        self.info_block.clear()
+        self.shotlist_btn.setEnabled(False)
+        self._update_result_controls()
+        self.search_status_label.setText("Enter a query and press Search")
 
     # ------------------------------------------------------------------
     # PDF export
@@ -1688,15 +1762,16 @@ class MosaicVisualizer(WindowVisualizer):
         self.vocab_nav_combo.blockSignals(False)
         self._vocab_loading_timer.stop()
         self._vocab_loading_bar.stop()
-        if not field or field in ("text", "description"):
+        if not field:
             return
 
         self._start_vocabulary_load()
 
     def _start_vocabulary_load(self, prefix: Optional[str] = None) -> None:
         field = self.field_combo.currentData()
-        if not field or field in ("text", "description"):
+        if not field:
             return
+        sort = self.vocab_sort_combo.currentData() or "count"
 
         scope_data = self.movie_combo.currentData()
         scope      = scope_data if scope_data else None
@@ -1714,6 +1789,7 @@ class MosaicVisualizer(WindowVisualizer):
             project_path = self.project_path,
             media_type   = self.media_type,
             prefix       = prefix,
+            sort         = sort,
             parent       = self,
         )
         self._vocab_worker.result_ready.connect(
@@ -1723,7 +1799,22 @@ class MosaicVisualizer(WindowVisualizer):
             lambda message, rid=request_id: self._on_vocab_error(message, rid)
         )
         self._vocab_worker.finished.connect(self._vocab_worker.deleteLater)
-        self._vocab_worker.start()
+        worker = self._vocab_worker
+        QTimer.singleShot(
+            0,
+            lambda: self._start_queued_vocabulary_worker(request_id, worker),
+        )
+
+    def _start_queued_vocabulary_worker(
+        self,
+        request_id: int,
+        worker: VocabularyWorker,
+    ) -> None:
+        """Start only the latest request after its cleared/loading UI can paint."""
+        if request_id != self._vocab_request_id or worker is not self._vocab_worker:
+            worker.deleteLater()
+            return
+        worker.start()
 
     def _on_vocab_result(self, result: dict, request_id: Optional[int] = None) -> None:
         if request_id is not None and request_id != self._vocab_request_id:
@@ -1780,6 +1871,12 @@ class MosaicVisualizer(WindowVisualizer):
         if prefix:
             self._start_vocabulary_load(prefix)
 
+    def _on_vocab_sort_changed(self, _index: int) -> None:
+        from tool import prefs as _prefs
+        _prefs.set(_VOCAB_SORT_PREF_KEY, self.vocab_sort_combo.currentData() or "count")
+        prefix = self.vocab_nav_combo.currentData() or "--all"
+        self._start_vocabulary_load(prefix)
+
     def _on_vocab_population_finished(self) -> None:
         self._stop_vocab_loading()
 
@@ -1797,7 +1894,11 @@ class MosaicVisualizer(WindowVisualizer):
         self._vocab_loading_bar.start()
         self._vocab_loading_timer.start()
 
-        self._vocab_rebuild_worker = VocabularyIndexWorker(self.media_type, self)
+        field = self.field_combo.currentData()
+        family = "all" if field == "--all" else (
+            "derived" if field in {"description", "text"} else "canonical"
+        )
+        self._vocab_rebuild_worker = VocabularyIndexWorker(self.media_type, family, self)
         self._vocab_rebuild_worker.finished_signal.connect(self._on_vocab_rebuild_done)
         self._vocab_rebuild_worker.error.connect(self._on_vocab_rebuild_error)
         self._vocab_rebuild_worker.start()

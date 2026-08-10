@@ -1,7 +1,7 @@
 import pytest
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QImage, QPainter
-from PyQt5.QtWidgets import QApplication, QComboBox, QLabel
+from PyQt5.QtCore import QPoint, Qt
+from PyQt5.QtGui import QImage, QPainter, QWheelEvent
+from PyQt5.QtWidgets import QApplication, QComboBox, QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from styles import theme
 from visualizers.components.collapsible_section import CollapsibleSection
@@ -104,3 +104,33 @@ def test_all_item_is_dimmed_but_preserves_hidden_value(app):
     assert combo.itemData(1, Qt.ForegroundRole) is None
     assert theme.TEXT in combo.styleSheet()
     combo.close()
+
+
+def test_closed_combo_wheel_scrolls_its_inspector_instead_of_changing_value(app):
+    content = QWidget()
+    layout = QVBoxLayout(content)
+    combo = QComboBox()
+    combo.addItems(["first", "second"])
+    style_canonical_combo(combo)
+    layout.addWidget(combo)
+    filler = QLabel("content")
+    filler.setMinimumHeight(1000)
+    layout.addWidget(filler)
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setWidget(content)
+    scroll.resize(180, 100)
+    scroll.show()
+    QApplication.processEvents()
+
+    position = combo.rect().center()
+    wheel = QWheelEvent(
+        position, combo.mapToGlobal(position), QPoint(), QPoint(0, -120),
+        Qt.NoButton, Qt.NoModifier, Qt.NoScrollPhase, False,
+    )
+    QApplication.sendEvent(combo, wheel)
+    QApplication.processEvents()
+
+    assert combo.currentText() == "first"
+    assert scroll.verticalScrollBar().value() > 0
+    scroll.close()

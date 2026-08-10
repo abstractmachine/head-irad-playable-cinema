@@ -1,13 +1,53 @@
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor
-from PyQt5.QtWidgets import QComboBox, QListView, QFrame
+from PyQt5.QtCore import QEvent, QObject, Qt
+from PyQt5.QtGui import QColor, QWheelEvent
+from PyQt5.QtWidgets import (
+    QAbstractScrollArea, QApplication, QComboBox, QListView, QFrame,
+)
 
 from styles import theme
 
 
 ALL_DISPLAY_TEXT = "<all>"
+
+
+class _ClosedComboWheelForwarder(QObject):
+    """Keep Inspector wheel scrolling active while a combo popup is closed."""
+
+    def __init__(self, combo: QComboBox) -> None:
+        super().__init__(combo)
+        self._combo = combo
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        if event.type() != QEvent.Wheel or self._combo.view().isVisible():
+            return False
+        scroll_area = self._nearest_scroll_area()
+        if scroll_area is None:
+            return False
+        global_pos = self._combo.mapToGlobal(event.pos())
+        target = scroll_area.viewport()
+        forwarded = QWheelEvent(
+            target.mapFromGlobal(global_pos),
+            global_pos,
+            event.pixelDelta(),
+            event.angleDelta(),
+            event.buttons(),
+            event.modifiers(),
+            event.phase(),
+            event.inverted(),
+            event.source(),
+        )
+        QApplication.postEvent(target, forwarded)
+        return True
+
+    def _nearest_scroll_area(self) -> QAbstractScrollArea | None:
+        parent = self._combo.parentWidget()
+        while parent is not None:
+            if isinstance(parent, QAbstractScrollArea):
+                return parent
+            parent = parent.parentWidget()
+        return None
 
 
 def add_combo_all_item(combo: QComboBox, user_data=None) -> None:
@@ -111,3 +151,7 @@ def style_canonical_combo(combo: QComboBox) -> None:
     combo.currentIndexChanged.connect(lambda _index, target=combo: _refresh_combo_text_color(target))
     _refresh_combo_text_color(combo)
     attach_combo_popup(combo)
+    if combo.property("crossingClosedWheelForwarder") is None:
+        forwarder = _ClosedComboWheelForwarder(combo)
+        combo.installEventFilter(forwarder)
+        combo.setProperty("crossingClosedWheelForwarder", forwarder)

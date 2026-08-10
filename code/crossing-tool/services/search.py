@@ -467,12 +467,77 @@ def vocabulary_from_index(
     media_type: str = "movie",
     show_count: bool = True,
     sort: str = "alphabetical",
+    family: str | None = None,
 ) -> dict:
     """Return an index-only vocabulary result without scanning annotations.
 
-    The returned dict has a ``status`` of ``ready``, ``missing``, ``stale``,
-    or ``field_missing``.  ``items`` is present only for a ready result.
+    The selected annotation field determines the family automatically:
+    free-text fields use derived vocabulary, structured fields use canonical
+    vocabulary, and ``--all`` merges the two already-built artifacts. The
+    optional ``family`` override is retained for compatibility. Typed lexical
+    search and semantic retrieval do not use this API.
     """
+    derived_fields = {"description", "text"}
+    if family is None:
+        family = "all" if field == "--all" else (
+            "derived" if field in derived_fields else "canonical"
+        )
+    if family == "all":
+        canonical = vocabulary_from_index(
+            "--all", project_path, media_type, show_count=True, sort=sort,
+            family="canonical",
+        )
+        derived = vocabulary_from_index(
+            "--all", project_path, media_type, show_count=True, sort=sort,
+            family="derived",
+        )
+        for result in (canonical, derived):
+            if result.get("status") != "ready":
+                return result
+        merged_counts: dict[str, int] = {}
+        for item in canonical["items"] + derived["items"]:
+            value = item["value"]
+            merged_counts[value] = merged_counts.get(value, 0) + item["count"]
+        items = [
+            {"value": value, "count": count}
+            for value, count in merged_counts.items()
+        ]
+        if sort == "alphabetical":
+            items.sort(key=lambda item: item["value"].casefold())
+        elif sort == "count":
+            items.sort(key=lambda item: -item["count"])
+        elif sort == "count_alphabetical":
+            items.sort(key=lambda item: (-item["count"], item["value"].casefold()))
+        if not show_count:
+            items = [item["value"] for item in items]
+        return {"status": "ready", "items": items}
+    if family == "derived":
+        from services.derived_vocabulary import (
+            DERIVED_FIELD,
+            derived_vocabulary_is_stale,
+            get_derived_vocabulary,
+            load_derived_vocabulary,
+        )
+        try:
+            load_derived_vocabulary(project_path, media_type)
+        except FileNotFoundError:
+            return {"status": "missing"}
+        if derived_vocabulary_is_stale(project_path, media_type):
+            return {"status": "stale"}
+        if field not in ("--all", DERIVED_FIELD, "description", "text"):
+            return {"status": "field_missing"}
+        items = get_derived_vocabulary(
+            project_path,
+            media_type,
+            sort=sort,
+            source_field=None if field == "--all" else field,
+        )
+        if not show_count:
+            items = [item["value"] for item in items]
+        return {"status": "ready", "items": items}
+    if family != "canonical":
+        return {"status": "family_missing"}
+
     from services.vocabulary_index import (
         get_vocabulary,
         load_vocabulary_index,
@@ -503,7 +568,9 @@ def vocabulary_from_index(
             ]
             if sort == "alphabetical":
                 items.sort(key=lambda item: item["value"].lower())
-            else:
+            elif sort == "count":
+                items.sort(key=lambda item: -item["count"])
+            elif sort == "count_alphabetical":
                 items.sort(key=lambda item: (-item["count"], item["value"].lower()))
         else:
             items = get_vocabulary(field, project_path, media_type, sort=sort)

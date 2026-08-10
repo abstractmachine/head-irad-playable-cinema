@@ -196,3 +196,11 @@ def test_parser_exposes_illustration_index_command():
     args = cli.build_parser().parse_args(["index", "illustration", "--media", "gameplay"])
     assert args.index_subcommand == "illustration"
     assert args.media == "gameplay"
+
+
+def test_parser_exposes_vocabulary_family_selection():
+    args = cli.build_parser().parse_args([
+        "index", "vocabulary", "--media", "gameplay", "--family", "derived",
+    ])
+
+    assert args.family == "derived"

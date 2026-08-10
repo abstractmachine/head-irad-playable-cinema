@@ -435,15 +435,20 @@ crossing index audit --tmdb 391
   --verbose
   --media {movies,gameplay}
 
-# Build two separate derived vocabulary artifacts from annotation JSON:
-# - canonical structured fields in data/vocabulary/vocabulary_<media_type>.json
-# - reviewable description candidates in
-#   data/vocabulary/description_candidates_<media_type>.json
-# Description candidates never enter canonical fields or alter annotations.
+# Build the canonical structured vocabulary and derived free-text vocabulary:
+# - canonical: data/vocabulary/vocabulary-<media_type>.json
+# - derived:   data/vocabulary/vocabulary-<media_type>-derived.json
+# The derived family retains free-text provenance and never changes annotations
+# or enters the canonical structured fields.
 crossing index vocabulary
 crossing index vocabulary --media gameplay
 crossing index vocabulary --all              # both movies and gameplay
+crossing index vocabulary --family canonical  # structured fields only
+crossing index vocabulary --family derived    # free-text candidates only
   --force                                    # rebuild even if cache exists
+
+# These are separate from typed lexical search (`crossing search text ...`)
+# and semantic embedding retrieval (`crossing search "..."`).
 
 # Rebuild both queryable SQLite browse indexes used by Illustration.
 # The UI traverses indexed facets and page slices rather than source datasets.
