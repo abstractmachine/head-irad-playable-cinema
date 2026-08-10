@@ -350,7 +350,8 @@ def extract_annotation_words(
         scope:        Movie title / id substring to restrict to; ``None`` → all.
         field:        Annotation field name (e.g. ``"description"``); ``None``
                       → aggregate all text-bearing fields.
-        media_type:   ``"movie"`` or ``"gameplay"`` (default: ``"movie"``).
+        media_type:   ``"movie"``, ``"gameplay"``, or ``"--all"`` to
+                  aggregate both (default: ``"movie"``).
         min_count:    Minimum occurrence count to retain a word.
 
     Returns:
@@ -359,6 +360,30 @@ def extract_annotation_words(
     Raises:
         FileNotFoundError: If the annotation directory or matched file is absent.
     """
+    if media_type == "--all":
+        counter: Counter = Counter()
+        found_annotations = False
+        for child_media_type in ("movie", "gameplay"):
+            try:
+                counter.update(extract_annotation_words(
+                    project_path,
+                    scope=scope,
+                    field=field,
+                    media_type=child_media_type,
+                    min_count=1,
+                ))
+                found_annotations = True
+            except FileNotFoundError:
+                continue
+        if not found_annotations:
+            raise FileNotFoundError(
+                "Annotation directories not found for movie or gameplay.\n"
+                "  Run 'crossing annotate shot --all' to generate annotations."
+            )
+        if min_count > 1:
+            counter = Counter({word: count for word, count in counter.items() if count >= min_count})
+        return counter
+
     ann_dir = (
         Path(project_path) / "data" / "annotations" / "shots" / media_type
     )
@@ -601,7 +626,8 @@ def cloud_from_annotations(
         project_path: Project root directory.
         scope:        Movie title / id substring; ``None`` → all movies.
         field:        Annotation field to read; ``None`` → all fields.
-        media_type:   ``"movie"`` or ``"gameplay"`` (default: ``"movie"``).
+        media_type:   ``"movie"``, ``"gameplay"``, or ``"--all"`` to
+                  aggregate both (default: ``"movie"``).
         output_path:  Destination file path.  Auto-generated under
                       ``output/clouds/`` when not provided.
         max_words:    Maximum words to render (default 150).

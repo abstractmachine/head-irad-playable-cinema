@@ -22,7 +22,7 @@ Displays the rendered word cloud. Word size is proportional to frequency in the 
 
 | Control | Description |
 |---|---|
-| Media type | `movie` or `gameplay` |
+| Media type | `<Media>` combines `movie` and `gameplay` annotations; `movie` or `gameplay` restricts to one type |
 | Title | `--all` for the full corpus, or a specific film title |
 
 Use `Home` / `End` to cycle through films without leaving the keyboard.

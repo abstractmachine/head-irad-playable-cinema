@@ -436,7 +436,10 @@ class CloudVisualizer(WindowVisualizer):
         scope_layout.setContentsMargins(0, 0, 0, 0)
         scope_layout.setSpacing(theme.SECTION_GAP)
         self.media_combo = QComboBox()
-        self.media_combo.addItems(["movie", "gameplay"])
+        self.media_combo.addItem("<Media>", userData="--all")
+        self.media_combo.addItem("movie", userData="movie")
+        self.media_combo.addItem("gameplay", userData="gameplay")
+        self.media_combo.setCurrentIndex(1)
         style_canonical_combo(self.media_combo)
         self.media_combo.currentIndexChanged.connect(self._populate_movies)
         scope_layout.addWidget(self.media_combo)
@@ -655,9 +658,10 @@ class CloudVisualizer(WindowVisualizer):
             self._worker.terminate()
             self._worker.wait()
 
-        scope      = self.movie_combo.currentData() or ""
+        scope_data = self.movie_combo.currentData()
+        scope      = scope_data[1] if isinstance(scope_data, tuple) else scope_data or ""
         field      = self.field_combo.currentData()
-        media_type = self.media_combo.currentText()
+        media_type = scope_data[0] if isinstance(scope_data, tuple) else self.media_combo.currentData()
         max_words  = self.max_words_spin.value()
         min_count  = self.min_count_spin.value()
         style      = self.style_combo.currentData() or "default"
@@ -816,21 +820,32 @@ class CloudVisualizer(WindowVisualizer):
 
     def _populate_movies(self) -> None:
         """Populate movie_combo from project metadata for the selected media type."""
-        media_type = self.media_combo.currentText()
+        media_type = self.media_combo.currentData()
         self.movie_combo.blockSignals(True)
         self.movie_combo.clear()
         add_combo_all_item(self.movie_combo)
         try:
             from data.metadata import get_metadata
-            rows = get_metadata(self.project_path, media_type=media_type)
-            sorted_rows = sorted(rows, key=lambda r: (r.get("title") or "").lower())
-            for row in sorted_rows:
+            media_types = ("movie", "gameplay") if media_type == "--all" else (media_type,)
+            rows = [
+                (child_media_type, row)
+                for child_media_type in media_types
+                for row in get_metadata(self.project_path, media_type=child_media_type)
+            ]
+            sorted_rows = sorted(rows, key=lambda item: (item[1].get("title") or "").lower())
+            for child_media_type, row in sorted_rows:
                 title = row.get("title", "")
                 year  = row.get("year", "")
                 label = f"{title} ({year})" if year else title
                 stem  = Path(row.get("filename", "")).stem
                 if label and stem:
-                    self.movie_combo.addItem(label, userData=stem)
+                    if media_type == "--all":
+                        self.movie_combo.addItem(
+                            f"{label} [{child_media_type}]",
+                            userData=(child_media_type, stem),
+                        )
+                    else:
+                        self.movie_combo.addItem(label, userData=stem)
         except Exception as exc:
             QMessageBox.warning(self, "Could not load movie list", str(exc))
         finally:
