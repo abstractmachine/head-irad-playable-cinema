@@ -1401,7 +1401,7 @@ class IllustrationBrowser(QWidget):
         self._grid_layout.setEnabled(True)
         self._grid_widget.setUpdatesEnabled(True)
         self._grid_widget.setVisible(True)
-        if self._index_status.get("status") == "ready":
+        if self._index_status.get("status") == "ready" or self._index_status.get("usable"):
             self._query_current_page()
 
         # Remove all existing cells from the layout and destroy them.
@@ -1629,8 +1629,9 @@ class IllustrationBrowser(QWidget):
             self._prev_btn.setEnabled(False)
             self._next_btn.setEnabled(False)
         else:
+            prefix = "Stale · " if self._index_status.get("status") == "stale" else ""
             self._page_lbl.setText(
-                f"{self._page_index + 1} / {page_count} ({total})"
+                f"{prefix}{self._page_index + 1} / {page_count} ({total})"
             )
             self._prev_btn.setEnabled(self._page_index > 0)
             self._next_btn.setEnabled(self._page_index < page_count - 1)

@@ -427,6 +427,9 @@ class IllustrationPane(QWidget):
         )
 
         self._build_ui()
+        self._browser_sil.catalogReloaded.connect(self._update_rebuild_index_buttons)
+        self._browser_eng.catalogReloaded.connect(self._update_rebuild_index_buttons)
+        self._update_rebuild_index_buttons()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -751,6 +754,7 @@ class IllustrationPane(QWidget):
             _prefs.set("ill_media_type", val if val is not None else "")
         except Exception:
             pass
+        self._update_rebuild_index_buttons()
 
     
 
@@ -843,8 +847,22 @@ class IllustrationPane(QWidget):
         button.setFocusPolicy(Qt.NoFocus)
         button.setFixedHeight(theme.BTN_H)
         button.setStyleSheet(self._btn_style())
+        button.setEnabled(False)
         button.clicked.connect(self._start_index_rebuild)
         return button
+
+    def _update_rebuild_index_buttons(self) -> None:
+        if getattr(self, "_index_worker", None) is not None:
+            return
+        pairs = (
+            (self._sil_rebuild_index_btn, self._browser_sil),
+            (self._eng_rebuild_index_btn, self._browser_eng),
+        )
+        for button, browser in pairs:
+            status = browser._index_status.get("status")
+            button.setText("Rebuild Index")
+            button.setToolTip("")
+            button.setEnabled(status in {"missing", "stale", "error"})
 
     def _start_index_rebuild(self) -> None:
         """Rebuild both source indexes for the currently selected media type."""
@@ -868,7 +886,7 @@ class IllustrationPane(QWidget):
     def _on_index_rebuild_finished(self, ok: bool, error: str) -> None:
         self._index_worker = None
         for button in (self._sil_rebuild_index_btn, self._eng_rebuild_index_btn):
-            button.setEnabled(True)
+            button.setEnabled(False)
             button.setText("Rebuild Index" if ok else "Rebuild Failed")
             button.setToolTip(error if not ok else "")
         if ok:
@@ -883,6 +901,9 @@ class IllustrationPane(QWidget):
             inactive._loading_bar.stop()
             self._browser.reload()
             return
+        for browser in (self._browser_sil, self._browser_eng):
+            browser._index_status = {"status": "error", "error": error}
+        self._update_rebuild_index_buttons()
         for browser in (self._browser_sil, self._browser_eng):
             browser._loading_timer.stop()
             browser._loading_bar.stop()

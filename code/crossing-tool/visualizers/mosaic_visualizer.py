@@ -1343,6 +1343,7 @@ class MosaicVisualizer(WindowVisualizer):
         self.vocab_rebuild_btn.setToolTip(
             "Rebuild the vocabulary index from project annotations"
         )
+        self.vocab_rebuild_btn.setEnabled(False)
         self.vocab_rebuild_btn.clicked.connect(self._on_vocab_rebuild)
         tools_layout.addWidget(self.vocab_rebuild_btn)
 
@@ -1703,6 +1704,7 @@ class MosaicVisualizer(WindowVisualizer):
         self._vocab_request_id += 1
         request_id = self._vocab_request_id
         self.vocab_table.clear()
+        self.vocab_rebuild_btn.setEnabled(False)
         self._vocab_loading_bar.start()
         self._vocab_loading_timer.start()
 
@@ -1728,6 +1730,9 @@ class MosaicVisualizer(WindowVisualizer):
             return
 
         status = result.get("status")
+        self.vocab_rebuild_btn.setEnabled(
+            status in {"missing", "stale", "error"}
+        )
         if status == "ready":
             items = result.get("items", [])
             self.vocab_nav_combo.blockSignals(True)
@@ -1765,6 +1770,7 @@ class MosaicVisualizer(WindowVisualizer):
         if request_id is not None and request_id != self._vocab_request_id:
             return
         self._stop_vocab_loading()
+        self.vocab_rebuild_btn.setEnabled(True)
         self.vocab_nav_combo.setVisible(False)
         preview = message.splitlines()[0][:120]
         self.vocab_table.set_message(f"Error loading vocabulary: {preview}")
@@ -1796,18 +1802,18 @@ class MosaicVisualizer(WindowVisualizer):
         self._vocab_rebuild_worker.error.connect(self._on_vocab_rebuild_error)
         self._vocab_rebuild_worker.start()
 
-    def _reset_vocab_rebuild_ui(self) -> None:
+    def _reset_vocab_rebuild_ui(self, *, enable: bool) -> None:
         self._vocab_loading_timer.stop()
         self._vocab_loading_bar.stop()
         self.vocab_rebuild_btn.setText("Rebuild Vocabulary")
-        self.vocab_rebuild_btn.setEnabled(True)
+        self.vocab_rebuild_btn.setEnabled(enable)
 
     def _on_vocab_rebuild_done(self, _output: str) -> None:
-        self._reset_vocab_rebuild_ui()
+        self._reset_vocab_rebuild_ui(enable=False)
         self._on_field_changed()
 
     def _on_vocab_rebuild_error(self, message: str) -> None:
-        self._reset_vocab_rebuild_ui()
+        self._reset_vocab_rebuild_ui(enable=True)
         preview = message.splitlines()[0][:120]
         self.vocab_table.set_message(f"Rebuild failed: {preview}")
 

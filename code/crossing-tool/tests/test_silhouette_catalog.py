@@ -38,7 +38,21 @@ from services.silhouette_catalog import (
     scan_catalog,
     audit_catalog,
     clear_catalog,
+    extract_catalog_for_movie,
 )
+
+
+def test_extraction_marks_illustration_index_stale_before_search(tmp_path):
+    with (
+        patch("services.illustration_index.invalidate_index") as invalidate,
+        patch.object(silhouette_catalog, "_find_shot_candidates", return_value=[]),
+    ):
+        result = extract_catalog_for_movie(
+            str(tmp_path), "Film.mp4", "tmdb_1", "horse", "animals"
+        )
+
+    invalidate.assert_called_once_with(str(tmp_path), "silhouettes", "movie")
+    assert result["total_shots"] == 0
 
 
 # ---------------------------------------------------------------------------

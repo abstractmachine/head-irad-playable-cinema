@@ -38,7 +38,11 @@ def test_silhouette_index_reports_missing_ready_and_stale(tmp_path):
     assert query_page(tmp_path, "silhouettes", "movie")["records"][0]["path"] == metadata_path
 
     invalidate_index(tmp_path, "silhouettes", "movie")
-    assert load_index(tmp_path, "silhouettes", "movie")["status"] == "stale"
+    stale = load_index(tmp_path, "silhouettes", "movie")
+    assert stale["status"] == "stale"
+    assert stale["usable"] is True
+    assert stale["count"] == 1
+    assert query_page(tmp_path, "silhouettes", "movie")["records"][0]["path"] == metadata_path
 
 
 def test_engraving_index_contains_only_generated_records(tmp_path):
@@ -76,7 +80,9 @@ def test_schema_change_marks_index_stale(tmp_path):
         connection.execute("UPDATE meta SET value = '-1' WHERE key = 'schema_version'")
         connection.commit()
 
-    assert load_index(tmp_path, "silhouettes", "movie")["status"] == "stale"
+    stale = load_index(tmp_path, "silhouettes", "movie")
+    assert stale["status"] == "stale"
+    assert stale["usable"] is False
 
 
 def test_legacy_monolithic_index_requires_rebuild(tmp_path):

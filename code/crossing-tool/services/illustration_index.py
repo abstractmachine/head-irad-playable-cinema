@@ -101,20 +101,24 @@ def load_index(
         if any(candidate.exists() for candidate in _obsolete_index_paths(
             project, source, media_type
         )):
-            return {"status": "stale", "count": 0}
+            return {"status": "stale", "count": 0, "usable": False}
         return {"status": "missing", "count": 0}
 
     try:
         with sqlite3.connect(path) as connection:
             meta = dict(connection.execute("SELECT key, value FROM meta"))
         if int(meta.get("schema_version", -1)) != INDEX_SCHEMA_VERSION:
-            return {"status": "stale", "count": 0}
-        if meta.get("revision") != _read_revision(project, source, media_type):
-            return {"status": "stale", "count": 0}
-        return {
-            "status": "ready",
+            return {"status": "stale", "count": 0, "usable": False}
+        details = {
             "count": int(meta.get("record_count", 0)),
             "generated_at": meta.get("generated_at"),
+            "usable": True,
+        }
+        if meta.get("revision") != _read_revision(project, source, media_type):
+            return {"status": "stale", **details}
+        return {
+            "status": "ready",
+            **details,
         }
     except Exception as exc:
         return {"status": "error", "count": 0, "error": str(exc)}
@@ -189,7 +193,7 @@ def query_facets(
 ) -> dict:
     """Return distinct facets and label counts for a browse scope."""
     status = load_index(project_path, source, media_type)
-    if status["status"] != "ready":
+    if not status.get("usable"):
         return {**status, "titles": [], "fields": [], "letters": [], "labels": []}
     where, params = _where(title=title, field=field, letter=letter, mode=mode)
     with sqlite3.connect(index_path(project_path, source, media_type)) as connection:
@@ -233,7 +237,7 @@ def query_page(
 ) -> dict:
     """Return one materialized browse page and its matching total count."""
     status = load_index(project_path, source, media_type)
-    if status["status"] != "ready":
+    if not status.get("usable"):
         return {**status, "total": 0, "records": []}
     where, params = _where(
         title=title, field=field, letter=letter, label=label, mode=mode,

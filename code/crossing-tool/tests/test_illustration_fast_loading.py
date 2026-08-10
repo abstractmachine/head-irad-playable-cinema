@@ -86,6 +86,22 @@ def test_live_pane_has_rebuild_action_on_both_tabs(app, tmp_path):
 
     assert pane._sil_rebuild_index_btn.text() == "Rebuild Index"
     assert pane._eng_rebuild_index_btn.text() == "Rebuild Index"
+    assert not pane._sil_rebuild_index_btn.isEnabled()
+    assert not pane._eng_rebuild_index_btn.isEnabled()
+
+    pane._browser_sil._index_status = {"status": "stale"}
+    pane._browser_eng._index_status = {"status": "ready"}
+    pane._update_rebuild_index_buttons()
+
+    assert pane._sil_rebuild_index_btn.isEnabled()
+    assert not pane._eng_rebuild_index_btn.isEnabled()
+
+    pane._browser_sil._index_status = {"status": "loading"}
+    pane._browser_eng._index_status = {"status": "missing"}
+    pane._update_rebuild_index_buttons()
+
+    assert not pane._sil_rebuild_index_btn.isEnabled()
+    assert pane._eng_rebuild_index_btn.isEnabled()
     pane.deleteLater()
 
 
@@ -256,6 +272,11 @@ def test_pagination_distinguishes_loading_from_index_errors(app, tmp_path):
     browser._index_status = {"status": "ready"}
     browser._update_pagination()
     assert browser._page_lbl.text() == "No items"
+
+    browser._index_status = {"status": "stale", "usable": True}
+    browser._total_items = 25
+    browser._update_pagination()
+    assert browser._page_lbl.text().startswith("Stale · 1 /")
     browser.deleteLater()
 
 

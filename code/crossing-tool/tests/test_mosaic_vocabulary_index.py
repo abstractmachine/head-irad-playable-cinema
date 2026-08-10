@@ -208,6 +208,7 @@ def test_mosaic_inspector_shows_stale_and_rebuild_busy_states(
     assert window.vocab_table._rows[0].text() == (
         "Vocabulary index is stale. Rebuild it to continue."
     )
+    assert window.vocab_rebuild_btn.isEnabled()
 
     window._on_vocab_rebuild()
     assert not window.vocab_rebuild_btn.isEnabled()
@@ -218,6 +219,9 @@ def test_mosaic_inspector_shows_stale_and_rebuild_busy_states(
     assert window.vocab_rebuild_btn.isEnabled()
     assert window.vocab_rebuild_btn.text() == "Rebuild Vocabulary"
     assert window.vocab_table._rows[0].text() == "Rebuild failed: command failed"
+
+    window._on_vocab_result({"status": "ready", "items": []})
+    assert not window.vocab_rebuild_btn.isEnabled()
     window.close()
 
 

@@ -698,6 +698,9 @@ def extract_catalog_for_movie(
       ``total_skipped``— total masks discarded
       ``failed``       — number of shots that hit an error
     """
+    from services.illustration_index import invalidate_index
+    invalidate_index(project_path, "silhouettes", media_type)
+
     if verbose:
         print(f"  [{filename}] Searching for '{label}' candidates…")
 
