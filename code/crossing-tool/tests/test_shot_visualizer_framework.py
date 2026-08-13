@@ -113,7 +113,7 @@ def test_subtitles_are_doubled_and_inset_inside_scaled_frame(
 
         margins = win._subtitle_overlay_layout.contentsMargins()
         line_spacing = win.subtitle_label.fontMetrics().lineSpacing()
-        assert win.subtitle_label.font().pointSize() == theme.SUBTITLE_PT * 2
+        assert win.subtitle_label.font().pointSize() == round(theme.SUBTITLE_PT * 2 * 0.75)
         assert margins.left() == 58
         assert margins.right() == 58
         assert margins.bottom() == 100 + line_spacing
@@ -166,6 +166,40 @@ def test_timeline_has_fifteen_times_taller_hit_area(app, fake_prefs, fake_movie,
         app.processEvents()
         scrollbar.setValue(max(0, scrollbar.value() - 1))
         assert scrollbar._active is False
+    finally:
+        win.close()
+
+
+def test_video_container_fills_browser_with_no_scrubber_carveout(
+    app, fake_prefs, fake_movie, tmp_path
+):
+    """The timeline scrubber's larger hover target must be a floating
+    overlay on top of the video, never a browser_layout sibling that
+    reserves/shrinks the movie's rectangle."""
+    win = _make_window(app, tmp_path)
+    win.show()
+    win.resize(900, 500)
+    app.processEvents()
+    try:
+        browser_layout = win._browser.layout()
+        # video_container is the ONLY browser_layout child — the scrubber's
+        # hover target is not a layout sibling reserving vertical space.
+        assert browser_layout.count() == 1
+
+        video_container = win.frame_label.parentWidget()
+        assert video_container.parentWidget() is win._browser
+        # No reserved bottom padding: video_container (and therefore
+        # frame_label) fills the Browser's entire content rect.
+        assert video_container.height() == win._browser.height()
+        assert video_container.width() == win._browser.width()
+
+        # The scrubber's larger hover target overlays the video instead of
+        # displacing it, and stays pinned to the bottom, full width.
+        assert win.timeline_hit_area.parentWidget() is video_container
+        hit_height = theme.SCROLLBAR_W * 15
+        assert win.timeline_hit_area.width() == video_container.width()
+        assert win.timeline_hit_area.height() == hit_height
+        assert win.timeline_hit_area.y() == video_container.height() - hit_height
     finally:
         win.close()
 

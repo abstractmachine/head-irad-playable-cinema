@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -24,7 +25,7 @@ from visualizers.components.metadata_block import INSPECTOR_ROW_HEIGHT, table_ke
 from visualizers.components.sweep_bar import SweepBar
 from visualizers.components.tab_panel import TabPanel
 
-from PyQt5.QtCore import Qt, QEvent, QTimer
+from PyQt5.QtCore import Qt, QEvent, QThread, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
     QGridLayout, QHBoxLayout, QLineEdit, QMessageBox, QPushButton,
@@ -99,6 +100,176 @@ def _normalize_form_labels(form: QFormLayout) -> None:
     max_width = max(lbl.sizeHint().width() for lbl in labels)
     for lbl in labels:
         lbl.setFixedWidth(max_width)
+
+
+# ---------------------------------------------------------------------------
+# Project Visualizer V0 — fixed column dashboard (see services/corpus_stats.py
+# for the ProjectColumn data model; this section is only a renderer over it)
+# ---------------------------------------------------------------------------
+
+_COLUMN_HEADER_H = 28   # fixed HEADER region height (px)
+_COLUMN_COUNT_H = 64    # fixed COUNT region height (px)
+
+# Display text for a column's status line when it isn't "ready" — keyed by
+# ProjectColumn.reason first, falling back to a generic per-state label.
+# Never invented data: purely maps the explicit missing/stale reason
+# services.corpus_stats already reports into short display text.
+_COLUMN_REASON_LABELS = {
+    "illustration_index_missing": "INDEX REQUIRED",
+    "illustration_index_stale": "INDEX STALE",
+    "illustration_index_error": "INDEX ERROR",
+    "corpus_stats_missing": "STATS REQUIRED",
+    "corpus_stats_stale": "STATS STALE",
+    "no_project": "NO PROJECT",
+}
+_COLUMN_STATE_FALLBACK_LABELS = {
+    "unavailable": "UNAVAILABLE",
+    "stale": "STALE",
+}
+
+
+def _format_column_count(count) -> str:
+    """Format a ProjectColumn's raw int count for display (or an em dash).
+
+    Purely a display-formatting helper — the underlying count itself always
+    comes from services.corpus_stats, never invented here.
+    """
+    if count is None:
+        return "\u2014"
+    if count < 1000:
+        return str(count)
+    if count < 1_000_000:
+        text = f"{count / 1000:.1f}k"
+    else:
+        text = f"{count / 1_000_000:.1f}M"
+    return text.replace(".0k", "k").replace(".0M", "M")
+
+
+def _column_status_label(column) -> str:
+    """Short status word for a non-ready column (e.g. "INDEX REQUIRED").
+
+    Distinguishes *why* a column has no count — never rendered for a column
+    that is genuinely, readily, zero.
+    """
+    return _COLUMN_REASON_LABELS.get(column.reason) or _COLUMN_STATE_FALLBACK_LABELS.get(
+        column.state, "UNAVAILABLE",
+    )
+
+
+class _ProjectColumnWidget(QWidget):
+    """One HEADER / COUNT / DATAVIS column of the Project Visualizer's V0 grid.
+
+    A pure renderer over a single ``services.corpus_stats.ProjectColumn`` —
+    it never computes or invents project data itself, only formats and lays
+    out whatever column it is given via the constructor / ``set_column()``.
+    ``column.state`` ("loading" / "ready" / "unavailable" / "stale") drives
+    whether the shared SweepBar loading indicator (same one used by
+    Illustration) is active and what the COUNT region shows. "unavailable"
+    and "stale" are rendered distinctly from a real zero — both show a
+    dimmed status word (e.g. "INDEX REQUIRED"/"INDEX STALE") instead of a
+    number, so a missing/outdated artifact is never mistaken for "0".
+    """
+
+    def __init__(self, column, parent=None) -> None:
+        super().__init__(parent)
+        self.setStyleSheet(f"background: {theme.CELL_BG}; border: 1px solid {theme.UI_BORDER};")
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self._header_label = QLabel()
+        self._header_label.setAlignment(Qt.AlignCenter)
+        self._header_label.setFont(theme.font_ui(bold=True))
+        self._header_label.setStyleSheet(
+            f"background: {theme.TITLE_BG}; color: {theme.TEXT_DIM}; "
+            f"border-bottom: 1px solid {theme.UI_BORDER};"
+        )
+        self._header_label.setFixedHeight(_COLUMN_HEADER_H)
+        outer.addWidget(self._header_label)
+
+        # Shared loading indicator (see visualizers/components/sweep_bar.py),
+        # the same one Illustration uses — a thin ACCENT stripe, invisible
+        # while idle. Driven by ProjectVisualizer's shared timer via tick().
+        self._loading_bar = SweepBar(self)
+        outer.addWidget(self._loading_bar)
+
+        self._count_label = QLabel()
+        self._count_label.setAlignment(Qt.AlignCenter)
+        self._count_label.setWordWrap(True)
+        self._ready_font = theme.font_mono(bold=True)
+        self._ready_font.setPointSize(theme.BASE_PT + 10)
+        self._status_font = theme.font_ui(bold=True)
+        self._status_font.setPointSize(theme.BASE_PT + 1)
+        self._count_label.setFont(self._ready_font)
+        self._count_label.setStyleSheet(f"color: {theme.TEXT};")
+        self._count_label.setFixedHeight(_COLUMN_COUNT_H)
+        outer.addWidget(self._count_label)
+
+        # DATAVIS region: every V0 column reports datavis={"kind": "empty"},
+        # so this is currently just a distinct display-style area (matching
+        # the CANVAS_BG convention used elsewhere for display surfaces) — not
+        # yet a real visualization. A future version would dispatch on
+        # column.datavis["kind"] here instead of always rendering blank.
+        self._datavis_widget = QWidget()
+        self._datavis_widget.setStyleSheet(f"background: {theme.CANVAS_BG};")
+        self._datavis_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        outer.addWidget(self._datavis_widget, 1)
+
+        self.column = column
+        self.set_column(column)
+
+    def set_column(self, column) -> None:
+        """Update this widget's displayed data for a refreshed ProjectColumn."""
+        self.column = column
+        self._header_label.setText(column.title.upper())
+        if column.state == "loading":
+            self._loading_bar.start()
+            self._count_label.setFont(self._ready_font)
+            self._count_label.setStyleSheet(f"color: {theme.TEXT};")
+            self._count_label.setText("loading…")
+        elif column.state == "ready":
+            self._loading_bar.stop()
+            self._count_label.setFont(self._ready_font)
+            self._count_label.setStyleSheet(f"color: {theme.TEXT};")
+            self._count_label.setText(_format_column_count(column.count))
+        else:
+            # "unavailable" / "stale" — never rendered the same as "0".
+            self._loading_bar.stop()
+            self._count_label.setFont(self._status_font)
+            self._count_label.setStyleSheet(f"color: {theme.TEXT_DIM};")
+            self._count_label.setText(f"\u2014\n{_column_status_label(column)}")
+
+
+class _ProjectColumnsWorker(QThread):
+    """Load Project Visualizer columns off the GUI thread.
+
+    Follows the same QThread + signal pattern as Mosaic's VocabularyWorker /
+    Illustration's index workers: heavy work happens in ``run()``, results
+    are delivered to the GUI thread via a signal. Never performs a full
+    corpus traversal and never silently rebuilds a missing/stale artifact —
+    see services.corpus_stats.get_live_project_columns /
+    get_cached_project_columns.
+
+    Emits ``tier_ready(list)`` twice: once for the cheap "live" tier
+    (Movies/Gameplay/Shots/Illustrations — computed directly from project
+    files and the illustration index on every call), and again for the
+    persisted-cache tier (Vocabulary/Segments/Flipbooks — reported as
+    "unavailable"/"stale" rather than recomputed if the cache is missing or
+    out of date) — so the GUI can display each tier as soon as it's ready
+    instead of waiting for both.
+    """
+
+    tier_ready = pyqtSignal(list)  # list[ProjectColumn]
+
+    def __init__(self, project_path, parent=None) -> None:
+        super().__init__(parent)
+        self.project_path = project_path
+
+    def run(self) -> None:
+        from services.corpus_stats import get_cached_project_columns, get_live_project_columns
+        self.tier_ready.emit(get_live_project_columns(self.project_path))
+        self.tier_ready.emit(get_cached_project_columns(self.project_path))
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +391,16 @@ class ProjectVisualizer(WindowVisualizer):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self._shown_as_project = True
+        self._start_project_columns_load()
+
+    def closeEvent(self, event) -> None:
+        timer = getattr(self, "_column_loading_timer", None)
+        if timer is not None:
+            timer.stop()
+        worker = getattr(self, "_project_columns_worker", None)
+        if worker is not None and worker.isRunning():
+            worker.wait(3000)
+        super().closeEvent(event)
 
     # ------------------------------------------------------------------
     # Project path
@@ -263,6 +444,7 @@ class ProjectVisualizer(WindowVisualizer):
             _prefs.set("path", folder)
             self.path_edit.setText(folder)
             self._reload_model_combos()
+            self._start_project_columns_load()
 
     # ------------------------------------------------------------------
     # Backup path
@@ -657,10 +839,78 @@ class ProjectVisualizer(WindowVisualizer):
 
 
     def create_browser(self) -> QWidget:
+        from services.corpus_stats import ProjectColumn, PROJECT_COLUMN_IDS_AND_TITLES
+
         w = QWidget()
         w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         w.setStyleSheet(f"background: {theme.CANVAS_BG};")
+
+        layout = QHBoxLayout(w)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(1)
+
+        # Headers are created immediately, in a "loading" state — no data
+        # access happens on the GUI thread. _start_project_columns_load()
+        # kicks off the background worker that fills them in.
+        self._project_column_widgets: dict[str, _ProjectColumnWidget] = {}
+        for col_id, title in PROJECT_COLUMN_IDS_AND_TITLES:
+            placeholder = ProjectColumn(
+                id=col_id, title=title, count=None, datavis={"kind": "empty"},
+                state="loading",
+            )
+            col_widget = _ProjectColumnWidget(placeholder)
+            self._project_column_widgets[col_id] = col_widget
+            layout.addWidget(col_widget, 1)
+
+        self._project_columns_worker: Optional[_ProjectColumnsWorker] = None
+        self._column_loading_timer = QTimer(self)
+        self._column_loading_timer.setInterval(20)
+        self._column_loading_timer.timeout.connect(self._tick_column_loading_bars)
+
+        self._start_project_columns_load()
         return w
+
+    def _tick_column_loading_bars(self) -> None:
+        for widget in self._project_column_widgets.values():
+            widget._loading_bar.tick()
+
+    def _start_project_columns_load(self) -> None:
+        """(Re)start the background worker that fills in every column.
+
+        Marks every column "loading" immediately (synchronous, GUI-thread —
+        just updating already-built label widgets, no project data access),
+        then hands the actual work to a QThread so opening/reloading the
+        Project Visualizer never blocks on a corpus traversal.
+        """
+        if not getattr(self, "_project_column_widgets", None):
+            return
+
+        from services.corpus_stats import ProjectColumn
+
+        if self._project_columns_worker is not None and self._project_columns_worker.isRunning():
+            self._project_columns_worker.tier_ready.disconnect(self._on_columns_tier_ready)
+            self._project_columns_worker.wait(3000)
+
+        for col_id, widget in self._project_column_widgets.items():
+            loading = ProjectColumn(
+                id=col_id, title=widget.column.title, count=None,
+                datavis={"kind": "empty"}, state="loading",
+            )
+            widget.set_column(loading)
+        self._column_loading_timer.start()
+
+        worker = _ProjectColumnsWorker(_prefs.get("path"))
+        worker.tier_ready.connect(self._on_columns_tier_ready)
+        self._project_columns_worker = worker
+        worker.start()
+
+    def _on_columns_tier_ready(self, columns) -> None:
+        for column in columns:
+            widget = self._project_column_widgets.get(column.id)
+            if widget is not None:
+                widget.set_column(column)
+        if all(w.column.state != "loading" for w in self._project_column_widgets.values()):
+            self._column_loading_timer.stop()
 
     # Splitter/panel behavior provided by WindowVisualizer
 

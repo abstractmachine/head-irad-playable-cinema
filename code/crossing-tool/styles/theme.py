@@ -914,12 +914,19 @@ class JumpScrollBar(QScrollBar):
         # already fills the handle's full width/height (100% of the
         # gutter), since the container itself is always SCROLLBAR_W.
         border_rule  = "none" if active else f"{SCROLLBAR_HANDLE_IDLE_W}px solid {SCROLLBAR_IDLE_COLOR}"
+        # Horizontal bars are the Shotlist Browser's timeline scrubber, which
+        # overlays directly on top of the video frame (see shot_visualizer's
+        # _TimelineHitArea) — an opaque container would hide video content
+        # underneath it, so it stays fully transparent. Vertical bars scroll
+        # opaque list/image panes and keep the CANVAS_BG container so they
+        # read as part of that chrome.
+        container_bg = "transparent" if horiz else CANVAS_BG
         # Ensure the scroll bar itself and its groove have no border so it
         # visually sits flush with adjacent chrome. Note {size_prop} below is
         # always SCROLLBAR_W — the container's footprint never changes
         # between idle/active; only the handle rule above does.
         return (
-            f"QScrollBar:{orient} {{ background: {CANVAS_BG}; {size_prop}: {SCROLLBAR_W}px; border: none; }}"
+            f"QScrollBar:{orient} {{ background: {container_bg}; {size_prop}: {SCROLLBAR_W}px; border: none; }}"
             f"QScrollBar::groove:{orient} {{ background: transparent; border: none; }}"
             f"QScrollBar::handle:{orient} {{"
             f"    background: {handle_bg};"

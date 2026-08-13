@@ -690,9 +690,13 @@ class IllustrationBrowser(QWidget):
         in a single O(n) pass and rebuilds the grid immediately — typically
         <50 ms even on a 400 k-item catalog.
 
-        ``object_id`` is the stem of the source JSON (e.g. ``"object_0001"``).
-        When given, the matching cell in the grid is selected after the grid
-        is built.
+        ``object_id`` is the stem of the source JSON (e.g. ``"object_0001"``)
+        and is the canonical identity for the target record within *item*'s
+        scope (unique within one label directory — see the disambiguation
+        below). When given, the matching cell in the grid is selected after
+        the grid is built, regardless of which page it falls on and
+        regardless of the filter state active before this call: this is a
+        direct request for one known object, not a browse-filter refinement.
         """
         # ── set item combo without triggering cascade ──────────────────────
         if item is not None:
@@ -712,8 +716,15 @@ class IllustrationBrowser(QWidget):
         # object_id is only unique *within* a label directory, so we must also
         # match the parent directory name (= engraving label) to avoid picking
         # the wrong object_0001 from a different label in the same film.
+        #
+        # This lookup is a direct object_id-scoped query (bypassing any
+        # label/keyword filter) rather than pre-filtering by the (possibly
+        # wrong) *keyword* — pre-filtering by the very value being resolved
+        # guarantees zero matches whenever it needs correcting, which was
+        # the root cause of the reported bug (the stale/incorrect keyword
+        # then gets applied as the active filter, hiding the target).
         if object_id and (keyword is None or keyword):
-            for r in self._source.records(title=item, label=keyword, limit=10_000):
+            for r in self._source.records(title=item, object_id=object_id, limit=10_000):
                 sil_path = Path(str(r.get("path", "")))
                 if (_clean_stem(r.get("filename_stem", "")) == (item or "") and
                         sil_path.stem == object_id and
@@ -730,12 +741,36 @@ class IllustrationBrowser(QWidget):
                     break
             _combo.blockSignals(False)
 
-        # ── single-pass filter ─────────────────────────────────────────────
+        # ── establish the final filter state, then locate the target's exact
+        # position within that SAME filtered+sorted result set — never assume
+        # it is on page 0. ``records()`` uses the identical WHERE/ORDER BY as
+        # ``page()`` (see illustration_index.query_records/query_page), so
+        # index i in the full bounded result list is the same index i that
+        # paginates identically to what the grid will display. ─────────────
         scope = self._item_combo.currentData()
         self._selected_index = -1
         self._page_index     = 0
-        result = self._query_current_page(label=keyword or "--all")
-        records = result["records"]
+        final_keyword = keyword or "--all"
+
+        # Refresh _filtered_items/_total_items from the real current query
+        # now (rather than relying only on _rebuild_grid's cached-status
+        # guard below) — the source itself reports an empty page whenever
+        # its index is genuinely unusable, so this can never disagree with
+        # what _rebuild_grid is about to show, even if this browser's own
+        # cached _index_status hasn't been refreshed yet.
+        self._query_current_page(label=final_keyword)
+
+        full_matches: list[dict] = []
+        abs_idx = -1
+        if object_id or final_keyword != "--all":
+            full_matches = self._source.records(
+                title=scope, field="--all", letter="--all", label=final_keyword,
+            )
+        if object_id:
+            for i, r in enumerate(full_matches):
+                if Path(str(r.get("path", ""))).stem == object_id:
+                    abs_idx = i
+                    break
 
         # ── update keyword combo to reflect the selection ──────────────────
         self._keyword_combo.blockSignals(True)
@@ -743,7 +778,7 @@ class IllustrationBrowser(QWidget):
         self._keyword_combo.addItem("<Keyword>", userData="--all")
         if keyword:
             self._keyword_combo.addItem(
-                f"{keyword}  ({len(records)})", userData=keyword
+                f"{keyword}  ({len(full_matches)})", userData=keyword
             )
             self._keyword_combo.setCurrentIndex(1)
         else:
@@ -757,12 +792,13 @@ class IllustrationBrowser(QWidget):
         self.keywordChanged.emit(keyword or "")
         self._rebuild_grid()
 
-        # ── select the specific item if object_id supplied ─────────────────
-        if object_id:
-            for abs_idx, r in enumerate(records):
-                if Path(str(r.get("path", ""))).stem == object_id:
-                    self.select_index(abs_idx)
-                    break
+        # ── select the specific item at its real position, on its real page ─
+        # select_index() computes the containing page from _page_size and
+        # rebuilds the grid again only if that page differs from the current
+        # one — so this always lands on the page that actually contains the
+        # target, never just wherever page 0 of the query happens to be.
+        if object_id and abs_idx >= 0:
+            self.select_index(abs_idx)
 
     def navigate_to_filters(
         self,

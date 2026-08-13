@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from data.metadata import load_json_metadata
 from data.shotlist import read_shotlist
 from data.subtitles import subtitle_path_for
-from services.silhouette_catalog import audit_catalog
-from services.vocabulary_index import load_vocabulary_index
+from services.vocabulary_index import load_vocabulary_index, vocabulary_cache_is_stale
 
 
 def _count_annotated_shots(project_path: str, media_type: str = "movie") -> int:
@@ -71,20 +72,79 @@ def _subtitle_path_exists(project_path: str, filename: str) -> bool:
     return subtitle_path_for(project_path, "movie", filename) is not None
 
 
-def _combined_silhouette_report(project_path: str) -> tuple[int, Counter[str]]:
-    total_objects = 0
-    label_counts: Counter[str] = Counter()
-    for media_type in ("movie", "gameplay"):
-        report = audit_catalog(project_path, media_type=media_type)
-        total_objects += int(report.get("total_objects", 0))
-        label_counts.update(report.get("labels", {}))
-    return total_objects, label_counts
+def _illustration_stats_for_media_type(project_path: str, media_type: str) -> dict[str, Any]:
+    """Raw illustration-index status for one media type.
+
+    Sourced only from the Illustration visualizer's own browse index (a
+    small SQLite file under data/indexes/illustration/) — never scans the
+    silhouette catalog itself. Returns
+    ``{"status": "ready"|"missing"|"stale"|"error", "count": int, "labels": Counter}``.
+    """
+    from services.illustration_index import load_index, query_facets
+
+    status = load_index(project_path, "silhouettes", media_type)
+    if status.get("status") == "ready":
+        facets = query_facets(project_path, "silhouettes", media_type)
+        labels = Counter({entry["label"]: entry["count"] for entry in facets.get("labels", [])})
+        return {"status": "ready", "count": int(status.get("count", 0)), "labels": labels}
+    return {"status": status.get("status") or "error", "count": 0, "labels": Counter()}
+
+
+# Worst-status-wins precedence when combining movie + gameplay: a missing
+# index is treated as more severe than a stale one, which is more severe
+# than a read error — any of the three means "not ready", never "ready".
+_ILLUSTRATION_STATUS_PRIORITY = {"missing": 0, "stale": 1, "error": 2, "ready": 3}
+
+
+def get_illustration_stats(project_path: Optional[str]) -> dict[str, Any]:
+    """Return Illustrations-column data, sourced only from the Illustration
+    visualizer's own browse index (data/indexes/illustration/).
+
+    This deliberately never calls ``audit_catalog()`` or otherwise scans the
+    silhouette catalog: if the index is missing/stale/errored for either
+    media type, this reports an explicit unavailable/stale state instead of
+    silently reconstructing anything. Cheap (small SQLite reads) — safe to
+    call synchronously on every Project Visualizer open.
+
+    Returns one of:
+      ``{"state": "ready", "count": int, "labels": Counter[str]}``
+      ``{"state": "unavailable", "reason": "illustration_index_missing"}``
+      ``{"state": "stale", "reason": "illustration_index_stale"}``
+      ``{"state": "unavailable", "reason": "illustration_index_error"}``
+      ``{"state": "unavailable", "reason": "no_project"}``
+    """
+    if not project_path:
+        return {"state": "unavailable", "reason": "no_project"}
+
+    per_media = [
+        _illustration_stats_for_media_type(project_path, media_type)
+        for media_type in ("movie", "gameplay")
+    ]
+    worst = min(per_media, key=lambda s: _ILLUSTRATION_STATUS_PRIORITY.get(s["status"], -1))
+    if worst["status"] == "ready":
+        total = sum(s["count"] for s in per_media)
+        labels: Counter[str] = Counter()
+        for s in per_media:
+            labels.update(s["labels"])
+        return {"state": "ready", "count": total, "labels": labels}
+    if worst["status"] == "missing":
+        return {"state": "unavailable", "reason": "illustration_index_missing"}
+    if worst["status"] == "stale":
+        return {"state": "stale", "reason": "illustration_index_stale"}
+    return {"state": "unavailable", "reason": "illustration_index_error"}
 
 
 def get_top_silhouette_labels(project_path: str, limit: int = 10) -> list[tuple[str, int]]:
-    """Return the most common silhouette labels across the corpus."""
-    _, label_counts = _combined_silhouette_report(project_path)
-    return sorted(label_counts.items(), key=lambda item: (-item[1], item[0]))[:limit]
+    """Return the most common silhouette labels across the corpus.
+
+    Sourced only from the illustration index (see ``get_illustration_stats``)
+    — returns an empty list, rather than scanning the catalog, when that
+    index isn't ready for both media types.
+    """
+    stats = get_illustration_stats(project_path)
+    if stats["state"] != "ready":
+        return []
+    return sorted(stats["labels"].items(), key=lambda item: (-item[1], item[0]))[:limit]
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +275,18 @@ def _count_shots_with_best_frame(project_path: str) -> dict[str, int]:
     return result
 
 
+def _count_flipbooks(project_path: str) -> int:
+    """Count generated flipbook PDFs under output/flipbooks/.
+
+    Mirrors generators/flipbook.py's documented output path convention
+    (``<project>/output/flipbooks/<stem>-flipbook.pdf``).
+    """
+    base = Path(project_path) / "output" / "flipbooks"
+    if not base.exists():
+        return 0
+    return sum(1 for f in base.glob("*-flipbook.pdf"))
+
+
 def _count_annotated_shots_by_type(project_path: str) -> dict[str, int]:
     """Count annotation entries per media type."""
     result: dict[str, int] = {}
@@ -239,7 +311,17 @@ def _count_annotated_shots_by_type(project_path: str) -> dict[str, int]:
 
 
 def get_corpus_stats(project_path: str) -> dict[str, Any]:
-    """Return corpus-level project statistics."""
+    """Return corpus-level project statistics.
+
+    Scans annotation/shotlist/palette/embedding files directly (proportional
+    to shot count — not the silhouette catalog), so this is not free, but it
+    never calls ``audit_catalog()``: silhouette/illustration stats are read
+    only from the illustration index (see ``get_illustration_stats``) and
+    come back as an explicit unavailable/stale state, not a number, when
+    that index isn't ready. Callers on a GUI thread should still prefer the
+    cached artifact (``get_corpus_stats_state`` / ``refresh_corpus_stats_cache``)
+    over calling this directly. See ``get_project_columns``.
+    """
     movie_metadata = load_json_metadata(project_path, "movie")
     gameplay_metadata = load_json_metadata(project_path, "gameplay")
 
@@ -253,7 +335,13 @@ def get_corpus_stats(project_path: str) -> dict[str, Any]:
 
     detected_scenes = _count_detected_scenes(project_path, movie_metadata)
 
-    silhouette_objects, label_counts = _combined_silhouette_report(project_path)
+    illustration_stats = get_illustration_stats(project_path)
+    if illustration_stats["state"] == "ready":
+        silhouette_objects: Optional[int] = illustration_stats["count"]
+        silhouette_labels: Optional[int] = len(illustration_stats["labels"])
+    else:
+        silhouette_objects = None
+        silhouette_labels = None
 
     subtitle_files = _count_present_assets(project_path, movie_metadata, _subtitle_path_exists)
     shotlists = _count_present_assets(project_path, movie_metadata, _shotlist_path_exists)
@@ -264,6 +352,8 @@ def get_corpus_stats(project_path: str) -> dict[str, Any]:
     embeddings_by_type = _count_embeddings(project_path)
     frame_embeddings_by_type = _count_frame_embeddings(project_path)
     shots_with_best_frame_by_type = _count_shots_with_best_frame(project_path)
+
+    flipbooks = _count_flipbooks(project_path)
 
     return {
         # Media
@@ -292,10 +382,329 @@ def get_corpus_stats(project_path: str) -> dict[str, Any]:
         "frame_embeddings_by_type": frame_embeddings_by_type,
         # Vocabulary
         "vocabulary_terms": vocabulary_terms,
-        # Silhouettes
+        # Silhouettes (sourced only from the illustration index — see
+        # get_illustration_stats; None + a reason when that index isn't
+        # ready for both media types, never a scanned/reconstructed number)
         "silhouette_objects": silhouette_objects,
-        "silhouette_labels": len(label_counts),
+        "silhouette_labels": silhouette_labels,
+        "silhouette_state": illustration_stats["state"],
+        "silhouette_reason": illustration_stats.get("reason"),
         # Assets
         "subtitle_files": subtitle_files,
         "shotlists": shotlists,
+        # Flipbooks (generated PDFs under output/flipbooks/)
+        "flipbooks": flipbooks,
     }
+
+
+# ---------------------------------------------------------------------------
+# Project Visualizer V0 — fixed column dashboard model
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ProjectColumn:
+    """One column of the Project Visualizer's V0 structural dashboard.
+
+    ``state`` is one of:
+      ``"ready"``        — ``count`` holds a real, current value.
+      ``"unavailable"``  — the artifact this column reads from has never
+                            been built (e.g. no project set, no stats cache,
+                            no illustration index yet). ``count`` is ``None``.
+      ``"stale"``         — the artifact exists but is out of date relative
+                            to the data it was built from (e.g. the
+                            illustration index's revision no longer matches,
+                            or the stats cache predates a since-changed
+                            vocabulary index). ``count`` is ``None`` — a
+                            stale number is never shown as if it were current.
+      ``"loading"``       — GUI-only placeholder meaning "not answered yet".
+                            :func:`get_project_columns` never returns this —
+                            it is synchronous and always returns a final
+                            answer — it is constructed directly by the
+                            renderer before its background worker resolves.
+
+    ``reason`` is an optional short machine-readable code (e.g.
+    ``"illustration_index_missing"``) explaining an ``"unavailable"``/
+    ``"stale"`` state, for the renderer to map to display text. ``None`` for
+    ``"ready"``/``"loading"`` columns, and for a bare/unspecified
+    unavailable state.
+
+    ``datavis`` is a small, renderer-agnostic dict describing what (if
+    anything) the column's DATAVIS region should draw, e.g.
+    ``{"kind": "empty"}``. V0 intentionally implements no real per-column
+    visualization yet (see ``get_project_columns`` docstring) but keeps this
+    shape so later versions can add per-column visualization strategies
+    without changing the column model itself.
+    """
+
+    id: str
+    title: str
+    count: Optional[int]
+    datavis: dict[str, Any]
+    state: str = "ready"
+    reason: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Cached corpus-stats artifact
+#
+# get_corpus_stats() is not free (proportional to shot/annotation count),
+# and never calls audit_catalog(), so it must still not run on the GUI
+# thread. The result is persisted to a small cache file (next to the
+# Illustration visualizer's own derived indexes under data/indexes/) and
+# only ever regenerated explicitly (via `crossing index stats --force`),
+# never implicitly recomputed on read. Reading the cache (see
+# `get_corpus_stats_state`) reports an explicit "missing"/"stale" state
+# rather than silently rebuilding it.
+# ---------------------------------------------------------------------------
+
+CORPUS_STATS_SCHEMA_VERSION = 2
+
+
+def corpus_stats_cache_path(project_path: str) -> Path:
+    return Path(project_path) / "data" / "indexes" / "corpus_stats.json"
+
+
+def load_cached_corpus_stats(project_path: str) -> Optional[dict[str, Any]]:
+    """Return the persisted corpus-stats dict, or None if missing/unreadable/wrong schema.
+
+    Cheap — only reads one small JSON file, never traverses project data.
+    Does not check staleness — see `get_corpus_stats_state` for the full
+    missing/stale/ready read used by the CLI and Project Visualizer.
+    """
+    path = corpus_stats_cache_path(project_path)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if payload.get("schema_version") != CORPUS_STATS_SCHEMA_VERSION:
+        return None
+    stats = payload.get("stats")
+    return stats if isinstance(stats, dict) else None
+
+
+def _annotations_fingerprint(project_path: str) -> str:
+    """Cheap mtime+size fingerprint over every annotation JSON file.
+
+    Used only to detect whether the corpus-stats cache (whose figures are
+    almost entirely derived from these files) has gone stale since it was
+    generated — never reads file contents, so this stays fast even on large
+    corpora (mirrors the same technique services/vocabulary_index.py already
+    uses for its own cheap staleness check).
+    """
+    import hashlib
+
+    digest = hashlib.md5()
+    base = Path(project_path) / "data" / "annotations" / "shots"
+    if not base.exists():
+        return ""
+    for mt_dir in sorted(base.iterdir()):
+        if not mt_dir.is_dir():
+            continue
+        for json_file in sorted(mt_dir.glob("*.json")):
+            if json_file.name.endswith(".manifest.json"):
+                continue
+            try:
+                st = json_file.stat()
+            except OSError:
+                continue
+            digest.update(f"{mt_dir.name}/{json_file.name}:{st.st_mtime_ns}:{st.st_size}\n".encode())
+    return digest.hexdigest()
+
+
+def refresh_corpus_stats_cache(project_path: str) -> dict[str, Any]:
+    """Recompute corpus stats and persist them, along with a staleness fingerprint.
+
+    This is the only place `get_corpus_stats()` should be called from the
+    GUI-adjacent code path — always off the GUI thread (see
+    visualizers/project_visualizer.py) or from the CLI's explicit `--force`
+    rebuild. Callers that only need to *read* the cache should use
+    `get_corpus_stats_state` instead.
+    """
+    from data.annotate import atomic_write_text
+
+    stats = get_corpus_stats(project_path)
+    payload = {
+        "schema_version": CORPUS_STATS_SCHEMA_VERSION,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "annotations_fingerprint": _annotations_fingerprint(project_path),
+        "stats": stats,
+    }
+    path = corpus_stats_cache_path(project_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(path, json.dumps(payload, indent=2, ensure_ascii=False))
+    return stats
+
+
+def get_corpus_stats_state(project_path: Optional[str]) -> dict[str, Any]:
+    """Return the corpus-stats cache's current read-only state.
+
+    Never recomputes anything — the only work here is a small JSON read plus
+    a cheap mtime/size fingerprint comparison (see `_annotations_fingerprint`).
+    One of:
+
+      ``{"state": "missing"}``                  — no valid cache exists yet
+      ``{"state": "stale", "stats": {...}}``     — cache exists, but the
+          annotation files it was computed from have changed since
+      ``{"state": "ready", "stats": {...}}``     — cache exists and current
+    """
+    if not project_path:
+        return {"state": "missing"}
+    path = corpus_stats_cache_path(project_path)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"state": "missing"}
+    if payload.get("schema_version") != CORPUS_STATS_SCHEMA_VERSION:
+        return {"state": "missing"}
+    stats = payload.get("stats")
+    if not isinstance(stats, dict):
+        return {"state": "missing"}
+    if payload.get("annotations_fingerprint") != _annotations_fingerprint(project_path):
+        return {"state": "stale", "stats": stats}
+    return {"state": "ready", "stats": stats}
+
+
+# Columns computed live (see get_live_project_columns) — (id, title). Cheap
+# enough to compute on every call without a persisted cache: Movies/Gameplay/
+# Shots read project metadata/annotation files directly; Illustrations reads
+# only the illustration index (see get_illustration_stats). None of the four
+# ever touches the silhouette catalog or calls audit_catalog().
+_LIVE_COLUMN_TITLES: tuple[tuple[str, str], ...] = (
+    ("movies", "Movies"),
+    ("gameplay", "Gameplay"),
+    ("shots", "Shots"),
+    ("illustrations", "Illustrations"),
+)
+
+# Columns sourced only from the persisted corpus-stats cache — never
+# recomputed here, per the "GUI opening -> READ CACHED STATS, never
+# RECALCULATE STATS" rule. (id, title, corpus_stats key)
+_CACHED_COLUMN_SPECS: tuple[tuple[str, str, str], ...] = (
+    ("vocabulary", "Vocabulary", "vocabulary_terms"),
+    ("segments", "Segments", "detected_scenes"),
+    ("flipbooks", "Flipbooks", "flipbooks"),
+)
+
+# The fixed (id, title) pairs for all seven V0 columns, in the display order
+# the GUI grid always uses — independent of which tier each column is
+# sourced from internally, so a GUI can render headers/placeholders
+# immediately, before any column value has been computed or read.
+PROJECT_COLUMN_IDS_AND_TITLES: tuple[tuple[str, str], ...] = (
+    ("movies", "Movies"),
+    ("gameplay", "Gameplay"),
+    ("shots", "Shots"),
+    ("vocabulary", "Vocabulary"),
+    ("segments", "Segments"),
+    ("flipbooks", "Flipbooks"),
+    ("illustrations", "Illustrations"),
+)
+
+
+def _make_column(
+    col_id: str, title: str, count: Optional[int],
+    *, state: Optional[str] = None, reason: Optional[str] = None,
+) -> ProjectColumn:
+    if state is None:
+        state = "ready" if count is not None else "unavailable"
+    return ProjectColumn(
+        id=col_id, title=title, count=count, datavis={"kind": "empty"},
+        state=state, reason=reason,
+    )
+
+
+def get_live_project_columns(project_path: Optional[str]) -> list[ProjectColumn]:
+    """Return the Movies/Gameplay/Shots/Illustrations columns, computed live.
+
+    Cheap (proportional to movie/annotation count, plus small illustration-
+    index reads) — never touches the silhouette catalog or calls
+    audit_catalog(). Safe to call synchronously, but Project Visualizer
+    still calls it off the GUI thread alongside `get_cached_project_columns`
+    so each tier can be displayed as soon as it's ready.
+    """
+    movie_count: Optional[int] = None
+    gameplay_count: Optional[int] = None
+    shots_count: Optional[int] = None
+
+    if project_path:
+        try:
+            movie_count = len(load_json_metadata(project_path, "movie"))
+        except (OSError, json.JSONDecodeError):
+            pass
+        try:
+            gameplay_count = len(load_json_metadata(project_path, "gameplay"))
+        except (OSError, json.JSONDecodeError):
+            pass
+        try:
+            annotated_shots_by_type = _count_annotated_shots_by_type(project_path)
+            shots_count = sum(annotated_shots_by_type.values())
+        except OSError:
+            pass
+
+    illustration_stats = get_illustration_stats(project_path)
+    if illustration_stats["state"] == "ready":
+        illustrations_column = _make_column(
+            "illustrations", "Illustrations", illustration_stats["count"],
+        )
+    else:
+        illustrations_column = _make_column(
+            "illustrations", "Illustrations", None,
+            state=illustration_stats["state"], reason=illustration_stats.get("reason"),
+        )
+
+    return [
+        _make_column("movies", "Movies", movie_count),
+        _make_column("gameplay", "Gameplay", gameplay_count),
+        _make_column("shots", "Shots", shots_count),
+        illustrations_column,
+    ]
+
+
+def get_cached_project_columns(project_path: Optional[str]) -> list[ProjectColumn]:
+    """Return the Vocabulary/Segments/Flipbooks columns.
+
+    Sourced only from the persisted stats cache (see `get_corpus_stats_state`)
+    — never recomputed here. Columns come back ``state="unavailable"`` when
+    no cache exists yet, or ``state="stale"`` when the cache exists but the
+    annotation data it was computed from has changed since — never silently
+    triggering a rebuild in either case.
+    """
+    result = get_corpus_stats_state(project_path)
+    state = result["state"]
+    if state == "missing":
+        return [
+            _make_column(col_id, title, None, state="unavailable", reason="corpus_stats_missing")
+            for col_id, title, _stat_key in _CACHED_COLUMN_SPECS
+        ]
+    if state == "stale":
+        return [
+            _make_column(col_id, title, None, state="stale", reason="corpus_stats_stale")
+            for col_id, title, _stat_key in _CACHED_COLUMN_SPECS
+        ]
+    stats = result["stats"]
+    return [
+        _make_column(col_id, title, stats.get(stat_key))
+        for col_id, title, stat_key in _CACHED_COLUMN_SPECS
+    ]
+
+
+def get_project_columns(project_path: Optional[str]) -> list[ProjectColumn]:
+    """Return the fixed V0 set of all seven Project Visualizer columns.
+
+    Always fast and synchronous — never performs a full corpus traversal.
+    See `get_live_project_columns` and `get_cached_project_columns` for the
+    two tiers this reads (kept separately callable so a GUI worker can
+    display each tier as soon as it's ready rather than waiting for both).
+    Always returned in `PROJECT_COLUMN_IDS_AND_TITLES`'s fixed display
+    order, regardless of which tier each column came from.
+
+    Every column's ``datavis`` is ``{"kind": "empty"}`` in V0: this is a
+    structural prototype, not a data-visualization implementation, and every
+    'obvious' per-column visualization (proportional vocabulary sizing,
+    palette swatches, embedding/density maps, segmentation maps) is
+    explicitly out of scope for V0.
+    """
+    by_id = {
+        column.id: column
+        for column in get_live_project_columns(project_path) + get_cached_project_columns(project_path)
+    }
+    return [by_id[col_id] for col_id, _title in PROJECT_COLUMN_IDS_AND_TITLES]

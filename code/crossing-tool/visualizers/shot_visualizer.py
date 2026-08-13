@@ -1185,16 +1185,21 @@ class ShotlistVisualizer(WindowVisualizer):
         self._splitter.setSizes([browser_w, scene_panel_w, shot_panel_w, inspector_w])
 
     def _build_browser(self) -> QWidget:
-        """Build the Browser: full-window video playback, subtitle overlay,
-        and the bottom timeline scrubber.
+        """Build the Browser: full-window video playback with the subtitle
+        and timeline-scrubber controls layered on top as overlays.
 
         The Browser is for viewing, scrubbing, and navigating playback only —
-        annotations and inspector-style metadata live in the Inspector instead.
+        annotations and inspector-style metadata live in the Inspector
+        instead. video_container fills the ENTIRE browser area — neither
+        overlay is a browser_layout sibling, so neither can reserve/carve out
+        layout space from the movie. frame_label is fit to whatever space
+        video_container has via a standard aspect-ratio-preserving scale (see
+        _rescale_current_frame) with no aspect-ratio-specific logic.
         """
         browser = QWidget()
         browser_layout = QVBoxLayout(browser)
         browser_layout.setContentsMargins(0, 0, 0, 0)
-        browser_layout.setSpacing(2)
+        browser_layout.setSpacing(0)
         # Same dark display background used by the Book and Illustration
         # browsers, so the Shotlist Browser's video/letterboxing matches the
         # shared framework look instead of the generic app grey.
@@ -1216,12 +1221,13 @@ class ShotlistVisualizer(WindowVisualizer):
         self.subtitle_label = QLabel()
         self.subtitle_label.setAlignment(Qt.AlignCenter)
         subtitle_font = theme.font_subtitle()
-        subtitle_font.setPointSize(theme.SUBTITLE_PT * 2)
+        subtitle_pt = round(theme.SUBTITLE_PT * 2 * 0.75)  # 75% of the prior on-screen size
+        subtitle_font.setPointSize(subtitle_pt)
         self.subtitle_label.setFont(subtitle_font)
         self.subtitle_label.setWordWrap(True)
         self.subtitle_label.setStyleSheet(
             f"color: {theme.TEXT}; background-color: transparent; padding: 2px 8px;"
-            f" font-size: {theme.SUBTITLE_PT * 2}pt;"
+            f" font-size: {subtitle_pt}pt;"
         )
 
         _sub_overlay = QWidget()
@@ -1242,11 +1248,16 @@ class ShotlistVisualizer(WindowVisualizer):
         _stack.addWidget(_sub_overlay)
         _stack.setCurrentIndex(1)
 
-        browser_layout.addWidget(video_container, stretch=1)
-
         # Timeline scrubber — a real scrollbar whose handle length reflects
         # the current shot's frame span relative to the whole film's length,
-        # the same idea as the Book Visualizer's bottom position bar.
+        # the same idea as the Book Visualizer's bottom position bar. Its
+        # larger hover target (_TimelineHitArea) is a raw, non-layout-managed
+        # child of video_container, pinned to the bottom by
+        # _position_timeline_hit_area (kept in sync with every video resize
+        # via the same eventFilter hook that rescales frame_label). It is
+        # never a browser_layout sibling and never fills video_container, so
+        # its taller hover target can't reserve/shrink the movie's rectangle,
+        # and the untouched area above it stays click-through to the video.
         self.timeline_slider = _TimelineScrollBar()
         self.timeline_slider.setMinimum(0)
         self.timeline_slider.setMaximum(max(0, self.total_frames - 1))
@@ -1258,11 +1269,30 @@ class ShotlistVisualizer(WindowVisualizer):
         self.timeline_slider.mousePressed.connect(self._on_timeline_press)
         self.timeline_slider.mouseReleased.connect(self._on_timeline_release)
         self.timeline_slider.setToolTip("Scrub timeline  [←/→ frame  Shift+←/→ 1s]")
-        self.timeline_hit_area = _TimelineHitArea(self.timeline_slider)
+        self.timeline_hit_area = _TimelineHitArea(self.timeline_slider, video_container)
         self.timeline_hit_area.setToolTip(self.timeline_slider.toolTip())
-        browser_layout.addWidget(self.timeline_hit_area)
+        self.timeline_hit_area.raise_()
+        self.timeline_hit_area.show()
+        self._position_timeline_hit_area()
+
+        browser_layout.addWidget(video_container, stretch=1)
 
         return browser
+
+    def _position_timeline_hit_area(self) -> None:
+        """Pin the timeline scrubber's larger hover target to the bottom of
+        the video, full width, without it ever joining browser_layout.
+
+        Called whenever frame_label resizes (see eventFilter) since
+        video_container and frame_label always share the same size.
+        """
+        if not hasattr(self, "timeline_hit_area"):
+            return
+        container = self.timeline_hit_area.parentWidget()
+        if container is None:
+            return
+        hit_height = theme.SCROLLBAR_W * 15
+        self.timeline_hit_area.setGeometry(0, container.height() - hit_height, container.width(), hit_height)
 
     def _build_scene_panel(self) -> QWidget:
         """Build the Scene index as its own collapsible, content-width panel."""
@@ -2522,6 +2552,7 @@ class ShotlistVisualizer(WindowVisualizer):
         try:
             if event.type() == QEvent.Resize and obj is self.frame_label:
                 self._rescale_current_frame()
+                self._position_timeline_hit_area()
                 return False
             if event.type() == QEvent.Resize and obj is self.ann_display:
                 # Re-fit the annotation text display's height to its wrapped

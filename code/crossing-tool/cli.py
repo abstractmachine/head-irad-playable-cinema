@@ -5504,18 +5504,44 @@ def _index_frame_embeddings_audit(args):
 
 
 def _index_stats(args):
-    """Print a corpus-wide statistical summary."""
-    from services.corpus_stats import get_corpus_stats, get_top_silhouette_labels
+    """Print a corpus-wide statistical summary.
+
+    A read operation by default: reports the persisted corpus-stats cache
+    (data/indexes/corpus_stats.json), or an explicit "not built"/"stale"
+    state if it can't be trusted — it never silently recomputes anything.
+    Pass --force to explicitly (re)build the cache.
+    """
+    from services.corpus_stats import get_corpus_stats_state, get_top_silhouette_labels, refresh_corpus_stats_cache
 
     project_path = prefs.get("path")
     output_json = getattr(args, "json", False)
     verbose = getattr(args, "verbose", False)
+    force = getattr(args, "force", False)
 
-    try:
-        stats = get_corpus_stats(project_path)
-    except FileNotFoundError as exc:
-        print(f"✗ {exc}", file=sys.stderr)
-        sys.exit(1)
+    if force:
+        try:
+            stats = refresh_corpus_stats_cache(project_path)
+        except FileNotFoundError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        result = get_corpus_stats_state(project_path)
+        state = result["state"]
+        if state == "missing":
+            if output_json:
+                print(json.dumps({"state": "missing"}, indent=2))
+            else:
+                print("Corpus statistics have not been built.", file=sys.stderr)
+                print("Run `crossing index stats --force` or rebuild the project index.", file=sys.stderr)
+            sys.exit(1)
+        if state == "stale":
+            if output_json:
+                print(json.dumps({"state": "stale", "stats": result["stats"]}, indent=2, ensure_ascii=False))
+            else:
+                print("Corpus statistics are stale.", file=sys.stderr)
+                print("Rebuild statistics before using them.", file=sys.stderr)
+            sys.exit(1)
+        stats = result["stats"]
 
     if output_json:
         print(json.dumps(stats, indent=2, ensure_ascii=False))
@@ -5585,8 +5611,16 @@ def _index_stats(args):
     blank()
 
     # ── Silhouettes ──────────────────────────────────────────────────────────
-    row("Silhouette Objects", stats["silhouette_objects"])
-    row("Silhouette Labels",  stats["silhouette_labels"])
+    if stats.get("silhouette_objects") is not None:
+        row("Silhouette Objects", stats["silhouette_objects"])
+        row("Silhouette Labels",  stats["silhouette_labels"])
+    else:
+        note = {
+            "illustration_index_missing": "not built — run `crossing index illustration`",
+            "illustration_index_stale": "stale — run `crossing index illustration`",
+            "illustration_index_error": "unavailable (index read error)",
+        }.get(stats.get("silhouette_reason"), "unavailable")
+        row("Silhouette Objects", note)
     blank()
 
     # ── Assets ───────────────────────────────────────────────────────────────
@@ -8622,7 +8656,8 @@ def build_parser():
             "Examples:\n"
             "  crossing index stats\n"
             "  crossing index stats --json\n"
-            "  crossing index stats --verbose"
+            "  crossing index stats --verbose\n"
+            "  crossing index stats --force"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -8630,6 +8665,13 @@ def build_parser():
     p_index_stats.add_argument(
         "--json", action="store_true", dest="json",
         help="Output raw JSON instead of formatted text",
+    )
+    p_index_stats.add_argument(
+        "--force", action="store_true",
+        help="Explicitly (re)build the corpus-stats cache even if it already "
+             "exists (reads project/annotation files and the illustration "
+             "index fresh; never scans the silhouette catalog itself — run "
+             "`crossing index illustration` first if that index needs rebuilding)",
     )
     _add_verbose_arg(p_index_stats, help="Print top silhouette labels after the summary")
 

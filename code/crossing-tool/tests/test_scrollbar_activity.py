@@ -11,11 +11,13 @@ resizing the container on hover causes a layout-reflow glitch.
 """
 
 import pytest
+from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication
 
 from styles import theme
 from styles.theme import (
     ACCENT,
+    CANVAS_BG,
     JumpScrollBar,
     SCROLLBAR_HANDLE_IDLE_W,
     SCROLLBAR_IDLE_COLOR,
@@ -128,3 +130,26 @@ def test_global_stylesheet_recolors_without_resizing_scrollbars_on_hover(app):
     assert SCROLLBAR_IDLE_COLOR in css
     assert f"{SCROLLBAR_HANDLE_IDLE_W}px solid" in css
     assert "QScrollBar::handle:vertical:hover, QScrollBar::handle:vertical:pressed" in css
+
+
+def test_horizontal_scrollbar_container_is_fully_transparent(app):
+    """The Shotlist Browser's timeline scrubber (the only horizontal
+    JumpScrollBar user) overlays the video frame directly, so its own
+    container must never paint an opaque rectangle over the content
+    underneath — only the handle should be visible."""
+    sb = JumpScrollBar(Qt.Horizontal)
+    try:
+        assert "QScrollBar:horizontal { background: transparent" in sb.styleSheet()
+        assert CANVAS_BG not in sb.styleSheet()
+    finally:
+        sb.deleteLater()
+
+
+def test_vertical_scrollbar_container_keeps_canvas_background(app):
+    """Vertical JumpScrollBar users (list/image scroll panes) are unaffected
+    by the horizontal-only transparency fix."""
+    sb = JumpScrollBar(Qt.Vertical)
+    try:
+        assert f"QScrollBar:vertical {{ background: {CANVAS_BG}" in sb.styleSheet()
+    finally:
+        sb.deleteLater()

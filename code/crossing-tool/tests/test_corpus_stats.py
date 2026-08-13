@@ -131,10 +131,30 @@ class TestCorpusStats(unittest.TestCase):
             self.assertEqual(stats["vocabulary_terms"], 3)
             self.assertEqual(stats["annotated_shots"], 3)
             self.assertEqual(stats["detected_scenes"], 3)
-            self.assertEqual(stats["silhouette_objects"], 3)
-            self.assertEqual(stats["silhouette_labels"], 2)
             self.assertEqual(stats["subtitle_files"], 1)
             self.assertEqual(stats["shotlists"], 2)
+
+            # No illustration index has been built yet — silhouette figures
+            # must be reported as explicitly unavailable, never silently
+            # computed by scanning the raw catalog sidecars.
+            self.assertIsNone(stats["silhouette_objects"])
+            self.assertIsNone(stats["silhouette_labels"])
+            self.assertEqual(stats["silhouette_state"], "unavailable")
+            self.assertEqual(stats["silhouette_reason"], "illustration_index_missing")
+            self.assertEqual(get_top_silhouette_labels(str(project), limit=2), [])
+
+            # Building the illustration index for both media types is the
+            # only thing that should make silhouette figures available.
+            from services.illustration_index import rebuild_index
+
+            rebuild_index(str(project), "silhouettes", "movie")
+            rebuild_index(str(project), "silhouettes", "gameplay")
+
+            stats = get_corpus_stats(str(project))
+            self.assertEqual(stats["silhouette_objects"], 3)
+            self.assertEqual(stats["silhouette_labels"], 2)
+            self.assertEqual(stats["silhouette_state"], "ready")
+            self.assertIsNone(stats["silhouette_reason"])
 
             self.assertEqual(get_top_silhouette_labels(str(project), limit=2), [("horse", 2), ("chair", 1)])
 
