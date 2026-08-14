@@ -23,13 +23,14 @@ A scrollable, zoomable mosaic of video frame thumbnails. Each tile is captioned 
 
 #### Scope
 
-Select **<Media>** to search both `movie` and `gameplay`, or select one media
-type and optionally restrict results to a single title. Use **<all>** to search
+Select **<All Media>** to search both `movie` and `gameplay`, or select one media
+type and optionally restrict results to a single title. Use **<All Titles>** to search
 all titles in the selected media scope.
 
 #### Field
 
-The annotation field to search against (e.g. `objects`, `wearing`, `action`, `humans`).
+The annotation field to search against (e.g. `objects`, `wearing`, `action`, `humans`),
+or **<All Fields>** to search across every field.
 
 #### Search
 
@@ -58,16 +59,16 @@ Type a search term and click one of the search mode buttons:
 
 A worker-loaded list of indexed terms. The selected annotation field determines the
 source automatically: structured fields use canonical vocabulary, while
-`description` and `text` use derived free-text vocabulary. Selecting **<all>**
+`description` and `text` use derived free-text vocabulary. Selecting **<All Fields>**
 merges both indexed families. Derived terms retain their free-text
-provenance and never enter the canonical artifact. The list defaults to **<all>**
+provenance and never enter the canonical artifact. The list defaults to **<All Fields>**
 when Mosaic opens and whenever the selected browse field changes. Use the Vocabulary
 sort dropdown to order terms by count, alphabetically, or by count with alphabetical
-ordering inside each equal-count group. Use the following dropdown to show **<all>**
+ordering inside each equal-count group. Use the following dropdown to show **<A-Z>**
 terms or jump to one initial letter. Click any term to place it in the Search
 field.
 
-Large **<all>** lists are built in background-sized GUI batches: the dropdown and Vocabulary loading indicator remain visible, while the completed table is laid out once to avoid repeatedly resizing the Inspector. If the vocabulary index is missing or stale, Mosaic shows that state instead of scanning annotations; use **Rebuild Vocabulary** in the Tools section to rebuild it through the canonical CLI index command.
+Large **<A-Z>** lists are built in background-sized GUI batches: the dropdown and Vocabulary loading indicator remain visible, while the completed table is laid out once to avoid repeatedly resizing the Inspector. If the vocabulary index is missing or stale, Mosaic shows that state instead of scanning annotations; use **Rebuild Vocabulary** in the Tools section to rebuild it through the canonical CLI index command.
 
 Canonical and derived browse vocabulary are distinct from the typed free-text
 **Search** workflow and from semantic retrieval. Searching a selected term still uses

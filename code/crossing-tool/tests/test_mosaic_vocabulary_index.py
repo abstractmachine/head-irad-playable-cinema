@@ -480,7 +480,7 @@ def test_annotation_field_change_resets_vocabulary_navigation_to_all(
         "selected_prefix": "--all",
         "is_large": False,
     })
-    assert window.vocab_nav_combo.currentText() == "<all>"
+    assert window.vocab_nav_combo.currentText() == "<A-Z>"
     assert window.vocab_nav_combo.currentData() == "--all"
     window.close()
 
@@ -502,7 +502,7 @@ def test_first_show_loads_all_field_vocabulary_once(
     window.show()
     app.processEvents()
 
-    assert window.field_combo.currentText() == "<all>"
+    assert window.field_combo.currentText() == "<All Fields>"
     assert window.field_combo.currentData() == "--all"
     assert started_fields == ["--all"]
     window.close()
@@ -580,7 +580,7 @@ def test_mosaic_scope_offers_all_media_and_keeps_title_media_type(tmp_path, app,
     assert [window.media_type_combo.itemData(index) for index in range(3)] == [
         "--all", None, None,
     ]
-    assert window.media_type_combo.itemText(0) == "<Media>"
+    assert window.media_type_combo.itemText(0) == "<All Media>"
     scopes = [window.movie_combo.itemData(index) for index in range(window.movie_combo.count())]
     assert ("movie", "movie.mp4") in scopes
     assert ("gameplay", "gameplay.mp4") in scopes

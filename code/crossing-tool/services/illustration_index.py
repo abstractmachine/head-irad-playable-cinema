@@ -18,6 +18,30 @@ from uuid import uuid4
 
 INDEX_SCHEMA_VERSION = 3
 SOURCES = ("silhouettes", "engravings")
+
+# ---------------------------------------------------------------------------
+# Explicit query-state vocabulary
+# ---------------------------------------------------------------------------
+# Three distinct states recur throughout the Illustration browse stack and
+# must never be conflated:
+#
+#   UNINITIALIZED  a falsy media_type (None/"").  No index is loaded, no
+#                  query is ever issued.  Purely a construction-time /
+#                  fast-empty-browser state (see IllustrationBrowser.reload).
+#   ALL_MEDIA      a real, truthy sentinel meaning "query every supported
+#                  media type and merge the results".  This is a genuine
+#                  cross-index query, never treated as "nothing selected".
+#   <media type>   one concrete, real value from MEDIA_TYPES ("movie" or
+#                  "gameplay") — a single-index query.
+#
+# ALL is the equivalent, pre-existing sentinel for the *other* filter
+# dimensions (title/field/letter/label/mode/object_id): "no restriction on
+# this column". It has always been the literal string "--all"; it is named
+# here so call sites reference one constant instead of retyping the literal.
+MEDIA_TYPES: tuple[str, ...] = ("movie", "gameplay")
+ALL_MEDIA = "--all-media--"
+ALL = "--all"
+
 _SORT_COLUMNS = {
     "confidence": "confidence_score",
     "usefulness": "usefulness_score",
@@ -94,7 +118,13 @@ def load_index(
     source: str,
     media_type: str,
 ) -> dict:
-    """Return status and cheap metadata without loading catalog records."""
+    """Return status and cheap metadata without loading catalog records.
+
+    ``media_type == ALL_MEDIA`` merges status across every entry in
+    ``MEDIA_TYPES`` rather than reading one on-disk index.
+    """
+    if media_type == ALL_MEDIA:
+        return _load_index_all_media(project_path, source)
     project = Path(project_path)
     path = index_path(project, source, media_type)
     if not path.exists():
@@ -122,6 +152,28 @@ def load_index(
         }
     except Exception as exc:
         return {"status": "error", "count": 0, "error": str(exc)}
+
+
+def _load_index_all_media(project_path: str | Path, source: str) -> dict:
+    """Merge per-media-type status into one ALL_MEDIA status.
+
+    Usable whenever at least one media type's index is usable \u2014 a genuinely
+    missing/stale gameplay index must never block browsing movie results
+    under <All Media>, and vice versa.
+    """
+    statuses = {mt: load_index(project_path, source, mt) for mt in MEDIA_TYPES}
+    usable = {mt: s for mt, s in statuses.items() if s.get("usable")}
+    if usable:
+        return {
+            "status": "stale" if any(s.get("status") == "stale" for s in usable.values()) else "ready",
+            "count": sum(int(s.get("count", 0)) for s in usable.values()),
+            "usable": True,
+        }
+    for candidate in ("error", "stale", "missing"):
+        match = next((s for s in statuses.values() if s.get("status") == candidate), None)
+        if match is not None:
+            return {**match, "count": 0}
+    return {"status": "missing", "count": 0}
 
 
 def rebuild_index(project_path: str | Path, source: str, media_type: str) -> dict:
@@ -191,7 +243,15 @@ def query_facets(
     letter: str | None = None,
     mode: str | None = None,
 ) -> dict:
-    """Return distinct facets and label counts for a browse scope."""
+    """Return distinct facets and label counts for a browse scope.
+
+    ``media_type == ALL_MEDIA`` merges facets across every entry in
+    ``MEDIA_TYPES``.
+    """
+    if media_type == ALL_MEDIA:
+        return _query_facets_all_media(
+            project_path, source, title=title, field=field, letter=letter, mode=mode,
+        )
     status = load_index(project_path, source, media_type)
     if not status.get("usable"):
         return {**status, "titles": [], "fields": [], "letters": [], "labels": []}
@@ -219,6 +279,37 @@ def query_facets(
     return {**status, "titles": titles, "fields": fields, "letters": letters, "labels": labels}
 
 
+def _query_facets_all_media(project_path: str | Path, source: str, **filters) -> dict:
+    """Merge ``query_facets`` results across every entry in ``MEDIA_TYPES``."""
+    status = _load_index_all_media(project_path, source)
+    if not status.get("usable"):
+        return {**status, "titles": [], "fields": [], "letters": [], "labels": []}
+    titles: set[str] = set()
+    fields: set[str] = set()
+    letters: set[str] = set()
+    label_counts: dict[str, int] = {}
+    for mt in MEDIA_TYPES:
+        sub_status = load_index(project_path, source, mt)
+        if not sub_status.get("usable"):
+            continue
+        sub = query_facets(project_path, source, mt, **filters)
+        titles.update(sub.get("titles", []))
+        fields.update(sub.get("fields", []))
+        letters.update(sub.get("letters", []))
+        for row in sub.get("labels", []):
+            label_counts[row["label"]] = label_counts.get(row["label"], 0) + row["count"]
+    return {
+        **status,
+        "titles": sorted(titles, key=str.casefold),
+        "fields": sorted(fields, key=str.casefold),
+        "letters": sorted(letters, key=str.casefold),
+        "labels": [
+            {"label": label, "count": count}
+            for label, count in sorted(label_counts.items(), key=lambda kv: kv[0].casefold())
+        ],
+    }
+
+
 def query_page(
     project_path: str | Path,
     source: str,
@@ -235,7 +326,20 @@ def query_page(
     offset: int = 0,
     limit: int = 50,
 ) -> dict:
-    """Return one materialized browse page and its matching total count."""
+    """Return one materialized browse page and its matching total count.
+
+    ``media_type == ALL_MEDIA`` merges pages across every entry in
+    ``MEDIA_TYPES``: the pagination math (``total``/``offset``/``limit``) is
+    always computed against the single, final, merged+sorted result set —
+    never against one media type's result set alone.
+    """
+    if media_type == ALL_MEDIA:
+        return _query_page_all_media(
+            project_path, source,
+            title=title, field=field, letter=letter, label=label, mode=mode,
+            object_id=object_id, human_best=human_best, sort_keys=sort_keys,
+            offset=offset, limit=limit,
+        )
     status = load_index(project_path, source, media_type)
     if not status.get("usable"):
         return {**status, "total": 0, "records": []}
@@ -254,6 +358,74 @@ def query_page(
         )
         records = [_deserialize_record(Path(project_path), row[0]) for row in rows]
     return {**status, "total": total, "records": records}
+
+
+# Generous fetch bound per media type when merging for an ALL_MEDIA page —
+# these are compact derived indexes (see module docstring); a bounded-but-
+# large fetch followed by an in-Python re-sort is the same "fetch a bounded
+# complete set, then sort/slice" pattern query_records already establishes.
+_ALL_MEDIA_FETCH_LIMIT = 1_000_000
+
+
+def _query_page_all_media(
+    project_path: str | Path,
+    source: str,
+    *,
+    sort_keys: list[str] | None = None,
+    offset: int = 0,
+    limit: int = 50,
+    **filters,
+) -> dict:
+    """Merge, re-sort, and paginate across every entry in ``MEDIA_TYPES``.
+
+    Each media type's own on-disk ``id`` ordering has no cross-database
+    meaning, so every matching record from every usable media type is fetched
+    first, then re-sorted in Python using the same semantics as ``_order_by``
+    (see ``_sort_merged_records``), and only then sliced to the requested
+    page — the total/offset/limit are always computed against this single
+    final merged+sorted result set, never against one media type alone.
+    """
+    status = _load_index_all_media(project_path, source)
+    if not status.get("usable"):
+        return {**status, "total": 0, "records": []}
+    merged: list[dict] = []
+    for mt in MEDIA_TYPES:
+        sub_status = load_index(project_path, source, mt)
+        if not sub_status.get("usable"):
+            continue
+        sub = query_page(
+            project_path, source, mt, sort_keys=sort_keys,
+            offset=0, limit=_ALL_MEDIA_FETCH_LIMIT, **filters,
+        )
+        merged.extend(sub.get("records", []))
+    merged = _sort_merged_records(merged, sort_keys)
+    start = max(0, int(offset))
+    end = start + max(1, int(limit))
+    return {**status, "total": len(merged), "records": merged[start:end]}
+
+
+def _sort_merged_records(records: list[dict], sort_keys: list[str] | None) -> list[dict]:
+    """Python-side equivalent of ``_order_by`` for merging already-sorted
+    per-media-type record lists into one cross-media order.
+
+    Reuses ``_numeric_score`` directly — deserialized page records retain the
+    same raw scan-time fields (confidence, mask_area, bbox, frame_size, …)
+    that function already knows how to read, so no separate scoring logic is
+    needed for the merged, cross-database case.
+    """
+    keys = [key for key in (sort_keys or []) if key]
+    numeric = [key for key in keys if key in _SORT_COLUMNS]
+    if numeric:
+        count = len(numeric)
+        return sorted(
+            records,
+            key=lambda r: sum(_numeric_score(r, key) for key in numeric) / count,
+            reverse=True,
+        )
+    if "alphabetical" in keys:
+        return sorted(records, key=lambda r: str(r.get("label") or "").casefold())
+    # No sort keys — preserve MEDIA_TYPES order, each sub-list's own id order.
+    return records
 
 
 def query_records(
@@ -309,7 +481,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
 
 def _record_row(project: Path, record: dict) -> tuple:
     title = _clean_stem(record.get("filename_stem", ""))
-    field = str(record.get("field") or "--all")
+    field = str(record.get("field") or ALL)
     label = str(record.get("label") or "")
     first = label[:1]
     initial = first.upper() if first.isalpha() else "#"
@@ -361,7 +533,7 @@ def _where(**filters) -> tuple[str, list]:
     }
     for name, column in columns.items():
         value = filters.get(name)
-        if value not in (None, "", "--all"):
+        if value not in (None, "", ALL):
             clauses.append(f"{column} = ?")
             params.append(value)
     if filters.get("human_best") is not None:
@@ -468,7 +640,7 @@ def _scan_engravings(project: Path, media_type: str) -> list[dict]:
 
             record = {
                 "label": label_dir.name,
-                "field": "--all",
+                "field": ALL,
                 "filename_stem": film_dir.name,
                 "media_type": media_type,
                 "mode": mode_dir.name,

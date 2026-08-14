@@ -1165,7 +1165,7 @@ class MosaicVisualizer(WindowVisualizer):
         scope_layout.setSpacing(theme.SECTION_GAP)
         self.media_type_combo = QComboBox()
         add_combo_all_item(self.media_type_combo, user_data="--all")
-        self.media_type_combo.setItemText(0, "<Media>")
+        self.media_type_combo.setItemText(0, "<All Media>")
         self.media_type_combo.addItems(["movie", "gameplay"])
         self.media_type_combo.setCurrentText(self.media_type)
         style_canonical_combo(self.media_type_combo)
@@ -1178,6 +1178,7 @@ class MosaicVisualizer(WindowVisualizer):
         scope_layout.addWidget(self.media_type_combo)
         self.movie_combo = QComboBox()
         add_combo_all_item(self.movie_combo)
+        self.movie_combo.setItemText(0, "<All Titles>")
         style_canonical_combo(self.movie_combo)
         self.movie_combo.currentIndexChanged.connect(self._on_field_changed)
         self.movie_combo.installEventFilter(self)
@@ -1193,6 +1194,7 @@ class MosaicVisualizer(WindowVisualizer):
         for f in ANNOTATION_FIELDS:
             if f == "--all":
                 add_combo_all_item(self.field_combo, user_data="--all")
+                self.field_combo.setItemText(self.field_combo.count() - 1, "<All Fields>")
             else:
                 self.field_combo.addItem(f, userData=f)
         style_canonical_combo(self.field_combo)
@@ -1481,6 +1483,7 @@ class MosaicVisualizer(WindowVisualizer):
         self.movie_combo.blockSignals(True)
         self.movie_combo.clear()
         add_combo_all_item(self.movie_combo)
+        self.movie_combo.setItemText(0, "<All Titles>")
         self.movie_combo.blockSignals(False)
         self._populate_movies()
 
@@ -1829,6 +1832,7 @@ class MosaicVisualizer(WindowVisualizer):
             self.vocab_nav_combo.blockSignals(True)
             self.vocab_nav_combo.clear()
             add_combo_all_item(self.vocab_nav_combo, user_data="--all")
+            self.vocab_nav_combo.setItemText(0, "<A-Z>")
             for initial in result.get("initials", []):
                 self.vocab_nav_combo.addItem(initial, initial)
             selected_prefix = result.get("selected_prefix", "--all")

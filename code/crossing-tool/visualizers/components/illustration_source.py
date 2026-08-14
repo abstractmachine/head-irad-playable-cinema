@@ -72,15 +72,17 @@ class IllustrationSource(ABC):
 
     def facets(self, **filters) -> dict:
         """Return indexed browse facets for the current media type."""
+        from services.illustration_index import ALL
+
         records = self._records
         title = filters.get("title")
         field = filters.get("field")
         letter = filters.get("letter")
         if title:
             records = [r for r in records if _record_title(r) == title]
-        if field not in (None, "", "--all"):
-            records = [r for r in records if (r.get("field") or "--all") == field]
-        if letter not in (None, "", "--all"):
+        if field not in (None, "", ALL):
+            records = [r for r in records if (r.get("field") or ALL) == field]
+        if letter not in (None, "", ALL):
             records = [r for r in records if _record_initial(r) == letter]
         counts: dict[str, int] = {}
         for record in records:
@@ -90,7 +92,7 @@ class IllustrationSource(ABC):
         return {
             **self._load_status,
             "titles": sorted({_record_title(r) for r in self._records}, key=str.casefold),
-            "fields": sorted({r.get("field") or "--all" for r in records}, key=str.casefold),
+            "fields": sorted({r.get("field") or ALL for r in records}, key=str.casefold),
             "letters": sorted({_record_initial(r) for r in records if r.get("label")}),
             "labels": [
                 {"label": label, "count": count}
@@ -112,14 +114,16 @@ class IllustrationSource(ABC):
 
     @staticmethod
     def _filter_records(records: list[dict], filters: dict) -> list[dict]:
+        from services.illustration_index import ALL
+
         result = list(records)
         if filters.get("title"):
             result = [r for r in result if _record_title(r) == filters["title"]]
-        if filters.get("field") not in (None, "", "--all"):
-            result = [r for r in result if (r.get("field") or "--all") == filters["field"]]
-        if filters.get("letter") not in (None, "", "--all"):
+        if filters.get("field") not in (None, "", ALL):
+            result = [r for r in result if (r.get("field") or ALL) == filters["field"]]
+        if filters.get("letter") not in (None, "", ALL):
             result = [r for r in result if _record_initial(r) == filters["letter"]]
-        if filters.get("label") not in (None, "", "--all"):
+        if filters.get("label") not in (None, "", ALL):
             result = [r for r in result if r.get("label") == filters["label"]]
         return result
 

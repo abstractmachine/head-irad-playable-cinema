@@ -288,22 +288,30 @@ class _EngravingWorker(QThread):
 
 
 class _IllustrationIndexWorker(QThread):
-    """Rebuild both Illustration browse indexes away from the GUI thread."""
+    """Rebuild both Illustration browse indexes away from the GUI thread.
+
+    Accepts one or more concrete media types (never the ALL_MEDIA query
+    sentinel — rebuilding always targets a real on-disk index directory).
+    """
     finished = pyqtSignal(bool, str)
 
-    def __init__(self, project_path: str, media_type: str, parent=None) -> None:
+    def __init__(self, project_path: str, media_types, parent=None) -> None:
         super().__init__(parent)
         self._project_path = project_path
-        self._media_type = media_type
+        self._media_types = (
+            [media_types] if isinstance(media_types, str) else list(media_types)
+        )
 
     def run(self) -> None:
         try:
             from services.illustration_index import rebuild_all
-            results = rebuild_all(self._project_path, self._media_type)
-            failed = [
-                source for source, result in results.items()
-                if result.get("status") != "ready"
-            ]
+            failed: list[str] = []
+            for media_type in self._media_types:
+                results = rebuild_all(self._project_path, media_type)
+                failed.extend(
+                    f"{media_type}/{source}" for source, result in results.items()
+                    if result.get("status") != "ready"
+                )
             if failed:
                 self.finished.emit(False, f"Index changed during rebuild: {', '.join(failed)}")
             else:
@@ -388,11 +396,17 @@ class IllustrationPane(QWidget):
         if media_type is None:
             try:
                 from tool import prefs as _prefs
+                from services.illustration_index import ALL_MEDIA
                 _saved = _prefs.get("ill_media_type")
                 if _saved is None:
                     media_type = "movie"
                 elif _saved == "":
-                    media_type = None
+                    # Legacy "nothing selected" preference (from before
+                    # <All Media> existed as a real query state) migrates to
+                    # the new ALL_MEDIA query rather than the empty/uninit
+                    # state — the user's prior choice was "don't restrict to
+                    # one media type", which ALL_MEDIA now genuinely means.
+                    media_type = ALL_MEDIA
                 else:
                     media_type = _saved
             except Exception:
@@ -865,12 +879,19 @@ class IllustrationPane(QWidget):
             button.setEnabled(status in {"missing", "stale", "error"})
 
     def _start_index_rebuild(self) -> None:
-        """Rebuild both source indexes for the currently selected media type."""
+        """Rebuild both source indexes for the currently selected media type(s).
+
+        When the browser is scoped to <All Media> (ALL_MEDIA), rebuild every
+        concrete media type in MEDIA_TYPES — rebuild always targets real,
+        on-disk indexes, never the cross-media query sentinel itself.
+        """
         if getattr(self, "_index_worker", None) is not None:
             return
+        from services.illustration_index import ALL_MEDIA, MEDIA_TYPES
         media_type = self._browser._media_type
         if not media_type:
             return
+        media_types = list(MEDIA_TYPES) if media_type == ALL_MEDIA else [media_type]
         for button in (self._sil_rebuild_index_btn, self._eng_rebuild_index_btn):
             button.setEnabled(False)
             button.setText("Rebuilding...")
@@ -878,7 +899,7 @@ class IllustrationPane(QWidget):
             browser._loading_bar.start()
             browser._loading_timer.start()
         self._index_worker = _IllustrationIndexWorker(
-            self._project_path, media_type, parent=self
+            self._project_path, media_types, parent=self
         )
         self._index_worker.finished.connect(self._on_index_rebuild_finished)
         self._index_worker.start()
@@ -1331,6 +1352,11 @@ class IllustrationPane(QWidget):
         # not the real label ("A.T.&S.F. sign"), so path.parent.name is the match.
         sil_path  = Path(str(rec.get("path", "")))
         eng_label = sil_path.parent.name  # label directory = engraving record label
+        # Silhouette records carry no explicit object_id key (see
+        # illustration_browser._record_object_id) — their JSON sidecar's own
+        # filename stem IS the canonical object_id shared with any engraving
+        # generated from this exact silhouette.
+        object_id = sil_path.stem
 
         # Clear grid + start loading animation immediately on tab switch.
         self._browser_eng.clear_view()
@@ -1341,8 +1367,9 @@ class IllustrationPane(QWidget):
             self._browser_eng._loading_timer.stop()
             self._browser_eng._loading_bar.stop()
             self._browser_eng.navigate_direct(
-                item    = filename_stem or None,
-                keyword = eng_label or None,
+                item      = filename_stem or None,
+                keyword   = eng_label or None,
+                object_id = object_id or None,
             )
 
         # Switch to Engravings tab (triggers _on_source_tab_changed).
@@ -1383,6 +1410,12 @@ class IllustrationPane(QWidget):
         mode_dir = Path(str(eng_json)).parent
         if not mode_dir.is_dir():
             return
+        # Records always carry their own concrete media_type (set at scan
+        # time); this browser's own _media_type may now be ALL_MEDIA (a
+        # cross-media query scope), which is never a valid invalidate_index
+        # argument, so the record's own value is used instead of the
+        # browser's aggregate scope.
+        self._pending_delete_media_type = rec.get("media_type") or "movie"
         # Disable the button while deleting to prevent double-fire.
         self._eng_delete_btn.setEnabled(False)
         self._eng_delete_btn.setText("Deleting…")
@@ -1398,7 +1431,7 @@ class IllustrationPane(QWidget):
             invalidate_index(
                 self._project_path,
                 "engravings",
-                self._browser_eng._media_type or "movie",
+                getattr(self, "_pending_delete_media_type", None) or "movie",
             )
         except Exception:
             pass
@@ -1414,8 +1447,14 @@ class IllustrationPane(QWidget):
         if not filename:
             return
         from visualizers.shot_visualizer import open_at_shot
+        # rec's own media_type is always a concrete value; the browser's own
+        # _media_type may now be ALL_MEDIA (a cross-media query scope, never
+        # a valid single media type here).
+        media_type = rec.get("media_type") or self._browser._media_type
+        if media_type not in ("movie", "gameplay"):
+            media_type = "movie"
         open_at_shot(self._project_path, filename,
-                     self._browser._media_type or "movie", shot_id=shot_id,
+                     media_type, shot_id=shot_id,
                      loop=True, no_continue=True, play=True)
 
     def _open_sam_explorer(self) -> None:
@@ -1425,9 +1464,15 @@ class IllustrationPane(QWidget):
         from tool import prefs as _prefs
         from visualizers.segmentation_visualizer import SAMExplorer
         model_name = _prefs.get("model_segmentation", _DEFAULT_MODEL) or _DEFAULT_MODEL
+        # rec's own media_type is always a concrete value; the browser's own
+        # _media_type may now be ALL_MEDIA (a cross-media query scope, never
+        # a valid single media type here).
+        media_type = rec.get("media_type") or self._browser._media_type
+        if media_type not in ("movie", "gameplay"):
+            media_type = None
         self._sam_explorer_win = SAMExplorer(
             self._project_path,
-            media_type=self._browser._media_type,
+            media_type=media_type,
             model_name=model_name,
         )
         self._sam_explorer_win.show()
@@ -1496,12 +1541,13 @@ class IllustrationPane(QWidget):
         """Toggle the alphabetical bucket filter for *letter*.
 
         First press → activates the letter filter.
-        Second press of the same letter → resets to <Letter> (no filter).
+        Second press of the same letter → resets to <A-Z> (no filter).
         """
+        from services.illustration_index import ALL
         current = self._browser._letter_combo.currentData()
         if current == letter:
             # Already on this letter — toggle off
-            self._browser.navigate_to_filters(letter="--all")
+            self._browser.navigate_to_filters(letter=ALL)
         else:
             self._browser.navigate_to_filters(letter=letter)
 

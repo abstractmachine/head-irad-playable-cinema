@@ -17,18 +17,28 @@ Filter hierarchy
 ----------------
 The browser uses a five-level cascade::
 
-    Media   →  "movie" or "gameplay"
+    Media   →  a specific type from MEDIA_TYPES ("movie"/"gameplay"), or
+               ALL_MEDIA ("<All Media>") — a real, active cross-media query,
+               never an "uninitialized/nothing selected" placeholder. A
+               falsy media_type (None/"") is a separate, third state —
+               UNINITIALIZED — used only at construction time to skip all
+               I/O until a real value (a MEDIA_TYPES entry or ALL_MEDIA) is
+               chosen; it has no dropdown entry of its own.
       ↓
-    Item    →  specific film (filename_stem), or "-- all --"
+    Item    →  specific film (filename_stem), or ALL ("-- all --")
       ↓
-    Field   →  annotation field (objects, setting …), or "-- all --"
+    Field   →  annotation field (objects, setting …), or ALL
       ↓
-    Letter  →  first-letter group (A–Z), or "-- all --"
+    Letter  →  first-letter group (A–Z), or ALL
       ↓
-    Keyword →  specific label (horse, revolver …), or "-- all --"
+    Keyword →  specific label (horse, revolver …), or ALL
 
-Sources that have no field taxonomy (engravings) receive ``"--all"`` for
-Field and the cascade degrades gracefully to a flat scope-filtered browser.
+Sources that have no field taxonomy (engravings) receive ``ALL`` for Field
+and the cascade degrades gracefully to a flat scope-filtered browser.
+
+See ``services.illustration_index`` for the canonical definitions of
+``ALL``, ``ALL_MEDIA``, and ``MEDIA_TYPES`` — the query layer that both
+sources delegate to.
 
 Selection
 ---------
@@ -71,6 +81,7 @@ from PyQt5.QtWidgets import (
 )
 
 from styles import theme
+from services.illustration_index import ALL, ALL_MEDIA, MEDIA_TYPES
 from visualizers.components.illustration_source import IllustrationSource
 from visualizers.components.thumbnail_cell import ThumbnailCell
 from visualizers.components.thumbnail_loader import ThumbnailLoader
@@ -168,7 +179,7 @@ class _CatalogLoader(QThread):
             stem = _clean_stem(r.get("filename_stem", ""))
             if stem:
                 films.add(stem)
-            fields.add(r.get("field") or "--all")
+            fields.add(r.get("field") or ALL)
             lbl = r.get("label", "")
             if lbl:
                 ch = lbl[0].upper()
@@ -276,13 +287,13 @@ class _KeywordLoader(QThread):
                 return
             if self._scope and _clean_stem(record.get("filename_stem", "")) != self._scope:
                 continue
-            if self._field != "--all" and (record.get("field") or "--all") != self._field:
+            if self._field != ALL and (record.get("field") or ALL) != self._field:
                 continue
             label = record.get("label", "")
             if self._letter == "#":
                 if not label or label[0].isalpha():
                     continue
-            elif self._letter != "--all" and label[:1].upper() != self._letter:
+            elif self._letter != ALL and label[:1].upper() != self._letter:
                 continue
             records.append(record)
             if label:
@@ -316,7 +327,7 @@ _THUMB_SIZE = 80  # default thumbnail cell dimension (px, square)
 # Annotation field display order — matches the vocabulary used by the
 # silhouette catalog and the existing CatalogBrowser.
 _FIELD_ORDER: list[str] = [
-    "--all", "setting", "description", "objects",
+    ALL, "setting", "description", "objects",
     "action", "humans", "wearing", "animals", "text",
 ]
 
@@ -327,6 +338,16 @@ _FIELD_ORDER: list[str] = [
 def _clean_stem(stem: str) -> str:
     """Strip TMDb suffix and normalise whitespace in a filename stem."""
     return re.sub(r"\s*\{tmdb-\d+\}", "", stem).strip()
+
+
+def _record_object_id(record: dict) -> str:
+    """Return a record's canonical object_id, matching the index builder's
+    own fallback (``services.illustration_index._record_row``): engraving
+    records carry an explicit ``object_id`` key (their JSON sidecar is
+    always named ``engraving.json``, so the *directory* — not the filename
+    stem — is the identity); silhouette records have no such key and fall
+    back to the JSON sidecar's own filename stem."""
+    return str(record.get("object_id") or Path(str(record.get("path", ""))).stem)
 
 # ---------------------------------------------------------------------------
 # IllustrationBrowser
@@ -381,7 +402,7 @@ class IllustrationBrowser(QWidget):
     """Emitted whenever the active keyword filter changes.
 
     The payload is the selected keyword label (e.g. ``"horse"``), or an empty
-    string when the keyword filter is cleared (``<Keyword>`` / no selection).
+    string when the keyword filter is cleared (``<All Keywords>`` / no selection).
     """
 
     # ------------------------------------------------------------------ init
@@ -460,7 +481,7 @@ class IllustrationBrowser(QWidget):
         self._pending_keyword_labels: list[str] = []
         self._pending_keyword_counts: dict[str, int] = {}
         self._pending_keyword_index = 0
-        self._pending_keyword_previous = "--all"
+        self._pending_keyword_previous = ALL
         self._pending_keyword_cascade = -1
         self._keyword_population_timer = QTimer(self)
         self._keyword_population_timer.setSingleShot(True)
@@ -683,74 +704,130 @@ class IllustrationBrowser(QWidget):
         keyword: Optional[str] = None,
         object_id: Optional[str] = None,
     ) -> None:
-        """Fast navigation to a known item+keyword, bypassing the cascade.
+        """Fast navigation to a known object, bypassing the cascade.
 
-        Unlike ``navigate_to_filters``, this method does NOT rebuild the
-        field / letter / keyword combos step-by-step.  It applies the filter
-        in a single O(n) pass and rebuilds the grid immediately — typically
-        <50 ms even on a 400 k-item catalog.
+        Unlike ``navigate_to_filters``, this method does NOT walk the field /
+        letter / keyword combos step-by-step.  It establishes the target's
+        own canonical semantic context in a single O(n) pass and rebuilds
+        the grid immediately — typically <50 ms even on a 400 k-item catalog.
 
-        ``object_id`` is the stem of the source JSON (e.g. ``"object_0001"``)
-        and is the canonical identity for the target record within *item*'s
-        scope (unique within one label directory — see the disambiguation
-        below). When given, the matching cell in the grid is selected after
-        the grid is built, regardless of which page it falls on and
-        regardless of the filter state active before this call: this is a
-        direct request for one known object, not a browse-filter refinement.
+        ``item``/``keyword`` are the caller's source-side hints, used only to
+        resolve the target's real ``field``/``label`` values and to
+        disambiguate ``object_id`` collisions (unique only within one film +
+        label directory, not globally) — they are NOT applied as the final
+        Title/Keyword filters. The destination context is deliberately the
+        target's own semantic class across the whole corpus, never a replay
+        of the source browser's incidental media/title/letter scope:
+
+            Media    — <All Media> (ALL_MEDIA): a real, active cross-media
+                       query genuinely spanning every entry in MEDIA_TYPES.
+                       This is never treated as "nothing selected" — see
+                       services.illustration_index.ALL_MEDIA. Establishing
+                       it here guarantees the target is resolvable even when
+                       this browser was previously scoped to a different,
+                       single media type than the target belongs to.
+            Title    — reset to ``<All Titles>`` (generic, ALL)
+            Field    — the target's own field (whatever the record has —
+                       data-driven, never a hardcoded field list)
+            Letter   — reset to ``<A-Z>`` (generic, ALL)
+            Keyword  — the target's own label
+
+        ``object_id`` is the canonical identity for the target record. When
+        given, the matching cell in the grid is selected after the grid is
+        built, regardless of which page it falls on and regardless of the
+        filter state active before this call: this is a direct request for
+        one known object, not a browse-filter refinement. Pagination is
+        always computed against this SAME final (Media=ALL, Title=ALL,
+        Field=target, Letter=ALL, Keyword=target) result set — never the
+        previous filter state, an unfiltered catalog, or page 0 alone.
         """
-        # ── set item combo without triggering cascade ──────────────────────
-        if item is not None:
-            self._item_combo.blockSignals(True)
-            found = False
-            for i in range(self._item_combo.count()):
-                if self._item_combo.itemData(i) == item:
-                    self._item_combo.setCurrentIndex(i)
-                    found = True
-                    break
-            self._item_combo.blockSignals(False)
+        # ── establish Media = <All Media> FIRST — every lookup below, and the
+        # final displayed context, must span the whole corpus. source.reload()
+        # here only refreshes a cheap index-status read (see
+        # IllustrationSource._load — it never scans a full catalog), so doing
+        # it synchronously (instead of via the async _CatalogLoader used by
+        # reload()) is safe and mirrors the same "bypass the step-by-step
+        # cascade" approach already used below for Field/Keyword.
+        if self._media_type != ALL_MEDIA:
+            self._media_type = ALL_MEDIA
+            self._source.reload(ALL_MEDIA)
+            self._index_status = self._source.load_status()
+        self._media_combo.blockSignals(True)
+        media_idx = self._media_combo.findData(ALL_MEDIA)
+        self._media_combo.setCurrentIndex(max(0, media_idx))
+        self._media_combo.blockSignals(False)
+        # Emit currentIndexChanged so _refresh_color runs (Media renders in
+        # its generic/dim styling, matching <All Titles>/<All Fields>/etc.).
+        self._media_combo.currentIndexChanged.emit(self._media_combo.currentIndex())
 
-        # ── resolve real keyword from the actual record when object_id given ─
-        # The engraving label is the directory name under the film — the
-        # normalised form of the silhouette's original label string.  We need
-        # the *real* label (from the silhouette JSON) so the filter matches.
-        # object_id is only unique *within* a label directory, so we must also
-        # match the parent directory name (= engraving label) to avoid picking
-        # the wrong object_0001 from a different label in the same film.
+        # ── resolve the real field + label from the actual target record ───
+        # The object_id SQL filter already guarantees a canonical-identity
+        # match; this loop only disambiguates *which* label directory it
+        # belongs to when the same object_id string recurs across different
+        # labels within the same film (see docstring). item/keyword are
+        # read-only hints here, never applied directly as filters below.
+        # This search now spans every media type (Media was just established
+        # above), so it can never silently fail merely because the browser
+        # happened to be scoped to the wrong single media type beforehand.
         #
-        # This lookup is a direct object_id-scoped query (bypassing any
-        # label/keyword filter) rather than pre-filtering by the (possibly
-        # wrong) *keyword* — pre-filtering by the very value being resolved
-        # guarantees zero matches whenever it needs correcting, which was
-        # the root cause of the reported bug (the stale/incorrect keyword
-        # then gets applied as the active filter, hiding the target).
+        # A record's own label-directory name is derived differently per
+        # source shape: silhouette JSONs live directly inside their label
+        # directory (``rec_path.parent.name``); engraving JSONs are always
+        # named ``engraving.json`` nested under ``<label>/<object_id>/<mode>/``,
+        # but engraving records already carry the label directory name
+        # verbatim in their own ``label`` field. Checking both covers either
+        # source without the browser needing to know which one it has.
+        field = None
         if object_id and (keyword is None or keyword):
             for r in self._source.records(title=item, object_id=object_id, limit=10_000):
-                sil_path = Path(str(r.get("path", "")))
+                rec_path = Path(str(r.get("path", "")))
                 if (_clean_stem(r.get("filename_stem", "")) == (item or "") and
-                        sil_path.stem == object_id and
-                        sil_path.parent.name == (keyword or "")):
+                        (rec_path.parent.name == (keyword or "") or
+                         r.get("label") == (keyword or ""))):
                     keyword = r.get("label") or keyword
+                    field = r.get("field") or field
                     break
 
-        # ── reset field / letter to "--all" (no cascade) ──────────────────
-        for _combo in (self._field_combo, self._letter_combo):
-            _combo.blockSignals(True)
-            for i in range(_combo.count()):
-                if _combo.itemData(i) == "--all":
-                    _combo.setCurrentIndex(i)
-                    break
-            _combo.blockSignals(False)
+        # ── establish the destination's canonical semantic context. Title
+        # and Letter return to their existing generic sentinel values (the
+        # prior browse scope must never leak into the destination); Field
+        # and Keyword are set to the target's own values. ────────────────
+        self._item_combo.blockSignals(True)
+        idx = self._item_combo.findData(None)
+        self._item_combo.setCurrentIndex(max(0, idx))
+        self._item_combo.blockSignals(False)
+
+        self._letter_combo.blockSignals(True)
+        for i in range(self._letter_combo.count()):
+            if self._letter_combo.itemData(i) == ALL:
+                self._letter_combo.setCurrentIndex(i)
+                break
+        self._letter_combo.blockSignals(False)
+
+        final_field = field if field not in (None, "", ALL) else ALL
+        self._field_combo.blockSignals(True)
+        self._field_combo.clear()
+        self._field_combo.addItem("<All Fields>", userData=ALL)
+        if final_field != ALL:
+            self._field_combo.addItem(final_field, userData=final_field)
+            self._field_combo.setCurrentIndex(1)
+        else:
+            self._field_combo.setCurrentIndex(0)
+        self._field_combo.blockSignals(False)
+        # Emit currentIndexChanged so _refresh_color runs and the selected
+        # field displays in TEXT colour (not the grey placeholder colour).
+        self._field_combo.currentIndexChanged.emit(self._field_combo.currentIndex())
 
         # ── establish the final filter state, then locate the target's exact
         # position within that SAME filtered+sorted result set — never assume
-        # it is on page 0. ``records()`` uses the identical WHERE/ORDER BY as
-        # ``page()`` (see illustration_index.query_records/query_page), so
-        # index i in the full bounded result list is the same index i that
-        # paginates identically to what the grid will display. ─────────────
-        scope = self._item_combo.currentData()
+        # it is on page 0 or scoped to the source's prior title/letter/media.
+        # ``records()`` uses the identical WHERE/ORDER BY as ``page()`` (see
+        # illustration_index.query_records/query_page), so index i in the
+        # full bounded result list is the same index i that paginates
+        # identically to what the grid will display. ───────────────────────
         self._selected_index = -1
         self._page_index     = 0
-        final_keyword = keyword or "--all"
+        final_keyword = keyword or ALL
 
         # Refresh _filtered_items/_total_items from the real current query
         # now (rather than relying only on _rebuild_grid's cached-status
@@ -762,20 +839,21 @@ class IllustrationBrowser(QWidget):
 
         full_matches: list[dict] = []
         abs_idx = -1
-        if object_id or final_keyword != "--all":
+        if object_id or final_field != ALL or final_keyword != ALL:
             full_matches = self._source.records(
-                title=scope, field="--all", letter="--all", label=final_keyword,
+                title=None, field=final_field, letter=ALL, label=final_keyword,
             )
         if object_id:
             for i, r in enumerate(full_matches):
-                if Path(str(r.get("path", ""))).stem == object_id:
+                if (_record_object_id(r) == object_id and
+                        _clean_stem(r.get("filename_stem", "")) == (item or "")):
                     abs_idx = i
                     break
 
         # ── update keyword combo to reflect the selection ──────────────────
         self._keyword_combo.blockSignals(True)
         self._keyword_combo.clear()
-        self._keyword_combo.addItem("<Keyword>", userData="--all")
+        self._keyword_combo.addItem("<All Keywords>", userData=ALL)
         if keyword:
             self._keyword_combo.addItem(
                 f"{keyword}  ({len(full_matches)})", userData=keyword
@@ -799,6 +877,7 @@ class IllustrationBrowser(QWidget):
         # target, never just wherever page 0 of the query happens to be.
         if object_id and abs_idx >= 0:
             self.select_index(abs_idx)
+
 
     def navigate_to_filters(
         self,
@@ -861,12 +940,27 @@ class IllustrationBrowser(QWidget):
                 )
 
     def reset_filters(self) -> None:
-        """Reset Title / Field / Letter / Keyword to placeholders.
+        """Reset every filter level to its unrestricted "all" state:
+        ``<All Media>`` / ``<All Titles>`` / ``<All Fields>`` / ``<A-Z>`` /
+        ``<All Keywords>``.
 
-        Forces the cascade even when the item combo is already at index 0
-        (where setCurrentIndex(0) would be a no-op and fire no signal).
-        The Media combo is intentionally left unchanged.
+        ``<All Media>`` (ALL_MEDIA) is a real, active cross-media query (see
+        ``services.illustration_index.ALL_MEDIA``) — Media is no longer a
+        permanent exception left untouched by a "reset to unrestricted"
+        action; it is just another filter level with its own genuine "all"
+        state, exactly like Title/Field/Letter/Keyword.
+
+        Forces the cascade even when a combo is already at its first index
+        (where ``setCurrentIndex`` to the same index would be a no-op and
+        fire no signal).
         """
+        if self._media_type != ALL_MEDIA:
+            self._media_combo.blockSignals(True)
+            idx = self._media_combo.findData(ALL_MEDIA)
+            self._media_combo.setCurrentIndex(max(0, idx))
+            self._media_combo.blockSignals(False)
+            self._media_type = ALL_MEDIA
+            self.reload()
         # Temporarily move to -1 so going back to 0 always fires
         # currentIndexChanged and triggers the full cascade rebuild.
         self._item_combo.blockSignals(True)
@@ -981,7 +1075,7 @@ class IllustrationBrowser(QWidget):
 
         def _combo(combo: QComboBox) -> None:
             def _refresh_color(_idx: int = 0, _c=combo) -> None:
-                _col = theme.TEXT_DIM if _c.currentData() in (None, "--all") else theme.TEXT
+                _col = theme.TEXT_DIM if _c.currentData() in (None, ALL, ALL_MEDIA) else theme.TEXT
                 _c.setStyleSheet(
                     f"QComboBox {{ background: {theme.BTN_BG}; color: {_col};"
                     f" font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
@@ -1007,15 +1101,21 @@ class IllustrationBrowser(QWidget):
             attach_combo_popup(combo)
             layout.addWidget(combo)
 
-        # Media — <Media> means "nothing selected" (fast empty-browser start)
+        # Media — <All Media> (ALL_MEDIA) is a real, active cross-media query
+        # state, not "nothing selected". A falsy media_type (UNINITIALIZED,
+        # used only at construction time to skip all I/O) has no dropdown
+        # entry of its own — the combo is simply left with no current
+        # selection so it never visually implies a query is active.
         self._media_combo = QComboBox()
-        self._media_combo.addItem("<Media>", userData=None)
-        self._media_combo.addItem("movie",    userData="movie")
-        self._media_combo.addItem("gameplay", userData="gameplay")
+        self._media_combo.addItem("<All Media>", userData=ALL_MEDIA)
+        for mt in MEDIA_TYPES:
+            self._media_combo.addItem(mt, userData=mt)
         if self._media_type:
             idx = self._media_combo.findData(self._media_type)
             if idx >= 0:
                 self._media_combo.setCurrentIndex(idx)
+        else:
+            self._media_combo.setCurrentIndex(-1)
         self._media_combo.currentIndexChanged.connect(self._on_media_changed)
         _combo(self._media_combo)
 
@@ -1134,7 +1234,7 @@ class IllustrationBrowser(QWidget):
     def _on_media_changed(self, _idx: int) -> None:
         if self._updating:
             return
-        new_type = self._media_combo.currentData()  # None, "movie", or "gameplay"
+        new_type = self._media_combo.currentData()  # ALL_MEDIA, "movie", or "gameplay"
         if new_type != self._media_type:
             self._media_type = new_type
             self.reload()
@@ -1196,7 +1296,7 @@ class IllustrationBrowser(QWidget):
         prev = self._item_combo.currentData()
         self._item_combo.blockSignals(True)
         self._item_combo.clear()
-        self._item_combo.addItem("<Title>", userData=None)
+        self._item_combo.addItem("<All Titles>", userData=None)
         for stem in films:
             self._item_combo.addItem(stem, userData=stem)
         idx = self._item_combo.findData(prev)
@@ -1223,11 +1323,11 @@ class IllustrationBrowser(QWidget):
         prev = self._field_combo.currentData()
         self._field_combo.blockSignals(True)
         self._field_combo.clear()
-        self._field_combo.addItem("<Field>", userData="--all")
+        self._field_combo.addItem("<All Fields>", userData=ALL)
         for f in self._FIELD_ORDER:
-            if f != "--all" and f in present:
+            if f != ALL and f in present:
                 self._field_combo.addItem(f, userData=f)
-        for f in sorted(present - set(self._FIELD_ORDER) - {"--all"}):
+        for f in sorted(present - set(self._FIELD_ORDER) - {ALL}):
             self._field_combo.addItem(f, userData=f)
         idx = self._field_combo.findData(prev)
         self._field_combo.setCurrentIndex(max(0, idx))
@@ -1247,13 +1347,13 @@ class IllustrationBrowser(QWidget):
         self._cascade_id += 1
         _cid = self._cascade_id
         scope = self._item_combo.currentData()
-        field = self._field_combo.currentData() or "--all"
+        field = self._field_combo.currentData() or ALL
         facets = self._source.facets(title=scope, field=field)
         letters = facets.get("letters", [])
         prev = self._letter_combo.currentData()
         self._letter_combo.blockSignals(True)
         self._letter_combo.clear()
-        self._letter_combo.addItem("<Letter>", userData="--all")
+        self._letter_combo.addItem("<A-Z>", userData=ALL)
         for ch in letters:
             self._letter_combo.addItem(ch, userData=ch)
         idx = self._letter_combo.findData(prev)
@@ -1273,14 +1373,14 @@ class IllustrationBrowser(QWidget):
         self._cascade_id += 1
         _cid = self._cascade_id
         scope  = self._item_combo.currentData()
-        field  = self._field_combo.currentData()  or "--all"
-        letter = self._letter_combo.currentData() or "--all"
+        field  = self._field_combo.currentData()  or ALL
+        letter = self._letter_combo.currentData() or ALL
         self._stop_keyword_loader()
         self._keyword_scope_items = None
-        self._pending_keyword_previous = self._keyword_combo.currentData() or "--all"
+        self._pending_keyword_previous = self._keyword_combo.currentData() or ALL
         self._keyword_combo.blockSignals(True)
         self._keyword_combo.clear()
-        self._keyword_combo.addItem("<Keyword>", userData="--all")
+        self._keyword_combo.addItem("<All Keywords>", userData=ALL)
         self._keyword_combo.blockSignals(False)
         self._keyword_combo.setEnabled(False)
         self._loading_bar.start()
@@ -1367,9 +1467,9 @@ class IllustrationBrowser(QWidget):
         phase_start = time.perf_counter()
         _cid = self._cascade_id   # capture — don't increment here
         scope   = self._item_combo.currentData()
-        field   = self._field_combo.currentData()  or "--all"
-        letter  = self._letter_combo.currentData() or "--all"
-        keyword = self._keyword_combo.currentData() or "--all"
+        field   = self._field_combo.currentData()  or ALL
+        letter  = self._letter_combo.currentData() or ALL
+        keyword = self._keyword_combo.currentData() or ALL
 
         result = self._query_current_page()
         records = result["records"]
@@ -1381,7 +1481,7 @@ class IllustrationBrowser(QWidget):
         )
         # Emit the active keyword so the Filter section title stays current.
         kw_data = self._keyword_combo.currentData()
-        self.keywordChanged.emit(kw_data if (kw_data and kw_data != "--all") else "")
+        self.keywordChanged.emit(kw_data if (kw_data and kw_data != ALL) else "")
         # Defer the grid rebuild one final tick so the UI reflects the updated
         # combo state and status bar before the (potentially slow) cell creation.
         QTimer.singleShot(0, lambda: self._rebuild_grid() if self._cascade_id == _cid else None)
@@ -1416,9 +1516,9 @@ class IllustrationBrowser(QWidget):
     def _query_current_page(self, label: Optional[str] = None) -> dict:
         result = self._source.page(
             title=self._item_combo.currentData(),
-            field=self._field_combo.currentData() or "--all",
-            letter=self._letter_combo.currentData() or "--all",
-            label=label or self._keyword_combo.currentData() or "--all",
+            field=self._field_combo.currentData() or ALL,
+            letter=self._letter_combo.currentData() or ALL,
+            label=label or self._keyword_combo.currentData() or ALL,
             offset=self._page_index * self._page_size,
             limit=self._page_size,
         )

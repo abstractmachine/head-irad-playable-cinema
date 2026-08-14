@@ -53,7 +53,7 @@ def test_cloud_scope_offers_all_media_titles(tmp_path, app, fake_prefs, monkeypa
     window = CloudVisualizer(str(tmp_path))
     window.media_combo.setCurrentIndex(0)
 
-    assert window.media_combo.currentText() == "<Media>"
+    assert window.media_combo.currentText() == "<All Media>"
     scopes = [window.movie_combo.itemData(index) for index in range(window.movie_combo.count())]
     assert ("movie", "movie") in scopes
     assert ("gameplay", "gameplay") in scopes

@@ -436,7 +436,7 @@ class CloudVisualizer(WindowVisualizer):
         scope_layout.setContentsMargins(0, 0, 0, 0)
         scope_layout.setSpacing(theme.SECTION_GAP)
         self.media_combo = QComboBox()
-        self.media_combo.addItem("<Media>", userData="--all")
+        self.media_combo.addItem("<All Media>", userData="--all")
         self.media_combo.addItem("movie", userData="movie")
         self.media_combo.addItem("gameplay", userData="gameplay")
         self.media_combo.setCurrentIndex(1)
@@ -445,6 +445,7 @@ class CloudVisualizer(WindowVisualizer):
         scope_layout.addWidget(self.media_combo)
         self.movie_combo = QComboBox()
         add_combo_all_item(self.movie_combo)
+        self.movie_combo.setItemText(0, "<All Titles>")
         style_canonical_combo(self.movie_combo)
         self.movie_combo.installEventFilter(self)
         scope_layout.addWidget(self.movie_combo)
@@ -456,7 +457,7 @@ class CloudVisualizer(WindowVisualizer):
         field_layout.setContentsMargins(0, 0, 0, 0)
         field_layout.setSpacing(theme.SECTION_GAP)
         self.field_combo = QComboBox()
-        self.field_combo.addItem("all fields", userData=None)
+        self.field_combo.addItem("<All Fields>", userData=None)
         for f in (
             "setting", "description", "objects", "action",
             "humans", "wearing", "animals", "text", "motif",
@@ -824,6 +825,7 @@ class CloudVisualizer(WindowVisualizer):
         self.movie_combo.blockSignals(True)
         self.movie_combo.clear()
         add_combo_all_item(self.movie_combo)
+        self.movie_combo.setItemText(0, "<All Titles>")
         try:
             from data.metadata import get_metadata
             media_types = ("movie", "gameplay") if media_type == "--all" else (media_type,)

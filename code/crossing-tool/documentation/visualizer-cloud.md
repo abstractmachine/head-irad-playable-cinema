@@ -22,14 +22,14 @@ Displays the rendered word cloud. Word size is proportional to frequency in the 
 
 | Control | Description |
 |---|---|
-| Media type | `<Media>` combines `movie` and `gameplay` annotations; `movie` or `gameplay` restricts to one type |
-| Title | `--all` for the full corpus, or a specific film title |
+| Media type | `<All Media>` combines `movie` and `gameplay` annotations; `movie` or `gameplay` restricts to one type |
+| Title | `<All Titles>` for the full corpus, or a specific film title |
 
 Use `Home` / `End` to cycle through films without leaving the keyboard.
 
 #### Field
 
-The annotation field to count vocabulary from (e.g. `wearing`, `objects`, `action`, `animals`). Use `PgUp` / `PgDn` to cycle through fields.
+The annotation field to count vocabulary from (e.g. `wearing`, `objects`, `action`, `animals`), or `<All Fields>` to aggregate every text-bearing field. Use `PgUp` / `PgDn` to cycle through fields.
 
 #### Options
 
