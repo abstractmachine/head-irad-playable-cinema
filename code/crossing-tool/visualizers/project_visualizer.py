@@ -172,7 +172,7 @@ class _ProjectColumnWidget(QWidget):
 
     def __init__(self, column, parent=None) -> None:
         super().__init__(parent)
-        self.setStyleSheet(f"background: {theme.CELL_BG}; border: 1px solid {theme.UI_BORDER};")
+        self.setStyleSheet(f"background: {theme.CELL_BG};")
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -183,7 +183,7 @@ class _ProjectColumnWidget(QWidget):
         self._header_label.setFont(theme.font_ui(bold=True))
         self._header_label.setStyleSheet(
             f"background: {theme.TITLE_BG}; color: {theme.TEXT_DIM}; "
-            f"border-bottom: 1px solid {theme.UI_BORDER};"
+            f"border: 1px solid {theme.UI_BORDER};"
         )
         self._header_label.setFixedHeight(_COLUMN_HEADER_H)
         outer.addWidget(self._header_label)
@@ -202,7 +202,12 @@ class _ProjectColumnWidget(QWidget):
         self._status_font = theme.font_ui(bold=True)
         self._status_font.setPointSize(theme.BASE_PT + 1)
         self._count_label.setFont(self._ready_font)
-        self._count_label.setStyleSheet(f"color: {theme.TEXT};")
+        self._count_border_style = (
+            f"border-left: 1px solid {theme.UI_BORDER}; "
+            f"border-right: 1px solid {theme.UI_BORDER}; "
+            f"border-bottom: 1px solid {theme.UI_BORDER};"
+        )
+        self._count_label.setStyleSheet(f"color: {theme.TEXT}; {self._count_border_style}")
         self._count_label.setFixedHeight(_COLUMN_COUNT_H)
         outer.addWidget(self._count_label)
 
@@ -226,18 +231,18 @@ class _ProjectColumnWidget(QWidget):
         if column.state == "loading":
             self._loading_bar.start()
             self._count_label.setFont(self._ready_font)
-            self._count_label.setStyleSheet(f"color: {theme.TEXT};")
+            self._count_label.setStyleSheet(f"color: {theme.TEXT}; {self._count_border_style}")
             self._count_label.setText("loading…")
         elif column.state == "ready":
             self._loading_bar.stop()
             self._count_label.setFont(self._ready_font)
-            self._count_label.setStyleSheet(f"color: {theme.TEXT};")
+            self._count_label.setStyleSheet(f"color: {theme.TEXT}; {self._count_border_style}")
             self._count_label.setText(_format_column_count(column.count))
         else:
             # "unavailable" / "stale" — never rendered the same as "0".
             self._loading_bar.stop()
             self._count_label.setFont(self._status_font)
-            self._count_label.setStyleSheet(f"color: {theme.TEXT_DIM};")
+            self._count_label.setStyleSheet(f"color: {theme.TEXT_DIM}; {self._count_border_style}")
             self._count_label.setText(f"\u2014\n{_column_status_label(column)}")
 
 
@@ -262,9 +267,10 @@ class _ProjectColumnsWorker(QThread):
 
     tier_ready = pyqtSignal(list)  # list[ProjectColumn]
 
-    def __init__(self, project_path, parent=None) -> None:
+    def __init__(self, project_path, generation: int = 0, parent=None) -> None:
         super().__init__(parent)
         self.project_path = project_path
+        self.generation = generation
 
     def run(self) -> None:
         from services.corpus_stats import get_cached_project_columns, get_live_project_columns
@@ -362,6 +368,8 @@ class _LauncherButton(QPushButton):
 class ProjectVisualizer(WindowVisualizer):
 
     def __init__(self) -> None:
+        self._project_load_generation = 0
+        self._project_load_state = "not_started"
         # Provide pref key to the shell so geometry is saved/restored there
         super().__init__(pref_key="window_project")
         self.setWindowTitle("Crossing — Project")
@@ -391,7 +399,6 @@ class ProjectVisualizer(WindowVisualizer):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self._shown_as_project = True
-        self._start_project_columns_load()
 
     def closeEvent(self, event) -> None:
         timer = getattr(self, "_column_loading_timer", None)
@@ -444,7 +451,7 @@ class ProjectVisualizer(WindowVisualizer):
             _prefs.set("path", folder)
             self.path_edit.setText(folder)
             self._reload_model_combos()
-            self._start_project_columns_load()
+            self._start_project_columns_load(force=True)
 
     # ------------------------------------------------------------------
     # Backup path
@@ -874,7 +881,7 @@ class ProjectVisualizer(WindowVisualizer):
         for widget in self._project_column_widgets.values():
             widget._loading_bar.tick()
 
-    def _start_project_columns_load(self) -> None:
+    def _start_project_columns_load(self, *, force: bool = False) -> None:
         """(Re)start the background worker that fills in every column.
 
         Marks every column "loading" immediately (synchronous, GUI-thread —
@@ -883,6 +890,8 @@ class ProjectVisualizer(WindowVisualizer):
         Project Visualizer never blocks on a corpus traversal.
         """
         if not getattr(self, "_project_column_widgets", None):
+            return
+        if not force and self._project_load_state != "not_started":
             return
 
         from services.corpus_stats import ProjectColumn
@@ -898,19 +907,26 @@ class ProjectVisualizer(WindowVisualizer):
             )
             widget.set_column(loading)
         self._column_loading_timer.start()
+        self._project_load_state = "loading"
 
-        worker = _ProjectColumnsWorker(_prefs.get("path"))
+        self._project_load_generation += 1
+        generation = self._project_load_generation
+        worker = _ProjectColumnsWorker(_prefs.get("path"), generation)
         worker.tier_ready.connect(self._on_columns_tier_ready)
         self._project_columns_worker = worker
         worker.start()
 
-    def _on_columns_tier_ready(self, columns) -> None:
+    def _on_columns_tier_ready(
+        self,
+        columns,
+    ) -> None:
         for column in columns:
             widget = self._project_column_widgets.get(column.id)
             if widget is not None:
                 widget.set_column(column)
         if all(w.column.state != "loading" for w in self._project_column_widgets.values()):
             self._column_loading_timer.stop()
+            self._project_load_state = "loaded"
 
     # Splitter/panel behavior provided by WindowVisualizer
 

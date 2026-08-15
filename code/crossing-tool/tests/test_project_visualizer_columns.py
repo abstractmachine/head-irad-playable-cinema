@@ -12,13 +12,17 @@ Covers three layers:
 from __future__ import annotations
 
 import json
+import threading
 
 import pytest
+from PyQt5.QtCore import QPoint
+from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import QApplication
 
 import services.corpus_stats as corpus_stats_mod
 import services.illustration_index as illustration_index_mod
 import services.silhouette_catalog as silhouette_catalog_mod
+from styles import theme
 from services.corpus_stats import (
     PROJECT_COLUMN_IDS_AND_TITLES,
     ProjectColumn,
@@ -312,6 +316,210 @@ def test_project_visualizer_headers_appear_immediately_in_loading_state(app, fak
         window.close()
 
 
+def test_project_visualizer_datavis_body_is_borderless_at_multiple_widths(
+    app, fake_prefs, monkeypatch,
+):
+    fake_prefs["path"] = "/fake/project"
+    monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    window = ProjectVisualizer()
+    try:
+        window.show()
+        first_widget = window._project_column_widgets[EXPECTED_COLUMN_IDS[0]]
+        assert "border:" not in first_widget.styleSheet()
+        assert "border: 1px" in first_widget._header_label.styleSheet()
+        assert "border-left: 1px" in first_widget._count_label.styleSheet()
+        assert "border-right: 1px" in first_widget._count_label.styleSheet()
+        assert "border-bottom: 1px" in first_widget._count_label.styleSheet()
+        assert "border" not in first_widget._datavis_widget.styleSheet()
+
+        expected_color = QColor(theme.CANVAS_BG)
+        for window_width in (900, 1500):
+            window.resize(window_width, 700)
+            app.processEvents()
+
+            browser = window._browser
+            datavis = first_widget._datavis_widget
+            body_y = datavis.mapTo(browser, QPoint(0, datavis.height() // 2)).y()
+            image = browser.grab().toImage()
+
+            assert image.width() == browser.width()
+            assert all(image.pixelColor(x, body_y) == expected_color for x in range(image.width()))
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_project_visualizer_splitter_has_no_extra_browser_inspector_gap(
+    app, fake_prefs, monkeypatch,
+):
+    fake_prefs["path"] = "/fake/project"
+    monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    window = ProjectVisualizer()
+    try:
+        window.show()
+        for window_width in (900, 1200, 1500):
+            window.resize(window_width, 700)
+            app.processEvents()
+
+            splitter = window._splitter
+            browser = window._browser
+            inspector = window._inspector_shell
+            handle = splitter.handle(1)
+
+            browser_right = browser.mapTo(splitter, QPoint(0, 0)).x() + browser.width()
+            handle_left = handle.mapTo(splitter, QPoint(0, 0)).x()
+            handle_right = handle_left + handle.width()
+            inspector_left = inspector.mapTo(splitter, QPoint(0, 0)).x()
+
+            assert handle.width() == splitter.handleWidth()
+            assert browser_right == handle_left
+            assert handle_right == inspector_left
+            assert inspector_left - browser_right == splitter.handleWidth()
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_project_visualizer_construction_starts_exactly_one_initial_worker(
+    app, fake_prefs, monkeypatch,
+):
+    fake_prefs["path"] = "/fake/project"
+    starts = []
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._ProjectColumnsWorker.start",
+        lambda self: starts.append(self.generation),
+    )
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    window = ProjectVisualizer()
+    try:
+        assert starts == [1]
+        assert window._project_load_generation == 1
+        assert window._project_load_state == "loading"
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_project_visualizer_show_does_not_restart_running_initial_load(
+    app, fake_prefs, monkeypatch,
+):
+    fake_prefs["path"] = "/fake/project"
+    release_worker = threading.Event()
+    worker_started = threading.Event()
+
+    def blocked_live_columns(_project_path):
+        worker_started.set()
+        assert release_worker.wait(5), "test did not release Project worker"
+        return [
+            ProjectColumn(
+                id=col_id, title=title, count=1,
+                datavis={"kind": "empty"}, state="ready",
+            )
+            for col_id, title in PROJECT_COLUMN_IDS_AND_TITLES[:3]
+        ] + [
+            ProjectColumn(
+                id="illustrations", title="Illustrations", count=1,
+                datavis={"kind": "empty"}, state="ready",
+            )
+        ]
+
+    monkeypatch.setattr(corpus_stats_mod, "get_live_project_columns", blocked_live_columns)
+    monkeypatch.setattr(
+        corpus_stats_mod,
+        "get_cached_project_columns",
+        lambda _project_path: [
+            ProjectColumn(
+                id=col_id, title=title, count=1,
+                datavis={"kind": "empty"}, state="ready",
+            )
+            for col_id, title in PROJECT_COLUMN_IDS_AND_TITLES[3:6]
+        ],
+    )
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    window = ProjectVisualizer()
+    try:
+        assert worker_started.wait(1), "Project worker did not start"
+        worker = window._project_columns_worker
+        assert worker.isRunning()
+
+        window.show()
+        app.processEvents()
+
+        assert window._project_columns_worker is worker
+        assert window._project_load_generation == 1
+        assert window._project_load_state == "loading"
+        assert all(
+            widget._loading_bar._active
+            for widget in window._project_column_widgets.values()
+        )
+
+        release_worker.set()
+        assert worker.wait(5000), "Project worker did not finish"
+        app.processEvents()
+        assert window._project_load_state == "loaded"
+    finally:
+        release_worker.set()
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_project_visualizer_show_hide_does_not_restart_loaded_initial_load(
+    app, fake_prefs, monkeypatch,
+):
+    fake_prefs["path"] = "/fake/project"
+    starts = []
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._ProjectColumnsWorker.start",
+        lambda self: starts.append(self.generation),
+    )
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    window = ProjectVisualizer()
+    try:
+        window._on_columns_tier_ready([
+            ProjectColumn(
+                id=col_id, title=title, count=1,
+                datavis={"kind": "empty"}, state="ready",
+            )
+            for col_id, title in PROJECT_COLUMN_IDS_AND_TITLES
+        ])
+        assert window._project_load_state == "loaded"
+
+        window.show()
+        app.processEvents()
+        window.hide()
+        app.processEvents()
+        window.show()
+        app.processEvents()
+
+        assert starts == [1]
+        assert window._project_load_generation == 1
+        assert window._project_load_state == "loaded"
+        assert all(
+            widget.column.state == "ready"
+            for widget in window._project_column_widgets.values()
+        )
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
 def test_project_visualizer_tier_ready_updates_only_matching_columns(app, fake_prefs, monkeypatch):
     fake_prefs["path"] = "/fake/project"
     monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
@@ -435,6 +643,8 @@ def test_project_visualizer_browse_restarts_column_loading(app, fake_prefs, monk
         window._on_browse()
 
         assert window._project_column_widgets["movies"].column.state == "loading"
+        assert window._project_load_generation == 2
+        assert window._project_load_state == "loading"
         assert window._project_columns_worker.wait(5000)
         app.processEvents()
 
