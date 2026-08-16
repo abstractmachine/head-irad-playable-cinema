@@ -21,14 +21,19 @@ from visualizers.window_visualizer import WindowVisualizer
 from visualizers.components.collapsible_section import CollapsibleSection
 from visualizers.components.combo_popup import style_canonical_combo
 from visualizers.components.inspector import Inspector
-from visualizers.components.metadata_block import INSPECTOR_ROW_HEIGHT, table_key_cell_style
+from visualizers.components.metadata_block import (
+    INSPECTOR_ROW_HEIGHT,
+    table_key_cell_style,
+    table_ui_cell_style,
+)
 from visualizers.components.sweep_bar import SweepBar
 from visualizers.components.tab_panel import TabPanel
 
 from PyQt5.QtCore import Qt, QEvent, QThread, QTimer, pyqtSignal
+from PyQt5.QtGui import QFontMetrics
 from PyQt5.QtWidgets import (
     QApplication, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
-    QGridLayout, QHBoxLayout, QLineEdit, QMessageBox, QPushButton,
+    QFrame, QGridLayout, QHBoxLayout, QLineEdit, QMessageBox, QPushButton,
     QSizePolicy, QSpinBox, QVBoxLayout, QWidget, QLabel,
 )
 
@@ -107,17 +112,38 @@ def _normalize_form_labels(form: QFormLayout) -> None:
 # for the ProjectColumn data model; this section is only a renderer over it)
 # ---------------------------------------------------------------------------
 
-_COLUMN_HEADER_H = 28   # fixed HEADER region height (px)
-_COLUMN_COUNT_H = 64    # fixed COUNT region height (px)
+_COLUMN_ROW_H = 28   # shared fixed height for HEADER and COUNT regions (px)
+_PROJECT_ROW_SEAM_H = 1
+_SPACER_ROW_INSET = 8
+_SPACER_ROW_GAP = 6
+
+
+def _project_row_border_style() -> str:
+    """Return the Project COUNT left, right, and bottom frame."""
+    return (
+        f"border-left: {_PROJECT_ROW_SEAM_H}px solid {theme.UI_BORDER}; "
+        f"border-right: {_PROJECT_ROW_SEAM_H}px solid {theme.UI_BORDER}; "
+        f"border-bottom: {_PROJECT_ROW_SEAM_H}px solid {theme.UI_BORDER};"
+    )
+
+
+def _project_row_side_style() -> str:
+    """Return Project left/right framing for rows separated by real gaps."""
+    return (
+        f"border-left: {_PROJECT_ROW_SEAM_H}px solid {theme.UI_BORDER}; "
+        f"border-right: {_PROJECT_ROW_SEAM_H}px solid {theme.UI_BORDER};"
+    )
 
 # Display text for a column's status line when it isn't "ready" — keyed by
 # ProjectColumn.reason first, falling back to a generic per-state label.
 # Never invented data: purely maps the explicit missing/stale reason
 # services.corpus_stats already reports into short display text.
 _COLUMN_REASON_LABELS = {
-    "illustration_index_missing": "INDEX REQUIRED",
+    "illustration_index_missing": "NEEDS INDEX",
     "illustration_index_stale": "INDEX STALE",
     "illustration_index_error": "INDEX ERROR",
+    "vocabulary_index_stale": "INDEX STALE",
+    "vocabulary_count_mismatch": "COUNT MISMATCH",
     "corpus_stats_missing": "STATS REQUIRED",
     "corpus_stats_stale": "STATS STALE",
     "no_project": "NO PROJECT",
@@ -156,6 +182,166 @@ def _column_status_label(column) -> str:
     )
 
 
+def _proportional_heights(
+    counts: list[int], available_height: int, minimum_height: int = 0,
+) -> list[int]:
+    """Allocate exactly *available_height*, enforcing readable minima when possible."""
+    if available_height <= 0 or not counts:
+        return [0] * len(counts)
+    positive_counts = [max(0, count) for count in counts]
+    total = sum(positive_counts)
+    if total <= 0:
+        return [0] * len(counts)
+
+    def allocate(indices: list[int], height: int) -> dict[int, int]:
+        subtotal = sum(positive_counts[index] for index in indices)
+        allocated = {
+            index: height * positive_counts[index] // subtotal
+            for index in indices
+        }
+        allocated[indices[-1]] += height - sum(allocated.values())
+        return allocated
+
+    # If readable minima cannot all fit, retain contained proportional
+    # slices. Labels are suppressed only on slices below one readable line.
+    if minimum_height <= 0 or len(counts) * minimum_height > available_height:
+        allocated = allocate(list(range(len(counts))), available_height)
+        return [allocated[index] for index in range(len(counts))]
+
+    heights = [0] * len(counts)
+    flexible = list(range(len(counts)))
+    remaining_height = available_height
+    while flexible:
+        subtotal = sum(positive_counts[index] for index in flexible)
+        undersized = [
+            index for index in flexible
+            if remaining_height * positive_counts[index] < minimum_height * subtotal
+        ]
+        if not undersized:
+            allocated = allocate(flexible, remaining_height)
+            for index, height in allocated.items():
+                heights[index] = height
+            break
+        for index in undersized:
+            heights[index] = minimum_height
+            remaining_height -= minimum_height
+        flexible = [index for index in flexible if index not in undersized]
+    return heights
+
+
+class _VocabularyFieldCell(QFrame):
+    """Stretched key/value row using Project launcher spacing and row seams."""
+
+    def __init__(self, font, parent=None) -> None:
+        super().__init__(parent)
+        self.setObjectName("VocabularyFieldCell")
+        self.setStyleSheet(
+            f"QFrame#VocabularyFieldCell {{ background: {theme.CELL_BG}; "
+            f"{_project_row_side_style()} }}"
+        )
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(_SPACER_ROW_INSET, 0, _PROJECT_ROW_SEAM_H, 0)
+        layout.setSpacing(_SPACER_ROW_GAP)
+
+        self.field_label = QLabel()
+        self.field_label.setFont(font)
+        self.field_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.field_label.setStyleSheet(table_ui_cell_style(
+            "", "", include_minimum_height=False,
+        ))
+        layout.addWidget(self.field_label, 1)
+
+        self.count_label = QLabel()
+        self.count_label.setFont(font)
+        self.count_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.count_label.setStyleSheet(table_ui_cell_style(
+            "",
+            "",
+            background_color=theme.CELL_BG,
+            text_color=theme.TEXT_DIM,
+            include_minimum_height=False,
+            horizontal_padding=_SPACER_ROW_INSET,
+        ))
+        layout.addWidget(self.count_label)
+
+    def set_content(self, field: str, count: str, count_width: int, visible: bool) -> None:
+        self.field_label.setText(field if visible else "")
+        self.count_label.setText(count if visible else "")
+        self.count_label.setFixedWidth(count_width)
+
+
+class _VocabularyDatavisWidget(QWidget):
+    """Responsive vertical composition of ordered vocabulary fields."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet(f"background: {theme.CANVAS_BG};")
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._cell_font = theme.font_ui()
+        self._minimum_cell_height = INSPECTOR_ROW_HEIGHT
+        self._fields: list[dict] = []
+        self._field_cells: list[_VocabularyFieldCell] = []
+
+    def set_datavis(self, datavis: dict) -> None:
+        fields = datavis.get("fields", []) if datavis.get("kind") == "vocabulary_fields" else []
+        self._fields = [
+            {"field": str(item.get("field", "")), "count": int(item.get("count", 0))}
+            for item in fields
+            if item.get("field") and int(item.get("count", 0)) > 0
+        ]
+        self.setStyleSheet(f"background: {theme.CANVAS_BG};")
+        while len(self._field_cells) < len(self._fields):
+            cell = _VocabularyFieldCell(self._cell_font, self)
+            cell.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            self._field_cells.append(cell)
+        for index, cell in enumerate(self._field_cells):
+            cell.setVisible(index < len(self._fields))
+        self._layout_cells()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._layout_cells()
+
+    def _layout_cells(self) -> None:
+        gap_count = len(self._fields)
+        total_gap_height = gap_count * theme.INSPECTOR_GAP
+        available_cell_height = max(0, self.height() - total_gap_height)
+        heights = _proportional_heights(
+            [item["count"] for item in self._fields],
+            available_cell_height,
+            self._minimum_cell_height,
+        )
+        y = theme.INSPECTOR_GAP if self._fields else 0
+        formatted_counts = [_format_column_count(item["count"]) for item in self._fields]
+        for cell, count in zip(self._field_cells, formatted_counts):
+            cell.count_label.setText(count)
+        count_width = max(
+            (cell.count_label.sizeHint().width() for cell in self._field_cells[:len(self._fields)]),
+            default=0,
+        )
+        for index, (item, height) in enumerate(zip(self._fields, heights)):
+            cell = self._field_cells[index]
+            count = formatted_counts[index]
+            available_field_width = (
+                self.width() - _SPACER_ROW_INSET - _SPACER_ROW_GAP - count_width
+            )
+            text_fits = (
+                QFontMetrics(self._cell_font).horizontalAdvance(item["field"])
+                <= available_field_width
+            )
+            cell.set_content(
+                item["field"],
+                count,
+                count_width,
+                height >= self._minimum_cell_height and text_fits,
+            )
+            cell.setGeometry(0, y, self.width(), height)
+            y += height
+            if index < gap_count:
+                y += theme.INSPECTOR_GAP
+
+
 class _ProjectColumnWidget(QWidget):
     """One HEADER / COUNT / DATAVIS column of the Project Visualizer's V0 grid.
 
@@ -165,14 +351,17 @@ class _ProjectColumnWidget(QWidget):
     ``column.state`` ("loading" / "ready" / "unavailable" / "stale") drives
     whether the shared SweepBar loading indicator (same one used by
     Illustration) is active and what the COUNT region shows. "unavailable"
-    and "stale" are rendered distinctly from a real zero — both show a
-    dimmed status word (e.g. "INDEX REQUIRED"/"INDEX STALE") instead of a
-    number, so a missing/outdated artifact is never mistaken for "0".
+    and "stale" are rendered distinctly from a real zero. Vocabulary's
+    ready state may additionally carry ordered field-composition data for
+    its DATAVIS region.
     """
 
     def __init__(self, column, parent=None) -> None:
         super().__init__(parent)
-        self.setStyleSheet(f"background: {theme.CELL_BG};")
+        self.setObjectName("ProjectColumnWidget")
+        self.setStyleSheet(
+            f"QWidget#ProjectColumnWidget {{ background: {theme.CELL_BG}; }}"
+        )
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -183,16 +372,26 @@ class _ProjectColumnWidget(QWidget):
         self._header_label.setFont(theme.font_ui(bold=True))
         self._header_label.setStyleSheet(
             f"background: {theme.TITLE_BG}; color: {theme.TEXT_DIM}; "
-            f"border: 1px solid {theme.UI_BORDER};"
+            f"border: {_PROJECT_ROW_SEAM_H}px solid {theme.UI_BORDER};"
         )
-        self._header_label.setFixedHeight(_COLUMN_HEADER_H)
+        self._header_label.setFixedHeight(_COLUMN_ROW_H)
         outer.addWidget(self._header_label)
 
         # Shared loading indicator (see visualizers/components/sweep_bar.py),
         # the same one Illustration uses — a thin ACCENT stripe, invisible
         # while idle. Driven by ProjectVisualizer's shared timer via tick().
         self._loading_bar = SweepBar(self)
-        outer.addWidget(self._loading_bar)
+        self._loading_gap = QWidget(self)
+        self._loading_gap.setAttribute(Qt.WA_StyledBackground, True)
+        self._loading_gap.setStyleSheet(
+            f"background: {theme.CANVAS_BG}; border: none;"
+        )
+        self._loading_gap.setFixedHeight(theme.INSPECTOR_GAP)
+        loading_layout = QVBoxLayout(self._loading_gap)
+        loading_layout.setContentsMargins(0, 0, 0, 0)
+        loading_layout.setSpacing(0)
+        loading_layout.addWidget(self._loading_bar)
+        outer.addWidget(self._loading_gap)
 
         self._count_label = QLabel()
         self._count_label.setAlignment(Qt.AlignCenter)
@@ -202,23 +401,15 @@ class _ProjectColumnWidget(QWidget):
         self._status_font = theme.font_ui(bold=True)
         self._status_font.setPointSize(theme.BASE_PT + 1)
         self._count_label.setFont(self._ready_font)
-        self._count_border_style = (
-            f"border-left: 1px solid {theme.UI_BORDER}; "
-            f"border-right: 1px solid {theme.UI_BORDER}; "
-            f"border-bottom: 1px solid {theme.UI_BORDER};"
+        self._count_border_style = _project_row_border_style()
+        self._count_background_style = f"background: {theme.PANEL_BG};"
+        self._count_label.setStyleSheet(
+            f"{self._count_background_style} color: {theme.TEXT}; {self._count_border_style}"
         )
-        self._count_label.setStyleSheet(f"color: {theme.TEXT}; {self._count_border_style}")
-        self._count_label.setFixedHeight(_COLUMN_COUNT_H)
+        self._count_label.setFixedHeight(_COLUMN_ROW_H)
         outer.addWidget(self._count_label)
 
-        # DATAVIS region: every V0 column reports datavis={"kind": "empty"},
-        # so this is currently just a distinct display-style area (matching
-        # the CANVAS_BG convention used elsewhere for display surfaces) — not
-        # yet a real visualization. A future version would dispatch on
-        # column.datavis["kind"] here instead of always rendering blank.
-        self._datavis_widget = QWidget()
-        self._datavis_widget.setStyleSheet(f"background: {theme.CANVAS_BG};")
-        self._datavis_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._datavis_widget = _VocabularyDatavisWidget()
         outer.addWidget(self._datavis_widget, 1)
 
         self.column = column
@@ -231,19 +422,37 @@ class _ProjectColumnWidget(QWidget):
         if column.state == "loading":
             self._loading_bar.start()
             self._count_label.setFont(self._ready_font)
-            self._count_label.setStyleSheet(f"color: {theme.TEXT}; {self._count_border_style}")
+            self._count_label.setStyleSheet(
+                f"{self._count_background_style} color: {theme.TEXT}; {self._count_border_style}"
+            )
             self._count_label.setText("loading…")
         elif column.state == "ready":
             self._loading_bar.stop()
             self._count_label.setFont(self._ready_font)
-            self._count_label.setStyleSheet(f"color: {theme.TEXT}; {self._count_border_style}")
+            self._count_label.setStyleSheet(
+                f"{self._count_background_style} color: {theme.TEXT}; {self._count_border_style}"
+            )
             self._count_label.setText(_format_column_count(column.count))
-        else:
-            # "unavailable" / "stale" — never rendered the same as "0".
+        elif column.state == "unavailable":
             self._loading_bar.stop()
             self._count_label.setFont(self._status_font)
-            self._count_label.setStyleSheet(f"color: {theme.TEXT_DIM}; {self._count_border_style}")
+            self._count_label.setStyleSheet(
+                f"{self._count_background_style} color: {theme.TEXT_DIM}; {self._count_border_style}"
+            )
+            self._count_label.setText(
+                "NEEDS INDEX"
+                if column.reason == "illustration_index_missing"
+                else "→ INDEX"
+            )
+        else:
+            # "stale" remains distinct from both unavailable and a real "0".
+            self._loading_bar.stop()
+            self._count_label.setFont(self._status_font)
+            self._count_label.setStyleSheet(
+                f"{self._count_background_style} color: {theme.TEXT_DIM}; {self._count_border_style}"
+            )
             self._count_label.setText(f"\u2014\n{_column_status_label(column)}")
+        self._datavis_widget.set_datavis(column.datavis if column.state == "ready" else {"kind": "empty"})
 
 
 class _ProjectColumnsWorker(QThread):
@@ -302,8 +511,8 @@ class _LauncherButton(QPushButton):
     def __init__(self, label: str, shortcut: str | None, parent=None) -> None:
         super().__init__(parent)
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 0, 8, 0)
-        layout.setSpacing(6)
+        layout.setContentsMargins(_SPACER_ROW_INSET, 0, _SPACER_ROW_INSET, 0)
+        layout.setSpacing(_SPACER_ROW_GAP)
 
         self._name_label = QLabel(label)
         self._name_label.setAttribute(Qt.WA_TransparentForMouseEvents)

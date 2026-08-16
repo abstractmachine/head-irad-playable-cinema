@@ -429,11 +429,9 @@ class ProjectColumn:
     unavailable state.
 
     ``datavis`` is a small, renderer-agnostic dict describing what (if
-    anything) the column's DATAVIS region should draw, e.g.
-    ``{"kind": "empty"}``. V0 intentionally implements no real per-column
-    visualization yet (see ``get_project_columns`` docstring) but keeps this
-    shape so later versions can add per-column visualization strategies
-    without changing the column model itself.
+    anything) the column's DATAVIS region should draw. Vocabulary uses
+    ``{"kind": "vocabulary_fields", "fields": [...]}``; all other columns
+    currently use ``{"kind": "empty"}``.
     """
 
     id: str
@@ -603,13 +601,45 @@ PROJECT_COLUMN_IDS_AND_TITLES: tuple[tuple[str, str], ...] = (
 def _make_column(
     col_id: str, title: str, count: Optional[int],
     *, state: Optional[str] = None, reason: Optional[str] = None,
+    datavis: Optional[dict[str, Any]] = None,
 ) -> ProjectColumn:
     if state is None:
         state = "ready" if count is not None else "unavailable"
     return ProjectColumn(
-        id=col_id, title=title, count=count, datavis={"kind": "empty"},
+        id=col_id, title=title, count=count, datavis=datavis or {"kind": "empty"},
         state=state, reason=reason,
     )
+
+
+def get_vocabulary_field_counts(
+    project_path: str, expected_total: Optional[int] = None,
+) -> list[dict[str, Any]]:
+    """Return unique vocabulary-term counts in the index's canonical field order."""
+    index = load_vocabulary_index(project_path, "movie")
+    fields = index.get("fields", {})
+    if not isinstance(fields, dict):
+        raise ValueError("Vocabulary index has no valid fields mapping")
+
+    canonical_order = index.get("meta", {}).get("vocabulary_fields", [])
+    ordered_names = [name for name in canonical_order if name in fields]
+    ordered_names.extend(name for name in fields if name not in ordered_names)
+    result = [
+        {"field": str(name), "count": len(fields[name])}
+        for name in ordered_names
+        if isinstance(fields[name], dict) and fields[name]
+    ]
+
+    index_total = int(index.get("meta", {}).get("total_tokens", 0))
+    field_total = sum(item["count"] for item in result)
+    if field_total != index_total:
+        raise ValueError(
+            f"Vocabulary field total {field_total} does not match index total {index_total}"
+        )
+    if expected_total is not None and field_total != int(expected_total):
+        raise ValueError(
+            f"Vocabulary field total {field_total} does not match Project count {expected_total}"
+        )
+    return result
 
 
 def get_live_project_columns(project_path: Optional[str]) -> list[ProjectColumn]:
@@ -681,10 +711,30 @@ def get_cached_project_columns(project_path: Optional[str]) -> list[ProjectColum
             for col_id, title, _stat_key in _CACHED_COLUMN_SPECS
         ]
     stats = result["stats"]
-    return [
+    columns = [
         _make_column(col_id, title, stats.get(stat_key))
         for col_id, title, stat_key in _CACHED_COLUMN_SPECS
     ]
+    vocabulary = columns[0]
+    if project_path and vocabulary.count is not None:
+        try:
+            fields = get_vocabulary_field_counts(project_path, vocabulary.count)
+        except FileNotFoundError:
+            vocabulary.count = None
+            vocabulary.state = "unavailable"
+            vocabulary.reason = "vocabulary_index_missing"
+        except ValueError:
+            vocabulary.count = None
+            vocabulary.state = "stale"
+            vocabulary.reason = "vocabulary_count_mismatch"
+        else:
+            if vocabulary_cache_is_stale(project_path, "movie"):
+                vocabulary.count = None
+                vocabulary.state = "stale"
+                vocabulary.reason = "vocabulary_index_stale"
+            else:
+                vocabulary.datavis = {"kind": "vocabulary_fields", "fields": fields}
+    return columns
 
 
 def get_project_columns(project_path: Optional[str]) -> list[ProjectColumn]:
@@ -697,11 +747,8 @@ def get_project_columns(project_path: Optional[str]) -> list[ProjectColumn]:
     Always returned in `PROJECT_COLUMN_IDS_AND_TITLES`'s fixed display
     order, regardless of which tier each column came from.
 
-    Every column's ``datavis`` is ``{"kind": "empty"}`` in V0: this is a
-    structural prototype, not a data-visualization implementation, and every
-    'obvious' per-column visualization (proportional vocabulary sizing,
-    palette swatches, embedding/density maps, segmentation maps) is
-    explicitly out of scope for V0.
+    Vocabulary's ``datavis`` contains its ordered field composition. Every
+    other column remains ``{"kind": "empty"}``.
     """
     by_id = {
         column.id: column

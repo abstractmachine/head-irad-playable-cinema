@@ -75,15 +75,43 @@ def table_row_edges(row_idx: int, last_idx: int) -> tuple[str, str]:
     return top, bottom
 
 
-def table_key_cell_style(top: str, bottom: str) -> str:
+def table_ui_cell_style(
+    top: str,
+    bottom: str,
+    *,
+    background_color: str = theme.CELL_BG,
+    text_color: str = theme.TEXT,
+    right_divider: bool = False,
+    include_minimum_height: bool = True,
+    horizontal_padding: int = 0,
+) -> str:
+    """Return canonical Inspector geometry and typography for a UI-text cell."""
+    right = (
+        f" border-right: {INSPECTOR_DIVIDER_THICKNESS}px solid {theme.TAB_BG};"
+        if right_divider else ""
+    )
+    minimum_height = (
+        f" min-height: {INSPECTOR_ROW_HEIGHT}px;"
+        if include_minimum_height else ""
+    )
     return (
-        f"background: {theme.CELL_BG}; color: {theme.TEXT_DIM};"
+        f"background: {background_color}; color: {text_color};"
         f" font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
         f" font-weight: {theme.WEIGHT_UI};"
+        f" border: none;"
         f"{top}{bottom}"
-        f" border-right: {INSPECTOR_DIVIDER_THICKNESS}px solid {theme.TAB_BG};"
-        f" min-height: {INSPECTOR_ROW_HEIGHT}px;"
-        f" padding: 0px;"
+        f"{right}"
+        f"{minimum_height}"
+        f" padding: 0px {horizontal_padding}px;"
+    )
+
+
+def table_key_cell_style(top: str, bottom: str) -> str:
+    return table_ui_cell_style(
+        top,
+        bottom,
+        text_color=theme.TEXT_DIM,
+        right_divider=True,
     )
 
 
