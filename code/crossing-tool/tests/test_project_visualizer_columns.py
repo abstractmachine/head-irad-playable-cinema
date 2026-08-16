@@ -1128,7 +1128,7 @@ def test_project_visualizer_show_hide_does_not_restart_loaded_initial_load(
 
     window = ProjectVisualizer()
     try:
-        window._on_columns_tier_ready([
+        window._on_columns_tier_ready(window._project_load_generation, [
             ProjectColumn(
                 id=col_id, title=title, count=1,
                 datavis={"kind": "empty"}, state="ready",
@@ -1157,7 +1157,153 @@ def test_project_visualizer_show_hide_does_not_restart_loaded_initial_load(
         app.processEvents()
 
 
-def test_project_visualizer_tier_ready_updates_only_matching_columns(app, fake_prefs, monkeypatch):
+def test_project_columns_worker_emits_generation_with_both_tiers(app, monkeypatch):
+    from visualizers.project_visualizer import _ProjectColumnsWorker
+
+    live_columns = [
+        ProjectColumn(
+            id="movies", title="Movies", count=12,
+            datavis={"kind": "empty"}, state="ready",
+        ),
+    ]
+    cached_columns = [
+        ProjectColumn(
+            id="vocabulary", title="Vocabulary", count=1832,
+            datavis={"kind": "empty"}, state="ready",
+        ),
+    ]
+    monkeypatch.setattr(corpus_stats_mod, "get_live_project_columns", lambda _path: live_columns)
+    monkeypatch.setattr(corpus_stats_mod, "get_cached_project_columns", lambda _path: cached_columns)
+
+    results = []
+    worker = _ProjectColumnsWorker("/fake/project", generation=17)
+    worker.tier_ready.connect(
+        lambda generation, columns: results.append((generation, columns))
+    )
+
+    worker.run()
+
+    assert results == [(17, live_columns), (17, cached_columns)]
+
+
+def test_project_visualizer_rejects_older_generation_without_affecting_current_load(
+    app, fake_prefs, monkeypatch,
+):
+    fake_prefs["path"] = "/fake/project"
+    monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    window = ProjectVisualizer()
+    try:
+        current_generation = window._project_load_generation
+        current_worker = window._project_columns_worker
+        window._on_columns_tier_ready(current_generation - 1, [
+            ProjectColumn(
+                id="movies", title="Movies", count=12,
+                datavis={"kind": "empty"}, state="ready",
+            ),
+        ])
+
+        assert window._project_load_generation == current_generation
+        assert window._project_columns_worker is current_worker
+        assert window._project_load_state == "loading"
+        assert window._column_loading_timer.isActive()
+        assert all(
+            widget.column.state == "loading"
+            for widget in window._project_column_widgets.values()
+        )
+
+        window._on_columns_tier_ready(current_generation, [
+            ProjectColumn(
+                id="movies", title="Movies", count=99,
+                datavis={"kind": "empty"}, state="ready",
+            ),
+        ])
+        assert window._project_column_widgets["movies"]._count_label.text() == "99"
+    finally:
+        window.close()
+
+
+def test_project_visualizer_old_live_tier_cannot_overwrite_new_generation(
+    app, fake_prefs, monkeypatch,
+):
+    fake_prefs["path"] = "/fake/project"
+    monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    window = ProjectVisualizer()
+    try:
+        old_generation = window._project_load_generation
+        window._start_project_columns_load(force=True)
+        current_generation = window._project_load_generation
+        assert current_generation == old_generation + 1
+
+        window._on_columns_tier_ready(current_generation, [
+            ProjectColumn(
+                id="movies", title="Movies", count=99,
+                datavis={"kind": "empty"}, state="ready",
+            ),
+        ])
+        window._on_columns_tier_ready(old_generation, [
+            ProjectColumn(
+                id="movies", title="Movies", count=12,
+                datavis={"kind": "empty"}, state="ready",
+            ),
+        ])
+
+        widget = window._project_column_widgets["movies"]
+        assert widget.column.count == 99
+        assert widget._count_label.text() == "99"
+        assert window._project_load_generation == current_generation
+        assert window._project_load_state == "loading"
+        assert window._column_loading_timer.isActive()
+    finally:
+        window.close()
+
+
+def test_project_visualizer_old_cached_tier_cannot_overwrite_new_generation(
+    app, fake_prefs, monkeypatch,
+):
+    fake_prefs["path"] = "/fake/project"
+    monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    window = ProjectVisualizer()
+    try:
+        old_generation = window._project_load_generation
+        window._start_project_columns_load(force=True)
+        current_generation = window._project_load_generation
+        assert current_generation == old_generation + 1
+
+        window._on_columns_tier_ready(current_generation, [
+            ProjectColumn(
+                id="vocabulary", title="Vocabulary", count=1832,
+                datavis={"kind": "empty"}, state="ready",
+            ),
+        ])
+        window._on_columns_tier_ready(old_generation, [
+            ProjectColumn(
+                id="vocabulary", title="Vocabulary", count=7,
+                datavis={"kind": "empty"}, state="ready",
+            ),
+        ])
+
+        widget = window._project_column_widgets["vocabulary"]
+        assert widget.column.count == 1832
+        assert widget._count_label.text() == "1.8k"
+        assert window._project_load_generation == current_generation
+        assert window._project_load_state == "loading"
+        assert window._column_loading_timer.isActive()
+    finally:
+        window.close()
+
+
+def test_project_visualizer_current_generation_tier_updates_only_matching_columns(
+    app, fake_prefs, monkeypatch,
+):
     fake_prefs["path"] = "/fake/project"
     monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
 
@@ -1170,7 +1316,7 @@ def test_project_visualizer_tier_ready_updates_only_matching_columns(app, fake_p
             ProjectColumn(id="gameplay", title="Gameplay", count=3, datavis={"kind": "empty"}, state="ready"),
             ProjectColumn(id="shots", title="Shots", count=4821, datavis={"kind": "empty"}, state="ready"),
         ]
-        window._on_columns_tier_ready(live_columns)
+        window._on_columns_tier_ready(window._project_load_generation, live_columns)
 
         widgets = window._project_column_widgets
         assert widgets["movies"].column.state == "ready"
@@ -1186,7 +1332,7 @@ def test_project_visualizer_tier_ready_updates_only_matching_columns(app, fake_p
             ProjectColumn(id="flipbooks", title="Flipbooks", count=2, datavis={"kind": "empty"}, state="ready"),
             ProjectColumn(id="illustrations", title="Illustrations", count=48213, datavis={"kind": "empty"}, state="ready"),
         ]
-        window._on_columns_tier_ready(cached_columns)
+        window._on_columns_tier_ready(window._project_load_generation, cached_columns)
 
         assert widgets["illustrations"]._count_label.text() == "48.2k"
         assert widgets["illustrations"].column.state == "ready"
@@ -1205,7 +1351,7 @@ def test_project_visualizer_unavailable_column_shows_compact_index_status(app, f
 
     window = ProjectVisualizer()
     try:
-        window._on_columns_tier_ready([
+        window._on_columns_tier_ready(window._project_load_generation, [
             ProjectColumn(id="vocabulary", title="Vocabulary", count=None, datavis={"kind": "empty"}, state="unavailable", reason="corpus_stats_missing"),
             ProjectColumn(id="segments", title="Segments", count=None, datavis={"kind": "empty"}, state="unavailable", reason="corpus_stats_missing"),
             ProjectColumn(id="flipbooks", title="Flipbooks", count=None, datavis={"kind": "empty"}, state="unavailable", reason="corpus_stats_missing"),

@@ -465,7 +465,7 @@ class _ProjectColumnsWorker(QThread):
     see services.corpus_stats.get_live_project_columns /
     get_cached_project_columns.
 
-    Emits ``tier_ready(list)`` twice: once for the cheap "live" tier
+    Emits ``tier_ready(generation, list)`` twice: once for the cheap "live" tier
     (Movies/Gameplay/Shots/Illustrations — computed directly from project
     files and the illustration index on every call), and again for the
     persisted-cache tier (Vocabulary/Segments/Flipbooks — reported as
@@ -474,7 +474,7 @@ class _ProjectColumnsWorker(QThread):
     instead of waiting for both.
     """
 
-    tier_ready = pyqtSignal(list)  # list[ProjectColumn]
+    tier_ready = pyqtSignal(int, list)  # generation, list[ProjectColumn]
 
     def __init__(self, project_path, generation: int = 0, parent=None) -> None:
         super().__init__(parent)
@@ -483,8 +483,8 @@ class _ProjectColumnsWorker(QThread):
 
     def run(self) -> None:
         from services.corpus_stats import get_cached_project_columns, get_live_project_columns
-        self.tier_ready.emit(get_live_project_columns(self.project_path))
-        self.tier_ready.emit(get_cached_project_columns(self.project_path))
+        self.tier_ready.emit(self.generation, get_live_project_columns(self.project_path))
+        self.tier_ready.emit(self.generation, get_cached_project_columns(self.project_path))
 
 
 # ---------------------------------------------------------------------------
@@ -1127,8 +1127,11 @@ class ProjectVisualizer(WindowVisualizer):
 
     def _on_columns_tier_ready(
         self,
+        generation,
         columns,
     ) -> None:
+        if generation != self._project_load_generation:
+            return
         for column in columns:
             widget = self._project_column_widgets.get(column.id)
             if widget is not None:
