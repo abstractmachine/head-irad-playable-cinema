@@ -153,6 +153,11 @@ _COLUMN_STATE_FALLBACK_LABELS = {
     "stale": "STALE",
 }
 
+_PROJECT_TIER_COLUMN_IDS = {
+    "live": ("movies", "gameplay", "shots", "illustrations"),
+    "cached": ("vocabulary", "segments", "flipbooks"),
+}
+
 
 def _format_column_count(count) -> str:
     """Format a ProjectColumn's raw int count for display (or an em dash).
@@ -465,7 +470,8 @@ class _ProjectColumnsWorker(QThread):
     see services.corpus_stats.get_live_project_columns /
     get_cached_project_columns.
 
-    Emits ``tier_ready(generation, list)`` twice: once for the cheap "live" tier
+    Emits ``tier_ready(generation, list)`` for each successful tier and
+    ``tier_failed(generation, tier, message)`` for each failed tier. The cheap "live" tier
     (Movies/Gameplay/Shots/Illustrations — computed directly from project
     files and the illustration index on every call), and again for the
     persisted-cache tier (Vocabulary/Segments/Flipbooks — reported as
@@ -475,6 +481,7 @@ class _ProjectColumnsWorker(QThread):
     """
 
     tier_ready = pyqtSignal(int, list)  # generation, list[ProjectColumn]
+    tier_failed = pyqtSignal(int, str, str)  # generation, tier, error message
 
     def __init__(self, project_path, generation: int = 0, parent=None) -> None:
         super().__init__(parent)
@@ -482,9 +489,26 @@ class _ProjectColumnsWorker(QThread):
         self.generation = generation
 
     def run(self) -> None:
-        from services.corpus_stats import get_cached_project_columns, get_live_project_columns
-        self.tier_ready.emit(self.generation, get_live_project_columns(self.project_path))
-        self.tier_ready.emit(self.generation, get_cached_project_columns(self.project_path))
+        try:
+            from services.corpus_stats import get_cached_project_columns, get_live_project_columns
+        except Exception as exc:
+            message = f"{type(exc).__name__}: {exc}"
+            self.tier_failed.emit(self.generation, "live", message)
+            self.tier_failed.emit(self.generation, "cached", message)
+            return
+
+        for tier, getter in (
+            ("live", get_live_project_columns),
+            ("cached", get_cached_project_columns),
+        ):
+            try:
+                columns = getter(self.project_path)
+            except Exception as exc:
+                self.tier_failed.emit(
+                    self.generation, tier, f"{type(exc).__name__}: {exc}",
+                )
+            else:
+                self.tier_ready.emit(self.generation, columns)
 
 
 # ---------------------------------------------------------------------------
@@ -1107,6 +1131,7 @@ class ProjectVisualizer(WindowVisualizer):
 
         if self._project_columns_worker is not None and self._project_columns_worker.isRunning():
             self._project_columns_worker.tier_ready.disconnect(self._on_columns_tier_ready)
+            self._project_columns_worker.tier_failed.disconnect(self._on_columns_tier_failed)
             self._project_columns_worker.wait(3000)
 
         for col_id, widget in self._project_column_widgets.items():
@@ -1122,6 +1147,7 @@ class ProjectVisualizer(WindowVisualizer):
         generation = self._project_load_generation
         worker = _ProjectColumnsWorker(_prefs.get("path"), generation)
         worker.tier_ready.connect(self._on_columns_tier_ready)
+        worker.tier_failed.connect(self._on_columns_tier_failed)
         self._project_columns_worker = worker
         worker.start()
 
@@ -1136,6 +1162,28 @@ class ProjectVisualizer(WindowVisualizer):
             widget = self._project_column_widgets.get(column.id)
             if widget is not None:
                 widget.set_column(column)
+        if all(w.column.state != "loading" for w in self._project_column_widgets.values()):
+            self._column_loading_timer.stop()
+            self._project_load_state = "loaded"
+
+    def _on_columns_tier_failed(
+        self,
+        generation,
+        tier,
+        _message,
+    ) -> None:
+        if generation != self._project_load_generation:
+            return
+
+        from services.corpus_stats import ProjectColumn
+
+        for col_id in _PROJECT_TIER_COLUMN_IDS[tier]:
+            widget = self._project_column_widgets[col_id]
+            widget.set_column(ProjectColumn(
+                id=col_id, title=widget.column.title, count=None,
+                datavis={"kind": "empty"}, state="unavailable",
+                reason=f"{tier}_tier_error",
+            ))
         if all(w.column.state != "loading" for w in self._project_column_widgets.values()):
             self._column_loading_timer.stop()
             self._project_load_state = "loaded"

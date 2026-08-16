@@ -1186,6 +1186,211 @@ def test_project_columns_worker_emits_generation_with_both_tiers(app, monkeypatc
     assert results == [(17, live_columns), (17, cached_columns)]
 
 
+def test_project_columns_worker_reports_live_failure_and_still_attempts_cached(
+    app, monkeypatch,
+):
+    from visualizers.project_visualizer import _ProjectColumnsWorker
+
+    cached_columns = [
+        ProjectColumn(
+            id="vocabulary", title="Vocabulary", count=1832,
+            datavis={"kind": "empty"}, state="ready",
+        ),
+    ]
+
+    def fail_live(_path):
+        raise RuntimeError("live failed")
+
+    monkeypatch.setattr(corpus_stats_mod, "get_live_project_columns", fail_live)
+    monkeypatch.setattr(corpus_stats_mod, "get_cached_project_columns", lambda _path: cached_columns)
+
+    events = []
+    worker = _ProjectColumnsWorker("/fake/project", generation=17)
+    worker.tier_ready.connect(
+        lambda generation, columns: events.append(("ready", generation, columns))
+    )
+    worker.tier_failed.connect(
+        lambda generation, tier, message: events.append(
+            ("failed", generation, tier, message)
+        )
+    )
+
+    worker.run()
+
+    assert events == [
+        ("failed", 17, "live", "RuntimeError: live failed"),
+        ("ready", 17, cached_columns),
+    ]
+
+
+def test_project_columns_worker_reports_cached_failure_after_live_result(
+    app, monkeypatch,
+):
+    from visualizers.project_visualizer import _ProjectColumnsWorker
+
+    live_columns = [
+        ProjectColumn(
+            id="movies", title="Movies", count=12,
+            datavis={"kind": "empty"}, state="ready",
+        ),
+    ]
+
+    def fail_cached(_path):
+        raise ValueError("cached failed")
+
+    monkeypatch.setattr(corpus_stats_mod, "get_live_project_columns", lambda _path: live_columns)
+    monkeypatch.setattr(corpus_stats_mod, "get_cached_project_columns", fail_cached)
+
+    events = []
+    worker = _ProjectColumnsWorker("/fake/project", generation=23)
+    worker.tier_ready.connect(
+        lambda generation, columns: events.append(("ready", generation, columns))
+    )
+    worker.tier_failed.connect(
+        lambda generation, tier, message: events.append(
+            ("failed", generation, tier, message)
+        )
+    )
+
+    worker.run()
+
+    assert events == [
+        ("ready", 23, live_columns),
+        ("failed", 23, "cached", "ValueError: cached failed"),
+    ]
+
+
+def test_project_visualizer_live_failure_settles_tier_and_preserves_cached_results(
+    app, fake_prefs, monkeypatch,
+):
+    fake_prefs["path"] = "/fake/project"
+    monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    window = ProjectVisualizer()
+    try:
+        generation = window._project_load_generation
+        cached_columns = [
+            ProjectColumn(
+                id="vocabulary", title="Vocabulary", count=1832,
+                datavis={"kind": "empty"}, state="ready",
+            ),
+            ProjectColumn(
+                id="segments", title="Segments", count=57,
+                datavis={"kind": "empty"}, state="ready",
+            ),
+            ProjectColumn(
+                id="flipbooks", title="Flipbooks", count=0,
+                datavis={"kind": "empty"}, state="ready",
+            ),
+        ]
+        window._on_columns_tier_ready(generation, cached_columns)
+        window._on_columns_tier_failed(generation, "live", "RuntimeError: live failed")
+
+        widgets = window._project_column_widgets
+        for col_id in ("movies", "gameplay", "shots", "illustrations"):
+            assert widgets[col_id].column.count is None
+            assert widgets[col_id].column.state == "unavailable"
+            assert widgets[col_id].column.reason == "live_tier_error"
+        assert widgets["vocabulary"].column.count == 1832
+        assert widgets["segments"].column.count == 57
+        assert widgets["flipbooks"].column.count == 0
+        assert widgets["flipbooks"].column.state == "ready"
+        assert widgets["flipbooks"]._count_label.text() == "0"
+        assert window._project_load_state == "loaded"
+        assert not window._column_loading_timer.isActive()
+        assert all(
+            widget.column.state != "loading"
+            for widget in widgets.values()
+        )
+    finally:
+        window.close()
+
+
+def test_project_visualizer_cached_failure_settles_tier_and_preserves_live_results(
+    app, fake_prefs, monkeypatch,
+):
+    fake_prefs["path"] = "/fake/project"
+    monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    window = ProjectVisualizer()
+    try:
+        generation = window._project_load_generation
+        live_columns = [
+            ProjectColumn(
+                id="movies", title="Movies", count=0,
+                datavis={"kind": "empty"}, state="ready",
+            ),
+            ProjectColumn(
+                id="gameplay", title="Gameplay", count=3,
+                datavis={"kind": "empty"}, state="ready",
+            ),
+            ProjectColumn(
+                id="shots", title="Shots", count=4821,
+                datavis={"kind": "empty"}, state="ready",
+            ),
+            ProjectColumn(
+                id="illustrations", title="Illustrations", count=None,
+                datavis={"kind": "empty"}, state="stale",
+                reason="illustration_index_stale",
+            ),
+        ]
+        window._on_columns_tier_ready(generation, live_columns)
+        window._on_columns_tier_failed(generation, "cached", "ValueError: cached failed")
+
+        widgets = window._project_column_widgets
+        assert widgets["movies"].column.count == 0
+        assert widgets["movies"].column.state == "ready"
+        assert widgets["movies"]._count_label.text() == "0"
+        assert widgets["gameplay"].column.count == 3
+        assert widgets["shots"].column.count == 4821
+        assert widgets["illustrations"].column.state == "stale"
+        assert widgets["illustrations"].column.reason == "illustration_index_stale"
+        for col_id in ("vocabulary", "segments", "flipbooks"):
+            assert widgets[col_id].column.count is None
+            assert widgets[col_id].column.state == "unavailable"
+            assert widgets[col_id].column.reason == "cached_tier_error"
+        assert window._project_load_state == "loaded"
+        assert not window._column_loading_timer.isActive()
+        assert all(
+            widget.column.state != "loading"
+            for widget in widgets.values()
+        )
+    finally:
+        window.close()
+
+
+def test_project_visualizer_ignores_stale_generation_tier_failure(
+    app, fake_prefs, monkeypatch,
+):
+    fake_prefs["path"] = "/fake/project"
+    monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    window = ProjectVisualizer()
+    try:
+        current_generation = window._project_load_generation
+        current_worker = window._project_columns_worker
+        window._on_columns_tier_failed(
+            current_generation - 1, "live", "RuntimeError: old failure",
+        )
+
+        assert window._project_load_generation == current_generation
+        assert window._project_columns_worker is current_worker
+        assert window._project_load_state == "loading"
+        assert window._column_loading_timer.isActive()
+        assert all(
+            widget.column.state == "loading"
+            for widget in window._project_column_widgets.values()
+        )
+    finally:
+        window.close()
+
+
 def test_project_visualizer_rejects_older_generation_without_affecting_current_load(
     app, fake_prefs, monkeypatch,
 ):
