@@ -45,7 +45,8 @@ from data.palette import (
 class _PaletteSegmenter:
     model_name = "sam3-test"
 
-    def segment_palette(self, image):
+    def segment_concept(self, image, concept):
+        assert concept in {"subject", "interior"}
         height, width = np.asarray(image).shape[:2]
         top, bottom = height // 4, height - height // 4
         left, right = width // 4, width - width // 4
@@ -58,6 +59,12 @@ class _PaletteSegmenter:
 
 
 _PALETTE_SEGMENTER = _PaletteSegmenter()
+_SEMANTIC_ANNOTATION = {
+    "humans": ["subject"],
+    "animals": [],
+    "objects": [],
+    "setting": "",
+}
 
 def _make_project(tmp: Path) -> str:
     """Return a minimal project directory structure under *tmp*."""
@@ -174,7 +181,11 @@ class TestExtractFgBg(unittest.TestCase):
         from PIL import Image
         img = Image.new("RGB", (64, 64), (100, 200, 50))
         img.save(str(img_path))
-        fg, bg = extract_fg_bg(img_path, segmenter=_PALETTE_SEGMENTER)
+        fg, bg = extract_fg_bg(
+            img_path,
+            annotation=_SEMANTIC_ANNOTATION,
+            segmenter=_PALETTE_SEGMENTER,
+        )
         self.assertIn("rgb", fg)
         self.assertIn("rgb", bg)
         for v in fg["rgb"] + bg["rgb"]:
@@ -187,7 +198,11 @@ class TestExtractFgBg(unittest.TestCase):
         img_path = self.tmp / "contrast.png"
         img.save(str(img_path))
 
-        fg, bg = extract_fg_bg(img_path, segmenter=_PALETTE_SEGMENTER)
+        fg, bg = extract_fg_bg(
+            img_path,
+            annotation=_SEMANTIC_ANNOTATION,
+            segmenter=_PALETTE_SEGMENTER,
+        )
 
         # Foreground (center) should be predominantly blue
         fg_rgb = fg["rgb"]
@@ -257,10 +272,15 @@ class TestCreatePaletteForMovie(unittest.TestCase):
         }
 
     def test_skips_when_cached_no_force(self):
-        # Pre-write a palette cache
-        save_palette(self.project, self.FILENAME, self.MEDIA_TYPE, {"shots": []})
-        # Write a dummy annotation JSON too
+        # Write the semantic source before the cache so the cache is current.
         _write_annotation_json(self.project, self.FILENAME, self.MEDIA_TYPE, [])
+        # Pre-write a palette cache
+        save_palette(self.project, self.FILENAME, self.MEDIA_TYPE, {
+            "schema_version": 2,
+            "analysis_version": "semantic-v1",
+            "method": "semantic-figure",
+            "shots": [],
+        })
 
         with patch("data.palette.load_annotation_items", return_value=[]) as mock_load:
             summary = create_palette_for_movie(
@@ -269,6 +289,39 @@ class TestCreatePaletteForMovie(unittest.TestCase):
 
         self.assertTrue(summary.get("cached"))
         mock_load.assert_not_called()
+
+    def test_newer_annotation_rebuilds_semantic_cache(self):
+        cache = {
+            "schema_version": 2,
+            "analysis_version": "semantic-v1",
+            "method": "semantic-figure",
+            "shots": [],
+        }
+        save_palette(self.project, self.FILENAME, self.MEDIA_TYPE, cache)
+        cache_path = get_palette_path(
+            self.project, self.FILENAME, self.MEDIA_TYPE
+        )
+        annotation_path = _write_annotation_json(
+            self.project, self.FILENAME, self.MEDIA_TYPE, []
+        )
+        cache_path.touch()
+        annotation_path.touch()
+        cache_stat = cache_path.stat()
+        annotation_path.touch()
+        import os
+        os.utime(
+            annotation_path,
+            ns=(cache_stat.st_atime_ns, cache_stat.st_mtime_ns + 1_000_000),
+        )
+
+        with patch("data.palette.load_annotation_items", return_value=[]) as mock_load, \
+             patch("data.palette.read_shotlist", side_effect=FileNotFoundError("no shotlist")):
+            summary = create_palette_for_movie(
+                self.project, self.FILENAME, self.MEDIA_TYPE, force=False
+            )
+
+        self.assertFalse(summary.get("cached"))
+        mock_load.assert_called_once()
 
     def test_force_overwrites_cache(self):
         save_palette(self.project, self.FILENAME, self.MEDIA_TYPE, {"shots": []})
@@ -502,6 +555,7 @@ class TestExtractFgBgFull(unittest.TestCase):
         arr = self._solid_arr((200, 50, 30), (30, 80, 200))
         _fg, _bg, diag = _extract_fg_bg_full(
             self._make_png(arr, "schema.png"),
+            annotation=_SEMANTIC_ANNOTATION,
             segmenter=_PALETTE_SEGMENTER,
         )
         expected = {
@@ -520,6 +574,7 @@ class TestExtractFgBgFull(unittest.TestCase):
         arr = self._solid_arr((220, 30, 30), (30, 30, 220))  # red border, blue center
         _fg, _bg, diag = _extract_fg_bg_full(
             self._make_png(arr, "hc.png"),
+            annotation=_SEMANTIC_ANNOTATION,
             segmenter=_PALETTE_SEGMENTER,
         )
         self.assertFalse(diag["rescue_applied"])
@@ -534,6 +589,7 @@ class TestExtractFgBgFull(unittest.TestCase):
         arr = np.zeros((128, 128, 3), dtype=np.uint8)
         fg, bg, diag = _extract_fg_bg_full(
             self._make_png(arr, "black.png"),
+            annotation=_SEMANTIC_ANNOTATION,
             segmenter=_PALETTE_SEGMENTER,
         )
         # Both colours must remain near-black — no false saturation
@@ -559,6 +615,7 @@ class TestExtractFgBgFull(unittest.TestCase):
         arr[ys, xs] = (35, 55, 145)
         fg, bg, diag = _extract_fg_bg_full(
             self._make_png(arr, "accent.png"),
+            annotation=_SEMANTIC_ANNOTATION,
             segmenter=_PALETTE_SEGMENTER,
         )
         # Diagnostics must be populated
@@ -580,10 +637,14 @@ class TestExtractFgBgFull(unittest.TestCase):
                           rng.integers(0, 64, (400, 2))[:, 1]] = (45, 20, 10)
         p = self._make_png(arr, "det.png")
         fg1, bg1, d1 = _extract_fg_bg_full(
-            p, segmenter=_PALETTE_SEGMENTER
+            p,
+            annotation=_SEMANTIC_ANNOTATION,
+            segmenter=_PALETTE_SEGMENTER,
         )
         fg2, bg2, d2 = _extract_fg_bg_full(
-            p, segmenter=_PALETTE_SEGMENTER
+            p,
+            annotation=_SEMANTIC_ANNOTATION,
+            segmenter=_PALETTE_SEGMENTER,
         )
         self.assertEqual(fg1["rgb"], fg2["rgb"])
         self.assertEqual(bg1["rgb"], bg2["rgb"])
@@ -597,6 +658,7 @@ class TestExtractFgBgFull(unittest.TestCase):
         arr = self._solid_arr((180, 40, 20), (20, 40, 180))
         fg, bg, _diag = _extract_fg_bg_full(
             self._make_png(arr, "keys.png"),
+            annotation=_SEMANTIC_ANNOTATION,
             segmenter=_PALETTE_SEGMENTER,
         )
         for colour in (fg, bg):
@@ -641,6 +703,7 @@ class TestExtractFgBgFull(unittest.TestCase):
                 "movie": {"filename": FILENAME},
                 "shot": {
                     "shot_id": shot_id,
+                    "annotation": _SEMANTIC_ANNOTATION,
                     "best_frame": {"frame": 50, "score": 0.9, "method": "clip"},
                 },
             }
@@ -669,51 +732,37 @@ if __name__ == "__main__":
 
 # ===========================================================================\n# Figure-ground pipeline tests\n# ===========================================================================
 
-class TestMeanShiftSimplify(unittest.TestCase):
-    """_mean_shift_simplify: should return same shape; deterministic."""
-
-    def test_returns_same_shape(self):
-        from data.palette import _mean_shift_simplify
-        arr = np.zeros((64, 64, 3), dtype=np.uint8)
-        out = _mean_shift_simplify(arr)
-        self.assertEqual(out.shape, arr.shape)
-        self.assertEqual(out.dtype, np.uint8)
-
-    def test_deterministic(self):
-        from data.palette import _mean_shift_simplify
-        rng = np.random.RandomState(42)
-        arr = rng.randint(0, 256, (64, 64, 3), dtype=np.uint8)
-        out1 = _mean_shift_simplify(arr)
-        out2 = _mean_shift_simplify(arr)
-        np.testing.assert_array_equal(out1, out2)
-
-    def test_uniform_image_unchanged(self):
-        from data.palette import _mean_shift_simplify
-        arr = np.full((64, 64, 3), 128, dtype=np.uint8)
-        out = _mean_shift_simplify(arr)
-        np.testing.assert_array_equal(out, arr)
-
-
 class TestAgglomerativePalette(unittest.TestCase):
     """_agglomerative_palette: schema, ordering, and explicit failures."""
+
+    @staticmethod
+    def _superpixels(rgb_values, pixel_count=1):
+        return [
+            {"rgb": [int(value) for value in rgb], "pixel_count": pixel_count}
+            for rgb in rgb_values
+        ]
 
     def test_empty_is_explicit_failure(self):
         from data.palette import _agglomerative_palette
         with self.assertRaisesRegex(PaletteAnalysisError, "empty region"):
-            _agglomerative_palette(np.empty((0, 3), dtype=np.uint8))
+            _agglomerative_palette([])
 
     def test_returns_at_most_n_palette(self):
         from data.palette import _agglomerative_palette
         rng = np.random.RandomState(0)
         pixels = rng.randint(0, 256, (500, 3), dtype=np.uint8)
-        result = _agglomerative_palette(pixels, n_clusters=8, n_palette=4)
+        result = _agglomerative_palette(
+            self._superpixels(pixels), n_clusters=8, n_palette=4
+        )
         self.assertLessEqual(len(result), 4)
 
     def test_schema_keys(self):
         from data.palette import _agglomerative_palette
         rng = np.random.RandomState(1)
         pixels = rng.randint(0, 256, (200, 3), dtype=np.uint8)
-        result = _agglomerative_palette(pixels, n_clusters=4, n_palette=3)
+        result = _agglomerative_palette(
+            self._superpixels(pixels), n_clusters=4, n_palette=3
+        )
         for entry in result:
             self.assertIn("rgb", entry)
             self.assertIn("lab", entry)
@@ -726,7 +775,9 @@ class TestAgglomerativePalette(unittest.TestCase):
         from data.palette import _agglomerative_palette
         rng = np.random.RandomState(2)
         pixels = rng.randint(0, 256, (400, 3), dtype=np.uint8)
-        result = _agglomerative_palette(pixels, n_clusters=6, n_palette=4)
+        result = _agglomerative_palette(
+            self._superpixels(pixels), n_clusters=6, n_palette=4
+        )
         weights = [c["weight"] for c in result]
         self.assertEqual(weights, sorted(weights, reverse=True))
 
@@ -734,15 +785,18 @@ class TestAgglomerativePalette(unittest.TestCase):
         from data.palette import _agglomerative_palette
         rng = np.random.RandomState(3)
         pixels = rng.randint(0, 256, (300, 3), dtype=np.uint8)
-        r1 = _agglomerative_palette(pixels, n_clusters=5, n_palette=3)
-        r2 = _agglomerative_palette(pixels, n_clusters=5, n_palette=3)
+        superpixels = self._superpixels(pixels)
+        r1 = _agglomerative_palette(superpixels, n_clusters=5, n_palette=3)
+        r2 = _agglomerative_palette(superpixels, n_clusters=5, n_palette=3)
         for a, b in zip(r1, r2):
             self.assertEqual(a["rgb"], b["rgb"])
 
     def test_single_colour_scene(self):
         from data.palette import _agglomerative_palette
         pixels = np.full((100, 3), (100, 150, 200), dtype=np.uint8)
-        result = _agglomerative_palette(pixels, n_clusters=4, n_palette=3)
+        result = _agglomerative_palette(
+            self._superpixels(pixels), n_clusters=4, n_palette=3
+        )
         self.assertGreater(len(result), 0)
         top_rgb = result[0]["rgb"]
         for v, exp in zip(top_rgb, (100, 150, 200)):
@@ -807,13 +861,21 @@ class TestExtractFgBgFigure(unittest.TestCase):
     def test_returns_three_items(self):
         from data.palette import _extract_fg_bg_figure
         arr = self._make_arr()
-        result = _extract_fg_bg_figure(arr, segmenter=_PALETTE_SEGMENTER)
+        result = _extract_fg_bg_figure(
+            arr,
+            annotation=_SEMANTIC_ANNOTATION,
+            segmenter=_PALETTE_SEGMENTER,
+        )
         self.assertEqual(len(result), 3)
 
     def test_fg_bg_have_rgb_key(self):
         from data.palette import _extract_fg_bg_figure
         arr = self._make_arr()
-        fg, bg, _ = _extract_fg_bg_figure(arr, segmenter=_PALETTE_SEGMENTER)
+        fg, bg, _ = _extract_fg_bg_figure(
+            arr,
+            annotation=_SEMANTIC_ANNOTATION,
+            segmenter=_PALETTE_SEGMENTER,
+        )
         self.assertIn("rgb", fg)
         self.assertIn("rgb", bg)
         self.assertEqual(len(fg["rgb"]), 3)
@@ -821,7 +883,11 @@ class TestExtractFgBgFigure(unittest.TestCase):
     def test_fg_bg_have_palette_key(self):
         from data.palette import _extract_fg_bg_figure
         arr = self._make_arr()
-        fg, bg, _ = _extract_fg_bg_figure(arr, segmenter=_PALETTE_SEGMENTER)
+        fg, bg, _ = _extract_fg_bg_figure(
+            arr,
+            annotation=_SEMANTIC_ANNOTATION,
+            segmenter=_PALETTE_SEGMENTER,
+        )
         self.assertIn("palette", fg)
         self.assertIn("palette", bg)
         self.assertIsInstance(fg["palette"], list)
@@ -830,7 +896,9 @@ class TestExtractFgBgFigure(unittest.TestCase):
         from data.palette import _extract_fg_bg_figure
         arr = self._make_arr()
         fg, bg, diag = _extract_fg_bg_figure(
-            arr, segmenter=_PALETTE_SEGMENTER
+            arr,
+            annotation=_SEMANTIC_ANNOTATION,
+            segmenter=_PALETTE_SEGMENTER,
         )
         self.assertIn("coverage", fg)
         self.assertIn("coverage", bg)
@@ -840,19 +908,29 @@ class TestExtractFgBgFigure(unittest.TestCase):
     def test_diagnostics_schema(self):
         from data.palette import _extract_fg_bg_figure
         arr = self._make_arr()
-        _, _, diag = _extract_fg_bg_figure(arr, segmenter=_PALETTE_SEGMENTER)
+        _, _, diag = _extract_fg_bg_figure(
+            arr,
+            annotation=_SEMANTIC_ANNOTATION,
+            segmenter=_PALETTE_SEGMENTER,
+        )
         for key in (
             "method_used", "segmentation_used", "segmentation_confidence",
-            "superpixels_used", "fallback_level",
+            "superpixels_used", "foreground_mode",
+            "semantic_categories_used", "semantic_concepts_used",
+            "semantic_mask_count", "semantic_foreground_coverage",
             "fg_bg_delta_e", "rescue_applied", "near_black_pair",
         ):
             self.assertIn(key, diag, f"Missing key: {key}")
 
-    def test_method_used_is_figure(self):
+    def test_method_used_is_semantic_figure(self):
         from data.palette import _extract_fg_bg_figure
         arr = self._make_arr()
-        _, _, diag = _extract_fg_bg_figure(arr, segmenter=_PALETTE_SEGMENTER)
-        self.assertEqual(diag["method_used"], "figure")
+        _, _, diag = _extract_fg_bg_figure(
+            arr,
+            annotation=_SEMANTIC_ANNOTATION,
+            segmenter=_PALETTE_SEGMENTER,
+        )
+        self.assertEqual(diag["method_used"], "semantic-figure")
 
     def test_segmentation_unavailable_is_explicit_failure(self):
         from data.palette import _extract_fg_bg_figure
@@ -865,10 +943,14 @@ class TestExtractFgBgFigure(unittest.TestCase):
         rng = np.random.RandomState(99)
         arr = rng.randint(0, 256, (256, 256, 3), dtype=np.uint8)
         fg1, bg1, d1 = _extract_fg_bg_figure(
-            arr, segmenter=_PALETTE_SEGMENTER
+            arr,
+            annotation=_SEMANTIC_ANNOTATION,
+            segmenter=_PALETTE_SEGMENTER,
         )
         fg2, bg2, d2 = _extract_fg_bg_figure(
-            arr, segmenter=_PALETTE_SEGMENTER
+            arr,
+            annotation=_SEMANTIC_ANNOTATION,
+            segmenter=_PALETTE_SEGMENTER,
         )
         self.assertEqual(fg1["rgb"], fg2["rgb"])
         self.assertEqual(bg1["rgb"], bg2["rgb"])
@@ -893,20 +975,26 @@ class TestExtractFgBgFullFigure(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             p = self._make_png(tmpdir)
             fg, bg, diag = _extract_fg_bg_full(
-                p, segmenter=_PALETTE_SEGMENTER
+                p,
+                annotation=_SEMANTIC_ANNOTATION,
+                segmenter=_PALETTE_SEGMENTER,
             )
         self.assertIn("rgb", fg)
         self.assertIn("palette", fg)
         self.assertIn("coverage", fg)
         self.assertIn("method_used", diag)
-        self.assertEqual(diag["method_used"], "figure")
+        self.assertEqual(diag["method_used"], "semantic-figure")
 
     def test_backward_compat_rgb_key(self):
         """extract_fg_bg should still return (fg, bg) with rgb key."""
         from data.palette import extract_fg_bg
         with tempfile.TemporaryDirectory() as tmpdir:
             p = self._make_png(tmpdir)
-            fg, bg = extract_fg_bg(p, segmenter=_PALETTE_SEGMENTER)
+            fg, bg = extract_fg_bg(
+                p,
+                annotation=_SEMANTIC_ANNOTATION,
+                segmenter=_PALETTE_SEGMENTER,
+            )
         self.assertIn("rgb", fg)
         self.assertIn("rgb", bg)
         self.assertEqual(len(fg["rgb"]), 3)
@@ -918,7 +1006,9 @@ class TestExtractFgBgFullFigure(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             p = self._make_png(tmpdir, bg_rgb=(10, 10, 60), fg_rgb=(220, 80, 20))
             fg, bg, _ = _extract_fg_bg_full(
-                p, segmenter=_PALETTE_SEGMENTER
+                p,
+                annotation=_SEMANTIC_ANNOTATION,
+                segmenter=_PALETTE_SEGMENTER,
             )
         fg_lab = _rgb_to_lab(np.array([fg["rgb"]], dtype=np.uint8))[0]
         bg_lab = _rgb_to_lab(np.array([bg["rgb"]], dtype=np.uint8))[0]
@@ -952,6 +1042,7 @@ class TestExtractFgBgFullFigure(unittest.TestCase):
                 "movie": {"filename": FILENAME},
                 "shot": {
                     "shot_id": shot_id,
+                    "annotation": _SEMANTIC_ANNOTATION,
                     "best_frame": {"frame": 50, "score": 0.9, "method": "clip"},
                 },
             }
@@ -969,8 +1060,8 @@ class TestExtractFgBgFullFigure(unittest.TestCase):
 
             cached = load_palette(project, FILENAME, MEDIA_TYPE)
             shot_entry = cached["shots"][0]
-            self.assertEqual(shot_entry.get("method"), "figure")
+            self.assertEqual(shot_entry.get("method"), "semantic-figure")
             self.assertIn("diagnostics", shot_entry)
             diag = shot_entry["diagnostics"]
             self.assertIn("method_used", diag)
-            self.assertEqual(diag["method_used"], "figure")
+            self.assertEqual(diag["method_used"], "semantic-figure")

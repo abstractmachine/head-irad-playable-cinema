@@ -15,20 +15,23 @@ frame``) is loaded and analysed using the figure-ground palette pipeline.
 Thumbnail palettes run that same pipeline once on the exact image resolved by
 the Metadata Viewer.
 
-Algorithm — figure
-------------------
+Algorithm — semantic figure
+---------------------------
 1. Detect paired, continuous near-black bars at the original image edges.
 2. Crop to the detected active-image bounds, or retain the full image when no
     bars are detected.
 3. Resize the active image to 256×256 (LANCZOS) for texture detail.
-4. Simplify texture via ``cv2.pyrMeanShiftFiltering``.
-5. Request foreground-object masks through the configured segmentation model's
-    canonical ``segment_palette(image_pil)`` interface; masks that do not touch
-    the frame edge and whose bounding-box centre lies within the inner 60 % of
-    the frame are classified as foreground.
-6. Cluster each region with agglomerative Ward clustering in CIELAB space
-    using scipy.
-7. Rank clusters by perceptual weight; apply a rescue pass when both
+4. Read ``humans``, ``animals``, and ``objects`` from the image's canonical
+    shot annotation, then request each concept through the configured model's
+    ``segment_concept(image_pil, concept)`` interface. All populated categories
+    contribute in that priority order. If they are empty, segment ``setting``
+    in explicit setting mode; if all four fields are empty, fail.
+5. Segment the working image into deterministic OpenCV SEEDS superpixels,
+    majority-assign each superpixel to foreground or background, and calculate
+    one assigned-region RGB mean per superpixel while retaining its pixel area.
+6. Cluster each region's area-weighted superpixel means with agglomerative Ward
+    clustering in CIELAB space using scipy.
+7. Rank clusters by perceptual and spatial-area weight; apply a rescue pass when both
    dominant colours are near-black or insufficiently distinct.
 
 Missing dependencies, unavailable/incompatible segmentation models, inference
@@ -55,8 +58,9 @@ Output schema
 Output is deterministic for a fixed segmentation result.
 
 Dependencies: Pillow (core dep), numpy (core dep).
-Required for extraction: cv2 (OpenCV), scipy, and a configured segmentation
-adapter exposing ``segment_palette(image_pil)``.
+Required for extraction: OpenCV contrib's ximgproc SEEDS implementation, scipy,
+and a configured segmentation adapter exposing
+``segment_concept(image_pil, concept)``.
 """
 
 from __future__ import annotations
@@ -90,11 +94,19 @@ _RESCUE_TRIGGER_MIN_DELTA_E = 15.0  # rescue triggers when pair CIE76 ΔE is bel
 
 # Figure-ground pipeline constants
 _FIG_RESIZE     = 256   # image resize for the figure pipeline
-_FIG_MS_SP      = 10    # mean-shift spatial radius (pixels)
-_FIG_MS_SR      = 20    # mean-shift color-range radius
 _FIG_N_CLUSTERS = 8     # agglomerative clusters per region
 _FIG_N_PALETTE  = 4     # palette entries kept per region
-_FIG_MAX_SAMPLE = 1024  # max pixels sampled for Ward linkage (speed cap)
+
+PALETTE_SCHEMA_VERSION = 2
+PALETTE_ANALYSIS_VERSION = "semantic-v1"
+
+# VIAN-style colour reduction: SEEDS superpixels become Ward representatives.
+_SEEDS_TARGET_SUPERPIXELS = 1024
+_SEEDS_NUM_LEVELS = 4
+_SEEDS_PRIOR = 2
+_SEEDS_HISTOGRAM_BINS = 5
+_SEEDS_DOUBLE_STEP = False
+_SEEDS_ITERATIONS = 4
 
 # Conservative edge-connected letterbox / pillarbox detection
 _LETTERBOX_NEAR_BLACK_LUMA = 16
@@ -434,7 +446,10 @@ def _rgb_to_lab(rgb_u8: np.ndarray) -> np.ndarray:
     return np.stack([L, a, b], axis=1).astype(np.float32)
 
 
-def _perceptual_weights(lab: np.ndarray) -> np.ndarray:
+def _perceptual_weights(
+    lab: np.ndarray,
+    pixel_counts: np.ndarray | None = None,
+) -> np.ndarray:
     """Compute per-pixel perceptual weights from CIELAB values ``(N, 3)``.
 
     Formula::
@@ -455,7 +470,17 @@ def _perceptual_weights(lab: np.ndarray) -> np.ndarray:
     b_ch  = lab[:, 2]
     chroma = np.sqrt(a * a + b_ch * b_ch)
 
-    dark_frac  = float((L < _LAB_MIN_L).mean())
+    if pixel_counts is None:
+        pixel_counts = np.ones(len(lab), dtype=np.float64)
+    else:
+        pixel_counts = np.asarray(pixel_counts, dtype=np.float64)
+        if pixel_counts.shape != (len(lab),) or np.any(pixel_counts <= 0):
+            raise PaletteAnalysisError(
+                "Palette representative pixel counts are malformed"
+            )
+    dark_frac = float(
+        pixel_counts[L < _LAB_MIN_L].sum() / pixel_counts.sum()
+    )
     eff_min_l  = 2.0 if dark_frac > _LAB_DARK_FRACTION else _LAB_MIN_L
 
     lum_ramp      = np.clip((L - eff_min_l) / max(40.0 - eff_min_l, 1.0), 0.0, 1.0)
@@ -636,7 +661,7 @@ def _maybe_rescue_pair(
 #
 # Required analysis path
 # ----------------------
-# Configured palette segmentation + mean-shift simplification + agglomerative
+# Configured palette segmentation + SEEDS superpixel reduction + agglomerative
 # Ward clustering in CIELAB space. Any unavailable or failed stage aborts
 # analysis.
 #
@@ -651,50 +676,187 @@ def _maybe_rescue_pair(
 #   "coverage"  : float              – fraction of frame pixels in this region
 
 
-def _mean_shift_simplify(arr: np.ndarray) -> np.ndarray:
-    """Merge fine texture into coherent colour regions via mean-shift filtering.
+def _extract_seeds_superpixels(
+    arr_rgb: np.ndarray,
+    fg_mask: np.ndarray,
+    bg_mask: np.ndarray,
+    *,
+    diagnostic_capture: dict | None = None,
+) -> "tuple[list[dict], list[dict], dict]":
+    """Reduce an RGB image to region-assigned OpenCV SEEDS representatives.
 
-    Requires ``cv2.pyrMeanShiftFiltering``; unavailable or failed processing is
-    an explicit analysis error.
-
-    Parameters
-    ----------
-    arr : (H, W, 3) uint8 RGB array.
-
-    Returns
-    -------
-    (H, W, 3) uint8 RGB simplified array — same shape as input.
+    SEEDS runs once on the complete working image. Each spatially coherent
+    superpixel is assigned to foreground only when a strict majority of its
+    pixels belong to the SAM foreground mask; background wins ties. For a
+    boundary-crossing label, its RGB representative is averaged only from
+    pixels in the assigned region, avoiding cross-region colour contamination,
+    while ``pixel_count`` retains the label's complete spatial area.
     """
+    if (
+        arr_rgb.ndim != 3
+        or arr_rgb.shape[2] != 3
+        or arr_rgb.dtype != np.uint8
+    ):
+        raise PaletteAnalysisError(
+            "SEEDS requires an H×W uint8 RGB working image"
+        )
+    height, width = arr_rgb.shape[:2]
+    expected_mask_shape = (height, width)
+    fg_mask = np.asarray(fg_mask, dtype=bool)
+    bg_mask = np.asarray(bg_mask, dtype=bool)
+    if fg_mask.shape != expected_mask_shape or bg_mask.shape != expected_mask_shape:
+        raise PaletteAnalysisError(
+            "SEEDS region masks do not match the working image"
+        )
+    if np.any(fg_mask & bg_mask) or not np.all(fg_mask | bg_mask):
+        raise PaletteAnalysisError(
+            "SEEDS region masks must be disjoint and cover the working image"
+        )
+
     try:
         import cv2  # type: ignore
     except ImportError as exc:
         raise PaletteAnalysisError(
-            "OpenCV unavailable for palette mean-shift analysis"
+            "OpenCV contrib SEEDS unavailable: install "
+            "opencv-contrib-python-headless>=4.10"
         ) from exc
+    factory = getattr(
+        getattr(cv2, "ximgproc", None), "createSuperpixelSEEDS", None
+    )
+    if not callable(factory):
+        raise PaletteAnalysisError(
+            "OpenCV contrib SEEDS unavailable: cv2.ximgproc."
+            "createSuperpixelSEEDS is missing"
+        )
+
     try:
-        return cv2.pyrMeanShiftFiltering(arr, sp=_FIG_MS_SP, sr=_FIG_MS_SR)
+        seeds = factory(
+            width,
+            height,
+            3,
+            _SEEDS_TARGET_SUPERPIXELS,
+            _SEEDS_NUM_LEVELS,
+            _SEEDS_PRIOR,
+            _SEEDS_HISTOGRAM_BINS,
+            _SEEDS_DOUBLE_STEP,
+        )
+        bgr = np.ascontiguousarray(arr_rgb[:, :, ::-1])
+        seeds.iterate(bgr, _SEEDS_ITERATIONS)
+        labels = np.asarray(seeds.getLabels())
     except Exception as exc:
         raise PaletteAnalysisError(
-            f"Palette mean-shift analysis failed: {exc}"
+            f"SEEDS superpixel segmentation failed: {exc}"
         ) from exc
+
+    if labels.shape != expected_mask_shape:
+        raise PaletteAnalysisError(
+            "SEEDS returned malformed labels: "
+            f"shape {labels.shape}, expected {expected_mask_shape}"
+        )
+    label_ids = np.unique(labels)
+    if len(label_ids) == 0:
+        raise PaletteAnalysisError("SEEDS produced no superpixels")
+    if len(label_ids) > _SEEDS_TARGET_SUPERPIXELS:
+        raise PaletteAnalysisError(
+            f"SEEDS produced {len(label_ids)} superpixels, exceeding the "
+            f"configured maximum of {_SEEDS_TARGET_SUPERPIXELS}"
+        )
+
+    foreground: list[dict] = []
+    background: list[dict] = []
+    areas: list[int] = []
+    boundary_crossing = 0
+    diagnostic_regions: list[dict] = []
+    for label_id in label_ids:
+        label_mask = labels == label_id
+        pixel_count = int(label_mask.sum())
+        fg_count = int(np.count_nonzero(label_mask & fg_mask))
+        bg_count = pixel_count - fg_count
+        if fg_count and bg_count:
+            boundary_crossing += 1
+
+        if fg_count > bg_count:
+            region_mask = label_mask & fg_mask
+            destination = foreground
+            region = "foreground"
+        else:
+            region_mask = label_mask & bg_mask
+            destination = background
+            region = "background"
+
+        diagnostic_regions.append({
+            "label": int(label_id),
+            "assignment": region,
+            "foreground_pixel_count": fg_count,
+            "background_pixel_count": bg_count,
+            "boundary_crossing": bool(fg_count and bg_count),
+            "tie": bool(fg_count and fg_count == bg_count),
+        })
+
+        region_pixels = arr_rgb[region_mask]
+        if len(region_pixels) == 0:
+            raise PaletteAnalysisError(
+                f"SEEDS superpixel {int(label_id)} has no {region} pixels"
+            )
+        mean_rgb = np.rint(
+            region_pixels.astype(np.float64).mean(axis=0)
+        ).astype(np.uint8)
+        destination.append({
+            "label": int(label_id),
+            "rgb": mean_rgb.tolist(),
+            "pixel_count": pixel_count,
+            "region_pixel_count": int(len(region_pixels)),
+        })
+        areas.append(pixel_count)
+
+    if not foreground:
+        raise PaletteAnalysisError(
+            "SEEDS produced no foreground superpixels after majority assignment"
+        )
+    if not background:
+        raise PaletteAnalysisError(
+            "SEEDS produced no background superpixels after majority assignment"
+        )
+
+    if diagnostic_capture is not None:
+        diagnostic_capture["seeds_labels"] = labels.copy()
+        diagnostic_capture["seeds_regions"] = diagnostic_regions
+        diagnostic_capture["seeds_superpixels"] = {
+            "foreground": [dict(item) for item in foreground],
+            "background": [dict(item) for item in background],
+        }
+
+    return foreground, background, {
+        "superpixels_used": True,
+        "superpixel_count": len(label_ids),
+        "foreground_superpixel_count": len(foreground),
+        "background_superpixel_count": len(background),
+        "boundary_crossing_superpixel_count": boundary_crossing,
+        "mean_superpixel_area": round(float(np.mean(areas)), 2),
+        "min_superpixel_area": min(areas),
+        "max_superpixel_area": max(areas),
+        "superpixel_region_rule": "strict_foreground_majority_background_tie",
+    }
 
 
 def _agglomerative_palette(
-    pixels_rgb: np.ndarray,
+    superpixels: list[dict],
     n_clusters: int = _FIG_N_CLUSTERS,
     n_palette: int = _FIG_N_PALETTE,
+    *,
+    diagnostic_capture: dict | None = None,
 ) -> "list[dict]":
-    """Agglomerative Ward clustering in LAB space for rich palette extraction.
+    """Agglomerative Ward clustering of area-weighted SEEDS means in LAB.
 
     More perceptually stable than k-means: bottom-up merging avoids local-
     minima sensitivity and never requires a random seed.
 
     Algorithm
     ---------
-    1. Stride-sample up to ``_FIG_MAX_SAMPLE`` pixels (deterministic).
-    2. Convert to CIELAB; run Ward linkage → *k* clusters.
-    3. Assign ALL pixels to the nearest sample-cluster centroid (Voronoi).
-    4. Rank clusters by total perceptual weight; return top *n_palette*.
+    1. Convert each superpixel-average RGB representative to CIELAB.
+    2. Run Ward linkage over those representatives.
+    3. Compute area-weighted RGB/LAB centroids for the resulting clusters.
+    4. Rank clusters by perceptual weight multiplied by represented pixel area.
 
     Returns
     -------
@@ -703,8 +865,28 @@ def _agglomerative_palette(
         ``rgb``, ``lab``, ``luminance``, ``chroma``, ``weight``, ``size``.
         Raises ``PaletteAnalysisError`` when Ward clustering cannot run.
     """
-    if len(pixels_rgb) == 0:
-        raise PaletteAnalysisError("Palette segmentation produced an empty region")
+    if not superpixels:
+        raise PaletteAnalysisError("Palette superpixels produced an empty region")
+
+    try:
+        representative_rgb = np.asarray(
+            [item["rgb"] for item in superpixels], dtype=np.uint8
+        )
+        pixel_counts = np.asarray(
+            [item["pixel_count"] for item in superpixels], dtype=np.int64
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise PaletteAnalysisError(
+            f"Palette superpixel representatives are malformed: {exc}"
+        ) from exc
+    if representative_rgb.shape != (len(superpixels), 3):
+        raise PaletteAnalysisError(
+            "Palette superpixel RGB representatives are malformed"
+        )
+    if pixel_counts.shape != (len(superpixels),) or np.any(pixel_counts <= 0):
+        raise PaletteAnalysisError(
+            "Palette superpixel pixel counts are malformed"
+        )
 
     try:
         from scipy.cluster.hierarchy import linkage, fcluster  # type: ignore
@@ -713,59 +895,50 @@ def _agglomerative_palette(
             "SciPy unavailable for palette Ward clustering"
         ) from exc
 
-    # --- Stride-sample for fast Ward linkage ---------------------------------
-    n = len(pixels_rgb)
-    if n > _FIG_MAX_SAMPLE:
-        step = max(1, n // _FIG_MAX_SAMPLE)
-        idx_sample = np.arange(0, n, step)[:_FIG_MAX_SAMPLE]
-    else:
-        idx_sample = np.arange(n)
-
-    sample_rgb = pixels_rgb[idx_sample]
-    sample_lab = _rgb_to_lab(sample_rgb)
-
-    k = min(n_clusters, len(idx_sample))
+    representative_lab = _rgb_to_lab(representative_rgb)
+    k = min(n_clusters, len(superpixels))
     if k < 2:
         raise PaletteAnalysisError(
-            "Palette region has insufficient pixels for Ward clustering"
+            "Palette region has insufficient superpixels for Ward clustering"
         )
 
-    # --- Ward linkage on sample LAB values -----------------------------------
+    # Ward determines colour-space groups; area weights determine their
+    # representative centroids and perceptual ranking below.
     try:
-        Z = linkage(sample_lab.astype(np.float64), method="ward")
-        sample_labels = fcluster(Z, t=k, criterion="maxclust")  # 1-indexed
+        linkage_matrix = linkage(
+            representative_lab.astype(np.float64), method="ward"
+        )
+        cluster_labels = fcluster(
+            linkage_matrix, t=k, criterion="maxclust"
+        )
     except Exception as exc:
         raise PaletteAnalysisError(
             f"Palette Ward clustering failed: {exc}"
         ) from exc
 
-    # --- Cluster centroids (mean LAB per sample cluster) ---------------------
-    centroids_lab = np.zeros((k, 3), dtype=np.float64)
-    for cid in range(1, k + 1):
-        cluster_mask = sample_labels == cid
-        if cluster_mask.any():
-            centroids_lab[cid - 1] = sample_lab[cluster_mask].mean(axis=0)
+    weights = _perceptual_weights(representative_lab, pixel_counts)
 
-    # --- Assign ALL pixels to nearest centroid (Voronoi) ---------------------
-    all_lab = _rgb_to_lab(pixels_rgb)
-    diffs = all_lab[:, np.newaxis, :] - centroids_lab[np.newaxis, :, :]  # (N, k, 3)
-    dists_sq = (diffs ** 2).sum(axis=2)                                   # (N, k)
-    assigned = np.argmin(dists_sq, axis=1) + 1                            # 1-indexed
-
-    weights = _perceptual_weights(all_lab)
-
-    # --- Cluster statistics --------------------------------------------------
     candidates: list[dict] = []
-    for cid in range(1, k + 1):
-        cluster_mask = assigned == cid
-        count = int(cluster_mask.sum())
-        if count == 0:
-            continue
-        cluster_weight = float(weights[cluster_mask].sum())
-        mean_rgb = pixels_rgb[cluster_mask].astype(np.float64).mean(axis=0)
-        mean_lab = all_lab[cluster_mask].mean(axis=0)
+    diagnostic_clusters: list[dict] = []
+    for cluster_id in np.unique(cluster_labels):
+        cluster_mask = cluster_labels == cluster_id
+        cluster_areas = pixel_counts[cluster_mask].astype(np.float64)
+        count = int(cluster_areas.sum())
+        cluster_weight = float(
+            np.sum(weights[cluster_mask] * cluster_areas)
+        )
+        mean_rgb = np.average(
+            representative_rgb[cluster_mask].astype(np.float64),
+            axis=0,
+            weights=cluster_areas,
+        )
+        mean_lab = np.average(
+            representative_lab[cluster_mask].astype(np.float64),
+            axis=0,
+            weights=cluster_areas,
+        )
         chroma = float(np.sqrt(float(mean_lab[1]) ** 2 + float(mean_lab[2]) ** 2))
-        candidates.append({
+        candidate = {
             "rgb":       (
                 int(round(float(mean_rgb[0]))),
                 int(round(float(mean_rgb[1]))),
@@ -780,12 +953,31 @@ def _agglomerative_palette(
             "chroma":    round(chroma / 100.0, 3),
             "weight":    cluster_weight,
             "size":      count,
+        }
+        candidates.append(candidate)
+        diagnostic_clusters.append({
+            "cluster_id": int(cluster_id),
+            "rgb": list(candidate["rgb"]),
+            "lab": list(candidate["lab"]),
+            "luminance": candidate["luminance"],
+            "chroma": candidate["chroma"],
+            "weight": candidate["weight"],
+            "size": candidate["size"],
+            "superpixel_count": int(np.count_nonzero(cluster_mask)),
         })
 
     if not candidates:
         raise PaletteAnalysisError("Palette Ward clustering produced no candidates")
 
     candidates.sort(key=lambda c: c["weight"], reverse=True)
+    if diagnostic_capture is not None:
+        diagnostic_clusters.sort(key=lambda item: item["weight"], reverse=True)
+        diagnostic_capture.update({
+            "superpixel_labels": [int(item["label"]) for item in superpixels],
+            "cluster_labels": [int(value) for value in cluster_labels],
+            "clusters": diagnostic_clusters,
+            "ranked_candidates": diagnostic_clusters[:n_palette],
+        })
     return candidates[:n_palette]
 
 
@@ -823,99 +1015,161 @@ def _region_info_from_candidates(
     }
 
 
-def _segment_palette_masks(
-    arr_rgb: np.ndarray,
-    segmenter,
-) -> "tuple[np.ndarray, np.ndarray, float]":
-    """Classify pixels using the canonical palette segmentation interface.
+_SEMANTIC_CATEGORY_PRIORITY = ("humans", "animals", "objects")
 
-    Foreground = masks that do **not** touch any frame edge AND whose
-    bounding-box centre lies in the inner 60 % of the frame.  Everything
-    else (edge-touching masks, uncovered pixels) is background.
+
+def _semantic_selection(annotation: dict | None) -> "tuple[str, list[tuple[str, list[str]]]]":
+    """Return the intentional semantic mode and ordered annotation concepts."""
+    annotation = annotation if isinstance(annotation, dict) else {}
+    selected: list[tuple[str, list[str]]] = []
+    seen: set[str] = set()
+
+    for category in _SEMANTIC_CATEGORY_PRIORITY:
+        value = annotation.get(category, [])
+        if value is None:
+            value = []
+        if not isinstance(value, (list, tuple)):
+            raise PaletteAnalysisError(
+                f"Palette annotation field '{category}' must be a list"
+            )
+        concepts: list[str] = []
+        for raw_concept in value:
+            concept = str(raw_concept).strip()
+            key = concept.casefold()
+            if not concept or key in seen:
+                continue
+            seen.add(key)
+            concepts.append(concept)
+        if concepts:
+            selected.append((category, concepts))
+
+    if selected:
+        return "semantic", selected
+
+    setting = annotation.get("setting", "")
+    if setting is None:
+        setting = ""
+    if not isinstance(setting, str):
+        raise PaletteAnalysisError(
+            "Palette annotation field 'setting' must be a string"
+        )
+    setting = setting.strip()
+    if setting:
+        return "setting", [("setting", [setting])]
+
+    raise PaletteAnalysisError(
+        "No semantic image categories available for palette extraction."
+    )
+
+
+def _select_semantic_foreground(
+    arr_rgb: np.ndarray,
+    *,
+    annotation: dict | None,
+    segmenter,
+) -> "tuple[np.ndarray, np.ndarray, dict]":
+    """Build a deterministic semantic foreground mask from shot annotation.
+
+    Every non-empty humans/animals/objects category contributes concepts in
+    priority order. Overlap pixels belong to the first category in that order.
+    When those categories are empty, the setting string is segmented as an
+    intentional setting mode. No spatial or colour-derived region is created.
 
     Returns
     -------
-    (fg_mask, bg_mask, confidence)
+    (fg_mask, bg_mask, diagnostics)
         fg_mask, bg_mask — (H, W) bool arrays.
-        confidence       — fraction of frame pixels covered by accepted fg masks.
+        diagnostics      — semantic mode, concepts, mask count, and coverage.
     """
-    from services.silhouette import check_containment  # type: ignore
-
     h, w = arr_rgb.shape[:2]
     fg_mask = np.zeros((h, w), dtype=bool)
-    bg_mask = np.ones((h, w), dtype=bool)
-
-    segment_palette = getattr(segmenter, "segment_palette", None)
-    if not callable(segment_palette):
+    segment_concept = getattr(segmenter, "segment_concept", None)
+    if not callable(segment_concept):
         raise PaletteAnalysisError(
             "Palette segmentation unavailable: configured model does not expose "
-            "segment_palette(image_pil)"
+            "segment_concept(image_pil, concept)"
         )
-    try:
-        from PIL import Image
+    foreground_mode, category_concepts = _semantic_selection(annotation)
 
-        masks = segment_palette(Image.fromarray(arr_rgb, "RGB"))
-    except Exception as exc:
-        raise PaletteAnalysisError(
-            f"Palette segmentation failed: {exc}"
-        ) from exc
-    if not isinstance(masks, (list, tuple)):
-        raise PaletteAnalysisError(
-            "Palette segmentation returned a malformed mask collection"
-        )
+    from PIL import Image
 
-    cy_lo, cy_hi = int(h * 0.20), int(h * 0.80)
-    cx_lo, cx_hi = int(w * 0.20), int(w * 0.80)
+    image_pil = Image.fromarray(arr_rgb, "RGB")
+    semantic_mask_count = 0
+    category_pixel_counts: dict[str, int] = {}
+    concepts_used: list[str] = []
+    for category, concepts in category_concepts:
+        category_mask = np.zeros((h, w), dtype=bool)
+        concepts_used.extend(concepts)
+        for concept in concepts:
+            try:
+                masks = segment_concept(image_pil, concept)
+            except Exception as exc:
+                raise PaletteAnalysisError(
+                    f"Semantic palette segmentation failed for '{concept}': {exc}"
+                ) from exc
+            if not isinstance(masks, (list, tuple)):
+                raise PaletteAnalysisError(
+                    f"Semantic palette segmentation for '{concept}' returned "
+                    "a malformed mask collection"
+                )
+            for mask in masks:
+                if not isinstance(mask, dict) or "segmentation" not in mask:
+                    raise PaletteAnalysisError(
+                        f"Semantic palette segmentation for '{concept}' returned "
+                        "a malformed mask entry"
+                    )
+                segmentation = np.asarray(mask["segmentation"], dtype=bool)
+                if segmentation.shape != (h, w):
+                    raise PaletteAnalysisError(
+                        f"Semantic palette segmentation for '{concept}' returned "
+                        f"mask shape {segmentation.shape}; expected {(h, w)}"
+                    )
+                if not segmentation.any():
+                    continue
+                category_mask |= segmentation
+                semantic_mask_count += 1
 
-    for m in masks:
-        if not isinstance(m, dict) or "segmentation" not in m:
-            raise PaletteAnalysisError(
-                "Palette segmentation returned a malformed mask entry"
-            )
-        seg = np.asarray(m["segmentation"], dtype=bool)
-        if seg.shape != (h, w):
-            raise PaletteAnalysisError(
-                "Palette segmentation returned mask shape "
-                f"{seg.shape}; expected {(h, w)}"
-            )
-        if not check_containment(seg):
-            continue
-        bbox = m.get("bbox", [])
-        if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
-            raise PaletteAnalysisError(
-                "Palette segmentation returned a mask without a valid bbox"
-            )
-        bx, by, bw_m, bh_m = bbox[:4]
-        cx_centre = bx + bw_m / 2
-        cy_centre = by + bh_m / 2
-        if not (cx_lo <= cx_centre <= cx_hi and cy_lo <= cy_centre <= cy_hi):
-            continue
-        fg_mask |= seg
-        bg_mask &= ~seg
+        exclusive_category_mask = category_mask & ~fg_mask
+        category_pixel_counts[category] = int(exclusive_category_mask.sum())
+        fg_mask |= category_mask
 
-    confidence = round(float(fg_mask.sum()) / float(h * w), 4)
+    bg_mask = ~fg_mask
+    semantic_coverage = round(float(fg_mask.sum()) / float(h * w), 4)
     if fg_mask.sum() < h * w * 0.02:
         raise PaletteAnalysisError(
-            "Palette segmentation returned no usable foreground segmentation"
+            "Semantic palette segmentation returned no usable masks for "
+            f"concepts: {', '.join(concepts_used)}"
         )
     if not bg_mask.any():
         raise PaletteAnalysisError(
-            "Palette segmentation returned no usable background region"
+            "Semantic palette segmentation returned no usable background region"
         )
-    return fg_mask, bg_mask, confidence
+    return fg_mask, bg_mask, {
+        "foreground_mode": foreground_mode,
+        "semantic_categories_used": [
+            category for category, _concepts in category_concepts
+        ],
+        "semantic_concepts_used": concepts_used,
+        "semantic_mask_count": semantic_mask_count,
+        "semantic_foreground_coverage": semantic_coverage,
+        "semantic_category_pixel_counts": category_pixel_counts,
+    }
 
 
 def _extract_fg_bg_figure(
     arr_rgb: np.ndarray,
     *,
+    annotation: dict | None = None,
     segmenter=None,
+    diagnostic_capture: dict | None = None,
 ) -> "tuple[dict, dict, dict]":
     """Full figure-ground extraction pipeline.
 
     Parameters
     ----------
     arr_rgb         : (H, W, 3) uint8 RGB array (already resized).
-    segmenter : Configured adapter implementing ``segment_palette(image_pil)``.
+    segmenter : Configured adapter implementing
+        ``segment_concept(image_pil, concept)``.
 
     Returns
     -------
@@ -926,30 +1180,57 @@ def _extract_fg_bg_figure(
         ``"method_used"``, ``"segmentation_used"``,
         ``"segmentation_confidence"``, ``"superpixels_used"``,
         ``"fg_region_count"``, ``"bg_region_count"``,
-        ``"cluster_count"``, ``"fallback_level"``.
+        ``"cluster_count"``, and semantic category/mask diagnostics.
     """
     h, w = arr_rgb.shape[:2]
     total_pixels = h * w
 
-    # Step 1 — mean-shift simplification
-    simplified = _mean_shift_simplify(arr_rgb)
-    superpixels_used = not np.array_equal(simplified, arr_rgb)
-
-    # Step 2 — required semantic segmentation
+    # Step 1 — required semantic segmentation
     if segmenter is None:
         raise PaletteAnalysisError(
             "Palette segmentation unavailable: no configured model loaded"
         )
-    fg_mask, bg_mask, segmentation_confidence = _segment_palette_masks(
-        arr_rgb, segmenter
+    fg_mask, bg_mask, semantic_diagnostics = _select_semantic_foreground(
+        arr_rgb, annotation=annotation, segmenter=segmenter
+    )
+    if diagnostic_capture is not None:
+        diagnostic_capture["semantic_foreground_mask"] = fg_mask.copy()
+
+    # Step 2 — VIAN-style SEEDS colour representatives, assigned by SAM region
+    seeds_kwargs = {}
+    if diagnostic_capture is not None:
+        seeds_kwargs["diagnostic_capture"] = diagnostic_capture
+    fg_superpixels, bg_superpixels, superpixel_diagnostics = (
+        _extract_seeds_superpixels(
+            arr_rgb, fg_mask, bg_mask, **seeds_kwargs
+        )
     )
 
-    fg_pixels = simplified[fg_mask]
-    bg_pixels = simplified[bg_mask]
-
     # Step 3 — agglomerative clustering per region
-    fg_candidates = _agglomerative_palette(fg_pixels, _FIG_N_CLUSTERS, _FIG_N_PALETTE)
-    bg_candidates = _agglomerative_palette(bg_pixels, _FIG_N_CLUSTERS, _FIG_N_PALETTE)
+    foreground_ward_capture = {} if diagnostic_capture is not None else None
+    background_ward_capture = {} if diagnostic_capture is not None else None
+    foreground_ward_kwargs = {}
+    background_ward_kwargs = {}
+    if foreground_ward_capture is not None:
+        foreground_ward_kwargs["diagnostic_capture"] = foreground_ward_capture
+        background_ward_kwargs["diagnostic_capture"] = background_ward_capture
+    fg_candidates = _agglomerative_palette(
+        fg_superpixels,
+        _FIG_N_CLUSTERS,
+        _FIG_N_PALETTE,
+        **foreground_ward_kwargs,
+    )
+    bg_candidates = _agglomerative_palette(
+        bg_superpixels,
+        _FIG_N_CLUSTERS,
+        _FIG_N_PALETTE,
+        **background_ward_kwargs,
+    )
+    if diagnostic_capture is not None:
+        diagnostic_capture["ward"] = {
+            "foreground": foreground_ward_capture,
+            "background": background_ward_capture,
+        }
 
     # Step 4 — rescue pass (reuses existing logic)
     fg_top, bg_top, rescue_diag = _maybe_rescue_pair(fg_candidates, bg_candidates)
@@ -967,16 +1248,18 @@ def _extract_fg_bg_figure(
     # Step 5 — diagnostics
     diagnostics: "dict[str, Any]" = {
         **rescue_diag,
-        "method_used":             "figure",
+        "method_used":             "semantic-figure",
         "segmentation_used":       getattr(
             segmenter, "model_name", type(segmenter).__name__
         ),
-        "segmentation_confidence": segmentation_confidence,
-        "superpixels_used":        superpixels_used,
+        "segmentation_confidence": semantic_diagnostics[
+            "semantic_foreground_coverage"
+        ],
+        **semantic_diagnostics,
+        **superpixel_diagnostics,
         "fg_region_count":         int(fg_mask.sum()),
         "bg_region_count":         int(bg_mask.sum()),
         "cluster_count":           _FIG_N_CLUSTERS,
-        "fallback_level":          0,
     }
     return fg_out, bg_out, diagnostics
 
@@ -984,14 +1267,17 @@ def _extract_fg_bg_figure(
 def _extract_fg_bg_full(
     image_path: Path,
     *,
+    annotation: dict | None = None,
     segmenter=None,
+    diagnostic_capture: dict | None = None,
 ) -> "tuple[dict, dict, dict]":
     """Full figure-ground extraction returning ``(foreground, background, diagnostics)``.
 
     Parameters
     ----------
     image_path        : Path to a PNG or other Pillow-readable image.
-    segmenter: Configured adapter implementing ``segment_palette(image_pil)``.
+    segmenter: Configured adapter implementing
+        ``segment_concept(image_pil, concept)``.
     """
     try:
         from PIL import Image
@@ -1004,6 +1290,8 @@ def _extract_fg_bg_full(
     try:
         with Image.open(image_path) as opened:
             source_image = opened.convert("RGB")
+        if diagnostic_capture is not None:
+            diagnostic_capture["source_image"] = source_image.copy()
         source_width, source_height = source_image.size
         content = _detect_content_bbox(source_image)
         active_image = source_image.crop(tuple(content["bbox"]))
@@ -1017,8 +1305,14 @@ def _extract_fg_bg_full(
             f"Palette source image could not be analyzed: {exc}"
         ) from exc
 
+    figure_kwargs = {
+        "annotation": annotation,
+        "segmenter": segmenter,
+    }
+    if diagnostic_capture is not None:
+        figure_kwargs["diagnostic_capture"] = diagnostic_capture
     foreground, background, diagnostics = _extract_fg_bg_figure(
-        arr, segmenter=segmenter
+        arr, **figure_kwargs
     )
     diagnostics["source_image"] = {
         "width": source_width,
@@ -1045,6 +1339,7 @@ def _extract_fg_bg_full(
 def extract_fg_bg(
     image_path: Path,
     *,
+    annotation: dict | None = None,
     segmenter=None,
 ) -> "tuple[dict, dict]":
     """Extract dominant foreground and background colours from a frame image.
@@ -1052,7 +1347,8 @@ def extract_fg_bg(
     Parameters
     ----------
     image_path        : Path to a PNG (or any Pillow-readable) image.
-    segmenter: Configured adapter implementing ``segment_palette(image_pil)``.
+    segmenter: Configured adapter implementing
+        ``segment_concept(image_pil, concept)``.
 
     Returns
     -------
@@ -1066,7 +1362,7 @@ def extract_fg_bg(
     OSError      If the image cannot be opened.
     """
     fg, bg, _diag = _extract_fg_bg_full(
-        image_path, segmenter=segmenter
+        image_path, annotation=annotation, segmenter=segmenter
     )
     return fg, bg
 
@@ -1088,10 +1384,10 @@ def _load_palette_segmenter(project_path: str, verbose: bool = False):
         raise PaletteAnalysisError(
             f"Palette segmentation unavailable: {exc}"
         ) from exc
-    if not callable(getattr(segmenter, "segment_palette", None)):
+    if not callable(getattr(segmenter, "segment_concept", None)):
         raise PaletteAnalysisError(
             "Palette segmentation unavailable: configured model does not expose "
-            "segment_palette(image_pil)"
+            "segment_concept(image_pil, concept)"
         )
     if verbose:
         print(f"  Segmentation model loaded: {sam_name} ({device})")
@@ -1114,12 +1410,612 @@ def _thumbnail_source_fingerprint(project_path: str, source_path: Path) -> dict:
     }
 
 
-def _thumbnail_cache_is_current(cache: dict, source_image: dict) -> bool:
+def _semantic_input_fingerprint(annotation: dict | None) -> dict:
+    """Return the normalized semantic input and its deterministic digest."""
+    foreground_mode, category_concepts = _semantic_selection(annotation)
+    semantic_input = {
+        "foreground_mode": foreground_mode,
+        "categories": [
+            {"category": category, "concepts": concepts}
+            for category, concepts in category_concepts
+        ],
+    }
+    encoded = json.dumps(
+        semantic_input, ensure_ascii=True, separators=(",", ":"), sort_keys=True
+    ).encode("utf-8")
+    return {
+        **semantic_input,
+        "sha256": hashlib.sha256(encoded).hexdigest(),
+    }
+
+
+def _thumbnail_cache_is_current(
+    cache: dict,
+    source_image: dict,
+    semantic_input: dict,
+) -> bool:
     cached_source = cache.get("source_image", {})
+    cached_semantic_input = cache.get("semantic_input", {})
     return (
-        cached_source.get("path") == source_image.get("path")
+        cache.get("schema_version") == PALETTE_SCHEMA_VERSION
+        and cache.get("analysis_version") == PALETTE_ANALYSIS_VERSION
+        and cache.get("method") == "semantic-figure"
+        and cached_source.get("path") == source_image.get("path")
         and cached_source.get("sha256") == source_image.get("sha256")
+        and cached_semantic_input.get("sha256") == semantic_input.get("sha256")
     )
+
+
+def _semantic_cache_is_current(cache: dict | None) -> bool:
+    return bool(
+        cache
+        and cache.get("schema_version") == PALETTE_SCHEMA_VERSION
+        and cache.get("analysis_version") == PALETTE_ANALYSIS_VERSION
+        and cache.get("method") == "semantic-figure"
+    )
+
+
+def _timecode_seconds(value: str) -> float:
+    try:
+        hours, minutes, seconds = str(value).split(":")
+        return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+    except (TypeError, ValueError) as exc:
+        raise PaletteAnalysisError(
+            f"Invalid shotlist timecode for thumbnail annotation: {value!r}"
+        ) from exc
+
+
+def _resolve_thumbnail_annotation(
+    project_path: str,
+    filename: str,
+    media_type: str,
+    media_id: str,
+    metadata: dict,
+) -> dict:
+    """Resolve the shot annotation describing a canonical gameplay thumbnail."""
+    if media_type != "gameplay":
+        raise PaletteAnalysisError(
+            "No semantic image categories available for palette extraction. "
+            "The metadata thumbnail has no per-image shot annotation."
+        )
+
+    video_path = (
+        Path(project_path) / "media" / "videos" / media_type / filename
+    )
+    if not video_path.exists():
+        raise PaletteAnalysisError(
+            "No semantic image categories available for palette extraction. "
+            f"Thumbnail source video not found: {video_path}"
+        )
+
+    from services.transcode import get_video_thumbnail_timestamp
+
+    target_seconds = get_video_thumbnail_timestamp(video_path)
+    try:
+        shotlist = read_shotlist(project_path, filename, media_type)
+        entries = load_annotation_items(project_path, filename, media_type)
+    except FileNotFoundError as exc:
+        raise PaletteAnalysisError(
+            "No semantic image categories available for palette extraction. "
+            f"{exc}"
+        ) from exc
+
+    matching_shot_id = None
+    for shot in shotlist:
+        start_seconds = _timecode_seconds(shot.get("start_time", ""))
+        end_seconds = _timecode_seconds(shot.get("end_time", ""))
+        if start_seconds <= target_seconds <= end_seconds:
+            matching_shot_id = build_shot_id(
+                media_id,
+                int(shot.get("start_frame") or 0),
+                int(shot.get("end_frame") or 0),
+            )
+            break
+
+    if matching_shot_id is None:
+        raise PaletteAnalysisError(
+            "No semantic image categories available for palette extraction. "
+            f"No shot contains thumbnail timestamp {target_seconds:.3f}s."
+        )
+
+    for entry in entries:
+        shot_data = entry.get("shot", {})
+        if str(shot_data.get("shot_id", "")) == matching_shot_id:
+            annotation = shot_data.get("annotation")
+            return annotation if isinstance(annotation, dict) else {}
+
+    raise PaletteAnalysisError(
+        "No semantic image categories available for palette extraction. "
+        f"No annotation found for thumbnail shot {matching_shot_id}."
+    )
+
+
+def _palette_diagnostic_dir(project_path: str) -> Path:
+    return Path(project_path) / "output" / "test" / "palette"
+
+
+def _write_palette_diagnostic_failure(
+    project_path: str,
+    media_id: str,
+    filename: str,
+    media_type: str,
+    error: Exception,
+    *,
+    artifact_stem: str | None = None,
+    extra: dict | None = None,
+) -> Path:
+    """Write a failure record and remove stale images for this media item."""
+    output_dir = _palette_diagnostic_dir(project_path)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stem = artifact_stem or media_id
+    for suffix in (
+        "_source.png",
+        "_palette.png",
+        "_semantic.png",
+        "_seeds.png",
+        "_seeds_assignment.png",
+        "_clusters.png",
+    ):
+        artifact = output_dir / f"{stem}{suffix}"
+        if artifact.exists():
+            artifact.unlink()
+    json_path = output_dir / f"{stem}.json"
+    document = {
+        "status": "failed",
+        "media_id": media_id,
+        "filename": filename,
+        "media_type": media_type,
+        "error": str(error),
+    }
+    if extra:
+        document.update(extra)
+    json_path.write_text(
+        json.dumps(document, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return json_path
+
+
+def _write_palette_diagnostic_success(
+    project_path: str,
+    media_id: str,
+    filename: str,
+    media_type: str,
+    foreground: dict,
+    background: dict,
+    diagnostics: dict,
+    diagnostic_capture: dict,
+    *,
+    artifact_stem: str | None = None,
+    semantic_target: str | None = None,
+    concepts_requested: list[str] | None = None,
+    include_source: bool = True,
+) -> list[Path]:
+    """Render diagnostic artifacts from one completed palette extraction."""
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError as exc:
+        raise ImportError(
+            "Pillow is required for palette diagnostic visualization"
+        ) from exc
+
+    semantic_mask = np.asarray(
+        diagnostic_capture.get("semantic_foreground_mask"), dtype=bool
+    )
+    if semantic_mask.shape != (_FIG_RESIZE, _FIG_RESIZE):
+        raise PaletteAnalysisError(
+            "Palette diagnostic semantic mask is unavailable or malformed"
+        )
+
+    captured_source = diagnostic_capture.get("source_image")
+    if not isinstance(captured_source, Image.Image):
+        raise PaletteAnalysisError(
+            "Palette diagnostic pre-crop source image is unavailable"
+        )
+    source_image = captured_source.copy()
+    width, height = source_image.size
+    source_diagnostics = dict(diagnostics.get("source_image", {}))
+    if (
+        source_diagnostics.get("width") != width
+        or source_diagnostics.get("height") != height
+    ):
+        raise PaletteAnalysisError(
+            "Palette diagnostic source dimensions do not match extraction diagnostics"
+        )
+
+    try:
+        foreground_rgb = tuple(int(value) for value in foreground["rgb"])
+        background_rgb = tuple(int(value) for value in background["rgb"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise PaletteAnalysisError(
+            f"Palette diagnostic colors are malformed: {exc}"
+        ) from exc
+    if len(foreground_rgb) != 3 or len(background_rgb) != 3:
+        raise PaletteAnalysisError("Palette diagnostic colors must be RGB triplets")
+
+    output_dir = _palette_diagnostic_dir(project_path)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stem = artifact_stem or media_id
+    source_output = output_dir / f"{stem}_source.png"
+    palette_output = output_dir / f"{stem}_palette.png"
+    semantic_output = output_dir / f"{stem}_semantic.png"
+    seeds_output = output_dir / f"{stem}_seeds.png"
+    assignment_output = output_dir / f"{stem}_seeds_assignment.png"
+    clusters_output = output_dir / f"{stem}_clusters.png"
+    json_output = output_dir / f"{stem}.json"
+
+    outputs = []
+    if include_source:
+        source_image.save(source_output, format="PNG")
+        outputs.append(source_output)
+
+    palette_image = Image.new("RGB", (width, height), background_rgb)
+    radius = max(1, int(round(min(width, height) * 0.15)))
+    center_x, center_y = width // 2, height // 2
+    ImageDraw.Draw(palette_image).ellipse(
+        (
+            center_x - radius,
+            center_y - radius,
+            center_x + radius,
+            center_y + radius,
+        ),
+        fill=foreground_rgb,
+    )
+    palette_image.save(palette_output, format="PNG")
+
+    bbox = source_diagnostics.get("content_bbox", {})
+    try:
+        left = int(bbox["left"])
+        top = int(bbox["top"])
+        right = int(bbox["right"])
+        bottom = int(bbox["bottom"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise PaletteAnalysisError(
+            f"Palette diagnostic content bbox is malformed: {exc}"
+        ) from exc
+    if not (0 <= left < right <= width and 0 <= top < bottom <= height):
+        raise PaletteAnalysisError("Palette diagnostic content bbox is out of bounds")
+
+    mask_image = Image.fromarray(
+        semantic_mask.astype(np.uint8) * 255, mode="L"
+    ).resize((right - left, bottom - top), Image.Resampling.NEAREST)
+    full_mask = Image.new("L", (width, height), 0)
+    full_mask.paste(mask_image, (left, top))
+    overlay_color = Image.new("RGB", (width, height), (255, 48, 48))
+    tinted = Image.blend(source_image, overlay_color, 0.45)
+    semantic_image = Image.composite(tinted, source_image, full_mask)
+    semantic_image.save(semantic_output, format="PNG")
+
+    labels = np.asarray(diagnostic_capture.get("seeds_labels"))
+    if labels.shape != (_FIG_RESIZE, _FIG_RESIZE):
+        raise PaletteAnalysisError(
+            "Palette diagnostic SEEDS labels are unavailable or malformed"
+        )
+    regions = diagnostic_capture.get("seeds_regions")
+    if not isinstance(regions, list) or not regions:
+        raise PaletteAnalysisError(
+            "Palette diagnostic SEEDS assignments are unavailable"
+        )
+    region_by_label = {int(item["label"]): item for item in regions}
+    label_ids = {int(value) for value in np.unique(labels)}
+    if set(region_by_label) != label_ids:
+        raise PaletteAnalysisError(
+            "Palette diagnostic SEEDS assignments do not match labels"
+        )
+
+    boundaries = np.zeros(labels.shape, dtype=bool)
+    horizontal = labels[:, 1:] != labels[:, :-1]
+    vertical = labels[1:, :] != labels[:-1, :]
+    boundaries[:, 1:] |= horizontal
+    boundaries[:, :-1] |= horizontal
+    boundaries[1:, :] |= vertical
+    boundaries[:-1, :] |= vertical
+
+    def _working_image_at_source(array: np.ndarray, mode: str) -> Image.Image:
+        active = Image.fromarray(array, mode=mode).resize(
+            (right - left, bottom - top), Image.Resampling.NEAREST
+        )
+        full = Image.new(mode, (width, height), 0)
+        full.paste(active, (left, top))
+        return full
+
+    full_boundaries = _working_image_at_source(
+        boundaries.astype(np.uint8) * 255, "L"
+    )
+    boundary_color = Image.new("RGB", (width, height), (0, 255, 225))
+    seeds_image = Image.composite(boundary_color, source_image, full_boundaries)
+    seeds_image.save(seeds_output, format="PNG")
+
+    assignment_colors = {
+        "foreground": np.asarray((235, 70, 70), dtype=np.uint8),
+        "background": np.asarray((55, 115, 235), dtype=np.uint8),
+        "boundary": np.asarray((255, 170, 35), dtype=np.uint8),
+        "tie": np.asarray((255, 230, 55), dtype=np.uint8),
+    }
+    assignment_pixels = np.zeros((*labels.shape, 3), dtype=np.uint8)
+    for label, region in region_by_label.items():
+        category = region["assignment"]
+        if region.get("boundary_crossing"):
+            category = "tie" if region.get("tie") else "boundary"
+        assignment_pixels[labels == label] = assignment_colors[category]
+    full_assignment = _working_image_at_source(assignment_pixels, "RGB")
+    active_mask = Image.new("L", (width, height), 0)
+    ImageDraw.Draw(active_mask).rectangle(
+        (left, top, right - 1, bottom - 1), fill=255
+    )
+    assignment_tint = Image.blend(source_image, full_assignment, 0.6)
+    assignment_image = Image.composite(
+        assignment_tint, source_image, active_mask
+    )
+    assignment_image = Image.composite(
+        Image.new("RGB", (width, height), (20, 20, 20)),
+        assignment_image,
+        full_boundaries,
+    )
+    assignment_image.save(assignment_output, format="PNG")
+
+    ward = diagnostic_capture.get("ward", {})
+    diagnostic_cluster_colors = (
+        (230, 60, 60), (40, 150, 240), (60, 190, 100), (245, 190, 45),
+        (190, 80, 220), (40, 200, 200), (245, 120, 45), (120, 100, 240),
+        (150, 205, 45), (245, 95, 165), (25, 135, 120), (190, 145, 35),
+        (90, 180, 235), (220, 90, 110), (105, 190, 175), (170, 105, 210),
+    )
+    cluster_pixels = np.zeros((*labels.shape, 3), dtype=np.uint8)
+    color_index = 0
+    clustered_label_ids = set()
+    for region_name in ("foreground", "background"):
+        region_ward = ward.get(region_name, {})
+        superpixel_labels = region_ward.get("superpixel_labels", [])
+        cluster_labels = region_ward.get("cluster_labels", [])
+        if len(superpixel_labels) != len(cluster_labels):
+            raise PaletteAnalysisError(
+                f"Palette diagnostic {region_name} Ward labels are malformed"
+            )
+        cluster_colors = {}
+        for cluster_id in sorted(set(int(value) for value in cluster_labels)):
+            cluster_colors[cluster_id] = diagnostic_cluster_colors[
+                color_index % len(diagnostic_cluster_colors)
+            ]
+            color_index += 1
+        for label, cluster_id in zip(superpixel_labels, cluster_labels):
+            label = int(label)
+            clustered_label_ids.add(label)
+            cluster_pixels[labels == label] = cluster_colors[int(cluster_id)]
+    if clustered_label_ids != label_ids:
+        raise PaletteAnalysisError(
+            "Palette diagnostic Ward memberships do not cover SEEDS labels"
+        )
+    full_clusters = _working_image_at_source(cluster_pixels, "RGB")
+    cluster_tint = Image.blend(source_image, full_clusters, 0.68)
+    clusters_image = Image.composite(cluster_tint, source_image, active_mask)
+    clusters_image = Image.composite(
+        Image.new("RGB", (width, height), (250, 250, 250)),
+        clusters_image,
+        full_boundaries,
+    )
+    clusters_image.save(clusters_output, format="PNG")
+
+    semantic_keys = {
+        "foreground_mode",
+        "semantic_categories_used",
+        "semantic_concepts_used",
+        "semantic_mask_count",
+        "semantic_foreground_coverage",
+        "semantic_category_pixel_counts",
+    }
+    remaining_diagnostics = {
+        key: value
+        for key, value in diagnostics.items()
+        if key != "source_image" and key not in semantic_keys
+    }
+    source_document = {
+        **source_diagnostics,
+        "stage": "original_before_letterbox_crop",
+    }
+    foreground_ward = ward.get("foreground", {})
+    background_ward = ward.get("background", {})
+    ward_candidate_colors = {
+        "foreground": [
+            list(item["rgb"])
+            for item in foreground_ward.get("ranked_candidates", [])
+        ],
+        "background": [
+            list(item["rgb"])
+            for item in background_ward.get("ranked_candidates", [])
+        ],
+    }
+    seeds_summary = {
+        "count": len(region_by_label),
+        "foreground_count": sum(
+            item["assignment"] == "foreground" for item in regions
+        ),
+        "background_count": sum(
+            item["assignment"] == "background" for item in regions
+        ),
+        "boundary_crossing_count": sum(
+            bool(item.get("boundary_crossing")) for item in regions
+        ),
+        "tie_count": sum(bool(item.get("tie")) for item in regions),
+    }
+    document = {
+        "status": "ok",
+        "media_id": media_id,
+        "filename": filename,
+        "media_type": media_type,
+        "source_image": source_document,
+        "semantic_selection": {
+            "foreground_mode": diagnostics.get("foreground_mode"),
+            "categories_used": diagnostics.get("semantic_categories_used", []),
+            "concepts_used": diagnostics.get("semantic_concepts_used", []),
+            "mask_count": diagnostics.get("semantic_mask_count", 0),
+            "foreground_coverage": diagnostics.get(
+                "semantic_foreground_coverage", 0.0
+            ),
+            "category_pixel_counts": diagnostics.get(
+                "semantic_category_pixel_counts", {}
+            ),
+        },
+        "foreground": foreground,
+        "background": background,
+        "pipeline": {
+            "seeds": seeds_summary,
+            "ward_candidate_colors": ward_candidate_colors,
+            "ward": {
+                "foreground_clusters": foreground_ward.get("clusters", []),
+                "background_clusters": background_ward.get("clusters", []),
+            },
+        },
+        "diagnostics": remaining_diagnostics,
+    }
+    if semantic_target is not None:
+        document.update({
+            "semantic_target": semantic_target,
+            "concepts_requested": list(concepts_requested or []),
+            "number_of_masks": diagnostics.get("semantic_mask_count", 0),
+            "semantic_coverage": diagnostics.get(
+                "semantic_foreground_coverage", 0.0
+            ),
+            "seeds_count": seeds_summary["count"],
+            "foreground_superpixel_count": seeds_summary["foreground_count"],
+            "background_superpixel_count": seeds_summary["background_count"],
+            "boundary_crossing_superpixel_count": seeds_summary[
+                "boundary_crossing_count"
+            ],
+            "ward_candidate_colors": ward_candidate_colors,
+            "final_foreground_rgb": list(foreground_rgb),
+            "final_background_rgb": list(background_rgb),
+        })
+    json_output.write_text(
+        json.dumps(document, indent=2) + "\n", encoding="utf-8"
+    )
+    outputs.extend([
+        semantic_output,
+        seeds_output,
+        assignment_output,
+        clusters_output,
+        palette_output,
+        json_output,
+    ])
+    return outputs
+
+
+def create_thumbnail_palette_semantic_diagnostic(
+    project_path: str,
+    filename: str,
+    media_type: str,
+    *,
+    semantic_target: str,
+    concepts: list[str],
+    metadata: dict | None = None,
+    segmenter=None,
+    verbose: bool = False,
+) -> dict:
+    """Run one isolated semantic target through the production palette path."""
+    requested = [
+        str(concept).strip()
+        for concept in concepts
+        if str(concept).strip()
+    ]
+    if not requested:
+        raise ValueError("Semantic target diagnostics require at least one concept")
+    if metadata is None:
+        entries = get_metadata(project_path, media_type=media_type)
+        metadata = next(
+            (entry for entry in entries if entry.get("filename") == filename),
+            {"filename": filename},
+        )
+    media_id = str(
+        metadata.get("media_id") or compute_media_id(metadata, media_type)
+    )
+    safe_target = "".join(
+        character if character.isalnum() or character in "_-" else "_"
+        for character in semantic_target.strip().lower()
+    ).strip("_")
+    if not safe_target:
+        raise ValueError("Semantic target diagnostic name is empty")
+    artifact_stem = f"{media_id}_{safe_target}"
+    target_failure_fields = {
+        "semantic_target": semantic_target,
+        "concepts_requested": requested,
+        "number_of_masks": None,
+        "semantic_coverage": None,
+        "seeds_count": None,
+        "foreground_superpixel_count": None,
+        "background_superpixel_count": None,
+        "boundary_crossing_superpixel_count": None,
+        "ward_candidate_colors": {"foreground": [], "background": []},
+        "final_foreground_rgb": None,
+        "final_background_rgb": None,
+    }
+    source_path = resolve_thumbnail_path(project_path, media_type, filename)
+    if source_path is None:
+        error = FileNotFoundError(
+            f"Metadata thumbnail not found for '{filename}' ({media_type})"
+        )
+        _write_palette_diagnostic_failure(
+            project_path,
+            media_id,
+            filename,
+            media_type,
+            error,
+            artifact_stem=artifact_stem,
+            extra=target_failure_fields,
+        )
+        raise error
+
+    annotation = {
+        "humans": requested,
+        "animals": [],
+        "objects": [],
+        "setting": "",
+    }
+    diagnostic_capture: dict = {}
+    try:
+        foreground, background, diagnostics = _extract_fg_bg_full(
+            source_path,
+            annotation=annotation,
+            segmenter=segmenter or _load_palette_segmenter(project_path, verbose),
+            diagnostic_capture=diagnostic_capture,
+        )
+        files = _write_palette_diagnostic_success(
+            project_path,
+            media_id,
+            filename,
+            media_type,
+            foreground,
+            background,
+            diagnostics,
+            diagnostic_capture,
+            artifact_stem=artifact_stem,
+            semantic_target=semantic_target,
+            concepts_requested=requested,
+            include_source=False,
+        )
+    except Exception as exc:
+        failure_fields = dict(target_failure_fields)
+        if "no usable masks" in str(exc):
+            failure_fields["number_of_masks"] = 0
+            failure_fields["semantic_coverage"] = 0.0
+        _write_palette_diagnostic_failure(
+            project_path,
+            media_id,
+            filename,
+            media_type,
+            exc,
+            artifact_stem=artifact_stem,
+            extra=failure_fields,
+        )
+        raise
+    return {
+        "media_id": media_id,
+        "semantic_target": semantic_target,
+        "concepts_requested": requested,
+        "foreground": foreground,
+        "background": background,
+        "diagnostics": diagnostics,
+        "diagnostic_files": [str(path) for path in files],
+    }
 
 
 def create_thumbnail_palette(
@@ -1130,6 +2026,57 @@ def create_thumbnail_palette(
     metadata: dict | None = None,
     force: bool = False,
     verbose: bool = False,
+    visualize: bool = False,
+) -> dict:
+    """Extract a thumbnail palette and optionally write diagnostic artifacts."""
+    try:
+        return _create_thumbnail_palette(
+            project_path,
+            filename,
+            media_type,
+            metadata=metadata,
+            force=force,
+            verbose=verbose,
+            visualize=visualize,
+        )
+    except Exception as exc:
+        if visualize:
+            failure_metadata = metadata
+            if failure_metadata is None:
+                try:
+                    entries = get_metadata(project_path, media_type=media_type)
+                    failure_metadata = next(
+                        (
+                            entry for entry in entries
+                            if entry.get("filename") == filename
+                        ),
+                        None,
+                    )
+                except Exception:
+                    failure_metadata = None
+            failure_metadata = failure_metadata or {"filename": filename}
+            try:
+                media_id = str(
+                    failure_metadata.get("media_id")
+                    or compute_media_id(failure_metadata, media_type)
+                )
+            except Exception:
+                media_id = Path(filename).stem
+            _write_palette_diagnostic_failure(
+                project_path, media_id, filename, media_type, exc
+            )
+        raise
+
+
+def _create_thumbnail_palette(
+    project_path: str,
+    filename: str,
+    media_type: str = "movie",
+    *,
+    metadata: dict | None = None,
+    force: bool = False,
+    verbose: bool = False,
+    visualize: bool = False,
 ) -> dict:
     """Extract and cache foreground/background colours from a metadata thumbnail."""
     if metadata is None:
@@ -1149,12 +2096,27 @@ def create_thumbnail_palette(
         )
 
     source_image = _thumbnail_source_fingerprint(project_path, source_path)
+    annotation = _resolve_thumbnail_annotation(
+        project_path, filename, media_type, media_id, metadata
+    )
+    semantic_input = _semantic_input_fingerprint(annotation)
     cache_path = get_thumbnail_palette_path(project_path, media_id, media_type)
     existing = load_thumbnail_palette(project_path, media_id, media_type)
     if existing is not None and not force:
-        if _thumbnail_cache_is_current(existing, source_image):
+        if not _semantic_cache_is_current(existing):
+            raise FileExistsError(
+                f"Legacy thumbnail palette cache exists: {cache_path}\n"
+                "  Pass --force to replace it with semantic analysis."
+            )
+        if _thumbnail_cache_is_current(existing, source_image, semantic_input):
             if verbose:
-                print(f"  skip  {filename}: thumbnail palette already cached")
+                note = (
+                    "; diagnostics require --force"
+                    if visualize else ""
+                )
+                print(
+                    f"  skip  {filename}: thumbnail palette already cached{note}"
+                )
             return {
                 "filename": filename,
                 "media_id": media_id,
@@ -1166,9 +2128,15 @@ def create_thumbnail_palette(
         if verbose:
             print(f"  stale {filename}: thumbnail image changed — regenerating")
 
+    diagnostic_capture = {} if visualize else None
+    extraction_kwargs = {
+        "annotation": annotation,
+        "segmenter": _load_palette_segmenter(project_path, verbose),
+    }
+    if diagnostic_capture is not None:
+        extraction_kwargs["diagnostic_capture"] = diagnostic_capture
     foreground, background, diagnostics = _extract_fg_bg_full(
-        source_path,
-        segmenter=_load_palette_segmenter(project_path, verbose),
+        source_path, **extraction_kwargs
     )
     identity = {
         "media_id": media_id,
@@ -1179,11 +2147,13 @@ def create_thumbnail_palette(
         "tmdb": metadata.get("tmdb") or metadata.get("tmdb_id"),
     }
     document = {
-        "schema_version": 1,
+        "schema_version": PALETTE_SCHEMA_VERSION,
+        "analysis_version": PALETTE_ANALYSIS_VERSION,
         "media": identity,
         "source": "thumbnail",
         "source_image": source_image,
-        "method": "figure",
+        "semantic_input": semantic_input,
+        "method": "semantic-figure",
         "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "thumbnail": {
             "foreground": foreground,
@@ -1198,6 +2168,23 @@ def create_thumbnail_palette(
         document,
         force=cache_path.exists() or force,
     )
+    diagnostic_files = []
+    if diagnostic_capture is not None:
+        diagnostic_files = _write_palette_diagnostic_success(
+            project_path,
+            media_id,
+            filename,
+            media_type,
+            foreground,
+            background,
+            diagnostics,
+            diagnostic_capture,
+        )
+        if verbose:
+            print(
+                f"  → diagnostics  "
+                f"{_palette_diagnostic_dir(project_path).relative_to(project_path)}"
+            )
     if verbose:
         print(f"  → saved  {cache_path.relative_to(project_path)}")
     return {
@@ -1207,6 +2194,7 @@ def create_thumbnail_palette(
         "skipped": 0,
         "failed": 0,
         "cached": False,
+        "diagnostic_files": [str(path) for path in diagnostic_files],
     }
 
 
@@ -1216,6 +2204,7 @@ def create_thumbnail_palettes_for_all(
     *,
     force: bool = False,
     verbose: bool = False,
+    visualize: bool = False,
     on_item_done=None,
 ) -> dict:
     """Build thumbnail palettes from one loaded metadata collection."""
@@ -1238,6 +2227,7 @@ def create_thumbnail_palettes_for_all(
                 metadata=metadata,
                 force=force,
                 verbose=verbose,
+                visualize=visualize,
             )
         except FileNotFoundError as exc:
             print(f"  skip  {filename}: {exc}", flush=True)
@@ -1318,7 +2308,9 @@ def _process_one_shot(
 
     try:
         foreground, background, diagnostics = _extract_fg_bg_full(
-            png_path, segmenter=segmenter
+            png_path,
+            annotation=shot_data.get("annotation"),
+            segmenter=segmenter,
         )
     except Exception as exc:
         return {**base, "status": "error", "reason": str(exc)}
@@ -1327,7 +2319,7 @@ def _process_one_shot(
         **base,
         "foreground": foreground,
         "background": background,
-        "method": "figure",
+        "method": "semantic-figure",
         "confidence": 1.0,
         "status": "ok",
     }
@@ -1370,11 +2362,23 @@ def create_palette_for_movie(
     cache_path = get_palette_path(project_path, filename, media_type)
     _overwrite = force  # True if we are authorized to overwrite an existing cache
     if cache_path.exists() and not force:
-        # Check whether the shotlist is newer than the palette cache (dirty check).
+        existing = load_palette(project_path, filename, media_type)
+        if not _semantic_cache_is_current(existing):
+            raise FileExistsError(
+                f"Legacy palette cache exists: {cache_path}\n"
+                "  Pass --force to replace it with semantic analysis."
+            )
+        # Check whether either canonical input is newer than the palette cache.
+        from data.annotate import get_annotation_json_path
+
         shotlist_path = get_shotlist_path(project_path, filename, media_type)
-        stale = (
-            shotlist_path.exists()
-            and shotlist_path.stat().st_mtime > cache_path.stat().st_mtime
+        annotation_path = get_annotation_json_path(
+            project_path, filename, media_type
+        )
+        stale = any(
+            source_path.exists()
+            and source_path.stat().st_mtime_ns > cache_path.stat().st_mtime_ns
+            for source_path in (shotlist_path, annotation_path)
         )
         if not stale:
             if verbose:
@@ -1391,7 +2395,10 @@ def create_palette_for_movie(
         # overwrite the existing file even though the caller did not pass --force.
         _overwrite = True
         if verbose:
-            print(f"  stale {filename}: shotlist is newer than palette cache — regenerating")
+            print(
+                f"  stale {filename}: source data is newer than palette cache "
+                "— regenerating"
+            )
 
     # Load annotation entries
     entries = load_annotation_items(project_path, filename, media_type)
@@ -1478,9 +2485,11 @@ def create_palette_for_movie(
         )
 
     palette_doc: dict[str, Any] = {
+        "schema_version": PALETTE_SCHEMA_VERSION,
+        "analysis_version": PALETTE_ANALYSIS_VERSION,
         "movie": movie_block,
         "source": "best_frame",
-        "method": "figure",
+        "method": "semantic-figure",
         "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "shots": shot_palettes,
         "summary": summary,

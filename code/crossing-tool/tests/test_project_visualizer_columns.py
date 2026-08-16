@@ -12,6 +12,8 @@ Covers three layers:
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import threading
 
 import pytest
@@ -101,10 +103,12 @@ def test_get_live_project_columns_computes_from_metadata_and_annotations(tmp_pat
             {
                 "index": 0, "title": "a.mp4", "filename": "a.mp4",
                 "media_type": "movie", "media_id": "",
+                "thumbnail_foreground_rgb": None,
             },
             {
                 "index": 1, "title": "b.mp4", "filename": "b.mp4",
                 "media_type": "movie", "media_id": "",
+                "thumbnail_foreground_rgb": None,
             },
         ],
     }
@@ -114,6 +118,7 @@ def test_get_live_project_columns_computes_from_metadata_and_annotations(tmp_pat
         "items": [{
             "index": 0, "title": "c.mp4", "filename": "c.mp4",
             "media_type": "gameplay", "media_id": "",
+            "thumbnail_foreground_rgb": None,
         }],
     }
     assert by_id["shots"].datavis == {"kind": "empty"}
@@ -165,6 +170,7 @@ def test_media_item_payload_counts_reuse_the_loaded_metadata_collections(monkeyp
         "filename": "movie-0.mp4",
         "media_type": "movie",
         "media_id": "tmdb_0",
+        "thumbnail_foreground_rgb": None,
     }
     assert by_id["gameplay"].count == 2
     assert by_id["gameplay"].datavis["count"] == len(by_id["gameplay"].datavis["items"]) == 2
@@ -174,7 +180,104 @@ def test_media_item_payload_counts_reuse_the_loaded_metadata_collections(monkeyp
         "filename": "gameplay-b.mp4",
         "media_type": "gameplay",
         "media_id": "game_b",
+        "thumbnail_foreground_rgb": None,
     }
+
+
+def test_media_items_project_cached_thumbnail_foregrounds_for_both_media_types(
+    monkeypatch,
+):
+    import data.palette as palette_mod
+
+    metadata = {
+        "movie": [{
+            "filename": "movie.mp4", "title": "Movie", "media_id": "movie_id",
+        }],
+        "gameplay": [{
+            "filename": "gameplay.mp4", "title": "Gameplay", "media_id": "game_id",
+        }],
+    }
+    palettes = {
+        ("movie_id", "movie"): {
+            "source": "thumbnail",
+            "thumbnail": {"foreground": {"rgb": [12, 34, 56]}},
+        },
+        ("game_id", "gameplay"): {
+            "source": "thumbnail",
+            "thumbnail": {"foreground": {"rgb": [210, 98, 7]}},
+        },
+    }
+    lookups = []
+
+    monkeypatch.setattr(
+        corpus_stats_mod, "load_json_metadata",
+        lambda _project_path, media_type: metadata[media_type],
+    )
+    monkeypatch.setattr(
+        palette_mod, "load_thumbnail_palette",
+        lambda project_path, media_id, media_type: (
+            lookups.append((project_path, media_id, media_type))
+            or palettes[(media_id, media_type)]
+        ),
+    )
+    monkeypatch.setattr(
+        corpus_stats_mod, "_count_annotated_shots_by_type", lambda _path: {},
+    )
+    monkeypatch.setattr(
+        corpus_stats_mod, "get_illustration_stats",
+        lambda _path: {"state": "ready", "count": 0, "labels": {}},
+    )
+
+    columns = get_live_project_columns("/current/project")
+    by_id = {column.id: column for column in columns}
+
+    assert by_id["movies"].datavis["items"][0]["thumbnail_foreground_rgb"] == [
+        12, 34, 56,
+    ]
+    assert by_id["gameplay"].datavis["items"][0]["thumbnail_foreground_rgb"] == [
+        210, 98, 7,
+    ]
+    assert lookups == [
+        ("/current/project", "movie_id", "movie"),
+        ("/current/project", "game_id", "gameplay"),
+    ]
+
+
+def test_missing_thumbnail_palettes_remain_explicit_without_extraction(monkeypatch):
+    import data.palette as palette_mod
+
+    monkeypatch.setattr(
+        corpus_stats_mod, "load_json_metadata",
+        lambda _project_path, media_type: [{
+            "filename": f"{media_type}.mp4",
+            "title": media_type.title(),
+            "media_id": f"{media_type}_id",
+        }],
+    )
+    monkeypatch.setattr(
+        palette_mod, "load_thumbnail_palette", lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        palette_mod, "create_thumbnail_palette",
+        lambda *_args, **_kwargs: pytest.fail("GUI data refresh triggered extraction"),
+    )
+    monkeypatch.setattr(
+        corpus_stats_mod, "_count_annotated_shots_by_type", lambda _path: {},
+    )
+    monkeypatch.setattr(
+        corpus_stats_mod, "get_illustration_stats",
+        lambda _path: {"state": "ready", "count": 0, "labels": {}},
+    )
+
+    columns = get_live_project_columns("/current/project")
+    media_items = [
+        item
+        for column in columns[:2]
+        for item in column.datavis["items"]
+    ]
+
+    assert media_items
+    assert all(item["thumbnail_foreground_rgb"] is None for item in media_items)
 
 
 def test_get_live_project_columns_without_project_path_are_unavailable():
@@ -522,6 +625,210 @@ def test_project_visualizer_headers_appear_immediately_in_loading_state(app, fak
         window.close()
 
 
+def test_project_tools_section_contains_thumbnail_palettes_button(
+    app, fake_prefs, monkeypatch,
+):
+    fake_prefs["path"] = "/fake/project"
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._ProjectColumnsWorker.start",
+        lambda self: None,
+    )
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    window = ProjectVisualizer()
+    try:
+        assert window._tools_section._title == "Tools"
+        assert window._tools_section._pref_key == "project_section_tools"
+        assert window.thumbnail_palettes_btn.text() == "Thumbnail Palettes"
+        assert window.thumbnail_palettes_btn.isEnabled()
+        assert not window._thumbnail_palette_poll_timer.isActive()
+    finally:
+        window.close()
+
+
+@pytest.mark.parametrize("media_type", ["movie", "gameplay"])
+def test_thumbnail_palette_cli_uses_canonical_argv_and_current_project(
+    monkeypatch, media_type,
+):
+    from visualizers.project_visualizer import (
+        _CLI_PATH,
+        _start_thumbnail_palette_cli,
+    )
+
+    sentinel = object()
+    calls = []
+
+    def fake_popen(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return sentinel
+
+    monkeypatch.setattr(
+        "visualizers.project_visualizer.subprocess.Popen", fake_popen,
+    )
+    output_stream = object()
+
+    result = _start_thumbnail_palette_cli(
+        "/current/project", media_type, output_stream,
+    )
+
+    assert result is sentinel
+    assert calls == [(
+        [
+            sys.executable,
+            str(_CLI_PATH),
+            "index", "palette", "create",
+            "--thumbnail", "--all",
+            "--media", media_type,
+        ],
+        {
+            "cwd": "/current/project",
+            "stdout": output_stream,
+            "stderr": subprocess.STDOUT,
+        },
+    )]
+
+
+def test_thumbnail_palette_tool_runs_both_media_once_then_refreshes(
+    app, fake_prefs, monkeypatch,
+):
+    fake_prefs["path"] = "/current/project"
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._ProjectColumnsWorker.start",
+        lambda self: None,
+    )
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    class FakeProcess:
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+    launches = []
+
+    def fake_start(project_path, media_type, output_stream):
+        process = FakeProcess()
+        launches.append((project_path, media_type, output_stream, process))
+        return process
+
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._start_thumbnail_palette_cli",
+        fake_start,
+    )
+    window = ProjectVisualizer()
+    refreshes = []
+    monkeypatch.setattr(
+        window, "_start_project_columns_load",
+        lambda *, force=False: refreshes.append(force),
+    )
+    try:
+        QTest.mouseClick(window.thumbnail_palettes_btn, Qt.LeftButton)
+
+        assert [(path, media) for path, media, _output, _proc in launches] == [
+            ("/current/project", "movie"),
+        ]
+        assert not window.thumbnail_palettes_btn.isEnabled()
+        assert window.thumbnail_palettes_btn.text() == "Building Thumbnail Palettes…"
+        assert window._tools_loading_bar._active
+        assert window._thumbnail_palette_poll_timer.isActive()
+        assert not window.project_browse_btn.isEnabled()
+
+        QTest.mouseClick(window.thumbnail_palettes_btn, Qt.LeftButton)
+        window._on_thumbnail_palettes()
+        assert len(launches) == 1
+
+        launches[0][3].returncode = 0
+        window._poll_thumbnail_palette_cli()
+        assert [(path, media) for path, media, _output, _proc in launches] == [
+            ("/current/project", "movie"),
+            ("/current/project", "gameplay"),
+        ]
+        assert refreshes == []
+
+        launches[1][3].returncode = 0
+        window._poll_thumbnail_palette_cli()
+
+        assert window.thumbnail_palettes_btn.isEnabled()
+        assert window.thumbnail_palettes_btn.text() == "Thumbnail Palettes"
+        assert not window._tools_loading_bar._active
+        assert not window._thumbnail_palette_poll_timer.isActive()
+        assert window.project_browse_btn.isEnabled()
+        assert refreshes == [True]
+    finally:
+        window.close()
+
+
+def test_thumbnail_palette_tool_restores_button_and_surfaces_cli_failure(
+    app, fake_prefs, monkeypatch,
+):
+    fake_prefs["path"] = "/current/project"
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._ProjectColumnsWorker.start",
+        lambda self: None,
+    )
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    class FakeProcess:
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+    process = FakeProcess()
+    launches = []
+
+    def fake_start(project_path, media_type, output_stream):
+        launches.append((project_path, media_type))
+        output_stream.write(b"SAM3 palette build failed")
+        return process
+
+    messages = []
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._start_thumbnail_palette_cli",
+        fake_start,
+    )
+    monkeypatch.setattr(
+        "visualizers.project_visualizer.QMessageBox.critical",
+        lambda parent, title, message: messages.append((title, message)),
+    )
+    window = ProjectVisualizer()
+    refreshes = []
+    monkeypatch.setattr(
+        window, "_start_project_columns_load",
+        lambda *, force=False: refreshes.append(force),
+    )
+    try:
+        QTest.mouseClick(window.thumbnail_palettes_btn, Qt.LeftButton)
+        process.returncode = 1
+        window._poll_thumbnail_palette_cli()
+
+        assert launches == [
+            ("/current/project", "movie"),
+            ("/current/project", "gameplay"),
+        ]
+        assert not window.thumbnail_palettes_btn.isEnabled()
+        assert messages == []
+
+        process.returncode = 0
+        window._poll_thumbnail_palette_cli()
+
+        assert window.thumbnail_palettes_btn.isEnabled()
+        assert window.thumbnail_palettes_btn.text() == "Thumbnail Palettes"
+        assert not window._tools_loading_bar._active
+        assert not window._thumbnail_palette_poll_timer.isActive()
+        assert window.project_browse_btn.isEnabled()
+        assert refreshes == []
+        assert len(messages) == 1
+        assert messages[0][0] == "Thumbnail Palettes failed"
+        assert "Movie thumbnail palettes failed" in messages[0][1]
+        assert "SAM3 palette build failed" in messages[0][1]
+    finally:
+        window.close()
+
+
 def test_project_visualizer_first_show_uses_saved_geometry_while_loading(
     app, fake_prefs, monkeypatch,
 ):
@@ -808,6 +1115,39 @@ def test_gameplay_media_items_render_two_equal_contiguous_alternating_cells(app)
         assert image.pixelColor(x, first.y() + first.height() - 1) == QColor(theme.CELL_BG)
         assert image.pixelColor(x, second.y()) == QColor(theme.PANEL_BG)
         assert image.pixelColor(x, datavis.height() - 1) == QColor(theme.PANEL_BG)
+    finally:
+        datavis.close()
+        datavis.deleteLater()
+        app.processEvents()
+
+
+def test_media_items_use_cached_thumbnail_foreground_and_missing_default(app):
+    from visualizers.project_visualizer import _ProjectDatavisWidget
+
+    datavis = _ProjectDatavisWidget()
+    try:
+        payload = _media_items_datavis(2)
+        payload["items"][0]["thumbnail_foreground_rgb"] = [12, 34, 56]
+        payload["items"][1]["thumbnail_foreground_rgb"] = None
+        datavis.resize(140, theme.INSPECTOR_GAP + 200)
+        datavis.set_datavis(payload)
+        datavis.show()
+        app.processEvents()
+
+        first, second = datavis._media_item_cells
+        image = datavis.grab().toImage()
+        x = datavis.width() // 2
+        assert image.pixelColor(x, first.y()) == QColor(12, 34, 56)
+        assert image.pixelColor(x, second.y()) == QColor(theme.PANEL_BG)
+
+        replacement = _media_items_datavis(1)
+        replacement["items"][0]["thumbnail_foreground_rgb"] = None
+        datavis.set_datavis(replacement)
+        app.processEvents()
+
+        assert datavis.grab().toImage().pixelColor(
+            x, datavis._media_item_cells[0].y()
+        ) == QColor(theme.CELL_BG)
     finally:
         datavis.close()
         datavis.deleteLater()

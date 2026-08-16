@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -41,6 +42,26 @@ from tool import prefs as _prefs
 from tool.shortcuts import shortcut_label_for
 
 _CLI_PATH = Path(__file__).parent.parent / "cli.py"
+_THUMBNAIL_PALETTE_MEDIA_TYPES = ("movie", "gameplay")
+
+
+def _start_thumbnail_palette_cli(
+    project_path: str,
+    media_type: str,
+    output_stream,
+) -> subprocess.Popen:
+    return subprocess.Popen(
+        [
+            sys.executable,
+            str(_CLI_PATH),
+            "index", "palette", "create",
+            "--thumbnail", "--all",
+            "--media", media_type,
+        ],
+        cwd=project_path,
+        stdout=output_stream,
+        stderr=subprocess.STDOUT,
+    )
 
 # ---------------------------------------------------------------------------
 # Constants mirrored from cli.py to avoid importing the full CLI module
@@ -377,12 +398,27 @@ class _MediaItemCell(QWidget):
     def __init__(self, color: str, parent=None) -> None:
         super().__init__(parent)
         self.item: dict = {}
+        self._default_color = color
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet(f"background: {color}; border: none;")
         self.setCursor(Qt.PointingHandCursor)
 
     def set_item(self, item: dict) -> None:
         self.item = item
+        rgb = item.get("thumbnail_foreground_rgb")
+        color = self._default_color
+        if (
+            isinstance(rgb, list)
+            and len(rgb) == 3
+            and all(
+                isinstance(channel, int)
+                and not isinstance(channel, bool)
+                and 0 <= channel <= 255
+                for channel in rgb
+            )
+        ):
+            color = f"rgb({rgb[0]}, {rgb[1]}, {rgb[2]})"
+        self.setStyleSheet(f"background: {color}; border: none;")
         self.setToolTip(str(item.get("title") or ""))
 
     def enterEvent(self, event) -> None:  # noqa: N802
@@ -743,6 +779,12 @@ class ProjectVisualizer(WindowVisualizer):
         self._backup_master_fd: int = -1
         self._backup_stdout_buf: bytes = b""
         self._backup_anim_frame: int = 0
+        self._thumbnail_palette_proc: subprocess.Popen | None = None
+        self._thumbnail_palette_output = None
+        self._thumbnail_palette_media_queue: list[str] = []
+        self._thumbnail_palette_active_media = ""
+        self._thumbnail_palette_project_path = ""
+        self._thumbnail_palette_errors: list[str] = []
 
         # visual sizing hint
         self.setMinimumSize(900, 560)
@@ -794,10 +836,10 @@ class ProjectVisualizer(WindowVisualizer):
 
         outer.addLayout(row)
 
-        browse_btn = QPushButton("Browse…")
-        browse_btn.clicked.connect(self._on_browse)
-        browse_btn.setStyleSheet(theme.action_button_stylesheet())
-        outer.addWidget(browse_btn)
+        self.project_browse_btn = QPushButton("Browse…")
+        self.project_browse_btn.clicked.connect(self._on_browse)
+        self.project_browse_btn.setStyleSheet(theme.action_button_stylesheet())
+        outer.addWidget(self.project_browse_btn)
 
         row_widget = QWidget()
         row_widget.setLayout(outer)
@@ -1145,6 +1187,141 @@ class ProjectVisualizer(WindowVisualizer):
         except Exception as exc:
             QMessageBox.critical(self, "Import failed", str(exc))
 
+    # Project tools
+
+    def _build_tools_section(self) -> CollapsibleSection:
+        sec = CollapsibleSection("Tools", pref_key="project_section_tools")
+
+        self.thumbnail_palettes_btn = QPushButton("Thumbnail Palettes")
+        self.thumbnail_palettes_btn.clicked.connect(self._on_thumbnail_palettes)
+        self.thumbnail_palettes_btn.setStyleSheet(theme.action_button_stylesheet())
+        self.thumbnail_palettes_btn.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Fixed,
+        )
+        sec.add_widget(self.thumbnail_palettes_btn)
+
+        self._tools_loading_bar = SweepBar(self)
+        self._tools_loading_timer = QTimer(self)
+        self._tools_loading_timer.setInterval(20)
+        self._tools_loading_timer.timeout.connect(self._tools_loading_bar.tick)
+        self._thumbnail_palette_poll_timer = QTimer(self)
+        self._thumbnail_palette_poll_timer.setInterval(250)
+        self._thumbnail_palette_poll_timer.timeout.connect(
+            self._poll_thumbnail_palette_cli
+        )
+        sec.set_subbar(self._tools_loading_bar)
+        self._tools_section = sec
+        return sec
+
+    def _on_thumbnail_palettes(self) -> None:
+        if self._thumbnail_palette_proc is not None:
+            return
+
+        project_path = self.path_edit.text().strip()
+        if not project_path:
+            QMessageBox.warning(
+                self, "No Project", "Please set a project folder first.",
+            )
+            return
+
+        if _prefs.get("path") != project_path:
+            _prefs.set("path", project_path)
+
+        self._thumbnail_palette_project_path = project_path
+        self._thumbnail_palette_media_queue = list(
+            _THUMBNAIL_PALETTE_MEDIA_TYPES
+        )
+        self._thumbnail_palette_errors = []
+        self.thumbnail_palettes_btn.setEnabled(False)
+        self.thumbnail_palettes_btn.setText("Building Thumbnail Palettes…")
+        self.project_browse_btn.setEnabled(False)
+        self._tools_loading_bar.start()
+        self._tools_loading_timer.start()
+        self._thumbnail_palette_poll_timer.start()
+        self._start_next_thumbnail_palette_cli()
+
+    def _start_next_thumbnail_palette_cli(self) -> None:
+        if not self._thumbnail_palette_media_queue:
+            error = "\n\n".join(self._thumbnail_palette_errors) or None
+            self._finish_thumbnail_palettes(error)
+            return
+
+        if _prefs.get("path") != self._thumbnail_palette_project_path:
+            self._finish_thumbnail_palettes(
+                "The current project changed before palette generation completed."
+            )
+            return
+
+        media_type = self._thumbnail_palette_media_queue.pop(0)
+        output = tempfile.TemporaryFile(mode="w+b")
+        try:
+            process = _start_thumbnail_palette_cli(
+                self._thumbnail_palette_project_path,
+                media_type,
+                output,
+            )
+        except Exception as exc:
+            output.close()
+            self._thumbnail_palette_errors.append(
+                f"{media_type.title()} thumbnail palettes failed:\n\n"
+                f"{type(exc).__name__}: {exc}"
+            )
+            self._start_next_thumbnail_palette_cli()
+            return
+
+        self._thumbnail_palette_active_media = media_type
+        self._thumbnail_palette_output = output
+        self._thumbnail_palette_proc = process
+
+    def _poll_thumbnail_palette_cli(self) -> None:
+        process = self._thumbnail_palette_proc
+        if process is None:
+            return
+
+        returncode = process.poll()
+        if returncode is None:
+            return
+
+        output_stream = self._thumbnail_palette_output
+        output_text = ""
+        if output_stream is not None:
+            try:
+                output_stream.seek(0)
+                output_text = output_stream.read().decode(
+                    "utf-8", errors="replace",
+                ).strip()
+            finally:
+                output_stream.close()
+
+        media_type = self._thumbnail_palette_active_media
+        self._thumbnail_palette_proc = None
+        self._thumbnail_palette_output = None
+        self._thumbnail_palette_active_media = ""
+
+        if returncode != 0:
+            detail = output_text or f"CLI exited with status {returncode}."
+            self._thumbnail_palette_errors.append(
+                f"{media_type.title()} thumbnail palettes failed:\n\n{detail}"
+            )
+
+        self._start_next_thumbnail_palette_cli()
+
+    def _finish_thumbnail_palettes(self, error: str | None = None) -> None:
+        self._thumbnail_palette_poll_timer.stop()
+        self._tools_loading_timer.stop()
+        self._tools_loading_bar.stop()
+        self.thumbnail_palettes_btn.setText("Thumbnail Palettes")
+        self.thumbnail_palettes_btn.setEnabled(True)
+        self.project_browse_btn.setEnabled(True)
+        self._thumbnail_palette_media_queue = []
+        self._thumbnail_palette_errors = []
+
+        if error is not None:
+            QMessageBox.critical(self, "Thumbnail Palettes failed", error)
+            return
+
+        self._start_project_columns_load(force=True)
+
     # Launcher buttons
 
     def _build_visualizers_section(self) -> CollapsibleSection:
@@ -1201,6 +1378,7 @@ class ProjectVisualizer(WindowVisualizer):
         panel.add_widget(self._build_models_section())
         panel.add_widget(self._build_defaults_section())
         panel.add_widget(self._build_import_section())
+        panel.add_widget(self._build_tools_section())
 
         inspector.add_tab(panel, " Project ")
 

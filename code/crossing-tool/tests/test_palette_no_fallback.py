@@ -24,7 +24,8 @@ from data.palette import (
 class ValidSegmenter:
     model_name = "sam3-test"
 
-    def segment_palette(self, image):
+    def segment_concept(self, image, concept):
+        assert concept == "subject"
         height, width = np.asarray(image).shape[:2]
         top, bottom = height // 4, height - height // 4
         left, right = width // 4, width - width // 4
@@ -37,18 +38,35 @@ class ValidSegmenter:
 
 
 class FailingSegmenter:
-    def segment_palette(self, _image):
+    def segment_concept(self, _image, _concept):
         raise RuntimeError("model crashed")
 
 
 class EmptySegmenter:
-    def segment_palette(self, _image):
+    def segment_concept(self, _image, _concept):
         return []
 
 
 class MalformedSegmenter:
-    def segment_palette(self, _image):
+    def segment_concept(self, _image, _concept):
         return [{"segmentation": np.ones((2, 2), dtype=bool), "bbox": [0, 0, 2, 2]}]
+
+
+SEMANTIC_ANNOTATION = {
+    "humans": ["subject"],
+    "animals": [],
+    "objects": [],
+    "setting": "",
+}
+
+
+@pytest.fixture(autouse=True)
+def semantic_thumbnail_annotation(monkeypatch):
+    monkeypatch.setattr(
+        palette_mod,
+        "_resolve_thumbnail_annotation",
+        lambda *_args: SEMANTIC_ANNOTATION,
+    )
 
 
 def _image_array():
@@ -92,6 +110,7 @@ def _prepare_best_frame(project: Path, monkeypatch):
         "movie": {"filename": metadata["filename"]},
         "shot": {
             "shot_id": shot_id,
+            "annotation": SEMANTIC_ANNOTATION,
             "best_frame": {"frame": 50, "score": 0.9, "method": "clip"},
         },
     }
@@ -105,13 +124,16 @@ def _prepare_best_frame(project: Path, monkeypatch):
 
 def test_successful_configured_segmentation_produces_palette():
     foreground, background, diagnostics = _extract_fg_bg_figure(
-        _image_array(), segmenter=ValidSegmenter()
+        _image_array(),
+        annotation=SEMANTIC_ANNOTATION,
+        segmenter=ValidSegmenter(),
     )
 
     assert foreground["palette"]
     assert background["palette"]
     assert diagnostics["segmentation_used"] == "sam3-test"
-    assert diagnostics["fallback_level"] == 0
+    assert diagnostics["foreground_mode"] == "semantic"
+    assert diagnostics["semantic_concepts_used"] == ["subject"]
 
 
 def test_segmentation_unavailable_is_explicit_failure():
@@ -121,17 +143,29 @@ def test_segmentation_unavailable_is_explicit_failure():
 
 def test_segmentation_failure_is_explicit_failure():
     with pytest.raises(PaletteAnalysisError, match="segmentation failed.*model crashed"):
-        _extract_fg_bg_figure(_image_array(), segmenter=FailingSegmenter())
+        _extract_fg_bg_figure(
+            _image_array(),
+            annotation=SEMANTIC_ANNOTATION,
+            segmenter=FailingSegmenter(),
+        )
 
 
 def test_empty_segmentation_is_explicit_failure():
-    with pytest.raises(PaletteAnalysisError, match="no usable foreground"):
-        _extract_fg_bg_figure(_image_array(), segmenter=EmptySegmenter())
+    with pytest.raises(PaletteAnalysisError, match="no usable masks"):
+        _extract_fg_bg_figure(
+            _image_array(),
+            annotation=SEMANTIC_ANNOTATION,
+            segmenter=EmptySegmenter(),
+        )
 
 
 def test_malformed_segmentation_is_explicit_failure():
     with pytest.raises(PaletteAnalysisError, match="returned mask shape"):
-        _extract_fg_bg_figure(_image_array(), segmenter=MalformedSegmenter())
+        _extract_fg_bg_figure(
+            _image_array(),
+            annotation=SEMANTIC_ANNOTATION,
+            segmenter=MalformedSegmenter(),
+        )
 
 
 def test_spatial_center_border_fallback_is_absent():
@@ -145,10 +179,7 @@ def test_configured_sam3_adapter_produces_foreground_through_canonical_interface
 ):
     import torch
 
-    from services.silhouette import (
-        PALETTE_SEGMENTATION_CONCEPT,
-        _SAM3Adapter,
-    )
+    from services.silhouette import _SAM3Adapter
 
     mask = torch.zeros((1, 256, 256), dtype=torch.bool)
     mask[:, 64:192, 64:192] = True
@@ -188,13 +219,15 @@ def test_configured_sam3_adapter_produces_foreground_through_canonical_interface
 
     segmenter = palette_mod._load_palette_segmenter("/project")
     foreground, background, diagnostics = _extract_fg_bg_figure(
-        _image_array(), segmenter=segmenter
+        _image_array(),
+        annotation=SEMANTIC_ANNOTATION,
+        segmenter=segmenter,
     )
 
     assert load_calls == [("/project", "sam3")]
     assert seen == {
         "image_size": (256, 256),
-        "concept": PALETTE_SEGMENTATION_CONCEPT,
+        "concept": "subject",
     }
     assert foreground["coverage"] > 0
     assert background["coverage"] > 0
@@ -202,17 +235,17 @@ def test_configured_sam3_adapter_produces_foreground_through_canonical_interface
 
 
 def test_configured_incompatible_model_is_explicitly_unavailable(monkeypatch):
-    class ConceptOnlySegmenter:
-        def segment_concept(self, _image, _concept):
+    class PaletteOnlySegmenter:
+        def segment_palette(self, _image):
             return []
 
     monkeypatch.setattr("tool.prefs.get", lambda _key: "sam3-model")
     monkeypatch.setattr(
         "services.silhouette.load_sam_model",
-        lambda *_args: (ConceptOnlySegmenter(), "sam3-model", "cpu"),
+        lambda *_args: (PaletteOnlySegmenter(), "sam3-model", "cpu"),
     )
 
-    with pytest.raises(PaletteAnalysisError, match="does not expose segment_palette"):
+    with pytest.raises(PaletteAnalysisError, match="does not expose segment_concept"):
         palette_mod._load_palette_segmenter("/project")
 
 

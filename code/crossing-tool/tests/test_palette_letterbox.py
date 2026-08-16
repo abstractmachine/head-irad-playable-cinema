@@ -22,7 +22,8 @@ class CenterSegmenter:
     def __init__(self):
         self.images = []
 
-    def segment_palette(self, image):
+    def segment_concept(self, image, concept):
+        assert concept == "subject"
         pixels = np.asarray(image)
         self.images.append(pixels.copy())
         height, width = pixels.shape[:2]
@@ -34,6 +35,14 @@ class CenterSegmenter:
             "segmentation": mask,
             "bbox": [left, top, right - left, bottom - top],
         }]
+
+
+SEMANTIC_ANNOTATION = {
+    "humans": ["subject"],
+    "animals": [],
+    "objects": [],
+    "setting": "",
+}
 
 
 def _barred_image(
@@ -290,7 +299,9 @@ def test_palette_segmentation_receives_cropped_active_image(tmp_path):
     segmenter = CenterSegmenter()
 
     foreground, background, diagnostics = _extract_fg_bg_full(
-        path, segmenter=segmenter
+        path,
+        annotation=SEMANTIC_ANNOTATION,
+        segmenter=segmenter,
     )
 
     segmented_image = segmenter.images[0]
@@ -324,7 +335,9 @@ def test_no_bars_diagnostics_record_full_source_bbox(tmp_path):
     path = _write_barred_image(tmp_path / "full-frame.png")
 
     _foreground, _background, diagnostics = _extract_fg_bg_full(
-        path, segmenter=CenterSegmenter()
+        path,
+        annotation=SEMANTIC_ANNOTATION,
+        segmenter=CenterSegmenter(),
     )
 
     source = diagnostics["source_image"]
@@ -367,6 +380,7 @@ def test_best_frame_and_thumbnail_use_same_detector(tmp_path, monkeypatch):
         "movie": {"filename": metadata["filename"]},
         "shot": {
             "shot_id": shot_id,
+            "annotation": SEMANTIC_ANNOTATION,
             "best_frame": {"frame": 50, "score": 0.9, "method": "clip"},
         },
     }
@@ -387,7 +401,8 @@ def test_best_frame_and_thumbnail_use_same_detector(tmp_path, monkeypatch):
         "luminance": 0.45, "chroma": 0.3, "palette": [], "coverage": 0.75,
     }
 
-    def fake_figure(_arr, *, segmenter):
+    def fake_figure(_arr, *, annotation, segmenter):
+        assert annotation == SEMANTIC_ANNOTATION
         assert segmenter is not None
         return foreground, background, {"method_used": "figure"}
 
@@ -395,6 +410,11 @@ def test_best_frame_and_thumbnail_use_same_detector(tmp_path, monkeypatch):
     monkeypatch.setattr(palette_mod, "_extract_fg_bg_figure", fake_figure)
     monkeypatch.setattr(
         palette_mod, "_load_palette_segmenter", lambda *_args: object()
+    )
+    monkeypatch.setattr(
+        palette_mod,
+        "_resolve_thumbnail_annotation",
+        lambda *_args: SEMANTIC_ANNOTATION,
     )
     monkeypatch.setattr(palette_mod, "get_metadata", lambda *_a, **_k: [metadata])
     monkeypatch.setattr(palette_mod, "load_annotation_items", lambda *_a: [entry])

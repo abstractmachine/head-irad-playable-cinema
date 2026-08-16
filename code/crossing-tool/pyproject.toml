@@ -33,7 +33,7 @@ annotate = [
 ]
 visualizer = [
   "PyQt5",
-  "opencv-python-headless",
+  "opencv-contrib-python-headless>=4.10",
 ]
 shot-detection = [
   "TransNetV2 @ git+https://github.com/soCzech/TransNetV2.git",
@@ -41,7 +41,7 @@ shot-detection = [
   "ffmpeg-python",
 ]
 silhouette = [
-  "opencv-python-headless",
+  "opencv-contrib-python-headless>=4.10",
   "torch",
   "transformers>=5.0.0",
   "safetensors",

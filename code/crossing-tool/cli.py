@@ -6362,6 +6362,10 @@ def _index_palette_create(args):
     movie_query = getattr(args, "movie", None)
     tmdb = getattr(args, "tmdb", None)
     thumbnail = getattr(args, "thumbnail", False)
+    visualize = getattr(args, "visualize", False)
+    if visualize and not thumbnail:
+        print("✗ --visualize requires --thumbnail", file=sys.stderr)
+        sys.exit(1)
     create_one = create_thumbnail_palette if thumbnail else create_palette_for_movie
     create_all = (
         create_thumbnail_palettes_for_all
@@ -6382,13 +6386,14 @@ def _index_palette_create(args):
             else:
                 discord_notify(f"✗ Palette failed: {filename}  — {exc}", project_path)
 
-        summary = create_all(
-            project_path,
-            media_type,
-            force=force,
-            verbose=verbose,
-            on_item_done=_palette_on_item if notify_each else None,
-        )
+        create_kwargs = {
+            "force": force,
+            "verbose": verbose,
+            "on_item_done": _palette_on_item if notify_each else None,
+        }
+        if visualize:
+            create_kwargs["visualize"] = True
+        summary = create_all(project_path, media_type, **create_kwargs)
         cached = summary.get("total_cached", 0)
         cached_note = f"  ({cached} already cached)" if cached else ""
         print(
@@ -6426,12 +6431,11 @@ def _index_palette_create(args):
         sys.exit(1)
 
     try:
+        create_kwargs = {"force": force, "verbose": verbose}
+        if visualize:
+            create_kwargs["visualize"] = True
         summary = create_one(
-            project_path,
-            filename,
-            media_type,
-            force=force,
-            verbose=verbose,
+            project_path, filename, media_type, **create_kwargs
         )
     except FileNotFoundError as exc:
         print(f"✗ {exc}", file=sys.stderr)
@@ -9167,7 +9171,9 @@ def build_parser():
             "  crossing index palette create --thumbnail --title 'The Searchers'\n"
             "  crossing index palette create --thumbnail --tmdb 12345\n"
             "  crossing index palette create --thumbnail --all --media movie\n"
-            "  crossing index palette create --thumbnail --all --media gameplay"
+            "  crossing index palette create --thumbnail --all --media gameplay\n"
+            "  crossing index palette create --thumbnail --all --media gameplay "
+            "--force --visualize"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -9179,6 +9185,14 @@ def build_parser():
     p_index_palette_create.add_argument(
         "--thumbnail", action="store_true",
         help="Extract one foreground/background palette from each Metadata Viewer thumbnail",
+    )
+    p_index_palette_create.add_argument(
+        "--visualize", action="store_true",
+        help=(
+            "Write pre-crop source, palette, semantic-overlay, and diagnostic "
+            "JSON artifacts under output/test/palette (requires --thumbnail; "
+            "cached items still require --force to recompute)"
+        ),
     )
     p_index_palette_create.add_argument(
         "--title", dest="movie", default=None, metavar="TITLE",

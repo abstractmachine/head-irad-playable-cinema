@@ -612,19 +612,53 @@ def _make_column(
     )
 
 
-def _media_items_datavis(metadata: list[dict], media_type: str) -> dict[str, Any]:
+def _thumbnail_foreground_rgb(
+    project_path: str,
+    media_id: str,
+    media_type: str,
+) -> list[int] | None:
+    if not project_path or not media_id:
+        return None
+
+    from data.palette import load_thumbnail_palette
+
+    palette = load_thumbnail_palette(project_path, media_id, media_type)
+    rgb = (palette or {}).get("thumbnail", {}).get("foreground", {}).get("rgb")
+    if not (
+        isinstance(rgb, list)
+        and len(rgb) == 3
+        and all(
+            isinstance(channel, int)
+            and not isinstance(channel, bool)
+            and 0 <= channel <= 255
+            for channel in rgb
+        )
+    ):
+        return None
+    return rgb
+
+
+def _media_items_datavis(
+    project_path: str,
+    metadata: list[dict],
+    media_type: str,
+) -> dict[str, Any]:
     """Project DATAVIS identity projected from an already-loaded metadata list."""
     items = []
     for index, record in enumerate(metadata):
         filename = str(record.get("filename") or "")
         title = str(record.get("title") or Path(filename).stem or "(untitled)")
         year = record.get("year")
+        media_id = str(record.get("media_id") or "")
         items.append({
             "index": index,
             "title": f"{title} ({year})" if year else title,
             "filename": filename,
             "media_type": media_type,
-            "media_id": str(record.get("media_id") or ""),
+            "media_id": media_id,
+            "thumbnail_foreground_rgb": _thumbnail_foreground_rgb(
+                project_path, media_id, media_type,
+            ),
         })
     return {"kind": "media_items", "count": len(items), "items": items}
 
@@ -703,7 +737,7 @@ def get_live_project_columns(project_path: Optional[str]) -> list[ProjectColumn]
         _make_column(
             "movies", "Movies", len(movie_metadata) if movie_metadata is not None else None,
             datavis=(
-                _media_items_datavis(movie_metadata, "movie")
+                _media_items_datavis(project_path, movie_metadata, "movie")
                 if movie_metadata is not None else None
             ),
         ),
@@ -711,7 +745,7 @@ def get_live_project_columns(project_path: Optional[str]) -> list[ProjectColumn]
             "gameplay", "Gameplay",
             len(gameplay_metadata) if gameplay_metadata is not None else None,
             datavis=(
-                _media_items_datavis(gameplay_metadata, "gameplay")
+                _media_items_datavis(project_path, gameplay_metadata, "gameplay")
                 if gameplay_metadata is not None else None
             ),
         ),

@@ -36,15 +36,26 @@ BACKGROUND = {
     "coverage": 0.75,
 }
 DIAGNOSTICS = {"fg_bg_delta_e": 90.0, "rescue_applied": False}
+SEMANTIC_ANNOTATION = {
+    "humans": ["subject"],
+    "animals": [],
+    "objects": [],
+    "setting": "",
+}
 
 
 @pytest.fixture(autouse=True)
 def compatible_sam(monkeypatch):
-    segmenter = SimpleNamespace(segment_palette=lambda _image: [])
+    segmenter = SimpleNamespace(segment_concept=lambda _image, _concept: [])
     monkeypatch.setattr(
         palette_mod,
         "_load_palette_segmenter",
         lambda _project_path, _verbose=False: segmenter,
+    )
+    monkeypatch.setattr(
+        palette_mod,
+        "_resolve_thumbnail_annotation",
+        lambda *_args: SEMANTIC_ANNOTATION,
     )
 
 
@@ -184,25 +195,21 @@ def test_thumbnail_palette_uses_exact_metadata_viewer_source(tmp_path, extractor
     )
 
     assert extractor.call_args.args[0] == expected
+    assert extractor.call_args.kwargs["annotation"] == SEMANTIC_ANNOTATION
 
 
-def test_thumbnail_palette_does_not_read_best_frames(
-    tmp_path, extractor, monkeypatch,
+def test_thumbnail_palette_passes_resolved_annotation_to_extractor(
+    tmp_path, extractor,
 ):
     metadata = _metadata()
     _write_thumbnail(tmp_path, metadata)
-    monkeypatch.setattr(
-        palette_mod,
-        "load_annotation_items",
-        lambda *_args, **_kwargs: pytest.fail("best-frame annotations were read"),
-    )
 
     create_thumbnail_palette(
         str(tmp_path), metadata["filename"], metadata["media_type"],
         metadata=metadata,
     )
 
-    extractor.assert_called_once()
+    assert extractor.call_args.kwargs["annotation"] == SEMANTIC_ANNOTATION
 
 
 def test_movie_thumbnail_palette_is_stored_under_movie_identity(tmp_path, extractor):
@@ -272,7 +279,9 @@ def test_thumbnail_palette_reuses_existing_figure_ground_result(tmp_path, extrac
     )
 
     cached = load_thumbnail_palette(str(tmp_path), metadata["media_id"], "movie")
-    assert cached["method"] == "figure"
+    assert cached["schema_version"] == 2
+    assert cached["analysis_version"] == "semantic-v1"
+    assert cached["method"] == "semantic-figure"
     assert cached["thumbnail"]["foreground"] == FOREGROUND
     assert cached["thumbnail"]["background"] == BACKGROUND
     assert cached["thumbnail"]["diagnostics"] == DIAGNOSTICS
