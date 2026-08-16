@@ -30,11 +30,11 @@ from visualizers.components.sweep_bar import SweepBar
 from visualizers.components.tab_panel import TabPanel
 
 from PyQt5.QtCore import Qt, QEvent, QThread, QTimer, pyqtSignal
-from PyQt5.QtGui import QFontMetrics
+from PyQt5.QtGui import QCursor, QFontMetrics
 from PyQt5.QtWidgets import (
     QApplication, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
     QFrame, QGridLayout, QHBoxLayout, QLineEdit, QMessageBox, QPushButton,
-    QSizePolicy, QSpinBox, QVBoxLayout, QWidget, QLabel,
+    QSizePolicy, QSpinBox, QToolTip, QVBoxLayout, QWidget, QLabel,
 )
 
 from tool import prefs as _prefs
@@ -361,6 +361,94 @@ class _VocabularyDatavisWidget(QWidget):
                 y += gap_heights[index + 1]
 
 
+class _MediaItemCell(QWidget):
+    """One anonymous media item; geometry and color are independent."""
+
+    activated = pyqtSignal(dict)
+
+    def __init__(self, color: str, parent=None) -> None:
+        super().__init__(parent)
+        self.item: dict = {}
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet(f"background: {color}; border: none;")
+        self.setCursor(Qt.PointingHandCursor)
+
+    def set_item(self, item: dict) -> None:
+        self.item = item
+        self.setToolTip(str(item.get("title") or ""))
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        title = self.toolTip()
+        if title:
+            QToolTip.showText(QCursor.pos(), title, self)
+        super().enterEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.LeftButton and self.item:
+            QToolTip.hideText()
+            self.activated.emit(self.item)
+        super().mouseDoubleClickEvent(event)
+
+
+class _ProjectDatavisWidget(_VocabularyDatavisWidget):
+    """Dispatch renderer-neutral Project DATAVIS payloads by ``kind``."""
+
+    def __init__(self, parent=None) -> None:
+        self._datavis_kind = "empty"
+        self._media_items: list[dict] = []
+        self._media_item_cells: list[_MediaItemCell] = []
+        super().__init__(parent)
+
+    mediaItemActivated = pyqtSignal(dict)
+
+    def set_datavis(self, datavis: dict) -> None:
+        self._datavis_kind = datavis.get("kind", "empty")
+        if self._datavis_kind == "media_items":
+            super().set_datavis({"kind": "empty"})
+            items = datavis.get("items", [])
+            self._media_items = [item for item in items if isinstance(item, dict)]
+            colors = (theme.CELL_BG, theme.PANEL_BG)
+            while len(self._media_item_cells) < len(self._media_items):
+                index = len(self._media_item_cells)
+                cell = _MediaItemCell(colors[index % len(colors)], self)
+                cell.activated.connect(self.mediaItemActivated)
+                self._media_item_cells.append(cell)
+            for index, cell in enumerate(self._media_item_cells):
+                visible = index < len(self._media_items)
+                cell.setVisible(visible)
+                if visible:
+                    cell.set_item(self._media_items[index])
+            self._layout_media_items()
+            return
+
+        self._media_items = []
+        for cell in self._media_item_cells:
+            cell.hide()
+        super().set_datavis(datavis)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if self._datavis_kind == "media_items":
+            self._layout_media_items()
+
+    def _layout_media_items(self) -> None:
+        item_count = len(self._media_items)
+        if item_count <= 0:
+            return
+        top_gap = min(theme.INSPECTOR_GAP, self.height())
+        usable_height = max(0, self.height() - top_gap)
+        base_height, remainder = divmod(usable_height, item_count)
+        y = top_gap
+        for index, cell in enumerate(self._media_item_cells[:item_count]):
+            height = base_height + (index < remainder)
+            cell.setGeometry(0, y, self.width(), height)
+            y += height
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        QToolTip.hideText()
+        super().leaveEvent(event)
+
+
 class _ProjectColumnWidget(QWidget):
     """One HEADER / COUNT / DATAVIS column of the Project Visualizer's V0 grid.
 
@@ -428,7 +516,7 @@ class _ProjectColumnWidget(QWidget):
         self._count_label.setFixedHeight(_COLUMN_ROW_H)
         outer.addWidget(self._count_label)
 
-        self._datavis_widget = _VocabularyDatavisWidget()
+        self._datavis_widget = _ProjectDatavisWidget()
         outer.addWidget(self._datavis_widget, 1)
 
         self.column = column
@@ -1113,6 +1201,9 @@ class ProjectVisualizer(WindowVisualizer):
                 state="loading",
             )
             col_widget = _ProjectColumnWidget(placeholder)
+            col_widget._datavis_widget.mediaItemActivated.connect(
+                self._open_media_item_in_shotlist
+            )
             self._project_column_widgets[col_id] = col_widget
             layout.addWidget(col_widget, 1)
 
@@ -1123,6 +1214,15 @@ class ProjectVisualizer(WindowVisualizer):
 
         self._start_project_columns_load()
         return w
+
+    def _open_media_item_in_shotlist(self, item: dict) -> None:
+        project_path = _prefs.get("path") or ""
+        filename = str(item.get("filename") or "")
+        media_type = str(item.get("media_type") or "movie")
+        if not project_path or not filename:
+            return
+        from visualizers.shot_visualizer import open_at_shot
+        open_at_shot(project_path, filename, media_type=media_type)
 
     def _tick_column_loading_bars(self) -> None:
         for widget in self._project_column_widgets.values():

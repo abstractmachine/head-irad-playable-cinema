@@ -15,9 +15,10 @@ import json
 import threading
 
 import pytest
-from PyQt5.QtCore import QPoint, Qt
-from PyQt5.QtGui import QColor
-from PyQt5.QtWidgets import QApplication, QLabel, QScrollArea
+from PyQt5.QtCore import QEvent, QPoint, Qt
+from PyQt5.QtGui import QColor, QHelpEvent
+from PyQt5.QtTest import QTest
+from PyQt5.QtWidgets import QApplication, QLabel, QScrollArea, QToolTip
 
 import services.corpus_stats as corpus_stats_mod
 import services.illustration_index as illustration_index_mod
@@ -56,6 +57,20 @@ def _write_annotations(project_path, media_type, filename, shot_count):
     (ann_dir / f"{filename}.annotations.json").write_text(json.dumps(payload), encoding="utf-8")
 
 
+def _media_items_datavis(count, media_type="movie"):
+    items = [
+        {
+            "index": index,
+            "title": f"{media_type.title()} {index}",
+            "filename": f"{media_type}-{index}.mp4",
+            "media_type": media_type,
+            "media_id": f"{media_type}_{index}",
+        }
+        for index in range(count)
+    ]
+    return {"kind": "media_items", "count": len(items), "items": items}
+
+
 # ---------------------------------------------------------------------------
 # Data model — live tier (Movies/Gameplay/Shots)
 # ---------------------------------------------------------------------------
@@ -79,7 +94,87 @@ def test_get_live_project_columns_computes_from_metadata_and_annotations(tmp_pat
     assert by_id["shots"].count == 5
     assert by_id["illustrations"].count == 7
     assert all(c.state == "ready" for c in columns)
-    assert all(c.datavis == {"kind": "empty"} for c in columns)
+    assert by_id["movies"].datavis == {
+        "kind": "media_items",
+        "count": 2,
+        "items": [
+            {
+                "index": 0, "title": "a.mp4", "filename": "a.mp4",
+                "media_type": "movie", "media_id": "",
+            },
+            {
+                "index": 1, "title": "b.mp4", "filename": "b.mp4",
+                "media_type": "movie", "media_id": "",
+            },
+        ],
+    }
+    assert by_id["gameplay"].datavis == {
+        "kind": "media_items",
+        "count": 1,
+        "items": [{
+            "index": 0, "title": "c.mp4", "filename": "c.mp4",
+            "media_type": "gameplay", "media_id": "",
+        }],
+    }
+    assert by_id["shots"].datavis == {"kind": "empty"}
+    assert by_id["illustrations"].datavis == {"kind": "empty"}
+
+
+def test_media_item_payload_counts_reuse_the_loaded_metadata_collections(monkeypatch):
+    calls = []
+
+    def load_metadata(_project_path, media_type):
+        calls.append(media_type)
+        if media_type == "movie":
+            return [
+                {
+                    "filename": f"movie-{index}.mp4",
+                    "title": f"Movie {index}",
+                    "year": 1939 + index,
+                    "media_id": f"tmdb_{index}",
+                }
+                for index in range(314)
+            ]
+        return [
+            {
+                "filename": "gameplay-a.mp4", "title": "Gameplay A",
+                "media_id": "game_a",
+            },
+            {
+                "filename": "gameplay-b.mp4", "title": "Gameplay B",
+                "media_id": "game_b",
+            },
+        ]
+
+    monkeypatch.setattr(corpus_stats_mod, "load_json_metadata", load_metadata)
+    monkeypatch.setattr(corpus_stats_mod, "_count_annotated_shots_by_type", lambda _path: {})
+    monkeypatch.setattr(
+        corpus_stats_mod, "get_illustration_stats",
+        lambda _path: {"state": "ready", "count": 0, "labels": {}},
+    )
+
+    columns = get_live_project_columns("/fake/project")
+    by_id = {column.id: column for column in columns}
+
+    assert calls == ["movie", "gameplay"]
+    assert by_id["movies"].count == 314
+    assert by_id["movies"].datavis["count"] == len(by_id["movies"].datavis["items"]) == 314
+    assert by_id["movies"].datavis["items"][0] == {
+        "index": 0,
+        "title": "Movie 0 (1939)",
+        "filename": "movie-0.mp4",
+        "media_type": "movie",
+        "media_id": "tmdb_0",
+    }
+    assert by_id["gameplay"].count == 2
+    assert by_id["gameplay"].datavis["count"] == len(by_id["gameplay"].datavis["items"]) == 2
+    assert by_id["gameplay"].datavis["items"][1] == {
+        "index": 1,
+        "title": "Gameplay B",
+        "filename": "gameplay-b.mp4",
+        "media_type": "gameplay",
+        "media_id": "game_b",
+    }
 
 
 def test_get_live_project_columns_without_project_path_are_unavailable():
@@ -87,6 +182,7 @@ def test_get_live_project_columns_without_project_path_are_unavailable():
 
     assert all(c.count is None for c in columns)
     assert all(c.state == "unavailable" for c in columns)
+    assert all(c.datavis == {"kind": "empty"} for c in columns)
 
 
 def test_get_live_project_columns_empty_project_reports_zero_not_unavailable(tmp_path, monkeypatch):
@@ -101,6 +197,10 @@ def test_get_live_project_columns_empty_project_reports_zero_not_unavailable(tmp
     for col_id in ("movies", "gameplay", "shots"):
         assert by_id[col_id].count == 0
         assert by_id[col_id].state == "ready"
+
+    assert by_id["movies"].datavis == {"kind": "media_items", "count": 0, "items": []}
+    assert by_id["gameplay"].datavis == {"kind": "media_items", "count": 0, "items": []}
+    assert by_id["shots"].datavis == {"kind": "empty"}
 
     assert by_id["illustrations"].count is None
     assert by_id["illustrations"].state == "unavailable"
@@ -547,6 +647,342 @@ def test_vocabulary_datavis_minima_redistribute_remaining_height():
 
     assert heights == [60, 20, 20]
     assert sum(heights) == 100
+
+
+def test_movies_media_items_render_314_equal_gapless_cells_with_exact_pixel_fill(app):
+    from visualizers.project_visualizer import _ProjectDatavisWidget
+
+    datavis = _ProjectDatavisWidget()
+    try:
+        datavis.resize(140, theme.INSPECTOR_GAP + 314 * 2)
+        datavis.set_datavis(_media_items_datavis(314))
+        datavis.show()
+        app.processEvents()
+
+        cells = datavis._media_item_cells
+        assert len(cells) == 314
+        assert all(cell.isVisible() for cell in cells)
+        assert all(cell.height() == 2 for cell in cells)
+        assert cells[0].y() == theme.INSPECTOR_GAP
+        assert all(
+            cells[index].y() == cells[index - 1].y() + cells[index - 1].height()
+            for index in range(1, len(cells))
+        )
+        assert cells[-1].y() + cells[-1].height() == datavis.height()
+        assert all(cell.findChildren(QLabel) == [] for cell in cells)
+
+        image = datavis.grab().toImage()
+        for y in range(theme.INSPECTOR_GAP):
+            assert image.pixelColor(datavis.width() // 2, y) == QColor(theme.CANVAS_BG)
+        colors = (QColor(theme.CELL_BG), QColor(theme.PANEL_BG))
+        for index, cell in enumerate(cells):
+            for y in range(cell.y(), cell.y() + cell.height()):
+                assert image.pixelColor(datavis.width() // 2, y) == colors[index % 2]
+    finally:
+        datavis.close()
+        datavis.deleteLater()
+        app.processEvents()
+
+
+def test_gameplay_media_items_render_two_equal_contiguous_alternating_cells(app):
+    from visualizers.project_visualizer import _ProjectDatavisWidget
+
+    datavis = _ProjectDatavisWidget()
+    try:
+        datavis.resize(140, theme.INSPECTOR_GAP + 200)
+        datavis.set_datavis(_media_items_datavis(2, "gameplay"))
+        datavis.show()
+        app.processEvents()
+
+        first, second = datavis._media_item_cells
+        assert first.geometry().getRect() == (0, theme.INSPECTOR_GAP, 140, 100)
+        assert second.geometry().getRect() == (
+            0, theme.INSPECTOR_GAP + 100, 140, 100,
+        )
+        assert second.y() == first.y() + first.height()
+        assert second.y() + second.height() == datavis.height()
+
+        image = datavis.grab().toImage()
+        x = datavis.width() // 2
+        assert image.pixelColor(x, theme.INSPECTOR_GAP - 1) == QColor(theme.CANVAS_BG)
+        assert image.pixelColor(x, first.y()) == QColor(theme.CELL_BG)
+        assert image.pixelColor(x, first.y() + first.height() - 1) == QColor(theme.CELL_BG)
+        assert image.pixelColor(x, second.y()) == QColor(theme.PANEL_BG)
+        assert image.pixelColor(x, datavis.height() - 1) == QColor(theme.PANEL_BG)
+    finally:
+        datavis.close()
+        datavis.deleteLater()
+        app.processEvents()
+
+
+def test_media_items_one_item_fills_every_pixel_after_canonical_top_gap(app):
+    from visualizers.project_visualizer import _ProjectDatavisWidget
+
+    datavis = _ProjectDatavisWidget()
+    try:
+        datavis.resize(140, 103)
+        datavis.set_datavis(_media_items_datavis(1))
+        datavis.show()
+        app.processEvents()
+
+        cell = datavis._media_item_cells[0]
+        assert cell.geometry().getRect() == (0, theme.INSPECTOR_GAP, 140, 100)
+        assert cell.y() + cell.height() == datavis.height()
+    finally:
+        datavis.close()
+        datavis.deleteLater()
+        app.processEvents()
+
+
+def test_media_items_zero_hides_cells_and_leaves_canvas_empty(app):
+    from visualizers.project_visualizer import _ProjectDatavisWidget
+
+    datavis = _ProjectDatavisWidget()
+    try:
+        datavis.resize(140, 103)
+        datavis.set_datavis(_media_items_datavis(2))
+        datavis.set_datavis(_media_items_datavis(0))
+        datavis.show()
+        app.processEvents()
+
+        assert datavis._media_items == []
+        assert not any(cell.isVisible() for cell in datavis._media_item_cells)
+        image = datavis.grab().toImage()
+        for y in range(datavis.height()):
+            assert image.pixelColor(datavis.width() // 2, y) == QColor(theme.CANVAS_BG)
+    finally:
+        datavis.close()
+        datavis.deleteLater()
+        app.processEvents()
+
+
+def test_media_items_responsive_resize_redistributes_only_rounding_pixels(app):
+    from visualizers.project_visualizer import _ProjectDatavisWidget
+
+    datavis = _ProjectDatavisWidget()
+    try:
+        datavis.set_datavis(_media_items_datavis(3))
+        datavis.show()
+        for height, expected_heights in (
+            (theme.INSPECTOR_GAP + 300, [100, 100, 100]),
+            (theme.INSPECTOR_GAP + 301, [101, 100, 100]),
+            (theme.INSPECTOR_GAP + 302, [101, 101, 100]),
+        ):
+            datavis.resize(140, height)
+            app.processEvents()
+
+            cells = datavis._media_item_cells
+            assert [cell.height() for cell in cells] == expected_heights
+            assert cells[0].y() == theme.INSPECTOR_GAP
+            assert all(
+                cells[index].y() == cells[index - 1].y() + cells[index - 1].height()
+                for index in range(1, len(cells))
+            )
+            assert cells[-1].y() + cells[-1].height() == datavis.height()
+            assert max(expected_heights) - min(expected_heights) <= 1
+    finally:
+        datavis.close()
+        datavis.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.parametrize(("media_type", "title"), [
+    ("movie", "Dodge City"),
+    ("gameplay", "Red Dead Redemption 2"),
+])
+def test_media_item_cell_attaches_identity_and_uses_canonical_tooltip(
+    app, monkeypatch, media_type, title,
+):
+    from visualizers.project_visualizer import _ProjectDatavisWidget
+
+    item = {
+        "index": 0,
+        "title": title,
+        "filename": f"{media_type}-item.mp4",
+        "media_type": media_type,
+        "media_id": f"{media_type}_stable_id",
+    }
+    datavis = _ProjectDatavisWidget()
+    try:
+        datavis.resize(140, 103)
+        datavis.set_datavis({"kind": "media_items", "count": 1, "items": [item]})
+        datavis.show()
+        app.processEvents()
+
+        cell = datavis._media_item_cells[0]
+        assert cell.item is item
+        assert cell.toolTip() == title
+
+        shown = []
+        monkeypatch.setattr(
+            QToolTip, "showText",
+            lambda pos, text, widget: shown.append((pos, text, widget)),
+        )
+        QApplication.sendEvent(cell, QEvent(QEvent.Enter))
+        assert len(shown) == 1
+        assert shown[0][1:] == (title, cell)
+
+        local_pos = cell.rect().center()
+        event = QHelpEvent(
+            QEvent.ToolTip, local_pos, cell.mapToGlobal(local_pos),
+        )
+        QApplication.sendEvent(cell, event)
+        assert event.isAccepted()
+        assert QToolTip.text() == title
+    finally:
+        QToolTip.hideText()
+        datavis.close()
+        datavis.deleteLater()
+        app.processEvents()
+
+
+def test_media_item_hover_updates_title_and_datavis_leave_dismisses_popup(
+    app, monkeypatch,
+):
+    from visualizers.project_visualizer import _ProjectDatavisWidget
+
+    datavis = _ProjectDatavisWidget()
+    try:
+        datavis.resize(140, 203)
+        datavis.set_datavis({
+            "kind": "media_items",
+            "count": 2,
+            "items": [
+                {
+                    "index": 0, "title": "First Movie", "filename": "first.mp4",
+                    "media_type": "movie", "media_id": "tmdb_1",
+                },
+                {
+                    "index": 1, "title": "Second Movie", "filename": "second.mp4",
+                    "media_type": "movie", "media_id": "tmdb_2",
+                },
+            ],
+        })
+        datavis.show()
+        app.processEvents()
+
+        first, second = datavis._media_item_cells
+        for cell, title in ((first, "First Movie"), (second, "Second Movie")):
+            local_pos = cell.rect().center()
+            event = QHelpEvent(
+                QEvent.ToolTip, local_pos, cell.mapToGlobal(local_pos),
+            )
+            QApplication.sendEvent(cell, event)
+            assert QToolTip.text() == title
+
+        hide_calls = []
+        monkeypatch.setattr(QToolTip, "hideText", lambda: hide_calls.append(True))
+        QApplication.sendEvent(datavis, QEvent(QEvent.Leave))
+        assert hide_calls == [True]
+        assert datavis.toolTip() == ""
+    finally:
+        QToolTip.hideText()
+        datavis.close()
+        datavis.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.parametrize(("media_type", "filename"), [
+    ("movie", "dodge-city.mp4"),
+    ("gameplay", "rdr2-session.mp4"),
+])
+def test_media_item_double_click_uses_canonical_shotlist_navigation(
+    app, fake_prefs, monkeypatch, media_type, filename,
+):
+    fake_prefs["path"] = "/fake/project"
+    monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
+    opened = []
+    monkeypatch.setattr(
+        "visualizers.shot_visualizer.open_at_shot",
+        lambda project_path, item_filename, *, media_type: opened.append(
+            (project_path, item_filename, media_type)
+        ),
+    )
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    item = {
+        "index": 0,
+        "title": "Selected Item",
+        "filename": filename,
+        "media_type": media_type,
+        "media_id": f"{media_type}_stable_id",
+    }
+    window = ProjectVisualizer()
+    try:
+        window.resize(1000, 700)
+        window.show()
+        widget = window._project_column_widgets[
+            "movies" if media_type == "movie" else "gameplay"
+        ]
+        widget.set_column(ProjectColumn(
+            id=widget.column.id,
+            title=widget.column.title,
+            count=1,
+            datavis={"kind": "media_items", "count": 1, "items": [item]},
+            state="ready",
+        ))
+        app.processEvents()
+        cell = widget._datavis_widget._media_item_cells[0]
+
+        QTest.mouseClick(cell, Qt.LeftButton)
+        assert opened == []
+
+        QTest.mouseDClick(cell, Qt.LeftButton)
+        assert opened == [("/fake/project", filename, media_type)]
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_media_item_double_click_opens_only_the_activated_cell(
+    app, fake_prefs, monkeypatch,
+):
+    fake_prefs["path"] = "/fake/project"
+    monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
+    opened = []
+    monkeypatch.setattr(
+        "visualizers.shot_visualizer.open_at_shot",
+        lambda project_path, filename, *, media_type: opened.append(filename),
+    )
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    window = ProjectVisualizer()
+    try:
+        window.resize(1000, 700)
+        window.show()
+        widget = window._project_column_widgets["movies"]
+        widget.set_column(ProjectColumn(
+            id="movies", title="Movies", count=2,
+            datavis={
+                "kind": "media_items", "count": 2,
+                "items": [
+                    {
+                        "index": 0, "title": "First", "filename": "first.mp4",
+                        "media_type": "movie", "media_id": "tmdb_1",
+                    },
+                    {
+                        "index": 1, "title": "Second", "filename": "second.mp4",
+                        "media_type": "movie", "media_id": "tmdb_2",
+                    },
+                ],
+            },
+            state="ready",
+        ))
+        app.processEvents()
+
+        first, second = widget._datavis_widget._media_item_cells
+        QTest.mouseDClick(second, Qt.LeftButton)
+
+        assert first.item["filename"] == "first.mp4"
+        assert second.item["filename"] == "second.mp4"
+        assert opened == ["second.mp4"]
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
 
 
 @pytest.mark.parametrize(("counts", "height", "expected_heights", "expected_y"), [

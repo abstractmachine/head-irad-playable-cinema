@@ -429,7 +429,8 @@ class ProjectColumn:
     unavailable state.
 
     ``datavis`` is a small, renderer-agnostic dict describing what (if
-    anything) the column's DATAVIS region should draw. Vocabulary uses
+    anything) the column's DATAVIS region should draw. Movies and Gameplay
+    use ``{"kind": "media_items", "count": int, "items": [...]}``; Vocabulary uses
     ``{"kind": "vocabulary_fields", "fields": [...]}``; all other columns
     currently use ``{"kind": "empty"}``.
     """
@@ -611,6 +612,23 @@ def _make_column(
     )
 
 
+def _media_items_datavis(metadata: list[dict], media_type: str) -> dict[str, Any]:
+    """Project DATAVIS identity projected from an already-loaded metadata list."""
+    items = []
+    for index, record in enumerate(metadata):
+        filename = str(record.get("filename") or "")
+        title = str(record.get("title") or Path(filename).stem or "(untitled)")
+        year = record.get("year")
+        items.append({
+            "index": index,
+            "title": f"{title} ({year})" if year else title,
+            "filename": filename,
+            "media_type": media_type,
+            "media_id": str(record.get("media_id") or ""),
+        })
+    return {"kind": "media_items", "count": len(items), "items": items}
+
+
 def get_vocabulary_field_counts(
     project_path: str, expected_total: Optional[int] = None,
 ) -> list[dict[str, Any]]:
@@ -651,17 +669,17 @@ def get_live_project_columns(project_path: Optional[str]) -> list[ProjectColumn]
     still calls it off the GUI thread alongside `get_cached_project_columns`
     so each tier can be displayed as soon as it's ready.
     """
-    movie_count: Optional[int] = None
-    gameplay_count: Optional[int] = None
+    movie_metadata: Optional[list[dict]] = None
+    gameplay_metadata: Optional[list[dict]] = None
     shots_count: Optional[int] = None
 
     if project_path:
         try:
-            movie_count = len(load_json_metadata(project_path, "movie"))
+            movie_metadata = load_json_metadata(project_path, "movie")
         except (OSError, json.JSONDecodeError):
             pass
         try:
-            gameplay_count = len(load_json_metadata(project_path, "gameplay"))
+            gameplay_metadata = load_json_metadata(project_path, "gameplay")
         except (OSError, json.JSONDecodeError):
             pass
         try:
@@ -682,8 +700,21 @@ def get_live_project_columns(project_path: Optional[str]) -> list[ProjectColumn]
         )
 
     return [
-        _make_column("movies", "Movies", movie_count),
-        _make_column("gameplay", "Gameplay", gameplay_count),
+        _make_column(
+            "movies", "Movies", len(movie_metadata) if movie_metadata is not None else None,
+            datavis=(
+                _media_items_datavis(movie_metadata, "movie")
+                if movie_metadata is not None else None
+            ),
+        ),
+        _make_column(
+            "gameplay", "Gameplay",
+            len(gameplay_metadata) if gameplay_metadata is not None else None,
+            datavis=(
+                _media_items_datavis(gameplay_metadata, "gameplay")
+                if gameplay_metadata is not None else None
+            ),
+        ),
         _make_column("shots", "Shots", shots_count),
         illustrations_column,
     ]
@@ -747,8 +778,9 @@ def get_project_columns(project_path: Optional[str]) -> list[ProjectColumn]:
     Always returned in `PROJECT_COLUMN_IDS_AND_TITLES`'s fixed display
     order, regardless of which tier each column came from.
 
-    Vocabulary's ``datavis`` contains its ordered field composition. Every
-    other column remains ``{"kind": "empty"}``.
+    Movies and Gameplay carry their metadata collection size as
+    ``media_items``; Vocabulary carries its ordered field composition.
+    Every other column remains ``{"kind": "empty"}``.
     """
     by_id = {
         column.id: column
