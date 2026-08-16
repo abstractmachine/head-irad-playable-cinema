@@ -114,6 +114,7 @@ def _normalize_form_labels(form: QFormLayout) -> None:
 
 _COLUMN_ROW_H = 28   # shared fixed height for HEADER and COUNT regions (px)
 _PROJECT_ROW_SEAM_H = 1
+_PROJECT_COLUMN_SPACING = _PROJECT_ROW_SEAM_H
 _SPACER_ROW_INSET = 8
 _SPACER_ROW_GAP = 6
 
@@ -133,6 +134,13 @@ def _project_row_side_style() -> str:
         f"border-left: {_PROJECT_ROW_SEAM_H}px solid {theme.UI_BORDER}; "
         f"border-right: {_PROJECT_ROW_SEAM_H}px solid {theme.UI_BORDER};"
     )
+
+
+def _project_datavis_horizontal_insets() -> tuple[int, int]:
+    """Return insets that make adjacent DATAVIS content exactly one canonical gap apart."""
+    inset_total = max(0, theme.INSPECTOR_GAP - _PROJECT_COLUMN_SPACING)
+    left = inset_total // 2
+    return left, inset_total - left
 
 # Display text for a column's status line when it isn't "ready" — keyed by
 # ProjectColumn.reason first, falling back to a generic per-state label.
@@ -398,6 +406,13 @@ class _ProjectDatavisWidget(_VocabularyDatavisWidget):
         self._media_items: list[dict] = []
         self._media_item_cells: list[_MediaItemCell] = []
         super().__init__(parent)
+        self._content_widget = QWidget(self)
+        self._content_widget.setObjectName("ProjectDatavisContent")
+        self._content_widget.setAttribute(Qt.WA_StyledBackground, True)
+        self._content_widget.setStyleSheet(
+            f"QWidget#ProjectDatavisContent {{ background: {theme.CANVAS_BG}; }}"
+        )
+        self._content_widget.hide()
 
     mediaItemActivated = pyqtSignal(dict)
 
@@ -405,12 +420,15 @@ class _ProjectDatavisWidget(_VocabularyDatavisWidget):
         self._datavis_kind = datavis.get("kind", "empty")
         if self._datavis_kind == "media_items":
             super().set_datavis({"kind": "empty"})
+            self._content_widget.show()
             items = datavis.get("items", [])
             self._media_items = [item for item in items if isinstance(item, dict)]
             colors = (theme.CELL_BG, theme.PANEL_BG)
             while len(self._media_item_cells) < len(self._media_items):
                 index = len(self._media_item_cells)
-                cell = _MediaItemCell(colors[index % len(colors)], self)
+                cell = _MediaItemCell(
+                    colors[index % len(colors)], self._content_widget
+                )
                 cell.activated.connect(self.mediaItemActivated)
                 self._media_item_cells.append(cell)
             for index, cell in enumerate(self._media_item_cells):
@@ -422,26 +440,36 @@ class _ProjectDatavisWidget(_VocabularyDatavisWidget):
             return
 
         self._media_items = []
+        self._content_widget.hide()
         for cell in self._media_item_cells:
             cell.hide()
         super().set_datavis(datavis)
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
+        self._sync_content_geometry()
         if self._datavis_kind == "media_items":
             self._layout_media_items()
+
+    def _sync_content_geometry(self) -> None:
+        left, right = _project_datavis_horizontal_insets()
+        self._content_widget.setGeometry(
+            left, 0, max(0, self.width() - left - right), self.height()
+        )
 
     def _layout_media_items(self) -> None:
         item_count = len(self._media_items)
         if item_count <= 0:
             return
-        top_gap = min(theme.INSPECTOR_GAP, self.height())
-        usable_height = max(0, self.height() - top_gap)
+        self._sync_content_geometry()
+        content = self._content_widget
+        top_gap = min(theme.INSPECTOR_GAP, content.height())
+        usable_height = max(0, content.height() - top_gap)
         base_height, remainder = divmod(usable_height, item_count)
         y = top_gap
         for index, cell in enumerate(self._media_item_cells[:item_count]):
             height = base_height + (index < remainder)
-            cell.setGeometry(0, y, self.width(), height)
+            cell.setGeometry(0, y, content.width(), height)
             y += height
 
     def leaveEvent(self, event) -> None:  # noqa: N802
@@ -1189,7 +1217,7 @@ class ProjectVisualizer(WindowVisualizer):
 
         layout = QHBoxLayout(w)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(1)
+        layout.setSpacing(_PROJECT_COLUMN_SPACING)
 
         # Headers are created immediately, in a "loading" state — no data
         # access happens on the GUI thread. _start_project_columns_load()

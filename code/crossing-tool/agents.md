@@ -294,8 +294,9 @@ paint/behavior level without forcing a structurally incompatible base class.
     (`book.json`, `layers.json`, `selections.json`, `mask.json`)
   - `data/film_motif.py` → `data/film_titles/<type>/<file>.json` (per-film semantic title)
 - **Derived/cache data** (regenerable from canonical data + a model pipeline):
-  `data/palette.py` (`data/palettes/`, CLIP+SAM2), `services/silhouette*.py` (silhouette
-  cache + object catalog), `services/vocabulary_index.py`, `services/frame_embeddings.py`
+  `data/palette.py` (`data/palettes/`, SAM3 via the canonical
+  `segment_palette(image_pil)` adapter), `services/silhouette*.py` (silhouette cache +
+  object catalog), `services/vocabulary_index.py`, `services/frame_embeddings.py`
   (`.npy` + manifest), `services/engraving_*` (PNG/JSON per generation run — cache-like,
   each `engraving_id` unique, no cross-run collision).
 - **Writes must be atomic.** `data/annotate.py::atomic_write_text(path, text)` is the

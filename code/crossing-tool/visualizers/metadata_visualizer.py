@@ -91,17 +91,9 @@ _INFO_ROWS = [
 
 
 def _resolve_thumbnail(project_path: str, media_type: str, filename: str) -> Path | None:
-    stem = Path(filename).stem
-    dirs_to_try = [media_type]
-    if media_type == "movie":
-        dirs_to_try.append("movies")
-    for mdir in dirs_to_try:
-        thumb_dir = Path(project_path) / "media" / "thumbnails" / mdir
-        for name in (stem + ".jpg", stem.replace(" ", "-") + ".jpg"):
-            path = thumb_dir / name
-            if path.exists():
-                return path
-    return None
+    from data.metadata import resolve_thumbnail_path
+
+    return resolve_thumbnail_path(project_path, media_type, filename)
 
 
 def _format_value(value) -> str:

@@ -1,27 +1,40 @@
-"""Palette indexing: figure-ground colour extraction from best frames.
+"""Palette indexing: figure-ground colour extraction from project images.
 
-Cache path
-----------
+Cache paths
+-----------
+Best-frame palettes retain their existing per-film path::
+
     <project>/data/palettes/<media_type>/<stem>.json
+
+Thumbnail palettes use canonical media identity::
+
+    <project>/data/palettes/<media_type>/thumbnail/<media_id>.json
 
 For each shot in a film the best-frame PNG (written by ``crossing annotate
 frame``) is loaded and analysed using the figure-ground palette pipeline.
+Thumbnail palettes run that same pipeline once on the exact image resolved by
+the Metadata Viewer.
 
 Algorithm — figure
 ------------------
-1. Resize to 256×256 (LANCZOS) for texture detail.
-2. Simplify texture via mean-shift filtering (``cv2.pyrMeanShiftFiltering``
-   when OpenCV is available; skipped gracefully if absent).
-3. Split into foreground / background regions:
-   a. SAM2 semantic segmentation when a model is configured via
-      ``crossing tool model set segmentation <name>``; objects that do not
-      touch the frame edge and whose bounding-box centre lies within the
-      inner 60 % of the frame are classified as foreground.
-   b. Spatial border/center split when SAM2 is unavailable.
-4. Cluster each region with agglomerative Ward clustering in CIELAB space
-   (falls back to stratified k-means when scipy is absent).
-5. Rank clusters by perceptual weight; apply a rescue pass when both
+1. Detect paired, continuous near-black bars at the original image edges.
+2. Crop to the detected active-image bounds, or retain the full image when no
+    bars are detected.
+3. Resize the active image to 256×256 (LANCZOS) for texture detail.
+4. Simplify texture via ``cv2.pyrMeanShiftFiltering``.
+5. Request foreground-object masks through the configured segmentation model's
+    canonical ``segment_palette(image_pil)`` interface; masks that do not touch
+    the frame edge and whose bounding-box centre lies within the inner 60 % of
+    the frame are classified as foreground.
+6. Cluster each region with agglomerative Ward clustering in CIELAB space
+    using scipy.
+7. Rank clusters by perceptual weight; apply a rescue pass when both
    dominant colours are near-black or insufficiently distinct.
+
+Missing dependencies, unavailable/incompatible segmentation models, inference
+errors, and unusable segmentation results are explicit analysis failures. The
+palette pipeline does not probe alternate model APIs or use a spatial,
+clustering, or sentinel-colour substitute.
 
 Output schema
 -------------
@@ -39,15 +52,16 @@ Output schema
         "coverage":  0.35            # fraction of frame pixels in this region
     }
 
-Output is fully deterministic when SAM2 is not in use.
+Output is deterministic for a fixed segmentation result.
 
 Dependencies: Pillow (core dep), numpy (core dep).
-Optional: cv2 (OpenCV) for mean-shift; scipy for Ward clustering;
-          SAM2 for semantic figure-ground segmentation.
+Required for extraction: cv2 (OpenCV), scipy, and a configured segmentation
+adapter exposing ``segment_palette(image_pil)``.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -57,7 +71,7 @@ import numpy as np
 
 from data.index import load_annotation_items
 from data.media_id import build_shot_id, compute_media_id
-from data.metadata import get_metadata
+from data.metadata import get_metadata, resolve_thumbnail_path
 from data.shotlist import get_shotlist_path, read_shotlist
 
 # ---------------------------------------------------------------------------
@@ -67,8 +81,6 @@ from data.shotlist import get_shotlist_path, read_shotlist
 # Perceptual weighting tuning
 _LAB_MIN_L         = 8.0   # L* below this is "near-black" and gets downweighted
 _LAB_DARK_FRACTION = 0.70  # if this fraction of pixels is near-black, lower threshold
-_N_CLUSTERS        = 5     # k-means cluster count (fallback when scipy absent)
-_KMEANS_MAX_ITER   = 20    # max k-means iterations
 
 # Low-key rescue pass thresholds
 _NEAR_BLACK_L               = 15.0  # L* below this is "near-black"
@@ -83,6 +95,177 @@ _FIG_MS_SR      = 20    # mean-shift color-range radius
 _FIG_N_CLUSTERS = 8     # agglomerative clusters per region
 _FIG_N_PALETTE  = 4     # palette entries kept per region
 _FIG_MAX_SAMPLE = 1024  # max pixels sampled for Ward linkage (speed cap)
+
+# Conservative edge-connected letterbox / pillarbox detection
+_LETTERBOX_NEAR_BLACK_LUMA = 16
+_LETTERBOX_MAX_CHANNEL_SPREAD = 8
+_LETTERBOX_DARK_COVERAGE = 0.98
+_LETTERBOX_MIN_THICKNESS_FRACTION = 0.015
+_LETTERBOX_MIN_THICKNESS_PIXELS = 2
+_LETTERBOX_INTERIOR_PROBE_FRACTION = 0.01
+_LETTERBOX_INTERIOR_PROBE_MAX_PIXELS = 16
+_LETTERBOX_MAX_INTERIOR_DARK_COVERAGE = 0.90
+_LETTERBOX_MIN_INTERIOR_LUMA_DELTA = 20
+_LETTERBOX_MAX_SAMPLES = 512
+
+
+class PaletteAnalysisError(RuntimeError):
+    """The intended figure-ground analysis could not produce a valid palette."""
+
+
+def _edge_run_length(flags: np.ndarray) -> int:
+    """Return the number of consecutive true values from the first edge."""
+    first_false = np.flatnonzero(~flags)
+    return int(first_false[0]) if len(first_false) else int(len(flags))
+
+
+def _edge_has_content_transition(
+    luma: np.ndarray,
+    near_black: np.ndarray,
+    run_length: int,
+    min_thickness: int,
+) -> bool:
+    """Return whether one edge run has strong evidence of adjacent content."""
+    axis_length = luma.shape[0]
+    if run_length < min_thickness or run_length >= axis_length:
+        return False
+
+    probe_size = max(
+        min_thickness,
+        int(np.ceil(axis_length * _LETTERBOX_INTERIOR_PROBE_FRACTION)),
+    )
+    probe_size = min(probe_size, _LETTERBOX_INTERIOR_PROBE_MAX_PIXELS)
+    probe_end = min(axis_length, run_length + probe_size)
+    if probe_end <= run_length:
+        return False
+
+    bar_luma = float(luma[:run_length].mean())
+    interior_luma = float(luma[run_length:probe_end].mean())
+    interior_dark_coverage = float(
+        near_black[run_length:probe_end].mean()
+    )
+    return (
+        interior_dark_coverage <= _LETTERBOX_MAX_INTERIOR_DARK_COVERAGE
+        and interior_luma - bar_luma >= _LETTERBOX_MIN_INTERIOR_LUMA_DELTA
+    )
+
+
+def _detect_content_bbox(image) -> dict:
+    """Return conservative active-image bounds in original image coordinates.
+
+    Top, bottom, left, and right are evaluated independently. Each accepted bar
+    must be a meaningful continuous edge run followed by a strong transition to
+    non-bar image content. No accepted bars returns the full image bounds.
+    """
+    try:
+        from PIL import Image
+
+        width, height = image.size
+        if width <= 0 or height <= 0:
+            raise ValueError(f"invalid image dimensions {width}x{height}")
+        rgb_image = image if image.mode == "RGB" else image.convert("RGB")
+        sample_width = min(width, _LETTERBOX_MAX_SAMPLES)
+        sample_height = min(height, _LETTERBOX_MAX_SAMPLES)
+        row_projection = rgb_image.resize(
+            (sample_width, height), Image.Resampling.NEAREST
+        )
+        col_projection = rgb_image.resize(
+            (width, sample_height), Image.Resampling.NEAREST
+        )
+        row_rgb = np.asarray(row_projection, dtype=np.uint8).astype(np.uint16)
+        col_rgb = np.asarray(col_projection, dtype=np.uint8).astype(np.uint16)
+    except Exception as exc:
+        raise PaletteAnalysisError(
+            f"Letterbox detection could not analyze the source image: {exc}"
+        ) from exc
+
+    if row_rgb.shape != (height, sample_width, 3):
+        raise PaletteAnalysisError(
+            "Letterbox row projection is malformed: "
+            f"shape {row_rgb.shape}, expected {(height, sample_width, 3)}"
+        )
+    if col_rgb.shape != (sample_height, width, 3):
+        raise PaletteAnalysisError(
+            "Letterbox column projection is malformed: "
+            f"shape {col_rgb.shape}, expected {(sample_height, width, 3)}"
+        )
+    row_luma = (
+        54 * row_rgb[..., 0] + 183 * row_rgb[..., 1] + 19 * row_rgb[..., 2]
+    ) // 256
+    col_luma = (
+        54 * col_rgb[..., 0] + 183 * col_rgb[..., 1] + 19 * col_rgb[..., 2]
+    ) // 256
+    row_channel_spread = row_rgb.max(axis=2) - row_rgb.min(axis=2)
+    col_channel_spread = col_rgb.max(axis=2) - col_rgb.min(axis=2)
+
+    near_black_rows = (
+        (row_luma <= _LETTERBOX_NEAR_BLACK_LUMA)
+        & (row_channel_spread <= _LETTERBOX_MAX_CHANNEL_SPREAD)
+    )
+    near_black_cols = (
+        (col_luma <= _LETTERBOX_NEAR_BLACK_LUMA)
+        & (col_channel_spread <= _LETTERBOX_MAX_CHANNEL_SPREAD)
+    )
+    dark_rows = near_black_rows.mean(axis=1) >= _LETTERBOX_DARK_COVERAGE
+    dark_cols = near_black_cols.mean(axis=0) >= _LETTERBOX_DARK_COVERAGE
+
+    top_run = _edge_run_length(dark_rows)
+    bottom_run = _edge_run_length(dark_rows[::-1])
+    left_run = _edge_run_length(dark_cols)
+    right_run = _edge_run_length(dark_cols[::-1])
+
+    min_horizontal = max(
+        _LETTERBOX_MIN_THICKNESS_PIXELS,
+        int(np.ceil(height * _LETTERBOX_MIN_THICKNESS_FRACTION)),
+    )
+    min_vertical = max(
+        _LETTERBOX_MIN_THICKNESS_PIXELS,
+        int(np.ceil(width * _LETTERBOX_MIN_THICKNESS_FRACTION)),
+    )
+    top_detected = _edge_has_content_transition(
+        row_luma, near_black_rows, top_run, min_horizontal
+    )
+    bottom_detected = _edge_has_content_transition(
+        row_luma[::-1], near_black_rows[::-1], bottom_run, min_horizontal
+    )
+    left_detected = _edge_has_content_transition(
+        col_luma.T, near_black_cols.T, left_run, min_vertical
+    )
+    right_detected = _edge_has_content_transition(
+        col_luma.T[::-1], near_black_cols.T[::-1], right_run, min_vertical
+    )
+
+    top = top_run if top_detected else 0
+    bottom = bottom_run if bottom_detected else 0
+    left = left_run if left_detected else 0
+    right = right_run if right_detected else 0
+
+    # Overlapping detections are ambiguous evidence, so retain that full axis.
+    if top + bottom >= height:
+        top = bottom = 0
+        top_detected = bottom_detected = False
+    if left + right >= width:
+        left = right = 0
+        left_detected = right_detected = False
+
+    detected_horizontal = top_detected or bottom_detected
+    detected_vertical = left_detected or right_detected
+    bbox = [left, top, width - right, height - bottom]
+    if bbox[0] >= bbox[2] or bbox[1] >= bbox[3]:
+        raise PaletteAnalysisError(
+            f"Letterbox detection produced an invalid content bbox: {bbox}"
+        )
+
+    return {
+        "bbox": bbox,
+        "top": top,
+        "bottom": bottom,
+        "left": left,
+        "right": right,
+        "detected": detected_horizontal or detected_vertical,
+        "detected_horizontal": detected_horizontal,
+        "detected_vertical": detected_vertical,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +329,64 @@ def get_palette(project_path: str, filename: str, media_type: str) -> dict | Non
     This is a thin alias for ``load_palette`` intended for use from the CLI.
     """
     return load_palette(project_path, filename, media_type)
+
+
+def get_thumbnail_palette_path(
+    project_path: str,
+    media_id: str,
+    media_type: str,
+) -> Path:
+    """Return the canonical media-ID cache path for a thumbnail palette."""
+    return (
+        Path(project_path)
+        / "data"
+        / "palettes"
+        / media_type
+        / "thumbnail"
+        / f"{media_id}.json"
+    )
+
+
+def load_thumbnail_palette(
+    project_path: str,
+    media_id: str,
+    media_type: str,
+) -> dict | None:
+    """Load one cached thumbnail palette, or return ``None`` if unavailable."""
+    path = get_thumbnail_palette_path(project_path, media_id, media_type)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if data.get("source") == "thumbnail" else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def save_thumbnail_palette(
+    project_path: str,
+    media_id: str,
+    media_type: str,
+    data: dict,
+    *,
+    force: bool = False,
+) -> Path:
+    """Atomically persist one thumbnail palette under the existing cache root."""
+    destination = get_thumbnail_palette_path(project_path, media_id, media_type)
+    if destination.exists() and not force:
+        raise FileExistsError(
+            f"Thumbnail palette cache already exists: {destination}\n"
+            "  Pass --force to overwrite."
+        )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    from data.annotate import atomic_write_text
+
+    atomic_write_text(
+        destination,
+        json.dumps(data, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return destination
 
 
 # ---------------------------------------------------------------------------
@@ -269,70 +510,6 @@ def _pair_separation_score(
     return lum_delta + chroma_delta + delta_e
 
 
-def _rank_region_candidates(
-    pixels_rgb: np.ndarray,
-    k: int = _N_CLUSTERS,
-) -> "list[dict]":
-    """Run LAB k-means and return all clusters ranked by perceptual weight.
-
-    Each entry in the returned list contains:
-
-    ``"rgb"``       — ``(R, G, B)`` int tuple
-    ``"lab"``       — ``[L, a, b]`` float list (mean LAB of cluster)
-    ``"luminance"`` — float (L*/100)
-    ``"chroma"``    — float (C*/100)
-    ``"weight"``    — float (total perceptual weight for the cluster)
-    ``"size"``      — int (pixel count)
-
-    Sorted highest to lowest perceptual weight.  Always returns at least one
-    entry; falls back to a synthetic black entry on empty input.
-    """
-    if len(pixels_rgb) == 0:
-        return [{
-            "rgb":       (0, 0, 0),
-            "lab":       [0.0, 0.0, 0.0],
-            "luminance": 0.0,
-            "chroma":    0.0,
-            "weight":    0.0,
-            "size":      0,
-        }]
-
-    lab     = _rgb_to_lab(pixels_rgb)
-    weights = _perceptual_weights(lab)
-    k       = min(k, len(pixels_rgb))
-    _, labels = _kmeans(lab, k)
-
-    candidates: "list[dict]" = []
-    for j in range(k):
-        mask  = labels == j
-        count = int(mask.sum())
-        if count == 0:
-            continue
-        cluster_w = float(weights[mask].sum())
-        mean_rgb  = pixels_rgb[mask].astype(np.float64).mean(axis=0)
-        mean_lab  = lab[mask].mean(axis=0)
-        chroma    = float(np.sqrt(mean_lab[1] ** 2 + mean_lab[2] ** 2))
-        candidates.append({
-            "rgb": (
-                int(round(mean_rgb[0])),
-                int(round(mean_rgb[1])),
-                int(round(mean_rgb[2])),
-            ),
-            "lab": [
-                round(float(mean_lab[0]), 1),
-                round(float(mean_lab[1]), 1),
-                round(float(mean_lab[2]), 1),
-            ],
-            "luminance": round(float(mean_lab[0]) / 100.0, 3),
-            "chroma":    round(chroma / 100.0, 3),
-            "weight":    cluster_w,
-            "size":      count,
-        })
-
-    candidates.sort(key=lambda c: c["weight"], reverse=True)
-    return candidates
-
-
 def _candidate_to_colour(cand: dict) -> dict:
     """Convert a candidate dict to a palette colour output dict.
 
@@ -449,66 +626,19 @@ def _maybe_rescue_pair(
     return _candidate_to_colour(best_fc), _candidate_to_colour(best_bc), diag
 
 
-def _kmeans(
-    lab: np.ndarray,
-    k: int,
-    max_iter: int = _KMEANS_MAX_ITER,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Deterministic k-means in LAB space.
-
-    Initialises ``k`` centres by stratified sampling along the L* axis so
-    that centres always span the luminance range.  No random seed needed.
-
-    Returns ``(centers, labels)`` where *centers* is ``(k, 3)`` float32
-    and *labels* is ``(N,)`` int32.
-    """
-    n = len(lab)
-    k = min(k, n)
-    if k == 0:
-        return np.zeros((0, 3), dtype=np.float32), np.zeros(0, dtype=np.int32)
-
-    # Stratified init: pick k pixels evenly spaced along sorted L*
-    order     = np.argsort(lab[:, 0])
-    positions = np.round(np.linspace(0, n - 1, k)).astype(int)
-    centers   = lab[order[positions]].copy().astype(np.float64)
-    pts       = lab.astype(np.float64)
-
-    labels = np.zeros(n, dtype=np.int32)
-    for _ in range(max_iter):
-        # Vectorised squared-distance matrix  (n, k)
-        diff   = pts[:, None, :] - centers[None, :, :]  # (n, k, 3)
-        dists2 = (diff * diff).sum(axis=2)               # (n, k)
-        new_labels = dists2.argmin(axis=1).astype(np.int32)
-
-        if np.array_equal(new_labels, labels):
-            break
-        labels = new_labels
-
-        for j in range(k):
-            pts_j = pts[labels == j]
-            if len(pts_j):
-                centers[j] = pts_j.mean(axis=0)
-
-    return centers.astype(np.float32), labels
-
-
 # ---------------------------------------------------------------------------
-# Colour extraction — two methods
+# Colour extraction
 # ---------------------------------------------------------------------------
 
 # ===========================================================================
 # Figure-ground colour analysis pipeline
 # ===========================================================================
 #
-# Fallback ladder
-# ---------------
-# Level 1 (full):     SAM2 semantic segmentation + mean-shift simplification
-#                     + agglomerative Ward clustering in CIELAB space.
-# Level 2 (spatial):  Spatial border/center split + mean-shift simplification
-#                     + agglomerative Ward clustering.
-#
-# Level 1 is used when a SAM2 mask_generator is supplied; Level 2 is the
-# automatic fallback when SAM2 is not configured or finds no usable masks.
+# Required analysis path
+# ----------------------
+# Configured palette segmentation + mean-shift simplification + agglomerative
+# Ward clustering in CIELAB space. Any unavailable or failed stage aborts
+# analysis.
 #
 # Output schema
 # -------------
@@ -524,8 +654,8 @@ def _kmeans(
 def _mean_shift_simplify(arr: np.ndarray) -> np.ndarray:
     """Merge fine texture into coherent colour regions via mean-shift filtering.
 
-    Wraps ``cv2.pyrMeanShiftFiltering`` when OpenCV is available; returns the
-    original array unchanged when it is not (graceful degradation).
+    Requires ``cv2.pyrMeanShiftFiltering``; unavailable or failed processing is
+    an explicit analysis error.
 
     Parameters
     ----------
@@ -537,21 +667,16 @@ def _mean_shift_simplify(arr: np.ndarray) -> np.ndarray:
     """
     try:
         import cv2  # type: ignore
-    except ImportError:
-        return arr
-    return cv2.pyrMeanShiftFiltering(arr, sp=_FIG_MS_SP, sr=_FIG_MS_SR)
-
-
-def _null_colour_dict() -> dict:
-    """Zero-value colour dict used as a sentinel for empty regions."""
-    return {
-        "rgb":       (0, 0, 0),
-        "lab":       [0.0, 0.0, 0.0],
-        "luminance": 0.0,
-        "chroma":    0.0,
-        "weight":    0.0,
-        "size":      0,
-    }
+    except ImportError as exc:
+        raise PaletteAnalysisError(
+            "OpenCV unavailable for palette mean-shift analysis"
+        ) from exc
+    try:
+        return cv2.pyrMeanShiftFiltering(arr, sp=_FIG_MS_SP, sr=_FIG_MS_SR)
+    except Exception as exc:
+        raise PaletteAnalysisError(
+            f"Palette mean-shift analysis failed: {exc}"
+        ) from exc
 
 
 def _agglomerative_palette(
@@ -574,18 +699,19 @@ def _agglomerative_palette(
     Returns
     -------
     list[dict]
-        Same schema as ``_rank_region_candidates``:
+        Candidate entries contain:
         ``rgb``, ``lab``, ``luminance``, ``chroma``, ``weight``, ``size``.
-        Falls back to ``_rank_region_candidates`` when scipy is unavailable.
+        Raises ``PaletteAnalysisError`` when Ward clustering cannot run.
     """
     if len(pixels_rgb) == 0:
-        return [_null_colour_dict()]
+        raise PaletteAnalysisError("Palette segmentation produced an empty region")
 
     try:
         from scipy.cluster.hierarchy import linkage, fcluster  # type: ignore
-    except ImportError:
-        # scipy not available: fall back to existing k-means
-        return _rank_region_candidates(pixels_rgb, n_clusters)[:n_palette]
+    except ImportError as exc:
+        raise PaletteAnalysisError(
+            "SciPy unavailable for palette Ward clustering"
+        ) from exc
 
     # --- Stride-sample for fast Ward linkage ---------------------------------
     n = len(pixels_rgb)
@@ -600,14 +726,18 @@ def _agglomerative_palette(
 
     k = min(n_clusters, len(idx_sample))
     if k < 2:
-        return _rank_region_candidates(pixels_rgb, 1)[:n_palette]
+        raise PaletteAnalysisError(
+            "Palette region has insufficient pixels for Ward clustering"
+        )
 
     # --- Ward linkage on sample LAB values -----------------------------------
     try:
         Z = linkage(sample_lab.astype(np.float64), method="ward")
         sample_labels = fcluster(Z, t=k, criterion="maxclust")  # 1-indexed
-    except Exception:
-        return _rank_region_candidates(pixels_rgb, n_clusters)[:n_palette]
+    except Exception as exc:
+        raise PaletteAnalysisError(
+            f"Palette Ward clustering failed: {exc}"
+        ) from exc
 
     # --- Cluster centroids (mean LAB per sample cluster) ---------------------
     centroids_lab = np.zeros((k, 3), dtype=np.float64)
@@ -653,7 +783,7 @@ def _agglomerative_palette(
         })
 
     if not candidates:
-        return [_null_colour_dict()]
+        raise PaletteAnalysisError("Palette Ward clustering produced no candidates")
 
     candidates.sort(key=lambda c: c["weight"], reverse=True)
     return candidates[:n_palette]
@@ -670,15 +800,7 @@ def _region_info_from_candidates(
     ``"coverage"`` is the region-pixel fraction of the full frame.
     """
     if not candidates:
-        c = _null_colour_dict()
-        return {
-            "rgb":       list(c["rgb"]),
-            "lab":       c["lab"],
-            "luminance": c["luminance"],
-            "chroma":    c["chroma"],
-            "palette":   [],
-            "coverage":  0.0,
-        }
+        raise PaletteAnalysisError("Palette region produced no colour candidates")
     top = candidates[0]
     region_size = sum(c.get("size", 0) for c in candidates)
     coverage = round(region_size / max(1, total_pixels), 4)
@@ -701,24 +823,11 @@ def _region_info_from_candidates(
     }
 
 
-def _spatial_masks(height: int, width: int, border: int) -> "tuple[np.ndarray, np.ndarray]":
-    """Return (fg_mask, bg_mask) 2-D bool arrays.
-
-    ``fg_mask`` is the inner rectangle; ``bg_mask`` is the outer border strip.
-    """
-    bg = np.zeros((height, width), dtype=bool)
-    bg[:border, :]             = True
-    bg[height - border:, :]    = True
-    bg[:, :border]             = True
-    bg[:, width - border:]     = True
-    return ~bg, bg
-
-
-def _sam2_fg_bg_masks(
+def _segment_palette_masks(
     arr_rgb: np.ndarray,
-    mask_generator,
+    segmenter,
 ) -> "tuple[np.ndarray, np.ndarray, float]":
-    """Classify pixels as foreground / background using SAM2 automatic masks.
+    """Classify pixels using the canonical palette segmentation interface.
 
     Foreground = masks that do **not** touch any frame edge AND whose
     bounding-box centre lies in the inner 60 % of the frame.  Everything
@@ -736,43 +845,77 @@ def _sam2_fg_bg_masks(
     fg_mask = np.zeros((h, w), dtype=bool)
     bg_mask = np.ones((h, w), dtype=bool)
 
+    segment_palette = getattr(segmenter, "segment_palette", None)
+    if not callable(segment_palette):
+        raise PaletteAnalysisError(
+            "Palette segmentation unavailable: configured model does not expose "
+            "segment_palette(image_pil)"
+        )
     try:
-        masks = mask_generator.generate(arr_rgb)
-    except Exception:
-        return fg_mask, bg_mask, 0.0
+        from PIL import Image
+
+        masks = segment_palette(Image.fromarray(arr_rgb, "RGB"))
+    except Exception as exc:
+        raise PaletteAnalysisError(
+            f"Palette segmentation failed: {exc}"
+        ) from exc
+    if not isinstance(masks, (list, tuple)):
+        raise PaletteAnalysisError(
+            "Palette segmentation returned a malformed mask collection"
+        )
 
     cy_lo, cy_hi = int(h * 0.20), int(h * 0.80)
     cx_lo, cx_hi = int(w * 0.20), int(w * 0.80)
 
     for m in masks:
+        if not isinstance(m, dict) or "segmentation" not in m:
+            raise PaletteAnalysisError(
+                "Palette segmentation returned a malformed mask entry"
+            )
         seg = np.asarray(m["segmentation"], dtype=bool)
+        if seg.shape != (h, w):
+            raise PaletteAnalysisError(
+                "Palette segmentation returned mask shape "
+                f"{seg.shape}; expected {(h, w)}"
+            )
         if not check_containment(seg):
             continue
         bbox = m.get("bbox", [])
-        if len(bbox) >= 4:
-            bx, by, bw_m, bh_m = bbox
-            cx_centre = bx + bw_m / 2
-            cy_centre = by + bh_m / 2
-            if not (cx_lo <= cx_centre <= cx_hi and cy_lo <= cy_centre <= cy_hi):
-                continue
+        if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
+            raise PaletteAnalysisError(
+                "Palette segmentation returned a mask without a valid bbox"
+            )
+        bx, by, bw_m, bh_m = bbox[:4]
+        cx_centre = bx + bw_m / 2
+        cy_centre = by + bh_m / 2
+        if not (cx_lo <= cx_centre <= cx_hi and cy_lo <= cy_centre <= cy_hi):
+            continue
         fg_mask |= seg
         bg_mask &= ~seg
 
     confidence = round(float(fg_mask.sum()) / float(h * w), 4)
+    if fg_mask.sum() < h * w * 0.02:
+        raise PaletteAnalysisError(
+            "Palette segmentation returned no usable foreground segmentation"
+        )
+    if not bg_mask.any():
+        raise PaletteAnalysisError(
+            "Palette segmentation returned no usable background region"
+        )
     return fg_mask, bg_mask, confidence
 
 
 def _extract_fg_bg_figure(
     arr_rgb: np.ndarray,
     *,
-    mask_generator=None,
+    segmenter=None,
 ) -> "tuple[dict, dict, dict]":
     """Full figure-ground extraction pipeline.
 
     Parameters
     ----------
     arr_rgb         : (H, W, 3) uint8 RGB array (already resized).
-    mask_generator  : Optional SAM2AutomaticMaskGenerator for semantic split.
+    segmenter : Configured adapter implementing ``segment_palette(image_pil)``.
 
     Returns
     -------
@@ -792,26 +935,14 @@ def _extract_fg_bg_figure(
     simplified = _mean_shift_simplify(arr_rgb)
     superpixels_used = not np.array_equal(simplified, arr_rgb)
 
-    # Step 2 — semantic segmentation or spatial fallback
-    segmentation_confidence = 0.0
-    if mask_generator is not None:
-        fg_mask, bg_mask, segmentation_confidence = _sam2_fg_bg_masks(
-            arr_rgb, mask_generator
+    # Step 2 — required semantic segmentation
+    if segmenter is None:
+        raise PaletteAnalysisError(
+            "Palette segmentation unavailable: no configured model loaded"
         )
-        if fg_mask.sum() < total_pixels * 0.02:
-            # SAM2 found almost nothing: fall back
-            border = max(1, h // 4)
-            fg_mask, bg_mask = _spatial_masks(h, w, border)
-            fallback_level = 2
-            segmentation_used = "spatial"
-        else:
-            fallback_level = 1
-            segmentation_used = "sam2"
-    else:
-        border = max(1, h // 4)
-        fg_mask, bg_mask = _spatial_masks(h, w, border)
-        fallback_level = 2
-        segmentation_used = "spatial"
+    fg_mask, bg_mask, segmentation_confidence = _segment_palette_masks(
+        arr_rgb, segmenter
+    )
 
     fg_pixels = simplified[fg_mask]
     bg_pixels = simplified[bg_mask]
@@ -837,13 +968,15 @@ def _extract_fg_bg_figure(
     diagnostics: "dict[str, Any]" = {
         **rescue_diag,
         "method_used":             "figure",
-        "segmentation_used":       segmentation_used,
+        "segmentation_used":       getattr(
+            segmenter, "model_name", type(segmenter).__name__
+        ),
         "segmentation_confidence": segmentation_confidence,
         "superpixels_used":        superpixels_used,
         "fg_region_count":         int(fg_mask.sum()),
         "bg_region_count":         int(bg_mask.sum()),
         "cluster_count":           _FIG_N_CLUSTERS,
-        "fallback_level":          fallback_level,
+        "fallback_level":          0,
     }
     return fg_out, bg_out, diagnostics
 
@@ -851,16 +984,14 @@ def _extract_fg_bg_figure(
 def _extract_fg_bg_full(
     image_path: Path,
     *,
-    sam_mask_generator=None,
+    segmenter=None,
 ) -> "tuple[dict, dict, dict]":
     """Full figure-ground extraction returning ``(foreground, background, diagnostics)``.
 
     Parameters
     ----------
     image_path        : Path to a PNG or other Pillow-readable image.
-    sam_mask_generator: Optional SAM2AutomaticMaskGenerator for semantic
-                        figure-ground segmentation.  When ``None``, the
-                        pipeline falls back to the spatial border/center split.
+    segmenter: Configured adapter implementing ``segment_palette(image_pil)``.
     """
     try:
         from PIL import Image
@@ -870,26 +1001,58 @@ def _extract_fg_bg_full(
             "Install with:  pip install Pillow"
         ) from exc
 
-    arr = np.asarray(
-        Image.open(image_path)
-        .convert("RGB")
-        .resize((_FIG_RESIZE, _FIG_RESIZE), Image.LANCZOS)
+    try:
+        with Image.open(image_path) as opened:
+            source_image = opened.convert("RGB")
+        source_width, source_height = source_image.size
+        content = _detect_content_bbox(source_image)
+        active_image = source_image.crop(tuple(content["bbox"]))
+        arr = np.asarray(
+            active_image.resize((_FIG_RESIZE, _FIG_RESIZE), Image.LANCZOS)
+        )
+    except PaletteAnalysisError:
+        raise
+    except Exception as exc:
+        raise PaletteAnalysisError(
+            f"Palette source image could not be analyzed: {exc}"
+        ) from exc
+
+    foreground, background, diagnostics = _extract_fg_bg_figure(
+        arr, segmenter=segmenter
     )
-    return _extract_fg_bg_figure(arr, mask_generator=sam_mask_generator)
+    diagnostics["source_image"] = {
+        "width": source_width,
+        "height": source_height,
+        "content_bbox": {
+            "left": content["bbox"][0],
+            "top": content["bbox"][1],
+            "right": content["bbox"][2],
+            "bottom": content["bbox"][3],
+        },
+        "letterbox": {
+            "detected": content["detected"],
+            "top": content["top"],
+            "bottom": content["bottom"],
+            "left": content["left"],
+            "right": content["right"],
+            "detected_horizontal": content["detected_horizontal"],
+            "detected_vertical": content["detected_vertical"],
+        },
+    }
+    return foreground, background, diagnostics
 
 
 def extract_fg_bg(
     image_path: Path,
     *,
-    sam_mask_generator=None,
+    segmenter=None,
 ) -> "tuple[dict, dict]":
     """Extract dominant foreground and background colours from a frame image.
 
     Parameters
     ----------
     image_path        : Path to a PNG (or any Pillow-readable) image.
-    sam_mask_generator: Optional SAM2AutomaticMaskGenerator for semantic
-                        figure-ground segmentation.
+    segmenter: Configured adapter implementing ``segment_palette(image_pil)``.
 
     Returns
     -------
@@ -903,9 +1066,209 @@ def extract_fg_bg(
     OSError      If the image cannot be opened.
     """
     fg, bg, _diag = _extract_fg_bg_full(
-        image_path, sam_mask_generator=sam_mask_generator
+        image_path, segmenter=segmenter
     )
     return fg, bg
+
+
+def _load_palette_segmenter(project_path: str, verbose: bool = False):
+    """Load the configured model's canonical palette segmenter."""
+    from tool import prefs as _prefs
+
+    sam_name = _prefs.get("model_segmentation")
+    if not sam_name:
+        raise PaletteAnalysisError(
+            "Palette segmentation unavailable: no model configured"
+        )
+    try:
+        from services.silhouette import load_sam_model  # type: ignore
+
+        segmenter, _, device = load_sam_model(project_path, sam_name)
+    except Exception as exc:
+        raise PaletteAnalysisError(
+            f"Palette segmentation unavailable: {exc}"
+        ) from exc
+    if not callable(getattr(segmenter, "segment_palette", None)):
+        raise PaletteAnalysisError(
+            "Palette segmentation unavailable: configured model does not expose "
+            "segment_palette(image_pil)"
+        )
+    if verbose:
+        print(f"  Segmentation model loaded: {sam_name} ({device})")
+    return segmenter
+
+
+def _thumbnail_source_fingerprint(project_path: str, source_path: Path) -> dict:
+    """Return a persistent content fingerprint for thumbnail cache freshness."""
+    stat = source_path.stat()
+    try:
+        display_path = str(source_path.relative_to(project_path))
+    except ValueError:
+        display_path = str(source_path)
+    digest = hashlib.sha256(source_path.read_bytes()).hexdigest()
+    return {
+        "path": display_path,
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+        "sha256": digest,
+    }
+
+
+def _thumbnail_cache_is_current(cache: dict, source_image: dict) -> bool:
+    cached_source = cache.get("source_image", {})
+    return (
+        cached_source.get("path") == source_image.get("path")
+        and cached_source.get("sha256") == source_image.get("sha256")
+    )
+
+
+def create_thumbnail_palette(
+    project_path: str,
+    filename: str,
+    media_type: str = "movie",
+    *,
+    metadata: dict | None = None,
+    force: bool = False,
+    verbose: bool = False,
+) -> dict:
+    """Extract and cache foreground/background colours from a metadata thumbnail."""
+    if metadata is None:
+        entries = get_metadata(project_path, media_type=media_type)
+        metadata = next(
+            (entry for entry in entries if entry.get("filename") == filename),
+            {"filename": filename},
+        )
+
+    media_id = str(
+        metadata.get("media_id") or compute_media_id(metadata, media_type)
+    )
+    source_path = resolve_thumbnail_path(project_path, media_type, filename)
+    if source_path is None:
+        raise FileNotFoundError(
+            f"Metadata thumbnail not found for '{filename}' ({media_type})"
+        )
+
+    source_image = _thumbnail_source_fingerprint(project_path, source_path)
+    cache_path = get_thumbnail_palette_path(project_path, media_id, media_type)
+    existing = load_thumbnail_palette(project_path, media_id, media_type)
+    if existing is not None and not force:
+        if _thumbnail_cache_is_current(existing, source_image):
+            if verbose:
+                print(f"  skip  {filename}: thumbnail palette already cached")
+            return {
+                "filename": filename,
+                "media_id": media_id,
+                "processed": 0,
+                "skipped": 0,
+                "failed": 0,
+                "cached": True,
+            }
+        if verbose:
+            print(f"  stale {filename}: thumbnail image changed — regenerating")
+
+    foreground, background, diagnostics = _extract_fg_bg_full(
+        source_path,
+        segmenter=_load_palette_segmenter(project_path, verbose),
+    )
+    identity = {
+        "media_id": media_id,
+        "media_type": media_type,
+        "filename": filename,
+        "title": metadata.get("title") or Path(filename).stem,
+        "year": metadata.get("year"),
+        "tmdb": metadata.get("tmdb") or metadata.get("tmdb_id"),
+    }
+    document = {
+        "schema_version": 1,
+        "media": identity,
+        "source": "thumbnail",
+        "source_image": source_image,
+        "method": "figure",
+        "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "thumbnail": {
+            "foreground": foreground,
+            "background": background,
+            "diagnostics": diagnostics,
+        },
+    }
+    save_thumbnail_palette(
+        project_path,
+        media_id,
+        media_type,
+        document,
+        force=cache_path.exists() or force,
+    )
+    if verbose:
+        print(f"  → saved  {cache_path.relative_to(project_path)}")
+    return {
+        "filename": filename,
+        "media_id": media_id,
+        "processed": 1,
+        "skipped": 0,
+        "failed": 0,
+        "cached": False,
+    }
+
+
+def create_thumbnail_palettes_for_all(
+    project_path: str,
+    media_type: str = "movie",
+    *,
+    force: bool = False,
+    verbose: bool = False,
+    on_item_done=None,
+) -> dict:
+    """Build thumbnail palettes from one loaded metadata collection."""
+    entries = get_metadata(project_path, media_type=media_type)
+    total_processed = 0
+    total_skipped = 0
+    total_failed = 0
+    total_cached = 0
+    results = []
+
+    for metadata in entries:
+        filename = metadata.get("filename")
+        if not filename:
+            continue
+        try:
+            summary = create_thumbnail_palette(
+                project_path,
+                filename,
+                media_type,
+                metadata=metadata,
+                force=force,
+                verbose=verbose,
+            )
+        except FileNotFoundError as exc:
+            print(f"  skip  {filename}: {exc}", flush=True)
+            total_skipped += 1
+            summary = {"filename": filename, "skipped": True, "reason": str(exc)}
+            if on_item_done is not None:
+                on_item_done(filename, None, exc)
+        except Exception as exc:
+            print(f"  fail  {filename}: {exc}", flush=True)
+            total_failed += 1
+            summary = {"filename": filename, "error": str(exc)}
+            if on_item_done is not None:
+                on_item_done(filename, None, exc)
+        else:
+            if summary.get("cached"):
+                total_cached += 1
+            else:
+                total_processed += summary.get("processed", 0)
+            if on_item_done is not None:
+                on_item_done(filename, summary, None)
+        results.append(summary)
+
+    return {
+        "media_type": media_type,
+        "total_files": len(results),
+        "total_processed": total_processed,
+        "total_skipped": total_skipped,
+        "total_failed": total_failed,
+        "total_cached": total_cached,
+        "results": results,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -920,7 +1283,7 @@ def _process_one_shot(
     shot_index: int,
     shot_info: dict | None,
     *,
-    sam_mask_generator=None,
+    segmenter=None,
 ) -> dict:
     """Extract palette for one annotation entry.
 
@@ -955,7 +1318,7 @@ def _process_one_shot(
 
     try:
         foreground, background, diagnostics = _extract_fg_bg_full(
-            png_path, sam_mask_generator=sam_mask_generator
+            png_path, segmenter=segmenter
         )
     except Exception as exc:
         return {**base, "status": "error", "reason": str(exc)}
@@ -991,11 +1354,11 @@ def create_palette_for_movie(
     ``best_frame`` PNG, extracts foreground and background colours using
     the figure-ground pipeline.
 
-    The SAM2 segmentation model is loaded automatically from the project's
+    The segmentation model is loaded automatically from the project's
     ``model_segmentation`` preference
     (``crossing tool model set segmentation <name>``).
-    If no model is configured the pipeline falls back to the spatial
-    border/center split.
+    Missing, incompatible, failed, or unusable segmentation is an explicit
+    analysis failure and no palette cache is written.
 
     Returns a summary dict with keys:
         ``filename``, ``shot_count``, ``processed``, ``skipped``, ``failed``
@@ -1063,22 +1426,10 @@ def create_palette_for_movie(
     processed = 0
     skipped = 0
     failed = 0
+    failure_reasons: list[str] = []
 
-    # Load SAM2 once for the whole movie (if configured in project prefs).
-    sam_mask_generator = None
-    from tool import prefs as _prefs
-    _sam_name = _prefs.get("model_segmentation")
-    if _sam_name:
-        try:
-            from services.silhouette import load_sam_model  # type: ignore
-            sam_mask_generator, _, _dev = load_sam_model(project_path, _sam_name)
-            if verbose:
-                print(f"  SAM2 loaded: {_sam_name} ({_dev})")
-        except (ImportError, FileNotFoundError, RuntimeError) as _sam_exc:
-            if verbose:
-                print(f"  warn  SAM2 not available ({_sam_exc}); using spatial fallback")
-    elif verbose:
-        print("  info  no segmentation model configured; using spatial fallback")
+    # Load the canonical palette segmenter once for the whole movie.
+    segmenter = _load_palette_segmenter(project_path, verbose)
 
     for i, entry in enumerate(entries):
         shot_data = entry.get("shot", {})
@@ -1087,7 +1438,7 @@ def create_palette_for_movie(
 
         result = _process_one_shot(
             project_path, filename, media_type, entry, i, shot_info,
-            sam_mask_generator=sam_mask_generator,
+            segmenter=segmenter,
         )
 
         status = result.pop("status", "ok")
@@ -1108,6 +1459,7 @@ def create_palette_for_movie(
         elif status == "error":
             failed += 1
             reason = result.pop("reason", "")
+            failure_reasons.append(f"shot {i}: {reason}")
             print(f"  fail  {filename} shot {i}: {reason}", flush=True)
 
         shot_palettes.append(result)
@@ -1118,6 +1470,12 @@ def create_palette_for_movie(
         "skipped": skipped,
         "failed": failed,
     }
+
+    if failed:
+        raise PaletteAnalysisError(
+            f"Figure-ground extraction failed for '{filename}' "
+            f"({failed} shot(s)): {failure_reasons[0]}"
+        )
 
     palette_doc: dict[str, Any] = {
         "movie": movie_block,
@@ -1186,6 +1544,7 @@ def create_palette_for_all_movies(
         except Exception as exc:
             print(f"  fail  {filename}: {exc}", flush=True)
             results.append({"filename": filename, "error": str(exc)})
+            total_failed += 1
             if on_item_done is not None:
                 on_item_done(filename, None, exc)
             continue

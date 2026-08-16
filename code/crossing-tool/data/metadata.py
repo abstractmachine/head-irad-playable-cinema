@@ -362,6 +362,27 @@ def fetch_thumbnail(filename: str, project_path: str, media_type: str, tmdb_id: 
     return thumbnail_path
 
 
+def resolve_thumbnail_path(
+    project_path: str,
+    media_type: str,
+    filename: str,
+) -> Path | None:
+    """Return the existing thumbnail path used by the Metadata Viewer."""
+    stem = Path(filename).stem
+    dirs_to_try = [media_type]
+    if media_type == "movie":
+        dirs_to_try.append("movies")
+    for thumbnail_media_type in dirs_to_try:
+        thumbnail_dir = (
+            Path(project_path) / "media" / "thumbnails" / thumbnail_media_type
+        )
+        for name in (stem + ".jpg", stem.replace(" ", "-") + ".jpg"):
+            path = thumbnail_dir / name
+            if path.exists():
+                return path
+    return None
+
+
 def fetch_metadata(filename: str, project_path: str) -> dict[str, Any]:
     """Fetch full movie metadata from TMDb by parsing the filename for clues.
 

@@ -58,6 +58,7 @@ _CLIP_RUNNER_UP_MARGIN = 0.025 # top mask must beat runner-up by at least this m
 _RERANK_TOP_N = 5              # top broad candidates fed into tight-crop re-scoring
 _TIGHT_CROP_PAD_FRACTION = 0.02  # 2% padding for tight-crop pass (vs 10% for broad)
 _MAX_ASPECT_RATIO = 6.0        # reject bbox with max/min side ratio above this (landscape filter)
+PALETTE_SEGMENTATION_CONCEPT = "foreground object"
 
 
 def _safe_word(word: str) -> str:
@@ -239,8 +240,9 @@ class _SAM3Adapter:
     directly from defaults + the project's local CLIP tokenizer so that no
     internet access or gated-repo credentials are required.
 
-    The rest of the silhouette pipeline calls only
-    ``segment_concept(image_pil, concept)`` and never touches SAM3 internals.
+    The silhouette pipeline calls ``segment_concept(image_pil, concept)``.
+    Palette extraction calls ``segment_palette(image_pil)``, which owns the
+    fixed concept used for generic figure-ground segmentation.
     """
 
     def __init__(self, model, processor, device: str, model_name: str) -> None:
@@ -336,6 +338,10 @@ class _SAM3Adapter:
 
         return masks_out
 
+    def segment_palette(self, image_pil) -> list[dict]:
+        """Return SAM3 masks for palette figure-ground extraction."""
+        return self.segment_concept(image_pil, PALETTE_SEGMENTATION_CONCEPT)
+
 
 def load_sam_model(project_path: str, model_name: str):
     """Load a SAM3 segmenter from the project's model directory.
@@ -347,7 +353,8 @@ def load_sam_model(project_path: str, model_name: str):
     locally cached CLIP tokenizer — no internet access required.
 
     Returns ``(segmenter, effective_model_name, device)`` where *segmenter*
-    is a :class:`_SAM3Adapter` exposing ``segment_concept(image_pil, concept)``.
+    is a :class:`_SAM3Adapter` exposing ``segment_concept(image_pil, concept)``
+    and the palette-specific ``segment_palette(image_pil)`` interface.
 
     Raises
     ------

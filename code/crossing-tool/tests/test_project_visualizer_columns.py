@@ -631,6 +631,102 @@ def test_project_visualizer_header_count_rows_are_equal_and_datavis_follows(
         app.processEvents()
 
 
+def test_project_media_datavis_uses_canonical_horizontal_content_gutters(
+    app, fake_prefs, monkeypatch,
+):
+    fake_prefs["path"] = "/fake/project"
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._ProjectColumnsWorker.start",
+        lambda self: None,
+    )
+
+    from visualizers.project_visualizer import (
+        _PROJECT_COLUMN_SPACING,
+        _project_datavis_horizontal_insets,
+        ProjectVisualizer,
+    )
+
+    window = ProjectVisualizer()
+    try:
+        movies = window._project_column_widgets["movies"]
+        gameplay = window._project_column_widgets["gameplay"]
+        shots = window._project_column_widgets["shots"]
+        movies.set_column(ProjectColumn(
+            id="movies", title="Movies", count=3,
+            datavis=_media_items_datavis(3), state="ready",
+        ))
+        gameplay.set_column(ProjectColumn(
+            id="gameplay", title="Gameplay", count=2,
+            datavis=_media_items_datavis(2, "gameplay"), state="ready",
+        ))
+        window.show()
+
+        left_inset, right_inset = _project_datavis_horizontal_insets()
+        assert right_inset + _PROJECT_COLUMN_SPACING + left_inset == theme.INSPECTOR_GAP
+
+        browser = window._browser
+        for window_width in (900, 1200, 1500):
+            window.resize(window_width, 700)
+            app.processEvents()
+
+            movie_cell, next_movie_cell = movies._datavis_widget._media_item_cells[:2]
+            gameplay_cell = gameplay._datavis_widget._media_item_cells[0]
+            movie_content = movies._datavis_widget._content_widget
+            gameplay_content = gameplay._datavis_widget._content_widget
+            shots_content = shots._datavis_widget._content_widget
+
+            assert movie_cell.geometry().left() == 0
+            assert movie_cell.width() == movie_content.width()
+            assert gameplay_cell.geometry().left() == 0
+            assert gameplay_cell.width() == gameplay_content.width()
+            assert next_movie_cell.y() == movie_cell.geometry().bottom() + 1
+
+            movie_count_bottom = movies._count_label.mapTo(
+                browser, movies._count_label.rect().bottomLeft()
+            ).y()
+            movie_cell_top = movie_cell.mapTo(browser, QPoint(0, 0)).y()
+            assert movie_cell_top - movie_count_bottom - 1 == theme.INSPECTOR_GAP
+
+            movie_datavis_left = movies._datavis_widget.mapTo(browser, QPoint(0, 0)).x()
+            movie_datavis_right = movie_datavis_left + movies._datavis_widget.width() - 1
+            movie_cell_left = movie_cell.mapTo(browser, QPoint(0, 0)).x()
+            movie_cell_right = movie_cell_left + movie_cell.width() - 1
+            gameplay_cell_left = gameplay_cell.mapTo(browser, QPoint(0, 0)).x()
+            gameplay_cell_right = gameplay_cell_left + gameplay_cell.width() - 1
+            shots_content_left = shots_content.mapTo(browser, QPoint(0, 0)).x()
+
+            assert movie_cell_left - movie_datavis_left == left_inset
+            assert movie_datavis_right - movie_cell_right == right_inset
+            assert gameplay_cell_left - movie_cell_right - 1 == theme.INSPECTOR_GAP
+            assert shots_content_left - gameplay_cell_right - 1 == theme.INSPECTOR_GAP
+
+            image = browser.grab().toImage()
+            sample_y = movie_cell.mapTo(
+                browser, QPoint(0, movie_cell.height() // 2)
+            ).y()
+            gap_pixels = range(movie_cell_right + 1, gameplay_cell_left)
+            assert all(
+                image.pixelColor(x, sample_y) == QColor(theme.CANVAS_BG)
+                for x in gap_pixels
+            )
+            assert all(
+                image.pixelColor(x, sample_y) != QColor(theme.UI_BORDER)
+                for x in gap_pixels
+            )
+            outer_pixels = list(range(movie_datavis_left, movie_cell_left)) + list(
+                range(movie_cell_right + 1, movie_datavis_right + 1)
+            )
+            assert outer_pixels
+            assert all(
+                image.pixelColor(x, sample_y) == QColor(theme.CANVAS_BG)
+                for x in outer_pixels
+            )
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
 def test_vocabulary_datavis_rounding_fills_exact_available_height():
     from visualizers.project_visualizer import _proportional_heights
 
@@ -695,9 +791,12 @@ def test_gameplay_media_items_render_two_equal_contiguous_alternating_cells(app)
         app.processEvents()
 
         first, second = datavis._media_item_cells
-        assert first.geometry().getRect() == (0, theme.INSPECTOR_GAP, 140, 100)
+        content = datavis._content_widget
+        assert first.geometry().getRect() == (
+            0, theme.INSPECTOR_GAP, content.width(), 100,
+        )
         assert second.geometry().getRect() == (
-            0, theme.INSPECTOR_GAP + 100, 140, 100,
+            0, theme.INSPECTOR_GAP + 100, content.width(), 100,
         )
         assert second.y() == first.y() + first.height()
         assert second.y() + second.height() == datavis.height()
@@ -726,7 +825,9 @@ def test_media_items_one_item_fills_every_pixel_after_canonical_top_gap(app):
         app.processEvents()
 
         cell = datavis._media_item_cells[0]
-        assert cell.geometry().getRect() == (0, theme.INSPECTOR_GAP, 140, 100)
+        assert cell.geometry().getRect() == (
+            0, theme.INSPECTOR_GAP, datavis._content_widget.width(), 100,
+        )
         assert cell.y() + cell.height() == datavis.height()
     finally:
         datavis.close()

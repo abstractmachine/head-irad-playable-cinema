@@ -39,7 +39,7 @@ The `crossing` command is now available globally. No virtual environment activat
 | `annotate` | transformers, huggingface-hub | `crossing annotate` (LLM vision models) |
 | `visualizer` | PyQt5, opencv | `--visualizer` flag on any command |
 | `shot-detection` | TransNetV2, TensorFlow | `crossing shotlist shot detect` |
-| `silhouette` | sam2, opencv | `crossing index silhouette` |
+| `silhouette` | torch, transformers, safetensors, opencv | `crossing index silhouette`, `crossing index palette` |
 
 ```bash
 # Install with a specific extra
@@ -115,7 +115,7 @@ uv sync --extra annotate --extra silhouette --extra visualizer
 | `annotate` | transformers, huggingface-hub | CLIP / frame matching |
 | `visualizer` | PyQt5, opencv | `--visualizer` flag |
 | `shot-detection` | TransNetV2, TensorFlow | `crossing shotlist shot detect` |
-| `silhouette` | sam2, opencv | `crossing index silhouette` |
+| `silhouette` | torch, transformers, safetensors, opencv | `crossing index silhouette`, `crossing index palette` |
 | `crossing index silhouette` | `uv sync --extra silhouette` |
 
 ```bash

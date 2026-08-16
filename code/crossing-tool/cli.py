@@ -6342,8 +6342,13 @@ def _index_palette(args):
 
 
 def _index_palette_create(args):
-    """Build and cache colour palettes from best-frame PNGs."""
-    from data.palette import create_palette_for_movie, create_palette_for_all_movies
+    """Build and cache best-frame or thumbnail colour palettes."""
+    from data.palette import (
+        create_palette_for_all_movies,
+        create_palette_for_movie,
+        create_thumbnail_palette,
+        create_thumbnail_palettes_for_all,
+    )
     from data.shotlist import resolve_filename
 
     project_path = prefs.get("path")
@@ -6356,6 +6361,12 @@ def _index_palette_create(args):
     do_all = getattr(args, "all", False)
     movie_query = getattr(args, "movie", None)
     tmdb = getattr(args, "tmdb", None)
+    thumbnail = getattr(args, "thumbnail", False)
+    create_one = create_thumbnail_palette if thumbnail else create_palette_for_movie
+    create_all = (
+        create_thumbnail_palettes_for_all
+        if thumbnail else create_palette_for_all_movies
+    )
 
     if do_all:
 
@@ -6371,7 +6382,7 @@ def _index_palette_create(args):
             else:
                 discord_notify(f"✗ Palette failed: {filename}  — {exc}", project_path)
 
-        summary = create_palette_for_all_movies(
+        summary = create_all(
             project_path,
             media_type,
             force=force,
@@ -6415,7 +6426,7 @@ def _index_palette_create(args):
         sys.exit(1)
 
     try:
-        summary = create_palette_for_movie(
+        summary = create_one(
             project_path,
             filename,
             media_type,
@@ -6437,7 +6448,8 @@ def _index_palette_create(args):
         return
 
     print(f"✓ {filename}")
-    print(f"  shots:     {summary.get('shot_count', 0)}")
+    if not thumbnail:
+        print(f"  shots:     {summary.get('shot_count', 0)}")
     print(f"  processed: {summary.get('processed', 0)}")
     print(f"  skipped:   {summary.get('skipped', 0)}")
     print(f"  failed:    {summary.get('failed', 0)}")
@@ -6455,8 +6467,13 @@ def _index_palette_create(args):
 
 
 def _index_palette_get(args):
-    """Print the cached colour palette for a movie."""
-    from data.palette import get_palette, get_palette_path
+    """Print a cached best-frame or thumbnail colour palette."""
+    from data.palette import (
+        get_palette,
+        get_palette_path,
+        get_thumbnail_palette_path,
+        load_thumbnail_palette,
+    )
     from data.shotlist import resolve_filename
 
     project_path = prefs.get("path")
@@ -6466,18 +6483,49 @@ def _index_palette_get(args):
     movie_query = getattr(args, "movie", None)
     tmdb = getattr(args, "tmdb", None)
     shot_index = getattr(args, "shot", None)
+    thumbnail = getattr(args, "thumbnail", False)
+
+    if thumbnail and shot_index is not None:
+        print(
+            "✗ --shot applies only to best-frame palettes, not --thumbnail",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     if do_all:
         from data.metadata import get_metadata
+        from data.media_id import compute_media_id
         entries = get_metadata(project_path, media_type=media_type)
         results = []
         for e in entries:
             fn = e.get("filename")
             if not fn:
                 continue
-            data = get_palette(project_path, fn, media_type)
+            if thumbnail:
+                media_id = str(
+                    e.get("media_id") or compute_media_id(e, media_type)
+                )
+                data = load_thumbnail_palette(project_path, media_id, media_type)
+            else:
+                data = get_palette(project_path, fn, media_type)
             if data is None:
-                results.append({"filename": fn, "status": "missing"})
+                if thumbnail:
+                    results.append({
+                        "filename": fn,
+                        "media_id": media_id,
+                        "media_type": media_type,
+                        "status": "missing",
+                    })
+                else:
+                    results.append({"filename": fn, "status": "missing"})
+            elif thumbnail:
+                results.append({
+                    "filename": fn,
+                    "media_id": media_id,
+                    "media_type": media_type,
+                    "status": "ok",
+                    "created_at": data.get("created_at"),
+                })
             else:
                 summary = data.get("summary", {})
                 results.append({
@@ -6503,13 +6551,39 @@ def _index_palette_get(args):
         print(f"✗ {exc}", file=sys.stderr)
         sys.exit(1)
 
-    data = get_palette(project_path, filename, media_type)
-    if data is None:
+    if thumbnail:
+        from data.media_id import compute_media_id
+        from data.metadata import get_metadata
+
+        entries = get_metadata(project_path, media_type=media_type)
+        metadata = next(
+            (entry for entry in entries if entry.get("filename") == filename),
+            {"filename": filename},
+        )
+        media_id = str(
+            metadata.get("media_id") or compute_media_id(metadata, media_type)
+        )
+        data = load_thumbnail_palette(project_path, media_id, media_type)
+        cache_path = get_thumbnail_palette_path(project_path, media_id, media_type)
+    else:
+        data = get_palette(project_path, filename, media_type)
         cache_path = get_palette_path(project_path, filename, media_type)
+    if data is None:
+        if thumbnail:
+            create_command = (
+                "crossing index palette create --thumbnail "
+                f"--title {movie_query or filename}"
+                + (f" --media {media_type}" if media_type != "movie" else "")
+            )
+        else:
+            create_command = (
+                "crossing index palette create "
+                f"--title {movie_query or filename}"
+            )
         print(
             f"✗ No palette cache found for '{filename}'.\n"
             f"  Expected: {cache_path}\n"
-            f"  Run: crossing index palette create --title {movie_query or filename}",
+            f"  Run: {create_command}",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -9058,15 +9132,24 @@ def build_parser():
     # index palette
     p_index_palette = index_sub.add_parser(
         "palette",
-        help="Build and retrieve per-shot colour palettes (foreground / background) from best-frame PNGs",
+        help=(
+            "Build and retrieve foreground/background palettes from best-frame "
+            "PNGs or Metadata Viewer thumbnails"
+        ),
         epilog=(
             "Examples:\n"
             "  crossing index palette create --all\n"
             "  crossing index palette create --title 'The Searchers'\n"
             "  crossing index palette create --tmdb 12345 --force\n"
+            "  crossing index palette create --thumbnail --title 'The Searchers'\n"
+            "  crossing index palette create --thumbnail --tmdb 12345\n"
+            "  crossing index palette create --thumbnail --all --media movie\n"
+            "  crossing index palette create --thumbnail --all --media gameplay\n"
             "  crossing index palette get --title 'The Searchers'\n"
             "  crossing index palette get --title 'The Searchers' --shot 4\n"
-            "  crossing index palette get --all"
+            "  crossing index palette get --all\n"
+            "  crossing index palette get --thumbnail --title 'The Searchers'\n"
+            "  crossing index palette get --thumbnail --all --media gameplay"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -9077,13 +9160,25 @@ def build_parser():
         "create",
         help=(
             "Extract and cache foreground/background colours for every shot "
-            "that has a best-frame PNG"
+            "that has a best-frame PNG, or once per Metadata Viewer thumbnail"
         ),
+        epilog=(
+            "Thumbnail examples:\n"
+            "  crossing index palette create --thumbnail --title 'The Searchers'\n"
+            "  crossing index palette create --thumbnail --tmdb 12345\n"
+            "  crossing index palette create --thumbnail --all --media movie\n"
+            "  crossing index palette create --thumbnail --all --media gameplay"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_index_palette_create.set_defaults(func=cmd_index)
     p_index_palette_create.add_argument(
         "--all", action="store_true",
-        help="Process every movie in the metadata index",
+        help="Process every item in the selected media metadata index",
+    )
+    p_index_palette_create.add_argument(
+        "--thumbnail", action="store_true",
+        help="Extract one foreground/background palette from each Metadata Viewer thumbnail",
     )
     p_index_palette_create.add_argument(
         "--title", dest="movie", default=None, metavar="TITLE",
@@ -9100,12 +9195,24 @@ def build_parser():
 
     p_index_palette_get = palette_sub.add_parser(
         "get",
-        help="Print the cached colour palette JSON for a movie",
+        help="Print cached best-frame or thumbnail palette JSON",
+        epilog=(
+            "Thumbnail examples:\n"
+            "  crossing index palette get --thumbnail --title 'The Searchers'\n"
+            "  crossing index palette get --thumbnail --tmdb 12345\n"
+            "  crossing index palette get --thumbnail --all --media movie\n"
+            "  crossing index palette get --thumbnail --all --media gameplay"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_index_palette_get.set_defaults(func=cmd_index)
     p_index_palette_get.add_argument(
         "--all", action="store_true",
-        help="List palette status for every movie",
+        help="List palette status for every item in the selected media index",
+    )
+    p_index_palette_get.add_argument(
+        "--thumbnail", action="store_true",
+        help="Retrieve palettes extracted from Metadata Viewer thumbnails",
     )
     p_index_palette_get.add_argument(
         "--title", dest="movie", default=None, metavar="TITLE",
@@ -9115,7 +9222,10 @@ def build_parser():
     _add_media_arg(p_index_palette_get)
     p_index_palette_get.add_argument(
         "--shot", type=int, default=None, metavar="INDEX",
-        help="Return palette for only this shot (0-based index)",
+        help=(
+            "Return only this shot from a best-frame palette (0-based index; "
+            "incompatible with --thumbnail)"
+        ),
     )
 
     # index motif
