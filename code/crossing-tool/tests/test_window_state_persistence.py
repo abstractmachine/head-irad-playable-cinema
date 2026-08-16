@@ -59,6 +59,20 @@ class _DummyVisualizer(WindowVisualizer):
         return QLabel("inspector")
 
 
+class _LateGeometryVisualizer(_DummyVisualizer):
+    def __init__(self, pref_key):
+        self.geometry_at_first_show = None
+        super().__init__(pref_key=pref_key)
+        self.setGeometry(5, 10, 320, 240)
+
+    def showEvent(self, event):
+        geometry = self.geometry()
+        self.geometry_at_first_show = (
+            geometry.x(), geometry.y(), geometry.width(), geometry.height(),
+        )
+        super().showEvent(event)
+
+
 def _pump(app, ticks: int = 5) -> None:
     for _ in range(ticks):
         app.processEvents()
@@ -197,6 +211,37 @@ def test_show_goes_straight_to_fullscreen_when_pending(app, fake_prefs):
     assert win2._pending_fullscreen is False
 
     win2.close()
+
+
+def test_saved_geometry_is_reasserted_before_first_show_event(app, fake_prefs):
+    fake_prefs["window_test_first_show"] = [50, 60, 700, 500, 0, 0]
+
+    win = _LateGeometryVisualizer(pref_key="window_test_first_show")
+    try:
+        # Simulates a subclass applying its own default after the shared base
+        # restored geometry but before the launcher invokes show().
+        geometry = win.geometry()
+        assert (
+            geometry.x(), geometry.y(), geometry.width(), geometry.height(),
+        ) == (5, 10, 320, 240)
+        assert not win.isVisible()
+
+        win.show()
+
+        assert win.geometry_at_first_show == (50, 60, 700, 500)
+        assert win.isVisible()
+    finally:
+        win.close()
+
+
+def test_unsaved_subclass_default_geometry_is_preserved_at_first_show(app, fake_prefs):
+    win = _LateGeometryVisualizer(pref_key="window_test_unsaved_first_show")
+    try:
+        win.show()
+
+        assert win.geometry_at_first_show == (5, 10, 320, 240)
+    finally:
+        win.close()
 
 
 def test_illustration_preserves_saved_windowed_geometry(app, fake_prefs, monkeypatch, tmp_path):

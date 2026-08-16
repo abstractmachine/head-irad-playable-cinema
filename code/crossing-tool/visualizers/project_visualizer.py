@@ -311,13 +311,27 @@ class _VocabularyDatavisWidget(QWidget):
     def _layout_cells(self) -> None:
         gap_count = len(self._fields)
         total_gap_height = gap_count * theme.INSPECTOR_GAP
-        available_cell_height = max(0, self.height() - total_gap_height)
-        heights = _proportional_heights(
-            [item["count"] for item in self._fields],
-            available_cell_height,
-            self._minimum_cell_height,
-        )
-        y = theme.INSPECTOR_GAP if self._fields else 0
+        if total_gap_height <= self.height():
+            gap_heights = [theme.INSPECTOR_GAP] * gap_count
+            available_cell_height = self.height() - total_gap_height
+            heights = _proportional_heights(
+                [item["count"] for item in self._fields],
+                available_cell_height,
+                self._minimum_cell_height,
+            )
+        else:
+            # Degenerate density: canonical gaps alone do not fit. Cells
+            # collapse to zero height and the existing leading/inter-field
+            # CANVAS_BG gaps compress evenly to exactly the available height.
+            # Later gaps receive the integer remainder; no gap exceeds the
+            # canonical size and no geometry can escape the DATAVIS bounds.
+            heights = [0] * gap_count
+            base_gap, remainder = divmod(self.height(), gap_count)
+            gap_heights = [
+                base_gap + (index >= gap_count - remainder)
+                for index in range(gap_count)
+            ]
+        y = gap_heights[0] if gap_heights else 0
         formatted_counts = [_format_column_count(item["count"]) for item in self._fields]
         for cell, count in zip(self._field_cells, formatted_counts):
             cell.count_label.setText(count)
@@ -343,8 +357,8 @@ class _VocabularyDatavisWidget(QWidget):
             )
             cell.setGeometry(0, y, self.width(), height)
             y += height
-            if index < gap_count:
-                y += theme.INSPECTOR_GAP
+            if index + 1 < gap_count:
+                y += gap_heights[index + 1]
 
 
 class _ProjectColumnWidget(QWidget):

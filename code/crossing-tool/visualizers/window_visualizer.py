@@ -75,6 +75,7 @@ class WindowVisualizer(VisualizerWindow):
         # intermediate state is what let some window managers ignore the
         # follow-up fullscreen request.
         self._pending_fullscreen = False
+        self._first_show_pending = True
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -217,6 +218,19 @@ class WindowVisualizer(VisualizerWindow):
         self.focus_target().setFocus()
 
     def show(self) -> None:
+        # Base-class restoration happens during WindowVisualizer.__init__,
+        # but subclass construction continues after that call and may apply
+        # its own minimum/default size. Reassert the saved geometry exactly
+        # once here, after the complete subclass exists but before Qt maps
+        # the native window, so no intermediate default geometry is visible.
+        if self._first_show_pending:
+            self._first_show_pending = False
+            if self._pref_key:
+                _panel_hidden, want_fullscreen = restore_window_geometry(
+                    self, self._pref_key,
+                )
+                self._pending_fullscreen = want_fullscreen
+
         # If restore_window_geometry() (see __init__) determined this window
         # should start fullscreen, go there directly instead of showing
         # normal first and upgrading to fullscreen a moment later — some

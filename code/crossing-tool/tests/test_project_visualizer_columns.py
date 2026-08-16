@@ -422,6 +422,45 @@ def test_project_visualizer_headers_appear_immediately_in_loading_state(app, fak
         window.close()
 
 
+def test_project_visualizer_first_show_uses_saved_geometry_while_loading(
+    app, fake_prefs, monkeypatch,
+):
+    from PyQt5.QtCore import QRect
+    from PyQt5.QtWidgets import QApplication
+
+    class _DesktopScreen:
+        @staticmethod
+        def availableGeometry():
+            return QRect(0, 0, 1920, 1080)
+
+    fake_prefs["path"] = "/fake/project"
+    fake_prefs["window_project"] = [40, 50, 1000, 650, 0, 0]
+    monkeypatch.setattr(
+        QApplication, "primaryScreen", staticmethod(lambda: _DesktopScreen()),
+    )
+    monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    window = ProjectVisualizer()
+    try:
+        assert not window.isVisible()
+
+        window.show()
+
+        geometry = window.geometry()
+        assert (
+            geometry.x(), geometry.y(), geometry.width(), geometry.height(),
+        ) == (40, 50, 1000, 650)
+        assert window._shown_as_project is True
+        assert all(
+            widget.column.state == "loading"
+            for widget in window._project_column_widgets.values()
+        )
+    finally:
+        window.close()
+
+
 def test_project_visualizer_datavis_body_is_borderless_at_multiple_widths(
     app, fake_prefs, monkeypatch,
 ):
@@ -508,6 +547,139 @@ def test_vocabulary_datavis_minima_redistribute_remaining_height():
 
     assert heights == [60, 20, 20]
     assert sum(heights) == 100
+
+
+@pytest.mark.parametrize(("counts", "height", "expected_heights", "expected_y"), [
+    ([3, 1], 199, [144, 49], [3, 150]),
+    ([8, 1, 1], 109, [52, 24, 24], [3, 58, 85]),
+])
+def test_vocabulary_datavis_normal_geometry_is_unchanged(
+    app, counts, height, expected_heights, expected_y,
+):
+    from visualizers.project_visualizer import _VocabularyDatavisWidget
+
+    datavis = _VocabularyDatavisWidget()
+    try:
+        datavis.resize(140, height)
+        datavis.set_datavis({
+            "kind": "vocabulary_fields",
+            "fields": [
+                {"field": f"field-{index}", "count": count}
+                for index, count in enumerate(counts)
+            ],
+        })
+        app.processEvents()
+
+        cells = datavis._field_cells
+        assert [cell.height() for cell in cells] == expected_heights
+        assert [cell.y() for cell in cells] == expected_y
+        assert cells[-1].y() + cells[-1].height() == height
+    finally:
+        datavis.close()
+        datavis.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.parametrize(("height", "expected_y"), [
+    (4 * theme.INSPECTOR_GAP, [3, 6, 9, 12]),
+    (4 * theme.INSPECTOR_GAP - 1, [2, 5, 8, 11]),
+])
+def test_vocabulary_datavis_gap_capacity_boundary_is_contained(
+    app, height, expected_y,
+):
+    from visualizers.project_visualizer import _VocabularyDatavisWidget
+
+    datavis = _VocabularyDatavisWidget()
+    try:
+        datavis.resize(140, height)
+        datavis.set_datavis({
+            "kind": "vocabulary_fields",
+            "fields": [
+                {"field": f"field-{index}", "count": 1}
+                for index in range(4)
+            ],
+        })
+        app.processEvents()
+
+        cells = datavis._field_cells
+        assert [cell.y() for cell in cells] == expected_y
+        assert all(cell.height() == 0 for cell in cells)
+        assert all(
+            0 <= cell.y() <= cell.y() + cell.height() <= datavis.height()
+            for cell in cells
+        )
+        assert cells[-1].y() + cells[-1].height() == datavis.height()
+    finally:
+        datavis.close()
+        datavis.deleteLater()
+        app.processEvents()
+
+
+def test_vocabulary_datavis_very_large_field_count_compresses_gaps_within_bounds(app):
+    from visualizers.project_visualizer import _VocabularyDatavisWidget
+
+    datavis = _VocabularyDatavisWidget()
+    try:
+        datavis.resize(140, 7)
+        datavis.set_datavis({
+            "kind": "vocabulary_fields",
+            "fields": [
+                {"field": f"field-{index}", "count": 1}
+                for index in range(100)
+            ],
+        })
+        app.processEvents()
+
+        cells = datavis._field_cells
+        gap_heights = [cells[0].y()] + [
+            cells[index].y() - (
+                cells[index - 1].y() + cells[index - 1].height()
+            )
+            for index in range(1, len(cells))
+        ]
+        assert len(cells) == 100
+        assert all(cell.height() == 0 for cell in cells)
+        assert all(0 <= gap <= theme.INSPECTOR_GAP for gap in gap_heights)
+        assert sum(gap_heights) == datavis.height()
+        assert all(
+            0 <= cell.y() <= cell.y() + cell.height() <= datavis.height()
+            for cell in cells
+        )
+        assert cells[-1].y() + cells[-1].height() == datavis.height()
+    finally:
+        datavis.close()
+        datavis.deleteLater()
+        app.processEvents()
+
+
+def test_vocabulary_datavis_zero_height_has_no_negative_or_overflowing_geometry(app):
+    from visualizers.project_visualizer import _VocabularyDatavisWidget
+
+    datavis = _VocabularyDatavisWidget()
+    try:
+        datavis.resize(140, 0)
+        datavis.set_datavis({
+            "kind": "vocabulary_fields",
+            "fields": [
+                {"field": f"field-{index}", "count": 1}
+                for index in range(10)
+            ],
+        })
+        app.processEvents()
+
+        assert datavis.height() == 0
+        assert all(
+            cell.y() == 0 and cell.height() == 0
+            for cell in datavis._field_cells
+        )
+        assert all(
+            cell.y() + cell.height() <= datavis.height()
+            for cell in datavis._field_cells
+        )
+    finally:
+        datavis.close()
+        datavis.deleteLater()
+        app.processEvents()
 
 
 def test_vocabulary_datavis_cells_resize_proportionally_and_render_labels(app):
