@@ -20,7 +20,7 @@ import pytest
 from PyQt5.QtCore import QEvent, QPoint, Qt
 from PyQt5.QtGui import QColor, QHelpEvent
 from PyQt5.QtTest import QTest
-from PyQt5.QtWidgets import QApplication, QLabel, QScrollArea, QToolTip
+from PyQt5.QtWidgets import QApplication, QLabel, QScrollArea, QTabBar, QToolTip
 
 import services.corpus_stats as corpus_stats_mod
 import services.illustration_index as illustration_index_mod
@@ -965,6 +965,28 @@ def test_project_tools_section_contains_two_by_two_tool_buttons(
         assert not window._vocabulary_poll_timer.isActive()
         assert not window._illustration_poll_timer.isActive()
         assert not window._index_all_poll_timer.isActive()
+    finally:
+        window.close()
+
+
+def test_project_inspector_tab_shows_f1_suffix(app, fake_prefs, monkeypatch):
+    fake_prefs["path"] = "/fake/project"
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._ProjectColumnsWorker.start",
+        lambda self: None,
+    )
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    window = ProjectVisualizer()
+    try:
+        tab_bar = window._inspector_shell.tabbed_panel().tab_bar()
+        assert tab_bar.count() == 1
+        assert tab_bar.tabText(0) == "Project"
+        shortcut = tab_bar.tabButton(0, QTabBar.RightSide)
+        assert isinstance(shortcut, QLabel)
+        assert shortcut.text() == "F1"
+        assert f"color: {theme.TEXT_DIM};" in shortcut.styleSheet()
     finally:
         window.close()
 

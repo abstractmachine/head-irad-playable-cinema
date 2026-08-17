@@ -35,7 +35,7 @@ from PyQt5.QtGui import QCursor, QFontMetrics
 from PyQt5.QtWidgets import (
     QApplication, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
     QFrame, QGridLayout, QHBoxLayout, QLineEdit, QMessageBox, QPushButton,
-    QSizePolicy, QSpinBox, QToolTip, QVBoxLayout, QWidget, QLabel,
+    QSizePolicy, QSpinBox, QTabBar, QToolTip, QVBoxLayout, QWidget, QLabel,
 )
 
 from tool import prefs as _prefs
@@ -1872,7 +1872,21 @@ class ProjectVisualizer(WindowVisualizer):
         panel.add_widget(self._build_import_section())
         panel.add_widget(self._build_tools_section())
 
-        inspector.add_tab(panel, " Project ")
+        inspector.add_tab(panel, "Project")
+        tab_bar = inspector.tabbed_panel().tab_bar()
+        self._project_inspector_shortcut_label = QLabel("F1", tab_bar)
+        self._project_inspector_shortcut_label.setAttribute(
+            Qt.WA_TransparentForMouseEvents, True,
+        )
+        self._project_inspector_shortcut_label.setSizePolicy(
+            QSizePolicy.Fixed, QSizePolicy.Fixed,
+        )
+        self._project_inspector_shortcut_label.setStyleSheet(
+            f"background: transparent; color: {theme.TEXT_DIM};"
+            f" font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
+            f" font-weight: {theme.WEIGHT_UI}; padding-left: 6px; padding-right: 2px;"
+        )
+        tab_bar.setTabButton(0, QTabBar.RightSide, self._project_inspector_shortcut_label)
 
         self._inspector = inspector
         return inspector
