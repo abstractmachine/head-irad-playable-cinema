@@ -2870,9 +2870,11 @@ def test_project_visualizer_unavailable_column_shows_compact_index_status(app, f
 
         widget.set_column(ProjectColumn(
             id="vocabulary", title="Vocabulary", count=None,
-            datavis={"kind": "empty"}, state="stale", reason="corpus_stats_stale",
+            datavis={"kind": "empty"}, state="stale", reason="vocabulary_index_stale",
         ))
-        assert widget._count_label.text() == "\u2014\nSTATS STALE"
+        assert widget._count_label.text() == "INDEX STALE"
+        assert "\n" not in widget._count_label.text()
+        assert "\u2014" not in widget._count_label.text()
         assert widget.column.state == "stale"
     finally:
         window.close()

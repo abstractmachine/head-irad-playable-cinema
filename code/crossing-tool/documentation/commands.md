@@ -420,13 +420,24 @@ crossing index embed --tmdb 391
   --media {movies,gameplay}
 
 # Reconcile .txt, .npy, and manifest (re-serializes/re-embeds only when source changed)
-crossing index update <filename_substring>
-crossing index update --tmdb 391
-crossing index update --all
+crossing index process <filename_substring>
+crossing index process --tmdb 391
+crossing index process --all
   --model <model-name>
   --force                           # rebuild even if up to date
   --verbose
-  --media {movies,gameplay}
+  --media {movie,gameplay}
+
+# Rebuild the corpus-stat cache used by the Project browser.
+# Run this after manually editing shot annotation JSON so the Shots total and
+# annotation-type breakdown (including <untyped>) reflect the edited records.
+# This covers both movie and gameplay annotations in one command.
+crossing index stats --force
+crossing index stats --force --json       # rebuild and print the cached values as JSON
+
+# Without --force, this is read-only: it prints the current cache or reports
+# that the cache is missing/stale. It never silently rebuilds.
+crossing index stats
 
 # Inspect index status without modifying files
 crossing index audit
@@ -455,6 +466,19 @@ crossing index vocabulary --family derived    # free-text candidates only
 crossing index illustration
 crossing index illustration --media gameplay
 ```
+
+Manual annotation edits can affect more than one derived index. Use the command
+that owns the feature you want to refresh:
+
+| Derived data | Rebuild command |
+|---|---|
+| Project browser counts and Shots-by-type DATAVIS | `crossing index stats --force` |
+| Semantic search text and embeddings | `crossing index process --all --media movie` or `--media gameplay` |
+| Structured and derived vocabulary | `crossing index vocabulary --all --force` |
+
+`crossing index stats --force` is sufficient when the goal is to refresh the
+Project browser after editing an annotation field such as `type`. It does not
+re-serialize or re-embed semantic-search data.
 
 ## Generate
 

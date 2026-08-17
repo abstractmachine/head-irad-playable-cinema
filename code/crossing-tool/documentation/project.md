@@ -91,7 +91,7 @@ Gameplay metadata includes:
 - Use `--json` flag for raw JSON output (full shot data or filtered fields with `--field`)
 - Shot detection uses TransNetV2 and creates CSV files with `Shot_Source="auto"`, confidence scores, and exact frame numbers (`Start_Frame`/`End_Frame`)
 - Shotlist visualizer GUI (`crossing visualizer shotlist`) uses OpenCV for frame-precise display — each frame is seeked by exact integer frame index, not timecode
-- `crossing index update` checks for changes in annotation files before re-serializing or re-embedding, making it safe to run repeatedly
+- `crossing index process` checks for changes in annotation files before re-serializing or re-embedding, making it safe to run repeatedly
 - Annotation IDs use a stable `<media_id>@fSTART-fEND` format; use `crossing annotate migrate` to upgrade existing projects from legacy integer IDs
 - The **metadata visualizer** communicates with a running Shotlist Visualizer via a Unix domain socket (`/tmp/crossing_shotlist_<hash>.sock`); the socket is created when the Shotlist Visualizer opens and removed when it closes
 

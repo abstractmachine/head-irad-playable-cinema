@@ -11,6 +11,35 @@ crossing visualizer project
 crossing visualizer          # default — opens Project
 ```
 
+## Browser Statistics
+
+The browser reads prebuilt corpus statistics from
+`data/indexes/corpus_stats.json`. In particular, the **Shots** column displays
+the cached total across movie and gameplay annotations plus the distribution of
+the annotation `type` field. `<untyped>` counts canonical shot annotation
+records whose `type` value is missing or empty.
+
+After manually editing shot annotation JSON, rebuild this cache with:
+
+```bash
+crossing index stats --force
+```
+
+This is the simple Project-browser refresh command. The Project visualizer does
+not traverse annotations or rebuild statistics itself. Close and reopen the
+Project visualizer after the command if it is already open.
+
+This command only rebuilds Project corpus statistics. If the edited annotation
+text must also be reflected in semantic search, update that media type's search
+index separately:
+
+```bash
+crossing index process --all --media movie
+crossing index process --all --media gameplay
+```
+
+For vocabulary changes, use `crossing index vocabulary --all --force`.
+
 ## Sections
 
 ### Project

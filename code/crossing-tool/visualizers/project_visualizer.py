@@ -693,7 +693,7 @@ class _ProjectColumnWidget(QWidget):
             self._count_label.setStyleSheet(
                 f"{self._count_background_style} color: {theme.TEXT_DIM}; {self._count_border_style}"
             )
-            self._count_label.setText(f"\u2014\n{_column_status_label(column)}")
+            self._count_label.setText(_column_status_label(column))
         self._datavis_widget.set_datavis(column.datavis if column.state == "ready" else {"kind": "empty"})
 
 
