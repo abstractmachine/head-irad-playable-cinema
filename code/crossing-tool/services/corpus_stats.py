@@ -754,7 +754,7 @@ def _media_items_datavis(
 def get_vocabulary_field_counts(
     project_path: str, expected_total: Optional[int] = None,
 ) -> list[dict[str, Any]]:
-    """Return unique vocabulary-term counts in the index's canonical field order."""
+    """Return unique vocabulary-term counts from largest to smallest."""
     index = load_vocabulary_index(project_path, "movie")
     fields = index.get("fields", {})
     if not isinstance(fields, dict):
@@ -768,6 +768,7 @@ def get_vocabulary_field_counts(
         for name in ordered_names
         if isinstance(fields[name], dict) and fields[name]
     ]
+    result.sort(key=lambda item: item["count"], reverse=True)
 
     index_total = int(index.get("meta", {}).get("total_tokens", 0))
     field_total = sum(item["count"] for item in result)

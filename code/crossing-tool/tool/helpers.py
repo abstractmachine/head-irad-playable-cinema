@@ -54,16 +54,21 @@ def _add_media_arg(
     *,
     default: str | None = "movie",
     required: bool = False,
+    allow_both: bool = False,
 ) -> None:
-    """Add ``--media {movie,gameplay}`` to *p*.
+    """Add a canonical ``--media`` selector to *p*.
 
     Most subcommands default to ``"movie"``.  Pass ``default=None`` for
     optional media selectors, or ``required=True`` for commands that must have
-    an explicit value (e.g. ``remove``).
+    an explicit value (e.g. ``remove``). Commands that explicitly handle both
+    media types may pass ``allow_both=True``.
     """
+    choices = ["movie", "gameplay"]
+    if allow_both:
+        choices.append("both")
     p.add_argument(
         "--media",
-        choices=["movie", "gameplay"],
+        choices=choices,
         default=default,
         required=required,
     )

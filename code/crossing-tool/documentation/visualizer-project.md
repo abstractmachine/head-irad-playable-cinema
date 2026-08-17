@@ -19,7 +19,12 @@ The browser columns are, in order: **Movies**, **Gameplay**, **Shots**,
 Shots reads `data/indexes/corpus_stats.json`; its total covers movie and
 gameplay annotations, and its distribution uses the annotation `type` field.
 `<untyped>` counts canonical shot annotation records whose `type` value is
-missing or empty. Vocabulary reads the canonical vocabulary indexes.
+missing or empty. Synthetic `<untyped>` cells use the same orange warning
+color as `INDEX STALE`. Double-click a synthetic `<untyped>` cell to run the
+corresponding `crossing index untyped` audit. The generated Markdown report is
+saved under `outputs/audits/` and opened with the operating system's default
+application. Each item is written as `shot_id (HH:MM:SS.mmm)`. Vocabulary
+reads the canonical vocabulary indexes.
 
 Silhouettes and Engravings read the current SQLite indexes under
 `data/indexes/illustration/`; the Project visualizer never traverses either
@@ -52,16 +57,16 @@ crossing index process --all --media gameplay
 ```
 
 For vocabulary changes, use `crossing index vocabulary --all --force`.
+The Vocabulary DATAVIS orders its fields by indexed term count, largest first.
 
 After silhouette or engraving catalog changes, rebuild both media indexes:
 
 ```bash
-crossing index illustration --media movie
-crossing index illustration --media gameplay
+crossing index illustration --media both
 ```
 
 Same-schema stale Illustration indexes keep displaying their last indexed field
-values while the count row says `INDEX STALE`. Missing, malformed, or
+values while the count row says `INDEX STALE` on an orange background. Missing, malformed, or
 older-schema indexes remain unavailable until rebuilt because their prior data
 cannot be queried safely. A valid empty index displays a zero count and the
 existing empty canvas.
@@ -104,16 +109,20 @@ Set the default **Type** (`movie` or `gameplay`) and click **Import** to run the
 
 ### Tools
 
-The two Tools actions run through the canonical CLI and show a loading indicator
+The four Tools actions run through the canonical CLI and show a loading indicator
 on the section header while they work:
 
 | Button | Action |
 |---|---|
-| Thumbnail Palettes | Builds missing thumbnail palettes for movie and gameplay media, then refreshes the Project browser. |
-| Rebuild Vocabulary | Rebuilds movie and gameplay vocabulary data with `crossing index vocabulary --all --force`, then refreshes the Project browser. |
+| Index Thumbnails | Builds missing thumbnail palettes for movie and gameplay media, then refreshes the Project browser. |
+| Index Vocabulary | Rebuilds movie and gameplay vocabulary data with `crossing index vocabulary --all --force`, then refreshes the Project browser. |
+| Index Illustrations | Rebuilds the Silhouette and Engraving browse indexes with `crossing index illustration --media both`, then refreshes the Project browser. |
+| Index | Runs Index Thumbnails, Index Vocabulary, and Index Illustrations in sequence, then refreshes the Project browser once. |
 
-Only one Tools action runs at a time. CLI failures are shown in the Project
-visualizer without silently falling back to a GUI-side annotation traversal.
+The buttons are arranged in two rows: Thumbnails/Vocabulary, then
+Illustrations/Index. Only one Tools action runs at a time. While it runs, the pressed button reads
+**indexing** and the section header animates. CLI failures are shown in the
+Project visualizer without silently falling back to a GUI-side annotation traversal.
 
 ### Visualizers
 

@@ -658,7 +658,7 @@ def test_get_cached_project_columns_rejects_mismatched_shot_type_total(monkeypat
     assert shots.datavis == {"kind": "empty"}
 
 
-def test_vocabulary_field_counts_follow_index_order_and_match_primary_total(monkeypatch):
+def test_vocabulary_field_counts_sort_by_count_and_match_primary_total(monkeypatch):
     monkeypatch.setattr(
         corpus_stats_mod, "load_vocabulary_index",
         lambda p, media_type: {
@@ -675,8 +675,8 @@ def test_vocabulary_field_counts_follow_index_order_and_match_primary_total(monk
     )
 
     assert get_vocabulary_field_counts("/fake/project", expected_total=6) == [
-        {"field": "settings", "count": 2},
         {"field": "objects", "count": 3},
+        {"field": "settings", "count": 2},
         {"field": "animals", "count": 1},
     ]
 
@@ -867,6 +867,7 @@ def test_stale_project_column_keeps_status_and_previous_datavis(app):
         app.processEvents()
 
         assert widget._count_label.text() == "INDEX STALE"
+        assert f"background: {theme.WARNING_COLOR}" in widget._count_label.styleSheet()
         assert [cell.field_label.text() for cell in widget._datavis_widget._field_cells] == [
             "objects", "animals",
         ]
@@ -930,7 +931,7 @@ def test_project_visualizer_headers_appear_immediately_in_loading_state(app, fak
         window.close()
 
 
-def test_project_tools_section_contains_side_by_side_tool_buttons(
+def test_project_tools_section_contains_two_by_two_tool_buttons(
     app, fake_prefs, monkeypatch,
 ):
     fake_prefs["path"] = "/fake/project"
@@ -945,17 +946,25 @@ def test_project_tools_section_contains_side_by_side_tool_buttons(
     try:
         assert window._tools_section._title == "Tools"
         assert window._tools_section._pref_key == "project_section_tools"
-        assert window.thumbnail_palettes_btn.text() == "Thumbnail Palettes"
+        assert window.thumbnail_palettes_btn.text() == "Index Thumbnails"
         assert window.thumbnail_palettes_btn.isEnabled()
-        assert window.rebuild_vocabulary_btn.text() == "Rebuild Vocabulary"
+        assert window.rebuild_vocabulary_btn.text() == "Index Vocabulary"
         assert window.rebuild_vocabulary_btn.isEnabled()
+        assert window.index_illustrations_btn.text() == "Index Illustrations"
+        assert window.index_illustrations_btn.isEnabled()
+        assert window.index_all_btn.text() == "Index"
+        assert window.index_all_btn.isEnabled()
         buttons_layout = window._tools_buttons_widget.layout()
-        assert buttons_layout.count() == 2
-        assert buttons_layout.itemAt(0).widget() is window.thumbnail_palettes_btn
-        assert buttons_layout.itemAt(1).widget() is window.rebuild_vocabulary_btn
-        assert buttons_layout.stretch(0) == buttons_layout.stretch(1) == 1
+        assert buttons_layout.count() == 4
+        assert buttons_layout.itemAtPosition(0, 0).widget() is window.thumbnail_palettes_btn
+        assert buttons_layout.itemAtPosition(0, 1).widget() is window.rebuild_vocabulary_btn
+        assert buttons_layout.itemAtPosition(1, 0).widget() is window.index_illustrations_btn
+        assert buttons_layout.itemAtPosition(1, 1).widget() is window.index_all_btn
+        assert buttons_layout.columnStretch(0) == buttons_layout.columnStretch(1) == 1
         assert not window._thumbnail_palette_poll_timer.isActive()
         assert not window._vocabulary_poll_timer.isActive()
+        assert not window._illustration_poll_timer.isActive()
+        assert not window._index_all_poll_timer.isActive()
     finally:
         window.close()
 
@@ -1034,6 +1043,68 @@ def test_vocabulary_cli_uses_canonical_argv_and_current_project(monkeypatch):
     )]
 
 
+def test_illustration_cli_uses_both_media_and_current_project(monkeypatch):
+    from visualizers.project_visualizer import _CLI_PATH, _start_illustration_cli
+
+    sentinel = object()
+    calls = []
+
+    def fake_popen(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return sentinel
+
+    monkeypatch.setattr(
+        "visualizers.project_visualizer.subprocess.Popen", fake_popen,
+    )
+    output_stream = object()
+
+    result = _start_illustration_cli("/current/project", output_stream)
+
+    assert result is sentinel
+    assert calls == [(
+        [
+            sys.executable,
+            str(_CLI_PATH),
+            "index", "illustration", "--media", "both",
+        ],
+        {
+            "cwd": "/current/project",
+            "stdout": output_stream,
+            "stderr": subprocess.STDOUT,
+        },
+    )]
+
+
+@pytest.mark.parametrize("source", ["shot", "silhouettes"])
+def test_untyped_audit_cli_uses_canonical_argv_and_current_project(
+    monkeypatch, source,
+):
+    from visualizers.project_visualizer import _CLI_PATH, _start_untyped_audit_cli
+
+    sentinel = object()
+    calls = []
+
+    def fake_popen(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return sentinel
+
+    monkeypatch.setattr(
+        "visualizers.project_visualizer.subprocess.Popen", fake_popen,
+    )
+
+    result = _start_untyped_audit_cli("/current/project", source)
+
+    assert result is sentinel
+    assert calls == [(
+        [
+            sys.executable,
+            str(_CLI_PATH),
+            "index", "untyped", "--source", source,
+        ],
+        {"cwd": "/current/project"},
+    )]
+
+
 def test_vocabulary_tool_runs_once_then_refreshes_project_columns(
     app, fake_prefs, monkeypatch,
 ):
@@ -1073,8 +1144,9 @@ def test_vocabulary_tool_runs_once_then_refreshes_project_columns(
         assert len(launches) == 1
         assert launches[0][0] == "/current/project"
         assert not window.rebuild_vocabulary_btn.isEnabled()
-        assert window.rebuild_vocabulary_btn.text() == "Building Vocabulary…"
+        assert window.rebuild_vocabulary_btn.text() == "indexing"
         assert not window.thumbnail_palettes_btn.isEnabled()
+        assert not window.index_illustrations_btn.isEnabled()
         assert not window.project_browse_btn.isEnabled()
         assert window._tools_loading_bar._active
         assert window._vocabulary_poll_timer.isActive()
@@ -1087,8 +1159,9 @@ def test_vocabulary_tool_runs_once_then_refreshes_project_columns(
         window._poll_vocabulary_cli()
 
         assert window.rebuild_vocabulary_btn.isEnabled()
-        assert window.rebuild_vocabulary_btn.text() == "Rebuild Vocabulary"
+        assert window.rebuild_vocabulary_btn.text() == "Index Vocabulary"
         assert window.thumbnail_palettes_btn.isEnabled()
+        assert window.index_illustrations_btn.isEnabled()
         assert window.project_browse_btn.isEnabled()
         assert not window._tools_loading_bar._active
         assert not window._vocabulary_poll_timer.isActive()
@@ -1140,8 +1213,9 @@ def test_vocabulary_tool_restores_buttons_and_surfaces_cli_failure(
         window._poll_vocabulary_cli()
 
         assert window.rebuild_vocabulary_btn.isEnabled()
-        assert window.rebuild_vocabulary_btn.text() == "Rebuild Vocabulary"
+        assert window.rebuild_vocabulary_btn.text() == "Index Vocabulary"
         assert window.thumbnail_palettes_btn.isEnabled()
+        assert window.index_illustrations_btn.isEnabled()
         assert window.project_browse_btn.isEnabled()
         assert not window._tools_loading_bar._active
         assert not window._vocabulary_poll_timer.isActive()
@@ -1195,7 +1269,9 @@ def test_thumbnail_palette_tool_runs_both_media_once_then_refreshes(
             ("/current/project", "movie"),
         ]
         assert not window.thumbnail_palettes_btn.isEnabled()
-        assert window.thumbnail_palettes_btn.text() == "Building Thumbnail Palettes…"
+        assert window.thumbnail_palettes_btn.text() == "indexing"
+        assert not window.rebuild_vocabulary_btn.isEnabled()
+        assert not window.index_illustrations_btn.isEnabled()
         assert window._tools_loading_bar._active
         assert window._thumbnail_palette_poll_timer.isActive()
         assert not window.project_browse_btn.isEnabled()
@@ -1216,7 +1292,9 @@ def test_thumbnail_palette_tool_runs_both_media_once_then_refreshes(
         window._poll_thumbnail_palette_cli()
 
         assert window.thumbnail_palettes_btn.isEnabled()
-        assert window.thumbnail_palettes_btn.text() == "Thumbnail Palettes"
+        assert window.thumbnail_palettes_btn.text() == "Index Thumbnails"
+        assert window.rebuild_vocabulary_btn.isEnabled()
+        assert window.index_illustrations_btn.isEnabled()
         assert not window._tools_loading_bar._active
         assert not window._thumbnail_palette_poll_timer.isActive()
         assert window.project_browse_btn.isEnabled()
@@ -1281,7 +1359,9 @@ def test_thumbnail_palette_tool_restores_button_and_surfaces_cli_failure(
         window._poll_thumbnail_palette_cli()
 
         assert window.thumbnail_palettes_btn.isEnabled()
-        assert window.thumbnail_palettes_btn.text() == "Thumbnail Palettes"
+        assert window.thumbnail_palettes_btn.text() == "Index Thumbnails"
+        assert window.rebuild_vocabulary_btn.isEnabled()
+        assert window.index_illustrations_btn.isEnabled()
         assert not window._tools_loading_bar._active
         assert not window._thumbnail_palette_poll_timer.isActive()
         assert window.project_browse_btn.isEnabled()
@@ -1290,6 +1370,308 @@ def test_thumbnail_palette_tool_restores_button_and_surfaces_cli_failure(
         assert messages[0][0] == "Thumbnail Palettes failed"
         assert "Movie thumbnail palettes failed" in messages[0][1]
         assert "SAM3 palette build failed" in messages[0][1]
+    finally:
+        window.close()
+
+
+def test_illustration_tool_indexes_both_media_then_refreshes(
+    app, fake_prefs, monkeypatch,
+):
+    fake_prefs["path"] = "/current/project"
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._ProjectColumnsWorker.start",
+        lambda self: None,
+    )
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    class FakeProcess:
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+    process = FakeProcess()
+    launches = []
+
+    def fake_start(project_path, output_stream):
+        launches.append((project_path, output_stream))
+        return process
+
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._start_illustration_cli", fake_start,
+    )
+    window = ProjectVisualizer()
+    refreshes = []
+    monkeypatch.setattr(
+        window, "_start_project_columns_load",
+        lambda *, force=False: refreshes.append(force),
+    )
+    try:
+        QTest.mouseClick(window.index_illustrations_btn, Qt.LeftButton)
+
+        assert len(launches) == 1
+        assert launches[0][0] == "/current/project"
+        assert not window.index_illustrations_btn.isEnabled()
+        assert window.index_illustrations_btn.text() == "indexing"
+        assert not window.thumbnail_palettes_btn.isEnabled()
+        assert not window.rebuild_vocabulary_btn.isEnabled()
+        assert not window.project_browse_btn.isEnabled()
+        assert window._tools_loading_bar._active
+        assert window._illustration_poll_timer.isActive()
+
+        window._on_index_illustrations()
+        window._on_thumbnail_palettes()
+        window._on_rebuild_vocabulary()
+        assert len(launches) == 1
+
+        process.returncode = 0
+        window._poll_illustration_cli()
+
+        assert window.index_illustrations_btn.isEnabled()
+        assert window.index_illustrations_btn.text() == "Index Illustrations"
+        assert window.thumbnail_palettes_btn.isEnabled()
+        assert window.rebuild_vocabulary_btn.isEnabled()
+        assert window.project_browse_btn.isEnabled()
+        assert not window._tools_loading_bar._active
+        assert not window._illustration_poll_timer.isActive()
+        assert refreshes == [True]
+    finally:
+        window.close()
+
+
+def test_illustration_tool_restores_controls_and_surfaces_cli_failure(
+    app, fake_prefs, monkeypatch,
+):
+    fake_prefs["path"] = "/current/project"
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._ProjectColumnsWorker.start",
+        lambda self: None,
+    )
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    class FakeProcess:
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+    process = FakeProcess()
+
+    def fake_start(_project_path, output_stream):
+        output_stream.write(b"Illustration index failed in CLI")
+        return process
+
+    messages = []
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._start_illustration_cli", fake_start,
+    )
+    monkeypatch.setattr(
+        "visualizers.project_visualizer.QMessageBox.critical",
+        lambda parent, title, message: messages.append((title, message)),
+    )
+    window = ProjectVisualizer()
+    refreshes = []
+    monkeypatch.setattr(
+        window, "_start_project_columns_load",
+        lambda *, force=False: refreshes.append(force),
+    )
+    try:
+        QTest.mouseClick(window.index_illustrations_btn, Qt.LeftButton)
+        process.returncode = 1
+        window._poll_illustration_cli()
+
+        assert window.index_illustrations_btn.isEnabled()
+        assert window.index_illustrations_btn.text() == "Index Illustrations"
+        assert window.thumbnail_palettes_btn.isEnabled()
+        assert window.rebuild_vocabulary_btn.isEnabled()
+        assert window.project_browse_btn.isEnabled()
+        assert not window._tools_loading_bar._active
+        assert not window._illustration_poll_timer.isActive()
+        assert refreshes == []
+        assert messages == [(
+            "Illustration indexing failed",
+            "Illustration index failed in CLI",
+        )]
+    finally:
+        window.close()
+
+
+def test_index_all_runs_every_index_in_order_then_refreshes(
+    app, fake_prefs, monkeypatch,
+):
+    fake_prefs["path"] = "/current/project"
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._ProjectColumnsWorker.start",
+        lambda self: None,
+    )
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    class FakeProcess:
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+    launches = []
+
+    def launch(kind, media_type=None):
+        process = FakeProcess()
+        launches.append((kind, media_type, process))
+        return process
+
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._start_thumbnail_palette_cli",
+        lambda project_path, media_type, output: launch("thumbnail", media_type),
+    )
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._start_vocabulary_cli",
+        lambda project_path, output: launch("vocabulary"),
+    )
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._start_illustration_cli",
+        lambda project_path, output: launch("illustration"),
+    )
+
+    window = ProjectVisualizer()
+    refreshes = []
+    monkeypatch.setattr(
+        window, "_start_project_columns_load",
+        lambda *, force=False: refreshes.append(force),
+    )
+    try:
+        QTest.mouseClick(window.index_all_btn, Qt.LeftButton)
+
+        assert [(kind, media) for kind, media, _proc in launches] == [
+            ("thumbnail", "movie"),
+        ]
+        assert window.index_all_btn.text() == "indexing"
+        assert not window.index_all_btn.isEnabled()
+        assert not window.thumbnail_palettes_btn.isEnabled()
+        assert not window.rebuild_vocabulary_btn.isEnabled()
+        assert not window.index_illustrations_btn.isEnabled()
+        assert not window.project_browse_btn.isEnabled()
+        assert window._tools_loading_bar._active
+        assert window._index_all_poll_timer.isActive()
+
+        launches[-1][2].returncode = 0
+        window._poll_index_all_cli()
+        assert [(kind, media) for kind, media, _proc in launches] == [
+            ("thumbnail", "movie"),
+            ("thumbnail", "gameplay"),
+        ]
+
+        launches[-1][2].returncode = 0
+        window._poll_index_all_cli()
+        assert launches[-1][:2] == ("vocabulary", None)
+
+        launches[-1][2].returncode = 0
+        window._poll_index_all_cli()
+        assert launches[-1][:2] == ("illustration", None)
+
+        launches[-1][2].returncode = 0
+        window._poll_index_all_cli()
+
+        assert window.index_all_btn.text() == "Index"
+        assert window.index_all_btn.isEnabled()
+        assert window.thumbnail_palettes_btn.isEnabled()
+        assert window.rebuild_vocabulary_btn.isEnabled()
+        assert window.index_illustrations_btn.isEnabled()
+        assert window.project_browse_btn.isEnabled()
+        assert not window._tools_loading_bar._active
+        assert not window._index_all_poll_timer.isActive()
+        assert refreshes == [True]
+    finally:
+        window.close()
+
+
+def test_index_all_continues_after_failure_then_reports_without_refresh(
+    app, fake_prefs, monkeypatch,
+):
+    fake_prefs["path"] = "/current/project"
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._ProjectColumnsWorker.start",
+        lambda self: None,
+    )
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    class FakeProcess:
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+    launches = []
+
+    def fake_thumbnail(_project_path, media_type, _output):
+        process = FakeProcess()
+        launches.append(("thumbnail", media_type, process))
+        return process
+
+    def fake_vocabulary(_project_path, output):
+        process = FakeProcess()
+        output.write(b"Vocabulary failed in CLI")
+        launches.append(("vocabulary", None, process))
+        return process
+
+    def fake_illustration(_project_path, _output):
+        process = FakeProcess()
+        launches.append(("illustration", None, process))
+        return process
+
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._start_thumbnail_palette_cli",
+        fake_thumbnail,
+    )
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._start_vocabulary_cli", fake_vocabulary,
+    )
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._start_illustration_cli", fake_illustration,
+    )
+    messages = []
+    monkeypatch.setattr(
+        "visualizers.project_visualizer.QMessageBox.critical",
+        lambda parent, title, message: messages.append((title, message)),
+    )
+
+    window = ProjectVisualizer()
+    refreshes = []
+    monkeypatch.setattr(
+        window, "_start_project_columns_load",
+        lambda *, force=False: refreshes.append(force),
+    )
+    try:
+        QTest.mouseClick(window.index_all_btn, Qt.LeftButton)
+        launches[-1][2].returncode = 0
+        window._poll_index_all_cli()
+        launches[-1][2].returncode = 0
+        window._poll_index_all_cli()
+        launches[-1][2].returncode = 1
+        window._poll_index_all_cli()
+
+        assert launches[-1][:2] == ("illustration", None)
+        assert window._tools_loading_bar._active
+
+        launches[-1][2].returncode = 0
+        window._poll_index_all_cli()
+
+        assert window.index_all_btn.text() == "Index"
+        assert window.index_all_btn.isEnabled()
+        assert window.thumbnail_palettes_btn.isEnabled()
+        assert window.rebuild_vocabulary_btn.isEnabled()
+        assert window.index_illustrations_btn.isEnabled()
+        assert window.project_browse_btn.isEnabled()
+        assert not window._tools_loading_bar._active
+        assert not window._index_all_poll_timer.isActive()
+        assert refreshes == []
+        assert messages == [(
+            "Indexing failed",
+            "Vocabulary failed:\n\nVocabulary failed in CLI",
+        )]
     finally:
         window.close()
 
@@ -2097,7 +2479,7 @@ def test_shot_types_narrow_column_keeps_untyped_label_and_count(app):
         app.processEvents()
 
 
-def test_shot_types_synthetic_untyped_label_is_dim_without_geometry_change(app):
+def test_shot_types_synthetic_untyped_cell_uses_warning_without_geometry_change(app):
     from visualizers.project_visualizer import _ProjectDatavisWidget
 
     datavis = _ProjectDatavisWidget()
@@ -2116,14 +2498,82 @@ def test_shot_types_synthetic_untyped_label_is_dim_without_geometry_change(app):
         synthetic, literal = datavis._field_cells
         assert synthetic.field_label.text() == "<untyped>"
         assert literal.field_label.text() == "untyped"
-        assert f"color: {theme.TEXT_DIM};" in synthetic.field_label.styleSheet()
+        assert f"background: {theme.WARNING_COLOR};" in synthetic.styleSheet()
+        assert f"background: {theme.WARNING_COLOR};" in synthetic.field_label.styleSheet()
+        assert f"background: {theme.WARNING_COLOR};" in synthetic.count_label.styleSheet()
         assert f"color: {theme.TEXT};" in literal.field_label.styleSheet()
+        assert theme.WARNING_COLOR not in literal.styleSheet()
+        assert theme.WARNING_COLOR not in literal.field_label.styleSheet()
+        assert theme.WARNING_COLOR not in literal.count_label.styleSheet()
         assert synthetic.geometry().size() == literal.geometry().size()
-        assert synthetic.count_label.styleSheet() == literal.count_label.styleSheet()
     finally:
         datavis.close()
         datavis.deleteLater()
         app.processEvents()
+
+
+def test_only_synthetic_untyped_cell_emits_audit_activation(app):
+    from visualizers.project_visualizer import _ProjectDatavisWidget
+
+    datavis = _ProjectDatavisWidget()
+    activated = []
+    datavis.syntheticActivated.connect(activated.append)
+    try:
+        datavis.resize(140, 100)
+        datavis.set_datavis({
+            "kind": "shot_types",
+            "fields": [
+                {"name": "<untyped>", "count": 1, "synthetic": True},
+                {"name": "untyped", "count": 1, "synthetic": False},
+            ],
+        })
+        datavis.show()
+        app.processEvents()
+
+        synthetic, literal = datavis._field_cells
+        QTest.mouseDClick(
+            datavis, Qt.LeftButton, Qt.NoModifier, literal.geometry().center(),
+        )
+        assert activated == []
+
+        QTest.mouseDClick(
+            datavis, Qt.LeftButton, Qt.NoModifier, synthetic.geometry().center(),
+        )
+        assert activated == ["shot_types"]
+    finally:
+        datavis.close()
+        datavis.deleteLater()
+        app.processEvents()
+
+
+def test_project_maps_untyped_datavis_kinds_to_cli_sources(
+    app, fake_prefs, monkeypatch,
+):
+    fake_prefs["path"] = "/current/project"
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._ProjectColumnsWorker.start",
+        lambda self: None,
+    )
+    launches = []
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._start_untyped_audit_cli",
+        lambda project_path, source: launches.append((project_path, source)),
+    )
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    window = ProjectVisualizer()
+    try:
+        window._open_untyped_audit("shot_types")
+        window._open_untyped_audit("silhouette_fields")
+        window._open_untyped_audit("vocabulary_fields")
+
+        assert launches == [
+            ("/current/project", "shot"),
+            ("/current/project", "silhouettes"),
+        ]
+    finally:
+        window.close()
 
 
 def test_shot_types_extreme_density_is_contained_and_display_only(app):

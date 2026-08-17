@@ -1,7 +1,7 @@
 import json
 from argparse import Namespace
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import cli
 from services.illustration_index import (
@@ -12,6 +12,7 @@ from services.illustration_index import (
     query_facets,
     query_field_counts,
     query_page,
+    query_untyped_records,
     rebuild_index,
 )
 
@@ -98,6 +99,26 @@ def test_silhouette_field_counts_use_indexed_rows_and_deterministic_order(tmp_pa
             {"field": "humans", "count": 1},
         ],
     }
+
+
+def test_query_untyped_records_returns_only_synthetic_index_rows(tmp_path):
+    records = [
+        {"filename_stem": "film", "field": None, "label": "horse", "frame": 12},
+        {"filename_stem": "film", "field": "animals", "label": "dog", "frame": 24},
+    ]
+    with patch("services.illustration_index._scan_silhouettes", return_value=records):
+        rebuild_index(tmp_path, "silhouettes", "movie")
+
+    result = query_untyped_records(tmp_path, "silhouettes", "movie")
+
+    assert result["status"] == "ready"
+    assert result["total"] == 1
+    assert [record["frame"] for record in result["records"]] == [12]
+
+    invalidate_index(tmp_path, "silhouettes", "movie")
+    assert query_untyped_records(
+        tmp_path, "silhouettes", "movie",
+    )["status"] == "stale"
 
 
 def test_engraving_field_counts_use_source_silhouette_provenance(tmp_path):
@@ -299,6 +320,37 @@ def test_parser_exposes_illustration_index_command():
     args = cli.build_parser().parse_args(["index", "illustration", "--media", "gameplay"])
     assert args.index_subcommand == "illustration"
     assert args.media == "gameplay"
+
+
+def test_cli_illustration_index_rebuilds_both_media_types(tmp_path, capsys):
+    results = {
+        "silhouettes": {"status": "ready", "count": 7},
+        "engravings": {"status": "ready", "count": 3},
+    }
+    with (
+        patch.object(cli.prefs, "get", return_value=str(tmp_path)),
+        patch("services.illustration_index.rebuild_all", return_value=results) as rebuild,
+    ):
+        cli._index_illustration(Namespace(media="both"))
+
+    assert rebuild.call_args_list == [
+        call(str(tmp_path), "movie"),
+        call(str(tmp_path), "gameplay"),
+    ]
+    assert capsys.readouterr().out.splitlines() == [
+        "Movie Silhouettes: 7 indexed",
+        "Movie Engravings: 3 indexed",
+        "Gameplay Silhouettes: 7 indexed",
+        "Gameplay Engravings: 3 indexed",
+    ]
+
+
+def test_parser_accepts_both_for_illustration_index():
+    args = cli.build_parser().parse_args([
+        "index", "illustration", "--media", "both",
+    ])
+
+    assert args.media == "both"
 
 
 def test_parser_exposes_vocabulary_family_selection():

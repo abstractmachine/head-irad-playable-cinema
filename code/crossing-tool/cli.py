@@ -4494,6 +4494,8 @@ def cmd_index(args):
         _index_silhouette(args)
     elif sub == "illustration":
         _index_illustration(args)
+    elif sub == "untyped":
+        _index_untyped(args)
     elif sub == "palette":
         _index_palette(args)
     elif sub == "motif":
@@ -5682,14 +5684,42 @@ def _index_illustration(args):
     from services.illustration_index import rebuild_all
 
     project_path = prefs.get("path")
-    media_type = normalize_media_type(getattr(args, "media", "movie"))
-    results = rebuild_all(project_path, media_type)
-    for source in ("silhouettes", "engravings"):
-        result = results[source]
-        if result.get("status") != "ready":
-            print(f"✗ {source}: index changed while rebuilding", file=sys.stderr)
-            sys.exit(1)
-        print(f"{source.capitalize()}: {result['count']} indexed")
+    media = getattr(args, "media", "movie")
+    media_types = (
+        ("movie", "gameplay")
+        if media == "both"
+        else (normalize_media_type(media),)
+    )
+    for media_type in media_types:
+        results = rebuild_all(project_path, media_type)
+        for source in ("silhouettes", "engravings"):
+            result = results[source]
+            if result.get("status") != "ready":
+                print(f"✗ {source}: index changed while rebuilding", file=sys.stderr)
+                sys.exit(1)
+            prefix = f"{media_type.title()} " if len(media_types) > 1 else ""
+            print(f"{prefix}{source.capitalize()}: {result['count']} indexed")
+
+
+def _index_untyped(args):
+    """Generate and open a Markdown audit for one synthetic untyped category."""
+    from services.untyped_audit import generate_untyped_audit
+
+    project_path = prefs.get("path")
+    output_path = generate_untyped_audit(project_path, args.source)
+    print(f"Saved: {output_path}")
+    _open_with_default_app(output_path)
+
+
+def _open_with_default_app(path: str | Path) -> None:
+    """Open *path* with the current platform's default application."""
+    if os.name == "nt":
+        os.startfile(str(path))
+        return
+    import subprocess
+
+    command = "open" if sys.platform == "darwin" else "xdg-open"
+    subprocess.Popen([command, str(path)])
 
 
 def _silhouette_catalog_extract(args):
@@ -8725,7 +8755,19 @@ def build_parser():
         help="Rebuild the Silhouette and Engraving browse indexes",
     )
     p_index_illustration.set_defaults(func=cmd_index)
-    _add_media_arg(p_index_illustration)
+    _add_media_arg(p_index_illustration, allow_both=True)
+
+    p_index_untyped = index_sub.add_parser(
+        "untyped",
+        help="Write and open a Markdown audit of synthetic untyped items",
+    )
+    p_index_untyped.set_defaults(func=cmd_index)
+    p_index_untyped.add_argument(
+        "--source",
+        choices=("shot", "silhouettes"),
+        required=True,
+        help="Project DATAVIS category to audit",
+    )
 
     p_index_stats = index_sub.add_parser(
         "stats",

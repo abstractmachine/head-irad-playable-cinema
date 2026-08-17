@@ -489,6 +489,27 @@ def query_records(
     ).get("records", [])
 
 
+def query_untyped_records(
+    project_path: str | Path,
+    source: str,
+    media_type: str,
+) -> dict:
+    """Return every indexed record stored under the synthetic untyped field."""
+    status = load_index(project_path, source, media_type)
+    if not status.get("usable"):
+        return {**status, "total": 0, "records": []}
+    with sqlite3.connect(index_path(project_path, source, media_type)) as connection:
+        rows = connection.execute(
+            "SELECT payload FROM records WHERE field = ? ORDER BY id",
+            (ALL,),
+        )
+        records = [
+            _deserialize_record(Path(project_path), row[0])
+            for row in rows
+        ]
+    return {**status, "total": len(records), "records": records}
+
+
 def _create_schema(connection: sqlite3.Connection) -> None:
     connection.executescript(
         """

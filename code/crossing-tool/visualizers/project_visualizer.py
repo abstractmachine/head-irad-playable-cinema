@@ -79,6 +79,36 @@ def _start_vocabulary_cli(
         stderr=subprocess.STDOUT,
     )
 
+
+def _start_illustration_cli(
+    project_path: str,
+    output_stream,
+) -> subprocess.Popen:
+    return subprocess.Popen(
+        [
+            sys.executable,
+            str(_CLI_PATH),
+            "index", "illustration", "--media", "both",
+        ],
+        cwd=project_path,
+        stdout=output_stream,
+        stderr=subprocess.STDOUT,
+    )
+
+
+def _start_untyped_audit_cli(
+    project_path: str,
+    source: str,
+) -> subprocess.Popen:
+    return subprocess.Popen(
+        [
+            sys.executable,
+            str(_CLI_PATH),
+            "index", "untyped", "--source", source,
+        ],
+        cwd=project_path,
+    )
+
 # ---------------------------------------------------------------------------
 # Constants mirrored from cli.py to avoid importing the full CLI module
 # ---------------------------------------------------------------------------
@@ -289,10 +319,15 @@ class _WordCountCell(QFrame):
     def __init__(self, font, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("VocabularyFieldCell")
-        self.setStyleSheet(
+        self._frame_style = (
             f"QFrame#VocabularyFieldCell {{ background: {theme.CELL_BG}; "
             f"{_project_row_side_style()} }}"
         )
+        self._warning_frame_style = (
+            f"QFrame#VocabularyFieldCell {{ background: {theme.WARNING_COLOR}; "
+            f"{_project_row_side_style()} }}"
+        )
+        self.setStyleSheet(self._frame_style)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(_SPACER_ROW_INSET, 0, _PROJECT_ROW_SEAM_H, 0)
         layout.setSpacing(_SPACER_ROW_GAP)
@@ -303,8 +338,9 @@ class _WordCountCell(QFrame):
         self._field_style = table_ui_cell_style(
             "", "", include_minimum_height=False,
         )
-        self._dim_field_style = table_ui_cell_style(
-            "", "", text_color=theme.TEXT_DIM, include_minimum_height=False,
+        self._warning_field_style = table_ui_cell_style(
+            "", "", background_color=theme.WARNING_COLOR,
+            include_minimum_height=False,
         )
         self.field_label.setStyleSheet(self._field_style)
         layout.addWidget(self.field_label, 1)
@@ -325,6 +361,18 @@ class _WordCountCell(QFrame):
             + f" padding-left: {_SPACER_ROW_GAP}px;"
             + f" padding-right: {_SPACER_ROW_INSET}px;"
         )
+        self._warning_count_style = table_ui_cell_style(
+            "",
+            "",
+            background_color=theme.WARNING_COLOR,
+            include_minimum_height=False,
+            horizontal_padding=_SPACER_ROW_INSET,
+        )
+        self._compact_warning_count_style = (
+            self._warning_count_style
+            + f" padding-left: {_SPACER_ROW_GAP}px;"
+            + f" padding-right: {_SPACER_ROW_INSET}px;"
+        )
         self.count_label.setStyleSheet(self._count_style)
         layout.addWidget(self.count_label)
 
@@ -341,14 +389,24 @@ class _WordCountCell(QFrame):
         count_width: int,
         visible: bool,
         compact_count: bool = False,
-        dim_field: bool = False,
+        warning: bool = False,
     ) -> None:
+        self.setStyleSheet(
+            self._warning_frame_style if warning else self._frame_style
+        )
         self.field_label.setStyleSheet(
-            self._dim_field_style if dim_field else self._field_style
+            self._warning_field_style if warning else self._field_style
         )
-        self.count_label.setStyleSheet(
-            self._compact_count_style if compact_count else self._count_style
-        )
+        if warning:
+            count_style = (
+                self._compact_warning_count_style
+                if compact_count else self._warning_count_style
+            )
+        else:
+            count_style = (
+                self._compact_count_style if compact_count else self._count_style
+            )
+        self.count_label.setStyleSheet(count_style)
         self.field_label.setText(field if visible else "")
         self.count_label.setText(count if visible else "")
         self.count_label.setFixedWidth(count_width)
@@ -380,6 +438,8 @@ def _word_count_fields(datavis: dict) -> list[dict]:
 class _WordCountDatavisWidget(QWidget):
     """Responsive vertical composition shared by renderer-neutral word/count kinds."""
 
+    syntheticActivated = pyqtSignal(str)
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -390,8 +450,10 @@ class _WordCountDatavisWidget(QWidget):
         self._fields: list[dict] = []
         self._field_cells: list[_VocabularyFieldCell] = []
         self._shared_count_width = True
+        self._word_count_kind = "empty"
 
     def set_datavis(self, datavis: dict) -> None:
+        self._word_count_kind = str(datavis.get("kind") or "empty")
         self._fields = _word_count_fields(datavis)
         self._shared_count_width = datavis.get("kind") != "shot_types"
         self.setStyleSheet(f"background: {theme.CANVAS_BG};")
@@ -402,6 +464,15 @@ class _WordCountDatavisWidget(QWidget):
         for index, cell in enumerate(self._field_cells):
             cell.setVisible(index < len(self._fields))
         self._layout_cells()
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.LeftButton:
+            for item, cell in zip(self._fields, self._field_cells):
+                if item["synthetic"] and cell.geometry().contains(event.pos()):
+                    self.syntheticActivated.emit(self._word_count_kind)
+                    event.accept()
+                    return
+        super().mouseDoubleClickEvent(event)
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
@@ -471,7 +542,7 @@ class _WordCountDatavisWidget(QWidget):
                 row_count_width,
                 height >= self._minimum_cell_height and text_fits,
                 compact_count=use_intrinsic_count_width,
-                dim_field=item["synthetic"],
+                warning=item["synthetic"],
             )
             cell.setGeometry(0, y, self.width(), height)
             y += height
@@ -710,10 +781,21 @@ class _ProjectColumnWidget(QWidget):
             # "stale" remains distinct from both unavailable and a real "0".
             self._loading_bar.stop()
             self._count_label.setFont(self._status_font)
-            self._count_label.setStyleSheet(
-                f"{self._count_background_style} color: {theme.TEXT_DIM}; {self._count_border_style}"
+            status_label = _column_status_label(column)
+            background = (
+                theme.WARNING_COLOR
+                if status_label == "INDEX STALE"
+                else theme.PANEL_BG
             )
-            self._count_label.setText(_column_status_label(column))
+            text_color = (
+                theme.TEXT
+                if status_label == "INDEX STALE"
+                else theme.TEXT_DIM
+            )
+            self._count_label.setStyleSheet(
+                f"background: {background}; color: {text_color}; {self._count_border_style}"
+            )
+            self._count_label.setText(status_label)
         self._datavis_widget.set_datavis(
             column.datavis
             if column.state in ("ready", "stale")
@@ -883,6 +965,14 @@ class ProjectVisualizer(WindowVisualizer):
         self._vocabulary_proc: subprocess.Popen | None = None
         self._vocabulary_output = None
         self._vocabulary_project_path = ""
+        self._illustration_proc: subprocess.Popen | None = None
+        self._illustration_output = None
+        self._index_all_proc: subprocess.Popen | None = None
+        self._index_all_output = None
+        self._index_all_project_path = ""
+        self._index_all_queue: list[tuple[str, str, str | None]] = []
+        self._index_all_errors: list[str] = []
+        self._index_all_active_label = ""
 
         # visual sizing hint
         self.setMinimumSize(900, 560)
@@ -1291,25 +1381,43 @@ class ProjectVisualizer(WindowVisualizer):
         sec = CollapsibleSection("Tools", pref_key="project_section_tools")
 
         self._tools_buttons_widget = QWidget()
-        buttons_layout = QHBoxLayout(self._tools_buttons_widget)
+        buttons_layout = QGridLayout(self._tools_buttons_widget)
         buttons_layout.setContentsMargins(0, 0, 0, 0)
         buttons_layout.setSpacing(theme.INSPECTOR_GAP)
+        buttons_layout.setColumnStretch(0, 1)
+        buttons_layout.setColumnStretch(1, 1)
 
-        self.thumbnail_palettes_btn = QPushButton("Thumbnail Palettes")
+        self.thumbnail_palettes_btn = QPushButton("Index Thumbnails")
         self.thumbnail_palettes_btn.clicked.connect(self._on_thumbnail_palettes)
         self.thumbnail_palettes_btn.setStyleSheet(theme.action_button_stylesheet())
         self.thumbnail_palettes_btn.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Fixed,
         )
-        buttons_layout.addWidget(self.thumbnail_palettes_btn, 1)
+        buttons_layout.addWidget(self.thumbnail_palettes_btn, 0, 0)
 
-        self.rebuild_vocabulary_btn = QPushButton("Rebuild Vocabulary")
+        self.rebuild_vocabulary_btn = QPushButton("Index Vocabulary")
         self.rebuild_vocabulary_btn.clicked.connect(self._on_rebuild_vocabulary)
         self.rebuild_vocabulary_btn.setStyleSheet(theme.action_button_stylesheet())
         self.rebuild_vocabulary_btn.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Fixed,
         )
-        buttons_layout.addWidget(self.rebuild_vocabulary_btn, 1)
+        buttons_layout.addWidget(self.rebuild_vocabulary_btn, 0, 1)
+
+        self.index_illustrations_btn = QPushButton("Index Illustrations")
+        self.index_illustrations_btn.clicked.connect(self._on_index_illustrations)
+        self.index_illustrations_btn.setStyleSheet(theme.action_button_stylesheet())
+        self.index_illustrations_btn.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Fixed,
+        )
+        buttons_layout.addWidget(self.index_illustrations_btn, 1, 0)
+
+        self.index_all_btn = QPushButton("Index")
+        self.index_all_btn.clicked.connect(self._on_index_all)
+        self.index_all_btn.setStyleSheet(theme.action_button_stylesheet())
+        self.index_all_btn.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Fixed,
+        )
+        buttons_layout.addWidget(self.index_all_btn, 1, 1)
         sec.add_widget(self._tools_buttons_widget)
 
         self._tools_loading_bar = SweepBar(self)
@@ -1324,15 +1432,53 @@ class ProjectVisualizer(WindowVisualizer):
         self._vocabulary_poll_timer = QTimer(self)
         self._vocabulary_poll_timer.setInterval(250)
         self._vocabulary_poll_timer.timeout.connect(self._poll_vocabulary_cli)
+        self._illustration_poll_timer = QTimer(self)
+        self._illustration_poll_timer.setInterval(250)
+        self._illustration_poll_timer.timeout.connect(self._poll_illustration_cli)
+        self._index_all_poll_timer = QTimer(self)
+        self._index_all_poll_timer.setInterval(250)
+        self._index_all_poll_timer.timeout.connect(self._poll_index_all_cli)
         sec.set_subbar(self._tools_loading_bar)
         self._tools_section = sec
         return sec
 
-    def _on_thumbnail_palettes(self) -> None:
-        if (
-            self._thumbnail_palette_proc is not None
-            or self._vocabulary_proc is not None
+    def _tools_indexing(self) -> bool:
+        return any((
+            self._thumbnail_palette_proc is not None,
+            self._vocabulary_proc is not None,
+            self._illustration_proc is not None,
+            self._index_all_proc is not None,
+            bool(self._index_all_queue),
+        ))
+
+    def _begin_tools_indexing(self, active_button: QPushButton) -> None:
+        for button in (
+            self.thumbnail_palettes_btn,
+            self.rebuild_vocabulary_btn,
+            self.index_illustrations_btn,
+            self.index_all_btn,
         ):
+            button.setEnabled(False)
+        active_button.setText("indexing")
+        self.project_browse_btn.setEnabled(False)
+        self._tools_loading_bar.start()
+        self._tools_loading_timer.start()
+
+    def _finish_tools_indexing(self) -> None:
+        self._tools_loading_timer.stop()
+        self._tools_loading_bar.stop()
+        self.thumbnail_palettes_btn.setText("Index Thumbnails")
+        self.rebuild_vocabulary_btn.setText("Index Vocabulary")
+        self.index_illustrations_btn.setText("Index Illustrations")
+        self.index_all_btn.setText("Index")
+        self.thumbnail_palettes_btn.setEnabled(True)
+        self.rebuild_vocabulary_btn.setEnabled(True)
+        self.index_illustrations_btn.setEnabled(True)
+        self.index_all_btn.setEnabled(True)
+        self.project_browse_btn.setEnabled(True)
+
+    def _on_thumbnail_palettes(self) -> None:
+        if self._tools_indexing():
             return
 
         project_path = self.path_edit.text().strip()
@@ -1350,12 +1496,7 @@ class ProjectVisualizer(WindowVisualizer):
             _THUMBNAIL_PALETTE_MEDIA_TYPES
         )
         self._thumbnail_palette_errors = []
-        self.thumbnail_palettes_btn.setEnabled(False)
-        self.thumbnail_palettes_btn.setText("Building Thumbnail Palettes…")
-        self.rebuild_vocabulary_btn.setEnabled(False)
-        self.project_browse_btn.setEnabled(False)
-        self._tools_loading_bar.start()
-        self._tools_loading_timer.start()
+        self._begin_tools_indexing(self.thumbnail_palettes_btn)
         self._thumbnail_palette_poll_timer.start()
         self._start_next_thumbnail_palette_cli()
 
@@ -1427,12 +1568,7 @@ class ProjectVisualizer(WindowVisualizer):
 
     def _finish_thumbnail_palettes(self, error: str | None = None) -> None:
         self._thumbnail_palette_poll_timer.stop()
-        self._tools_loading_timer.stop()
-        self._tools_loading_bar.stop()
-        self.thumbnail_palettes_btn.setText("Thumbnail Palettes")
-        self.thumbnail_palettes_btn.setEnabled(True)
-        self.rebuild_vocabulary_btn.setEnabled(True)
-        self.project_browse_btn.setEnabled(True)
+        self._finish_tools_indexing()
         self._thumbnail_palette_media_queue = []
         self._thumbnail_palette_errors = []
 
@@ -1443,10 +1579,7 @@ class ProjectVisualizer(WindowVisualizer):
         self._start_project_columns_load(force=True)
 
     def _on_rebuild_vocabulary(self) -> None:
-        if (
-            self._vocabulary_proc is not None
-            or self._thumbnail_palette_proc is not None
-        ):
+        if self._tools_indexing():
             return
 
         project_path = self.path_edit.text().strip()
@@ -1474,12 +1607,7 @@ class ProjectVisualizer(WindowVisualizer):
         self._vocabulary_project_path = project_path
         self._vocabulary_output = output
         self._vocabulary_proc = process
-        self.thumbnail_palettes_btn.setEnabled(False)
-        self.rebuild_vocabulary_btn.setEnabled(False)
-        self.rebuild_vocabulary_btn.setText("Building Vocabulary…")
-        self.project_browse_btn.setEnabled(False)
-        self._tools_loading_bar.start()
-        self._tools_loading_timer.start()
+        self._begin_tools_indexing(self.rebuild_vocabulary_btn)
         self._vocabulary_poll_timer.start()
 
     def _poll_vocabulary_cli(self) -> None:
@@ -1506,16 +1634,182 @@ class ProjectVisualizer(WindowVisualizer):
         self._vocabulary_output = None
         self._vocabulary_project_path = ""
         self._vocabulary_poll_timer.stop()
-        self._tools_loading_timer.stop()
-        self._tools_loading_bar.stop()
-        self.thumbnail_palettes_btn.setEnabled(True)
-        self.rebuild_vocabulary_btn.setEnabled(True)
-        self.rebuild_vocabulary_btn.setText("Rebuild Vocabulary")
-        self.project_browse_btn.setEnabled(True)
+        self._finish_tools_indexing()
 
         if returncode != 0:
             detail = output_text or f"CLI exited with status {returncode}."
             QMessageBox.critical(self, "Vocabulary rebuild failed", detail)
+            return
+
+        self._start_project_columns_load(force=True)
+
+    def _on_index_illustrations(self) -> None:
+        if self._tools_indexing():
+            return
+
+        project_path = self.path_edit.text().strip()
+        if not project_path:
+            QMessageBox.warning(
+                self, "No Project", "Please set a project folder first.",
+            )
+            return
+
+        if _prefs.get("path") != project_path:
+            _prefs.set("path", project_path)
+
+        output = tempfile.TemporaryFile(mode="w+b")
+        try:
+            process = _start_illustration_cli(project_path, output)
+        except Exception as exc:
+            output.close()
+            QMessageBox.critical(
+                self,
+                "Illustration indexing failed",
+                f"{type(exc).__name__}: {exc}",
+            )
+            return
+
+        self._illustration_output = output
+        self._illustration_proc = process
+        self._begin_tools_indexing(self.index_illustrations_btn)
+        self._illustration_poll_timer.start()
+
+    def _poll_illustration_cli(self) -> None:
+        process = self._illustration_proc
+        if process is None:
+            return
+
+        returncode = process.poll()
+        if returncode is None:
+            return
+
+        output_stream = self._illustration_output
+        output_text = ""
+        if output_stream is not None:
+            try:
+                output_stream.seek(0)
+                output_text = output_stream.read().decode(
+                    "utf-8", errors="replace",
+                ).strip()
+            finally:
+                output_stream.close()
+
+        self._illustration_proc = None
+        self._illustration_output = None
+        self._illustration_poll_timer.stop()
+        self._finish_tools_indexing()
+
+        if returncode != 0:
+            detail = output_text or f"CLI exited with status {returncode}."
+            QMessageBox.critical(self, "Illustration indexing failed", detail)
+            return
+
+        self._start_project_columns_load(force=True)
+
+    def _on_index_all(self) -> None:
+        if self._tools_indexing():
+            return
+
+        project_path = self.path_edit.text().strip()
+        if not project_path:
+            QMessageBox.warning(
+                self, "No Project", "Please set a project folder first.",
+            )
+            return
+
+        if _prefs.get("path") != project_path:
+            _prefs.set("path", project_path)
+
+        self._index_all_project_path = project_path
+        self._index_all_queue = [
+            ("Movie thumbnails", "thumbnail", "movie"),
+            ("Gameplay thumbnails", "thumbnail", "gameplay"),
+            ("Vocabulary", "vocabulary", None),
+            ("Illustrations", "illustration", None),
+        ]
+        self._index_all_errors = []
+        self._begin_tools_indexing(self.index_all_btn)
+        self._index_all_poll_timer.start()
+        self._start_next_index_all_cli()
+
+    def _start_next_index_all_cli(self) -> None:
+        if not self._index_all_queue:
+            errors = "\n\n".join(self._index_all_errors) or None
+            self._finish_index_all(errors)
+            return
+
+        if _prefs.get("path") != self._index_all_project_path:
+            self._finish_index_all(
+                "The current project changed before indexing completed."
+            )
+            return
+
+        label, kind, media_type = self._index_all_queue.pop(0)
+        output = tempfile.TemporaryFile(mode="w+b")
+        try:
+            if kind == "thumbnail":
+                process = _start_thumbnail_palette_cli(
+                    self._index_all_project_path, media_type, output,
+                )
+            elif kind == "vocabulary":
+                process = _start_vocabulary_cli(
+                    self._index_all_project_path, output,
+                )
+            else:
+                process = _start_illustration_cli(
+                    self._index_all_project_path, output,
+                )
+        except Exception as exc:
+            output.close()
+            self._index_all_errors.append(
+                f"{label} failed:\n\n{type(exc).__name__}: {exc}"
+            )
+            self._start_next_index_all_cli()
+            return
+
+        self._index_all_active_label = label
+        self._index_all_output = output
+        self._index_all_proc = process
+
+    def _poll_index_all_cli(self) -> None:
+        process = self._index_all_proc
+        if process is None:
+            return
+
+        returncode = process.poll()
+        if returncode is None:
+            return
+
+        output_stream = self._index_all_output
+        output_text = ""
+        if output_stream is not None:
+            try:
+                output_stream.seek(0)
+                output_text = output_stream.read().decode(
+                    "utf-8", errors="replace",
+                ).strip()
+            finally:
+                output_stream.close()
+
+        label = self._index_all_active_label
+        self._index_all_proc = None
+        self._index_all_output = None
+        self._index_all_active_label = ""
+        if returncode != 0:
+            detail = output_text or f"CLI exited with status {returncode}."
+            self._index_all_errors.append(f"{label} failed:\n\n{detail}")
+
+        self._start_next_index_all_cli()
+
+    def _finish_index_all(self, error: str | None = None) -> None:
+        self._index_all_poll_timer.stop()
+        self._finish_tools_indexing()
+        self._index_all_project_path = ""
+        self._index_all_queue = []
+        self._index_all_errors = []
+
+        if error is not None:
+            QMessageBox.critical(self, "Indexing failed", error)
             return
 
         self._start_project_columns_load(force=True)
@@ -1608,6 +1902,9 @@ class ProjectVisualizer(WindowVisualizer):
             col_widget._datavis_widget.mediaItemActivated.connect(
                 self._open_media_item_in_shotlist
             )
+            col_widget._datavis_widget.syntheticActivated.connect(
+                self._open_untyped_audit
+            )
             self._project_column_widgets[col_id] = col_widget
             layout.addWidget(col_widget, 1)
 
@@ -1627,6 +1924,23 @@ class ProjectVisualizer(WindowVisualizer):
             return
         from visualizers.shot_visualizer import open_at_shot
         open_at_shot(project_path, filename, media_type=media_type)
+
+    def _open_untyped_audit(self, datavis_kind: str) -> None:
+        source = {
+            "shot_types": "shot",
+            "silhouette_fields": "silhouettes",
+        }.get(datavis_kind)
+        project_path = _prefs.get("path") or ""
+        if not source or not project_path:
+            return
+        try:
+            _start_untyped_audit_cli(project_path, source)
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Untyped audit failed",
+                f"{type(exc).__name__}: {exc}",
+            )
 
     def _tick_column_loading_bars(self) -> None:
         for widget in self._project_column_widgets.values():

@@ -465,7 +465,17 @@ crossing index vocabulary --family derived    # free-text candidates only
 # The UI traverses indexed facets and page slices rather than source datasets.
 crossing index illustration
 crossing index illustration --media gameplay
+crossing index illustration --media both       # movies and gameplay
+
+# Write a timestamped Markdown audit and open it with the default OS app.
+crossing index untyped --source shot
+crossing index untyped --source silhouettes
 ```
+
+Untyped reports are written under `<project>/outputs/audits/` as
+`untyped-shot-YYYY-MM-DD-HH-mm-SS.md` or
+`untyped-silhouettes-YYYY-MM-DD-HH-mm-SS.md`. Each report groups item
+shot IDs and parenthesized timecodes by media filename.
 
 Manual annotation edits can affect more than one derived index. Use the command
 that owns the feature you want to refresh:
@@ -475,7 +485,7 @@ that owns the feature you want to refresh:
 | Project browser counts and Shots-by-type DATAVIS | `crossing index stats --force` |
 | Semantic search text and embeddings | `crossing index process --all --media movie` or `--media gameplay` |
 | Structured and derived vocabulary | `crossing index vocabulary --all --force` |
-| Project Silhouettes/Engravings field distributions | `crossing index illustration --media movie` and `crossing index illustration --media gameplay` |
+| Project Silhouettes/Engravings field distributions | `crossing index illustration --media both` |
 
 `crossing index stats --force` is sufficient when the goal is to refresh the
 Project browser after editing an annotation field such as `type`. It does not

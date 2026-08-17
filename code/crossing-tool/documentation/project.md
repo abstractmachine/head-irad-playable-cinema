@@ -47,6 +47,8 @@
 │   │   └── videos/                 # output from `crossing generate mosaic video`
 │   ├── clouds/                     # output from `crossing generate cloud`
 │   └── compositions/               # output from `crossing generate composition`
+├── outputs/
+│   └── audits/                     # timestamped reports from `crossing index untyped`
 ├── models/
 │   └── <model-folder>/             # local HuggingFace models (annotate, embed, segmentation)
 └── preferences/

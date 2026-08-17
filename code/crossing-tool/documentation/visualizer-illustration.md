@@ -80,6 +80,7 @@ Use **Rebuild Index** in either source tab after catalog changes. The action reb
 
 ```bash
 crossing index illustration --media movie
+crossing index illustration --media both  # movie and gameplay
 ```
 
 Missing or stale indexes are reported in the pagination area; the visualizer does not silently scan canonical catalog directories.

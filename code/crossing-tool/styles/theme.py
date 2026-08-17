@@ -105,6 +105,7 @@ UI_BORDER    = "#404040"   # structural chrome borders (group boxes, frames) —
 SPLITTER     = "#737373"   # splitter drag handles — 45% grey (barely visible on BG)
 ACCENT       = "#ffff00"   # selections, active, checked states
 ACCENT_TEXT  = "#333333"   # text on ACCENT background (black on yellow; use #ffffff for dark accents)
+WARNING_COLOR = "#FF5C00"  # stale indexes and synthetic/untyped data warnings
 ACCENT_FILL_ALPHA = 64     # alpha for accent-colored area fills (25% of 255)
 CANVAS_BG    = "#3a3a3a"   # video / image display areas (dark so content pops)
 TRIANGLE_LEFT = 8          # shared left edge for section/combo triangles
