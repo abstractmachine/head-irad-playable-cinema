@@ -15,24 +15,6 @@ from data.subtitles import subtitle_path_for
 from services.vocabulary_index import load_vocabulary_index, vocabulary_cache_is_stale
 
 
-def _count_annotated_shots(project_path: str, media_type: str = "movie") -> int:
-    ann_dir = Path(project_path) / "data" / "annotations" / "shots" / media_type
-    if not ann_dir.exists():
-        return 0
-
-    total = 0
-    for json_file in sorted(ann_dir.glob("*.json")):
-        if json_file.name.endswith(".manifest.json"):
-            continue
-        try:
-            payload = json.loads(json_file.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if isinstance(payload, list):
-            total += sum(1 for entry in payload if isinstance(entry, dict))
-    return total
-
-
 def _count_detected_scenes(project_path: str, metadata: list[dict]) -> int:
     total = 0
     for entry in metadata:
@@ -287,27 +269,52 @@ def _count_flipbooks(project_path: str) -> int:
     return sum(1 for f in base.glob("*-flipbook.pdf"))
 
 
-def _count_annotated_shots_by_type(project_path: str) -> dict[str, int]:
-    """Count annotation entries per media type."""
-    result: dict[str, int] = {}
+_ANNOTATION_MEDIA_TYPES = ("movie", "gameplay")
+_UNTYPED_SHOT_TYPE = "<untyped>"
+
+
+def _aggregate_annotated_shots(project_path: str) -> dict[str, Any]:
+    """Aggregate the canonical annotated-shot population and its type values."""
+    by_media_type = {media_type: 0 for media_type in _ANNOTATION_MEDIA_TYPES}
+    type_counts: Counter[tuple[str, bool]] = Counter()
     base = Path(project_path) / "data" / "annotations" / "shots"
-    if not base.exists():
-        return result
-    for mt_dir in sorted(base.iterdir()):
-        if not mt_dir.is_dir():
+    for media_type in _ANNOTATION_MEDIA_TYPES:
+        annotation_dir = base / media_type
+        if not annotation_dir.is_dir():
             continue
-        total = 0
-        for json_file in mt_dir.glob("*.json"):
+        for json_file in sorted(annotation_dir.glob("*.json")):
             if json_file.name.endswith(".manifest.json"):
                 continue
             try:
                 payload = json.loads(json_file.read_text(encoding="utf-8"))
-                if isinstance(payload, list):
-                    total += sum(1 for e in payload if isinstance(e, dict))
             except (OSError, json.JSONDecodeError):
                 continue
-        result[mt_dir.name] = total
-    return result
+            if not isinstance(payload, list):
+                continue
+            for entry in payload:
+                if not isinstance(entry, dict):
+                    continue
+                by_media_type[media_type] += 1
+                shot = entry.get("shot")
+                annotation = shot.get("annotation") if isinstance(shot, dict) else None
+                type_value = annotation.get("type") if isinstance(annotation, dict) else None
+                if isinstance(type_value, str) and type_value.strip():
+                    type_counts[(type_value, False)] += 1
+                else:
+                    type_counts[(_UNTYPED_SHOT_TYPE, True)] += 1
+
+    types = [
+        {"name": name, "count": count, "synthetic": synthetic}
+        for (name, synthetic), count in sorted(
+            type_counts.items(),
+            key=lambda item: (-item[1], item[0][0], item[0][1]),
+        )
+    ]
+    return {
+        "total": sum(by_media_type.values()),
+        "by_media_type": by_media_type,
+        "types": types,
+    }
 
 
 def get_corpus_stats(project_path: str) -> dict[str, Any]:
@@ -328,10 +335,11 @@ def get_corpus_stats(project_path: str) -> dict[str, Any]:
     vocabulary_index = load_vocabulary_index(project_path, "movie")
     vocabulary_terms = int(vocabulary_index.get("meta", {}).get("total_tokens", 0))
 
-    annotated_shots_by_type = _count_annotated_shots_by_type(project_path)
-    annotated_shots_movie = annotated_shots_by_type.get("movie", 0)
-    annotated_shots_gameplay = annotated_shots_by_type.get("gameplay", 0)
-    annotated_shots = annotated_shots_movie + annotated_shots_gameplay
+    annotated_shots_aggregation = _aggregate_annotated_shots(project_path)
+    annotated_shots_by_media_type = annotated_shots_aggregation["by_media_type"]
+    annotated_shots_movie = annotated_shots_by_media_type["movie"]
+    annotated_shots_gameplay = annotated_shots_by_media_type["gameplay"]
+    annotated_shots = annotated_shots_aggregation["total"]
 
     detected_scenes = _count_detected_scenes(project_path, movie_metadata)
 
@@ -363,6 +371,7 @@ def get_corpus_stats(project_path: str) -> dict[str, Any]:
         "annotated_shots": annotated_shots,
         "annotated_shots_movie": annotated_shots_movie,
         "annotated_shots_gameplay": annotated_shots_gameplay,
+        "annotated_shot_types": annotated_shots_aggregation["types"],
         "detected_scenes": detected_scenes,
         # Best frames (CLIP-selected representative frames)
         "best_frames": sum(best_frames_by_type.values()),
@@ -430,9 +439,10 @@ class ProjectColumn:
 
     ``datavis`` is a small, renderer-agnostic dict describing what (if
     anything) the column's DATAVIS region should draw. Movies and Gameplay
-    use ``{"kind": "media_items", "count": int, "items": [...]}``; Vocabulary uses
-    ``{"kind": "vocabulary_fields", "fields": [...]}``; all other columns
-    currently use ``{"kind": "empty"}``.
+    use ``{"kind": "media_items", "count": int, "items": [...]}``; Shots uses
+    ``{"kind": "shot_types", "fields": [...]}``; Vocabulary uses
+    ``{"kind": "vocabulary_fields", "fields": [...]}``; all other columns use
+    ``{"kind": "empty"}``.
     """
 
     id: str
@@ -456,7 +466,7 @@ class ProjectColumn:
 # rather than silently rebuilding it.
 # ---------------------------------------------------------------------------
 
-CORPUS_STATS_SCHEMA_VERSION = 2
+CORPUS_STATS_SCHEMA_VERSION = 3
 
 
 def corpus_stats_cache_path(project_path: str) -> Path:
@@ -563,15 +573,13 @@ def get_corpus_stats_state(project_path: Optional[str]) -> dict[str, Any]:
     return {"state": "ready", "stats": stats}
 
 
-# Columns computed live (see get_live_project_columns) — (id, title). Cheap
-# enough to compute on every call without a persisted cache: Movies/Gameplay/
-# Shots read project metadata/annotation files directly; Illustrations reads
-# only the illustration index (see get_illustration_stats). None of the four
-# ever touches the silhouette catalog or calls audit_catalog().
+# Columns computed live (see get_live_project_columns) — (id, title). Movies
+# and Gameplay read metadata plus existing palette caches; Illustrations reads
+# only the illustration index (see get_illustration_stats). None traverses the
+# annotation corpus or silhouette catalog.
 _LIVE_COLUMN_TITLES: tuple[tuple[str, str], ...] = (
     ("movies", "Movies"),
     ("gameplay", "Gameplay"),
-    ("shots", "Shots"),
     ("illustrations", "Illustrations"),
 )
 
@@ -579,6 +587,7 @@ _LIVE_COLUMN_TITLES: tuple[tuple[str, str], ...] = (
 # recomputed here, per the "GUI opening -> READ CACHED STATS, never
 # RECALCULATE STATS" rule. (id, title, corpus_stats key)
 _CACHED_COLUMN_SPECS: tuple[tuple[str, str, str], ...] = (
+    ("shots", "Shots", "annotated_shots"),
     ("vocabulary", "Vocabulary", "vocabulary_terms"),
     ("segments", "Segments", "detected_scenes"),
     ("flipbooks", "Flipbooks", "flipbooks"),
@@ -694,19 +703,56 @@ def get_vocabulary_field_counts(
     return result
 
 
-def get_live_project_columns(project_path: Optional[str]) -> list[ProjectColumn]:
-    """Return the Movies/Gameplay/Shots/Illustrations columns, computed live.
+def _shot_types_datavis(stats: dict[str, Any]) -> dict[str, Any]:
+    """Validate and project cached shot-type statistics for Project DATAVIS."""
+    expected_total = stats.get("annotated_shots")
+    fields = stats.get("annotated_shot_types")
+    if (
+        not isinstance(expected_total, int)
+        or isinstance(expected_total, bool)
+        or expected_total < 0
+        or not isinstance(fields, list)
+    ):
+        raise ValueError("Invalid cached shot-type statistics")
 
-    Cheap (proportional to movie/annotation count, plus small illustration-
-    index reads) — never touches the silhouette catalog or calls
-    audit_catalog(). Safe to call synchronously, but Project Visualizer
-    still calls it off the GUI thread alongside `get_cached_project_columns`
-    so each tier can be displayed as soon as it's ready.
+    normalized = []
+    for field in fields:
+        if not isinstance(field, dict):
+            raise ValueError("Invalid cached shot-type field")
+        name = field.get("name")
+        count = field.get("count")
+        synthetic = field.get("synthetic")
+        if (
+            not isinstance(name, str)
+            or not name
+            or not isinstance(count, int)
+            or isinstance(count, bool)
+            or count <= 0
+            or not isinstance(synthetic, bool)
+        ):
+            raise ValueError("Invalid cached shot-type field")
+        normalized.append({"name": name, "count": count, "synthetic": synthetic})
+
+    if normalized != sorted(
+        normalized,
+        key=lambda item: (-item["count"], item["name"], item["synthetic"]),
+    ):
+        raise ValueError("Cached shot-type fields are not deterministically ordered")
+    if sum(field["count"] for field in normalized) != expected_total:
+        raise ValueError("Cached shot-type total does not match Project Shots count")
+    return {"kind": "shot_types", "fields": normalized}
+
+
+def get_live_project_columns(project_path: Optional[str]) -> list[ProjectColumn]:
+    """Return the Movies/Gameplay/Illustrations columns, computed live.
+
+    Cheap (proportional to media count, plus small illustration-index reads)
+    — never traverses shot annotations, touches the silhouette catalog, or
+    calls audit_catalog(). Project Visualizer still calls it off the GUI
+    thread so each tier can be displayed as soon as it is ready.
     """
     movie_metadata: Optional[list[dict]] = None
     gameplay_metadata: Optional[list[dict]] = None
-    shots_count: Optional[int] = None
-
     if project_path:
         try:
             movie_metadata = load_json_metadata(project_path, "movie")
@@ -716,12 +762,6 @@ def get_live_project_columns(project_path: Optional[str]) -> list[ProjectColumn]
             gameplay_metadata = load_json_metadata(project_path, "gameplay")
         except (OSError, json.JSONDecodeError):
             pass
-        try:
-            annotated_shots_by_type = _count_annotated_shots_by_type(project_path)
-            shots_count = sum(annotated_shots_by_type.values())
-        except OSError:
-            pass
-
     illustration_stats = get_illustration_stats(project_path)
     if illustration_stats["state"] == "ready":
         illustrations_column = _make_column(
@@ -749,13 +789,12 @@ def get_live_project_columns(project_path: Optional[str]) -> list[ProjectColumn]
                 if gameplay_metadata is not None else None
             ),
         ),
-        _make_column("shots", "Shots", shots_count),
         illustrations_column,
     ]
 
 
 def get_cached_project_columns(project_path: Optional[str]) -> list[ProjectColumn]:
-    """Return the Vocabulary/Segments/Flipbooks columns.
+    """Return the Shots/Vocabulary/Segments/Flipbooks columns.
 
     Sourced only from the persisted stats cache (see `get_corpus_stats_state`)
     — never recomputed here. Columns come back ``state="unavailable"`` when
@@ -780,7 +819,15 @@ def get_cached_project_columns(project_path: Optional[str]) -> list[ProjectColum
         _make_column(col_id, title, stats.get(stat_key))
         for col_id, title, stat_key in _CACHED_COLUMN_SPECS
     ]
-    vocabulary = columns[0]
+    shots = columns[0]
+    try:
+        shots.datavis = _shot_types_datavis(stats)
+    except ValueError:
+        shots.count = None
+        shots.state = "stale"
+        shots.reason = "shot_type_stats_invalid"
+
+    vocabulary = columns[1]
     if project_path and vocabulary.count is not None:
         try:
             fields = get_vocabulary_field_counts(project_path, vocabulary.count)
@@ -813,8 +860,9 @@ def get_project_columns(project_path: Optional[str]) -> list[ProjectColumn]:
     order, regardless of which tier each column came from.
 
     Movies and Gameplay carry their metadata collection size as
-    ``media_items``; Vocabulary carries its ordered field composition.
-    Every other column remains ``{"kind": "empty"}``.
+    ``media_items``; Shots carries its ordered annotation-type distribution;
+    Vocabulary carries its ordered field composition. Every other column
+    remains ``{"kind": "empty"}``.
     """
     by_id = {
         column.id: column

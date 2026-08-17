@@ -10,7 +10,11 @@ from pathlib import Path
 
 from PIL import Image
 
-from services.corpus_stats import get_corpus_stats, get_top_silhouette_labels
+from services.corpus_stats import (
+    _aggregate_annotated_shots,
+    get_corpus_stats,
+    get_top_silhouette_labels,
+)
 
 
 def _write_json(path: Path, data) -> None:
@@ -43,6 +47,96 @@ def _write_silhouette_object(path: Path) -> None:
 
 
 class TestCorpusStats(unittest.TestCase):
+    def test_shot_type_aggregation_matches_canonical_shot_total(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project = Path(tmp_dir)
+            _write_json(
+                project / "data" / "annotations" / "shots" / "movie" / "film.annotations.json",
+                [
+                    {"shot": {"annotation": {"type": "diegetic"}}},
+                    {"shot": {"annotation": {"type": "title"}}},
+                    {"shot": {"annotation": {"type": ""}}},
+                    {"shot": {"annotation": {}}},
+                    {"shot": {"annotation": {"type": "untyped"}}},
+                    {"shot": {"annotation": {"type": "future-mode"}}},
+                    {"shot": {"annotation": {"type": 7}}},
+                    "malformed record",
+                ],
+            )
+            _write_json(
+                project / "data" / "annotations" / "shots" / "gameplay" / "game.annotations.json",
+                [
+                    {"shot": {"annotation": {"type": "diegetic"}}},
+                    {"shot": {"annotation": {"type": "graphics"}}},
+                    {"shot": {"annotation": {"type": "   "}}},
+                ],
+            )
+            _write_json(
+                project / "data" / "annotations" / "shots" / "other" / "ignored.annotations.json",
+                [{"shot": {"annotation": {"type": "ignored"}}}],
+            )
+
+            aggregation = _aggregate_annotated_shots(str(project))
+
+            self.assertEqual(aggregation["by_media_type"], {"movie": 7, "gameplay": 3})
+            self.assertEqual(aggregation["total"], 10)
+            self.assertEqual(
+                aggregation["types"],
+                [
+                    {"name": "<untyped>", "count": 4, "synthetic": True},
+                    {"name": "diegetic", "count": 2, "synthetic": False},
+                    {"name": "future-mode", "count": 1, "synthetic": False},
+                    {"name": "graphics", "count": 1, "synthetic": False},
+                    {"name": "title", "count": 1, "synthetic": False},
+                    {"name": "untyped", "count": 1, "synthetic": False},
+                ],
+            )
+            self.assertEqual(
+                aggregation["total"],
+                sum(item["count"] for item in aggregation["types"]),
+            )
+
+    def test_shot_type_aggregation_omits_synthetic_bucket_when_all_typed(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project = Path(tmp_dir)
+            _write_json(
+                project / "data" / "annotations" / "shots" / "movie" / "film.annotations.json",
+                [
+                    {"shot": {"annotation": {"type": "title"}}},
+                    {"shot": {"annotation": {"type": "diegetic"}}},
+                ],
+            )
+
+            aggregation = _aggregate_annotated_shots(str(project))
+
+            self.assertEqual(
+                aggregation["types"],
+                [
+                    {"name": "diegetic", "count": 1, "synthetic": False},
+                    {"name": "title", "count": 1, "synthetic": False},
+                ],
+            )
+
+    def test_shot_type_aggregation_all_untyped(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project = Path(tmp_dir)
+            _write_json(
+                project / "data" / "annotations" / "shots" / "gameplay" / "game.annotations.json",
+                [
+                    {"shot": {"annotation": {}}},
+                    {"shot": {}},
+                    {},
+                ],
+            )
+
+            aggregation = _aggregate_annotated_shots(str(project))
+
+            self.assertEqual(
+                aggregation["types"],
+                [{"name": "<untyped>", "count": 3, "synthetic": True}],
+            )
+            self.assertEqual(aggregation["total"], 3)
+
     def test_corpus_stats_counts_and_top_labels(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             project = Path(tmp_dir)
@@ -130,6 +224,14 @@ class TestCorpusStats(unittest.TestCase):
             self.assertEqual(stats["gameplay_videos"], 1)
             self.assertEqual(stats["vocabulary_terms"], 3)
             self.assertEqual(stats["annotated_shots"], 3)
+            self.assertEqual(
+                stats["annotated_shot_types"],
+                [{"name": "<untyped>", "count": 3, "synthetic": True}],
+            )
+            self.assertEqual(
+                stats["annotated_shots"],
+                sum(item["count"] for item in stats["annotated_shot_types"]),
+            )
             self.assertEqual(stats["detected_scenes"], 3)
             self.assertEqual(stats["subtitle_files"], 1)
             self.assertEqual(stats["shotlists"], 2)

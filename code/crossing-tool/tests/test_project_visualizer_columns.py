@@ -74,14 +74,18 @@ def _media_items_datavis(count, media_type="movie"):
 
 
 # ---------------------------------------------------------------------------
-# Data model — live tier (Movies/Gameplay/Shots)
+# Data model — live tier (Movies/Gameplay/Illustrations)
 # ---------------------------------------------------------------------------
 
-def test_get_live_project_columns_computes_from_metadata_and_annotations(tmp_path, monkeypatch):
+def test_get_live_project_columns_does_not_traverse_annotations(tmp_path, monkeypatch):
     _write_metadata(tmp_path, "movie", ["a.mp4", "b.mp4"])
     _write_metadata(tmp_path, "gameplay", ["c.mp4"])
     _write_annotations(tmp_path, "movie", "a", 3)
     _write_annotations(tmp_path, "movie", "b", 2)
+    monkeypatch.setattr(
+        corpus_stats_mod, "_aggregate_annotated_shots",
+        lambda _path: pytest.fail("Project live tier traversed shot annotations"),
+    )
     monkeypatch.setattr(
         corpus_stats_mod, "get_illustration_stats",
         lambda p: {"state": "ready", "count": 7, "labels": {"horse": 7}},
@@ -89,11 +93,10 @@ def test_get_live_project_columns_computes_from_metadata_and_annotations(tmp_pat
 
     columns = get_live_project_columns(str(tmp_path))
 
-    assert [c.id for c in columns] == ["movies", "gameplay", "shots", "illustrations"]
+    assert [c.id for c in columns] == ["movies", "gameplay", "illustrations"]
     by_id = {c.id: c for c in columns}
     assert by_id["movies"].count == 2
     assert by_id["gameplay"].count == 1
-    assert by_id["shots"].count == 5
     assert by_id["illustrations"].count == 7
     assert all(c.state == "ready" for c in columns)
     assert by_id["movies"].datavis == {
@@ -121,7 +124,6 @@ def test_get_live_project_columns_computes_from_metadata_and_annotations(tmp_pat
             "thumbnail_foreground_rgb": None,
         }],
     }
-    assert by_id["shots"].datavis == {"kind": "empty"}
     assert by_id["illustrations"].datavis == {"kind": "empty"}
 
 
@@ -152,7 +154,6 @@ def test_media_item_payload_counts_reuse_the_loaded_metadata_collections(monkeyp
         ]
 
     monkeypatch.setattr(corpus_stats_mod, "load_json_metadata", load_metadata)
-    monkeypatch.setattr(corpus_stats_mod, "_count_annotated_shots_by_type", lambda _path: {})
     monkeypatch.setattr(
         corpus_stats_mod, "get_illustration_stats",
         lambda _path: {"state": "ready", "count": 0, "labels": {}},
@@ -221,9 +222,6 @@ def test_media_items_project_cached_thumbnail_foregrounds_for_both_media_types(
         ),
     )
     monkeypatch.setattr(
-        corpus_stats_mod, "_count_annotated_shots_by_type", lambda _path: {},
-    )
-    monkeypatch.setattr(
         corpus_stats_mod, "get_illustration_stats",
         lambda _path: {"state": "ready", "count": 0, "labels": {}},
     )
@@ -262,9 +260,6 @@ def test_missing_thumbnail_palettes_remain_explicit_without_extraction(monkeypat
         lambda *_args, **_kwargs: pytest.fail("GUI data refresh triggered extraction"),
     )
     monkeypatch.setattr(
-        corpus_stats_mod, "_count_annotated_shots_by_type", lambda _path: {},
-    )
-    monkeypatch.setattr(
         corpus_stats_mod, "get_illustration_stats",
         lambda _path: {"state": "ready", "count": 0, "labels": {}},
     )
@@ -290,32 +285,33 @@ def test_get_live_project_columns_without_project_path_are_unavailable():
 
 def test_get_live_project_columns_empty_project_reports_zero_not_unavailable(tmp_path, monkeypatch):
     # An empty-but-real project directory has a known answer (zero) for
-    # Movies/Gameplay/Shots, which is semantically different from "we don't
-    # know" (state="unavailable"). Illustrations is different: with no
-    # illustration index ever built, we genuinely don't know the count, so
-    # it stays "unavailable" even for an otherwise-empty project.
+    # Movies/Gameplay. Shots is cache-owned and is not part of this tier.
+    # Illustrations still requires its own index.
     columns = get_live_project_columns(str(tmp_path))
     by_id = {c.id: c for c in columns}
 
-    for col_id in ("movies", "gameplay", "shots"):
+    for col_id in ("movies", "gameplay"):
         assert by_id[col_id].count == 0
         assert by_id[col_id].state == "ready"
 
     assert by_id["movies"].datavis == {"kind": "media_items", "count": 0, "items": []}
     assert by_id["gameplay"].datavis == {"kind": "media_items", "count": 0, "items": []}
-    assert by_id["shots"].datavis == {"kind": "empty"}
-
     assert by_id["illustrations"].count is None
     assert by_id["illustrations"].state == "unavailable"
     assert by_id["illustrations"].reason == "illustration_index_missing"
 
 
 # ---------------------------------------------------------------------------
-# Data model — cached tier (Vocabulary/Segments/Flipbooks/Illustrations)
+# Data model — cached tier (Shots/Vocabulary/Segments/Flipbooks)
 # ---------------------------------------------------------------------------
 
 def test_get_cached_project_columns_reads_stats_cache(monkeypatch):
     fake_stats = {
+        "annotated_shots": 5,
+        "annotated_shot_types": [
+            {"name": "diegetic", "count": 3, "synthetic": False},
+            {"name": "<untyped>", "count": 2, "synthetic": True},
+        ],
         "vocabulary_terms": 1832,
         "detected_scenes": 57,
         "flipbooks": 2,
@@ -335,11 +331,16 @@ def test_get_cached_project_columns_reads_stats_cache(monkeypatch):
 
     columns = get_cached_project_columns("/fake/project")
 
-    assert [c.id for c in columns] == ["vocabulary", "segments", "flipbooks"]
+    assert [c.id for c in columns] == ["shots", "vocabulary", "segments", "flipbooks"]
     counts = {c.id: c.count for c in columns}
-    assert counts == {"vocabulary": 1832, "segments": 57, "flipbooks": 2}
+    assert counts == {"shots": 5, "vocabulary": 1832, "segments": 57, "flipbooks": 2}
     assert all(c.state == "ready" for c in columns)
     assert columns[0].datavis == {
+        "kind": "shot_types",
+        "fields": fake_stats["annotated_shot_types"],
+    }
+    assert sum(field["count"] for field in columns[0].datavis["fields"]) == columns[0].count
+    assert columns[1].datavis == {
         "kind": "vocabulary_fields",
         "fields": [{"field": "objects", "count": 1832}],
     }
@@ -350,7 +351,10 @@ def test_get_cached_project_columns_keeps_stale_vocabulary_distinct(monkeypatch)
         corpus_stats_mod, "get_corpus_stats_state",
         lambda p: {
             "state": "ready",
-            "stats": {"vocabulary_terms": 2, "detected_scenes": 7, "flipbooks": 3},
+            "stats": {
+                "annotated_shots": 0, "annotated_shot_types": [],
+                "vocabulary_terms": 2, "detected_scenes": 7, "flipbooks": 3,
+            },
         },
     )
     monkeypatch.setattr(
@@ -364,11 +368,12 @@ def test_get_cached_project_columns_keeps_stale_vocabulary_distinct(monkeypatch)
 
     columns = get_cached_project_columns("/fake/project")
 
-    assert columns[0].count is None
-    assert columns[0].state == "stale"
-    assert columns[0].reason == "vocabulary_index_stale"
-    assert columns[0].datavis == {"kind": "empty"}
-    assert [(column.id, column.count, column.state) for column in columns[1:]] == [
+    assert columns[1].count is None
+    assert columns[1].state == "stale"
+    assert columns[1].reason == "vocabulary_index_stale"
+    assert columns[1].datavis == {"kind": "empty"}
+    assert [(column.id, column.count, column.state) for column in (columns[0], *columns[2:])] == [
+        ("shots", 0, "ready"),
         ("segments", 7, "ready"),
         ("flipbooks", 3, "ready"),
     ]
@@ -379,7 +384,10 @@ def test_get_cached_project_columns_surfaces_vocabulary_count_mismatch(monkeypat
         corpus_stats_mod, "get_corpus_stats_state",
         lambda p: {
             "state": "ready",
-            "stats": {"vocabulary_terms": 3, "detected_scenes": 7, "flipbooks": 3},
+            "stats": {
+                "annotated_shots": 0, "annotated_shot_types": [],
+                "vocabulary_terms": 3, "detected_scenes": 7, "flipbooks": 3,
+            },
         },
     )
     monkeypatch.setattr(
@@ -392,14 +400,45 @@ def test_get_cached_project_columns_surfaces_vocabulary_count_mismatch(monkeypat
 
     columns = get_cached_project_columns("/fake/project")
 
-    assert columns[0].count is None
-    assert columns[0].state == "stale"
-    assert columns[0].reason == "vocabulary_count_mismatch"
-    assert columns[0].datavis == {"kind": "empty"}
-    assert [(column.id, column.count) for column in columns[1:]] == [
+    assert columns[1].count is None
+    assert columns[1].state == "stale"
+    assert columns[1].reason == "vocabulary_count_mismatch"
+    assert columns[1].datavis == {"kind": "empty"}
+    assert [(column.id, column.count) for column in (columns[0], *columns[2:])] == [
+        ("shots", 0),
         ("segments", 7),
         ("flipbooks", 3),
     ]
+
+
+def test_get_cached_project_columns_rejects_mismatched_shot_type_total(monkeypatch):
+    monkeypatch.setattr(
+        corpus_stats_mod, "get_corpus_stats_state",
+        lambda _path: {
+            "state": "ready",
+            "stats": {
+                "annotated_shots": 3,
+                "annotated_shot_types": [
+                    {"name": "diegetic", "count": 2, "synthetic": False},
+                ],
+                "vocabulary_terms": 0,
+                "detected_scenes": 0,
+                "flipbooks": 0,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        corpus_stats_mod, "load_vocabulary_index",
+        lambda *_args: {"meta": {"total_tokens": 0}, "fields": {}},
+    )
+    monkeypatch.setattr(corpus_stats_mod, "vocabulary_cache_is_stale", lambda *_args: False)
+
+    shots = get_cached_project_columns("/fake/project")[0]
+
+    assert shots.count is None
+    assert shots.state == "stale"
+    assert shots.reason == "shot_type_stats_invalid"
+    assert shots.datavis == {"kind": "empty"}
 
 
 def test_vocabulary_field_counts_follow_index_order_and_match_primary_total(monkeypatch):
@@ -491,7 +530,15 @@ def test_project_column_ids_and_titles_matches_get_project_columns_order():
 # ---------------------------------------------------------------------------
 
 def test_refresh_corpus_stats_cache_writes_and_load_reads_it_back(tmp_path, monkeypatch):
-    fake_stats = {"movie_videos": 9, "vocabulary_terms": 5}
+    fake_stats = {
+        "movie_videos": 9,
+        "annotated_shots": 5,
+        "annotated_shot_types": [
+            {"name": "diegetic", "count": 4, "synthetic": False},
+            {"name": "<untyped>", "count": 1, "synthetic": True},
+        ],
+        "vocabulary_terms": 5,
+    }
     monkeypatch.setattr(corpus_stats_mod, "get_corpus_stats", lambda p: fake_stats)
 
     result = refresh_corpus_stats_cache(str(tmp_path))
@@ -1457,6 +1504,200 @@ def test_vocabulary_datavis_normal_geometry_is_unchanged(
         app.processEvents()
 
 
+@pytest.mark.parametrize(("width", "height"), [(140, 199), (60, 98), (140, 7)])
+def test_shot_types_match_vocabulary_pixels_and_geometry(app, width, height):
+    from visualizers.project_visualizer import _ProjectDatavisWidget
+
+    rows = [("diegetic", 3200), ("title", 20), ("future-mode", 1)]
+    vocabulary = _ProjectDatavisWidget()
+    shot_types = _ProjectDatavisWidget()
+    try:
+        for datavis in (vocabulary, shot_types):
+            datavis.resize(width, height)
+            datavis.show()
+        vocabulary.set_datavis({
+            "kind": "vocabulary_fields",
+            "fields": [{"field": name, "count": count} for name, count in rows],
+        })
+        shot_types.set_datavis({
+            "kind": "shot_types",
+            "fields": [
+                {"name": name, "count": count, "synthetic": False}
+                for name, count in rows
+            ],
+        })
+        app.processEvents()
+
+        vocabulary_cells = vocabulary._field_cells
+        shot_type_cells = shot_types._field_cells
+        assert [cell.geometry() for cell in shot_type_cells] == [
+            cell.geometry() for cell in vocabulary_cells
+        ]
+        assert [cell.field_label.text() for cell in shot_type_cells] == [
+            cell.field_label.text() for cell in vocabulary_cells
+        ]
+        assert [cell.count_label.text() for cell in shot_type_cells] == [
+            cell.count_label.text() for cell in vocabulary_cells
+        ]
+        assert [cell.styleSheet() for cell in shot_type_cells] == [
+            cell.styleSheet() for cell in vocabulary_cells
+        ]
+        assert shot_types.grab().toImage() == vocabulary.grab().toImage()
+    finally:
+        for datavis in (vocabulary, shot_types):
+            datavis.close()
+            datavis.deleteLater()
+        app.processEvents()
+
+
+def test_shot_types_resize_proportionally_with_canonical_gaps_and_compact_counts(app):
+    from visualizers.project_visualizer import _COLUMN_ROW_H, _ProjectColumnWidget
+
+    widget = _ProjectColumnWidget(ProjectColumn(
+        id="shots", title="Shots", count=1_003_201,
+        datavis={
+            "kind": "shot_types",
+            "fields": [
+                {"name": "diegetic", "count": 1_000_000, "synthetic": False},
+                {"name": "<untyped>", "count": 3200, "synthetic": True},
+                {"name": "future-mode", "count": 1, "synthetic": False},
+            ],
+        },
+        state="ready",
+    ))
+    try:
+        widget.show()
+        previous_heights = None
+        for widget_height in (258, 458):
+            widget.resize(140, widget_height)
+            app.processEvents()
+
+            datavis = widget._datavis_widget
+            cells = datavis._field_cells
+            heights = [cell.height() for cell in cells]
+            assert datavis.height() == widget_height - 2 * _COLUMN_ROW_H - theme.INSPECTOR_GAP
+            assert sum(heights) + len(cells) * theme.INSPECTOR_GAP == datavis.height()
+            assert cells[0].y() == theme.INSPECTOR_GAP
+            assert all(
+                cells[index].y()
+                == cells[index - 1].geometry().bottom() + 1 + theme.INSPECTOR_GAP
+                for index in range(1, len(cells))
+            )
+            assert cells[-1].geometry().bottom() == datavis.rect().bottom()
+            if previous_heights is not None:
+                assert heights != previous_heights
+            previous_heights = heights
+
+        assert [cell.field_label.text() for cell in cells] == [
+            "diegetic", "<untyped>", "future-mode",
+        ]
+        assert [cell.count_label.text() for cell in cells] == ["1M", "3.2k", "1"]
+    finally:
+        widget.close()
+        widget.deleteLater()
+        app.processEvents()
+
+
+def test_shot_types_narrow_column_keeps_untyped_label_and_count(app):
+    from visualizers.project_visualizer import _ProjectDatavisWidget
+
+    datavis = _ProjectDatavisWidget()
+    try:
+        datavis.resize(113, 600)
+        datavis.set_datavis({
+            "kind": "shot_types",
+            "fields": [
+                {"name": "diegetic", "count": 274464, "synthetic": False},
+                {"name": "<untyped>", "count": 7288, "synthetic": True},
+                {"name": "graphics", "count": 1764, "synthetic": False},
+            ],
+        })
+        datavis.show()
+        app.processEvents()
+
+        untyped = datavis._field_cells[1]
+        assert untyped.field_label.text() == "<untyped>"
+        assert untyped.count_label.text() == "7.3k"
+        assert untyped.count_label.geometry().right() == datavis.rect().right() - 1
+
+        for width in (140, 113, 100, 113):
+            datavis.resize(width, 600)
+            app.processEvents()
+        assert untyped.field_label.text() == "<untyped>"
+        assert untyped.count_label.text() == "7.3k"
+        assert untyped.count_label.geometry().right() == datavis.rect().right() - 1
+    finally:
+        datavis.close()
+        datavis.deleteLater()
+        app.processEvents()
+
+
+def test_shot_types_synthetic_untyped_label_is_dim_without_geometry_change(app):
+    from visualizers.project_visualizer import _ProjectDatavisWidget
+
+    datavis = _ProjectDatavisWidget()
+    try:
+        datavis.resize(140, 100)
+        datavis.set_datavis({
+            "kind": "shot_types",
+            "fields": [
+                {"name": "<untyped>", "count": 1, "synthetic": True},
+                {"name": "untyped", "count": 1, "synthetic": False},
+            ],
+        })
+        datavis.show()
+        app.processEvents()
+
+        synthetic, literal = datavis._field_cells
+        assert synthetic.field_label.text() == "<untyped>"
+        assert literal.field_label.text() == "untyped"
+        assert f"color: {theme.TEXT_DIM};" in synthetic.field_label.styleSheet()
+        assert f"color: {theme.TEXT};" in literal.field_label.styleSheet()
+        assert synthetic.geometry().size() == literal.geometry().size()
+        assert synthetic.count_label.styleSheet() == literal.count_label.styleSheet()
+    finally:
+        datavis.close()
+        datavis.deleteLater()
+        app.processEvents()
+
+
+def test_shot_types_extreme_density_is_contained_and_display_only(app):
+    from visualizers.project_visualizer import _ProjectDatavisWidget
+
+    activated = []
+    datavis = _ProjectDatavisWidget()
+    datavis.mediaItemActivated.connect(activated.append)
+    try:
+        datavis.resize(140, 7)
+        datavis.set_datavis({
+            "kind": "shot_types",
+            "fields": [
+                {"name": f"type-{index}", "count": 1, "synthetic": False}
+                for index in range(100)
+            ],
+        })
+        datavis.show()
+        app.processEvents()
+
+        cells = datavis._field_cells
+        assert len(cells) == 100
+        assert all(cell.height() == 0 for cell in cells)
+        assert all(
+            0 <= cell.y() <= cell.y() + cell.height() <= datavis.height()
+            for cell in cells
+        )
+        assert cells[-1].y() + cells[-1].height() == datavis.height()
+        assert datavis.findChildren(QScrollArea) == []
+        assert all(cell.testAttribute(Qt.WA_TransparentForMouseEvents) for cell in cells)
+        assert all(cell.toolTip() == "" and not hasattr(cell, "activated") for cell in cells)
+        QTest.mouseDClick(cells[0], Qt.LeftButton)
+        assert activated == []
+    finally:
+        datavis.close()
+        datavis.deleteLater()
+        app.processEvents()
+
+
 @pytest.mark.parametrize(("height", "expected_y"), [
     (4 * theme.INSPECTOR_GAP, [3, 6, 9, 12]),
     (4 * theme.INSPECTOR_GAP - 1, [2, 5, 8, 11]),
@@ -2322,6 +2563,10 @@ def test_project_visualizer_live_failure_settles_tier_and_preserves_cached_resul
         generation = window._project_load_generation
         cached_columns = [
             ProjectColumn(
+                id="shots", title="Shots", count=4821,
+                datavis={"kind": "empty"}, state="ready",
+            ),
+            ProjectColumn(
                 id="vocabulary", title="Vocabulary", count=1832,
                 datavis={"kind": "empty"}, state="ready",
             ),
@@ -2338,10 +2583,12 @@ def test_project_visualizer_live_failure_settles_tier_and_preserves_cached_resul
         window._on_columns_tier_failed(generation, "live", "RuntimeError: live failed")
 
         widgets = window._project_column_widgets
-        for col_id in ("movies", "gameplay", "shots", "illustrations"):
+        for col_id in ("movies", "gameplay", "illustrations"):
             assert widgets[col_id].column.count is None
             assert widgets[col_id].column.state == "unavailable"
             assert widgets[col_id].column.reason == "live_tier_error"
+        assert widgets["shots"].column.count == 4821
+        assert widgets["shots"].column.state == "ready"
         assert widgets["vocabulary"].column.count == 1832
         assert widgets["segments"].column.count == 57
         assert widgets["flipbooks"].column.count == 0
@@ -2378,10 +2625,6 @@ def test_project_visualizer_cached_failure_settles_tier_and_preserves_live_resul
                 datavis={"kind": "empty"}, state="ready",
             ),
             ProjectColumn(
-                id="shots", title="Shots", count=4821,
-                datavis={"kind": "empty"}, state="ready",
-            ),
-            ProjectColumn(
                 id="illustrations", title="Illustrations", count=None,
                 datavis={"kind": "empty"}, state="stale",
                 reason="illustration_index_stale",
@@ -2395,10 +2638,9 @@ def test_project_visualizer_cached_failure_settles_tier_and_preserves_live_resul
         assert widgets["movies"].column.state == "ready"
         assert widgets["movies"]._count_label.text() == "0"
         assert widgets["gameplay"].column.count == 3
-        assert widgets["shots"].column.count == 4821
         assert widgets["illustrations"].column.state == "stale"
         assert widgets["illustrations"].column.reason == "illustration_index_stale"
-        for col_id in ("vocabulary", "segments", "flipbooks"):
+        for col_id in ("shots", "vocabulary", "segments", "flipbooks"):
             assert widgets[col_id].column.count is None
             assert widgets[col_id].column.state == "unavailable"
             assert widgets[col_id].column.reason == "cached_tier_error"

@@ -173,6 +173,7 @@ _COLUMN_REASON_LABELS = {
     "illustration_index_error": "INDEX ERROR",
     "vocabulary_index_stale": "INDEX STALE",
     "vocabulary_count_mismatch": "COUNT MISMATCH",
+    "shot_type_stats_invalid": "STATS STALE",
     "corpus_stats_missing": "STATS REQUIRED",
     "corpus_stats_stale": "STATS STALE",
     "no_project": "NO PROJECT",
@@ -183,8 +184,8 @@ _COLUMN_STATE_FALLBACK_LABELS = {
 }
 
 _PROJECT_TIER_COLUMN_IDS = {
-    "live": ("movies", "gameplay", "shots", "illustrations"),
-    "cached": ("vocabulary", "segments", "flipbooks"),
+    "live": ("movies", "gameplay", "illustrations"),
+    "cached": ("shots", "vocabulary", "segments", "flipbooks"),
 }
 
 
@@ -263,8 +264,8 @@ def _proportional_heights(
     return heights
 
 
-class _VocabularyFieldCell(QFrame):
-    """Stretched key/value row using Project launcher spacing and row seams."""
+class _WordCountCell(QFrame):
+    """Stretched word/count row using Project launcher spacing and row seams."""
 
     def __init__(self, font, parent=None) -> None:
         super().__init__(parent)
@@ -280,32 +281,84 @@ class _VocabularyFieldCell(QFrame):
         self.field_label = QLabel()
         self.field_label.setFont(font)
         self.field_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.field_label.setStyleSheet(table_ui_cell_style(
+        self._field_style = table_ui_cell_style(
             "", "", include_minimum_height=False,
-        ))
+        )
+        self._dim_field_style = table_ui_cell_style(
+            "", "", text_color=theme.TEXT_DIM, include_minimum_height=False,
+        )
+        self.field_label.setStyleSheet(self._field_style)
         layout.addWidget(self.field_label, 1)
 
         self.count_label = QLabel()
         self.count_label.setFont(font)
         self.count_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.count_label.setStyleSheet(table_ui_cell_style(
+        self._count_style = table_ui_cell_style(
             "",
             "",
             background_color=theme.CELL_BG,
             text_color=theme.TEXT_DIM,
             include_minimum_height=False,
             horizontal_padding=_SPACER_ROW_INSET,
-        ))
+        )
+        self._compact_count_style = (
+            self._count_style
+            + f" padding-left: {_SPACER_ROW_GAP}px;"
+            + f" padding-right: {_SPACER_ROW_INSET}px;"
+        )
+        self.count_label.setStyleSheet(self._count_style)
         layout.addWidget(self.count_label)
 
-    def set_content(self, field: str, count: str, count_width: int, visible: bool) -> None:
+    def prepare_count(self, count: str) -> None:
+        self.count_label.setMinimumWidth(0)
+        self.count_label.setMaximumWidth(16777215)
+        self.count_label.setStyleSheet(self._count_style)
+        self.count_label.setText(count)
+
+    def set_content(
+        self,
+        field: str,
+        count: str,
+        count_width: int,
+        visible: bool,
+        compact_count: bool = False,
+        dim_field: bool = False,
+    ) -> None:
+        self.field_label.setStyleSheet(
+            self._dim_field_style if dim_field else self._field_style
+        )
+        self.count_label.setStyleSheet(
+            self._compact_count_style if compact_count else self._count_style
+        )
         self.field_label.setText(field if visible else "")
         self.count_label.setText(count if visible else "")
         self.count_label.setFixedWidth(count_width)
 
 
-class _VocabularyDatavisWidget(QWidget):
-    """Responsive vertical composition of ordered vocabulary fields."""
+_VocabularyFieldCell = _WordCountCell
+
+
+def _word_count_fields(datavis: dict) -> list[dict]:
+    """Normalize renderer-neutral word/count payloads for shared presentation."""
+    is_shot_types = datavis.get("kind") == "shot_types"
+    name_key = {
+        "vocabulary_fields": "field",
+        "shot_types": "name",
+    }.get(datavis.get("kind"))
+    fields = datavis.get("fields", []) if name_key else []
+    return [
+        {
+            "field": str(item.get(name_key, "")),
+            "count": int(item.get("count", 0)),
+            "synthetic": is_shot_types and item.get("synthetic") is True,
+        }
+        for item in fields
+        if item.get(name_key) and int(item.get("count", 0)) > 0
+    ]
+
+
+class _WordCountDatavisWidget(QWidget):
+    """Responsive vertical composition shared by renderer-neutral word/count kinds."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -316,17 +369,14 @@ class _VocabularyDatavisWidget(QWidget):
         self._minimum_cell_height = INSPECTOR_ROW_HEIGHT
         self._fields: list[dict] = []
         self._field_cells: list[_VocabularyFieldCell] = []
+        self._shared_count_width = True
 
     def set_datavis(self, datavis: dict) -> None:
-        fields = datavis.get("fields", []) if datavis.get("kind") == "vocabulary_fields" else []
-        self._fields = [
-            {"field": str(item.get("field", "")), "count": int(item.get("count", 0))}
-            for item in fields
-            if item.get("field") and int(item.get("count", 0)) > 0
-        ]
+        self._fields = _word_count_fields(datavis)
+        self._shared_count_width = datavis.get("kind") != "shot_types"
         self.setStyleSheet(f"background: {theme.CANVAS_BG};")
         while len(self._field_cells) < len(self._fields):
-            cell = _VocabularyFieldCell(self._cell_font, self)
+            cell = _WordCountCell(self._cell_font, self)
             cell.setAttribute(Qt.WA_TransparentForMouseEvents, True)
             self._field_cells.append(cell)
         for index, cell in enumerate(self._field_cells):
@@ -363,7 +413,7 @@ class _VocabularyDatavisWidget(QWidget):
         y = gap_heights[0] if gap_heights else 0
         formatted_counts = [_format_column_count(item["count"]) for item in self._fields]
         for cell, count in zip(self._field_cells, formatted_counts):
-            cell.count_label.setText(count)
+            cell.prepare_count(count)
         count_width = max(
             (cell.count_label.sizeHint().width() for cell in self._field_cells[:len(self._fields)]),
             default=0,
@@ -371,23 +421,45 @@ class _VocabularyDatavisWidget(QWidget):
         for index, (item, height) in enumerate(zip(self._fields, heights)):
             cell = self._field_cells[index]
             count = formatted_counts[index]
-            available_field_width = (
+            field_width = QFontMetrics(self._cell_font).horizontalAdvance(item["field"])
+            shared_available_width = (
                 self.width() - _SPACER_ROW_INSET - _SPACER_ROW_GAP - count_width
             )
-            text_fits = (
-                QFontMetrics(self._cell_font).horizontalAdvance(item["field"])
-                <= available_field_width
+            intrinsic_count_width = cell.count_label.sizeHint().width()
+            compact_count_width = (
+                intrinsic_count_width - _SPACER_ROW_INSET + _SPACER_ROW_GAP
             )
+            intrinsic_available_width = (
+                self.width() - _SPACER_ROW_INSET - _SPACER_ROW_GAP
+                - compact_count_width
+            )
+            use_intrinsic_count_width = (
+                not self._shared_count_width
+                and field_width > shared_available_width
+                and field_width <= intrinsic_available_width
+            )
+            row_count_width = (
+                compact_count_width if use_intrinsic_count_width else count_width
+            )
+            available_field_width = (
+                self.width() - _SPACER_ROW_INSET - _SPACER_ROW_GAP - row_count_width
+            )
+            text_fits = field_width <= available_field_width
             cell.set_content(
                 item["field"],
                 count,
-                count_width,
+                row_count_width,
                 height >= self._minimum_cell_height and text_fits,
+                compact_count=use_intrinsic_count_width,
+                dim_field=item["synthetic"],
             )
             cell.setGeometry(0, y, self.width(), height)
             y += height
             if index + 1 < gap_count:
                 y += gap_heights[index + 1]
+
+
+_VocabularyDatavisWidget = _WordCountDatavisWidget
 
 
 class _MediaItemCell(QWidget):
@@ -434,7 +506,7 @@ class _MediaItemCell(QWidget):
         super().mouseDoubleClickEvent(event)
 
 
-class _ProjectDatavisWidget(_VocabularyDatavisWidget):
+class _ProjectDatavisWidget(_WordCountDatavisWidget):
     """Dispatch renderer-neutral Project DATAVIS payloads by ``kind``."""
 
     def __init__(self, parent=None) -> None:
@@ -522,9 +594,8 @@ class _ProjectColumnWidget(QWidget):
     ``column.state`` ("loading" / "ready" / "unavailable" / "stale") drives
     whether the shared SweepBar loading indicator (same one used by
     Illustration) is active and what the COUNT region shows. "unavailable"
-    and "stale" are rendered distinctly from a real zero. Vocabulary's
-    ready state may additionally carry ordered field-composition data for
-    its DATAVIS region.
+    and "stale" are rendered distinctly from a real zero. Shots and Vocabulary
+    may additionally carry ordered word/count data for their DATAVIS regions.
     """
 
     def __init__(self, column, parent=None) -> None:
@@ -638,9 +709,9 @@ class _ProjectColumnsWorker(QThread):
 
     Emits ``tier_ready(generation, list)`` for each successful tier and
     ``tier_failed(generation, tier, message)`` for each failed tier. The cheap "live" tier
-    (Movies/Gameplay/Shots/Illustrations — computed directly from project
-    files and the illustration index on every call), and again for the
-    persisted-cache tier (Vocabulary/Segments/Flipbooks — reported as
+    (Movies/Gameplay/Illustrations — computed from metadata, palette caches,
+    and the illustration index), and again for the persisted-cache tier
+    (Shots/Vocabulary/Segments/Flipbooks — reported as
     "unavailable"/"stale" rather than recomputed if the cache is missing or
     out of date) — so the GUI can display each tier as soon as it's ready
     instead of waiting for both.
