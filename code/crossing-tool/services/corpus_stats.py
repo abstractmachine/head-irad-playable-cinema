@@ -65,11 +65,21 @@ def _illustration_stats_for_media_type(project_path: str, media_type: str) -> di
     from services.illustration_index import load_index, query_facets
 
     status = load_index(project_path, "silhouettes", media_type)
-    if status.get("status") == "ready":
+    if status.get("usable"):
         facets = query_facets(project_path, "silhouettes", media_type)
         labels = Counter({entry["label"]: entry["count"] for entry in facets.get("labels", [])})
-        return {"status": "ready", "count": int(status.get("count", 0)), "labels": labels}
-    return {"status": status.get("status") or "error", "count": 0, "labels": Counter()}
+        return {
+            "status": status["status"],
+            "count": int(status.get("count", 0)),
+            "labels": labels,
+            "usable": True,
+        }
+    return {
+        "status": status.get("status") or "error",
+        "count": 0,
+        "labels": Counter(),
+        "usable": False,
+    }
 
 
 # Worst-status-wins precedence when combining movie + gameplay: a missing
@@ -79,19 +89,20 @@ _ILLUSTRATION_STATUS_PRIORITY = {"missing": 0, "stale": 1, "error": 2, "ready": 
 
 
 def get_illustration_stats(project_path: Optional[str]) -> dict[str, Any]:
-    """Return Illustrations-column data, sourced only from the Illustration
-    visualizer's own browse index (data/indexes/illustration/).
+    """Return silhouette summary data from the Illustration browse index.
 
     This deliberately never calls ``audit_catalog()`` or otherwise scans the
     silhouette catalog: if the index is missing/stale/errored for either
     media type, this reports an explicit unavailable/stale state instead of
     silently reconstructing anything. Cheap (small SQLite reads) — safe to
-    call synchronously on every Project Visualizer open.
+    call synchronously from lightweight statistics consumers.
 
     Returns one of:
       ``{"state": "ready", "count": int, "labels": Counter[str]}``
+    ``{"state": "stale", "count": int, "labels": Counter[str], ...}``
       ``{"state": "unavailable", "reason": "illustration_index_missing"}``
-      ``{"state": "stale", "reason": "illustration_index_stale"}``
+    ``{"state": "stale", "reason": "illustration_index_stale"}`` when
+    the stale artifact is incompatible and cannot be queried
       ``{"state": "unavailable", "reason": "illustration_index_error"}``
       ``{"state": "unavailable", "reason": "no_project"}``
     """
@@ -103,17 +114,85 @@ def get_illustration_stats(project_path: Optional[str]) -> dict[str, Any]:
         for media_type in ("movie", "gameplay")
     ]
     worst = min(per_media, key=lambda s: _ILLUSTRATION_STATUS_PRIORITY.get(s["status"], -1))
-    if worst["status"] == "ready":
+    if worst["status"] in ("ready", "stale") and all(
+        result.get("usable") for result in per_media
+    ):
         total = sum(s["count"] for s in per_media)
         labels: Counter[str] = Counter()
         for s in per_media:
             labels.update(s["labels"])
-        return {"state": "ready", "count": total, "labels": labels}
+        result = {"state": worst["status"], "count": total, "labels": labels}
+        if worst["status"] == "stale":
+            result["reason"] = "illustration_index_stale"
+        return result
     if worst["status"] == "missing":
         return {"state": "unavailable", "reason": "illustration_index_missing"}
     if worst["status"] == "stale":
         return {"state": "stale", "reason": "illustration_index_stale"}
     return {"state": "unavailable", "reason": "illustration_index_error"}
+
+
+def get_indexed_field_stats(
+    project_path: Optional[str], source: str,
+) -> dict[str, Any]:
+    """Merge one source's usable movie/gameplay field counts for Project.
+
+    A same-schema stale index retains its last count and field distribution;
+    incompatible stale artifacts carry only their stale state and reason.
+    """
+    reason_stems = {"silhouettes": "silhouette", "engravings": "engraving"}
+    if source not in reason_stems:
+        raise ValueError(f"Unknown Illustration index source: {source}")
+    if not project_path:
+        return {"state": "unavailable", "reason": "no_project"}
+
+    from services.illustration_index import query_field_counts
+
+    per_media = [
+        query_field_counts(project_path, source, media_type)
+        for media_type in ("movie", "gameplay")
+    ]
+    worst = min(
+        per_media,
+        key=lambda result: _ILLUSTRATION_STATUS_PRIORITY.get(
+            result.get("status", "error"), -1,
+        ),
+    )
+    status = worst.get("status") or "error"
+    stale_is_usable = status == "stale" and all(
+        result.get("usable") is not False for result in per_media
+    )
+    if status != "ready" and not stale_is_usable:
+        state = "stale" if status == "stale" else "unavailable"
+        return {
+            "state": state,
+            "reason": f"{reason_stems[source]}_index_{status}",
+        }
+
+    counts: Counter[tuple[str, bool]] = Counter()
+    expected_total = 0
+    for result in per_media:
+        expected_total += int(result.get("count", 0))
+        for item in result.get("fields", []):
+            key = (str(item["field"]), item.get("synthetic") is True)
+            counts[key] += int(item["count"])
+    fields = []
+    for (field, synthetic), count in sorted(
+        counts.items(), key=lambda item: (-item[1], item[0][0], item[0][1]),
+    ):
+        result = {"field": field, "count": count}
+        if synthetic:
+            result["synthetic"] = True
+        fields.append(result)
+    if sum(item["count"] for item in fields) != expected_total:
+        return {
+            "state": "unavailable",
+            "reason": f"{reason_stems[source]}_index_error",
+        }
+    result = {"state": status, "count": expected_total, "fields": fields}
+    if status == "stale":
+        result["reason"] = f"{reason_stems[source]}_index_stale"
+    return result
 
 
 def get_top_silhouette_labels(project_path: str, limit: int = 10) -> list[tuple[str, int]]:
@@ -419,12 +498,13 @@ class ProjectColumn:
       ``"unavailable"``  — the artifact this column reads from has never
                             been built (e.g. no project set, no stats cache,
                             no illustration index yet). ``count`` is ``None``.
-      ``"stale"``         — the artifact exists but is out of date relative
-                            to the data it was built from (e.g. the
-                            illustration index's revision no longer matches,
-                            or the stats cache predates a since-changed
-                            vocabulary index). ``count`` is ``None`` — a
-                            stale number is never shown as if it were current.
+    ``"stale"``         — the artifact exists but is out of date relative
+                    to the data it was built from (e.g. the
+                    illustration index's revision no longer matches,
+                    or the stats cache predates a since-changed
+                    vocabulary index). A still-compatible index may
+                    retain its last count/DATAVIS while the renderer
+                    labels it stale; incompatible artifacts do not.
       ``"loading"``       — GUI-only placeholder meaning "not answered yet".
                             :func:`get_project_columns` never returns this —
                             it is synchronous and always returns a final
@@ -441,8 +521,9 @@ class ProjectColumn:
     anything) the column's DATAVIS region should draw. Movies and Gameplay
     use ``{"kind": "media_items", "count": int, "items": [...]}``; Shots uses
     ``{"kind": "shot_types", "fields": [...]}``; Vocabulary uses
-    ``{"kind": "vocabulary_fields", "fields": [...]}``; all other columns use
-    ``{"kind": "empty"}``.
+    ``{"kind": "vocabulary_fields", "fields": [...]}``; Silhouettes and
+    Engravings use their corresponding ``*_fields`` payload; all other
+    columns use ``{"kind": "empty"}``.
     """
 
     id: str
@@ -574,13 +655,14 @@ def get_corpus_stats_state(project_path: Optional[str]) -> dict[str, Any]:
 
 
 # Columns computed live (see get_live_project_columns) — (id, title). Movies
-# and Gameplay read metadata plus existing palette caches; Illustrations reads
-# only the illustration index (see get_illustration_stats). None traverses the
-# annotation corpus or silhouette catalog.
+# and Gameplay read metadata plus existing palette caches; the final two
+# columns read only current Illustration indexes. None traverses the annotation
+# corpus or silhouette/engraving catalogs.
 _LIVE_COLUMN_TITLES: tuple[tuple[str, str], ...] = (
     ("movies", "Movies"),
     ("gameplay", "Gameplay"),
-    ("illustrations", "Illustrations"),
+    ("silhouettes", "Silhouettes"),
+    ("engravings", "Engravings"),
 )
 
 # Columns sourced only from the persisted corpus-stats cache — never
@@ -589,11 +671,9 @@ _LIVE_COLUMN_TITLES: tuple[tuple[str, str], ...] = (
 _CACHED_COLUMN_SPECS: tuple[tuple[str, str, str], ...] = (
     ("shots", "Shots", "annotated_shots"),
     ("vocabulary", "Vocabulary", "vocabulary_terms"),
-    ("segments", "Segments", "detected_scenes"),
-    ("flipbooks", "Flipbooks", "flipbooks"),
 )
 
-# The fixed (id, title) pairs for all seven V0 columns, in the display order
+# The fixed (id, title) pairs for all six V0 columns, in the display order
 # the GUI grid always uses — independent of which tier each column is
 # sourced from internally, so a GUI can render headers/placeholders
 # immediately, before any column value has been computed or read.
@@ -602,9 +682,8 @@ PROJECT_COLUMN_IDS_AND_TITLES: tuple[tuple[str, str], ...] = (
     ("gameplay", "Gameplay"),
     ("shots", "Shots"),
     ("vocabulary", "Vocabulary"),
-    ("segments", "Segments"),
-    ("flipbooks", "Flipbooks"),
-    ("illustrations", "Illustrations"),
+    ("silhouettes", "Silhouettes"),
+    ("engravings", "Engravings"),
 )
 
 
@@ -744,12 +823,12 @@ def _shot_types_datavis(stats: dict[str, Any]) -> dict[str, Any]:
 
 
 def get_live_project_columns(project_path: Optional[str]) -> list[ProjectColumn]:
-    """Return the Movies/Gameplay/Illustrations columns, computed live.
+    """Return the index-backed Project columns computed live.
 
-    Cheap (proportional to media count, plus small illustration-index reads)
-    — never traverses shot annotations, touches the silhouette catalog, or
-    calls audit_catalog(). Project Visualizer still calls it off the GUI
-    thread so each tier can be displayed as soon as it is ready.
+    Cheap (proportional to media count, plus small Illustration-index reads)
+    — never traverses shot annotations or canonical silhouette/engraving
+    catalogs. Project Visualizer still calls it off the GUI thread so each
+    tier can be displayed as soon as it is ready.
     """
     movie_metadata: Optional[list[dict]] = None
     gameplay_metadata: Optional[list[dict]] = None
@@ -762,15 +841,25 @@ def get_live_project_columns(project_path: Optional[str]) -> list[ProjectColumn]
             gameplay_metadata = load_json_metadata(project_path, "gameplay")
         except (OSError, json.JSONDecodeError):
             pass
-    illustration_stats = get_illustration_stats(project_path)
-    if illustration_stats["state"] == "ready":
-        illustrations_column = _make_column(
-            "illustrations", "Illustrations", illustration_stats["count"],
-        )
-    else:
-        illustrations_column = _make_column(
-            "illustrations", "Illustrations", None,
-            state=illustration_stats["state"], reason=illustration_stats.get("reason"),
+    indexed_field_stats = {
+        source: get_indexed_field_stats(project_path, source)
+        for source in ("silhouettes", "engravings")
+    }
+
+    def field_column(source: str, title: str) -> ProjectColumn:
+        stats = indexed_field_stats[source]
+        if stats["state"] not in ("ready", "stale") or "count" not in stats:
+            return _make_column(
+                source, title, None,
+                state=stats["state"], reason=stats.get("reason"),
+            )
+        return _make_column(
+            source, title, stats["count"],
+            state=stats["state"], reason=stats.get("reason"),
+            datavis={
+                "kind": f"{source[:-1]}_fields",
+                "fields": stats["fields"],
+            },
         )
 
     return [
@@ -789,12 +878,13 @@ def get_live_project_columns(project_path: Optional[str]) -> list[ProjectColumn]
                 if gameplay_metadata is not None else None
             ),
         ),
-        illustrations_column,
+        field_column("silhouettes", "Silhouettes"),
+        field_column("engravings", "Engravings"),
     ]
 
 
 def get_cached_project_columns(project_path: Optional[str]) -> list[ProjectColumn]:
-    """Return the Shots/Vocabulary/Segments/Flipbooks columns.
+    """Return the Shots/Vocabulary columns.
 
     Sourced only from the persisted stats cache (see `get_corpus_stats_state`)
     — never recomputed here. Columns come back ``state="unavailable"`` when
@@ -850,7 +940,7 @@ def get_cached_project_columns(project_path: Optional[str]) -> list[ProjectColum
 
 
 def get_project_columns(project_path: Optional[str]) -> list[ProjectColumn]:
-    """Return the fixed V0 set of all seven Project Visualizer columns.
+    """Return the fixed V0 set of all six Project Visualizer columns.
 
     Always fast and synchronous — never performs a full corpus traversal.
     See `get_live_project_columns` and `get_cached_project_columns` for the
@@ -861,8 +951,7 @@ def get_project_columns(project_path: Optional[str]) -> list[ProjectColumn]:
 
     Movies and Gameplay carry their metadata collection size as
     ``media_items``; Shots carries its ordered annotation-type distribution;
-    Vocabulary carries its ordered field composition. Every other column
-    remains ``{"kind": "empty"}``.
+    Vocabulary, Silhouettes, and Engravings carry ordered field composition.
     """
     by_id = {
         column.id: column

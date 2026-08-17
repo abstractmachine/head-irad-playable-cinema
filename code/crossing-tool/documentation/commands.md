@@ -475,6 +475,7 @@ that owns the feature you want to refresh:
 | Project browser counts and Shots-by-type DATAVIS | `crossing index stats --force` |
 | Semantic search text and embeddings | `crossing index process --all --media movie` or `--media gameplay` |
 | Structured and derived vocabulary | `crossing index vocabulary --all --force` |
+| Project Silhouettes/Engravings field distributions | `crossing index illustration --media movie` and `crossing index illustration --media gameplay` |
 
 `crossing index stats --force` is sufficient when the goal is to refresh the
 Project browser after editing an annotation field such as `type`. It does not

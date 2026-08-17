@@ -16,7 +16,7 @@ import sqlite3
 from uuid import uuid4
 
 
-INDEX_SCHEMA_VERSION = 3
+INDEX_SCHEMA_VERSION = 4
 SOURCES = ("silhouettes", "engravings")
 
 # ---------------------------------------------------------------------------
@@ -41,6 +41,7 @@ SOURCES = ("silhouettes", "engravings")
 MEDIA_TYPES: tuple[str, ...] = ("movie", "gameplay")
 ALL_MEDIA = "--all-media--"
 ALL = "--all"
+UNTYPED_FIELD = "<untyped>"
 
 _SORT_COLUMNS = {
     "confidence": "confidence_score",
@@ -277,6 +278,52 @@ def query_facets(
             )
         ]
     return {**status, "titles": titles, "fields": fields, "letters": letters, "labels": labels}
+
+
+def query_field_counts(
+    project_path: str | Path,
+    source: str,
+    media_type: str,
+) -> dict:
+    """Return a validated field distribution from one usable browse index."""
+    status = load_index(project_path, source, media_type)
+    if not status.get("usable"):
+        result = {
+            "status": status.get("status") or "error",
+            "count": 0,
+            "fields": [],
+        }
+        if status.get("status") == "stale":
+            result["usable"] = False
+        return result
+
+    try:
+        with sqlite3.connect(index_path(project_path, source, media_type)) as connection:
+            rows = connection.execute(
+                "SELECT field, COUNT(*) FROM records "
+                "GROUP BY field ORDER BY COUNT(*) DESC, field"
+            )
+            fields = []
+            for field, count in rows:
+                name = str(field)
+                if name == ALL and source == "silhouettes":
+                    fields.append({
+                        "field": UNTYPED_FIELD,
+                        "count": int(count),
+                        "synthetic": True,
+                    })
+                else:
+                    fields.append({"field": name, "count": int(count)})
+    except Exception:
+        return {"status": "error", "count": 0, "fields": []}
+
+    if any(not item["field"] or item["field"] == ALL for item in fields):
+        return {"status": "error", "count": 0, "fields": []}
+    fields.sort(key=lambda item: (-item["count"], item["field"], item.get("synthetic", False)))
+    count = sum(item["count"] for item in fields)
+    if count != int(status.get("count", 0)):
+        return {"status": "error", "count": 0, "fields": []}
+    return {"status": status["status"], "count": count, "fields": fields}
 
 
 def _query_facets_all_media(project_path: str | Path, source: str, **filters) -> dict:
@@ -638,9 +685,14 @@ def _scan_engravings(project: Path, media_type: str) -> list[dict]:
                 named = [path for path in mode_dir.glob("*.png") if path.name != "raw.png"]
                 output_png = named[0] if named else raw_png
 
+            silhouette = metadata.get("silhouette")
+            silhouette_field = (
+                silhouette.get("field") if isinstance(silhouette, dict) else None
+            )
+
             record = {
                 "label": label_dir.name,
-                "field": ALL,
+                "field": silhouette_field or ALL,
                 "filename_stem": film_dir.name,
                 "media_type": media_type,
                 "mode": mode_dir.name,

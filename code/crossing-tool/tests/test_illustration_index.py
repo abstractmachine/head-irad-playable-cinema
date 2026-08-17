@@ -10,6 +10,7 @@ from services.illustration_index import (
     invalidate_index,
     load_index,
     query_facets,
+    query_field_counts,
     query_page,
     rebuild_index,
 )
@@ -42,6 +43,11 @@ def test_silhouette_index_reports_missing_ready_and_stale(tmp_path):
     assert stale["status"] == "stale"
     assert stale["usable"] is True
     assert stale["count"] == 1
+    assert query_field_counts(tmp_path, "silhouettes", "movie") == {
+        "status": "stale",
+        "count": 1,
+        "fields": [{"field": "animals", "count": 1}],
+    }
     assert query_page(tmp_path, "silhouettes", "movie")["records"][0]["path"] == metadata_path
 
 
@@ -72,6 +78,100 @@ def test_engraving_index_contains_only_generated_records(tmp_path):
     assert record["model"] == "test-model"
 
 
+def test_silhouette_field_counts_use_indexed_rows_and_deterministic_order(tmp_path):
+    records = [
+        {"filename_stem": "film", "field": "objects", "label": "hat"},
+        {"filename_stem": "film", "field": "animals", "label": "horse"},
+        {"filename_stem": "film", "field": "objects", "label": "lamp"},
+        {"filename_stem": "film", "field": "humans", "label": "rider"},
+        {"filename_stem": "film", "field": "animals", "label": "dog"},
+    ]
+    with patch("services.illustration_index._scan_silhouettes", return_value=records):
+        rebuild_index(tmp_path, "silhouettes", "movie")
+
+    assert query_field_counts(tmp_path, "silhouettes", "movie") == {
+        "status": "ready",
+        "count": 5,
+        "fields": [
+            {"field": "animals", "count": 2},
+            {"field": "objects", "count": 2},
+            {"field": "humans", "count": 1},
+        ],
+    }
+
+
+def test_engraving_field_counts_use_source_silhouette_provenance(tmp_path):
+    def write_engraving(object_id, mode, field):
+        mode_dir = (
+            tmp_path / "data" / "engravings" / "catalog" / "movie"
+            / "film" / "horse" / object_id / mode
+        )
+        mode_dir.mkdir(parents=True)
+        (mode_dir / "raw.png").write_bytes(b"png")
+        (mode_dir / "engraving.json").write_text(json.dumps({
+            "schema_version": "2",
+            "status": "generated",
+            "mode": mode,
+            "field": "must-not-override-source",
+            "source": {
+                "silhouette_json": (
+                    f"data/silhouettes/catalog/movie/film/horse/{object_id}.json"
+                ),
+            },
+            "silhouette": {"field": field, "label": "horse"},
+        }), encoding="utf-8")
+
+    write_engraving("object_0001", "isolated", "animals")
+    write_engraving("object_0001", "frame", "animals")
+    write_engraving("object_0002", "isolated", "objects")
+
+    rebuild_index(tmp_path, "engravings", "movie")
+
+    assert query_field_counts(tmp_path, "engravings", "movie") == {
+        "status": "ready",
+        "count": 3,
+        "fields": [
+            {"field": "animals", "count": 2},
+            {"field": "objects", "count": 1},
+        ],
+    }
+
+
+def test_field_counts_accept_a_valid_empty_index(tmp_path):
+    with patch("services.illustration_index._scan_silhouettes", return_value=[]):
+        rebuild_index(tmp_path, "silhouettes", "movie")
+
+    assert query_field_counts(tmp_path, "silhouettes", "movie") == {
+        "status": "ready", "count": 0, "fields": [],
+    }
+
+
+def test_silhouette_field_counts_use_synthetic_untyped_for_missing_field(tmp_path):
+    with patch(
+        "services.illustration_index._scan_silhouettes",
+        return_value=[{"filename_stem": "film", "label": "horse"}],
+    ):
+        rebuild_index(tmp_path, "silhouettes", "movie")
+
+    result = query_field_counts(tmp_path, "silhouettes", "movie")
+
+    assert result == {
+        "status": "ready",
+        "count": 1,
+        "fields": [{"field": "<untyped>", "count": 1, "synthetic": True}],
+    }
+
+
+def test_engraving_field_counts_reject_missing_source_field(tmp_path):
+    records = [{"filename_stem": "film", "label": "horse"}]
+    with patch("services.illustration_index._scan_engravings", return_value=records):
+        rebuild_index(tmp_path, "engravings", "movie")
+
+    assert query_field_counts(tmp_path, "engravings", "movie") == {
+        "status": "error", "count": 0, "fields": [],
+    }
+
+
 def test_schema_change_marks_index_stale(tmp_path):
     rebuild_index(tmp_path, "silhouettes", "movie")
     path = index_path(tmp_path, "silhouettes", "movie")
@@ -83,6 +183,9 @@ def test_schema_change_marks_index_stale(tmp_path):
     stale = load_index(tmp_path, "silhouettes", "movie")
     assert stale["status"] == "stale"
     assert stale["usable"] is False
+    assert query_field_counts(tmp_path, "silhouettes", "movie") == {
+        "status": "stale", "count": 0, "fields": [], "usable": False,
+    }
 
 
 def test_legacy_monolithic_index_requires_rebuild(tmp_path):

@@ -31,6 +31,7 @@ from services.corpus_stats import (
     ProjectColumn,
     corpus_stats_cache_path,
     get_cached_project_columns,
+    get_indexed_field_stats,
     get_illustration_stats,
     get_live_project_columns,
     get_project_columns,
@@ -40,8 +41,8 @@ from services.corpus_stats import (
 )
 
 EXPECTED_COLUMN_IDS = (
-    "movies", "gameplay", "shots", "vocabulary", "segments", "flipbooks",
-    "illustrations",
+    "movies", "gameplay", "shots", "vocabulary", "silhouettes",
+    "engravings",
 )
 
 
@@ -74,7 +75,7 @@ def _media_items_datavis(count, media_type="movie"):
 
 
 # ---------------------------------------------------------------------------
-# Data model — live tier (Movies/Gameplay/Illustrations)
+# Data model — live tier (Movies/Gameplay/Silhouettes/Engravings)
 # ---------------------------------------------------------------------------
 
 def test_get_live_project_columns_does_not_traverse_annotations(tmp_path, monkeypatch):
@@ -87,17 +88,31 @@ def test_get_live_project_columns_does_not_traverse_annotations(tmp_path, monkey
         lambda _path: pytest.fail("Project live tier traversed shot annotations"),
     )
     monkeypatch.setattr(
-        corpus_stats_mod, "get_illustration_stats",
-        lambda p: {"state": "ready", "count": 7, "labels": {"horse": 7}},
+        corpus_stats_mod, "get_indexed_field_stats",
+        lambda _path, source: {
+            "state": "ready",
+            "count": 7 if source == "silhouettes" else 3,
+            "fields": (
+                [{"field": "animals", "count": 7}]
+                if source == "silhouettes"
+                else [
+                    {"field": "animals", "count": 2},
+                    {"field": "objects", "count": 1},
+                ]
+            ),
+        },
     )
 
     columns = get_live_project_columns(str(tmp_path))
 
-    assert [c.id for c in columns] == ["movies", "gameplay", "illustrations"]
+    assert [c.id for c in columns] == [
+        "movies", "gameplay", "silhouettes", "engravings",
+    ]
     by_id = {c.id: c for c in columns}
     assert by_id["movies"].count == 2
     assert by_id["gameplay"].count == 1
-    assert by_id["illustrations"].count == 7
+    assert by_id["silhouettes"].count == 7
+    assert by_id["engravings"].count == 3
     assert all(c.state == "ready" for c in columns)
     assert by_id["movies"].datavis == {
         "kind": "media_items",
@@ -124,7 +139,17 @@ def test_get_live_project_columns_does_not_traverse_annotations(tmp_path, monkey
             "thumbnail_foreground_rgb": None,
         }],
     }
-    assert by_id["illustrations"].datavis == {"kind": "empty"}
+    assert by_id["silhouettes"].datavis == {
+        "kind": "silhouette_fields",
+        "fields": [{"field": "animals", "count": 7}],
+    }
+    assert by_id["engravings"].datavis == {
+        "kind": "engraving_fields",
+        "fields": [
+            {"field": "animals", "count": 2},
+            {"field": "objects", "count": 1},
+        ],
+    }
 
 
 def test_media_item_payload_counts_reuse_the_loaded_metadata_collections(monkeypatch):
@@ -286,7 +311,6 @@ def test_get_live_project_columns_without_project_path_are_unavailable():
 def test_get_live_project_columns_empty_project_reports_zero_not_unavailable(tmp_path, monkeypatch):
     # An empty-but-real project directory has a known answer (zero) for
     # Movies/Gameplay. Shots is cache-owned and is not part of this tier.
-    # Illustrations still requires its own index.
     columns = get_live_project_columns(str(tmp_path))
     by_id = {c.id: c for c in columns}
 
@@ -296,13 +320,216 @@ def test_get_live_project_columns_empty_project_reports_zero_not_unavailable(tmp
 
     assert by_id["movies"].datavis == {"kind": "media_items", "count": 0, "items": []}
     assert by_id["gameplay"].datavis == {"kind": "media_items", "count": 0, "items": []}
-    assert by_id["illustrations"].count is None
-    assert by_id["illustrations"].state == "unavailable"
-    assert by_id["illustrations"].reason == "illustration_index_missing"
+    for col_id, reason in (
+        ("silhouettes", "silhouette_index_missing"),
+        ("engravings", "engraving_index_missing"),
+    ):
+        assert by_id[col_id].count is None
+        assert by_id[col_id].state == "unavailable"
+        assert by_id[col_id].reason == reason
+        assert by_id[col_id].datavis == {"kind": "empty"}
+
+
+def test_indexed_field_stats_combine_media_with_deterministic_order(monkeypatch):
+    def query(_project_path, source, media_type):
+        assert source == "silhouettes"
+        return {
+            "status": "ready",
+            "count": 3,
+            "fields": (
+                [{"field": "objects", "count": 2}, {"field": "animals", "count": 1}]
+                if media_type == "movie"
+                else [{"field": "animals", "count": 2}, {"field": "humans", "count": 1}]
+            ),
+        }
+
+    monkeypatch.setattr(illustration_index_mod, "query_field_counts", query)
+
+    assert get_indexed_field_stats("/fake/project", "silhouettes") == {
+        "state": "ready",
+        "count": 6,
+        "fields": [
+            {"field": "animals", "count": 3},
+            {"field": "objects", "count": 2},
+            {"field": "humans", "count": 1},
+        ],
+    }
+
+
+def test_indexed_field_stats_preserve_valid_zero(monkeypatch):
+    monkeypatch.setattr(
+        illustration_index_mod, "query_field_counts",
+        lambda *_args: {"status": "ready", "count": 0, "fields": []},
+    )
+
+    assert get_indexed_field_stats("/fake/project", "engravings") == {
+        "state": "ready", "count": 0, "fields": [],
+    }
+
+
+def test_indexed_field_stats_preserve_values_from_usable_stale_index(monkeypatch):
+    monkeypatch.setattr(
+        illustration_index_mod, "query_field_counts",
+        lambda _project_path, _source, media_type: (
+            {
+                "status": "stale", "count": 3,
+                "fields": [{"field": "objects", "count": 3}],
+            }
+            if media_type == "movie"
+            else {
+                "status": "ready", "count": 1,
+                "fields": [{"field": "animals", "count": 1}],
+            }
+        ),
+    )
+
+    assert get_indexed_field_stats("/fake/project", "silhouettes") == {
+        "state": "stale",
+        "reason": "silhouette_index_stale",
+        "count": 4,
+        "fields": [
+            {"field": "objects", "count": 3},
+            {"field": "animals", "count": 1},
+        ],
+    }
+
+
+def test_indexed_field_stats_preserve_synthetic_silhouette_category(monkeypatch):
+    monkeypatch.setattr(
+        illustration_index_mod, "query_field_counts",
+        lambda _project_path, _source, media_type: {
+            "status": "ready",
+            "count": 2 if media_type == "movie" else 1,
+            "fields": (
+                [{"field": "<untyped>", "count": 2, "synthetic": True}]
+                if media_type == "movie"
+                else [{"field": "objects", "count": 1}]
+            ),
+        },
+    )
+
+    assert get_indexed_field_stats("/fake/project", "silhouettes") == {
+        "state": "ready",
+        "count": 3,
+        "fields": [
+            {"field": "<untyped>", "count": 2, "synthetic": True},
+            {"field": "objects", "count": 1},
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    ("source", "status", "expected"),
+    [
+        (
+            "silhouettes", "missing",
+            {"state": "unavailable", "reason": "silhouette_index_missing"},
+        ),
+        (
+            "engravings", "stale",
+            {"state": "stale", "reason": "engraving_index_stale"},
+        ),
+        (
+            "engravings", "error",
+            {"state": "unavailable", "reason": "engraving_index_error"},
+        ),
+    ],
+)
+def test_indexed_field_stats_surface_unusable_indexes(
+    monkeypatch, source, status, expected,
+):
+    monkeypatch.setattr(
+        illustration_index_mod, "query_field_counts",
+        lambda *_args: {
+            "status": status, "count": 0, "fields": [],
+            **({"usable": False} if status == "stale" else {}),
+        },
+    )
+
+    assert get_indexed_field_stats("/fake/project", source) == expected
+
+
+def test_live_project_columns_keep_usable_stale_index_values(monkeypatch):
+    monkeypatch.setattr(corpus_stats_mod, "load_json_metadata", lambda *_args: [])
+    monkeypatch.setattr(
+        corpus_stats_mod, "get_indexed_field_stats",
+        lambda _path, source: {
+            "state": "stale",
+            "reason": f"{source[:-1]}_index_stale",
+            "count": 4,
+            "fields": [{"field": "objects", "count": 4}],
+        },
+    )
+
+    columns = {column.id: column for column in get_live_project_columns("/project")}
+
+    for source, kind in (
+        ("silhouettes", "silhouette_fields"),
+        ("engravings", "engraving_fields"),
+    ):
+        assert columns[source].state == "stale"
+        assert columns[source].count == 4
+        assert columns[source].datavis == {
+            "kind": kind,
+            "fields": [{"field": "objects", "count": 4}],
+        }
+
+
+def test_live_project_field_payloads_read_only_current_indexes(tmp_path, monkeypatch):
+    indexed_records = {
+        ("silhouettes", "movie"): [
+            {"filename_stem": "film", "field": "animals", "label": "horse"},
+            {"filename_stem": "film", "field": "objects", "label": "hat"},
+        ],
+        ("silhouettes", "gameplay"): [
+            {"filename_stem": "game", "field": "animals", "label": "dog"},
+        ],
+        ("engravings", "movie"): [
+            {"filename_stem": "film", "field": "humans", "label": "rider"},
+            {"filename_stem": "film", "field": "humans", "label": "sheriff"},
+        ],
+        ("engravings", "gameplay"): [
+            {"filename_stem": "game", "field": "animals", "label": "dog"},
+        ],
+    }
+    for source in ("silhouettes", "engravings"):
+        scan_name = f"_scan_{source}"
+        for media_type in ("movie", "gameplay"):
+            monkeypatch.setattr(
+                illustration_index_mod, scan_name,
+                lambda _project, _media_type, rows=indexed_records[(source, media_type)]: rows,
+            )
+            illustration_index_mod.rebuild_index(tmp_path, source, media_type)
+
+    def fail_scan(*_args, **_kwargs):
+        pytest.fail("Project refresh traversed a canonical source catalog")
+
+    monkeypatch.setattr(illustration_index_mod, "_scan_silhouettes", fail_scan)
+    monkeypatch.setattr(illustration_index_mod, "_scan_engravings", fail_scan)
+    monkeypatch.setattr(silhouette_catalog_mod, "scan_catalog", fail_scan)
+
+    columns = {column.id: column for column in get_live_project_columns(str(tmp_path))}
+
+    assert columns["silhouettes"].count == 3
+    assert columns["silhouettes"].datavis == {
+        "kind": "silhouette_fields",
+        "fields": [
+            {"field": "animals", "count": 2},
+            {"field": "objects", "count": 1},
+        ],
+    }
+    assert columns["engravings"].count == 3
+    assert columns["engravings"].datavis == {
+        "kind": "engraving_fields",
+        "fields": [
+            {"field": "humans", "count": 2},
+            {"field": "animals", "count": 1},
+        ],
+    }
 
 
 # ---------------------------------------------------------------------------
-# Data model — cached tier (Shots/Vocabulary/Segments/Flipbooks)
+# Data model — cached tier (Shots/Vocabulary)
 # ---------------------------------------------------------------------------
 
 def test_get_cached_project_columns_reads_stats_cache(monkeypatch):
@@ -313,8 +540,6 @@ def test_get_cached_project_columns_reads_stats_cache(monkeypatch):
             {"name": "<untyped>", "count": 2, "synthetic": True},
         ],
         "vocabulary_terms": 1832,
-        "detected_scenes": 57,
-        "flipbooks": 2,
     }
     monkeypatch.setattr(
         corpus_stats_mod, "get_corpus_stats_state",
@@ -331,9 +556,9 @@ def test_get_cached_project_columns_reads_stats_cache(monkeypatch):
 
     columns = get_cached_project_columns("/fake/project")
 
-    assert [c.id for c in columns] == ["shots", "vocabulary", "segments", "flipbooks"]
+    assert [c.id for c in columns] == ["shots", "vocabulary"]
     counts = {c.id: c.count for c in columns}
-    assert counts == {"shots": 5, "vocabulary": 1832, "segments": 57, "flipbooks": 2}
+    assert counts == {"shots": 5, "vocabulary": 1832}
     assert all(c.state == "ready" for c in columns)
     assert columns[0].datavis == {
         "kind": "shot_types",
@@ -353,7 +578,7 @@ def test_get_cached_project_columns_keeps_stale_vocabulary_distinct(monkeypatch)
             "state": "ready",
             "stats": {
                 "annotated_shots": 0, "annotated_shot_types": [],
-                "vocabulary_terms": 2, "detected_scenes": 7, "flipbooks": 3,
+                "vocabulary_terms": 2,
             },
         },
     )
@@ -372,11 +597,9 @@ def test_get_cached_project_columns_keeps_stale_vocabulary_distinct(monkeypatch)
     assert columns[1].state == "stale"
     assert columns[1].reason == "vocabulary_index_stale"
     assert columns[1].datavis == {"kind": "empty"}
-    assert [(column.id, column.count, column.state) for column in (columns[0], *columns[2:])] == [
-        ("shots", 0, "ready"),
-        ("segments", 7, "ready"),
-        ("flipbooks", 3, "ready"),
-    ]
+    assert (columns[0].id, columns[0].count, columns[0].state) == (
+        "shots", 0, "ready",
+    )
 
 
 def test_get_cached_project_columns_surfaces_vocabulary_count_mismatch(monkeypatch):
@@ -386,7 +609,7 @@ def test_get_cached_project_columns_surfaces_vocabulary_count_mismatch(monkeypat
             "state": "ready",
             "stats": {
                 "annotated_shots": 0, "annotated_shot_types": [],
-                "vocabulary_terms": 3, "detected_scenes": 7, "flipbooks": 3,
+                "vocabulary_terms": 3,
             },
         },
     )
@@ -404,11 +627,7 @@ def test_get_cached_project_columns_surfaces_vocabulary_count_mismatch(monkeypat
     assert columns[1].state == "stale"
     assert columns[1].reason == "vocabulary_count_mismatch"
     assert columns[1].datavis == {"kind": "empty"}
-    assert [(column.id, column.count) for column in (columns[0], *columns[2:])] == [
-        ("shots", 0),
-        ("segments", 7),
-        ("flipbooks", 3),
-    ]
+    assert (columns[0].id, columns[0].count) == ("shots", 0)
 
 
 def test_get_cached_project_columns_rejects_mismatched_shot_type_total(monkeypatch):
@@ -422,8 +641,6 @@ def test_get_cached_project_columns_rejects_mismatched_shot_type_total(monkeypat
                     {"name": "diegetic", "count": 2, "synthetic": False},
                 ],
                 "vocabulary_terms": 0,
-                "detected_scenes": 0,
-                "flipbooks": 0,
             },
         },
     )
@@ -507,14 +724,14 @@ def test_get_cached_project_columns_stale_without_recomputing(monkeypatch):
 def test_get_project_columns_combines_both_tiers_in_fixed_order(monkeypatch):
     monkeypatch.setattr(
         corpus_stats_mod, "get_corpus_stats_state",
-        lambda p: {"state": "ready", "stats": {"vocabulary_terms": 1, "detected_scenes": 2, "flipbooks": 3}},
+        lambda p: {"state": "ready", "stats": {"vocabulary_terms": 1}},
     )
 
     columns = get_project_columns(None)  # live tier -> unavailable, cached tier -> ready
 
     assert [c.id for c in columns] == list(EXPECTED_COLUMN_IDS)
     assert [c.title for c in columns] == [
-        "Movies", "Gameplay", "Shots", "Vocabulary", "Segments", "Flipbooks", "Illustrations",
+        "Movies", "Gameplay", "Shots", "Vocabulary", "Silhouettes", "Engravings",
     ]
     assert all(c.datavis == {"kind": "empty"} for c in columns)
 
@@ -523,6 +740,9 @@ def test_project_column_ids_and_titles_matches_get_project_columns_order():
     columns = get_project_columns(None)
 
     assert PROJECT_COLUMN_IDS_AND_TITLES == tuple((c.id, c.title) for c in columns)
+    assert "segments" not in EXPECTED_COLUMN_IDS
+    assert "flipbooks" not in EXPECTED_COLUMN_IDS
+    assert "illustrations" not in EXPECTED_COLUMN_IDS
 
 
 # ---------------------------------------------------------------------------
@@ -618,7 +838,45 @@ def test_get_illustration_stats_stale_index_reports_stale_without_scanning(monke
 
     result = get_illustration_stats("/fake/project")
 
-    assert result == {"state": "stale", "reason": "illustration_index_stale"}
+    assert result == {
+        "state": "stale",
+        "reason": "illustration_index_stale",
+        "count": 8,
+        "labels": {},
+    }
+
+
+def test_stale_project_column_keeps_status_and_previous_datavis(app):
+    from visualizers.project_visualizer import _ProjectColumnWidget
+
+    column = ProjectColumn(
+        id="silhouettes", title="Silhouettes", count=4,
+        datavis={
+            "kind": "silhouette_fields",
+            "fields": [
+                {"field": "objects", "count": 3},
+                {"field": "animals", "count": 1},
+            ],
+        },
+        state="stale", reason="silhouette_index_stale",
+    )
+    widget = _ProjectColumnWidget(column)
+    try:
+        widget.resize(140, 258)
+        widget.show()
+        app.processEvents()
+
+        assert widget._count_label.text() == "INDEX STALE"
+        assert [cell.field_label.text() for cell in widget._datavis_widget._field_cells] == [
+            "objects", "animals",
+        ]
+        assert [cell.count_label.text() for cell in widget._datavis_widget._field_cells] == [
+            "3", "1",
+        ]
+    finally:
+        widget.close()
+        widget.deleteLater()
+        app.processEvents()
 
 
 def test_get_illustration_stats_no_project_path_is_unavailable():
@@ -659,8 +917,8 @@ def test_project_visualizer_headers_appear_immediately_in_loading_state(app, fak
         assert list(widgets.keys()) == list(EXPECTED_COLUMN_IDS)
 
         layout = window._browser.layout()
-        assert layout.count() == 7
-        assert all(layout.stretch(i) == 1 for i in range(7))  # equal-width, responsive grid
+        assert layout.count() == 6
+        assert all(layout.stretch(i) == 1 for i in range(6))  # equal-width, responsive grid
 
         for col_id, title in PROJECT_COLUMN_IDS_AND_TITLES:
             widget = widgets[col_id]
@@ -672,7 +930,7 @@ def test_project_visualizer_headers_appear_immediately_in_loading_state(app, fak
         window.close()
 
 
-def test_project_tools_section_contains_thumbnail_palettes_button(
+def test_project_tools_section_contains_side_by_side_tool_buttons(
     app, fake_prefs, monkeypatch,
 ):
     fake_prefs["path"] = "/fake/project"
@@ -689,7 +947,15 @@ def test_project_tools_section_contains_thumbnail_palettes_button(
         assert window._tools_section._pref_key == "project_section_tools"
         assert window.thumbnail_palettes_btn.text() == "Thumbnail Palettes"
         assert window.thumbnail_palettes_btn.isEnabled()
+        assert window.rebuild_vocabulary_btn.text() == "Rebuild Vocabulary"
+        assert window.rebuild_vocabulary_btn.isEnabled()
+        buttons_layout = window._tools_buttons_widget.layout()
+        assert buttons_layout.count() == 2
+        assert buttons_layout.itemAt(0).widget() is window.thumbnail_palettes_btn
+        assert buttons_layout.itemAt(1).widget() is window.rebuild_vocabulary_btn
+        assert buttons_layout.stretch(0) == buttons_layout.stretch(1) == 1
         assert not window._thumbnail_palette_poll_timer.isActive()
+        assert not window._vocabulary_poll_timer.isActive()
     finally:
         window.close()
 
@@ -734,6 +1000,158 @@ def test_thumbnail_palette_cli_uses_canonical_argv_and_current_project(
             "stderr": subprocess.STDOUT,
         },
     )]
+
+
+def test_vocabulary_cli_uses_canonical_argv_and_current_project(monkeypatch):
+    from visualizers.project_visualizer import _CLI_PATH, _start_vocabulary_cli
+
+    sentinel = object()
+    calls = []
+
+    def fake_popen(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return sentinel
+
+    monkeypatch.setattr(
+        "visualizers.project_visualizer.subprocess.Popen", fake_popen,
+    )
+    output_stream = object()
+
+    result = _start_vocabulary_cli("/current/project", output_stream)
+
+    assert result is sentinel
+    assert calls == [(
+        [
+            sys.executable,
+            str(_CLI_PATH),
+            "index", "vocabulary", "--all", "--force",
+        ],
+        {
+            "cwd": "/current/project",
+            "stdout": output_stream,
+            "stderr": subprocess.STDOUT,
+        },
+    )]
+
+
+def test_vocabulary_tool_runs_once_then_refreshes_project_columns(
+    app, fake_prefs, monkeypatch,
+):
+    fake_prefs["path"] = "/current/project"
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._ProjectColumnsWorker.start",
+        lambda self: None,
+    )
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    class FakeProcess:
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+    process = FakeProcess()
+    launches = []
+
+    def fake_start(project_path, output_stream):
+        launches.append((project_path, output_stream))
+        return process
+
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._start_vocabulary_cli", fake_start,
+    )
+    window = ProjectVisualizer()
+    refreshes = []
+    monkeypatch.setattr(
+        window, "_start_project_columns_load",
+        lambda *, force=False: refreshes.append(force),
+    )
+    try:
+        QTest.mouseClick(window.rebuild_vocabulary_btn, Qt.LeftButton)
+
+        assert len(launches) == 1
+        assert launches[0][0] == "/current/project"
+        assert not window.rebuild_vocabulary_btn.isEnabled()
+        assert window.rebuild_vocabulary_btn.text() == "Building Vocabulary…"
+        assert not window.thumbnail_palettes_btn.isEnabled()
+        assert not window.project_browse_btn.isEnabled()
+        assert window._tools_loading_bar._active
+        assert window._vocabulary_poll_timer.isActive()
+
+        window._on_rebuild_vocabulary()
+        window._on_thumbnail_palettes()
+        assert len(launches) == 1
+
+        process.returncode = 0
+        window._poll_vocabulary_cli()
+
+        assert window.rebuild_vocabulary_btn.isEnabled()
+        assert window.rebuild_vocabulary_btn.text() == "Rebuild Vocabulary"
+        assert window.thumbnail_palettes_btn.isEnabled()
+        assert window.project_browse_btn.isEnabled()
+        assert not window._tools_loading_bar._active
+        assert not window._vocabulary_poll_timer.isActive()
+        assert refreshes == [True]
+    finally:
+        window.close()
+
+
+def test_vocabulary_tool_restores_buttons_and_surfaces_cli_failure(
+    app, fake_prefs, monkeypatch,
+):
+    fake_prefs["path"] = "/current/project"
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._ProjectColumnsWorker.start",
+        lambda self: None,
+    )
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    class FakeProcess:
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+    process = FakeProcess()
+
+    def fake_start(_project_path, output_stream):
+        output_stream.write(b"Vocabulary rebuild failed in CLI")
+        return process
+
+    messages = []
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._start_vocabulary_cli", fake_start,
+    )
+    monkeypatch.setattr(
+        "visualizers.project_visualizer.QMessageBox.critical",
+        lambda parent, title, message: messages.append((title, message)),
+    )
+    window = ProjectVisualizer()
+    refreshes = []
+    monkeypatch.setattr(
+        window, "_start_project_columns_load",
+        lambda *, force=False: refreshes.append(force),
+    )
+    try:
+        QTest.mouseClick(window.rebuild_vocabulary_btn, Qt.LeftButton)
+        process.returncode = 1
+        window._poll_vocabulary_cli()
+
+        assert window.rebuild_vocabulary_btn.isEnabled()
+        assert window.rebuild_vocabulary_btn.text() == "Rebuild Vocabulary"
+        assert window.thumbnail_palettes_btn.isEnabled()
+        assert window.project_browse_btn.isEnabled()
+        assert not window._tools_loading_bar._active
+        assert not window._vocabulary_poll_timer.isActive()
+        assert refreshes == []
+        assert messages == [(
+            "Vocabulary rebuild failed",
+            "Vocabulary rebuild failed in CLI",
+        )]
+    finally:
+        window.close()
 
 
 def test_thumbnail_palette_tool_runs_both_media_once_then_refreshes(
@@ -1550,6 +1968,53 @@ def test_shot_types_match_vocabulary_pixels_and_geometry(app, width, height):
         app.processEvents()
 
 
+@pytest.mark.parametrize("kind", ["silhouette_fields", "engraving_fields"])
+@pytest.mark.parametrize(("width", "height"), [(140, 199), (60, 98), (140, 7)])
+def test_indexed_field_kinds_match_vocabulary_pixels_and_geometry(
+    app, kind, width, height,
+):
+    from visualizers.project_visualizer import _ProjectDatavisWidget
+
+    rows = [("animals", 3200), ("objects", 20), ("wearing", 1)]
+    vocabulary = _ProjectDatavisWidget()
+    indexed = _ProjectDatavisWidget()
+    try:
+        for datavis in (vocabulary, indexed):
+            datavis.resize(width, height)
+            datavis.show()
+        vocabulary.set_datavis({
+            "kind": "vocabulary_fields",
+            "fields": [{"field": name, "count": count} for name, count in rows],
+        })
+        indexed.set_datavis({
+            "kind": kind,
+            "fields": [{"field": name, "count": count} for name, count in rows],
+        })
+        app.processEvents()
+
+        vocabulary_cells = vocabulary._field_cells
+        indexed_cells = indexed._field_cells
+        assert [cell.geometry() for cell in indexed_cells] == [
+            cell.geometry() for cell in vocabulary_cells
+        ]
+        assert [cell.field_label.text() for cell in indexed_cells] == [
+            cell.field_label.text() for cell in vocabulary_cells
+        ]
+        assert [cell.count_label.text() for cell in indexed_cells] == [
+            cell.count_label.text() for cell in vocabulary_cells
+        ]
+        assert [cell.styleSheet() for cell in indexed_cells] == [
+            cell.styleSheet() for cell in vocabulary_cells
+        ]
+        assert indexed.findChildren(QScrollArea) == []
+        assert indexed.grab().toImage() == vocabulary.grab().toImage()
+    finally:
+        for datavis in (vocabulary, indexed):
+            datavis.close()
+            datavis.deleteLater()
+        app.processEvents()
+
+
 def test_shot_types_resize_proportionally_with_canonical_gaps_and_compact_counts(app):
     from visualizers.project_visualizer import _COLUMN_ROW_H, _ProjectColumnWidget
 
@@ -2353,12 +2818,8 @@ def test_project_visualizer_show_does_not_restart_running_initial_load(
                 id=col_id, title=title, count=1,
                 datavis={"kind": "empty"}, state="ready",
             )
-            for col_id, title in PROJECT_COLUMN_IDS_AND_TITLES[:3]
-        ] + [
-            ProjectColumn(
-                id="illustrations", title="Illustrations", count=1,
-                datavis={"kind": "empty"}, state="ready",
-            )
+            for col_id, title in PROJECT_COLUMN_IDS_AND_TITLES
+            if col_id in ("movies", "gameplay", "silhouettes", "engravings")
         ]
 
     monkeypatch.setattr(corpus_stats_mod, "get_live_project_columns", blocked_live_columns)
@@ -2370,7 +2831,8 @@ def test_project_visualizer_show_does_not_restart_running_initial_load(
                 id=col_id, title=title, count=1,
                 datavis={"kind": "empty"}, state="ready",
             )
-            for col_id, title in PROJECT_COLUMN_IDS_AND_TITLES[3:6]
+            for col_id, title in PROJECT_COLUMN_IDS_AND_TITLES
+            if col_id in ("shots", "vocabulary")
         ],
     )
 
@@ -2570,30 +3032,20 @@ def test_project_visualizer_live_failure_settles_tier_and_preserves_cached_resul
                 id="vocabulary", title="Vocabulary", count=1832,
                 datavis={"kind": "empty"}, state="ready",
             ),
-            ProjectColumn(
-                id="segments", title="Segments", count=57,
-                datavis={"kind": "empty"}, state="ready",
-            ),
-            ProjectColumn(
-                id="flipbooks", title="Flipbooks", count=0,
-                datavis={"kind": "empty"}, state="ready",
-            ),
         ]
         window._on_columns_tier_ready(generation, cached_columns)
         window._on_columns_tier_failed(generation, "live", "RuntimeError: live failed")
 
         widgets = window._project_column_widgets
-        for col_id in ("movies", "gameplay", "illustrations"):
+        for col_id in (
+            "movies", "gameplay", "silhouettes", "engravings",
+        ):
             assert widgets[col_id].column.count is None
             assert widgets[col_id].column.state == "unavailable"
             assert widgets[col_id].column.reason == "live_tier_error"
         assert widgets["shots"].column.count == 4821
         assert widgets["shots"].column.state == "ready"
         assert widgets["vocabulary"].column.count == 1832
-        assert widgets["segments"].column.count == 57
-        assert widgets["flipbooks"].column.count == 0
-        assert widgets["flipbooks"].column.state == "ready"
-        assert widgets["flipbooks"]._count_label.text() == "0"
         assert window._project_load_state == "loaded"
         assert not window._column_loading_timer.isActive()
         assert all(
@@ -2625,9 +3077,14 @@ def test_project_visualizer_cached_failure_settles_tier_and_preserves_live_resul
                 datavis={"kind": "empty"}, state="ready",
             ),
             ProjectColumn(
-                id="illustrations", title="Illustrations", count=None,
-                datavis={"kind": "empty"}, state="stale",
-                reason="illustration_index_stale",
+                id="silhouettes", title="Silhouettes", count=7,
+                datavis={"kind": "silhouette_fields", "fields": [
+                    {"field": "animals", "count": 7},
+                ]}, state="ready",
+            ),
+            ProjectColumn(
+                id="engravings", title="Engravings", count=0,
+                datavis={"kind": "engraving_fields", "fields": []}, state="ready",
             ),
         ]
         window._on_columns_tier_ready(generation, live_columns)
@@ -2638,9 +3095,9 @@ def test_project_visualizer_cached_failure_settles_tier_and_preserves_live_resul
         assert widgets["movies"].column.state == "ready"
         assert widgets["movies"]._count_label.text() == "0"
         assert widgets["gameplay"].column.count == 3
-        assert widgets["illustrations"].column.state == "stale"
-        assert widgets["illustrations"].column.reason == "illustration_index_stale"
-        for col_id in ("shots", "vocabulary", "segments", "flipbooks"):
+        assert widgets["silhouettes"].column.count == 7
+        assert widgets["engravings"].column.count == 0
+        for col_id in ("shots", "vocabulary"):
             assert widgets[col_id].column.count is None
             assert widgets[col_id].column.state == "unavailable"
             assert widgets[col_id].column.reason == "cached_tier_error"
@@ -2810,7 +3267,8 @@ def test_project_visualizer_current_generation_tier_updates_only_matching_column
         live_columns = [
             ProjectColumn(id="movies", title="Movies", count=12, datavis={"kind": "empty"}, state="ready"),
             ProjectColumn(id="gameplay", title="Gameplay", count=3, datavis={"kind": "empty"}, state="ready"),
-            ProjectColumn(id="shots", title="Shots", count=4821, datavis={"kind": "empty"}, state="ready"),
+            ProjectColumn(id="silhouettes", title="Silhouettes", count=91, datavis={"kind": "empty"}, state="ready"),
+            ProjectColumn(id="engravings", title="Engravings", count=28, datavis={"kind": "empty"}, state="ready"),
         ]
         window._on_columns_tier_ready(window._project_load_generation, live_columns)
 
@@ -2823,17 +3281,12 @@ def test_project_visualizer_current_generation_tier_updates_only_matching_column
         assert window._column_loading_timer.isActive()
 
         cached_columns = [
+            ProjectColumn(id="shots", title="Shots", count=4821, datavis={"kind": "empty"}, state="ready"),
             ProjectColumn(id="vocabulary", title="Vocabulary", count=1832, datavis={"kind": "empty"}, state="ready"),
-            ProjectColumn(id="segments", title="Segments", count=57, datavis={"kind": "empty"}, state="ready"),
-            ProjectColumn(id="flipbooks", title="Flipbooks", count=2, datavis={"kind": "empty"}, state="ready"),
-            ProjectColumn(id="illustrations", title="Illustrations", count=48213, datavis={"kind": "empty"}, state="ready"),
         ]
         window._on_columns_tier_ready(window._project_load_generation, cached_columns)
 
-        assert widgets["illustrations"]._count_label.text() == "48.2k"
-        assert widgets["illustrations"].column.state == "ready"
-        assert widgets["illustrations"]._loading_bar._active is False
-        # All seven columns resolved — the shared loading timer stops.
+        # All six columns resolved — the shared loading timer stops.
         assert not window._column_loading_timer.isActive()
     finally:
         window.close()
@@ -2849,8 +3302,6 @@ def test_project_visualizer_unavailable_column_shows_compact_index_status(app, f
     try:
         window._on_columns_tier_ready(window._project_load_generation, [
             ProjectColumn(id="vocabulary", title="Vocabulary", count=None, datavis={"kind": "empty"}, state="unavailable", reason="corpus_stats_missing"),
-            ProjectColumn(id="segments", title="Segments", count=None, datavis={"kind": "empty"}, state="unavailable", reason="corpus_stats_missing"),
-            ProjectColumn(id="flipbooks", title="Flipbooks", count=None, datavis={"kind": "empty"}, state="unavailable", reason="corpus_stats_missing"),
         ])
         widget = window._project_column_widgets["vocabulary"]
         assert widget._count_label.text() == "→ INDEX"
@@ -2858,15 +3309,6 @@ def test_project_visualizer_unavailable_column_shows_compact_index_status(app, f
         assert "—" not in widget._count_label.text()
         assert "INDEX REQUIRED" not in widget._count_label.text()
         assert widget._loading_bar._active is False
-
-        illustrations = window._project_column_widgets["illustrations"]
-        illustrations.set_column(ProjectColumn(
-            id="illustrations", title="Illustrations", count=None,
-            datavis={"kind": "empty"}, state="unavailable",
-            reason="illustration_index_missing",
-        ))
-        assert illustrations._count_label.text() == "NEEDS INDEX"
-        assert "\n" not in illustrations._count_label.text()
 
         widget.set_column(ProjectColumn(
             id="vocabulary", title="Vocabulary", count=None,
@@ -2887,14 +3329,13 @@ def test_project_visualizer_worker_populates_columns_end_to_end(app, fake_prefs,
         corpus_stats_mod, "get_live_project_columns",
         lambda p: [ProjectColumn(id="movies", title="Movies", count=314, datavis={"kind": "empty"}, state="ready"),
                    ProjectColumn(id="gameplay", title="Gameplay", count=2, datavis={"kind": "empty"}, state="ready"),
-                   ProjectColumn(id="shots", title="Shots", count=285500, datavis={"kind": "empty"}, state="ready")],
+                   ProjectColumn(id="silhouettes", title="Silhouettes", count=883723, datavis={"kind": "empty"}, state="ready"),
+                   ProjectColumn(id="engravings", title="Engravings", count=4123, datavis={"kind": "empty"}, state="ready")],
     )
     monkeypatch.setattr(
         corpus_stats_mod, "get_cached_project_columns",
-        lambda p: [ProjectColumn(id="vocabulary", title="Vocabulary", count=8418, datavis={"kind": "empty"}, state="ready"),
-                   ProjectColumn(id="segments", title="Segments", count=28200, datavis={"kind": "empty"}, state="ready"),
-                   ProjectColumn(id="flipbooks", title="Flipbooks", count=314, datavis={"kind": "empty"}, state="ready"),
-                   ProjectColumn(id="illustrations", title="Illustrations", count=883723, datavis={"kind": "empty"}, state="ready")],
+        lambda p: [ProjectColumn(id="shots", title="Shots", count=285500, datavis={"kind": "empty"}, state="ready"),
+               ProjectColumn(id="vocabulary", title="Vocabulary", count=8418, datavis={"kind": "empty"}, state="ready")],
     )
 
     from visualizers.project_visualizer import ProjectVisualizer
@@ -2907,7 +3348,6 @@ def test_project_visualizer_worker_populates_columns_end_to_end(app, fake_prefs,
         widgets = window._project_column_widgets
         assert widgets["movies"]._count_label.text() == "314"
         assert widgets["shots"]._count_label.text() == "285.5k"
-        assert widgets["illustrations"]._count_label.text() == "883.7k"
         assert all(w.column.state == "ready" for w in widgets.values())
         assert not window._column_loading_timer.isActive()
     finally:

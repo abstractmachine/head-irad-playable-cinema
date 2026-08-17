@@ -13,11 +13,24 @@ crossing visualizer          # default — opens Project
 
 ## Browser Statistics
 
-The browser reads prebuilt corpus statistics from
-`data/indexes/corpus_stats.json`. In particular, the **Shots** column displays
-the cached total across movie and gameplay annotations plus the distribution of
-the annotation `type` field. `<untyped>` counts canonical shot annotation
-records whose `type` value is missing or empty.
+The browser columns are, in order: **Movies**, **Gameplay**, **Shots**,
+**Vocabulary**, **Silhouettes**, and **Engravings**.
+
+Shots reads `data/indexes/corpus_stats.json`; its total covers movie and
+gameplay annotations, and its distribution uses the annotation `type` field.
+`<untyped>` counts canonical shot annotation records whose `type` value is
+missing or empty. Vocabulary reads the canonical vocabulary indexes.
+
+Silhouettes and Engravings read the current SQLite indexes under
+`data/indexes/illustration/`; the Project visualizer never traverses either
+source catalog. One silhouette is one indexed catalog object and contributes
+to its single scalar `field`. One engraving is one indexed, generated
+mode-specific record, so isolated and frame engravings from the same object are
+counted separately. Each engraving has exactly one source silhouette, and its
+authoritative category is the captured `silhouette.field` in engraving
+provenance. Silhouettes with missing field provenance contribute to the
+synthetic `<untyped>` category; engravings remain unavailable if their source
+field provenance is missing.
 
 After manually editing shot annotation JSON, rebuild this cache with:
 
@@ -39,6 +52,19 @@ crossing index process --all --media gameplay
 ```
 
 For vocabulary changes, use `crossing index vocabulary --all --force`.
+
+After silhouette or engraving catalog changes, rebuild both media indexes:
+
+```bash
+crossing index illustration --media movie
+crossing index illustration --media gameplay
+```
+
+Same-schema stale Illustration indexes keep displaying their last indexed field
+values while the count row says `INDEX STALE`. Missing, malformed, or
+older-schema indexes remain unavailable until rebuilt because their prior data
+cannot be queried safely. A valid empty index displays a zero count and the
+existing empty canvas.
 
 ## Sections
 
@@ -75,6 +101,19 @@ Click a field to type a model name, or choose a locally downloaded model from th
 ### Import Media
 
 Set the default **Type** (`movie` or `gameplay`) and click **Import** to run the import pipeline for new media files.
+
+### Tools
+
+The two Tools actions run through the canonical CLI and show a loading indicator
+on the section header while they work:
+
+| Button | Action |
+|---|---|
+| Thumbnail Palettes | Builds missing thumbnail palettes for movie and gameplay media, then refreshes the Project browser. |
+| Rebuild Vocabulary | Rebuilds movie and gameplay vocabulary data with `crossing index vocabulary --all --force`, then refreshes the Project browser. |
+
+Only one Tools action runs at a time. CLI failures are shown in the Project
+visualizer without silently falling back to a GUI-side annotation traversal.
 
 ### Visualizers
 

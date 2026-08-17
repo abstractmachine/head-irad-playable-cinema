@@ -84,4 +84,4 @@ crossing index illustration --media movie
 
 Missing or stale indexes are reported in the pagination area; the visualizer does not silently scan canonical catalog directories.
 
-Indexes use a streaming format with precomputed filter values so opening filter menus remains responsive while large catalogs load. Only the visible source loads at startup; the other source loads when its tab is first selected. Indexes created by older versions are marked stale and require one rebuild.
+Indexes use SQLite with precomputed filter values so opening filter menus remains responsive while large catalogs load. Only the visible source loads at startup; the other source loads when its tab is first selected. Indexes created by older versions are marked stale and require one rebuild.

@@ -63,6 +63,22 @@ def _start_thumbnail_palette_cli(
         stderr=subprocess.STDOUT,
     )
 
+
+def _start_vocabulary_cli(
+    project_path: str,
+    output_stream,
+) -> subprocess.Popen:
+    return subprocess.Popen(
+        [
+            sys.executable,
+            str(_CLI_PATH),
+            "index", "vocabulary", "--all", "--force",
+        ],
+        cwd=project_path,
+        stdout=output_stream,
+        stderr=subprocess.STDOUT,
+    )
+
 # ---------------------------------------------------------------------------
 # Constants mirrored from cli.py to avoid importing the full CLI module
 # ---------------------------------------------------------------------------
@@ -168,9 +184,12 @@ def _project_datavis_horizontal_insets() -> tuple[int, int]:
 # Never invented data: purely maps the explicit missing/stale reason
 # services.corpus_stats already reports into short display text.
 _COLUMN_REASON_LABELS = {
-    "illustration_index_missing": "NEEDS INDEX",
-    "illustration_index_stale": "INDEX STALE",
-    "illustration_index_error": "INDEX ERROR",
+    "silhouette_index_missing": "NEEDS INDEX",
+    "silhouette_index_stale": "INDEX STALE",
+    "silhouette_index_error": "INDEX ERROR",
+    "engraving_index_missing": "NEEDS INDEX",
+    "engraving_index_stale": "INDEX STALE",
+    "engraving_index_error": "INDEX ERROR",
     "vocabulary_index_stale": "INDEX STALE",
     "vocabulary_count_mismatch": "COUNT MISMATCH",
     "shot_type_stats_invalid": "STATS STALE",
@@ -184,8 +203,8 @@ _COLUMN_STATE_FALLBACK_LABELS = {
 }
 
 _PROJECT_TIER_COLUMN_IDS = {
-    "live": ("movies", "gameplay", "illustrations"),
-    "cached": ("shots", "vocabulary", "segments", "flipbooks"),
+    "live": ("movies", "gameplay", "silhouettes", "engravings"),
+    "cached": ("shots", "vocabulary"),
 }
 
 
@@ -340,17 +359,18 @@ _VocabularyFieldCell = _WordCountCell
 
 def _word_count_fields(datavis: dict) -> list[dict]:
     """Normalize renderer-neutral word/count payloads for shared presentation."""
-    is_shot_types = datavis.get("kind") == "shot_types"
     name_key = {
         "vocabulary_fields": "field",
         "shot_types": "name",
+        "silhouette_fields": "field",
+        "engraving_fields": "field",
     }.get(datavis.get("kind"))
     fields = datavis.get("fields", []) if name_key else []
     return [
         {
             "field": str(item.get(name_key, "")),
             "count": int(item.get("count", 0)),
-            "synthetic": is_shot_types and item.get("synthetic") is True,
+            "synthetic": item.get("synthetic") is True,
         }
         for item in fields
         if item.get(name_key) and int(item.get("count", 0)) > 0
@@ -694,7 +714,11 @@ class _ProjectColumnWidget(QWidget):
                 f"{self._count_background_style} color: {theme.TEXT_DIM}; {self._count_border_style}"
             )
             self._count_label.setText(_column_status_label(column))
-        self._datavis_widget.set_datavis(column.datavis if column.state == "ready" else {"kind": "empty"})
+        self._datavis_widget.set_datavis(
+            column.datavis
+            if column.state in ("ready", "stale")
+            else {"kind": "empty"}
+        )
 
 
 class _ProjectColumnsWorker(QThread):
@@ -709,9 +733,9 @@ class _ProjectColumnsWorker(QThread):
 
     Emits ``tier_ready(generation, list)`` for each successful tier and
     ``tier_failed(generation, tier, message)`` for each failed tier. The cheap "live" tier
-    (Movies/Gameplay/Illustrations — computed from metadata, palette caches,
-    and the illustration index), and again for the persisted-cache tier
-    (Shots/Vocabulary/Segments/Flipbooks — reported as
+    (Movies/Gameplay/Silhouettes/Engravings — computed from metadata, palette
+    caches, and the illustration index), and again for the
+    persisted-cache tier (Shots/Vocabulary — reported as
     "unavailable"/"stale" rather than recomputed if the cache is missing or
     out of date) — so the GUI can display each tier as soon as it's ready
     instead of waiting for both.
@@ -856,6 +880,9 @@ class ProjectVisualizer(WindowVisualizer):
         self._thumbnail_palette_active_media = ""
         self._thumbnail_palette_project_path = ""
         self._thumbnail_palette_errors: list[str] = []
+        self._vocabulary_proc: subprocess.Popen | None = None
+        self._vocabulary_output = None
+        self._vocabulary_project_path = ""
 
         # visual sizing hint
         self.setMinimumSize(900, 560)
@@ -1263,13 +1290,27 @@ class ProjectVisualizer(WindowVisualizer):
     def _build_tools_section(self) -> CollapsibleSection:
         sec = CollapsibleSection("Tools", pref_key="project_section_tools")
 
+        self._tools_buttons_widget = QWidget()
+        buttons_layout = QHBoxLayout(self._tools_buttons_widget)
+        buttons_layout.setContentsMargins(0, 0, 0, 0)
+        buttons_layout.setSpacing(theme.INSPECTOR_GAP)
+
         self.thumbnail_palettes_btn = QPushButton("Thumbnail Palettes")
         self.thumbnail_palettes_btn.clicked.connect(self._on_thumbnail_palettes)
         self.thumbnail_palettes_btn.setStyleSheet(theme.action_button_stylesheet())
         self.thumbnail_palettes_btn.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Fixed,
         )
-        sec.add_widget(self.thumbnail_palettes_btn)
+        buttons_layout.addWidget(self.thumbnail_palettes_btn, 1)
+
+        self.rebuild_vocabulary_btn = QPushButton("Rebuild Vocabulary")
+        self.rebuild_vocabulary_btn.clicked.connect(self._on_rebuild_vocabulary)
+        self.rebuild_vocabulary_btn.setStyleSheet(theme.action_button_stylesheet())
+        self.rebuild_vocabulary_btn.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Fixed,
+        )
+        buttons_layout.addWidget(self.rebuild_vocabulary_btn, 1)
+        sec.add_widget(self._tools_buttons_widget)
 
         self._tools_loading_bar = SweepBar(self)
         self._tools_loading_timer = QTimer(self)
@@ -1280,12 +1321,18 @@ class ProjectVisualizer(WindowVisualizer):
         self._thumbnail_palette_poll_timer.timeout.connect(
             self._poll_thumbnail_palette_cli
         )
+        self._vocabulary_poll_timer = QTimer(self)
+        self._vocabulary_poll_timer.setInterval(250)
+        self._vocabulary_poll_timer.timeout.connect(self._poll_vocabulary_cli)
         sec.set_subbar(self._tools_loading_bar)
         self._tools_section = sec
         return sec
 
     def _on_thumbnail_palettes(self) -> None:
-        if self._thumbnail_palette_proc is not None:
+        if (
+            self._thumbnail_palette_proc is not None
+            or self._vocabulary_proc is not None
+        ):
             return
 
         project_path = self.path_edit.text().strip()
@@ -1305,6 +1352,7 @@ class ProjectVisualizer(WindowVisualizer):
         self._thumbnail_palette_errors = []
         self.thumbnail_palettes_btn.setEnabled(False)
         self.thumbnail_palettes_btn.setText("Building Thumbnail Palettes…")
+        self.rebuild_vocabulary_btn.setEnabled(False)
         self.project_browse_btn.setEnabled(False)
         self._tools_loading_bar.start()
         self._tools_loading_timer.start()
@@ -1383,12 +1431,91 @@ class ProjectVisualizer(WindowVisualizer):
         self._tools_loading_bar.stop()
         self.thumbnail_palettes_btn.setText("Thumbnail Palettes")
         self.thumbnail_palettes_btn.setEnabled(True)
+        self.rebuild_vocabulary_btn.setEnabled(True)
         self.project_browse_btn.setEnabled(True)
         self._thumbnail_palette_media_queue = []
         self._thumbnail_palette_errors = []
 
         if error is not None:
             QMessageBox.critical(self, "Thumbnail Palettes failed", error)
+            return
+
+        self._start_project_columns_load(force=True)
+
+    def _on_rebuild_vocabulary(self) -> None:
+        if (
+            self._vocabulary_proc is not None
+            or self._thumbnail_palette_proc is not None
+        ):
+            return
+
+        project_path = self.path_edit.text().strip()
+        if not project_path:
+            QMessageBox.warning(
+                self, "No Project", "Please set a project folder first.",
+            )
+            return
+
+        if _prefs.get("path") != project_path:
+            _prefs.set("path", project_path)
+
+        output = tempfile.TemporaryFile(mode="w+b")
+        try:
+            process = _start_vocabulary_cli(project_path, output)
+        except Exception as exc:
+            output.close()
+            QMessageBox.critical(
+                self,
+                "Vocabulary rebuild failed",
+                f"{type(exc).__name__}: {exc}",
+            )
+            return
+
+        self._vocabulary_project_path = project_path
+        self._vocabulary_output = output
+        self._vocabulary_proc = process
+        self.thumbnail_palettes_btn.setEnabled(False)
+        self.rebuild_vocabulary_btn.setEnabled(False)
+        self.rebuild_vocabulary_btn.setText("Building Vocabulary…")
+        self.project_browse_btn.setEnabled(False)
+        self._tools_loading_bar.start()
+        self._tools_loading_timer.start()
+        self._vocabulary_poll_timer.start()
+
+    def _poll_vocabulary_cli(self) -> None:
+        process = self._vocabulary_proc
+        if process is None:
+            return
+
+        returncode = process.poll()
+        if returncode is None:
+            return
+
+        output_stream = self._vocabulary_output
+        output_text = ""
+        if output_stream is not None:
+            try:
+                output_stream.seek(0)
+                output_text = output_stream.read().decode(
+                    "utf-8", errors="replace",
+                ).strip()
+            finally:
+                output_stream.close()
+
+        self._vocabulary_proc = None
+        self._vocabulary_output = None
+        self._vocabulary_project_path = ""
+        self._vocabulary_poll_timer.stop()
+        self._tools_loading_timer.stop()
+        self._tools_loading_bar.stop()
+        self.thumbnail_palettes_btn.setEnabled(True)
+        self.rebuild_vocabulary_btn.setEnabled(True)
+        self.rebuild_vocabulary_btn.setText("Rebuild Vocabulary")
+        self.project_browse_btn.setEnabled(True)
+
+        if returncode != 0:
+            detail = output_text or f"CLI exited with status {returncode}."
+            QMessageBox.critical(self, "Vocabulary rebuild failed", detail)
             return
 
         self._start_project_columns_load(force=True)
