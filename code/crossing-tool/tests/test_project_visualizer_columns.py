@@ -3886,3 +3886,68 @@ def test_format_column_count(count, expected):
     from visualizers.project_visualizer import _format_column_count
 
     assert _format_column_count(count) == expected
+
+
+# ---------------------------------------------------------------------------
+# Backup section: low-disk-space warning
+# ---------------------------------------------------------------------------
+
+def _build_project_window(monkeypatch, fake_prefs, tmp_path, free_bytes):
+    fake_prefs["path"] = str(tmp_path)
+    fake_prefs["backup_path"] = str(tmp_path)
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._ProjectColumnsWorker.start",
+        lambda self: None,
+    )
+    monkeypatch.setattr(
+        "visualizers.project_visualizer._backup_free_bytes",
+        lambda path: free_bytes,
+    )
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    return ProjectVisualizer()
+
+
+def test_backup_button_warns_when_backup_volume_is_full(
+    app, fake_prefs, monkeypatch, tmp_path,
+):
+    window = _build_project_window(monkeypatch, fake_prefs, tmp_path, 0)
+    try:
+        assert window.backup_btn.text() == "Free Space: 0 GB"
+        assert theme.WARNING_COLOR in window.backup_btn.styleSheet()
+        assert "full" in window.backup_btn.toolTip()
+        assert window.backup_btn.isEnabled()
+    finally:
+        window.close()
+
+
+def test_backup_button_is_normal_when_space_is_available(
+    app, fake_prefs, monkeypatch, tmp_path,
+):
+    window = _build_project_window(
+        monkeypatch, fake_prefs, tmp_path, 500 * 1024 ** 3,
+    )
+    try:
+        assert window.backup_btn.text() == "Backup"
+        assert theme.WARNING_COLOR not in window.backup_btn.styleSheet()
+        assert window.backup_btn.toolTip() == ""
+    finally:
+        window.close()
+
+
+def test_backup_button_stays_normal_when_free_space_is_unreadable(
+    app, fake_prefs, monkeypatch, tmp_path,
+):
+    window = _build_project_window(monkeypatch, fake_prefs, tmp_path, None)
+    try:
+        assert window.backup_btn.text() == "Backup"
+        assert theme.WARNING_COLOR not in window.backup_btn.styleSheet()
+    finally:
+        window.close()
+
+
+def test_backup_free_space_threshold_matches_cli_abort_threshold():
+    import cli as cli_mod
+    from visualizers.project_visualizer import _BACKUP_MIN_FREE_BYTES
+
+    assert _BACKUP_MIN_FREE_BYTES == cli_mod.BACKUP_MIN_FREE_BYTES

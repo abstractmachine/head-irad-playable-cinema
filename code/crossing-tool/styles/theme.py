@@ -422,7 +422,7 @@ def table_stylesheet() -> str:
     """
 
 
-def action_button_stylesheet() -> str:
+def action_button_stylesheet(*, warning: bool = False) -> str:
     """Return the shared per-button stylesheet used for inspector action buttons.
 
     Qt Style Sheets cascade: once ANY ancestor of a widget has its own
@@ -435,10 +435,15 @@ def action_button_stylesheet() -> str:
     background/hover/pressed/checked/disabled look, matching the
     ``action_btn_style`` / ``_btn_style()`` convention already used by the
     Book and Illustration Visualizers.
+
+    Pass ``warning=True`` for the WARNING_COLOR variant used when a button
+    reports a blocking condition rather than an available action (e.g. the
+    Project Visualizer's Backup button when the backup volume is full).
     """
+    face = WARNING_COLOR if warning else BTN_BG
     return (
         f"QPushButton {{"
-        f"  background-color: {BTN_BG}; color: {TEXT};"
+        f"  background-color: {face}; color: {TEXT};"
         f"  border: none; border-radius: 3px; padding: 0 8px;"
         f"  min-height: {BTN_H}px; max-height: {BTN_H}px;"
         # Match the CollapsibleSection title font weight so button text
@@ -452,7 +457,7 @@ def action_button_stylesheet() -> str:
         # as an inversion of the hover state.
         f"QPushButton:pressed  {{ background-color: {ACCENT_TEXT}; color: {ACCENT}; }}"
         f"QPushButton:checked  {{ background-color: {ACCENT}; color: {ACCENT_TEXT}; }}"
-        f"QPushButton:disabled {{ background-color: {BTN_BG};"
+        f"QPushButton:disabled {{ background-color: {face};"
         f" color: rgba(255,255,255,0.15); }}"
     )
 

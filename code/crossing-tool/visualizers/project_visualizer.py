@@ -109,9 +109,22 @@ def _start_untyped_audit_cli(
         cwd=project_path,
     )
 
+
+def _backup_free_bytes(backup_path: str) -> Optional[int]:
+    """Return free bytes on the backup volume, or ``None`` if unreadable."""
+    import shutil
+    try:
+        return shutil.disk_usage(str(backup_path)).free
+    except Exception:
+        return None
+
 # ---------------------------------------------------------------------------
 # Constants mirrored from cli.py to avoid importing the full CLI module
 # ---------------------------------------------------------------------------
+
+# Mirrors cli.py's BACKUP_MIN_FREE_BYTES so the button warns exactly when
+# `crossing backup update` would refuse to run.
+_BACKUP_MIN_FREE_BYTES = 100 * 1024 * 1024
 
 _MODEL_KEYS = {
     "annotate":     "model_annotate",
@@ -1114,21 +1127,36 @@ class ProjectVisualizer(WindowVisualizer):
 
     def _refresh_backup_button(self) -> None:
         """Enable/disable the Backup button based on lightweight path checks."""
-        import shutil
         backup_path = _prefs.get("backup_path")
         if not backup_path:
             self.backup_btn.setEnabled(False)
+            self._set_backup_space_warning(None)
             return
         p = Path(backup_path)
         if not p.exists() or not os.access(str(p), os.W_OK):
             self.backup_btn.setEnabled(False)
+            self._set_backup_space_warning(None)
             return
-        # Optionally verify disk_usage is accessible (non-fatal if not)
-        try:
-            shutil.disk_usage(str(p))
-        except Exception:
-            pass
         self.backup_btn.setEnabled(True)
+        free = _backup_free_bytes(str(p))
+        self._set_backup_space_warning(
+            free if free is not None and free < _BACKUP_MIN_FREE_BYTES else None
+        )
+
+    def _set_backup_space_warning(self, free_bytes: Optional[int]) -> None:
+        """Show the out-of-space state on the Backup button, or clear it."""
+        if free_bytes is None:
+            self.backup_btn.setText("Backup")
+            self.backup_btn.setStyleSheet(theme.action_button_stylesheet())
+            self.backup_btn.setToolTip("")
+            return
+        free_gb = free_bytes / (1024 ** 3)
+        self.backup_btn.setText(f"Free Space: {free_gb:.0f} GB")
+        self.backup_btn.setStyleSheet(theme.action_button_stylesheet(warning=True))
+        self.backup_btn.setToolTip(
+            f"The backup volume is full ({free_gb:.1f} GB free) — "
+            "backups will not sync until space is freed."
+        )
 
     def _on_backup_run(self) -> None:
         import fcntl
@@ -1213,7 +1241,7 @@ class ProjectVisualizer(WindowVisualizer):
             self._backup_loading_timer.stop()
             self._backup_loading_bar.stop()
             self.backup_browse_btn.setEnabled(True)
-            self.backup_btn.setText("Backup")
+            self._refresh_backup_button()
 
     # ------------------------------------------------------------------
     # Defaults

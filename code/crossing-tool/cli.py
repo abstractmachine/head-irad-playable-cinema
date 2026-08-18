@@ -7493,6 +7493,11 @@ def _require_path():
 # Backup
 # ---------------------------------------------------------------------------
 
+# Minimum free space on the backup volume below which a backup is refused.
+# Mirrored by visualizers/project_visualizer.py's _BACKUP_MIN_FREE_BYTES.
+BACKUP_MIN_FREE_BYTES = 100 * 1024 * 1024
+
+
 def _validate_backup_paths() -> tuple[str, str]:
     """Validate project and backup paths. Returns (project_path, backup_path) or exits."""
     project_path = prefs.get("path")
@@ -7534,7 +7539,7 @@ def _backup_update(project_path: str, backup_path: str, dry_run: bool = False) -
         usage = shutil.disk_usage(str(backup))
         free_gb = usage.free / (1024 ** 3)
         print(f"  Free space on backup volume: {free_gb:.1f} GB")
-        if not dry_run and usage.free < 100 * 1024 * 1024:  # less than 100 MB
+        if not dry_run and usage.free < BACKUP_MIN_FREE_BYTES:
             print(f"✗ Backup volume is full ({free_gb:.1f} GB free) — aborting", file=sys.stderr)
             sys.exit(1)
     except Exception:
