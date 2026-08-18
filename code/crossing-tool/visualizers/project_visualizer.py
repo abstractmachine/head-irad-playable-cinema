@@ -9,6 +9,7 @@ Opened via:
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -117,6 +118,18 @@ def _backup_free_bytes(backup_path: str) -> Optional[int]:
         return shutil.disk_usage(str(backup_path)).free
     except Exception:
         return None
+
+
+# rsync --info=progress2 emits "<bytes>  <pct>%  <rate>  <eta>" separated by \r.
+_RSYNC_PERCENT_RE = re.compile(r"\s(\d{1,3})%\s")
+
+
+def _parse_rsync_percent(text: str) -> Optional[int]:
+    """Return the most recent whole-transfer percentage in *text*, or ``None``."""
+    matches = _RSYNC_PERCENT_RE.findall(text)
+    if not matches:
+        return None
+    return min(100, max(0, int(matches[-1])))
 
 # ---------------------------------------------------------------------------
 # Constants mirrored from cli.py to avoid importing the full CLI module
@@ -969,6 +982,7 @@ class ProjectVisualizer(WindowVisualizer):
         self._backup_master_fd: int = -1
         self._backup_stdout_buf: bytes = b""
         self._backup_anim_frame: int = 0
+        self._backup_percent: Optional[int] = None
         self._thumbnail_palette_proc: subprocess.Popen | None = None
         self._thumbnail_palette_output = None
         self._thumbnail_palette_media_queue: list[str] = []
@@ -1192,6 +1206,7 @@ class ProjectVisualizer(WindowVisualizer):
 
         self._backup_stdout_buf = b""
         self._backup_anim_frame = 0
+        self._backup_percent = None
         self.backup_browse_btn.setEnabled(False)
         self.backup_btn.setText("Backing Up")
         self._backup_loading_bar.start()
@@ -1220,14 +1235,24 @@ class ProjectVisualizer(WindowVisualizer):
         # Drain any available output from the pty master
         try:
             chunk = os.read(self._backup_master_fd, 4096)
-            self._backup_stdout_buf += chunk
+            # Only the tail matters — rsync repeats the whole progress line.
+            self._backup_stdout_buf = (self._backup_stdout_buf + chunk)[-4096:]
+            percent = _parse_rsync_percent(
+                self._backup_stdout_buf.decode("utf-8", errors="ignore")
+            )
+            if percent is not None:
+                self._backup_percent = percent
         except (BlockingIOError, OSError):
             pass
 
-        # Animate the button label: "Backing Up", "Backing Up.", "Backing Up..", "Backing Up..."
-        self._backup_anim_frame = (self._backup_anim_frame + 1) % 4
-        dots = "." * self._backup_anim_frame
-        self.backup_btn.setText(f"Backing Up{dots}")
+        if self._backup_percent is not None:
+            self.backup_btn.setText(f"Backing Up {self._backup_percent}%")
+        else:
+            # No progress line yet (rsync is still building its file list, or
+            # the shutil fallback is running) — fall back to the dots animation.
+            self._backup_anim_frame = (self._backup_anim_frame + 1) % 4
+            dots = "." * self._backup_anim_frame
+            self.backup_btn.setText(f"Backing Up{dots}")
 
         # Check if the process has finished
         if self._backup_proc is None or self._backup_proc.poll() is not None:

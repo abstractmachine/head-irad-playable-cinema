@@ -15,6 +15,7 @@ import json
 import subprocess
 import sys
 import threading
+from types import SimpleNamespace
 
 import pytest
 from PyQt5.QtCore import QEvent, QPoint, Qt
@@ -3951,3 +3952,90 @@ def test_backup_free_space_threshold_matches_cli_abort_threshold():
     from visualizers.project_visualizer import _BACKUP_MIN_FREE_BYTES
 
     assert _BACKUP_MIN_FREE_BYTES == cli_mod.BACKUP_MIN_FREE_BYTES
+
+
+# ---------------------------------------------------------------------------
+# Backup section: rsync progress percentage
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("text, expected", [
+    ("", None),
+    ("Backing up project to: /media/backup\r\n", None),
+    ("\r      1,234,567  42%    3.45MB/s    0:00:12", 42),
+    ("\r  1,000  7%  1MB/s  0:01:00\r  2,000  9%  1MB/s  0:00:50", 9),
+    ("\r  9,999,999,999  100%  120MB/s    0:00:00 (xfr#4, to-chk=0/9)", 100),
+    ("  Free space on backup volume: 3.5 GB\r\n", None),
+])
+def test_parse_rsync_percent(text, expected):
+    from visualizers.project_visualizer import _parse_rsync_percent
+
+    assert _parse_rsync_percent(text) == expected
+
+
+def test_backup_button_shows_rsync_percentage_while_running(
+    app, fake_prefs, monkeypatch, tmp_path,
+):
+    window = _build_project_window(
+        monkeypatch, fake_prefs, tmp_path, 500 * 1024 ** 3,
+    )
+    try:
+        window._backup_proc = SimpleNamespace(poll=lambda: None)
+        window._backup_master_fd = -1
+        monkeypatch.setattr(
+            "visualizers.project_visualizer.os.read",
+            lambda fd, size: b"\r      1,234,567  42%    3.45MB/s    0:00:12",
+        )
+
+        window._poll_backup_proc()
+
+        assert window.backup_btn.text() == "Backing Up 42%"
+    finally:
+        window._backup_proc = None
+        window.close()
+
+
+def test_backup_button_falls_back_to_dots_before_first_progress_line(
+    app, fake_prefs, monkeypatch, tmp_path,
+):
+    window = _build_project_window(
+        monkeypatch, fake_prefs, tmp_path, 500 * 1024 ** 3,
+    )
+    try:
+        window._backup_proc = SimpleNamespace(poll=lambda: None)
+        window._backup_master_fd = -1
+        monkeypatch.setattr(
+            "visualizers.project_visualizer.os.read",
+            lambda fd, size: b"Backing up project to: /media/backup\r\n",
+        )
+
+        window._poll_backup_proc()
+        assert window.backup_btn.text() == "Backing Up."
+        window._poll_backup_proc()
+        assert window.backup_btn.text() == "Backing Up.."
+    finally:
+        window._backup_proc = None
+        window.close()
+
+
+def test_backup_output_buffer_is_bounded(
+    app, fake_prefs, monkeypatch, tmp_path,
+):
+    window = _build_project_window(
+        monkeypatch, fake_prefs, tmp_path, 500 * 1024 ** 3,
+    )
+    try:
+        window._backup_proc = SimpleNamespace(poll=lambda: None)
+        window._backup_master_fd = -1
+        monkeypatch.setattr(
+            "visualizers.project_visualizer.os.read",
+            lambda fd, size: b"\r  1,000  55%  1MB/s  0:01:00" * 100,
+        )
+
+        for _ in range(20):
+            window._poll_backup_proc()
+
+        assert len(window._backup_stdout_buf) <= 4096
+        assert window.backup_btn.text() == "Backing Up 55%"
+    finally:
+        window._backup_proc = None
+        window.close()
