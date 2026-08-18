@@ -14,7 +14,7 @@ colours itself.
 
 Output
 ------
-PDF: ``<project>/output/palettes/<stem>-palette.pdf``
+PDF: ``<project>/outputs/palettes/<stem>-palette.pdf``
 """
 
 from __future__ import annotations
@@ -118,10 +118,10 @@ def render_palette_page(shots: list[dict]) -> Image.Image:
 def get_palette_output_path(project_path: str, filename: str) -> Path:
     """Return the canonical PDF output path for a palette contact sheet.
 
-    ``<project>/output/palettes/<stem>-palette.pdf``
+    ``<project>/outputs/palettes/<stem>-palette.pdf``
     """
     stem = Path(filename).stem
-    return Path(project_path) / "output" / "palettes" / f"{stem}-palette.pdf"
+    return Path(project_path) / "outputs" / "palettes" / f"{stem}-palette.pdf"
 
 
 def export_palette_pdf(

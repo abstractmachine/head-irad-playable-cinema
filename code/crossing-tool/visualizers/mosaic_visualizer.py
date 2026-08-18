@@ -1075,7 +1075,7 @@ class PdfExportWorker(QThread):
             else:
                 base = "mosaic"
             out_path = (
-                Path(self.project_path) / "output" / "mosaics"
+                Path(self.project_path) / "outputs" / "mosaics"
                 / (self.subfolder or "searches")
                 / f"{base} [{stamp}].pdf"
             )
@@ -1266,7 +1266,7 @@ class MosaicVisualizer(WindowVisualizer):
         self.video_btn.setEnabled(False)
         self.video_btn.setToolTip(
             "Generate a looping video mosaic (.mp4) from the current results\n"
-            "saved to output/mosaics/video/search/"
+            "saved to outputs/mosaics/video/search/"
         )
         self.video_btn.clicked.connect(self._on_save_video)
         btn_grid.addWidget(self.video_btn, 2, 1)

@@ -43,7 +43,7 @@ The annotation field to count vocabulary from (e.g. `wearing`, `objects`, `actio
 #### Actions
 
 - **Generate** — Re-render the cloud with the current settings
-- **Save PDF** — Export the cloud as a PDF file to `output/clouds/`
+- **Save PDF** — Export the cloud as a PDF file to `outputs/clouds/`
 
 The status line below the buttons shows the output filename after saving.
 

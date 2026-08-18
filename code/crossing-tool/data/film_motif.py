@@ -8,7 +8,7 @@ Storage schema
 --------------
 The title is stored as Flipbook output in a dedicated per-film file at:
 
-    <project>/output/flipbooks/<media_type>/<stem>-title.json
+    <project>/outputs/flipbooks/<media_type>/<stem>-title.json
 
 Schema::
 
@@ -389,11 +389,11 @@ def normalize_film_title(text: str) -> str:
 def get_film_title_path(project_path: str, filename: str, media_type: str) -> "Path":
     """Return the canonical path for the per-film title JSON file.
 
-    ``<project>/output/flipbooks/<media_type>/<stem>-title.json``
+    ``<project>/outputs/flipbooks/<media_type>/<stem>-title.json``
     """
     stem = Path(filename).stem
     return (
-        Path(project_path) / "output" / "flipbooks" / media_type
+        Path(project_path) / "outputs" / "flipbooks" / media_type
         / f"{stem}-title.json"
     )
 
@@ -495,7 +495,7 @@ def generate_film_title(
 
     The title is derived from the complete shot motif progression stored in
     the annotation JSON.  It is cached under
-    ``<project>/output/flipbooks/<media_type>/<stem>-title.json``.
+    ``<project>/outputs/flipbooks/<media_type>/<stem>-title.json``.
 
     Parameters
     ----------

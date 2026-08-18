@@ -8,7 +8,7 @@ Architecture:
 
 Typical use:
     items = [MosaicItem(image_path=p, caption="Title") for p in paths]
-    render_mosaic(items, Path("output/mosaics/movies-thumbnails-mosaic.png"))
+    render_mosaic(items, Path("outputs/mosaics/movies-thumbnails-mosaic.png"))
 """
 
 from __future__ import annotations
@@ -454,7 +454,7 @@ def mosaic_from_search_results(
         results:      List of result dicts from ``search_shots()["results"]``.
         project_path: Project root directory.
         output_path:  Destination file (auto-generated under
-                      ``output/mosaics/`` if not provided).
+                      ``outputs/mosaics/`` if not provided).
         layout:       ``"landscape"`` (wider) or ``"portrait"`` (taller grid).
         show_captions: Draw ``movie_title`` below each tile.
 
@@ -514,7 +514,7 @@ def mosaic_from_search_results(
     else:
         stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
         dest = (
-            Path(project_path) / "output" / "mosaics"
+            Path(project_path) / "outputs" / "mosaics"
             / f"search-mosaic-{stamp}.png"
         )
 
@@ -814,7 +814,7 @@ def mosaic_pdf_from_shots(
         best_mode:    Use precomputed CLIP best-frame PNGs instead of the raw
                       first frame of each shot.
         output_path:  Override destination path (default: auto-named PDF under
-                      ``output/mosaics/``).
+                      ``outputs/mosaics/``).
         verbose:      Print progress to stderr.
         progress_cb:  Optional ``callable(current, total)`` called after each
                       image is loaded (for live progress reporting).
@@ -835,7 +835,7 @@ def mosaic_pdf_from_shots(
     else:
         stem  = _re.sub(r'[/\\:*?"<>|]', '_', Path(filename).stem)
         stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-        dest  = Path(project_path) / "output" / "mosaics" / "shots" / f"{stem} [{stamp}].pdf"
+        dest  = Path(project_path) / "outputs" / "mosaics" / "shots" / f"{stem} [{stamp}].pdf"
 
     return render_mosaic(items, dest, layout="landscape",
                          verbose=verbose, progress_cb=progress_cb)
@@ -880,7 +880,7 @@ def mosaic_pdf_from_scenes(
     else:
         stem  = _re.sub(r'[/\\:*?"<>|]', '_', Path(filename).stem)
         stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-        dest  = Path(project_path) / "output" / "mosaics" / "scenes" / f"{stem} [{stamp}].pdf"
+        dest  = Path(project_path) / "outputs" / "mosaics" / "scenes" / f"{stem} [{stamp}].pdf"
 
     return render_mosaic(items, dest, layout="landscape",
                          verbose=verbose, progress_cb=progress_cb)
@@ -1066,7 +1066,7 @@ def mosaic_video_from_search_results(
         filename = f"mosaic-video-{stamp}.mp4"
 
     output_path = (
-        Path(project_path) / "output" / "mosaics" / "video" / "search" / filename
+        Path(project_path) / "outputs" / "mosaics" / "video" / "search" / filename
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1121,7 +1121,7 @@ def export_frames_from_search_results(
 
     Files are written to::
 
-        <project>/output/exports/<stem>-<YYYY-MM-DD-HH-MM-SS>/
+        <project>/outputs/exports/<stem>-<YYYY-MM-DD-HH-MM-SS>/
 
     where *stem* is the sanitised query string.  Each file is named::
 
@@ -1155,7 +1155,7 @@ def export_frames_from_search_results(
     stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     safe_query = re.sub(r"[^\w\-]", "_", query)[:40].strip("_")
     folder_name = f"{safe_query}-{stamp}"
-    export_dir = Path(project_path) / "output" / "exports" / folder_name
+    export_dir = Path(project_path) / "outputs" / "exports" / folder_name
     export_dir.mkdir(parents=True, exist_ok=True)
 
     # Info bar visual constants

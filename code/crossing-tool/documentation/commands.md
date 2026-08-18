@@ -572,7 +572,7 @@ crossing generate mosaic scenes --all              # one PDF per movie
 | `--no-open` | — | Do not open the result in the desktop viewer |
 | `--notify` | — | Discord notification when finished |
 
-Output is saved to `<project>/output/mosaics/` (`searches/` sub-folder for search results, `shots/` for shot PDFs, `scenes/` for scene PDFs).
+Output is saved to `<project>/outputs/mosaics/` (`searches/` sub-folder for search results, `shots/` for shot PDFs, `scenes/` for scene PDFs).
 
 #### Mosaic flags (shots / scenes):
 
@@ -612,7 +612,7 @@ crossing generate composition "close-up gun"
 | `--no-open` | — | Skip opening the result in the desktop viewer |
 | `--notify` | — | Discord notification when done |
 
-Output is saved to `<project>/output/compositions/`.
+Output is saved to `<project>/outputs/compositions/`.
 
 ### Cloud
 
@@ -654,7 +654,7 @@ crossing visualizer cloud
 | `--notify` | — | Discord notification when done |
 | `--visualizer` | — | Open the interactive GUI instead of saving |
 
-Output is saved to `<project>/output/clouds/`.
+Output is saved to `<project>/outputs/clouds/`.
 
 ## API Keys
 

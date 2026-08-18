@@ -1,7 +1,7 @@
 """Book data module — create, delete, list, and manage PDF books.
 
 Books live inside:
-    <project>/output/books/<slug>/
+    <project>/outputs/books/<slug>/
 
 Each book folder contains:
     book.json   — metadata (slug, pdf reference, page count)
@@ -21,7 +21,7 @@ from pathlib import Path
 
 def books_dir(project_path: str) -> Path:
     """Return the root books directory for the project."""
-    return Path(project_path) / "output" / "books"
+    return Path(project_path) / "outputs" / "books"
 
 
 def book_dir(project_path: str, slug: str) -> Path:

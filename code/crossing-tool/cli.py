@@ -3550,7 +3550,7 @@ def cmd_composition(args):
             from pathlib import Path as _Path
             out = save_tableau(
                 tableau, query,
-                _Path(project_path) / "output" / "compositions",
+                _Path(project_path) / "outputs" / "compositions",
             )
 
         movie = result.get("movie_title", result.get("movie_id", ""))
@@ -3672,7 +3672,7 @@ def _mosaic_thumbnails(args):
         import datetime
         stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
         output_path = (
-            Path(project_path) / "output" / "mosaics"
+            Path(project_path) / "outputs" / "mosaics"
             / f"{media_type}-thumbnails-mosaic-{stamp}.png"
         )
 
@@ -3764,7 +3764,7 @@ def _mosaic_shots(args):
                 discord_notify(f"✗ Mosaic shots failed: {Path(filename).stem}\n{exc}", project_path)
 
     if open_result and len(filenames) > 1:
-        subprocess.Popen(["xdg-open", str(Path(project_path) / "output" / "mosaics")])
+        subprocess.Popen(["xdg-open", str(Path(project_path) / "outputs" / "mosaics")])
 
     if notify:
         from services.notify import discord_notify
@@ -3843,7 +3843,7 @@ def _mosaic_scenes(args):
                 discord_notify(f"✗ Mosaic scenes failed: {Path(filename).stem}\n{exc}", project_path)
 
     if open_result and len(filenames) > 1:
-        subprocess.Popen(["xdg-open", str(Path(project_path) / "output" / "mosaics")])
+        subprocess.Popen(["xdg-open", str(Path(project_path) / "outputs" / "mosaics")])
 
     if notify:
         from services.notify import discord_notify
@@ -7267,7 +7267,7 @@ def _book_new(args):
         sys.exit(1)
     prefs.set("current_book", slug)
     print(f"✓ Created book: {slug}")
-    print(f"  Path: {project_path}/output/books/{slug}")
+    print(f"  Path: {project_path}/outputs/books/{slug}")
     print(f"  Set as current book.")
 
 
@@ -8346,7 +8346,7 @@ def build_parser():
     )
     p_mosaic_thumbnails.add_argument(
         "--output", default=None, metavar="PATH",
-        help="Override output file path (default: output/mosaics/<media>-thumbnails-mosaic.png)",
+        help="Override output file path (default: outputs/mosaics/<media>-thumbnails-mosaic.png)",
     )
     p_mosaic_thumbnails.add_argument(
         "--layout", choices=["portrait", "landscape"], default="landscape",
@@ -8499,7 +8499,7 @@ def build_parser():
     )
     p_cloud.add_argument(
         "--output", default=None, metavar="PATH",
-        help="Override output file path (default: output/clouds/<scope>-<field>-cloud-<stamp>.pdf)",
+        help="Override output file path (default: outputs/clouds/<scope>-<field>-cloud-<stamp>.pdf)",
     )
     p_cloud.add_argument(
         "--no-open", action="store_true", dest="no_open",
@@ -9232,7 +9232,7 @@ def build_parser():
         "--visualize", action="store_true",
         help=(
             "Write pre-crop source, palette, semantic-overlay, and diagnostic "
-            "JSON artifacts under output/test/palette (requires --thumbnail; "
+            "JSON artifacts under outputs/test/palette (requires --thumbnail; "
             "cached items still require --force to recompute)"
         ),
     )

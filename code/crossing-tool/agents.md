@@ -34,7 +34,7 @@ MCP server    ──┘         (algorithms,              (canonical
   function a CLI command calls — never a reimplementation of that logic in Qt code.
 - **MCP exposes a curated, safety-limited subset of the same capabilities** to LLM
   clients (Claude Desktop, etc.) — read-only tools plus a handful of generation tools
-  that only ever write to `output/`. It must never contain business logic of its own;
+  that only ever write to `outputs/`. It must never contain business logic of its own;
   it calls `data.*`/`services.*` exactly like the CLI does.
 - **`data/` is canonical state I/O.** It owns the on-disk schema and read/write
   functions for project state (metadata, shotlists, annotations, motifs, palettes,
@@ -44,7 +44,7 @@ MCP server    ──┘         (algorithms,              (canonical
   caches or trigger heavier pipelines (CLIP/SAM3/TransNetV2/FLUX/OpenAI).
 - **`generators/` are pure renderers.** They consume already-computed data (annotations,
   motifs, palettes, search results) and produce PDFs/images. They never write back to
-  `data/` — only to `output/`. They may call into `data.*`/`services.*` to *read*, but
+  `data/` — only to `outputs/`. They may call into `data.*`/`services.*` to *read*, but
   are themselves only ever called from `cli.py`, `visualizers/`, or `mcp_server/`.
 - **No ORM, almost no dataclasses/schemas.** Nearly all cross-module data is plain
   dicts with implicit, docstring-documented schemas. The only real dataclasses are
@@ -290,7 +290,7 @@ paint/behavior level without forcing a structurally incompatible base class.
     `visualizers/shot_visualizer.py`, `data/motif.py` — grep
     `get_annotation_json_path` before assuming a migration/audit of this file is
     complete)
-  - `data/book.py` + `visualizers/book_visualizer.py`'s 3 sidecars → `output/books/<slug>/`
+  - `data/book.py` + `visualizers/book_visualizer.py`'s 3 sidecars → `outputs/books/<slug>/`
     (`book.json`, `layers.json`, `selections.json`, `mask.json`)
   - `data/film_motif.py` → `data/film_titles/<type>/<file>.json` (per-film semantic title)
 - **Derived/cache data** (regenerable from canonical data + a model pipeline):
@@ -313,7 +313,7 @@ paint/behavior level without forcing a structurally incompatible base class.
 - **Relationship**: `services/` and `generators/` read canonical `data/` state (via
   lazy, function-local `from data.X import Y` — this is the dominant import style, not
   a stylistic accident: it avoids circular imports and defers heavy/optional model
-  loading) and write to caches or `output/`. `generators/` almost never import from
+  loading) and write to caches or `outputs/`. `generators/` almost never import from
   `data/`/`services/` at all besides the reads they need to render — the one confirmed
   exception is `services/frame_retrieval.py` importing `generators.mosaic` for frame
   extraction, a justified, narrow reuse.
@@ -357,9 +357,9 @@ mirroring `_ctx()`'s own "tuple on success, JSON error string on failure" conven
 
 **Access policy** (by convention + a shared `_output_dir()` helper, not sandboxed):
 tools read freely from `data/`, `media/`, `preferences/`; generation tools write
-**only** under `output/<subdir>/` (flipbooks, mosaics, clouds, compositions, catalogs).
-The generic derived-workspace conventions are `output/agent/` for scratch or working
-artifacts and `output/review/` for reviewable or provisional artifacts; these names do
+**only** under `outputs/<subdir>/` (flipbooks, mosaics, clouds, compositions, catalogs).
+The generic derived-workspace conventions are `outputs/agent/` for scratch or working
+artifacts and `outputs/review/` for reviewable or provisional artifacts; these names do
 not imply a queue or promotion workflow. No tool ever writes to
 `data/annotations/`, `data/shotlists/`, `data/metadata/`, or `preferences/` — anything
 destructive or expensive (annotation, motif generation, palette building, shotlist

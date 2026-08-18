@@ -337,12 +337,12 @@ def _count_shots_with_best_frame(project_path: str) -> dict[str, int]:
 
 
 def _count_flipbooks(project_path: str) -> int:
-    """Count generated flipbook PDFs under output/flipbooks/.
+    """Count generated flipbook PDFs under outputs/flipbooks/.
 
     Mirrors generators/flipbook.py's documented output path convention
-    (``<project>/output/flipbooks/<stem>-flipbook.pdf``).
+    (``<project>/outputs/flipbooks/<stem>-flipbook.pdf``).
     """
-    base = Path(project_path) / "output" / "flipbooks"
+    base = Path(project_path) / "outputs" / "flipbooks"
     if not base.exists():
         return 0
     return sum(1 for f in base.glob("*-flipbook.pdf"))
@@ -480,7 +480,7 @@ def get_corpus_stats(project_path: str) -> dict[str, Any]:
         # Assets
         "subtitle_files": subtitle_files,
         "shotlists": shotlists,
-        # Flipbooks (generated PDFs under output/flipbooks/)
+        # Flipbooks (generated PDFs under outputs/flipbooks/)
         "flipbooks": flipbooks,
     }
 

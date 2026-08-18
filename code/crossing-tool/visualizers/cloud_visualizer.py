@@ -668,14 +668,14 @@ class CloudVisualizer(WindowVisualizer):
         style      = self.style_combo.currentData() or "default"
         width, height = self._resolve_dimensions()
 
-        # Generate into the project's output/clouds/ folder (temporary name)
+        # Generate into the project's outputs/clouds/ folder (temporary name)
         import datetime
         stamp      = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
         import re
         scope_slug = re.sub(r"[^\w]+", "-", scope or media_type).strip("-")
         field_slug = re.sub(r"[^\w]+", "-", field or "all").strip("-")
         out_path   = (
-            Path(self.project_path) / "output" / "clouds"
+            Path(self.project_path) / "outputs" / "clouds"
             / f"{scope_slug}-{field_slug}-cloud-{stamp}.pdf"
         )
 

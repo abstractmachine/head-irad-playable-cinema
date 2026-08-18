@@ -4,7 +4,7 @@ mcp_server/mcp_server.py — Crossing MCP server v2 for Playable Cinema.
 Access policy
 -------------
 READ-ONLY  : data/, media/, preferences/  (reads only, never mutated)
-OUTPUT     : output/  (write to output/ subdirectories only)
+OUTPUT     : outputs/  (write to outputs/ subdirectories only)
 FORBIDDEN  : no writes to data/annotations/, data/shotlists/, data/metadata/,
              preferences/, or media/
 
@@ -42,13 +42,13 @@ Tier 1 — Image retrieval (5 tools, return JPEG thumbnails directly):
   get_best_frame, get_best_frames, get_palette_frames,
   get_motif_frames, get_context_frames
 
-Tier 2 — Generation, writes to output/ only (5 tools):
+Tier 2 — Generation, writes to outputs/ only (5 tools):
   generate_flipbook, generate_mosaic, generate_cloud,
   generate_composition, generate_catalog
 
 Output folder convention
 ------------------------
-  <project>/output/
+  <project>/outputs/
     flipbooks/           ← generate_flipbook
     mosaics/             ← generate_mosaic
     clouds/              ← generate_cloud
@@ -155,8 +155,8 @@ def _resolve_single_film(project_path: str, film: str, media_type: str) -> "tupl
 
 
 def _output_dir(project_path: str, subdir: str) -> Path:
-    """Return and create an output subdirectory under <project>/output/."""
-    d = Path(project_path) / "output" / subdir
+    """Return and create an output subdirectory under <project>/outputs/."""
+    d = Path(project_path) / "outputs" / subdir
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -1500,7 +1500,7 @@ def get_best_silhouette(
 
 
 # ===========================================================================
-# TIER 2 — GENERATION TOOLS (write to output/ only)
+# TIER 2 — GENERATION TOOLS (write to outputs/ only)
 # ===========================================================================
 
 @mcp.tool()
@@ -1516,7 +1516,7 @@ def generate_flipbook(
     the film semantic title; back cover shows original title and year.
 
     Requires: motif data (data/motifs/) and palette data (data/palettes/).
-    Output: output/flipbooks/<stem>-flipbook.pdf
+    Output: outputs/flipbooks/<stem>-flipbook.pdf
 
     Args:
         film:       Title substring, exact filename, or numeric TMDb ID.
@@ -1524,7 +1524,7 @@ def generate_flipbook(
         force:      Overwrite if PDF already exists (default False).
 
     Output-writing. Reads: data/motifs/, data/palettes/
-                   Writes: output/flipbooks/
+                   Writes: outputs/flipbooks/
     """
     result = _ctx()
     if isinstance(result, str):
@@ -1566,7 +1566,7 @@ def generate_mosaic(
     Searches annotations for *query*, then assembles matching frames into a
     grid image. Each tile shows one shot frame with its film title as caption.
 
-    Output: output/mosaics/search-mosaic-<timestamp>.png
+    Output: outputs/mosaics/search-mosaic-<timestamp>.png
 
     Args:
         query:      Search string — same semantics as search_shots.
@@ -1577,7 +1577,7 @@ def generate_mosaic(
         media_type: "movie" (default) or "gameplay".
 
     Output-writing. Reads: data/annotations/, media/videos/
-                   Writes: output/mosaics/
+                   Writes: outputs/mosaics/
     """
     result = _ctx()
     if isinstance(result, str):
@@ -1634,7 +1634,7 @@ def generate_cloud(
     Stopwords are removed; remaining words reflect the symbolic register of
     the annotations.
 
-    Output: output/clouds/<scope>-<field>-cloud-<timestamp>.pdf
+    Output: outputs/clouds/<scope>-<field>-cloud-<timestamp>.pdf
 
     Args:
         film:       Film title/filename to restrict to one film.
@@ -1647,7 +1647,7 @@ def generate_cloud(
         media_type: "movie" (default) or "gameplay".
 
     Output-writing. Reads: data/annotations/
-                   Writes: output/clouds/
+                   Writes: outputs/clouds/
     """
     result = _ctx()
     if isinstance(result, str):
@@ -1693,7 +1693,7 @@ def generate_composition(
     Searches for *query*, picks one matching shot at random (reproducible with
     *seed*), extracts the frame, fits it to the canvas, and saves a JPEG.
 
-    Output: output/compositions/<query>+<date>+<time>.jpg
+    Output: outputs/compositions/<query>+<date>+<time>.jpg
 
     Args:
         query:       Search string — semantics as search_shots.
@@ -1705,7 +1705,7 @@ def generate_composition(
         media_type:  "movie" (default) or "gameplay".
 
     Output-writing. Reads: data/annotations/, media/videos/
-                   Writes: output/compositions/
+                   Writes: outputs/compositions/
     """
     result = _ctx()
     if isinstance(result, str):
@@ -1763,7 +1763,7 @@ def generate_catalog(
 ) -> str:
     """Generate a JSON catalog of films with metadata and data availability.
 
-    Produces a structured JSON file in output/catalogs/ that Claude can
+    Produces a structured JSON file in outputs/catalogs/ that Claude can
     reference in subsequent work. The catalog lists every film with its
     metadata, shot counts, and optionally its annotation fields and motifs.
 
@@ -1771,7 +1771,7 @@ def generate_catalog(
     disk). Pass inline=True to also receive the full catalog object in the
     response (only advisable for small selections of films).
 
-    Output: output/catalogs/catalog-<media_type>-<timestamp>.json
+    Output: outputs/catalogs/catalog-<media_type>-<timestamp>.json
 
     Args:
         films:               Optional list of film titles/filenames to include.
@@ -1784,7 +1784,7 @@ def generate_catalog(
 
     Output-writing. Reads: data/metadata/, data/motifs/, data/shotlists/,
                             data/annotations/
-                   Writes: output/catalogs/
+                   Writes: outputs/catalogs/
     """
     result = _ctx()
     if isinstance(result, str):
@@ -1890,7 +1890,7 @@ def generate_silhouette_booklet(
       • silhouette PNG (transparent, on white) on the left panel
       • original source frame on the right panel
 
-    The booklet is written to ``output/booklets/`` and the output path is
+    The booklet is written to ``outputs/booklets/`` and the output path is
     returned in the response.
 
     OpenAI engraving integration is not yet implemented. The page structure
@@ -1905,7 +1905,7 @@ def generate_silhouette_booklet(
         media_type:    "movie" (default) or "gameplay".
 
     Output-writing. Reads: data/silhouettes/catalog/, media/frames/best/
-                   Writes: output/booklets/
+                   Writes: outputs/booklets/
     """
     if not words:
         return _err("words must be a non-empty list of vocabulary terms.")
@@ -2481,12 +2481,12 @@ def crossing_about(media_type: str = "movie") -> str:
             },
             capabilities=capabilities,
             output_dirs=[
-                "output/flipbooks",
-                "output/mosaics",
-                "output/clouds",
-                "output/compositions",
-                "output/catalogs",
-                "output/booklets",
+                "outputs/flipbooks",
+                "outputs/mosaics",
+                "outputs/clouds",
+                "outputs/compositions",
+                "outputs/catalogs",
+                "outputs/booklets",
             ],
             notes=[
                 "Use list_movies, search_shots, get_best_frames, and "

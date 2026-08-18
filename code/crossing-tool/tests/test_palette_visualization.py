@@ -121,7 +121,7 @@ def _render(tmp_path, size, content_bbox=None):
             },
         },
     )
-    output_dir = tmp_path / "output" / "test" / "palette"
+    output_dir = tmp_path / "outputs" / "test" / "palette"
     return source_pixels, diagnostics, output_dir
 
 
@@ -238,7 +238,7 @@ def test_semantic_failure_writes_json_without_fake_palette(tmp_path, monkeypatch
             visualize=True,
         )
 
-    output_dir = tmp_path / "output" / "test" / "palette"
+    output_dir = tmp_path / "outputs" / "test" / "palette"
     document = json.loads(
         (output_dir / "game_test_12345678.json").read_text(encoding="utf-8")
     )
@@ -295,15 +295,15 @@ def test_visualization_reuses_single_semantic_inference(tmp_path, monkeypatch):
 
     assert segmenter.calls == 1
     assert (
-        tmp_path / "output" / "test" / "palette"
+        tmp_path / "outputs" / "test" / "palette"
         / "game_test_12345678_semantic.png"
     ).exists()
     assert (
-        tmp_path / "output" / "test" / "palette"
+        tmp_path / "outputs" / "test" / "palette"
         / "game_test_12345678_seeds.png"
     ).exists()
     assert (
-        tmp_path / "output" / "test" / "palette"
+        tmp_path / "outputs" / "test" / "palette"
         / "game_test_12345678_clusters.png"
     ).exists()
 
@@ -350,7 +350,7 @@ def test_semantic_target_experiment_is_isolated_and_does_not_write_cache(
 
     assert segmenter.concepts == ["man"]
     save_cache.assert_not_called()
-    output_dir = tmp_path / "output" / "test" / "palette"
+    output_dir = tmp_path / "outputs" / "test" / "palette"
     for suffix in (
         "_semantic.png",
         "_seeds.png",
@@ -403,7 +403,7 @@ def test_failed_semantic_target_records_empty_pipeline_without_fake_images(
             segmenter=segmenter,
         )
 
-    output_dir = tmp_path / "output" / "test" / "palette"
+    output_dir = tmp_path / "outputs" / "test" / "palette"
     document = json.loads(
         (output_dir / "game_test_12345678_group.json").read_text(encoding="utf-8")
     )
@@ -447,7 +447,7 @@ def test_non_visualized_creation_keeps_existing_extractor_call(tmp_path, monkeyp
         "segmenter": extractor.call_args.kwargs["segmenter"],
     }
     assert "diagnostic_capture" not in extractor.call_args.kwargs
-    assert not (tmp_path / "output" / "test" / "palette").exists()
+    assert not (tmp_path / "outputs" / "test" / "palette").exists()
 
 
 def test_visualize_does_not_recompute_current_cache_without_force(
@@ -485,7 +485,7 @@ def test_visualize_does_not_recompute_current_cache_without_force(
 
     assert summary["cached"] is True
     assert extractor.call_count == 1
-    assert not (tmp_path / "output" / "test" / "palette").exists()
+    assert not (tmp_path / "outputs" / "test" / "palette").exists()
 
 
 def test_visualize_flag_parses_and_is_forwarded_for_title(tmp_path, monkeypatch, capsys):

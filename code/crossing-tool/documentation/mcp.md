@@ -8,7 +8,7 @@
 
 **Access policy**
 - All tools may read freely from `data/`, `media/`, and `preferences/`.
-- Generation tools write only to `output/` subdirectories.
+- Generation tools write only to `outputs/` subdirectories.
 - No tool may write to source data (`data/annotations/`, `data/shotlists/`, `data/metadata/`, or `preferences/`).
 
 ---
@@ -88,15 +88,15 @@ Returns `[{ "value": "gun", "count": 412 }, ...]`. `sort` is `"count"` or `"alph
 
 ---
 
-### Tier 2 — Generation tools (write to `output/` only)
+### Tier 2 — Generation tools (write to `outputs/` only)
 
 | Tool | Output | Key inputs |
 |---|---|---|
-| `generate_flipbook` | `output/flipbooks/<stem>-flipbook.pdf` | `film`, `force` |
-| `generate_mosaic` | `output/mosaics/search-mosaic-<timestamp>.png` | `query`, `films`, `limit`, `layout` |
-| `generate_cloud` | `output/clouds/<scope>-<field>-cloud-<timestamp>.pdf` | `film`, `field`, `style` |
-| `generate_composition` | `output/compositions/<query>+<date>.jpg` | `query`, `orientation`, `seed` |
-| `generate_catalog` | `output/catalogs/catalog-<media_type>-<timestamp>.json` | `films`, `include_motifs` |
+| `generate_flipbook` | `outputs/flipbooks/<stem>-flipbook.pdf` | `film`, `force` |
+| `generate_mosaic` | `outputs/mosaics/search-mosaic-<timestamp>.png` | `query`, `films`, `limit`, `layout` |
+| `generate_cloud` | `outputs/clouds/<scope>-<field>-cloud-<timestamp>.pdf` | `film`, `field`, `style` |
+| `generate_composition` | `outputs/compositions/<query>+<date>.jpg` | `query`, `orientation`, `seed` |
+| `generate_catalog` | `outputs/catalogs/catalog-<media_type>-<timestamp>.json` | `films`, `include_motifs` |
 
 **`generate_flipbook`**
 ```json
@@ -126,14 +126,14 @@ Picks one matching shot at random (seeded for reproducibility), extracts and fit
 ```json
 { "include_motifs": true }
 ```
-Writes a structured JSON index of all films to `output/catalogs/`. Pass `include_annotations: true` for full shot annotation data (large).
+Writes a structured JSON index of all films to `outputs/catalogs/`. Pass `include_annotations: true` for full shot annotation data (large).
 
 ---
 
 ### Output folder convention
 
 ```
-<project>/output/
+<project>/outputs/
   flipbooks/       ← generate_flipbook
   mosaics/         ← generate_mosaic
   clouds/          ← generate_cloud
@@ -143,7 +143,7 @@ Writes a structured JSON index of all films to `output/catalogs/`. Pass `include
   review/          ← reviewable or provisional derived artifacts
 ```
 
-MCP reads canonical project data but does not write back to it. All MCP-generated artifacts are derived outputs under `output/`. When scratch or working artifacts are needed, they belong in `output/agent/`; reviewable or provisional artifacts belong in `output/review/`. These folders are workspace conventions, not review queues or promotion workflows.
+MCP reads canonical project data but does not write back to it. All MCP-generated artifacts are derived outputs under `outputs/`. When scratch or working artifacts are needed, they belong in `outputs/agent/`; reviewable or provisional artifacts belong in `outputs/review/`. These folders are workspace conventions, not review queues or promotion workflows.
 
 ---
 

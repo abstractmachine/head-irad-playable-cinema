@@ -82,7 +82,7 @@ class TestSetFilmTitle:
         path = get_film_title_path(str(tmp_path), "Film.mp4", "movie")
 
         assert path == (
-            tmp_path / "output" / "flipbooks" / "movie" / "Film-title.json"
+            tmp_path / "outputs" / "flipbooks" / "movie" / "Film-title.json"
         )
 
     def test_round_trip(self, tmp_path):

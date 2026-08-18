@@ -25,7 +25,7 @@ It does NOT:
 
 Output
 ------
-PDF: ``<project>/output/flipbooks/<stem>-flipbook.pdf``
+PDF: ``<project>/outputs/flipbooks/<stem>-flipbook.pdf``
 
 Page schema (internal, used by visualizer and renderer):
   {
@@ -566,10 +566,10 @@ def render_flipbook_cover(kind: str, text: str, bg_rgb: list, fg_rgb: list) -> I
 def get_flipbook_output_path(project_path: str, filename: str) -> Path:
     """Return the canonical PDF output path for a flipbook.
 
-    ``<project>/output/flipbooks/<stem>-flipbook.pdf``
+    ``<project>/outputs/flipbooks/<stem>-flipbook.pdf``
     """
     stem = Path(filename).stem
-    return Path(project_path) / "output" / "flipbooks" / f"{stem}-flipbook.pdf"
+    return Path(project_path) / "outputs" / "flipbooks" / f"{stem}-flipbook.pdf"
 
 
 def export_flipbook_pdf(

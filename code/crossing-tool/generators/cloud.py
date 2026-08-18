@@ -629,7 +629,7 @@ def cloud_from_annotations(
         media_type:   ``"movie"``, ``"gameplay"``, or ``"--all"`` to
                   aggregate both (default: ``"movie"``).
         output_path:  Destination file path.  Auto-generated under
-                      ``output/clouds/`` when not provided.
+                      ``outputs/clouds/`` when not provided.
         max_words:    Maximum words to render (default 150).
         min_count:    Minimum word occurrences to include (default 2).
         width:        Canvas width in pixels (default 1200).
@@ -671,7 +671,7 @@ def cloud_from_annotations(
         scope_slug = re.sub(r"[^\w]+", "-", scope or media_type).strip("-")
         field_slug = re.sub(r"[^\w]+", "-", field or "all").strip("-")
         output_path = (
-            Path(project_path) / "output" / "clouds"
+            Path(project_path) / "outputs" / "clouds"
             / f"{scope_slug}-{field_slug}-cloud-{stamp}.pdf"
         )
     else:

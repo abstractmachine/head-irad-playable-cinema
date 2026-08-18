@@ -20,7 +20,7 @@ Example::
                        project_path=project_path)
     result  = choose_background(res["results"])
     tableau = build_tableau(result, project_path, orientation="portrait")
-    out     = save_tableau(tableau, "gun", Path(project_path) / "output" / "compositions")
+    out     = save_tableau(tableau, "gun", Path(project_path) / "outputs" / "compositions")
 """
 
 from __future__ import annotations

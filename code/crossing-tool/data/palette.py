@@ -1531,7 +1531,7 @@ def _resolve_thumbnail_annotation(
 
 
 def _palette_diagnostic_dir(project_path: str) -> Path:
-    return Path(project_path) / "output" / "test" / "palette"
+    return Path(project_path) / "outputs" / "test" / "palette"
 
 
 def _write_palette_diagnostic_failure(

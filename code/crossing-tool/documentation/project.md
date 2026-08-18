@@ -38,7 +38,7 @@
 │   │   └── best/
 │   │       ├── movies/             # best-frame PNGs per shot (from `crossing annotate frame`)
 │   │       └── gameplay/
-├── output/
+├── outputs/
 │   ├── mosaics/
 │   │   ├── scenes/                 # output from `crossing generate mosaic scenes`
 │   │   ├── shots/                  # output from `crossing generate mosaic shots`
@@ -46,8 +46,7 @@
 │   │   ├── images/                 # output from `crossing generate mosaic export`
 │   │   └── videos/                 # output from `crossing generate mosaic video`
 │   ├── clouds/                     # output from `crossing generate cloud`
-│   └── compositions/               # output from `crossing generate composition`
-├── outputs/
+│   ├── compositions/               # output from `crossing generate composition`
 │   └── audits/                     # timestamped reports from `crossing index untyped`
 ├── models/
 │   └── <model-folder>/             # local HuggingFace models (annotate, embed, segmentation)
