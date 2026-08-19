@@ -121,8 +121,10 @@ on the section header while they work:
 
 The buttons are arranged in two rows: Thumbnails/Vocabulary, then
 Illustrations/Index. Only one Tools action runs at a time. While it runs, the pressed button reads
-**indexing** and the section header animates. CLI failures are shown in the
-Project visualizer without silently falling back to a GUI-side annotation traversal.
+**indexing** and the section header animates. CLI failures are written to
+`outputs/logs/log-YYYY-MM-DD-HH-MM-SS.txt` and opened with the operating
+system's default text viewer, without silently falling back to a GUI-side
+annotation traversal.
 
 ### Visualizers
 

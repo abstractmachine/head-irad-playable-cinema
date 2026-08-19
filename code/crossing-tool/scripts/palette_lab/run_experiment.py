@@ -85,7 +85,21 @@ def _production_palette(project_path: str, media_id: str, media_type: str) -> di
         return None
 
 
-def run(args: argparse.Namespace) -> Path:
+def run(
+    args: argparse.Namespace,
+    *,
+    pipeline=None,
+    segmenter=None,
+    source_override: dict | None = None,
+    annotation_override: dict | None = None,
+    out_name: str | None = None,
+) -> Path:
+    """Run one image through the apparatus.
+
+    The keyword arguments exist only so a batch runner can supply an image the
+    metadata resolver cannot address and can reuse already-loaded models.  No
+    pipeline stage, prompt, model, or parameter changes when they are used.
+    """
     from tool import prefs
 
     project_path = args.project or prefs.get("path")
@@ -93,12 +107,16 @@ def run(args: argparse.Namespace) -> Path:
         raise SystemExit("No project path configured. Pass --project.")
     repo_root = Path(__file__).resolve().parents[2]
 
-    source = stages.resolve_source(project_path, args.media, args.media_type)
-    annotation = None if args.mode == "context" else stages.resolve_annotation(project_path, source)
+    source = source_override or stages.resolve_source(project_path, args.media, args.media_type)
+    if annotation_override is not None:
+        annotation = annotation_override
+    else:
+        annotation = None if args.mode == "context" else stages.resolve_annotation(project_path, source)
     images = stages.prepare_images(source["source_path"])
 
     out_dir = (
-        Path(project_path) / "outputs" / "tests" / args.space / args.experiment / source["media_id"]
+        Path(project_path) / "outputs" / "tests" / args.space / args.experiment
+        / (out_name or source["media_id"])
     )
     out_dir.mkdir(parents=True, exist_ok=True)
     candidates_dir = out_dir / "candidates"
@@ -126,7 +144,8 @@ def run(args: argparse.Namespace) -> Path:
     print(f"  loading {args.model} …")
     from data.annotate import _load_text_generation_pipeline
 
-    pipeline = _load_text_generation_pipeline(project_path, args.model)
+    if pipeline is None:
+        pipeline = _load_text_generation_pipeline(project_path, args.model)
 
     print("  stage 1 — Qwen interpretation …")
     focus = stages.call_qwen(
@@ -146,7 +165,11 @@ def run(args: argparse.Namespace) -> Path:
     print(f"  stage 2 — SAM3 spatialization ({args.sam_resolution}) …")
     from services.silhouette import load_sam_model
 
-    segmenter, sam_name, device = load_sam_model(project_path, args.sam_model)
+    reused_segmenter = segmenter is not None
+    if reused_segmenter:
+        sam_name, device = args.sam_model, getattr(segmenter, "_device", "cuda")
+    else:
+        segmenter, sam_name, device = load_sam_model(project_path, args.sam_model)
 
     focus_ladder = stages._phrase_ladder(parsed_focus.get("focus"))
     ambience_ladder = stages._phrase_ladder(parsed_focus.get("ambience"))
@@ -157,7 +180,8 @@ def run(args: argparse.Namespace) -> Path:
         segmenter, images, ambience_ladder, resolution=args.sam_resolution
     )
 
-    del segmenter
+    if not reused_segmenter:
+        del segmenter
     _free_cuda()
 
     _write_json(out_dir / "03-spatialization.json", {

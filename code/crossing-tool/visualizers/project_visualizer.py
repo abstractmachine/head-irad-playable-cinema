@@ -120,6 +120,22 @@ def _backup_free_bytes(backup_path: str) -> Optional[int]:
         return None
 
 
+def _write_error_log(project_path: str, title: str, detail: str) -> Optional[Path]:
+    """Write *detail* to ``<project>/outputs/logs/log-<stamp>.txt``.
+
+    Returns the log path, or ``None`` if it could not be written.
+    """
+    import datetime
+    try:
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        log_path = Path(project_path) / "outputs" / "logs" / f"log-{stamp}.txt"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(f"{title}\n{stamp}\n\n{detail}\n", encoding="utf-8")
+        return log_path
+    except Exception:
+        return None
+
+
 # rsync --info=progress2 emits "<bytes>  <pct>%  <rate>  <eta>" separated by \r.
 _RSYNC_PERCENT_RE = re.compile(r"\s(\d{1,3})%\s")
 
@@ -1530,6 +1546,21 @@ class ProjectVisualizer(WindowVisualizer):
         self.index_all_btn.setEnabled(True)
         self.project_browse_btn.setEnabled(True)
 
+    def _report_tools_failure(self, title: str, detail: str) -> None:
+        """Write indexing output to a log file and open it in the default viewer.
+
+        Falls back to a dialog when no log file could be written or opened.
+        """
+        project_path = self.path_edit.text().strip() or _prefs.get("path") or ""
+        log_path = _write_error_log(project_path, title, detail) if project_path else None
+        if log_path is not None:
+            try:
+                subprocess.Popen(["xdg-open", str(log_path)])
+                return
+            except Exception:
+                pass
+        QMessageBox.critical(self, title, detail)
+
     def _on_thumbnail_palettes(self) -> None:
         if self._tools_indexing():
             return
@@ -1626,7 +1657,7 @@ class ProjectVisualizer(WindowVisualizer):
         self._thumbnail_palette_errors = []
 
         if error is not None:
-            QMessageBox.critical(self, "Thumbnail Palettes failed", error)
+            self._report_tools_failure("Thumbnail Palettes failed", error)
             return
 
         self._start_project_columns_load(force=True)
@@ -1691,7 +1722,7 @@ class ProjectVisualizer(WindowVisualizer):
 
         if returncode != 0:
             detail = output_text or f"CLI exited with status {returncode}."
-            QMessageBox.critical(self, "Vocabulary rebuild failed", detail)
+            self._report_tools_failure("Vocabulary rebuild failed", detail)
             return
 
         self._start_project_columns_load(force=True)
@@ -1754,7 +1785,7 @@ class ProjectVisualizer(WindowVisualizer):
 
         if returncode != 0:
             detail = output_text or f"CLI exited with status {returncode}."
-            QMessageBox.critical(self, "Illustration indexing failed", detail)
+            self._report_tools_failure("Illustration indexing failed", detail)
             return
 
         self._start_project_columns_load(force=True)
@@ -1862,7 +1893,7 @@ class ProjectVisualizer(WindowVisualizer):
         self._index_all_errors = []
 
         if error is not None:
-            QMessageBox.critical(self, "Indexing failed", error)
+            self._report_tools_failure("Indexing failed", error)
             return
 
         self._start_project_columns_load(force=True)

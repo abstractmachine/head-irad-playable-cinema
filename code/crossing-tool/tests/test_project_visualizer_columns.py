@@ -12,6 +12,7 @@ Covers three layers:
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import threading
@@ -4038,4 +4039,83 @@ def test_backup_output_buffer_is_bounded(
         assert window.backup_btn.text() == "Backing Up 55%"
     finally:
         window._backup_proc = None
+        window.close()
+
+
+# ---------------------------------------------------------------------------
+# Tools section: indexing failures go to a log file, not a giant dialog
+# ---------------------------------------------------------------------------
+
+def test_write_error_log_creates_timestamped_file_under_outputs_logs(tmp_path):
+    from visualizers.project_visualizer import _write_error_log
+
+    log_path = _write_error_log(str(tmp_path), "Indexing failed", "boom\nmore")
+
+    assert log_path is not None
+    assert log_path.parent == tmp_path / "outputs" / "logs"
+    assert re.fullmatch(r"log-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}\.txt", log_path.name)
+    text = log_path.read_text(encoding="utf-8")
+    assert text.startswith("Indexing failed\n")
+    assert "boom\nmore" in text
+
+
+def test_write_error_log_returns_none_when_directory_cannot_be_created(tmp_path):
+    from visualizers.project_visualizer import _write_error_log
+
+    blocker = tmp_path / "outputs"
+    blocker.write_text("not a directory", encoding="utf-8")
+
+    assert _write_error_log(str(tmp_path), "Indexing failed", "boom") is None
+
+
+def test_index_failure_writes_log_and_opens_it_without_a_dialog(
+    app, fake_prefs, monkeypatch, tmp_path,
+):
+    import visualizers.project_visualizer as pv
+
+    window = _build_project_window(
+        monkeypatch, fake_prefs, tmp_path, 500 * 1024 ** 3,
+    )
+    try:
+        opened = []
+        dialogs = []
+        monkeypatch.setattr(pv.subprocess, "Popen", lambda argv, **k: opened.append(argv))
+        monkeypatch.setattr(
+            pv.QMessageBox, "critical",
+            lambda *a, **k: dialogs.append(a),
+        )
+
+        window._finish_index_all("Vocabulary failed:\n\nboom")
+
+        logs = sorted((tmp_path / "outputs" / "logs").glob("log-*.txt"))
+        assert len(logs) == 1
+        assert "boom" in logs[0].read_text(encoding="utf-8")
+        assert opened == [["xdg-open", str(logs[0])]]
+        assert dialogs == []
+    finally:
+        window.close()
+
+
+def test_index_failure_falls_back_to_dialog_when_log_cannot_be_written(
+    app, fake_prefs, monkeypatch, tmp_path,
+):
+    import visualizers.project_visualizer as pv
+
+    window = _build_project_window(
+        monkeypatch, fake_prefs, tmp_path, 500 * 1024 ** 3,
+    )
+    try:
+        dialogs = []
+        monkeypatch.setattr(pv, "_write_error_log", lambda *a: None)
+        monkeypatch.setattr(
+            pv.QMessageBox, "critical",
+            lambda *a, **k: dialogs.append(a),
+        )
+
+        window._finish_index_all("Vocabulary failed:\n\nboom")
+
+        assert len(dialogs) == 1
+        assert dialogs[0][1] == "Indexing failed"
+        assert "boom" in dialogs[0][2]
+    finally:
         window.close()
