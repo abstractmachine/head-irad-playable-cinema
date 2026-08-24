@@ -4,6 +4,9 @@ import subprocess
 import pytest
 from PyQt5.QtWidgets import QApplication
 
+from data.media_id import build_shot_id
+from data.metadata import save_json_metadata
+from data.shotlist import write_shotlist
 import services.search as search_mod
 import services.vocabulary_index as vocabulary_index_mod
 import visualizers.mosaic_visualizer as mosaic_mod
@@ -620,3 +623,109 @@ def test_all_media_search_worker_queries_movie_and_gameplay(monkeypatch):
 
     assert calls == ["movie", "gameplay"]
     assert [result["media_type"] for result in results] == ["movie", "gameplay"]
+
+
+def test_search_shots_multiword_query_requires_all_terms(tmp_path):
+    filename = "Film One.mp4"
+    media_id = "file_film_one"
+    save_json_metadata(tmp_path, "movie", [{
+        "filename": filename,
+        "title": "Film One",
+        "media_id": media_id,
+    }])
+    write_shotlist(tmp_path, filename, "movie", [
+        {
+            "Scene": "1",
+            "start_time": "00:00:00.000",
+            "end_time": "00:00:10.000",
+            "start_frame": 0,
+            "end_frame": 240,
+            "shot_id": build_shot_id(media_id, 0, 240),
+        },
+        {
+            "Scene": "1",
+            "start_time": "00:00:10.000",
+            "end_time": "00:00:20.000",
+            "start_frame": 241,
+            "end_frame": 480,
+            "shot_id": build_shot_id(media_id, 241, 480),
+        },
+    ])
+    ann_dir = tmp_path / "data" / "annotations" / "shots" / "movie"
+    ann_dir.mkdir(parents=True, exist_ok=True)
+    (ann_dir / "Film One.annotations.json").write_text(
+        json.dumps([
+            {"shot": {"shot_id": build_shot_id(media_id, 0, 240), "annotation": {"wearing": ["cowboy hat", "shirt", "pants", "boots"]}}},
+            {"shot": {"shot_id": build_shot_id(media_id, 241, 480), "annotation": {"wearing": ["brown pants"]}}},
+        ]),
+        encoding="utf-8",
+    )
+
+    result = search_mod.search_shots(
+        query="brown pants",
+        scopes=None,
+        field="wearing",
+        limit=None,
+        limit_per_item=None,
+        use_all=True,
+        project_path=str(tmp_path),
+        media_type="movie",
+    )
+
+    assert [item["shot_id"] for item in result["results"]] == [
+        build_shot_id(media_id, 241, 480),
+    ]
+    assert result["results"][0]["matched_text"] == "brown pants"
+
+
+def test_search_shots_multiword_query_requires_exact_phrase(tmp_path):
+    filename = "Film Two.mp4"
+    media_id = "file_film_two"
+    save_json_metadata(tmp_path, "movie", [{
+        "filename": filename,
+        "title": "Film Two",
+        "media_id": media_id,
+    }])
+    write_shotlist(tmp_path, filename, "movie", [
+        {
+            "Scene": "1",
+            "start_time": "00:00:00.000",
+            "end_time": "00:00:10.000",
+            "start_frame": 0,
+            "end_frame": 240,
+            "shot_id": build_shot_id(media_id, 0, 240),
+        },
+        {
+            "Scene": "1",
+            "start_time": "00:00:10.000",
+            "end_time": "00:00:20.000",
+            "start_frame": 241,
+            "end_frame": 480,
+            "shot_id": build_shot_id(media_id, 241, 480),
+        },
+    ])
+    ann_dir = tmp_path / "data" / "annotations" / "shots" / "movie"
+    ann_dir.mkdir(parents=True, exist_ok=True)
+    (ann_dir / "Film Two.annotations.json").write_text(
+        json.dumps([
+            {"shot": {"shot_id": build_shot_id(media_id, 0, 240), "annotation": {"wearing": ["black neckerchief"]}}},
+            {"shot": {"shot_id": build_shot_id(media_id, 241, 480), "annotation": {"wearing": ["green neckerchief", "black gloves"]}}},
+        ]),
+        encoding="utf-8",
+    )
+
+    result = search_mod.search_shots(
+        query="black neckerchief",
+        scopes=None,
+        field="wearing",
+        limit=None,
+        limit_per_item=None,
+        use_all=True,
+        project_path=str(tmp_path),
+        media_type="movie",
+    )
+
+    assert [item["shot_id"] for item in result["results"]] == [
+        build_shot_id(media_id, 0, 240),
+    ]
+    assert result["results"][0]["matched_text"] == "black neckerchief"

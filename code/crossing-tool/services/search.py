@@ -179,8 +179,7 @@ def _score_text(query: str, text: str) -> float:
 
     Scoring:
       - exact phrase (substring) match  → 0.80 + 0.05 per additional occurrence (capped at 1.0)
-      - full token coverage             → proportional in (0, 0.75]
-      - partial token coverage          → proportional in (0, 0.60]
+            - single-word token coverage      → proportional in (0, 0.75]
     """
     q = query.lower().strip()
     t = text.lower()
@@ -192,8 +191,11 @@ def _score_text(query: str, text: str) -> float:
         freq = t.count(q)
         return min(1.0, 0.80 + 0.05 * freq)
 
-    # Token overlap
     q_tokens = q.split()
+    if len(q_tokens) > 1:
+        return 0.0
+
+    # Token overlap
     t_tokens = set(t.split())
     if not q_tokens:
         return 0.0
@@ -201,7 +203,7 @@ def _score_text(query: str, text: str) -> float:
     if matched == 0:
         return 0.0
     ratio = matched / len(q_tokens)
-    # Full coverage gets a higher score than partial
+    # Full coverage gets a higher score than partial.
     base = 0.75 if ratio == 1.0 else 0.60
     return round(ratio * base, 4)
 

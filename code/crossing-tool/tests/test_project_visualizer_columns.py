@@ -3981,10 +3981,8 @@ def test_backup_button_shows_rsync_percentage_while_running(
     )
     try:
         window._backup_proc = SimpleNamespace(poll=lambda: None)
-        window._backup_master_fd = -1
-        monkeypatch.setattr(
-            "visualizers.project_visualizer.os.read",
-            lambda fd, size: b"\r      1,234,567  42%    3.45MB/s    0:00:12",
+        window._append_backup_stdout(
+            b"\r      1,234,567  42%    3.45MB/s    0:00:12",
         )
 
         window._poll_backup_proc()
@@ -4003,16 +4001,33 @@ def test_backup_button_falls_back_to_dots_before_first_progress_line(
     )
     try:
         window._backup_proc = SimpleNamespace(poll=lambda: None)
-        window._backup_master_fd = -1
-        monkeypatch.setattr(
-            "visualizers.project_visualizer.os.read",
-            lambda fd, size: b"Backing up project to: /media/backup\r\n",
-        )
+        window._append_backup_stdout(b"Backing up project to: /media/backup\r\n")
 
         window._poll_backup_proc()
         assert window.backup_btn.text() == "Backing Up."
         window._poll_backup_proc()
         assert window.backup_btn.text() == "Backing Up.."
+    finally:
+        window._backup_proc = None
+        window.close()
+
+
+def test_backup_button_ignores_initial_rsync_zero_percent(
+    app, fake_prefs, monkeypatch, tmp_path,
+):
+    window = _build_project_window(
+        monkeypatch, fake_prefs, tmp_path, 500 * 1024 ** 3,
+    )
+    try:
+        window._backup_proc = SimpleNamespace(poll=lambda: None)
+        window._append_backup_stdout(
+            b"\r      0   0%    0.00kB/s    0:00:00 (xfr#0, to-chk=0/2965337)",
+        )
+
+        window._poll_backup_proc()
+
+        assert window._backup_percent is None
+        assert window.backup_btn.text() == "Backing Up."
     finally:
         window._backup_proc = None
         window.close()
@@ -4025,20 +4040,11 @@ def test_backup_output_buffer_is_bounded(
         monkeypatch, fake_prefs, tmp_path, 500 * 1024 ** 3,
     )
     try:
-        window._backup_proc = SimpleNamespace(poll=lambda: None)
-        window._backup_master_fd = -1
-        monkeypatch.setattr(
-            "visualizers.project_visualizer.os.read",
-            lambda fd, size: b"\r  1,000  55%  1MB/s  0:01:00" * 100,
-        )
-
         for _ in range(20):
-            window._poll_backup_proc()
+            window._append_backup_stdout(b"\r  1,000  55%  1MB/s  0:01:00" * 100)
 
         assert len(window._backup_stdout_buf) <= 4096
-        assert window.backup_btn.text() == "Backing Up 55%"
     finally:
-        window._backup_proc = None
         window.close()
 
 

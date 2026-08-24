@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -995,7 +996,8 @@ class ProjectVisualizer(WindowVisualizer):
         self._windows: dict[str, object] = {}  # in-process visualizer windows
         self._backup_proc: subprocess.Popen | None = None
         self._backup_poll_timer: QTimer | None = None
-        self._backup_master_fd: int = -1
+        self._backup_stdout_lock = threading.Lock()
+        self._backup_session_token: object | None = None
         self._backup_stdout_buf: bytes = b""
         self._backup_anim_frame: int = 0
         self._backup_percent: Optional[int] = None
@@ -1188,9 +1190,35 @@ class ProjectVisualizer(WindowVisualizer):
             "backups will not sync until space is freed."
         )
 
+    def _append_backup_stdout(self, chunk: bytes, session_token: object | None = None) -> None:
+        if not chunk:
+            return
+        if session_token is not None and self._backup_session_token is not session_token:
+            return
+        with self._backup_stdout_lock:
+            if session_token is not None and self._backup_session_token is not session_token:
+                return
+            self._backup_stdout_buf = (self._backup_stdout_buf + chunk)[-4096:]
+
+    def _backup_stdout_reader(
+        self,
+        process: subprocess.Popen,
+        session_token: object,
+    ) -> None:
+        stdout = process.stdout
+        if stdout is None:
+            return
+
+        try:
+            while True:
+                chunk = stdout.read(4096)
+                if not chunk:
+                    break
+                self._append_backup_stdout(chunk, session_token)
+        except Exception:
+            pass
+
     def _on_backup_run(self) -> None:
-        import fcntl
-        import pty
         if self._backup_proc is not None and self._backup_proc.poll() is None:
             self._stop_backup_proc()
             return  # Clicking while running stops the backup instead.
@@ -1202,24 +1230,18 @@ class ProjectVisualizer(WindowVisualizer):
 
         cmd = [sys.executable, str(_CLI_PATH), "backup", "update"]
         try:
-            # Use a pty so rsync believes it is writing to a terminal and
-            # flushes progress updates immediately instead of buffering.
-            master_fd, slave_fd = pty.openpty()
             self._backup_proc = subprocess.Popen(
                 cmd,
-                stdout=slave_fd,
-                stderr=slave_fd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 close_fds=True,
             )
-            os.close(slave_fd)
-            self._backup_master_fd = master_fd
-            # Non-blocking reads so the timer never stalls
-            flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
-            fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
         except Exception as exc:
             QMessageBox.critical(self, "Backup failed", str(exc))
             return
 
+        self._backup_session_token = object()
         self._backup_stdout_buf = b""
         self._backup_anim_frame = 0
         self._backup_percent = None
@@ -1227,6 +1249,13 @@ class ProjectVisualizer(WindowVisualizer):
         self.backup_btn.setText("Backing Up")
         self._backup_loading_bar.start()
         self._backup_loading_timer.start()
+
+        reader = threading.Thread(
+            target=self._backup_stdout_reader,
+            args=(self._backup_proc, self._backup_session_token),
+            daemon=True,
+        )
+        reader.start()
 
         self._backup_poll_timer = QTimer(self)
         self._backup_poll_timer.setInterval(500)
@@ -1247,19 +1276,15 @@ class ProjectVisualizer(WindowVisualizer):
                 pass
 
     def _poll_backup_proc(self) -> None:
-        """Called every 500 ms to drain pty output and detect completion."""
-        # Drain any available output from the pty master
-        try:
-            chunk = os.read(self._backup_master_fd, 4096)
-            # Only the tail matters — rsync repeats the whole progress line.
-            self._backup_stdout_buf = (self._backup_stdout_buf + chunk)[-4096:]
-            percent = _parse_rsync_percent(
-                self._backup_stdout_buf.decode("utf-8", errors="ignore")
-            )
-            if percent is not None:
-                self._backup_percent = percent
-        except (BlockingIOError, OSError):
-            pass
+        """Called every 500 ms to update backup progress and detect completion."""
+        with self._backup_stdout_lock:
+            stdout_buf = self._backup_stdout_buf
+
+        percent = _parse_rsync_percent(stdout_buf.decode("utf-8", errors="ignore"))
+        # rsync can sit at a literal 0% while it is still scanning the file
+        # list; treat that as indeterminate so the button does not look stuck.
+        if percent is not None and percent > 0:
+            self._backup_percent = percent
 
         if self._backup_percent is not None:
             self.backup_btn.setText(f"Backing Up {self._backup_percent}%")
@@ -1273,12 +1298,8 @@ class ProjectVisualizer(WindowVisualizer):
         # Check if the process has finished
         if self._backup_proc is None or self._backup_proc.poll() is not None:
             self._backup_poll_timer.stop()
-            rc = self._backup_proc.returncode if self._backup_proc else -1
-            try:
-                os.close(self._backup_master_fd)
-            except OSError:
-                pass
             self._backup_proc = None
+            self._backup_session_token = None
             self._backup_loading_timer.stop()
             self._backup_loading_bar.stop()
             self.backup_browse_btn.setEnabled(True)
