@@ -5674,8 +5674,10 @@ def _index_silhouette(args):
         _silhouette_backfill_scanned(args)
     elif silhouette_action == "enrich":
         _silhouette_enrich(args)
+    elif silhouette_action == "provenance":
+        _silhouette_provenance(args)
     else:
-        print("✗ index silhouette: specify a subcommand (extract, audit, clear, score, enrich, backfill-scanned)", file=sys.stderr)
+        print("✗ index silhouette: specify a subcommand (extract, audit, clear, score, enrich, provenance, backfill-scanned)", file=sys.stderr)
         sys.exit(1)
 
 
@@ -6255,6 +6257,44 @@ def _silhouette_enrich(args):
         f"skipped={summary.get('skipped', 0)}  "
         f"errors={summary.get('errors', 0)}"
     )
+
+
+def _silhouette_provenance(args):
+    """Add search provenance to silhouette catalog JSON files from a completed audit."""
+    from services.silhouette_provenance import migrate_search_provenance
+
+    project_path = prefs.get("path")
+    media_type   = normalize_media_type(getattr(args, "media", "movie"))
+    audit_dir    = getattr(args, "audit_dir", None)
+    dry_run      = getattr(args, "dry_run", False)
+
+    report = migrate_search_provenance(
+        project_path=project_path,
+        audit_dir=audit_dir,
+        media_type=media_type,
+        dry_run=dry_run,
+    )
+
+    mode = " (dry-run)" if dry_run else ""
+    print(
+        f"Provenance migration{mode}: "
+        f"examined={report.get('total_records_examined', 0)}  "
+        f"valid={report.get('valid', 0)}  "
+        f"questionable={report.get('questionable', 0)}  "
+        f"already_classified={report.get('already_classified', 0)}  "
+        f"unmatched_audit_records={report.get('unmatched_audit_records', 0)}  "
+        f"errors={report.get('errors', 0)}"
+    )
+    if report.get("safe_to_apply"):
+        print("  Audit and archive agree sufficiently for this migration.")
+    else:
+        print("  Audit/archive mismatch detected; migration is blocked until the mismatch is resolved.")
+    if report.get("applied"):
+        index_result = report.get("index_result") or {}
+        print(
+            f"  Silhouette index rebuilt: status={index_result.get('status', 'unknown')} "
+            f"count={index_result.get('count', 0)}"
+        )
 
 
 def _silhouette_catalog_audit(args):
@@ -9180,6 +9220,29 @@ def build_parser():
     _add_dry_run_arg(p_sil_enrich, help="Report how many entries would be enriched without writing files")
     _add_verbose_arg(p_sil_enrich, help="Print per-object enrichment progress")
 
+    # ── provenance ───────────────────────────────────────────────────────
+    p_sil_provenance = silhouette_sub.add_parser(
+        "provenance",
+        help="Add search provenance to silhouette JSON files from the semantic audit",
+        epilog=(
+            "Examples:\n"
+            "  crossing index silhouette provenance\n"
+            "  crossing index silhouette provenance --dry-run\n"
+            "  crossing index silhouette provenance --media movie\n"
+            "  crossing index silhouette provenance --media movie --dry-run\n"
+            "  crossing index silhouette provenance --audit-dir outputs/tests/silhouette-semantic-audit\n"
+            "  crossing index silhouette provenance --audit-dir outputs/tests/silhouette-semantic-audit --dry-run"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_sil_provenance.set_defaults(func=cmd_index)
+    _add_media_arg(p_sil_provenance)
+    _add_dry_run_arg(p_sil_provenance, help="Preview the provenance migration without writing files")
+    p_sil_provenance.add_argument(
+        "--audit-dir", default=None, metavar="PATH",
+        help="Path to the completed semantic audit directory (default: discovered automatically)",
+    )
+
     # index palette
     p_index_palette = index_sub.add_parser(
         "palette",
@@ -9237,7 +9300,7 @@ def build_parser():
         "--visualize", action="store_true",
         help=(
             "Write pre-crop source, palette, semantic-overlay, and diagnostic "
-            "JSON artifacts under outputs/test/palette (requires --thumbnail; "
+            "JSON artifacts under outputs/tests/palette (requires --thumbnail; "
             "cached items still require --force to recompute)"
         ),
     )

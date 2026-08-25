@@ -16,7 +16,7 @@ import sqlite3
 from uuid import uuid4
 
 
-INDEX_SCHEMA_VERSION = 4
+INDEX_SCHEMA_VERSION = 5
 SOURCES = ("silhouettes", "engravings")
 
 # ---------------------------------------------------------------------------
@@ -202,8 +202,10 @@ def rebuild_index(project_path: str | Path, source: str, media_type: str) -> dic
                     confidence_score, usefulness_score, engraving_score,
                     fullness_score, size_score, completeness_score,
                     isolation_score, semantic_label_score, semantic_field_score,
-                    engraved_score, payload
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        engraved_score, search_provenance_state,
+                        search_provenance_reason, search_provenance_audit_version,
+                        payload
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (_record_row(project, record) for record in records),
             )
             meta = {
@@ -243,6 +245,7 @@ def query_facets(
     field: str | None = None,
     letter: str | None = None,
     mode: str | None = None,
+    provenance_state: str | None = None,
 ) -> dict:
     """Return distinct facets and label counts for a browse scope.
 
@@ -256,7 +259,13 @@ def query_facets(
     status = load_index(project_path, source, media_type)
     if not status.get("usable"):
         return {**status, "titles": [], "fields": [], "letters": [], "labels": []}
-    where, params = _where(title=title, field=field, letter=letter, mode=mode)
+    where, params = _where(
+        title=title,
+        field=field,
+        letter=letter,
+        mode=mode,
+        provenance_state=provenance_state,
+    )
     with sqlite3.connect(index_path(project_path, source, media_type)) as connection:
         titles = [row[0] for row in connection.execute(
             "SELECT DISTINCT title FROM records ORDER BY title COLLATE NOCASE"
@@ -369,6 +378,7 @@ def query_page(
     mode: str | None = None,
     object_id: str | None = None,
     human_best: bool | None = None,
+    provenance_state: str | None = None,
     sort_keys: list[str] | None = None,
     offset: int = 0,
     limit: int = 50,
@@ -384,7 +394,9 @@ def query_page(
         return _query_page_all_media(
             project_path, source,
             title=title, field=field, letter=letter, label=label, mode=mode,
-            object_id=object_id, human_best=human_best, sort_keys=sort_keys,
+            object_id=object_id, human_best=human_best,
+            provenance_state=provenance_state,
+            sort_keys=sort_keys,
             offset=offset, limit=limit,
         )
     status = load_index(project_path, source, media_type)
@@ -393,6 +405,7 @@ def query_page(
     where, params = _where(
         title=title, field=field, letter=letter, label=label, mode=mode,
         object_id=object_id, human_best=human_best,
+        provenance_state=provenance_state,
     )
     with sqlite3.connect(index_path(project_path, source, media_type)) as connection:
         total = int(connection.execute(
@@ -535,6 +548,9 @@ def _create_schema(connection: sqlite3.Connection) -> None:
             semantic_label_score REAL NOT NULL,
             semantic_field_score REAL NOT NULL,
             engraved_score REAL NOT NULL,
+            search_provenance_state TEXT,
+            search_provenance_reason TEXT,
+            search_provenance_audit_version TEXT,
             payload TEXT NOT NULL
         );
         CREATE INDEX records_title ON records(title);
@@ -542,6 +558,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
         CREATE INDEX records_initial ON records(initial);
         CREATE INDEX records_label ON records(label);
         CREATE INDEX records_mode ON records(mode);
+        CREATE INDEX records_search_provenance_state ON records(search_provenance_state);
         CREATE INDEX records_filters ON records(title, field, initial, label, mode);
         """
     )
@@ -555,6 +572,10 @@ def _record_row(project: Path, record: dict) -> tuple:
     initial = first.upper() if first.isalpha() else "#"
     record_path = Path(str(record.get("path") or ""))
     object_id = str(record.get("object_id") or record_path.stem)
+    provenance = record.get("search_provenance") if isinstance(record.get("search_provenance"), dict) else {}
+    provenance_state = provenance.get("state") if isinstance(provenance, dict) else None
+    provenance_reason = provenance.get("reason") if isinstance(provenance, dict) else None
+    provenance_version = provenance.get("audit_version") if isinstance(provenance, dict) else None
     return (
         title, field, initial, label, str(record.get("mode") or ""),
         object_id, 1 if record.get("human_best") else 0,
@@ -563,6 +584,7 @@ def _record_row(project: Path, record: dict) -> tuple:
         _numeric_score(record, "size"), _numeric_score(record, "completeness"),
         _numeric_score(record, "isolation"), _numeric_score(record, "semantic_label"),
         _numeric_score(record, "semantic_field"), float(bool(record.get("engraved"))),
+        provenance_state, provenance_reason, provenance_version,
         json.dumps(
             _serialize_record(project, record), ensure_ascii=False,
             separators=(",", ":"),
@@ -598,6 +620,7 @@ def _where(**filters) -> tuple[str, list]:
     columns = {
         "title": "title", "field": "field", "letter": "initial",
         "label": "label", "mode": "mode", "object_id": "object_id",
+        "provenance_state": "search_provenance_state",
     }
     for name, column in columns.items():
         value = filters.get(name)

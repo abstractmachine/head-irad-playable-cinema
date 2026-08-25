@@ -52,6 +52,54 @@ def test_silhouette_index_reports_missing_ready_and_stale(tmp_path):
     assert query_page(tmp_path, "silhouettes", "movie")["records"][0]["path"] == metadata_path
 
 
+def test_silhouette_index_filters_by_provenance_state(tmp_path):
+    records = [
+        {
+            "filename_stem": "film",
+            "field": "objects",
+            "label": "coat",
+            "search_provenance": {
+                "state": "valid",
+                "reason": "single_word_label",
+                "audit_version": "semantic-v1",
+            },
+        },
+        {
+            "filename_stem": "film",
+            "field": "objects",
+            "label": "yellow coat",
+            "search_provenance": {
+                "state": "questionable",
+                "reason": "multi_word_not_exact_annotation_value",
+                "audit_version": "semantic-v1",
+            },
+        },
+        {
+            "filename_stem": "film",
+            "field": "objects",
+            "label": "unclassified",
+        },
+    ]
+    with patch("services.illustration_index._scan_silhouettes", return_value=records):
+        rebuild_index(tmp_path, "silhouettes", "movie")
+
+    valid = query_page(tmp_path, "silhouettes", "movie", provenance_state="valid")
+    questionable = query_page(
+        tmp_path, "silhouettes", "movie", provenance_state="questionable"
+    )
+    all_records = query_page(tmp_path, "silhouettes", "movie")
+
+    assert [record["label"] for record in valid["records"]] == ["coat"]
+    assert valid["records"][0]["search_provenance"]["state"] == "valid"
+    assert [record["label"] for record in questionable["records"]] == ["yellow coat"]
+    assert questionable["records"][0]["search_provenance"]["state"] == "questionable"
+    assert sorted(record["label"] for record in all_records["records"]) == [
+        "coat",
+        "unclassified",
+        "yellow coat",
+    ]
+
+
 def test_engraving_index_contains_only_generated_records(tmp_path):
     mode_dir = tmp_path / "data" / "engravings" / "catalog" / "movie" / "film" / "horse" / "object_0001" / "isolated"
     mode_dir.mkdir(parents=True)

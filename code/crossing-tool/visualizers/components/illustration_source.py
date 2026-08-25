@@ -52,6 +52,16 @@ class IllustrationSource(ABC):
         self._records: list[dict] = []
         self._load_status: dict = {"status": "missing"}
         self._media_type = "movie"
+        self._provenance_state: Optional[str] = None
+
+    def set_provenance_state(self, provenance_state: Optional[str]) -> None:
+        """Filter silhouette catalog queries by provenance state.
+
+        ``None`` means "All". The state is stored on the source so every
+        indexed query path (facets, page, records, in-memory fallbacks) sees
+        the same browse scope without the browser having to rescan JSON files.
+        """
+        self._provenance_state = provenance_state or None
 
     def reload(self, media_type: str = "movie") -> None:
         """Refresh index status without materializing the complete catalog."""
@@ -74,16 +84,13 @@ class IllustrationSource(ABC):
         """Return indexed browse facets for the current media type."""
         from services.illustration_index import ALL
 
-        records = self._records
+        records = self._filter_records(self._records, {
+            **filters,
+            "provenance_state": self._provenance_state,
+        })
         title = filters.get("title")
         field = filters.get("field")
         letter = filters.get("letter")
-        if title:
-            records = [r for r in records if _record_title(r) == title]
-        if field not in (None, "", ALL):
-            records = [r for r in records if (r.get("field") or ALL) == field]
-        if letter not in (None, "", ALL):
-            records = [r for r in records if _record_initial(r) == letter]
         counts: dict[str, int] = {}
         for record in records:
             label = record.get("label", "")
@@ -102,7 +109,10 @@ class IllustrationSource(ABC):
 
     def page(self, **filters) -> dict:
         """Return one filtered page; custom in-memory sources use this fallback."""
-        records = self._filter_records(self._records, filters)
+        records = self._filter_records(
+            self._records,
+            {**filters, "provenance_state": self._provenance_state},
+        )
         offset = max(0, int(filters.get("offset", 0)))
         limit = max(1, int(filters.get("limit", 50)))
         self._records = records[offset:offset + limit]
@@ -110,7 +120,10 @@ class IllustrationSource(ABC):
 
     def records(self, **filters) -> list[dict]:
         """Return a bounded action query."""
-        return self._filter_records(self._records, filters)[:int(filters.get("limit", 100_000))]
+        return self._filter_records(
+            self._records,
+            {**filters, "provenance_state": self._provenance_state},
+        )[:int(filters.get("limit", 100_000))]
 
     @staticmethod
     def _filter_records(records: list[dict], filters: dict) -> list[dict]:
@@ -125,6 +138,12 @@ class IllustrationSource(ABC):
             result = [r for r in result if _record_initial(r) == filters["letter"]]
         if filters.get("label") not in (None, "", ALL):
             result = [r for r in result if r.get("label") == filters["label"]]
+        provenance_state = filters.get("provenance_state")
+        if provenance_state not in (None, "", ALL):
+            result = [
+                r for r in result
+                if (r.get("search_provenance") or {}).get("state") == provenance_state
+            ]
         return result
 
     @abstractmethod
@@ -293,14 +312,16 @@ class SilhouetteSource(IllustrationSource):
     def facets(self, **filters) -> dict:
         from services.illustration_index import query_facets
         return query_facets(
-            self._project_path, "silhouettes", self._media_type, **filters
+            self._project_path, "silhouettes", self._media_type,
+            provenance_state=self._provenance_state, **filters,
         )
 
     def page(self, **filters) -> dict:
         from services.illustration_index import query_page
         result = query_page(
             self._project_path, "silhouettes", self._media_type,
-            sort_keys=self._sort_keys, **filters,
+            provenance_state=self._provenance_state, sort_keys=self._sort_keys,
+            **filters,
         )
         self._records = list(result.get("records", []))
         return result
@@ -309,7 +330,8 @@ class SilhouetteSource(IllustrationSource):
         from services.illustration_index import query_records
         return query_records(
             self._project_path, "silhouettes", self._media_type,
-            sort_keys=self._sort_keys, **filters,
+            provenance_state=self._provenance_state, sort_keys=self._sort_keys,
+            **filters,
         )
 
     def thumbnail_path(self, record: dict) -> Optional[Path]:

@@ -59,7 +59,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from styles import theme
 from styles.theme import JumpScrollBar, save_window_geometry, restore_window_geometry
-from visualizers.components.combo_popup import attach_combo_popup
+from visualizers.components.combo_popup import attach_combo_popup, style_canonical_combo
 
 # Fix Qt plugin conflict with OpenCV — del env var before first PyQt5 import
 if "QT_QPA_PLATFORM_PLUGIN_PATH" in os.environ:
@@ -476,10 +476,22 @@ class IllustrationPane(QWidget):
         inspector = Inspector(self)
         inspector.set_minimum_width(_SIDE_PANE_W)
 
-        sil_panel, self._sil_sort_combo, self._sil_meta_rows = self._build_source_panel(
-            self._browser_sil, "ill_sil", _SIL_INFO_KEYS, has_sort=True, has_tools=True
+        (
+            sil_panel,
+            self._sil_sort_combo,
+            self._sil_meta_rows,
+            self._sil_provenance_rows,
+        ) = self._build_source_panel(
+            self._browser_sil, "ill_sil", _SIL_INFO_KEYS,
+            has_sort=True, has_tools=True, has_provenance_filter=True,
+            has_provenance_details=True,
         )
-        eng_panel, self._eng_sort_combo, self._eng_meta_rows = self._build_source_panel(
+        (
+            eng_panel,
+            self._eng_sort_combo,
+            self._eng_meta_rows,
+            self._eng_provenance_rows,
+        ) = self._build_source_panel(
             self._browser_eng, "ill_eng", _ENG_INFO_KEYS,
             has_sort=False, has_mode_filter=True, has_eng_tools=True
         )
@@ -489,6 +501,7 @@ class IllustrationPane(QWidget):
 
         self._sort_combo = self._sil_sort_combo
         self._meta_rows = self._sil_meta_rows
+        self._clear_provenance_meta()
 
         inspector.tabbed_panel().currentChanged.connect(self._on_source_tab_changed)
         self._side_scroll = inspector
@@ -560,6 +573,24 @@ class IllustrationPane(QWidget):
         panel.add_widget(info_sec)
         return block.labels()
 
+    def _make_provenance_grid(self, panel: TabPanel, pref_key: str) -> dict:
+        """Build and add a Provenance evidence section; return {key: QLabel} dict."""
+        provenance_sec = CollapsibleSection("Provenance", pref_key=pref_key)
+        block = MetadataBlock([
+            "Original annotation",
+            "Matched",
+            "Missing",
+            "Classification",
+            "Reason",
+            "Support values",
+            "Flags",
+        ])
+        provenance_sec.add_widget(block)
+        panel.add_widget(provenance_sec)
+        self._sil_provenance_details_section = provenance_sec
+        self._sil_provenance_details_rows = block.labels()
+        return self._sil_provenance_details_rows
+
     def _build_source_panel(
         self,
         browser: "IllustrationBrowser",
@@ -569,12 +600,15 @@ class IllustrationPane(QWidget):
         has_mode_filter: bool = False,
         has_tools: bool = False,
         has_eng_tools: bool = False,
+        has_provenance_filter: bool = False,
+        has_provenance_details: bool = False,
     ) -> tuple:
-        """Build a complete Filter/[Sort]/[Mode]/Info/[Tools] `TabPanel` for
+        """Build a complete Filter/[Sort]/[Mode]/Info/[Provenance]/[Tools] `TabPanel` for
         *browser*.
 
-        Returns (TabPanel, sort_combo, meta_rows).  sort_combo is None when
-        has_sort is False.
+        Returns (TabPanel, sort_combo, meta_rows, provenance_rows).  sort_combo
+        is None when has_sort is False, and provenance_rows is None unless
+        has_provenance_details is True.
         """
         panel = self._make_source_tab_panel()
 
@@ -600,6 +634,10 @@ class IllustrationPane(QWidget):
         if has_sort:
             sort_combo = self._make_sort_combo(panel, f"{pref_prefix}_section_sort")
 
+        # ── Provenance (silhouettes) ─────────────────────────────────────
+        if has_provenance_filter:
+            self._build_provenance_filter_section(panel, browser)
+
         # ── Mode filter (engravings) ──────────────────────────────────────
         if has_mode_filter:
             self._build_mode_filter_section(panel, browser)
@@ -607,13 +645,54 @@ class IllustrationPane(QWidget):
         # ── Info ──────────────────────────────────────────────────────────
         meta_rows = self._make_info_grid(panel, f"{pref_prefix}_section_info", info_keys)
 
+        # ── Provenance evidence (silhouettes) ────────────────────────────
+        provenance_rows = None
+        if has_provenance_details:
+            provenance_rows = self._make_provenance_grid(
+                panel, f"{pref_prefix}_section_provenance_details"
+            )
+
         # ── Tools ─────────────────────────────────────────────────────────
         if has_tools:
             self._build_tools_section(panel)
         if has_eng_tools:
             self._build_engraving_tools_section(panel)
 
-        return panel, sort_combo, meta_rows
+        return panel, sort_combo, meta_rows, provenance_rows
+
+    def _set_silhouette_provenance_state(self, provenance_state: Optional[str], *, refresh: bool = True) -> None:
+        self._sil_source.set_provenance_state(provenance_state)
+        combo = getattr(self, "_sil_provenance_combo", None)
+        if combo is not None:
+            idx = combo.findData(provenance_state)
+            combo.blockSignals(True)
+            combo.setCurrentIndex(max(0, idx))
+            combo.blockSignals(False)
+        if refresh:
+            self._browser_sil.reload()
+
+    def _build_provenance_filter_section(
+        self, panel: TabPanel, browser: "IllustrationBrowser"
+    ) -> None:
+        """Add a Provenance collapsible section for silhouette browsing."""
+        provenance_sec = CollapsibleSection("Provenance", pref_key="ill_sil_section_provenance")
+        combo = QComboBox()
+        combo.setFocusPolicy(Qt.NoFocus)
+        combo.setMinimumContentsLength(14)
+        combo.addItem("All", userData=None)
+        combo.addItem("✓ Valid", userData="valid")
+        combo.addItem("? Questionable", userData="questionable")
+        style_canonical_combo(combo)
+
+        def _on_provenance_changed(_idx: int) -> None:
+            self._set_silhouette_provenance_state(combo.currentData(), refresh=True)
+
+        combo.currentIndexChanged.connect(_on_provenance_changed)
+        provenance_sec.add_widget(combo)
+        panel.add_widget(provenance_sec)
+        self._sil_provenance_section = provenance_sec
+        self._sil_provenance_combo = combo
+        self._set_silhouette_provenance_state(None, refresh=False)
 
     # ------------------------------------------------------------------ shared button helpers
 
@@ -952,12 +1031,97 @@ class IllustrationPane(QWidget):
         self._show_object_meta(rec)
         self._update_best_btn()
 
+    @staticmethod
+    def _format_provenance_values(values) -> str:
+        if values is None:
+            return "—"
+        if isinstance(values, str):
+            values = [values]
+        if isinstance(values, (list, tuple, set)):
+            parts = [str(value).strip() for value in values if str(value).strip()]
+            return ", ".join(parts) if parts else "—"
+        text = str(values).strip()
+        return text if text else "—"
+
+    @classmethod
+    def _format_provenance_support(cls, support_values) -> str:
+        if not isinstance(support_values, dict) or not support_values:
+            return "—"
+        parts = []
+        for key in sorted(support_values):
+            parts.append(f"{key}: {cls._format_provenance_values(support_values.get(key))}")
+        return "; ".join(parts) if parts else "—"
+
+    @staticmethod
+    def _format_provenance_flag(value) -> str:
+        if value is True:
+            return "Yes"
+        if value is False:
+            return "No"
+        return "—"
+
+    @staticmethod
+    def _provenance_state_label(provenance: dict | None) -> str:
+        if not isinstance(provenance, dict):
+            return "—"
+        state = str(provenance.get("state") or "").strip()
+        if state == "valid":
+            return "✓ Valid"
+        if state == "questionable":
+            return "? Questionable"
+        return "—"
+
+    def _clear_provenance_meta(self) -> None:
+        rows = getattr(self, "_sil_provenance_details_rows", None)
+        if not rows:
+            return
+        for lbl in rows.values():
+            lbl.setText("—")
+        section = getattr(self, "_sil_provenance_details_section", None)
+        if section is not None:
+            section.set_subtitle("—")
+
+    def _show_provenance_meta(self, rec: dict) -> None:
+        rows = getattr(self, "_sil_provenance_details_rows", None)
+        if not rows:
+            return
+
+        provenance = rec.get("search_provenance") if isinstance(rec, dict) else None
+        if not isinstance(provenance, dict) or not provenance:
+            self._clear_provenance_meta()
+            return
+
+        section = getattr(self, "_sil_provenance_details_section", None)
+        if section is not None:
+            section.set_subtitle(self._provenance_state_label(provenance))
+
+        def _set(key: str, value: str) -> None:
+            lbl = rows.get(key)
+            if lbl is not None:
+                lbl.setText(value or "—")
+
+        _set("Original annotation", self._format_provenance_values(provenance.get("annotation_values")))
+        _set("Matched", self._format_provenance_values(provenance.get("matched_words")))
+        _set("Missing", self._format_provenance_values(provenance.get("missing_words")))
+        classification = provenance.get("audit_classification") or str(provenance.get("state") or "").upper() or "—"
+        _set("Classification", str(classification))
+        _set("Reason", str(provenance.get("reason") or "—"))
+        _set("Support values", self._format_provenance_support(provenance.get("support_values")))
+        flags = "; ".join([
+            f"exact annotation match: {self._format_provenance_flag(provenance.get('exact_annotation_match'))}",
+            f"all words present: {self._format_provenance_flag(provenance.get('all_words_present'))}",
+            f"all words present as one value: {self._format_provenance_flag(provenance.get('all_words_present_as_one_value'))}",
+            f"separate component values: {self._format_provenance_flag(provenance.get('separate_component_values'))}",
+        ])
+        _set("Flags", flags)
+
     # ------------------------------------------------------------------
     # Object inspector
 
     def _clear_meta(self) -> None:
         for lbl in self._meta_rows.values():
             lbl.setText("—")
+        self._clear_provenance_meta()
         self._current_rec = None
         if hasattr(self, "_eng_view_btn"):
             self._eng_view_btn.setEnabled(False)
@@ -1046,6 +1210,8 @@ class IllustrationPane(QWidget):
         _set("overlap",        _fmt(_stored("overlap")))
         _set("semantic_label", _fmt(_stored("semantic_label")))
         _set("semantic_field", _fmt(_stored("semantic_field")))
+
+        self._show_provenance_meta(rec)
 
         # Engraving-only keys
         _set("mode",      rec.get("mode", "—"))
@@ -1308,6 +1474,8 @@ class IllustrationPane(QWidget):
         self._browser_sil.clear_view()
         self._browser_sil._loading_bar.start()
         self._browser_sil._loading_timer.start()
+
+        self._set_silhouette_provenance_state(None, refresh=False)
 
         object_id = rec.get("object_id") or ""
 
@@ -1572,7 +1740,6 @@ class IllustrationPane(QWidget):
         )
         if shot_id:
             self._browser.select_current_page_record("shot_id", shot_id)
-
 
 # Main window
 # ---------------------------------------------------------------------------

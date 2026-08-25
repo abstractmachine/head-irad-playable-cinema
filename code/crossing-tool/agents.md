@@ -296,7 +296,10 @@ paint/behavior level without forcing a structurally incompatible base class.
 - **Derived/cache data** (regenerable from canonical data + a model pipeline):
   `data/palette.py` (`data/palettes/`, SAM3 via the canonical
   `segment_palette(image_pil)` adapter), `services/silhouette*.py` (silhouette cache +
-  object catalog), `services/vocabulary_index.py`, `services/frame_embeddings.py`
+  object catalog), `services/illustration_index.py` (browse index + indexed
+  `search_provenance` for silhouette records), `services/silhouette_provenance.py`
+  (one-time provenance migration from the completed semantic audit),
+  `services/vocabulary_index.py`, `services/frame_embeddings.py`
   (`.npy` + manifest), `services/engraving_*` (PNG/JSON per generation run — cache-like,
   each `engraving_id` unique, no cross-run collision).
 - **Writes must be atomic.** `data/annotate.py::atomic_write_text(path, text)` is the
@@ -359,13 +362,19 @@ mirroring `_ctx()`'s own "tuple on success, JSON error string on failure" conven
 tools read freely from `data/`, `media/`, `preferences/`; generation tools write
 **only** under `outputs/<subdir>/` (flipbooks, mosaics, clouds, compositions, catalogs).
 The generic derived-workspace conventions are `outputs/agent/` for scratch or working
-artifacts and `outputs/review/` for reviewable or provisional artifacts; these names do
+artifacts and `outputs/review/` for reviewable or provisional artifacts; test and audit
+artifacts belong under `outputs/tests/` (never `outputs/test/`); do not add a
+default path, fallback, or example that resurrects the singular `output/test`
+form; these names do
 not imply a queue or promotion workflow. No tool ever writes to
 `data/annotations/`, `data/shotlists/`, `data/metadata/`, or `preferences/` — anything
 destructive or expensive (annotation, motif generation, palette building, shotlist
 editing, metadata editing, subtitle download, model management, vocabulary rebuild,
 silhouette extraction, embedding index) is **intentionally CLI-only** and must stay
-that way unless the user explicitly asks to add it.
+that way unless the user explicitly asks to add it. The silhouette provenance
+migration is part of that CLI-only set; it reads the completed audit and writes the
+additive `search_provenance` field back into existing silhouette JSON records, then
+rebuilds the browse index.
 
 Tools are organized in tiers (see `documentation/mcp.md` for the maintained reference,
 though it currently under-documents ~16 of the ~30 real tools — Tier 3 analysis tools

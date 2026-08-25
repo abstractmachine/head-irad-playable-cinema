@@ -9,6 +9,7 @@ from visualizers.components.illustration_browser import (
     _CatalogLoader,
     _KeywordLoader,
 )
+from visualizers.components.collapsible_section import CollapsibleSection
 from visualizers.components.illustration_source import IllustrationSource
 from visualizers.illustration_visualizer import IllustrationPane, _IllustrationIndexWorker
 
@@ -25,6 +26,33 @@ class _MemorySource(IllustrationSource):
 
     def thumbnail_path(self, record: dict):
         return None
+
+
+def _make_pane(tmp_path):
+    preferences = {}
+
+    with (
+        patch("tool.prefs.get", side_effect=lambda key, default=None: preferences.get(key, default)),
+        patch("tool.prefs.set", side_effect=lambda key, value: preferences.__setitem__(key, value)),
+    ):
+        pane = IllustrationPane(str(tmp_path), media_type=None)
+
+    return pane
+
+
+def _visible_text(widget) -> str:
+    return widget.text().replace("\u200b", "")
+
+
+def _provenance_record(label: str, provenance: dict | None) -> dict:
+    record = {
+        "filename_stem": "film",
+        "field": "objects",
+        "label": label,
+    }
+    if provenance is not None:
+        record["search_provenance"] = provenance
+    return record
 
 
 def test_grid_cells_are_created_in_bounded_batches(app, tmp_path):
@@ -102,6 +130,137 @@ def test_live_pane_has_rebuild_action_on_both_tabs(app, tmp_path):
 
     assert not pane._sil_rebuild_index_btn.isEnabled()
     assert pane._eng_rebuild_index_btn.isEnabled()
+    pane.deleteLater()
+
+
+def test_provenance_section_exists_and_defaults_to_all(app, tmp_path):
+    pane = _make_pane(tmp_path)
+
+    assert isinstance(pane._sil_provenance_section, CollapsibleSection)
+    assert pane._sil_provenance_section._title == "Provenance"
+    assert pane._sil_provenance_section._pref_key == "ill_sil_section_provenance"
+    assert pane._sil_provenance_combo.currentData() is None
+    assert pane._sil_provenance_combo.itemText(0) == "All"
+    assert pane._sil_provenance_combo.itemText(1) == "✓ Valid"
+    assert pane._sil_provenance_combo.itemText(2) == "? Questionable"
+    assert pane._sil_provenance_combo.property("crossingCanonicalCombo") is True
+    assert pane._sil_provenance_section._body_layout.count() == 1
+    assert pane._sil_provenance_section._body_layout.itemAt(0).widget() is pane._sil_provenance_combo
+    pane.deleteLater()
+
+
+def test_provenance_filter_updates_source_state_without_catalog_scan(app, tmp_path):
+    pane = _make_pane(tmp_path)
+
+    with (
+        patch.object(pane._browser_sil, "reload") as reload_browser,
+        patch("services.silhouette_catalog.scan_catalog", side_effect=AssertionError("scan_catalog should not be called")),
+    ):
+        valid_idx = pane._sil_provenance_combo.findData("valid")
+        pane._sil_provenance_combo.setCurrentIndex(valid_idx)
+        assert pane._sil_source._provenance_state == "valid"
+        reload_browser.assert_called_once()
+
+        questionable_idx = pane._sil_provenance_combo.findData("questionable")
+        pane._sil_provenance_combo.setCurrentIndex(questionable_idx)
+        assert pane._sil_source._provenance_state == "questionable"
+        assert reload_browser.call_count == 2
+
+    pane.deleteLater()
+
+
+def test_provenance_details_render_questionable_and_update_on_selection_change(app, tmp_path):
+    pane = _make_pane(tmp_path)
+
+    questionable = _provenance_record(
+        "adobe building",
+        {
+            "state": "questionable",
+            "reason": "multi_word_not_exact_annotation_value",
+            "audit_version": "semantic-v1",
+            "audit_classification": "QUESTIONABLE_PARTIAL",
+            "annotation_values": ["gate", "building", "lantern"],
+            "matched_words": ["building"],
+            "missing_words": ["adobe"],
+            "support_values": {"adobe": [], "building": ["building"]},
+            "exact_annotation_match": False,
+            "all_words_present": False,
+            "all_words_present_as_one_value": False,
+            "separate_component_values": False,
+        },
+    )
+    valid_exact = _provenance_record(
+        "yellow coat",
+        {
+            "state": "valid",
+            "reason": "exact_annotation_value",
+            "audit_version": "semantic-v1",
+            "audit_classification": "VALID_EXACT",
+            "annotation_values": ["yellow coat"],
+            "matched_words": ["yellow", "coat"],
+            "missing_words": [],
+            "support_values": {"yellow": ["yellow coat"], "coat": ["yellow coat"]},
+            "exact_annotation_match": True,
+            "all_words_present": True,
+            "all_words_present_as_one_value": True,
+            "separate_component_values": False,
+        },
+    )
+
+    with patch("services.silhouette_catalog.scan_catalog", side_effect=AssertionError("scan_catalog should not be called")):
+        pane._on_selection_changed(questionable)
+        assert pane._sil_provenance_details_section._header.text() == "Provenance: ? Questionable"
+        assert _visible_text(pane._sil_provenance_details_rows["Original annotation"]) == "gate, building, lantern"
+        assert _visible_text(pane._sil_provenance_details_rows["Matched"]) == "building"
+        assert _visible_text(pane._sil_provenance_details_rows["Missing"]) == "adobe"
+        assert _visible_text(pane._sil_provenance_details_rows["Classification"]) == "QUESTIONABLE_PARTIAL"
+
+        pane._on_selection_changed(valid_exact)
+        assert pane._sil_provenance_details_section._header.text() == "Provenance: ✓ Valid"
+        assert _visible_text(pane._sil_provenance_details_rows["Original annotation"]) == "yellow coat"
+        assert _visible_text(pane._sil_provenance_details_rows["Matched"]) == "yellow, coat"
+        assert _visible_text(pane._sil_provenance_details_rows["Missing"]) == "—"
+        assert _visible_text(pane._sil_provenance_details_rows["Classification"]) == "VALID_EXACT"
+
+    pane.deleteLater()
+
+
+def test_provenance_details_render_valid_single_and_clear_on_missing_provenance(app, tmp_path):
+    pane = _make_pane(tmp_path)
+
+    valid_single = _provenance_record(
+        "coat",
+        {
+            "state": "valid",
+            "reason": "single_word_label",
+            "audit_version": "semantic-v1",
+            "audit_classification": "VALID_SINGLE",
+            "annotation_values": ["coat", "shirt", "boots"],
+            "matched_words": ["coat"],
+            "missing_words": [],
+            "support_values": {"coat": ["coat"], "shirt": ["shirt"], "boots": ["boots"]},
+            "exact_annotation_match": True,
+            "all_words_present": False,
+            "all_words_present_as_one_value": False,
+            "separate_component_values": False,
+        },
+    )
+    missing = _provenance_record("coat", None)
+
+    pane._on_selection_changed(valid_single)
+    assert pane._sil_provenance_details_section._header.text() == "Provenance: ✓ Valid"
+    assert _visible_text(pane._sil_provenance_details_rows["Original annotation"]) == "coat, shirt, boots"
+    assert _visible_text(pane._sil_provenance_details_rows["Matched"]) == "coat"
+    assert _visible_text(pane._sil_provenance_details_rows["Missing"]) == "—"
+    assert _visible_text(pane._sil_provenance_details_rows["Classification"]) == "VALID_SINGLE"
+
+    pane._on_selection_changed(missing)
+    assert pane._sil_provenance_details_section._header.text() == "Provenance: —"
+    assert _visible_text(pane._sil_provenance_details_rows["Original annotation"]) == "—"
+    assert _visible_text(pane._sil_provenance_details_rows["Matched"]) == "—"
+    assert _visible_text(pane._sil_provenance_details_rows["Missing"]) == "—"
+    assert _visible_text(pane._sil_provenance_details_rows["Classification"]) == "—"
+
     pane.deleteLater()
 
 
