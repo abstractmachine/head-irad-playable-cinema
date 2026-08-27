@@ -184,8 +184,8 @@ def _pick_files_or_folder():
 
     print(
         "✗ No file picker available.\n"
-        "  Install the visualizer extra:  uv tool install --reinstall \"crossing[visualizer] @ ...\"\n"
-        "  Or pass file paths directly:   crossing media import /path/to/film.mkv",
+        "  Sync the visualizer extra into the shared runtime:  uv sync --extra visualizer\n"
+        "  Or pass file paths directly:                        crossing media import /path/to/film.mkv",
         file=sys.stderr,
     )
     return []
@@ -2318,9 +2318,7 @@ def _shotlist_annotate(args):
     except ImportError as e:
         print(f"✗ {e}", file=sys.stderr)
         print("  Annotation requires the 'annotate' extra.", file=sys.stderr)
-        print("  Installed as a tool? Re-install with the extra:", file=sys.stderr)
-        print("    uv tool install --reinstall \"crossing[annotate] @ git+https://github.com/abstractmachine/head-irad-playable-cinema.git#subdirectory=code/crossing-tool\"", file=sys.stderr)
-        print("  Working from source? Sync the extra into your dev environment:", file=sys.stderr)
+        print("  Sync the extra into the shared runtime:", file=sys.stderr)
         print("    uv sync --extra annotate", file=sys.stderr)
         sys.exit(1)
     except ValueError as e:
@@ -2666,15 +2664,7 @@ def _require_visualizer_deps():
             file=sys.stderr,
         )
         print(
-            "  Installed as a tool? Re-install with the extra:",
-            file=sys.stderr,
-        )
-        print(
-            "    uv tool install --reinstall \"crossing[visualizer] @ git+https://github.com/abstractmachine/head-irad-playable-cinema.git#subdirectory=code/crossing-tool\"",
-            file=sys.stderr,
-        )
-        print(
-            "  Working from source? Sync the extra into your dev environment:",
+            "  Sync the extra into the shared runtime:",
             file=sys.stderr,
         )
         print(
@@ -5676,8 +5666,14 @@ def _index_silhouette(args):
         _silhouette_enrich(args)
     elif silhouette_action == "provenance":
         _silhouette_provenance(args)
+    elif silhouette_action == "morphology-audit":
+        _silhouette_number_morphology_audit(args)
+    elif silhouette_action == "number-direction-audit":
+        _silhouette_number_direction_audit(args)
+    elif silhouette_action == "number-ambiguity-audit":
+        _silhouette_number_ambiguity_audit(args)
     else:
-        print("✗ index silhouette: specify a subcommand (extract, audit, clear, score, enrich, provenance, backfill-scanned)", file=sys.stderr)
+        print("✗ index silhouette: specify a subcommand (extract, audit, clear, score, enrich, provenance, morphology-audit, number-direction-audit, number-ambiguity-audit, backfill-scanned)", file=sys.stderr)
         sys.exit(1)
 
 
@@ -6295,6 +6291,98 @@ def _silhouette_provenance(args):
             f"  Silhouette index rebuilt: status={index_result.get('status', 'unknown')} "
             f"count={index_result.get('count', 0)}"
         )
+
+
+def _silhouette_number_morphology_audit(args):
+    """Run the read-only number-morphology audit over the completed number audit."""
+    from services.silhouette_number_morphology_audit import audit_silhouette_number_morphology
+
+    project_path = prefs.get("path")
+    source_audit_dir = getattr(args, "source_audit_dir", None)
+    output_dir = getattr(args, "output_dir", None)
+
+    report = audit_silhouette_number_morphology(
+        project_path,
+        source_audit_dir=source_audit_dir,
+        output_dir=output_dir,
+    )
+
+    cls = report.get("classification", {})
+    print(
+        "Morphology audit: "
+        f"examined={cls.get('total_existing_questionable_number_records_examined', 0)}  "
+        f"number_variant={cls.get('number_variant', 0)}  "
+        f"unresolved={cls.get('morphology_unresolved', 0)}  "
+        f"semantic_ambiguous={cls.get('number_semantically_ambiguous', 0)}  "
+        f"not_number_variant={cls.get('not_number_variant', 0)}"
+    )
+    print(f"  Saved: {report['artifacts']['report_md']}")
+    print(f"  Saved: {report['artifacts']['report_json']}")
+    print(f"  Saved: {report['artifacts']['morphology_records_csv']}")
+    print(f"  Saved: {report['artifacts']['morphology_labels_csv']}")
+
+
+def _silhouette_number_direction_audit(args):
+    """Run the read-only reverse-direction forensic audit."""
+    from services.silhouette_number_direction_audit import audit_silhouette_number_direction
+
+    project_path = prefs.get("path")
+    morphology_audit_dir = getattr(args, "morphology_audit_dir", None)
+    output_dir = getattr(args, "output_dir", None)
+
+    report = audit_silhouette_number_direction(
+        project_path,
+        morphology_audit_dir=morphology_audit_dir,
+        output_dir=output_dir,
+    )
+
+    population = report.get("population", {})
+    print(
+        "Direction audit: "
+        f"reverse={population.get('reverse_direction_records', 0)}  "
+        f"forward={population.get('forward_direction_records', 0)}  "
+        f"reverse_examples={report.get('sample_counts', {}).get('reverse_examples', 0)}  "
+        f"forward_controls={report.get('sample_counts', {}).get('forward_controls', 0)}"
+    )
+    print(f"  Saved: {report['artifacts']['report_md']}")
+    print(f"  Saved: {report['artifacts']['report_json']}")
+    print(f"  Saved: {report['artifacts']['reverse_relationships_csv']}")
+    print(f"  Saved: {report['artifacts']['sampled_examples_csv']}")
+    print(f"  Saved: {report['artifacts']['examples_dir']}")
+
+
+def _silhouette_number_ambiguity_audit(args):
+    """Run the read-only semantic-ambiguity forensic audit."""
+    from services.silhouette_number_ambiguity_audit import audit_silhouette_number_ambiguity
+
+    project_path = prefs.get("path")
+    preference_audit_dir = getattr(args, "preference_audit_dir", None)
+    output_dir = getattr(args, "output_dir", None)
+    sample_size = getattr(args, "sample_size", 25)
+
+    report = audit_silhouette_number_ambiguity(
+        project_path,
+        preference_audit_dir=preference_audit_dir,
+        output_dir=output_dir,
+        sample_size=sample_size,
+    )
+
+    inventory = report.get("inventory", {})
+    candidates = report.get("policy_candidates", {})
+    print(
+        "Ambiguity audit: "
+        f"records={inventory.get('total_records', 0)}  "
+        f"relationships={inventory.get('unique_relationships', 0)}  "
+        f"families={len(report.get('families', []))}  "
+        f"candidate_records={candidates.get('candidate_records', 0)}  "
+        f"retained_ambiguous={candidates.get('retain_ambiguous_records', 0)}"
+    )
+    print(f"  Saved: {report['artifacts']['report_md']}")
+    print(f"  Saved: {report['artifacts']['report_json']}")
+    print(f"  Saved: {report['artifacts']['relationships_csv']}")
+    print(f"  Saved: {report['artifacts']['families_csv']}")
+    print(f"  Saved: {report['artifacts']['sampled_examples_csv']}")
+    print(f"  Saved: {report['artifacts']['examples_dir']}")
 
 
 def _silhouette_catalog_audit(args):
@@ -8958,6 +9046,9 @@ def build_parser():
             "Subcommands:\n"
             "  extract   Extract transparent PNG objects for a label\n"
             "  audit     Show catalog statistics\n"
+            "  morphology-audit  Reclassify historical QUESTIONABLE_NUMBER rows\n"
+            "  number-direction-audit  Read-only forensic audit of reverse-direction number variants\n"
+            "  number-ambiguity-audit  Read-only forensic audit of semantic number ambiguities\n"
             "  clear     Delete catalog entries\n\n"
             "Examples:\n"
             "  crossing index silhouette extract horse --field animals --all\n"
@@ -8966,6 +9057,9 @@ def build_parser():
             "  crossing index silhouette extract cowboy --field characters --shot tmdb_281957@f001240-f001310\n"
             "  crossing index silhouette audit\n"
             "  crossing index silhouette audit --label horse\n"
+            "  crossing index silhouette morphology-audit\n"
+            "  crossing index silhouette number-direction-audit\n"
+            "  crossing index silhouette number-ambiguity-audit\n"
             "  crossing index silhouette clear --label horse --dry-run"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -9241,6 +9335,91 @@ def build_parser():
     p_sil_provenance.add_argument(
         "--audit-dir", default=None, metavar="PATH",
         help="Path to the completed semantic audit directory (default: discovered automatically)",
+    )
+
+    # ── morphology-audit ───────────────────────────────────────────────
+    p_sil_morphology_audit = silhouette_sub.add_parser(
+        "morphology-audit",
+        help="Reclassify QUESTIONABLE_NUMBER silhouette records with inflect-backed phrase comparison",
+        epilog=(
+            "Examples:\n"
+            "  crossing index silhouette morphology-audit\n"
+            "  crossing index silhouette morphology-audit --source-audit-dir outputs/tests/silhouette-number-audit\n"
+            "  crossing index silhouette morphology-audit --output-dir outputs/tests/silhouette-number-morphology-audit"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_sil_morphology_audit.set_defaults(func=cmd_index)
+    p_sil_morphology_audit.add_argument(
+        "--source-audit-dir",
+        default=None,
+        metavar="PATH",
+        help="Path to the completed number audit directory (default: discovered automatically)",
+    )
+    p_sil_morphology_audit.add_argument(
+        "--output-dir",
+        default=None,
+        metavar="PATH",
+        help="Path to the morphology audit output directory (default: outputs/tests/silhouette-number-morphology-audit)",
+    )
+
+    # ── number-direction-audit ─────────────────────────────────────────
+    p_sil_direction_audit = silhouette_sub.add_parser(
+        "number-direction-audit",
+        help="Read-only forensic audit of reverse-direction silhouette number variants",
+        epilog=(
+            "Examples:\n"
+            "  crossing index silhouette number-direction-audit\n"
+            "  crossing index silhouette number-direction-audit --morphology-audit-dir outputs/tests/silhouette-number-morphology-audit\n"
+            "  crossing index silhouette number-direction-audit --output-dir outputs/tests/silhouette-number-direction-audit"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_sil_direction_audit.set_defaults(func=cmd_index)
+    p_sil_direction_audit.add_argument(
+        "--morphology-audit-dir",
+        default=None,
+        metavar="PATH",
+        help="Path to the morphology audit output directory (default: outputs/tests/silhouette-number-morphology-audit)",
+    )
+    p_sil_direction_audit.add_argument(
+        "--output-dir",
+        default=None,
+        metavar="PATH",
+        help="Path to the direction audit output directory (default: outputs/tests/silhouette-number-direction-audit)",
+    )
+
+    # ── number-ambiguity-audit ─────────────────────────────────────────
+    p_sil_ambiguity_audit = silhouette_sub.add_parser(
+        "number-ambiguity-audit",
+        help="Read-only forensic audit of NUMBER_SEMANTICALLY_AMBIGUOUS preference-audit records",
+        epilog=(
+            "Examples:\n"
+            "  crossing index silhouette number-ambiguity-audit\n"
+            "  crossing index silhouette number-ambiguity-audit --preference-audit-dir outputs/tests/silhouette-number-preference-audit\n"
+            "  crossing index silhouette number-ambiguity-audit --output-dir outputs/tests/silhouette-number-ambiguity-audit"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_sil_ambiguity_audit.set_defaults(func=cmd_index)
+    p_sil_ambiguity_audit.add_argument(
+        "--preference-audit-dir",
+        default=None,
+        metavar="PATH",
+        help="Path to the completed number-preference audit (default: outputs/tests/silhouette-number-preference-audit)",
+    )
+    p_sil_ambiguity_audit.add_argument(
+        "--output-dir",
+        default=None,
+        metavar="PATH",
+        help="Path to the ambiguity audit output directory (default: outputs/tests/silhouette-number-ambiguity-audit)",
+    )
+    p_sil_ambiguity_audit.add_argument(
+        "--sample-size",
+        type=int,
+        default=25,
+        metavar="COUNT",
+        help="Maximum number of representative evidence panels to render (default: 25)",
     )
 
     # index palette

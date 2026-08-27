@@ -22,17 +22,19 @@ Then restart your shell (or run `source ~/.local/bin/env`) so the `uv` command i
 
 ## 3. Install crossing
 
+If you want one shared runtime that works from any directory, sync the repo venv and point your PATH at the repo launcher:
+
 ```bash
-uv tool install "crossing[all] @ git+https://github.com/abstractmachine/head-irad-playable-cinema.git#subdirectory=code/crossing-tool"
+cd head-irad-playable-cinema/code/crossing-tool
+uv sync --extra all
+ln -sf "$PWD/scripts/crossing" ~/.local/bin/crossing
 ```
 
-The `crossing` command is now available globally. No virtual environment activation needed.
-
-> **Note:** `crossing` lives inside a larger monorepo. The `#subdirectory=` part tells `uv` where to find it.
+This reuses the repo-managed `.venv` instead of creating a separate uv tool environment.
 
 ## Optional components
 
-`[all]` in the command above installs everything. You can instead pick only what you need:
+`uv sync --extra all` installs everything into the shared runtime. You can instead pick only what you need:
 
 | Extra | What it adds | Required for |
 |---|---|---|
@@ -43,15 +45,15 @@ The `crossing` command is now available globally. No virtual environment activat
 
 ```bash
 # Install with a specific extra
-uv tool install "crossing[annotate] @ git+https://github.com/abstractmachine/head-irad-playable-cinema.git#subdirectory=code/crossing-tool"
-uv tool install "crossing[visualizer] @ git+https://github.com/abstractmachine/head-irad-playable-cinema.git#subdirectory=code/crossing-tool"
-uv tool install "crossing[shot-detection] @ git+https://github.com/abstractmachine/head-irad-playable-cinema.git#subdirectory=code/crossing-tool"
-uv tool install "crossing[silhouette] @ git+https://github.com/abstractmachine/head-irad-playable-cinema.git#subdirectory=code/crossing-tool"
+uv sync --extra annotate
+uv sync --extra visualizer
+uv sync --extra shot-detection
+uv sync --extra silhouette
 ```
 
-To change extras on an already-installed tool, add `--reinstall`:
+To change extras on the shared runtime, rerun `uv sync` with the extras you want:
 ```bash
-uv tool install --reinstall "crossing[all] @ git+https://github.com/abstractmachine/head-irad-playable-cinema.git#subdirectory=code/crossing-tool"
+uv sync --extra all
 ```
 
 ## 4. Configure API keys
@@ -81,18 +83,14 @@ cd head-irad-playable-cinema/code/crossing-tool
 
 ## Global `crossing` command (recommended)
 
-Install as a uv-managed tool with all extras. This gives you a `crossing` command that works from any directory, survives `uv sync`, and reflects source edits immediately:
+Use the repo-managed venv and launcher script so `crossing` from anywhere reuses the same runtime:
 
 ```bash
-uv tool install --editable ".[all]"
+uv sync --extra all
+ln -sf "$PWD/scripts/crossing" ~/.local/bin/crossing
 ```
 
-To update after adding dependencies to `pyproject.toml`:
-
-```bash
-cd head-irad-playable-cinema/code/crossing-tool
-uv tool install --force --editable ".[all]"
-```
+After adding dependencies to `pyproject.toml`, rerun `uv sync` in the repo instead of reinstalling a separate tool environment.
 
 ## Dev environment only (no global command)
 
@@ -103,7 +101,7 @@ uv sync              # must be run from crossing-tool directory
 uv run crossing --help
 ```
 
-`uv sync` only installs base dependencies. To also get optional extras in the dev venv:
+`uv sync` installs the base dependencies into the same project venv. To also get optional extras in that runtime:
 
 ```bash
 # Run from the crossing-tool directory

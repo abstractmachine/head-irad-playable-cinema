@@ -16,7 +16,7 @@ import sqlite3
 from uuid import uuid4
 
 
-INDEX_SCHEMA_VERSION = 5
+INDEX_SCHEMA_VERSION = 6
 SOURCES = ("silhouettes", "engravings")
 
 # ---------------------------------------------------------------------------
@@ -198,14 +198,14 @@ def rebuild_index(project_path: str | Path, source: str, media_type: str) -> dic
             _create_schema(connection)
             connection.executemany(
                 """INSERT INTO records (
-                    title, field, initial, label, mode, object_id, human_best,
+                    title, field, initial, label, mode, object_id, assignment_state, human_best,
                     confidence_score, usefulness_score, engraving_score,
                     fullness_score, size_score, completeness_score,
                     isolation_score, semantic_label_score, semantic_field_score,
                         engraved_score, search_provenance_state,
                         search_provenance_reason, search_provenance_audit_version,
                         payload
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (_record_row(project, record) for record in records),
             )
             meta = {
@@ -246,6 +246,7 @@ def query_facets(
     letter: str | None = None,
     mode: str | None = None,
     provenance_state: str | None = None,
+    assignment_state: str | None = None,
 ) -> dict:
     """Return distinct facets and label counts for a browse scope.
 
@@ -255,6 +256,7 @@ def query_facets(
     if media_type == ALL_MEDIA:
         return _query_facets_all_media(
             project_path, source, title=title, field=field, letter=letter, mode=mode,
+            assignment_state=assignment_state,
         )
     status = load_index(project_path, source, media_type)
     if not status.get("usable"):
@@ -265,6 +267,7 @@ def query_facets(
         letter=letter,
         mode=mode,
         provenance_state=provenance_state,
+        assignment_state=_default_assignment_state(source, assignment_state),
     )
     with sqlite3.connect(index_path(project_path, source, media_type)) as connection:
         titles = [row[0] for row in connection.execute(
@@ -379,6 +382,7 @@ def query_page(
     object_id: str | None = None,
     human_best: bool | None = None,
     provenance_state: str | None = None,
+    assignment_state: str | None = None,
     sort_keys: list[str] | None = None,
     offset: int = 0,
     limit: int = 50,
@@ -396,6 +400,7 @@ def query_page(
             title=title, field=field, letter=letter, label=label, mode=mode,
             object_id=object_id, human_best=human_best,
             provenance_state=provenance_state,
+            assignment_state=assignment_state,
             sort_keys=sort_keys,
             offset=offset, limit=limit,
         )
@@ -406,6 +411,7 @@ def query_page(
         title=title, field=field, letter=letter, label=label, mode=mode,
         object_id=object_id, human_best=human_best,
         provenance_state=provenance_state,
+        assignment_state=_default_assignment_state(source, assignment_state),
     )
     with sqlite3.connect(index_path(project_path, source, media_type)) as connection:
         total = int(connection.execute(
@@ -537,6 +543,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
             label TEXT NOT NULL,
             mode TEXT NOT NULL,
             object_id TEXT NOT NULL,
+            assignment_state TEXT NOT NULL,
             human_best INTEGER NOT NULL,
             confidence_score REAL NOT NULL,
             usefulness_score REAL NOT NULL,
@@ -558,6 +565,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
         CREATE INDEX records_initial ON records(initial);
         CREATE INDEX records_label ON records(label);
         CREATE INDEX records_mode ON records(mode);
+        CREATE INDEX records_assignment_state ON records(assignment_state);
         CREATE INDEX records_search_provenance_state ON records(search_provenance_state);
         CREATE INDEX records_filters ON records(title, field, initial, label, mode);
         """
@@ -565,6 +573,8 @@ def _create_schema(connection: sqlite3.Connection) -> None:
 
 
 def _record_row(project: Path, record: dict) -> tuple:
+    from services.silhouette_catalog import assignment_state_for_record
+
     title = _clean_stem(record.get("filename_stem", ""))
     field = str(record.get("field") or ALL)
     label = str(record.get("label") or "")
@@ -578,7 +588,7 @@ def _record_row(project: Path, record: dict) -> tuple:
     provenance_version = provenance.get("audit_version") if isinstance(provenance, dict) else None
     return (
         title, field, initial, label, str(record.get("mode") or ""),
-        object_id, 1 if record.get("human_best") else 0,
+        object_id, assignment_state_for_record(record), 1 if record.get("human_best") else 0,
         _numeric_score(record, "confidence"), _numeric_score(record, "usefulness"),
         _numeric_score(record, "engraving"), _numeric_score(record, "fullness"),
         _numeric_score(record, "size"), _numeric_score(record, "completeness"),
@@ -621,6 +631,7 @@ def _where(**filters) -> tuple[str, list]:
         "title": "title", "field": "field", "letter": "initial",
         "label": "label", "mode": "mode", "object_id": "object_id",
         "provenance_state": "search_provenance_state",
+        "assignment_state": "assignment_state",
     }
     for name, column in columns.items():
         value = filters.get(name)
@@ -631,6 +642,15 @@ def _where(**filters) -> tuple[str, list]:
         clauses.append("human_best = ?")
         params.append(1 if filters["human_best"] else 0)
     return ("WHERE " + " AND ".join(clauses) if clauses else ""), params
+
+
+def _default_assignment_state(source: str, assignment_state: str | None) -> str | None:
+    """Default ordinary silhouette browsing to active lifecycle assignments."""
+    if source != "silhouettes" or assignment_state is not None:
+        return assignment_state
+    from services.silhouette_catalog import ASSIGNMENT_ACTIVE
+
+    return ASSIGNMENT_ACTIVE
 
 
 def _order_by(sort_keys: list[str]) -> str:

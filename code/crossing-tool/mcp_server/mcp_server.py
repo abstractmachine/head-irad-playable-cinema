@@ -38,8 +38,8 @@ Tier 1 — Read access (9 tools):
   list_motifs, list_palettes, list_silhouettes,
   search_shots, search_vocabulary
 
-Tier 1 — Image retrieval (5 tools, return JPEG thumbnails directly):
-  get_best_frame, get_best_frames, get_palette_frames,
+Tier 1 — Image retrieval (6 tools, return JPEG thumbnails directly):
+    get_poster, get_best_frame, get_best_frames, get_palette_frames,
   get_motif_frames, get_context_frames
 
 Tier 2 — Generation, writes to outputs/ only (5 tools):
@@ -135,8 +135,19 @@ def _ctx() -> tuple[str, str] | str:
     return project_path, ""
 
 
-def _resolve_single_film(project_path: str, film: str, media_type: str) -> "tuple[dict, str] | str":
-    """Resolve *film* (title/filename/TMDb id substring) to exactly one metadata entry.
+def _resolve_single_film(
+    project_path: str,
+    film: str,
+    media_type: str,
+    *,
+    year: int | None = None,
+    tmdb_id: int | None = None,
+) -> "tuple[dict, str] | str":
+    """Resolve a film query to exactly one metadata entry.
+
+    ``film`` matches title or filename substrings; an exact TMDb ID is also
+    accepted. Optional ``year`` and ``tmdb_id`` narrow an otherwise ambiguous
+    match.
 
     Returns an error JSON string instead of raising so that tools can do:
         result = _resolve_single_film(project_path, film, media_type)
@@ -144,7 +155,27 @@ def _resolve_single_film(project_path: str, film: str, media_type: str) -> "tupl
         entry, filename = result
     """
     from data.metadata import get_metadata as _get_metadata
-    entries = _get_metadata(project_path, query=film, media_type=media_type)
+
+    all_entries = _get_metadata(project_path, media_type=media_type)
+    requested_tmdb = str(tmdb_id) if tmdb_id is not None else ""
+    film_as_tmdb = str(film).strip()
+    exact_tmdb_entries = [
+        entry
+        for entry in all_entries
+        if str(entry.get("tmdb") or entry.get("tmdb_id") or "")
+        == (requested_tmdb or film_as_tmdb)
+    ]
+    entries = exact_tmdb_entries or _get_metadata(
+        project_path, query=film, media_type=media_type
+    )
+    if tmdb_id is not None:
+        entries = [
+            entry
+            for entry in entries
+            if str(entry.get("tmdb") or entry.get("tmdb_id") or "") == requested_tmdb
+        ]
+    if year is not None:
+        entries = [entry for entry in entries if str(entry.get("year", "")) == str(year)]
     if not entries:
         return _err(f"No film found matching {film!r}.")
     if len(entries) > 1:
@@ -159,6 +190,23 @@ def _output_dir(project_path: str, subdir: str) -> Path:
     d = Path(project_path) / "outputs" / subdir
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _poster_reference(
+    project_path: str,
+    media_type: str,
+    filename: str,
+) -> tuple[Path | None, str | None]:
+    """Return the canonical local poster path and its project-relative reference."""
+    from data.metadata import resolve_thumbnail_path
+
+    poster_path = resolve_thumbnail_path(project_path, media_type, filename)
+    if poster_path is None:
+        return None, None
+    try:
+        return poster_path, str(poster_path.relative_to(project_path))
+    except ValueError:
+        return poster_path, str(poster_path)
 
 
 # ---------------------------------------------------------------------------
@@ -337,6 +385,7 @@ def list_movies(
             filename = e.get("filename", "")
             stem = Path(filename).stem if filename else ""
             has_ann = bool(stem and (ann_base / f"{stem}.annotations.json").exists())
+            poster_path, _ = _poster_reference(project_path, media_type, filename)
             summary.append({
                 "title":       e.get("title", ""),
                 "year":        e.get("year", ""),
@@ -348,6 +397,7 @@ def list_movies(
                 "has_shotlist": get_shotlist_path(project_path, filename, media_type).exists() if filename else False,
                 "has_annotations": has_ann,
                 "has_motifs":  has_ann,  # motifs live in annotation JSON
+                "has_poster":  poster_path is not None,
             })
 
         total = len(summary)
@@ -394,9 +444,86 @@ def get_metadata(
         entries = _get_metadata(project_path, query=film, media_type=media_type)
         if not entries:
             return _err(f"No film found matching {film!r} in {media_type}.")
+
+        def with_poster_reference(entry: dict) -> dict:
+            result = dict(entry)
+            poster_path, poster_reference = _poster_reference(
+                project_path, media_type, result.get("filename", "")
+            )
+            result["has_poster"] = poster_path is not None
+            if poster_reference is not None:
+                result["poster_path"] = poster_reference
+            return result
+
         if len(entries) == 1:
-            return _ok(film=entries[0])
-        return _ok(matches=len(entries), films=entries)
+            return _ok(film=with_poster_reference(entries[0]))
+        return _ok(matches=len(entries), films=[with_poster_reference(e) for e in entries])
+
+    except Exception as exc:
+        return _err(str(exc), traceback.format_exc())
+
+
+@mcp.tool(structured_output=False)
+def get_poster(
+    film: str,
+    media_type: str = "movie",
+    year: int | None = None,
+    tmdb_id: int | None = None,
+) -> list | str:
+    """Return a film's local poster thumbnail as inline JPEG image content.
+
+    Resolves the film using its title, filename, or TMDb ID. Supply ``year``
+    or ``tmdb_id`` to disambiguate multiple matching titles. The returned image
+    is the existing project thumbnail; this tool makes no network request and
+    never creates or modifies poster files.
+
+    Args:
+        film:       Title substring, exact filename, or numeric TMDb ID.
+        media_type: "movie" (default) or "gameplay".
+        year:       Optional release year used to narrow title matches.
+        tmdb_id:    Optional TMDb ID used to narrow title matches.
+
+    Read-only. Reads: data/metadata/<media_type>.json and
+    media/thumbnails/<media_type>/.
+    """
+    if media_type not in ("movie", "gameplay"):
+        return _err(f"Invalid media_type {media_type!r}. Must be 'movie' or 'gameplay'.")
+
+    result = _ctx()
+    if isinstance(result, str):
+        return result
+    project_path, _ = result
+
+    try:
+        resolved = _resolve_single_film(
+            project_path,
+            film,
+            media_type,
+            year=year,
+            tmdb_id=tmdb_id,
+        )
+        if isinstance(resolved, str):
+            return resolved
+        entry, filename = resolved
+
+        poster_path, poster_reference = _poster_reference(
+            project_path, media_type, filename
+        )
+        if poster_path is None:
+            return _err(
+                f"No local poster found for {entry.get('title', filename)!r}.",
+                f"Expected a JPEG thumbnail in media/thumbnails/{media_type}/.",
+            )
+
+        metadata = _ok(
+            media_type=media_type,
+            title=entry.get("title", ""),
+            year=entry.get("year", ""),
+            tmdb=entry.get("tmdb") or entry.get("tmdb_id") or "",
+            filename=filename,
+            poster_path=poster_reference,
+        )
+        return [metadata, _MCPImage(data=poster_path.read_bytes(), format="jpeg")]
 
     except Exception as exc:
         return _err(str(exc), traceback.format_exc())
@@ -948,7 +1075,7 @@ def _frames_to_mcp(frames: list[dict]) -> list:
     return out
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 def test_image_return() -> list:
     """Minimal smoke-test: verify Claude Desktop renders an inline image from MCP.
 
@@ -989,7 +1116,7 @@ def test_image_return() -> list:
     ]
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 def test_image_png() -> list:
     """Variant of test_image_return using PNG instead of JPEG.
 
@@ -1133,7 +1260,7 @@ def debug_frame_bytes(
         return _err(str(exc), traceback.format_exc())
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 def get_best_frame(
     film: str,
     shot_id: str,
@@ -1173,7 +1300,7 @@ def get_best_frame(
         return [_err(str(exc), traceback.format_exc())]
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 def get_best_frames(
     query: str,
     limit: int = 4,
@@ -1220,7 +1347,7 @@ def get_best_frames(
         return [_err(str(exc), traceback.format_exc())]
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 def get_palette_frames(
     warm: bool = False,
     cold: bool = False,
@@ -1299,7 +1426,7 @@ def get_palette_frames(
         return [_err(str(exc), traceback.format_exc())]
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 def get_motif_frames(
     motif: str,
     films: list[str] | None = None,
@@ -1342,7 +1469,7 @@ def get_motif_frames(
         return [_err(str(exc), traceback.format_exc())]
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 def get_context_frames(
     film: str,
     shot_id: str,
@@ -1388,7 +1515,7 @@ def get_context_frames(
         return [_err(str(exc), traceback.format_exc())]
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 def get_best_silhouette(
     word: str,
     field: str = "objects",

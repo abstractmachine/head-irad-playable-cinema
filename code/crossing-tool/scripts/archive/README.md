@@ -28,6 +28,17 @@ again against a current project.
 - `debug_illustration_inspector_layout.py` — one-off layout instrumentation
   for the Illustration inspector.
 
+## Read-only forensic audits
+
+- `crossing index silhouette morphology-audit` — current read-only historical
+  silhouette morphology audit for singular/plural ambiguity. It consumes the
+  completed `outputs/tests/silhouette-number-audit/` report and writes its own
+  report under `outputs/tests/silhouette-number-morphology-audit/` without
+  mutating canonical project state.
+- `audit_silhouette_number.py` — older historical precursor to the morphology
+  audit. It writes reports under `outputs/tests/silhouette-number-audit/` and
+  does not mutate canonical project state.
+
 Both are read-only/diagnostic-only and made no permanent changes to
 application behavior when they were used.
 

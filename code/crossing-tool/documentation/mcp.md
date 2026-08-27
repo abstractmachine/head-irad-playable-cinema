@@ -19,6 +19,7 @@
 |---|---|---|
 | `list_movies` | List all films with metadata and data-availability flags | `media_type` |
 | `get_metadata` | Full metadata for one film | `film` (title/filename/tmdb id) |
+| `get_poster` | Existing local poster as inline JPEG image content | `film`, `year` / `tmdb_id` (optional) |
 | `get_shotlist` | Shot list with timecodes and captions | `film`, `scene` (optional) |
 | `get_subtitles` | Subtitle cues, optional time window | `film`, `start_secs`, `end_secs` |
 | `list_motifs` | Per-shot motif sequence + film semantic title | `film` |
@@ -31,13 +32,19 @@
 ```json
 { "media_type": "movies" }
 ```
-Returns: `{ "ok": true, "count": N, "movies": [...] }` — each entry includes `title`, `year`, `tmdb`, `director`, `runtime`, `filename`, `media_id`, `has_shotlist`, `has_annotations`, `has_motifs`.
+Returns: `{ "ok": true, "count": N, "movies": [...] }` — each entry includes `title`, `year`, `tmdb`, `director`, `runtime`, `filename`, `media_id`, `has_shotlist`, `has_annotations`, `has_motifs`, and `has_poster`. `has_poster` means a local JPEG thumbnail is present; it does not make a network request.
 
 **`get_metadata`**
 ```json
 { "film": "Searchers", "media_type": "movies" }
 ```
-Accepts a title substring, exact filename, or numeric TMDb ID. Returns the full metadata record.
+Accepts a title substring, exact filename, or numeric TMDb ID. Returns the full metadata record plus `has_poster` and, when available, project-relative `poster_path` such as `media/thumbnails/movie/Searchers.jpg`.
+
+**`get_poster`**
+```json
+{ "film": "Searchers", "year": 1956 }
+```
+Returns a metadata JSON item followed by the existing local JPEG poster as inline image content. Use `tmdb_id` instead of (or with) `year` to disambiguate titles. This tool is read-only: it does not contact TMDb or create a thumbnail when one is missing.
 
 **`get_shotlist`**
 ```json

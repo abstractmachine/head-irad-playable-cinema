@@ -69,6 +69,28 @@ from services.silhouette import _BORDER_CHECK_PX, _MAX_ASPECT_RATIO
 
 CATALOG_VERSION = "1"
 
+# ``search_provenance`` explains semantic support for a label. Assignment is
+# independent lifecycle state for this particular catalog object.
+ASSIGNMENT_FIELD = "assignment"
+ASSIGNMENT_ACTIVE = "active"
+ASSIGNMENT_INACTIVE = "inactive"
+ASSIGNMENT_SUPERSEDED = "superseded"
+ASSIGNMENT_STATES = frozenset({
+    ASSIGNMENT_ACTIVE,
+    ASSIGNMENT_INACTIVE,
+    ASSIGNMENT_SUPERSEDED,
+})
+
+RECHECK_FIELD = "recheck"
+RECHECK_PENDING = "pending"
+RECHECK_COMPLETED = "completed"
+RECHECK_NO_RESULT = "no_result"
+RECHECK_STATES = frozenset({
+    RECHECK_PENDING,
+    RECHECK_COMPLETED,
+    RECHECK_NO_RESULT,
+})
+
 # Quality filters that intentionally differ from services.silhouette (looser
 # area bounds tuned for the catalog pipeline) — see _passes_quality_filters().
 # _BORDER_CHECK_PX and _MAX_ASPECT_RATIO are identical to services.silhouette
@@ -78,6 +100,65 @@ _MAX_MASK_AREA_FRACTION = 0.70    # 70 %
 _IOU_DEDUP_THRESHOLD    = 0.70    # IoU above which two masks are considered duplicates
 _MAX_OBJECTS_PER_SHOT   = 8       # cap on accepted objects extracted from a single shot
 _PNG_CROP_PAD_PX        = 6       # pixel padding around tight bbox when saving PNG
+
+
+def assignment_state_for_record(record: dict[str, Any]) -> str:
+    """Return lifecycle state, treating legacy records without assignment as active.
+
+    An explicit malformed assignment is deliberately not promoted to active:
+    an unknown lifecycle state is safest treated as inactive until curated.
+    """
+    assignment = record.get(ASSIGNMENT_FIELD)
+    if assignment is None:
+        return ASSIGNMENT_ACTIVE
+    if not isinstance(assignment, dict):
+        return ASSIGNMENT_INACTIVE
+    state = assignment.get("state")
+    if state in ASSIGNMENT_STATES:
+        return str(state)
+    return ASSIGNMENT_INACTIVE
+
+
+def assignment_is_active(record: dict[str, Any]) -> bool:
+    """Return whether *record* belongs in the ordinary active catalog."""
+    return assignment_state_for_record(record) == ASSIGNMENT_ACTIVE
+
+
+def extraction_identity(record: dict[str, Any]) -> dict[str, str]:
+    """Return the stable identity of the original extraction request.
+
+    ``label`` is the historical search label. It remains distinct from an
+    annotation value, which is captured only in a curator-requested recheck.
+    """
+    return {
+        "media_type": str(record.get("media_type") or ""),
+        "media_id": str(record.get("media_id") or ""),
+        "shot_id": str(record.get("shot_id") or ""),
+        "field": str(record.get("field") or ""),
+        "search_label": str(record.get("label") or ""),
+    }
+
+
+def same_extraction_identity(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    """Return true only for exactly equal extraction request identities."""
+    return extraction_identity(left) == extraction_identity(right)
+
+
+def catalog_object_reference(record: dict[str, Any], json_path: str | Path | None = None) -> dict[str, str]:
+    """Return a catalog-local reference that disambiguates repeated object IDs."""
+    path = Path(json_path or record.get("path") or "")
+    object_id = str(record.get("object_id") or path.stem or "")
+    return {
+        "media_type": str(record.get("media_type") or ""),
+        "filename_stem": str(record.get("filename_stem") or ""),
+        "label": str(record.get("label") or ""),
+        "object_id": object_id,
+    }
+
+
+def active_assignment() -> dict[str, str]:
+    """Return the lifecycle block for a newly extracted active object."""
+    return {"state": ASSIGNMENT_ACTIVE}
 
 
 def _scanned_marker_path(
@@ -340,6 +421,7 @@ def extract_objects_for_shot(
     mask_generator=None,
     force: bool = False,
     verbose: bool = False,
+    recheck_source_json_path: str | Path | None = None,
 ) -> dict:
     """Extract all valid objects for *label* from one shot.
 
@@ -356,6 +438,10 @@ def extract_objects_for_shot(
     media_id:        Media identifier (e.g. ``"tmdb_11969"``).
     force:           Overwrite existing objects for this shot.
     verbose:         Print progress detail.
+    recheck_source_json_path:
+                     Canonical JSON with a pending recheck for this exact
+                     extraction identity. It bypasses only the per-shot cache;
+                     it does not clear corpus-wide ``.scanned`` state.
 
     Returns
     -------
@@ -383,8 +469,32 @@ def extract_objects_for_shot(
     filename_stem = Path(filename).stem
     label_dir = catalog_item_dir(project_path, media_type, filename_stem, label)
 
-    # --- check if already done for this shot (unless --force) ---
-    if not force and label_dir.exists():
+    # A future recheck runner must prove that the selected historical object
+    # carries a pending request for this exact source/label before it can bypass
+    # the ordinary per-shot cache. This intentionally does not consult or
+    # mutate the corpus-wide (field, label) ``.scanned`` optimization.
+    recheck_cache_bypass = False
+    if recheck_source_json_path is not None:
+        from services.silhouette_curation import pending_recheck_matches
+
+        try:
+            source_path = Path(recheck_source_json_path)
+            source_record = json.loads(source_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {"saved": [], "skipped": 0, "reason": "recheck source JSON is unreadable"}
+        recheck_cache_bypass = isinstance(source_record, dict) and pending_recheck_matches(
+            source_record,
+            media_type=media_type,
+            media_id=media_id,
+            shot_id=shot_id,
+            field=field,
+            search_label=label,
+        )
+        if not recheck_cache_bypass:
+            return {"saved": [], "skipped": 0, "reason": "recheck request is not pending for this extraction identity"}
+
+    # --- check if already done for this shot (unless --force or recheck) ---
+    if not force and not recheck_cache_bypass and label_dir.exists():
         existing = list(label_dir.glob("object_????.json"))
         for jf in existing:
             try:
@@ -590,6 +700,7 @@ def extract_objects_for_shot(
             "source_frame":       source_frame,
             "png":                png_name,
             "timestamp":          timestamp,
+            "assignment":         active_assignment(),
         }
         from data.annotate import atomic_write_text
 

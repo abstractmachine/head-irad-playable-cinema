@@ -21,6 +21,7 @@ dependencies = [
     "mcp[cli]>=1.27.0",
     "argcomplete>=3.0",
     "openai>=1.0.0",
+    "inflect>=7.5.0",
 ]
 
 [project.optional-dependencies]

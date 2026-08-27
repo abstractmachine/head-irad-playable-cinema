@@ -302,6 +302,24 @@ paint/behavior level without forcing a structurally incompatible base class.
   `services/vocabulary_index.py`, `services/frame_embeddings.py`
   (`.npy` + manifest), `services/engraving_*` (PNG/JSON per generation run — cache-like,
   each `engraving_id` unique, no cross-run collision).
+- **Silhouette lifecycle metadata** lives additively in each canonical catalog object
+  JSON, beside but independent from `search_provenance`. `search_provenance` answers
+  why a label is semantically related to the source annotation; `assignment` answers
+  whether that particular extracted object is the current representation. Missing
+  `assignment` is backward-compatible `active`; explicit states are `active`,
+  `inactive`, and `superseded`. A curatorially rejected object becomes inactive with
+  an embedded `assignment.recheck` request containing the original search label and
+  the distinct annotation value. `human_best` remains a separate positive selection
+  marker for engraving workflows and must never be overloaded as lifecycle state.
+  Rechecks preserve the old PNG/JSON and supersede rather than delete assets. Do not
+  bulk-migrate historical JSON records without explicit user direction.
+- **`.scanned` is not lifecycle state.**
+  `data/silhouettes/catalog/<media>/.scanned/<field>/<label>` is only a completed
+  corpus `(field, label)` processing optimization. It is neither per-shot nor
+  per-object, and must never be used for curator rejection or recheck eligibility.
+  Pending rechecks belong in the original object's `assignment.recheck` metadata and
+  must match the exact extraction identity `(media_type, media_id, shot_id, field,
+  search_label)` before bypassing the ordinary per-shot catalog cache.
 - **Writes must be atomic.** `data/annotate.py::atomic_write_text(path, text)` is the
   shared, public helper (temp file in the same directory + `os.replace()`, cleanup on
   failure) — reuse it (lazy-import `from data.annotate import atomic_write_text`) for
@@ -511,6 +529,21 @@ there too instead of letting the gap grow further).
 - Sync's floating-overlay Inspector is a one-off, not a pattern to generalize into
   `WindowVisualizer`.
 - FLUX engraving backend intentionally not wired into the production batch pipeline.
+- The read-only silhouette number-ambiguity audit is a separate forensic pass from
+  the historical semantic provenance migration. The current CLI-backed morphology
+  audit lives in `services/silhouette_number_morphology_audit.py` and runs via
+  `crossing index silhouette morphology-audit`; it consumes the completed
+  `outputs/tests/silhouette-number-audit/` report and writes only to
+  `outputs/tests/silhouette-number-morphology-audit/` without mutating
+  `search_provenance` or reindexing the archive. The older
+  `services/silhouette_number_audit.py` / `scripts/archive/audit_silhouette_number.py`
+  path is historical.
+- The follow-on read-only direction audit lives in
+  `services/silhouette_number_direction_audit.py` and runs via
+  `crossing index silhouette number-direction-audit`; it consumes the completed
+  morphology audit, writes only to `outputs/tests/silhouette-number-direction-audit/`,
+  and uses exact normalized label matching for same-shot/same-frame sibling checks
+  so inflected variants do not overmatch.
 
 **Future opportunities (no action needed unless asked):**
 - Renaming `illustration_browser.py`/`illustration_inspector.py` to something
