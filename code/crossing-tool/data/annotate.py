@@ -15,6 +15,7 @@ provided inline) and is not coupled to caching or transformer logic.
 from __future__ import annotations
 
 FRAMES_PER_SHOT = 10
+UNTYPED_SHOT_TYPE = "<untyped>"
 
 import json
 import math
@@ -2288,6 +2289,78 @@ def get_annotation_json_path(project_path: str, filename: str, media_type: str) 
     """
     stem = Path(filename).stem
     return Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{stem}.annotations.json"
+
+
+def canonical_shot_type(annotation: dict | None) -> str:
+    """Return the canonical scalar type value for one shot annotation.
+
+    A literal ``"untyped"`` remains a source value. Only missing, non-string,
+    empty, and whitespace-only values map to the synthetic ``<untyped>`` key.
+    """
+    value = annotation.get("type") if isinstance(annotation, dict) else None
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return UNTYPED_SHOT_TYPE
+
+
+def load_shot_type_lookup(
+    project_path: str,
+    media_type: str,
+) -> tuple[dict[tuple[str, str], str], dict[str, int]]:
+    """Build one canonical ``(media_id, shot_id) -> shot_type`` lookup.
+
+    This read-only helper is for deterministic derived-index builds. Stable
+    shot IDs include their media ID; metadata supplies the fallback necessary
+    for older integer shot IDs that were stored in per-film annotation files.
+    """
+    from data.media_id import compute_media_id, parse_shot_id
+    from data.metadata import get_metadata
+
+    metadata_by_stem = {
+        Path(str(record.get("filename") or "")).stem: compute_media_id(record, media_type)
+        for record in get_metadata(project_path, media_type=media_type)
+        if record.get("filename")
+    }
+    root = Path(project_path) / "data" / "annotations" / "shots" / media_type
+    lookup: dict[tuple[str, str], str] = {}
+    stats = {
+        "annotation_files_read": 0,
+        "annotation_files_failed": 0,
+        "annotation_entries_read": 0,
+        "shot_types_indexed": 0,
+    }
+    if not root.is_dir():
+        return lookup, stats
+
+    for annotation_path in sorted(root.glob("*.annotations.json")):
+        stats["annotation_files_read"] += 1
+        try:
+            entries = json.loads(annotation_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            stats["annotation_files_failed"] += 1
+            continue
+        if not isinstance(entries, list):
+            stats["annotation_files_failed"] += 1
+            continue
+
+        stem = annotation_path.name.removesuffix(".annotations.json")
+        fallback_media_id = metadata_by_stem.get(stem, "")
+        for entry in entries:
+            stats["annotation_entries_read"] += 1
+            shot = entry.get("shot") if isinstance(entry, dict) else None
+            annotation = shot.get("annotation") if isinstance(shot, dict) else None
+            shot_id = str(shot.get("shot_id") or "") if isinstance(shot, dict) else ""
+            if not shot_id or not isinstance(annotation, dict):
+                continue
+            try:
+                media_id, _, _ = parse_shot_id(shot_id)
+            except ValueError:
+                media_id = fallback_media_id
+            if not media_id:
+                continue
+            lookup[(media_id, shot_id)] = canonical_shot_type(annotation)
+            stats["shot_types_indexed"] += 1
+    return lookup, stats
 
 
 def _merge_annotation_dicts(prev_ann: Dict[str, Any], removed_ann: Dict[str, Any]) -> Dict[str, Any]:

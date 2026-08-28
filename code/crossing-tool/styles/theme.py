@@ -378,8 +378,8 @@ QMessageBox {{ background-color: {BG}; }}
 
 /* ── Tooltips ──────────────────────────────────────────────── */
 QToolTip {{
-    background-color: {PANEL_BG};
-    color: {TEXT};
+    background-color: {ACCENT};
+    color: {ACCENT_TEXT};
     border: none;
     font-size: {BASE_PT}pt;
 }}

@@ -159,7 +159,9 @@ def launch_visualizer(
     cmd = [
         sys.executable, str(vis_script),
         "--project", project_path,
-        "--media", media_type,
+        # ALL_MEDIA is the literal "--all-media--" query sentinel. It must
+        # be supplied with '=' so argparse does not parse it as an option.
+        f"--media={media_type}",
     ]
     if initial_film:
         cmd += ["--film", initial_film]

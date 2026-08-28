@@ -21,11 +21,13 @@ the window-state branch, not the catalog navigation itself.
 
 from unittest.mock import MagicMock
 
+from services.illustration_index import ALL_MEDIA
 from visualizers.illustration_visualizer import (
     IllustrationPane,
     IllustrationWindow,
     open_at_illustration,
 )
+from visualizers import launcher
 
 
 def _fake_window(is_fullscreen: bool) -> MagicMock:
@@ -77,14 +79,39 @@ def test_pane_select_source_tab_updates_the_inspector_tab() -> None:
     pane._side_scroll.setCurrentIndex.assert_called_once_with(1)
 
 
-def test_open_at_illustration_forwards_source_tab_over_ipc(monkeypatch) -> None:
+def test_open_at_illustration_forwards_source_tab_and_field_over_ipc(monkeypatch) -> None:
     sent = {}
     monkeypatch.setattr(
         "visualizers.illustration_visualizer._ill_ipc_send_navigate",
         lambda project_path, **kwargs: sent.update(project_path=project_path, **kwargs) or True,
     )
 
-    open_at_illustration("/project", source_tab="engravings")
+    open_at_illustration("/project", field="wearing", source_tab="engravings")
 
     assert sent["project_path"] == "/project"
     assert sent["source_tab"] == "engravings"
+    assert sent["field"] == "wearing"
+
+
+def test_illustration_process_launcher_keeps_all_media_sentinel_as_media_value(monkeypatch) -> None:
+    launched = []
+    monkeypatch.setattr(launcher, "raise_existing_window", lambda _subcommand: False)
+    monkeypatch.setattr(launcher.QApplication, "instance", lambda: MagicMock())
+    monkeypatch.setattr(launcher._sp, "Popen", lambda command: launched.append(command))
+
+    launcher.launch_visualizer(
+        "illustration",
+        "/project",
+        media_type=ALL_MEDIA,
+        initial_field="wearing",
+        initial_source_tab="engravings",
+    )
+
+    assert launched == [[
+        launcher.sys.executable,
+        str(launcher.Path(launcher.__file__).parent / "illustration_visualizer.py"),
+        "--project", "/project",
+        "--media=--all-media--",
+        "--field", "wearing",
+        "--source-tab", "engravings",
+    ]]

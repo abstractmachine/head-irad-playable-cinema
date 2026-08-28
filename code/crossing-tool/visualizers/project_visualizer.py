@@ -32,12 +32,12 @@ from visualizers.components.metadata_block import (
 from visualizers.components.sweep_bar import SweepBar
 from visualizers.components.tab_panel import TabPanel
 
-from PyQt5.QtCore import Qt, QEvent, QThread, QTimer, pyqtSignal
-from PyQt5.QtGui import QCursor, QFontMetrics
+from PyQt5.QtCore import Qt, QEvent, QPoint, QThread, QTimer, pyqtSignal
+from PyQt5.QtGui import QFontMetrics
 from PyQt5.QtWidgets import (
     QApplication, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
     QFrame, QGridLayout, QHBoxLayout, QLineEdit, QMessageBox, QPushButton,
-    QSizePolicy, QSpinBox, QTabBar, QToolTip, QVBoxLayout, QWidget, QLabel,
+    QSizePolicy, QSpinBox, QTabBar, QVBoxLayout, QWidget, QLabel,
 )
 
 from tool import prefs as _prefs
@@ -359,6 +359,8 @@ def _proportional_heights(
 class _WordCountCell(QFrame):
     """Stretched word/count row using Project launcher spacing and row seams."""
 
+    fieldActivated = pyqtSignal(str)
+
     def __init__(self, font, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("VocabularyFieldCell")
@@ -370,12 +372,23 @@ class _WordCountCell(QFrame):
             f"QFrame#VocabularyFieldCell {{ background: {theme.WARNING_COLOR}; "
             f"{_project_row_side_style()} }}"
         )
+        self._hover_frame_style = (
+            f"QFrame#VocabularyFieldCell {{ background: {theme.ACCENT}; "
+            f"{_project_row_side_style()} }}"
+        )
         self.setStyleSheet(self._frame_style)
+        self._interactive = False
+        self._warning = False
+        self._compact_count = False
+        self._field = ""
+        self._count = ""
+        self._visible_content = False
         layout = QHBoxLayout(self)
         layout.setContentsMargins(_SPACER_ROW_INSET, 0, _PROJECT_ROW_SEAM_H, 0)
         layout.setSpacing(_SPACER_ROW_GAP)
 
         self.field_label = QLabel()
+        self.field_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.field_label.setFont(font)
         self.field_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self._field_style = table_ui_cell_style(
@@ -385,10 +398,15 @@ class _WordCountCell(QFrame):
             "", "", background_color=theme.WARNING_COLOR,
             include_minimum_height=False,
         )
+        self._hover_field_style = table_ui_cell_style(
+            "", "", background_color=theme.ACCENT, text_color=theme.ACCENT_TEXT,
+            include_minimum_height=False,
+        )
         self.field_label.setStyleSheet(self._field_style)
         layout.addWidget(self.field_label, 1)
 
         self.count_label = QLabel()
+        self.count_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.count_label.setFont(font)
         self.count_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._count_style = table_ui_cell_style(
@@ -416,6 +434,16 @@ class _WordCountCell(QFrame):
             + f" padding-left: {_SPACER_ROW_GAP}px;"
             + f" padding-right: {_SPACER_ROW_INSET}px;"
         )
+        self._hover_count_style = table_ui_cell_style(
+            "", "", background_color=theme.ACCENT, text_color=theme.ACCENT_TEXT,
+            include_minimum_height=False,
+            horizontal_padding=_SPACER_ROW_INSET,
+        )
+        self._compact_hover_count_style = (
+            self._hover_count_style
+            + f" padding-left: {_SPACER_ROW_GAP}px;"
+            + f" padding-right: {_SPACER_ROW_INSET}px;"
+        )
         self.count_label.setStyleSheet(self._count_style)
         layout.addWidget(self.count_label)
 
@@ -433,26 +461,69 @@ class _WordCountCell(QFrame):
         visible: bool,
         compact_count: bool = False,
         warning: bool = False,
+        interactive: bool = False,
     ) -> None:
+        self._field = field
+        self._count = count
+        self._visible_content = visible
+        self._compact_count = compact_count
+        self._warning = warning
+        self._interactive = interactive
+        self.setCursor(Qt.PointingHandCursor if interactive else Qt.ArrowCursor)
+        self._apply_content_style()
+        self.count_label.setFixedWidth(count_width)
+
+    def _apply_content_style(self) -> None:
+        hovered = self._interactive and self.underMouse()
         self.setStyleSheet(
-            self._warning_frame_style if warning else self._frame_style
+            self._hover_frame_style if hovered
+            else self._warning_frame_style if self._warning
+            else self._frame_style
         )
         self.field_label.setStyleSheet(
-            self._warning_field_style if warning else self._field_style
+            self._hover_field_style if hovered
+            else self._warning_field_style if self._warning
+            else self._field_style
         )
-        if warning:
+        if hovered:
+            count_style = (
+                self._compact_hover_count_style
+                if self._compact_count else self._hover_count_style
+            )
+        elif self._warning:
             count_style = (
                 self._compact_warning_count_style
-                if compact_count else self._warning_count_style
+                if self._compact_count else self._warning_count_style
             )
         else:
             count_style = (
-                self._compact_count_style if compact_count else self._count_style
+                self._compact_count_style if self._compact_count else self._count_style
             )
         self.count_label.setStyleSheet(count_style)
-        self.field_label.setText(field if visible else "")
-        self.count_label.setText(count if visible else "")
-        self.count_label.setFixedWidth(count_width)
+        self.field_label.setText(self._field if self._visible_content else "")
+        self.count_label.setText(self._count if self._visible_content else "")
+
+    def enterEvent(self, event) -> None:
+        self._apply_content_style()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._apply_content_style()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event) -> None:
+        if self._interactive and event.button() == Qt.LeftButton:
+            self.fieldActivated.emit(self._field)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        if self._interactive and event.button() == Qt.LeftButton:
+            self.fieldActivated.emit(self._field)
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
 
 _VocabularyFieldCell = _WordCountCell
@@ -482,6 +553,9 @@ class _WordCountDatavisWidget(QWidget):
     """Responsive vertical composition shared by renderer-neutral word/count kinds."""
 
     syntheticActivated = pyqtSignal(str)
+    fieldActivated = pyqtSignal(str)
+    illustrationFieldActivated = pyqtSignal(str, str)
+    shotTypeActivated = pyqtSignal(str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -502,16 +576,47 @@ class _WordCountDatavisWidget(QWidget):
         self.setStyleSheet(f"background: {theme.CANVAS_BG};")
         while len(self._field_cells) < len(self._fields):
             cell = _WordCountCell(self._cell_font, self)
-            cell.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            cell.fieldActivated.connect(self._on_field_cell_activated)
             self._field_cells.append(cell)
         for index, cell in enumerate(self._field_cells):
-            cell.setVisible(index < len(self._fields))
+            visible = index < len(self._fields)
+            cell.setVisible(visible)
+            cell.setAttribute(
+                Qt.WA_TransparentForMouseEvents,
+                True,
+            )
         self._layout_cells()
+
+    def _field_is_interactive(self, item: dict) -> bool:
+        if self._word_count_kind == "shot_types":
+            return True
+        return (
+            not item["synthetic"]
+            and self._word_count_kind in (
+                "vocabulary_fields",
+                "silhouette_fields",
+                "engraving_fields",
+            )
+        )
+
+    def _on_field_cell_activated(self, field: str) -> None:
+        if self._word_count_kind == "shot_types":
+            self.shotTypeActivated.emit(field)
+        elif self._word_count_kind == "vocabulary_fields":
+            self.fieldActivated.emit(field)
+        elif self._word_count_kind in ("silhouette_fields", "engraving_fields"):
+            self.illustrationFieldActivated.emit(self._word_count_kind, field)
 
     def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.LeftButton:
             for item, cell in zip(self._fields, self._field_cells):
-                if item["synthetic"] and cell.geometry().contains(event.pos()):
+                if not cell.geometry().contains(event.pos()):
+                    continue
+                if self._word_count_kind == "shot_types":
+                    self.shotTypeActivated.emit(item["field"])
+                    event.accept()
+                    return
+                if item["synthetic"]:
                     self.syntheticActivated.emit(self._word_count_kind)
                     event.accept()
                     return
@@ -579,6 +684,12 @@ class _WordCountDatavisWidget(QWidget):
                 self.width() - _SPACER_ROW_INSET - _SPACER_ROW_GAP - row_count_width
             )
             text_fits = field_width <= available_field_width
+            interactive = (
+                self._field_is_interactive(item)
+                and height >= self._minimum_cell_height
+                and text_fits
+            )
+            cell.setAttribute(Qt.WA_TransparentForMouseEvents, not interactive)
             cell.set_content(
                 item["field"],
                 count,
@@ -586,6 +697,7 @@ class _WordCountDatavisWidget(QWidget):
                 height >= self._minimum_cell_height and text_fits,
                 compact_count=use_intrinsic_count_width,
                 warning=item["synthetic"],
+                interactive=interactive,
             )
             cell.setGeometry(0, y, self.width(), height)
             y += height
@@ -596,25 +708,100 @@ class _WordCountDatavisWidget(QWidget):
 _VocabularyDatavisWidget = _WordCountDatavisWidget
 
 
+class _MediaTitlePopup(QFrame):
+    """Fixed-width title popup for a compact Project media cell."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent, Qt.ToolTip | Qt.FramelessWindowHint)
+        self.setObjectName("ProjectMediaTitlePopup")
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setStyleSheet(
+            f"QFrame#ProjectMediaTitlePopup {{ background: {theme.ACCENT}; "
+            f"border: none; }}"
+        )
+
+        self._title_label = QLabel(self)
+        self._title_label.setWordWrap(True)
+        self._title_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self._title_label.setFont(theme.font_ui())
+        self._title_label.setStyleSheet(
+            table_ui_cell_style(
+                "", "", background_color=theme.ACCENT,
+                text_color=theme.ACCENT_TEXT, include_minimum_height=False,
+                horizontal_padding=_SPACER_ROW_INSET,
+            )
+        )
+        self.hide()
+
+    def show_for(self, cell, title: str) -> None:
+        """Place the title on the open side of *cell*'s datavis column."""
+        width = cell.width()
+        if width <= 0 or not title:
+            self.hide()
+            return
+
+        self._title_label.setText(title)
+        self._title_label.setFixedWidth(width)
+        height = max(
+            INSPECTOR_ROW_HEIGHT,
+            self._title_label.heightForWidth(width),
+        )
+        self.setFixedSize(width, height)
+        self._title_label.setGeometry(self.rect())
+
+        cell_origin = cell.mapToGlobal(QPoint(0, 0))
+        content = cell.parentWidget()
+        is_upper_half = (
+            content is None
+            or cell.y() + cell.height() / 2 < content.height() / 2
+        )
+        if is_upper_half:
+            position = cell_origin + QPoint(0, cell.height() + theme.INSPECTOR_GAP)
+        else:
+            position = cell_origin - QPoint(0, height + theme.INSPECTOR_GAP)
+        self.move(position)
+        self.show()
+        self.raise_()
+
+
 class _MediaItemCell(QWidget):
     """One anonymous media item; geometry and color are independent."""
 
     activated = pyqtSignal(dict)
+    titlePopupRequested = pyqtSignal(object)
+    titlePopupHidden = pyqtSignal()
 
     def __init__(self, color: str, parent=None) -> None:
         super().__init__(parent)
         self.item: dict = {}
         self._default_color = color
+        self._item_color = color
+        self._title = ""
+        self._title_is_visible = False
+        self._hovered = False
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setStyleSheet(f"background: {color}; border: none;")
+        self._title_label = QLabel(self)
+        self._title_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._title_label.setWordWrap(True)
+        self._title_label.setFont(theme.font_ui())
+        self._title_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self._title_label.hide()
+        self._apply_style()
         self.setCursor(Qt.PointingHandCursor)
 
     def set_item(self, item: dict) -> None:
         self.item = item
+        self._title = str(item.get("title") or "")
+        self._title_is_visible = False
+        self._hovered = self.underMouse()
+        self._title_label.clear()
+        self._title_label.hide()
         rgb = item.get("thumbnail_foreground_rgb")
         color = self._default_color
         if (
-            isinstance(rgb, list)
+            item.get("media_type") == "gameplay"
+            and isinstance(rgb, list)
             and len(rgb) == 3
             and all(
                 isinstance(channel, int)
@@ -624,20 +811,63 @@ class _MediaItemCell(QWidget):
             )
         ):
             color = f"rgb({rgb[0]}, {rgb[1]}, {rgb[2]})"
+        self._item_color = color
+        self._apply_style()
+
+    def update_title_visibility(self) -> None:
+        """Show a title when its complete word-wrapped layout fits the cell."""
+        self._title_label.setText(self._title)
+        self._title_label.setFixedWidth(self.width())
+        required_height = self._title_label.heightForWidth(self.width())
+        self._title_is_visible = (
+            bool(self._title)
+            and self.height() >= INSPECTOR_ROW_HEIGHT
+            and required_height <= self.height()
+        )
+        self._title_label.setText(self._title if self._title_is_visible else "")
+        self._title_label.setVisible(self._title_is_visible)
+        if self._title_is_visible:
+            self.titlePopupHidden.emit()
+        self._apply_style()
+
+    def _apply_style(self) -> None:
+        hovered = bool(self.item) and self._hovered
+        color = theme.ACCENT if hovered else self._item_color
         self.setStyleSheet(f"background: {color}; border: none;")
-        self.setToolTip(str(item.get("title") or ""))
+        self._title_label.setStyleSheet(
+            table_ui_cell_style(
+                "", "", background_color=color,
+                text_color=theme.ACCENT_TEXT if hovered else theme.TEXT,
+                include_minimum_height=False,
+                horizontal_padding=_SPACER_ROW_INSET,
+            )
+        )
 
     def enterEvent(self, event) -> None:  # noqa: N802
-        title = self.toolTip()
-        if title:
-            QToolTip.showText(QCursor.pos(), title, self)
+        self._hovered = True
+        self._apply_style()
+        if not self._title_is_visible:
+            self.titlePopupRequested.emit(self)
         super().enterEvent(event)
 
-    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        self._hovered = False
+        self._apply_style()
+        self.titlePopupHidden.emit()
+        super().leaveEvent(event)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        self._title_label.setGeometry(self.rect())
+        self.update_title_visibility()
+        super().resizeEvent(event)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.LeftButton and self.item:
-            QToolTip.hideText()
+            self.titlePopupHidden.emit()
             self.activated.emit(self.item)
-        super().mouseDoubleClickEvent(event)
+            event.accept()
+            return
+        super().mousePressEvent(event)
 
 
 class _ProjectDatavisWidget(_WordCountDatavisWidget):
@@ -655,11 +885,13 @@ class _ProjectDatavisWidget(_WordCountDatavisWidget):
             f"QWidget#ProjectDatavisContent {{ background: {theme.CANVAS_BG}; }}"
         )
         self._content_widget.hide()
+        self._media_title_popup = _MediaTitlePopup(self)
 
     mediaItemActivated = pyqtSignal(dict)
 
     def set_datavis(self, datavis: dict) -> None:
         self._datavis_kind = datavis.get("kind", "empty")
+        self._media_title_popup.hide()
         if self._datavis_kind == "media_items":
             super().set_datavis({"kind": "empty"})
             self._content_widget.show()
@@ -672,6 +904,8 @@ class _ProjectDatavisWidget(_WordCountDatavisWidget):
                     colors[index % len(colors)], self._content_widget
                 )
                 cell.activated.connect(self.mediaItemActivated)
+                cell.titlePopupRequested.connect(self._show_media_title_popup)
+                cell.titlePopupHidden.connect(self._media_title_popup.hide)
                 self._media_item_cells.append(cell)
             for index, cell in enumerate(self._media_item_cells):
                 visible = index < len(self._media_items)
@@ -693,6 +927,12 @@ class _ProjectDatavisWidget(_WordCountDatavisWidget):
         if self._datavis_kind == "media_items":
             self._layout_media_items()
 
+    def _show_media_title_popup(self, cell: _MediaItemCell) -> None:
+        if cell._title_is_visible:
+            self._media_title_popup.hide()
+            return
+        self._media_title_popup.show_for(cell, cell._title)
+
     def _sync_content_geometry(self) -> None:
         left, right = _project_datavis_horizontal_insets()
         self._content_widget.setGeometry(
@@ -712,11 +952,16 @@ class _ProjectDatavisWidget(_WordCountDatavisWidget):
         for index, cell in enumerate(self._media_item_cells[:item_count]):
             height = base_height + (index < remainder)
             cell.setGeometry(0, y, content.width(), height)
+            cell.update_title_visibility()
             y += height
 
     def leaveEvent(self, event) -> None:  # noqa: N802
-        QToolTip.hideText()
+        self._media_title_popup.hide()
         super().leaveEvent(event)
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        self._media_title_popup.hide()
+        super().closeEvent(event)
 
 
 class _ProjectColumnWidget(QWidget):
@@ -750,11 +995,14 @@ class _ProjectColumnWidget(QWidget):
         self._header_label.setCursor(Qt.PointingHandCursor)
         self._header_label.setFocusPolicy(Qt.NoFocus)
         self._header_label.setFont(theme.font_ui(bold=True))
+        self._header_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self._header_label.setStyleSheet(
             f"QPushButton#ProjectColumnHeader {{"
             f" background: {theme.TITLE_BG}; color: {theme.TEXT_DIM};"
             f" border: {_PROJECT_ROW_SEAM_H}px solid {theme.UI_BORDER};"
             f" padding: 0px; margin: 0px;"
+            f" min-height: {_COLUMN_ROW_H - 2 * _PROJECT_ROW_SEAM_H}px;"
+            f" max-height: {_COLUMN_ROW_H - 2 * _PROJECT_ROW_SEAM_H}px;"
             f"}}"
             f"QPushButton#ProjectColumnHeader:hover {{"
             f" background: {theme.ACCENT}; color: {theme.ACCENT_TEXT};"
@@ -2040,6 +2288,15 @@ class ProjectVisualizer(WindowVisualizer):
             col_widget._datavis_widget.syntheticActivated.connect(
                 self._open_untyped_audit
             )
+            col_widget._datavis_widget.fieldActivated.connect(
+                self._open_vocabulary_field
+            )
+            col_widget._datavis_widget.illustrationFieldActivated.connect(
+                self._open_illustration_field
+            )
+            col_widget._datavis_widget.shotTypeActivated.connect(
+                self._open_shot_type
+            )
             col_widget.headerActivated.connect(self._open_column_visualizer)
             self._project_column_widgets[col_id] = col_widget
             layout.addWidget(col_widget, 1)
@@ -2073,6 +2330,37 @@ class ProjectVisualizer(WindowVisualizer):
             self._launch("mosaic")
         elif column_id in ("silhouettes", "engravings"):
             self._launch("illustration", source_tab=column_id)
+
+    def _open_vocabulary_field(self, field: str) -> None:
+        """Open Mosaic and select the exact Project vocabulary field."""
+        if field:
+            self._launch("mosaic", field=field)
+
+    def _open_shot_type(self, shot_type: str) -> None:
+        """Open Mosaic at an exact Project shot type across both media types."""
+        if shot_type:
+            self._launch(
+                "mosaic",
+                media_type="--all",
+                shot_type=shot_type,
+            )
+
+    def _open_illustration_field(self, datavis_kind: str, field: str) -> None:
+        """Open Illustration at the clicked aggregate field across both media types."""
+        source_tab = {
+            "silhouette_fields": "silhouettes",
+            "engraving_fields": "engravings",
+        }.get(datavis_kind)
+        if not source_tab or not field:
+            return
+        from services.illustration_index import ALL_MEDIA
+
+        self._launch(
+            "illustration",
+            media_type=ALL_MEDIA,
+            source_tab=source_tab,
+            field=field,
+        )
 
     def _open_untyped_audit(self, datavis_kind: str) -> None:
         source = {
@@ -2177,6 +2465,8 @@ class ProjectVisualizer(WindowVisualizer):
         *,
         media_type: str = "movie",
         source_tab: str | None = None,
+        field: str | None = None,
+        shot_type: str | None = None,
     ) -> None:
         if not _prefs.get("path"):
             QMessageBox.warning(self, "No Project", "Please set a project folder first.")
@@ -2188,6 +2478,15 @@ class ProjectVisualizer(WindowVisualizer):
         if subcommand == "metadata" and existing_window is not None:
             try:
                 existing_window.select_media_type(media_type)
+            except RuntimeError:
+                self._windows.pop(subcommand, None)
+        elif subcommand == "mosaic" and existing_window is not None:
+            try:
+                existing_window.select_media_type(media_type)
+                if field:
+                    existing_window.select_field(field)
+                if shot_type:
+                    existing_window.select_shot_type(shot_type)
             except RuntimeError:
                 self._windows.pop(subcommand, None)
 
@@ -2217,6 +2516,8 @@ class ProjectVisualizer(WindowVisualizer):
                 project_path,
                 media_type=media_type,
                 source_tab=source_tab,
+                field=field,
+                shot_type=shot_type,
             )
         except Exception as exc:
             import traceback
@@ -2264,6 +2565,8 @@ class ProjectVisualizer(WindowVisualizer):
         *,
         media_type: str = "movie",
         source_tab: str | None = None,
+        field: str | None = None,
+        shot_type: str | None = None,
     ):
         """Instantiate the named visualizer as a window inside this process.
 
@@ -2278,7 +2581,14 @@ class ProjectVisualizer(WindowVisualizer):
             return CloudVisualizer(project_path)
         elif subcommand == "mosaic":
             from visualizers.mosaic_visualizer import MosaicVisualizer
-            return MosaicVisualizer(project_path, media_type=media_type)
+            window = MosaicVisualizer(
+                project_path,
+                media_type=media_type,
+                shot_type=shot_type,
+            )
+            if field:
+                window.select_field(field)
+            return window
         elif subcommand == "book":
             from visualizers.book_visualizer import BookVisualizerWindow
             return BookVisualizerWindow(project_path)
@@ -2291,6 +2601,7 @@ class ProjectVisualizer(WindowVisualizer):
             open_at_illustration(
                 project_path,
                 media_type=media_type,
+                field=field,
                 source_tab=source_tab or "silhouettes",
             )
             return None

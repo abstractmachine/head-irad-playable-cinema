@@ -20,9 +20,9 @@ from types import SimpleNamespace
 
 import pytest
 from PyQt5.QtCore import QEvent, QPoint, Qt
-from PyQt5.QtGui import QColor, QHelpEvent
+from PyQt5.QtGui import QColor, QFontMetrics
 from PyQt5.QtTest import QTest
-from PyQt5.QtWidgets import QApplication, QLabel, QScrollArea, QTabBar, QToolTip
+from PyQt5.QtWidgets import QApplication, QLabel, QScrollArea, QTabBar
 
 import services.corpus_stats as corpus_stats_mod
 import services.illustration_index as illustration_index_mod
@@ -212,7 +212,7 @@ def test_media_item_payload_counts_reuse_the_loaded_metadata_collections(monkeyp
     }
 
 
-def test_media_items_project_cached_thumbnail_foregrounds_for_both_media_types(
+def test_media_items_project_cached_thumbnail_foregrounds_only_for_gameplay(
     monkeypatch,
 ):
     import data.palette as palette_mod
@@ -256,16 +256,11 @@ def test_media_items_project_cached_thumbnail_foregrounds_for_both_media_types(
     columns = get_live_project_columns("/current/project")
     by_id = {column.id: column for column in columns}
 
-    assert by_id["movies"].datavis["items"][0]["thumbnail_foreground_rgb"] == [
-        12, 34, 56,
-    ]
+    assert by_id["movies"].datavis["items"][0]["thumbnail_foreground_rgb"] is None
     assert by_id["gameplay"].datavis["items"][0]["thumbnail_foreground_rgb"] == [
         210, 98, 7,
     ]
-    assert lookups == [
-        ("/current/project", "movie_id", "movie"),
-        ("/current/project", "game_id", "gameplay"),
-    ]
+    assert lookups == [("/current/project", "game_id", "gameplay")]
 
 
 def test_missing_thumbnail_palettes_remain_explicit_without_extraction(monkeypatch):
@@ -1943,7 +1938,7 @@ def test_movies_media_items_render_314_equal_gapless_cells_with_exact_pixel_fill
             for index in range(1, len(cells))
         )
         assert cells[-1].y() + cells[-1].height() == datavis.height()
-        assert all(cell.findChildren(QLabel) == [] for cell in cells)
+        assert all(not cell._title_label.isVisible() for cell in cells)
 
         image = datavis.grab().toImage()
         for y in range(theme.INSPECTOR_GAP):
@@ -1992,7 +1987,7 @@ def test_gameplay_media_items_render_two_equal_contiguous_alternating_cells(app)
         app.processEvents()
 
 
-def test_media_items_use_cached_thumbnail_foreground_and_missing_default(app):
+def test_movies_media_items_ignore_cached_thumbnail_foreground(app):
     from visualizers.project_visualizer import _ProjectDatavisWidget
 
     datavis = _ProjectDatavisWidget()
@@ -2008,7 +2003,7 @@ def test_media_items_use_cached_thumbnail_foreground_and_missing_default(app):
         first, second = datavis._media_item_cells
         image = datavis.grab().toImage()
         x = datavis.width() // 2
-        assert image.pixelColor(x, first.y()) == QColor(12, 34, 56)
+        assert image.pixelColor(x, first.y()) == QColor(theme.CELL_BG)
         assert image.pixelColor(x, second.y()) == QColor(theme.PANEL_BG)
 
         replacement = _media_items_datavis(1)
@@ -2019,6 +2014,30 @@ def test_media_items_use_cached_thumbnail_foreground_and_missing_default(app):
         assert datavis.grab().toImage().pixelColor(
             x, datavis._media_item_cells[0].y()
         ) == QColor(theme.CELL_BG)
+    finally:
+        datavis.close()
+        datavis.deleteLater()
+        app.processEvents()
+
+
+def test_gameplay_media_items_use_cached_thumbnail_foreground_and_missing_default(app):
+    from visualizers.project_visualizer import _ProjectDatavisWidget
+
+    datavis = _ProjectDatavisWidget()
+    try:
+        payload = _media_items_datavis(2, "gameplay")
+        payload["items"][0]["thumbnail_foreground_rgb"] = [12, 34, 56]
+        payload["items"][1]["thumbnail_foreground_rgb"] = None
+        datavis.resize(140, theme.INSPECTOR_GAP + 200)
+        datavis.set_datavis(payload)
+        datavis.show()
+        app.processEvents()
+
+        first, second = datavis._media_item_cells
+        image = datavis.grab().toImage()
+        x = datavis.width() // 2
+        assert image.pixelColor(x, first.y()) == QColor(12, 34, 56)
+        assert image.pixelColor(x, second.y()) == QColor(theme.PANEL_BG)
     finally:
         datavis.close()
         datavis.deleteLater()
@@ -2102,8 +2121,8 @@ def test_media_items_responsive_resize_redistributes_only_rounding_pixels(app):
     ("movie", "Dodge City"),
     ("gameplay", "Red Dead Redemption 2"),
 ])
-def test_media_item_cell_attaches_identity_and_uses_canonical_tooltip(
-    app, monkeypatch, media_type, title,
+def test_media_item_cell_shows_inline_title_when_it_fits(
+    app, media_type, title,
 ):
     from visualizers.project_visualizer import _ProjectDatavisWidget
 
@@ -2116,56 +2135,79 @@ def test_media_item_cell_attaches_identity_and_uses_canonical_tooltip(
     }
     datavis = _ProjectDatavisWidget()
     try:
-        datavis.resize(140, 103)
+        datavis.resize(260, 103)
         datavis.set_datavis({"kind": "media_items", "count": 1, "items": [item]})
         datavis.show()
         app.processEvents()
 
         cell = datavis._media_item_cells[0]
         assert cell.item is item
-        assert cell.toolTip() == title
+        assert cell._title_label.isVisible()
+        assert cell._title_label.text() == title
+        assert cell._title_label.font().pointSize() == theme.font_ui().pointSize()
+        assert cell._title_label.alignment() == (Qt.AlignLeft | Qt.AlignVCenter)
+        assert not datavis._media_title_popup.isVisible()
 
-        shown = []
-        monkeypatch.setattr(
-            QToolTip, "showText",
-            lambda pos, text, widget: shown.append((pos, text, widget)),
-        )
         QApplication.sendEvent(cell, QEvent(QEvent.Enter))
-        assert len(shown) == 1
-        assert shown[0][1:] == (title, cell)
-
-        local_pos = cell.rect().center()
-        event = QHelpEvent(
-            QEvent.ToolTip, local_pos, cell.mapToGlobal(local_pos),
-        )
-        QApplication.sendEvent(cell, event)
-        assert event.isAccepted()
-        assert QToolTip.text() == title
+        app.processEvents()
+        assert f"color: {theme.ACCENT_TEXT};" in cell._title_label.styleSheet()
+        assert not datavis._media_title_popup.isVisible()
     finally:
-        QToolTip.hideText()
         datavis.close()
         datavis.deleteLater()
         app.processEvents()
 
 
-def test_media_item_hover_updates_title_and_datavis_leave_dismisses_popup(
-    app, monkeypatch,
-):
+def test_media_item_cell_word_wraps_title_when_its_height_fits(app):
     from visualizers.project_visualizer import _ProjectDatavisWidget
 
+    title = "This longer media title wraps inside the available cell height"
     datavis = _ProjectDatavisWidget()
     try:
-        datavis.resize(140, 203)
+        datavis.resize(140, theme.INSPECTOR_GAP + 200)
+        datavis.set_datavis({
+            "kind": "media_items",
+            "count": 1,
+            "items": [{
+                "index": 0, "title": title, "filename": "wrapped.mp4",
+                "media_type": "movie", "media_id": "tmdb_1",
+            }],
+        })
+        datavis.show()
+        app.processEvents()
+
+        cell = datavis._media_item_cells[0]
+        assert QFontMetrics(cell._title_label.font()).horizontalAdvance(title) > cell.width()
+        assert cell._title_label.wordWrap()
+        assert cell._title_label.isVisible()
+        assert cell._title_label.heightForWidth(cell.width()) <= cell.height()
+
+        QApplication.sendEvent(cell, QEvent(QEvent.Enter))
+        assert not datavis._media_title_popup.isVisible()
+    finally:
+        datavis.close()
+        datavis.deleteLater()
+        app.processEvents()
+
+
+def test_compact_media_item_title_popup_matches_cell_width_and_position(app):
+    from visualizers.project_visualizer import _ProjectDatavisWidget
+
+    first_title = "This title is too long for the compact media cell"
+    second_title = "Another title that must open above its compact media cell"
+    datavis = _ProjectDatavisWidget()
+    try:
+        datavis.resize(140, theme.INSPECTOR_GAP + 40)
         datavis.set_datavis({
             "kind": "media_items",
             "count": 2,
             "items": [
                 {
-                    "index": 0, "title": "First Movie", "filename": "first.mp4",
+                    "index": 0, "title": first_title, "filename": "first.mp4",
                     "media_type": "movie", "media_id": "tmdb_1",
                 },
                 {
-                    "index": 1, "title": "Second Movie", "filename": "second.mp4",
+                    "index": 1, "title": second_title, "filename": "second.mp4",
                     "media_type": "movie", "media_id": "tmdb_2",
                 },
             ],
@@ -2174,21 +2216,67 @@ def test_media_item_hover_updates_title_and_datavis_leave_dismisses_popup(
         app.processEvents()
 
         first, second = datavis._media_item_cells
-        for cell, title in ((first, "First Movie"), (second, "Second Movie")):
-            local_pos = cell.rect().center()
-            event = QHelpEvent(
-                QEvent.ToolTip, local_pos, cell.mapToGlobal(local_pos),
-            )
-            QApplication.sendEvent(cell, event)
-            assert QToolTip.text() == title
+        popup = datavis._media_title_popup
+        assert not first._title_label.isVisible()
+        assert not second._title_label.isVisible()
 
-        hide_calls = []
-        monkeypatch.setattr(QToolTip, "hideText", lambda: hide_calls.append(True))
-        QApplication.sendEvent(datavis, QEvent(QEvent.Leave))
-        assert hide_calls == [True]
-        assert datavis.toolTip() == ""
+        QApplication.sendEvent(first, QEvent(QEvent.Enter))
+        app.processEvents()
+        assert popup.isVisible()
+        assert popup.width() == first.width()
+        assert popup._title_label.text() == first_title
+        assert f"background: {theme.ACCENT}" in popup.styleSheet()
+        assert f"color: {theme.ACCENT_TEXT};" in popup._title_label.styleSheet()
+        assert popup.pos() == first.mapToGlobal(
+            QPoint(0, first.height() + theme.INSPECTOR_GAP)
+        )
+
+        QApplication.sendEvent(first, QEvent(QEvent.Leave))
+        assert not popup.isVisible()
+
+        QApplication.sendEvent(second, QEvent(QEvent.Enter))
+        app.processEvents()
+        second_origin = second.mapToGlobal(QPoint(0, 0))
+        assert popup.isVisible()
+        assert popup.width() == second.width()
+        assert popup.x() == second_origin.x()
+        assert popup.y() + popup.height() == second_origin.y() - theme.INSPECTOR_GAP
+
+        datavis.close()
+        assert not popup.isVisible()
     finally:
-        QToolTip.hideText()
+        datavis.close()
+        datavis.deleteLater()
+        app.processEvents()
+
+
+def test_compact_media_popup_hides_when_datavis_is_left(
+    app,
+):
+    from visualizers.project_visualizer import _ProjectDatavisWidget
+
+    datavis = _ProjectDatavisWidget()
+    try:
+        datavis.resize(140, theme.INSPECTOR_GAP + 20)
+        datavis.set_datavis({
+            "kind": "media_items",
+            "count": 1,
+            "items": [
+                {
+                    "index": 0, "title": "A compact title that cannot fit here", "filename": "first.mp4",
+                    "media_type": "movie", "media_id": "tmdb_1",
+                },
+            ],
+        })
+        datavis.show()
+        app.processEvents()
+
+        cell = datavis._media_item_cells[0]
+        QApplication.sendEvent(cell, QEvent(QEvent.Enter))
+        assert datavis._media_title_popup.isVisible()
+        QApplication.sendEvent(datavis, QEvent(QEvent.Leave))
+        assert not datavis._media_title_popup.isVisible()
+    finally:
         datavis.close()
         datavis.deleteLater()
         app.processEvents()
@@ -2198,7 +2286,7 @@ def test_media_item_hover_updates_title_and_datavis_leave_dismisses_popup(
     ("movie", "dodge-city.mp4"),
     ("gameplay", "rdr2-session.mp4"),
 ])
-def test_media_item_double_click_uses_canonical_shotlist_navigation(
+def test_media_item_clicks_use_canonical_shotlist_navigation(
     app, fake_prefs, monkeypatch, media_type, filename,
 ):
     fake_prefs["path"] = "/fake/project"
@@ -2222,7 +2310,7 @@ def test_media_item_double_click_uses_canonical_shotlist_navigation(
     }
     window = ProjectVisualizer()
     try:
-        window.resize(1000, 700)
+        window.resize(1600, 700)
         window.show()
         widget = window._project_column_widgets[
             "movies" if media_type == "movie" else "gameplay"
@@ -2237,18 +2325,27 @@ def test_media_item_double_click_uses_canonical_shotlist_navigation(
         app.processEvents()
         cell = widget._datavis_widget._media_item_cells[0]
 
-        QTest.mouseClick(cell, Qt.LeftButton)
-        assert opened == []
-
+        QTest.mouseMove(cell)
+        app.processEvents()
+        assert f"background: {theme.ACCENT}" in cell.styleSheet()
         QTest.mouseDClick(cell, Qt.LeftButton)
         assert opened == [("/fake/project", filename, media_type)]
+
+        QApplication.sendEvent(cell, QEvent(QEvent.Leave))
+        assert f"background: {theme.CELL_BG}" in cell.styleSheet()
+
+        QTest.mouseClick(cell, Qt.LeftButton)
+        assert opened == [
+            ("/fake/project", filename, media_type),
+            ("/fake/project", filename, media_type),
+        ]
     finally:
         window.close()
         window.deleteLater()
         app.processEvents()
 
 
-def test_media_item_double_click_opens_only_the_activated_cell(
+def test_media_item_click_opens_only_the_activated_cell(
     app, fake_prefs, monkeypatch,
 ):
     fake_prefs["path"] = "/fake/project"
@@ -2286,7 +2383,7 @@ def test_media_item_double_click_opens_only_the_activated_cell(
         app.processEvents()
 
         first, second = widget._datavis_widget._media_item_cells
-        QTest.mouseDClick(second, Qt.LeftButton)
+        QTest.mouseClick(second, Qt.LeftButton)
 
         assert first.item["filename"] == "first.mp4"
         assert second.item["filename"] == "second.mp4"
@@ -2395,6 +2492,207 @@ def test_metadata_visualizer_selects_requested_initial_media_tab(app, fake_prefs
         window.select_media_type("movie")
         assert window._inspector.currentIndex() == 0
         assert window._browser_stack.currentIndex() == 0
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_project_launch_selects_requested_scope_and_type_in_existing_mosaic(
+    app, fake_prefs, monkeypatch,
+):
+    from unittest.mock import MagicMock
+
+    fake_prefs["path"] = "/fake/project"
+    monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
+    monkeypatch.setattr("visualizers._window_helpers.raise_existing_window", lambda _subcommand: True)
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    window = ProjectVisualizer()
+    existing_mosaic = MagicMock()
+    window._windows["mosaic"] = existing_mosaic
+    try:
+        window._launch("mosaic", media_type="--all", shot_type="graphics")
+        existing_mosaic.select_media_type.assert_called_once_with("--all")
+        existing_mosaic.select_shot_type.assert_called_once_with("graphics")
+        existing_mosaic.select_field.assert_not_called()
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_project_vocabulary_cell_click_and_double_click_open_mosaic_at_field(
+    app, fake_prefs, monkeypatch,
+):
+    fake_prefs["path"] = "/fake/project"
+    monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    launched = []
+    window = ProjectVisualizer()
+    try:
+        monkeypatch.setattr(
+            window,
+            "_launch",
+            lambda subcommand, **kwargs: launched.append((subcommand, kwargs)),
+        )
+        window.resize(1600, 700)
+        window.show()
+        column = window._project_column_widgets["vocabulary"]
+        column.set_column(ProjectColumn(
+            id="vocabulary", title="Vocabulary", count=5,
+            datavis={"kind": "vocabulary_fields", "fields": [
+                {"field": "objects", "count": 4},
+                {"field": "wearing", "count": 1},
+            ]},
+            state="ready",
+        ))
+        app.processEvents()
+
+        cell = column._datavis_widget._field_cells[1]
+        assert cell.cursor().shape() == Qt.PointingHandCursor
+        QTest.mouseMove(cell, QPoint(5, 5))
+        app.processEvents()
+        image = column._datavis_widget.grab().toImage()
+        point = cell.mapTo(column._datavis_widget, QPoint(5, 5))
+        assert image.pixelColor(point) == QColor(theme.ACCENT)
+        QTest.mouseClick(cell, Qt.LeftButton)
+        QTest.mouseDClick(cell, Qt.LeftButton)
+
+        assert launched
+        assert all(call == ("mosaic", {"field": "wearing"}) for call in launched)
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_project_vocabulary_cell_hover_uses_theme_accent(app):
+    from visualizers.project_visualizer import _ProjectDatavisWidget
+
+    datavis = _ProjectDatavisWidget()
+    try:
+        datavis.resize(160, 150)
+        datavis.set_datavis({
+            "kind": "vocabulary_fields",
+            "fields": [{"field": "objects", "count": 1}],
+        })
+        datavis.show()
+        app.processEvents()
+
+        cell = datavis._field_cells[0]
+        assert cell.cursor().shape() == Qt.PointingHandCursor
+        QTest.mouseMove(cell, QPoint(5, 5))
+        app.processEvents()
+        image = datavis.grab().toImage()
+        point = cell.mapTo(datavis, QPoint(5, 5))
+        assert image.pixelColor(point) == QColor(theme.ACCENT)
+    finally:
+        datavis.close()
+        datavis.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.parametrize("shot_type", ["diegetic", "<untyped>"])
+def test_project_shot_type_cell_click_and_double_click_open_mosaic_at_type(
+    app, fake_prefs, monkeypatch, shot_type,
+):
+    fake_prefs["path"] = "/fake/project"
+    monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    launched = []
+    window = ProjectVisualizer()
+    try:
+        monkeypatch.setattr(
+            window,
+            "_launch",
+            lambda subcommand, **kwargs: launched.append((subcommand, kwargs)),
+        )
+        window.resize(1600, 700)
+        window.show()
+        column = window._project_column_widgets["shots"]
+        column.set_column(ProjectColumn(
+            id="shots", title="Shots", count=2,
+            datavis={"kind": "shot_types", "fields": [
+                {"name": "diegetic", "count": 1, "synthetic": False},
+                {"name": "<untyped>", "count": 1, "synthetic": True},
+            ]},
+            state="ready",
+        ))
+        app.processEvents()
+
+        index = 0 if shot_type == "diegetic" else 1
+        cell = column._datavis_widget._field_cells[index]
+        assert cell.cursor().shape() == Qt.PointingHandCursor
+        QTest.mouseMove(cell, QPoint(5, 5))
+        app.processEvents()
+        image = column._datavis_widget.grab().toImage()
+        point = cell.mapTo(column._datavis_widget, QPoint(5, 5))
+        assert image.pixelColor(point) == QColor(theme.ACCENT)
+        QTest.mouseClick(cell, Qt.LeftButton)
+        QTest.mouseDClick(cell, Qt.LeftButton)
+
+        expected = ("mosaic", {"media_type": "--all", "shot_type": shot_type})
+        assert launched
+        assert all(call == expected for call in launched)
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.parametrize(
+    ("column_id", "datavis_kind", "source_tab"),
+    [
+        ("silhouettes", "silhouette_fields", "silhouettes"),
+        ("engravings", "engraving_fields", "engravings"),
+    ],
+)
+def test_project_illustration_field_cell_click_and_double_click_open_filtered_source(
+    app, fake_prefs, monkeypatch, column_id, datavis_kind, source_tab,
+):
+    fake_prefs["path"] = "/fake/project"
+    monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
+
+    from services.illustration_index import ALL_MEDIA
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    launched = []
+    window = ProjectVisualizer()
+    try:
+        monkeypatch.setattr(
+            window,
+            "_launch",
+            lambda subcommand, **kwargs: launched.append((subcommand, kwargs)),
+        )
+        window.resize(1600, 700)
+        window.show()
+        column = window._project_column_widgets[column_id]
+        column.set_column(ProjectColumn(
+            id=column_id, title=column.column.title, count=5,
+            datavis={"kind": datavis_kind, "fields": [
+                {"field": "objects", "count": 4},
+                {"field": "wearing", "count": 1},
+            ]},
+            state="ready",
+        ))
+        app.processEvents()
+
+        cell = column._datavis_widget._field_cells[1]
+        QTest.mouseClick(cell, Qt.LeftButton)
+        QTest.mouseDClick(cell, Qt.LeftButton)
+
+        expected = (
+            "illustration",
+            {"media_type": ALL_MEDIA, "source_tab": source_tab, "field": "wearing"},
+        )
+        assert launched
+        assert all(call == expected for call in launched)
     finally:
         window.close()
         window.deleteLater()
@@ -2640,12 +2938,14 @@ def test_shot_types_synthetic_untyped_cell_uses_warning_without_geometry_change(
         app.processEvents()
 
 
-def test_only_synthetic_untyped_cell_emits_audit_activation(app):
+def test_shot_type_cells_emit_exact_type_including_synthetic_untyped(app):
     from visualizers.project_visualizer import _ProjectDatavisWidget
 
     datavis = _ProjectDatavisWidget()
-    activated = []
-    datavis.syntheticActivated.connect(activated.append)
+    shot_types = []
+    audits = []
+    datavis.shotTypeActivated.connect(shot_types.append)
+    datavis.syntheticActivated.connect(audits.append)
     try:
         datavis.resize(140, 100)
         datavis.set_datavis({
@@ -2662,12 +2962,14 @@ def test_only_synthetic_untyped_cell_emits_audit_activation(app):
         QTest.mouseDClick(
             datavis, Qt.LeftButton, Qt.NoModifier, literal.geometry().center(),
         )
-        assert activated == []
+        assert shot_types == ["untyped"]
+        assert audits == []
 
         QTest.mouseDClick(
             datavis, Qt.LeftButton, Qt.NoModifier, synthetic.geometry().center(),
         )
-        assert activated == ["shot_types"]
+        assert shot_types == ["untyped", "<untyped>"]
+        assert audits == []
     finally:
         datavis.close()
         datavis.deleteLater()

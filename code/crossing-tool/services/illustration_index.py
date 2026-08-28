@@ -16,7 +16,7 @@ import sqlite3
 from uuid import uuid4
 
 
-INDEX_SCHEMA_VERSION = 6
+INDEX_SCHEMA_VERSION = 7
 SOURCES = ("silhouettes", "engravings")
 
 # ---------------------------------------------------------------------------
@@ -179,13 +179,40 @@ def _load_index_all_media(project_path: str | Path, source: str) -> dict:
 
 def rebuild_index(project_path: str | Path, source: str, media_type: str) -> dict:
     """Rebuild one source index from canonical sidecars."""
-    _validate_source(source)
+    from data.annotate import load_shot_type_lookup
+
     project = Path(project_path)
+    shot_type_lookup, lookup_stats = load_shot_type_lookup(str(project), media_type)
+    return _rebuild_index(project, source, media_type, shot_type_lookup, lookup_stats)
+
+
+def rebuild_all(project_path: str | Path, media_type: str) -> dict:
+    """Rebuild both source indexes from one shared annotation type lookup."""
+    from data.annotate import load_shot_type_lookup
+
+    project = Path(project_path)
+    shot_type_lookup, lookup_stats = load_shot_type_lookup(str(project), media_type)
+    return {
+        source: _rebuild_index(project, source, media_type, shot_type_lookup, lookup_stats)
+        for source in SOURCES
+    }
+
+
+def _rebuild_index(
+    project: Path,
+    source: str,
+    media_type: str,
+    shot_type_lookup: dict[tuple[str, str], str],
+    lookup_stats: dict[str, int],
+) -> dict:
+    """Build one index using a precomputed canonical shot-type lookup."""
+    _validate_source(source)
     revision = _read_revision(project, source, media_type)
     if source == "silhouettes":
         records = _scan_silhouettes(project, media_type)
     else:
         records = _scan_engravings(project, media_type)
+    _apply_shot_types(records, shot_type_lookup)
 
     if revision != _read_revision(project, source, media_type):
         return {"status": "stale", "count": 0}
@@ -198,14 +225,14 @@ def rebuild_index(project_path: str | Path, source: str, media_type: str) -> dic
             _create_schema(connection)
             connection.executemany(
                 """INSERT INTO records (
-                    title, field, initial, label, mode, object_id, assignment_state, human_best,
+                    title, field, initial, label, shot_type, mode, object_id, assignment_state, human_best,
                     confidence_score, usefulness_score, engraving_score,
                     fullness_score, size_score, completeness_score,
                     isolation_score, semantic_label_score, semantic_field_score,
                         engraved_score, search_provenance_state,
                         search_provenance_reason, search_provenance_audit_version,
                         payload
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (_record_row(project, record) for record in records),
             )
             meta = {
@@ -225,14 +252,11 @@ def rebuild_index(project_path: str | Path, source: str, media_type: str) -> dic
         temporary.unlink(missing_ok=True)
     for obsolete in _obsolete_index_paths(project, source, media_type):
         obsolete.unlink(missing_ok=True)
-    return {"status": "ready", "count": len(records), "path": path}
-
-
-def rebuild_all(project_path: str | Path, media_type: str) -> dict:
-    """Rebuild both source indexes for one media type."""
     return {
-        source: rebuild_index(project_path, source, media_type)
-        for source in SOURCES
+        "status": "ready",
+        "count": len(records),
+        "path": path,
+        "shot_type_lookup": dict(lookup_stats),
     }
 
 
@@ -247,6 +271,7 @@ def query_facets(
     mode: str | None = None,
     provenance_state: str | None = None,
     assignment_state: str | None = None,
+    shot_type: str | None = None,
 ) -> dict:
     """Return distinct facets and label counts for a browse scope.
 
@@ -256,7 +281,7 @@ def query_facets(
     if media_type == ALL_MEDIA:
         return _query_facets_all_media(
             project_path, source, title=title, field=field, letter=letter, mode=mode,
-            assignment_state=assignment_state,
+            assignment_state=assignment_state, shot_type=shot_type,
         )
     status = load_index(project_path, source, media_type)
     if not status.get("usable"):
@@ -268,6 +293,7 @@ def query_facets(
         mode=mode,
         provenance_state=provenance_state,
         assignment_state=_default_assignment_state(source, assignment_state),
+        shot_type=shot_type,
     )
     with sqlite3.connect(index_path(project_path, source, media_type)) as connection:
         titles = [row[0] for row in connection.execute(
@@ -296,6 +322,8 @@ def query_field_counts(
     project_path: str | Path,
     source: str,
     media_type: str,
+    *,
+    shot_type: str | None = None,
 ) -> dict:
     """Return a validated field distribution from one usable browse index."""
     status = load_index(project_path, source, media_type)
@@ -310,10 +338,15 @@ def query_field_counts(
         return result
 
     try:
+        where, params = _where(
+            shot_type=shot_type,
+            assignment_state=_default_assignment_state(source, None),
+        )
         with sqlite3.connect(index_path(project_path, source, media_type)) as connection:
             rows = connection.execute(
-                "SELECT field, COUNT(*) FROM records "
-                "GROUP BY field ORDER BY COUNT(*) DESC, field"
+                f"SELECT field, COUNT(*) FROM records {where} "
+                "GROUP BY field ORDER BY COUNT(*) DESC, field",
+                params,
             )
             fields = []
             for field, count in rows:
@@ -333,9 +366,60 @@ def query_field_counts(
         return {"status": "error", "count": 0, "fields": []}
     fields.sort(key=lambda item: (-item["count"], item["field"], item.get("synthetic", False)))
     count = sum(item["count"] for item in fields)
-    if count != int(status.get("count", 0)):
+    if shot_type in (None, "", ALL) and count != int(status.get("count", 0)):
         return {"status": "error", "count": 0, "fields": []}
     return {"status": status["status"], "count": count, "fields": fields}
+
+
+def query_shot_type_counts(
+    project_path: str | Path,
+    source: str,
+    media_type: str,
+    *,
+    title: str | None = None,
+) -> dict:
+    """Return indexed exact shot-type counts for one or all media types."""
+    if media_type == ALL_MEDIA:
+        status = _load_index_all_media(project_path, source)
+        if not status.get("usable"):
+            return {**status, "shot_types": []}
+        counts: dict[str, int] = {}
+        for current_media_type in MEDIA_TYPES:
+            sub_status = load_index(project_path, source, current_media_type)
+            if not sub_status.get("usable"):
+                continue
+            sub = query_shot_type_counts(
+                project_path, source, current_media_type, title=title,
+            )
+            for item in sub.get("shot_types", []):
+                key = str(item["shot_type"])
+                counts[key] = counts.get(key, 0) + int(item["count"])
+        return {
+            **status,
+            "shot_types": [
+                {"shot_type": value, "count": count}
+                for value, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+            ],
+        }
+
+    status = load_index(project_path, source, media_type)
+    if not status.get("usable"):
+        return {**status, "shot_types": []}
+    where, params = _where(
+        title=title,
+        assignment_state=_default_assignment_state(source, None),
+    )
+    with sqlite3.connect(index_path(project_path, source, media_type)) as connection:
+        rows = connection.execute(
+            f"SELECT shot_type, COUNT(*) FROM records {where} "
+            "GROUP BY shot_type ORDER BY COUNT(*) DESC, shot_type",
+            params,
+        )
+        values = [
+            {"shot_type": str(current_shot_type), "count": int(count)}
+            for current_shot_type, count in rows
+        ]
+    return {**status, "shot_types": values}
 
 
 def _query_facets_all_media(project_path: str | Path, source: str, **filters) -> dict:
@@ -383,6 +467,7 @@ def query_page(
     human_best: bool | None = None,
     provenance_state: str | None = None,
     assignment_state: str | None = None,
+    shot_type: str | None = None,
     sort_keys: list[str] | None = None,
     offset: int = 0,
     limit: int = 50,
@@ -401,6 +486,7 @@ def query_page(
             object_id=object_id, human_best=human_best,
             provenance_state=provenance_state,
             assignment_state=assignment_state,
+            shot_type=shot_type,
             sort_keys=sort_keys,
             offset=offset, limit=limit,
         )
@@ -412,6 +498,7 @@ def query_page(
         object_id=object_id, human_best=human_best,
         provenance_state=provenance_state,
         assignment_state=_default_assignment_state(source, assignment_state),
+        shot_type=shot_type,
     )
     with sqlite3.connect(index_path(project_path, source, media_type)) as connection:
         total = int(connection.execute(
@@ -426,13 +513,6 @@ def query_page(
     return {**status, "total": total, "records": records}
 
 
-# Generous fetch bound per media type when merging for an ALL_MEDIA page —
-# these are compact derived indexes (see module docstring); a bounded-but-
-# large fetch followed by an in-Python re-sort is the same "fetch a bounded
-# complete set, then sort/slice" pattern query_records already establishes.
-_ALL_MEDIA_FETCH_LIMIT = 1_000_000
-
-
 def _query_page_all_media(
     project_path: str | Path,
     source: str,
@@ -445,29 +525,33 @@ def _query_page_all_media(
     """Merge, re-sort, and paginate across every entry in ``MEDIA_TYPES``.
 
     Each media type's own on-disk ``id`` ordering has no cross-database
-    meaning, so every matching record from every usable media type is fetched
-    first, then re-sorted in Python using the same semantics as ``_order_by``
-    (see ``_sort_merged_records``), and only then sliced to the requested
-    page — the total/offset/limit are always computed against this single
-    final merged+sorted result set, never against one media type alone.
+    meaning, so matching source prefixes are merged in Python using the same
+    semantics as ``_order_by`` (see ``_sort_merged_records``). A global page
+    ending at ``offset + limit`` can only contain records from that prefix of
+    each individual sorted source, so the query never materializes an entire
+    large archive merely to display one page.
     """
     status = _load_index_all_media(project_path, source)
     if not status.get("usable"):
         return {**status, "total": 0, "records": []}
+    start = max(0, int(offset))
+    page_size = max(1, int(limit))
+    prefix_size = start + page_size
     merged: list[dict] = []
+    total = 0
     for mt in MEDIA_TYPES:
         sub_status = load_index(project_path, source, mt)
         if not sub_status.get("usable"):
             continue
         sub = query_page(
             project_path, source, mt, sort_keys=sort_keys,
-            offset=0, limit=_ALL_MEDIA_FETCH_LIMIT, **filters,
+            offset=0, limit=prefix_size, **filters,
         )
+        total += int(sub.get("total", 0))
         merged.extend(sub.get("records", []))
     merged = _sort_merged_records(merged, sort_keys)
-    start = max(0, int(offset))
-    end = start + max(1, int(limit))
-    return {**status, "total": len(merged), "records": merged[start:end]}
+    end = start + page_size
+    return {**status, "total": total, "records": merged[start:end]}
 
 
 def _sort_merged_records(records: list[dict], sort_keys: list[str] | None) -> list[dict]:
@@ -541,6 +625,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
             field TEXT NOT NULL,
             initial TEXT NOT NULL,
             label TEXT NOT NULL,
+            shot_type TEXT NOT NULL,
             mode TEXT NOT NULL,
             object_id TEXT NOT NULL,
             assignment_state TEXT NOT NULL,
@@ -564,6 +649,8 @@ def _create_schema(connection: sqlite3.Connection) -> None:
         CREATE INDEX records_field ON records(field);
         CREATE INDEX records_initial ON records(initial);
         CREATE INDEX records_label ON records(label);
+        CREATE INDEX records_shot_type ON records(shot_type);
+        CREATE INDEX records_shot_type_field ON records(shot_type, field);
         CREATE INDEX records_mode ON records(mode);
         CREATE INDEX records_assignment_state ON records(assignment_state);
         CREATE INDEX records_search_provenance_state ON records(search_provenance_state);
@@ -574,10 +661,12 @@ def _create_schema(connection: sqlite3.Connection) -> None:
 
 def _record_row(project: Path, record: dict) -> tuple:
     from services.silhouette_catalog import assignment_state_for_record
+    from data.annotate import UNTYPED_SHOT_TYPE
 
     title = _clean_stem(record.get("filename_stem", ""))
     field = str(record.get("field") or ALL)
     label = str(record.get("label") or "")
+    shot_type = str(record.get("shot_type") or UNTYPED_SHOT_TYPE)
     first = label[:1]
     initial = first.upper() if first.isalpha() else "#"
     record_path = Path(str(record.get("path") or ""))
@@ -587,7 +676,7 @@ def _record_row(project: Path, record: dict) -> tuple:
     provenance_reason = provenance.get("reason") if isinstance(provenance, dict) else None
     provenance_version = provenance.get("audit_version") if isinstance(provenance, dict) else None
     return (
-        title, field, initial, label, str(record.get("mode") or ""),
+        title, field, initial, label, shot_type, str(record.get("mode") or ""),
         object_id, assignment_state_for_record(record), 1 if record.get("human_best") else 0,
         _numeric_score(record, "confidence"), _numeric_score(record, "usefulness"),
         _numeric_score(record, "engraving"), _numeric_score(record, "fullness"),
@@ -632,6 +721,7 @@ def _where(**filters) -> tuple[str, list]:
         "label": "label", "mode": "mode", "object_id": "object_id",
         "provenance_state": "search_provenance_state",
         "assignment_state": "assignment_state",
+        "shot_type": "shot_type",
     }
     for name, column in columns.items():
         value = filters.get(name)
@@ -705,6 +795,18 @@ def _scan_silhouettes(project: Path, media_type: str) -> list[dict]:
     return records
 
 
+def _apply_shot_types(
+    records: list[dict],
+    shot_type_lookup: dict[tuple[str, str], str],
+) -> None:
+    """Attach derived type values without changing canonical catalog JSON."""
+    from data.annotate import UNTYPED_SHOT_TYPE
+
+    for record in records:
+        key = (str(record.get("media_id") or ""), str(record.get("shot_id") or ""))
+        record["shot_type"] = shot_type_lookup.get(key, UNTYPED_SHOT_TYPE)
+
+
 def _engraved_source_keys(project: Path, media_type: str) -> set[tuple[str, str, str]]:
     from services.engraving_paths import read_engraving_meta
 
@@ -753,10 +855,18 @@ def _scan_engravings(project: Path, media_type: str) -> list[dict]:
             silhouette_field = (
                 silhouette.get("field") if isinstance(silhouette, dict) else None
             )
+            silhouette_media_id = (
+                silhouette.get("media_id") if isinstance(silhouette, dict) else None
+            )
+            silhouette_shot_id = (
+                silhouette.get("shot_id") if isinstance(silhouette, dict) else None
+            )
 
             record = {
                 "label": label_dir.name,
                 "field": silhouette_field or ALL,
+                "media_id": silhouette_media_id or "",
+                "shot_id": silhouette_shot_id or "",
                 "filename_stem": film_dir.name,
                 "media_type": media_type,
                 "mode": mode_dir.name,

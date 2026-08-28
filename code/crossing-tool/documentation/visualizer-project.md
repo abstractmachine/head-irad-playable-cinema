@@ -16,6 +16,13 @@ crossing visualizer          # default — opens Project
 The browser columns are, in order: **Movies**, **Gameplay**, **Shots**,
 **Vocabulary**, **Silhouettes**, and **Engravings**.
 
+Movie and gameplay items use the shared yellow selection highlight on hover.
+Click or double-click an item to open it in the Shotlist visualizer with its
+own media type selected. A title appears directly in its cell when its
+word-wrapped layout fits the available height. Compact cells instead show the
+title in a yellow, black-text popup matching the cell width; it appears on the
+open side of the column with the canonical `3px` gap.
+
 Shots reads `data/indexes/corpus_stats.json`; its total covers movie and
 gameplay annotations, and its distribution uses the annotation `type` field.
 `<untyped>` counts canonical shot annotation records whose `type` value is

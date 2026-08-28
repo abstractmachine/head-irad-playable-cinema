@@ -406,6 +406,7 @@ class SearchWorker(QThread):
         model_name: str = "clip-vit-base-patch32",
         media_type: str = "movie",
         parent=None,
+        shot_type: Optional[str] = None,
     ):
         super().__init__(parent)
         self.query           = query
@@ -417,6 +418,7 @@ class SearchWorker(QThread):
         self.best_mode       = best_mode
         self.model_name      = model_name
         self.media_type      = media_type
+        self.shot_type       = shot_type
         self._cancelled      = False
 
     def cancel(self) -> None:
@@ -451,6 +453,7 @@ class SearchWorker(QThread):
                     use_all        = use_all,
                     project_path   = self.project_path,
                     media_type     = media_type,
+                    shot_type      = self.shot_type,
                 )
                 results.extend(
                     {**item, "media_type": media_type}
@@ -607,6 +610,134 @@ class VocabularyWorker(QThread):
         except Exception as exc:
             import traceback
             self.error.emit(f"{exc}\n{traceback.format_exc()}")
+
+
+class ShotTypeWorker(QThread):
+    """Load exact shot types from the derived Illustration index off-thread."""
+
+    result_ready = pyqtSignal(list)
+    error = pyqtSignal(str)
+
+    def __init__(self, project_path: str, media_type: str, parent=None) -> None:
+        super().__init__(parent)
+        self.project_path = project_path
+        self.media_type = media_type
+
+    def run(self) -> None:
+        try:
+            from data.annotate import UNTYPED_SHOT_TYPE
+            from services.illustration_index import ALL_MEDIA, query_shot_type_counts
+
+            index_media_type = ALL_MEDIA if self.media_type == "--all" else self.media_type
+            result = query_shot_type_counts(
+                self.project_path,
+                "silhouettes",
+                index_media_type,
+            )
+            self.result_ready.emit([
+                {
+                    "value": item["shot_type"],
+                    "count": item["count"],
+                    "synthetic": item["shot_type"] == UNTYPED_SHOT_TYPE,
+                }
+                for item in result.get("shot_types", [])
+            ])
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
+class ShotTypeFacetWorker(QThread):
+    """Read type-conditioned Field or Vocabulary facets from SQLite off-thread."""
+
+    result_ready = pyqtSignal(dict)
+    error = pyqtSignal(str)
+
+    def __init__(
+        self,
+        project_path: str,
+        media_type: str,
+        shot_type: str,
+        *,
+        purpose: str,
+        field: Optional[str] = None,
+        prefix: str = "--all",
+        sort: str = "count",
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self.project_path = project_path
+        self.media_type = media_type
+        self.shot_type = shot_type
+        self.purpose = purpose
+        self.field = field
+        self.prefix = prefix
+        self.sort = sort
+
+    def run(self) -> None:
+        try:
+            from services.illustration_index import ALL_MEDIA, query_facets
+
+            index_media_type = ALL_MEDIA if self.media_type == "--all" else self.media_type
+            facets = query_facets(
+                self.project_path,
+                "silhouettes",
+                index_media_type,
+                shot_type=self.shot_type,
+                field=self.field,
+            )
+            status = facets.get("status")
+            if status not in {"ready", "stale"}:
+                self.result_ready.emit({"purpose": self.purpose, "status": status or "error"})
+                return
+            if self.purpose == "fields":
+                self.result_ready.emit({
+                    "purpose": "fields",
+                    "status": "ready",
+                    "fields": list(facets.get("fields", [])),
+                })
+                return
+
+            all_items = [
+                {"value": str(item["label"]), "count": int(item["count"])}
+                for item in facets.get("labels", [])
+            ]
+            if self.sort == "alphabetical":
+                all_items.sort(key=lambda item: item["value"].casefold())
+            elif self.sort == "count_alphabetical":
+                all_items.sort(key=lambda item: (-item["count"], item["value"].casefold()))
+            else:
+                all_items.sort(key=lambda item: -item["count"])
+            initials = sorted(
+                {
+                    value[:1].lower() if value[:1].isalpha() else "#"
+                    for value in (item["value"] for item in all_items)
+                    if value
+                },
+                key=lambda value: (value == "#", value),
+            )
+            items = (
+                all_items
+                if self.prefix == "--all"
+                else [
+                    item for item in all_items
+                    if (
+                        item["value"][:1].lower()
+                        if item["value"][:1].isalpha()
+                        else "#"
+                    ) == self.prefix
+                ]
+            )
+            self.result_ready.emit({
+                "purpose": "vocabulary",
+                "status": "ready",
+                "items": items,
+                "total": len(all_items),
+                "initials": initials,
+                "selected_prefix": self.prefix,
+                "is_large": len(all_items) > VOCABULARY_RENDER_THRESHOLD,
+            })
+        except Exception as exc:
+            self.error.emit(str(exc))
 
 
 class VocabularyIndexWorker(QThread):
@@ -1096,7 +1227,12 @@ class PdfExportWorker(QThread):
 class MosaicVisualizer(WindowVisualizer):
     """Interactive mosaic visualizer window — canvas browser, controls in the inspector."""
 
-    def __init__(self, project_path: str, media_type: str = "movie"):
+    def __init__(
+        self,
+        project_path: str,
+        media_type: str = "movie",
+        shot_type: Optional[str] = None,
+    ):
         # Instance attributes must be set before super().__init__() since the
         # base class calls create_browser()/create_inspector() synchronously.
         self.project_path = project_path
@@ -1107,6 +1243,12 @@ class MosaicVisualizer(WindowVisualizer):
         self._vocab_rebuild_worker: Optional[VocabularyIndexWorker] = None
         self._vocab_request_id = 0
         self._initial_vocab_load_started = False
+        self._shot_type_worker: Optional[ShotTypeWorker] = None
+        self._shot_type_request_id = 0
+        self._initial_shot_type_load_started = False
+        self._pending_shot_type = shot_type
+        self._shot_type_facet_worker: Optional[ShotTypeFacetWorker] = None
+        self._shot_type_facet_request_id = 0
         self._export_worker: Optional[ExportWorker] = None
         self._video_worker: Optional[VideoMosaicWorker] = None
         self._current_results: list = []   # results for the last completed search
@@ -1118,12 +1260,26 @@ class MosaicVisualizer(WindowVisualizer):
         self.resize(1440, 900)
 
         self._populate_movies()
+        if shot_type:
+            self.select_shot_type(shot_type)
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
         if not self._initial_vocab_load_started:
             self._initial_vocab_load_started = True
             self._on_field_changed()
+        if not self._initial_shot_type_load_started:
+            self._initial_shot_type_load_started = True
+            self._request_shot_type_load()
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        # Workers read compact SQLite facets and cannot be force-cancelled
+        # safely. Invalidate their captured request IDs so late results cannot
+        # repopulate controls after this window has closed.
+        self._vocab_request_id += 1
+        self._shot_type_request_id += 1
+        self._shot_type_facet_request_id += 1
+        super().closeEvent(event)
 
     def create_browser(self) -> QWidget:
         self.canvas = MosaicCanvas()
@@ -1184,6 +1340,21 @@ class MosaicVisualizer(WindowVisualizer):
         self.movie_combo.installEventFilter(self)
         scope_layout.addWidget(self.movie_combo)
         panel.add_section("Scope", scope_wrap, pref_key="mosaic_section_scope")
+
+        # Shot type limits which annotated shots a search can return. Field
+        # separately controls the annotation property searched for the query.
+        shot_type_wrap = QWidget()
+        shot_type_layout = QVBoxLayout(shot_type_wrap)
+        shot_type_layout.setContentsMargins(0, 0, 0, 0)
+        shot_type_layout.setSpacing(theme.SECTION_GAP)
+        self.shot_type_combo = QComboBox()
+        add_combo_all_item(self.shot_type_combo, user_data="--all")
+        self.shot_type_combo.setItemText(0, "<All Shot Types>")
+        style_canonical_combo(self.shot_type_combo)
+        self.shot_type_combo.currentIndexChanged.connect(self._on_shot_type_changed)
+        self.shot_type_combo.installEventFilter(self)
+        shot_type_layout.addWidget(self.shot_type_combo)
+        panel.add_section("Shot Type", shot_type_wrap, pref_key="mosaic_section_shot_type")
 
         # ── Field section ──────────────────────────────────────────────
         field_wrap = QWidget()
@@ -1486,6 +1657,163 @@ class MosaicVisualizer(WindowVisualizer):
         self.movie_combo.setItemText(0, "<All Titles>")
         self.movie_combo.blockSignals(False)
         self._populate_movies()
+        self._request_shot_type_load()
+
+    def _on_shot_type_changed(self) -> None:
+        """Constrain Field and Vocabulary only for a concrete Shot Type."""
+        if (
+            not self._initial_shot_type_load_started
+            or not hasattr(self, "field_combo")
+            or not hasattr(self, "vocab_table")
+        ):
+            return
+        if self._selected_shot_type() is None:
+            self._set_field_options(ANNOTATION_FIELDS[1:])
+        else:
+            self._request_shot_type_facets("fields")
+
+    def _request_shot_type_load(self) -> None:
+        """Refresh available shot types for the current media scope off-thread."""
+        if not hasattr(self, "shot_type_combo"):
+            return
+        self._shot_type_request_id += 1
+        request_id = self._shot_type_request_id
+        worker = ShotTypeWorker(self.project_path, self.media_type, parent=self)
+        self._shot_type_worker = worker
+        worker.result_ready.connect(
+            lambda values, rid=request_id: self._on_shot_type_values_loaded(values, rid)
+        )
+        worker.error.connect(
+            lambda _message, rid=request_id: self._on_shot_type_values_loaded([], rid)
+        )
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_shot_type_values_loaded(self, values: list, request_id: int) -> None:
+        if request_id != self._shot_type_request_id:
+            return
+        selected = self._pending_shot_type or self.shot_type_combo.currentData() or "--all"
+        self._pending_shot_type = None
+        self.shot_type_combo.blockSignals(True)
+        self.shot_type_combo.clear()
+        self.shot_type_combo.addItem("<All Shot Types>", userData="--all")
+        for item in values:
+            value = str(item.get("value") or "")
+            if value:
+                self.shot_type_combo.addItem(value, userData=value)
+        if selected != "--all" and self.shot_type_combo.findData(selected) < 0:
+            # Project derives type choices from every annotated shot, while
+            # this index contains only illustrated records. Preserve a clicked
+            # type with no indexed silhouettes so the request is never widened.
+            self.shot_type_combo.addItem(selected, userData=selected)
+        selected_index = self.shot_type_combo.findData(selected)
+        self.shot_type_combo.setCurrentIndex(max(0, selected_index))
+        self.shot_type_combo.blockSignals(False)
+        self.shot_type_combo.currentIndexChanged.emit(self.shot_type_combo.currentIndex())
+
+    def _selected_shot_type(self) -> Optional[str]:
+        value = self.shot_type_combo.currentData()
+        return None if value in (None, "", "--all") else str(value)
+
+    def _set_field_options(self, fields: list[str]) -> None:
+        """Populate Field from the active type scope without altering Field semantics."""
+        selected = self.field_combo.currentData() or "--all"
+        present = {str(field) for field in fields if field and field != "--all"}
+        ordered = [field for field in ANNOTATION_FIELDS[1:] if field in present]
+        ordered.extend(sorted(present - set(ordered), key=str.casefold))
+        self.field_combo.blockSignals(True)
+        self.field_combo.clear()
+        self.field_combo.addItem("<All Fields>", userData="--all")
+        for field in ordered:
+            self.field_combo.addItem(field, userData=field)
+        index = self.field_combo.findData(selected)
+        self.field_combo.setCurrentIndex(max(0, index))
+        self.field_combo.blockSignals(False)
+        self._on_field_changed()
+
+    def _request_shot_type_facets(self, purpose: str, prefix: str = "--all") -> None:
+        shot_type = self._selected_shot_type()
+        if shot_type is None:
+            return
+        self._shot_type_facet_request_id += 1
+        request_id = self._shot_type_facet_request_id
+        field = self.field_combo.currentData()
+        worker = ShotTypeFacetWorker(
+            self.project_path,
+            self.media_type,
+            shot_type,
+            purpose=purpose,
+            field=None if purpose == "fields" or field == "--all" else field,
+            prefix=prefix,
+            sort=self.vocab_sort_combo.currentData() or "count",
+            parent=self,
+        )
+        self._shot_type_facet_worker = worker
+        worker.result_ready.connect(
+            lambda result, rid=request_id: self._on_shot_type_facets_loaded(result, rid)
+        )
+        worker.error.connect(
+            lambda message, rid=request_id, p=purpose: self._on_shot_type_facets_loaded(
+                {"purpose": p, "status": "error", "error": message}, rid,
+            )
+        )
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_shot_type_facets_loaded(self, result: dict, request_id: int) -> None:
+        if request_id != self._shot_type_facet_request_id:
+            return
+        purpose = result.get("purpose")
+        if purpose == "fields":
+            if result.get("status") == "ready":
+                self._set_field_options(result.get("fields", []))
+            return
+        if result.get("status") == "ready":
+            self._on_vocab_result(result)
+            return
+        self._stop_vocab_loading()
+        self.vocab_rebuild_btn.setEnabled(False)
+        self.vocab_nav_combo.setVisible(False)
+        self.vocab_table.set_message("Illustration index must be rebuilt to filter vocabulary by shot type.")
+
+    def select_shot_type(self, shot_type: str) -> bool:
+        """Select a Project shot type before or after async type population."""
+        if not shot_type:
+            return False
+        index = self.shot_type_combo.findData(shot_type)
+        if index < 0:
+            self._pending_shot_type = shot_type
+            self.shot_type_combo.addItem(shot_type, userData=shot_type)
+            index = self.shot_type_combo.count() - 1
+        if self._initial_shot_type_load_started:
+            self.shot_type_combo.setCurrentIndex(index)
+        else:
+            self.shot_type_combo.blockSignals(True)
+            self.shot_type_combo.setCurrentIndex(index)
+            self.shot_type_combo.blockSignals(False)
+        return True
+
+    def select_media_type(self, media_type: str) -> bool:
+        """Select a concrete or all-media scope through the normal combo path."""
+        index = self.media_type_combo.findData(media_type)
+        if index < 0:
+            return False
+        if index == self.media_type_combo.currentIndex():
+            return True
+        self.media_type_combo.setCurrentIndex(index)
+        return True
+
+    def select_field(self, field: str) -> bool:
+        """Select one configured annotation field through the normal combo path."""
+        index = self.field_combo.findData(field)
+        if index < 0:
+            return False
+        self._initial_vocab_load_started = True
+        if index == self.field_combo.currentIndex():
+            self._on_field_changed()
+        else:
+            self.field_combo.setCurrentIndex(index)
+        return True
 
     def _current_scope(self) -> "tuple[str, str | None]":
         """Return (media_type, filename_or_none) for the current scope selection."""
@@ -1594,6 +1922,8 @@ class MosaicVisualizer(WindowVisualizer):
         scope = scope_data if scope_data else None
         field_data = self.field_combo.currentData()
         field      = None if field_data == "--all" else field_data
+        shot_type_data = self.shot_type_combo.currentData()
+        shot_type = None if shot_type_data == "--all" else shot_type_data
         limit_text = self.limit_combo.currentText()
         limit      = None if limit_text == "all" else int(limit_text)
         limit_per_movie = self.limit_per_movie_cb.isChecked()
@@ -1615,6 +1945,7 @@ class MosaicVisualizer(WindowVisualizer):
             best_mode      = self.best_mode,
             model_name     = model_name,
             media_type     = scope_media_type,
+            shot_type      = shot_type,
         )
         self._worker.tile_ready.connect(self._on_tile_ready)
         self._worker.finished_signal.connect(self._on_search_done)
@@ -1767,8 +2098,10 @@ class MosaicVisualizer(WindowVisualizer):
         self._vocab_loading_bar.stop()
         if not field:
             return
-
-        self._start_vocabulary_load()
+        if self._selected_shot_type() is None:
+            self._start_vocabulary_load()
+        else:
+            self._request_shot_type_facets("vocabulary")
 
     def _start_vocabulary_load(self, prefix: Optional[str] = None) -> None:
         field = self.field_combo.currentData()
@@ -1873,13 +2206,19 @@ class MosaicVisualizer(WindowVisualizer):
     def _on_vocab_nav_changed(self, _index: int) -> None:
         prefix = self.vocab_nav_combo.currentData()
         if prefix:
-            self._start_vocabulary_load(prefix)
+            if self._selected_shot_type() is None:
+                self._start_vocabulary_load(prefix)
+            else:
+                self._request_shot_type_facets("vocabulary", prefix)
 
     def _on_vocab_sort_changed(self, _index: int) -> None:
         from tool import prefs as _prefs
         _prefs.set(_VOCAB_SORT_PREF_KEY, self.vocab_sort_combo.currentData() or "count")
         prefix = self.vocab_nav_combo.currentData() or "--all"
-        self._start_vocabulary_load(prefix)
+        if self._selected_shot_type() is None:
+            self._start_vocabulary_load(prefix)
+        else:
+            self._request_shot_type_facets("vocabulary", prefix)
 
     def _on_vocab_population_finished(self) -> None:
         self._stop_vocab_loading()

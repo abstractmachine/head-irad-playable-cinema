@@ -27,10 +27,24 @@ Select **<All Media>** to search both `movie` and `gameplay`, or select one medi
 type and optionally restrict results to a single title. Use **<All Titles>** to search
 all titles in the selected media scope.
 
+#### Shot Type
+
+Restrict eligible shots by their exact annotation `type`, such as `diegetic` or
+`graphics`. **<All Shot Types>** leaves this unrestricted; **<untyped>** selects
+shots whose type is absent or blank. This filter is independent of **Field**: Shot
+Type chooses *which shots* are eligible, while Field chooses *which annotation
+property* the search term matches. Type values come from the derived Illustration
+index, which denormalizes the source annotation type during `crossing index
+illustration`; rebuild that index after changing annotation types.
+
 #### Field
 
 The annotation field to search against (e.g. `objects`, `wearing`, `action`, `humans`),
 or **<All Fields>** to search across every field.
+
+With a concrete Shot Type selected, Field contains only indexed silhouette fields
+present for that type. Returning to **<All Shot Types>** restores Mosaic's normal
+annotation field list.
 
 #### Search
 
@@ -67,6 +81,11 @@ sort dropdown to order terms by count, alphabetically, or by count with alphabet
 ordering inside each equal-count group. Use the following dropdown to show **<A-Z>**
 terms or jump to one initial letter. Click any term to place it in the Search
 field.
+
+When a concrete Shot Type is selected, the Vocabulary panel instead uses
+type-conditioned silhouette-label counts from the Illustration index. This keeps
+Shot Type, Field, and Vocabulary facets aligned without reopening annotation JSON
+files at runtime.
 
 Large **<A-Z>** lists are built in background-sized GUI batches: the dropdown and Vocabulary loading indicator remain visible, while the completed table is laid out once to avoid repeatedly resizing the Inspector. If the vocabulary index is missing or stale, Mosaic shows that state instead of scanning annotations; use **Rebuild Vocabulary** in the Tools section to rebuild it through the canonical CLI index command.
 

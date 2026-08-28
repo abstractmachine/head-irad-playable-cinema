@@ -35,6 +35,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from data.annotate import UNTYPED_SHOT_TYPE, canonical_shot_type
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -172,6 +174,20 @@ def _annotation_searchable_text(
     return " ".join(parts), fields_included
 
 
+def _annotation_type_matches(ann: dict, shot_type: str | None) -> bool:
+    """Return whether an annotation matches one exact Project shot-type value.
+
+    ``<untyped>`` is the explicit UI representation of a missing, blank, or
+    non-string ``annotation.type`` value. Every other value is compared exactly
+    to the trimmed annotation string; this is deliberately not fuzzy search.
+    """
+    if shot_type in (None, "", "--all"):
+        return True
+    if shot_type == UNTYPED_SHOT_TYPE:
+        return canonical_shot_type(ann) == UNTYPED_SHOT_TYPE
+    return canonical_shot_type(ann) == shot_type
+
+
 def _score_text(query: str, text: str) -> float:
     """Return a relevance score ≥ 0 for *query* against *text*.
 
@@ -262,6 +278,7 @@ def search_shots(
     use_all: bool,
     project_path: str | None = None,
     media_type: str = "movie",
+    shot_type: str | None = None,
 ) -> dict:
     """Search shot annotations and return a structured result dict.
 
@@ -271,6 +288,8 @@ def search_shots(
     scopes:         Optional list of fuzzy movie-title matchers.
     field:          Restrict search to this annotation field (e.g. "objects").
                     If None, all fields are searched.
+    shot_type:      Restrict results to one exact ``annotation.type`` value.
+                    ``<untyped>`` selects missing or blank type values.
     limit:          Max total results to return. None → return all.
     limit_per_item: Max results per movie (applied before global limit).
     use_all:        Force search across all movies, ignoring *scopes*.
@@ -351,6 +370,8 @@ def search_shots(
             ann = shot_meta.get("annotation")
             if not isinstance(ann, dict):
                 continue
+            if not _annotation_type_matches(ann, shot_type):
+                continue
             shot_id_raw = shot_meta.get("shot_id")
             if shot_id_raw is None:
                 continue
@@ -396,6 +417,7 @@ def search_shots(
                 "end_frame": end_frame,
                 "matched_fields": matched_fields,
                 "matched_text": matched_text,
+                "shot_type": canonical_shot_type(ann),
                 "score": round(score, 4),
             })
 
@@ -420,6 +442,7 @@ def search_shots(
         "query": query,
         "scopes": effective_scopes,
         "field": field,
+        "shot_type": shot_type,
         "limit": limit,
         "limit_per_item": limit_per_item,
         "results": results,

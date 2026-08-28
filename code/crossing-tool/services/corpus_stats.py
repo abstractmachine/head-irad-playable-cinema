@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from data.annotate import UNTYPED_SHOT_TYPE, canonical_shot_type
 from data.metadata import load_json_metadata
 from data.shotlist import read_shotlist
 from data.subtitles import subtitle_path_for
@@ -349,9 +350,6 @@ def _count_flipbooks(project_path: str) -> int:
 
 
 _ANNOTATION_MEDIA_TYPES = ("movie", "gameplay")
-_UNTYPED_SHOT_TYPE = "<untyped>"
-
-
 def _aggregate_annotated_shots(project_path: str) -> dict[str, Any]:
     """Aggregate the canonical annotated-shot population and its type values."""
     by_media_type = {media_type: 0 for media_type in _ANNOTATION_MEDIA_TYPES}
@@ -376,11 +374,8 @@ def _aggregate_annotated_shots(project_path: str) -> dict[str, Any]:
                 by_media_type[media_type] += 1
                 shot = entry.get("shot")
                 annotation = shot.get("annotation") if isinstance(shot, dict) else None
-                type_value = annotation.get("type") if isinstance(annotation, dict) else None
-                if isinstance(type_value, str) and type_value.strip():
-                    type_counts[(type_value, False)] += 1
-                else:
-                    type_counts[(_UNTYPED_SHOT_TYPE, True)] += 1
+                type_value = canonical_shot_type(annotation)
+                type_counts[(type_value, type_value == UNTYPED_SHOT_TYPE)] += 1
 
     types = [
         {"name": name, "count": count, "synthetic": synthetic}
@@ -744,8 +739,9 @@ def _media_items_datavis(
             "filename": filename,
             "media_type": media_type,
             "media_id": media_id,
-            "thumbnail_foreground_rgb": _thumbnail_foreground_rgb(
-                project_path, media_id, media_type,
+            "thumbnail_foreground_rgb": (
+                _thumbnail_foreground_rgb(project_path, media_id, media_type)
+                if media_type == "gameplay" else None
             ),
         })
     return {"kind": "media_items", "count": len(items), "items": items}

@@ -16,6 +16,8 @@ from services.vocabulary_index import build_vocabulary_index
 from visualizers.mosaic_visualizer import (
     MosaicVisualizer,
     SearchWorker,
+    ShotTypeFacetWorker,
+    ShotTypeWorker,
     VOCABULARY_RENDER_THRESHOLD,
     VocabularyIndexWorker,
     VocabularyWorker,
@@ -347,6 +349,28 @@ def test_mosaic_uses_annotation_field_for_derived_vocabulary(tmp_path, app, fake
     window.close()
 
 
+def test_mosaic_select_field_uses_the_normal_field_combo_path(
+    tmp_path, app, fake_prefs, monkeypatch,
+):
+    window = MosaicVisualizer(str(tmp_path))
+    requested = []
+    monkeypatch.setattr(
+        window,
+        "_start_vocabulary_load",
+        lambda prefix=None: requested.append(prefix),
+    )
+    try:
+        assert window.select_field("wearing") is True
+        assert window.field_combo.currentData() == "wearing"
+        assert window._initial_vocab_load_started is True
+        assert requested == [None]
+
+        assert window.select_field("not-a-configured-field") is False
+        assert requested == [None]
+    finally:
+        window.close()
+
+
 def test_mosaic_inspector_shows_stale_and_rebuild_busy_states(
     tmp_path, monkeypatch, app, fake_prefs
 ):
@@ -611,18 +635,212 @@ def test_all_media_search_worker_queries_movie_and_gameplay(monkeypatch):
     monkeypatch.setattr(
         search_mod,
         "search_shots",
-        lambda **kwargs: calls.append(kwargs["media_type"]) or {"results": [{
+        lambda **kwargs: calls.append((kwargs["media_type"], kwargs["shot_type"])) or {"results": [{
             "movie_id": kwargs["media_type"], "shot_id": "1",
         }]},
     )
     results = []
-    worker = SearchWorker("query", None, None, None, False, "/project", media_type="--all")
+    worker = SearchWorker(
+        "query", None, None, None, False, "/project",
+        media_type="--all", shot_type="diegetic",
+    )
     worker.tile_ready.connect(lambda result, _pixmap: results.append(result))
 
     worker.run()
 
-    assert calls == ["movie", "gameplay"]
+    assert calls == [("movie", "diegetic"), ("gameplay", "diegetic")]
     assert [result["media_type"] for result in results] == ["movie", "gameplay"]
+
+
+def test_search_shots_filters_by_exact_shot_type_and_untyped_values(tmp_path):
+    filename = "Typed Film.mp4"
+    media_id = "file_typed_film"
+    shot_ids = [build_shot_id(media_id, index * 100, index * 100 + 99) for index in range(4)]
+    save_json_metadata(tmp_path, "movie", [{
+        "filename": filename,
+        "title": "Typed Film",
+        "media_id": media_id,
+    }])
+    annotation_dir = tmp_path / "data" / "annotations" / "shots" / "movie"
+    annotation_dir.mkdir(parents=True, exist_ok=True)
+    (annotation_dir / "Typed Film.annotations.json").write_text(
+        json.dumps([
+            {"shot": {"shot_id": shot_ids[0], "annotation": {"type": "diegetic", "wearing": ["hat"]}}},
+            {"shot": {"shot_id": shot_ids[1], "annotation": {"type": "graphics", "wearing": ["hat"]}}},
+            {"shot": {"shot_id": shot_ids[2], "annotation": {"type": "", "wearing": ["hat"]}}},
+            {"shot": {"shot_id": shot_ids[3], "annotation": {"wearing": ["hat"]}}},
+        ]),
+        encoding="utf-8",
+    )
+
+    diegetic = search_mod.search_shots(
+        query="hat", scopes=None, field="wearing", limit=None,
+        limit_per_item=None, use_all=True, project_path=str(tmp_path),
+        media_type="movie", shot_type="diegetic",
+    )
+    untyped = search_mod.search_shots(
+        query="hat", scopes=None, field="wearing", limit=None,
+        limit_per_item=None, use_all=True, project_path=str(tmp_path),
+        media_type="movie", shot_type=search_mod.UNTYPED_SHOT_TYPE,
+    )
+
+    assert [item["shot_id"] for item in diegetic["results"]] == [shot_ids[0]]
+    assert diegetic["results"][0]["shot_type"] == "diegetic"
+    assert [item["shot_id"] for item in untyped["results"]] == shot_ids[2:]
+    assert {item["shot_type"] for item in untyped["results"]} == {
+        search_mod.UNTYPED_SHOT_TYPE,
+    }
+
+
+def test_shot_type_worker_reads_type_values_from_illustration_index(monkeypatch):
+    values = []
+    monkeypatch.setattr(
+        "services.illustration_index.query_shot_type_counts",
+        lambda project_path, source, media_type: {
+            "status": "ready",
+            "shot_types": [
+                {"shot_type": "diegetic", "count": 4},
+                {"shot_type": "<untyped>", "count": 2},
+            ],
+        },
+    )
+    worker = ShotTypeWorker("/project", "--all")
+    worker.result_ready.connect(values.append)
+
+    worker.run()
+
+    assert values == [[
+        {"value": "diegetic", "count": 4, "synthetic": False},
+        {"value": "<untyped>", "count": 2, "synthetic": True},
+    ]]
+
+
+def test_shot_type_facet_worker_uses_indexed_fields_and_vocabulary(monkeypatch):
+    calls = []
+    results = []
+    monkeypatch.setattr(
+        "services.illustration_index.query_facets",
+        lambda project_path, source, media_type, **kwargs: calls.append(
+            (project_path, source, media_type, kwargs)
+        ) or {
+            "status": "ready",
+            "fields": ["objects", "wearing"],
+            "labels": [
+                {"label": "hat", "count": 3},
+                {"label": "coat", "count": 2},
+            ],
+        },
+    )
+
+    fields_worker = ShotTypeFacetWorker(
+        "/project", "--all", "diegetic", purpose="fields",
+    )
+    fields_worker.result_ready.connect(results.append)
+    fields_worker.run()
+
+    vocabulary_worker = ShotTypeFacetWorker(
+        "/project", "--all", "diegetic",
+        purpose="vocabulary", field="wearing", prefix="h", sort="count",
+    )
+    vocabulary_worker.result_ready.connect(results.append)
+    vocabulary_worker.run()
+
+    from services.illustration_index import ALL_MEDIA
+
+    assert calls == [
+        ("/project", "silhouettes", ALL_MEDIA, {"shot_type": "diegetic", "field": None}),
+        ("/project", "silhouettes", ALL_MEDIA, {"shot_type": "diegetic", "field": "wearing"}),
+    ]
+    assert results == [
+        {"purpose": "fields", "status": "ready", "fields": ["objects", "wearing"]},
+        {
+            "purpose": "vocabulary",
+            "status": "ready",
+            "items": [{"value": "hat", "count": 3}],
+            "total": 2,
+            "initials": ["c", "h"],
+            "selected_prefix": "h",
+            "is_large": False,
+        },
+    ]
+
+
+def test_mosaic_concrete_shot_type_narrows_field_choices_from_index(
+    tmp_path, app, fake_prefs, monkeypatch,
+):
+    window = MosaicVisualizer(str(tmp_path))
+    requested = []
+    monkeypatch.setattr(
+        window,
+        "_request_shot_type_facets",
+        lambda purpose, prefix="--all": requested.append((purpose, prefix)),
+    )
+    try:
+        window._initial_shot_type_load_started = True
+        window.shot_type_combo.addItem("diegetic", userData="diegetic")
+        window.shot_type_combo.setCurrentIndex(window.shot_type_combo.findData("diegetic"))
+        assert requested == [("fields", "--all")]
+
+        window._set_field_options(["wearing"])
+        assert [window.field_combo.itemData(index) for index in range(window.field_combo.count())] == [
+            "--all", "wearing",
+        ]
+        assert requested[-1] == ("vocabulary", "--all")
+    finally:
+        window.close()
+
+
+def test_mosaic_all_shot_types_keeps_existing_annotation_field_choices(
+    tmp_path, app, fake_prefs, monkeypatch,
+):
+    window = MosaicVisualizer(str(tmp_path))
+    requested = []
+    monkeypatch.setattr(
+        window,
+        "_start_vocabulary_load",
+        lambda prefix=None: requested.append(prefix),
+    )
+    try:
+        window._initial_shot_type_load_started = True
+        window._on_shot_type_changed()
+        assert [window.field_combo.itemData(index) for index in range(window.field_combo.count())] == [
+            "--all", "setting", "objects", "wearing", "action", "humans", "animals", "text", "description",
+        ]
+        assert requested == [None]
+    finally:
+        window.close()
+
+
+def test_mosaic_keeps_initial_shot_type_through_async_type_population(
+    tmp_path, app, fake_prefs,
+):
+    window = MosaicVisualizer(str(tmp_path), media_type="--all", shot_type="diegetic")
+    try:
+        assert window.shot_type_combo.currentData() == "diegetic"
+        window._on_shot_type_values_loaded([
+            {"value": "diegetic", "count": 2, "synthetic": False},
+            {"value": "graphics", "count": 1, "synthetic": False},
+            {"value": "<untyped>", "count": 1, "synthetic": True},
+        ], 0)
+        assert window.shot_type_combo.itemText(0) == "<All Shot Types>"
+        assert window.shot_type_combo.currentData() == "diegetic"
+    finally:
+        window.close()
+
+
+def test_mosaic_keeps_project_requested_type_when_it_has_no_indexed_silhouettes(
+    tmp_path, app, fake_prefs,
+):
+    window = MosaicVisualizer(str(tmp_path), media_type="--all", shot_type="credits")
+    try:
+        assert window.shot_type_combo.currentData() == "credits"
+        window._on_shot_type_values_loaded([
+            {"value": "diegetic", "count": 2, "synthetic": False},
+        ], 0)
+        assert window.shot_type_combo.currentData() == "credits"
+        assert window.shot_type_combo.findData("credits") >= 0
+    finally:
+        window.close()
 
 
 def test_search_shots_multiword_query_requires_all_terms(tmp_path):

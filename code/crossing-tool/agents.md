@@ -313,6 +313,17 @@ paint/behavior level without forcing a structurally incompatible base class.
   marker for engraving workflows and must never be overloaded as lifecycle state.
   Rechecks preserve the old PNG/JSON and supersede rather than delete assets. Do not
   bulk-migrate historical JSON records without explicit user direction.
+- **Shot type is derived index metadata, not catalog lifecycle state.**
+  `data.annotate.canonical_shot_type()` is the only canonical conversion of
+  `shot.annotation.type`: missing/blank/null values become `<untyped>`, while
+  literal `"untyped"` remains distinct. `crossing index illustration` builds one
+  `(media_id, shot_id) -> shot_type` lookup per media type and writes the result
+  only to the v7 Illustration SQLite indexes for silhouettes and engravings; it
+  never bulk-writes historical catalog JSON. `shot_type` and `field` are
+  independent indexed query dimensions. Mosaic uses this index for Shot Type,
+  type-conditioned Field, and type-conditioned silhouette-label vocabulary facets;
+  refresh it through the normal Illustration index rebuild after annotation types
+  change. Do not reintroduce a raw-annotation type scan in Mosaic runtime code.
 - **`.scanned` is not lifecycle state.**
   `data/silhouettes/catalog/<media>/.scanned/<field>/<label>` is only a completed
   corpus `(field, label)` processing optimization. It is neither per-shot nor
