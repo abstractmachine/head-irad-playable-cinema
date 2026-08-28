@@ -21,7 +21,11 @@ the window-state branch, not the catalog navigation itself.
 
 from unittest.mock import MagicMock
 
-from visualizers.illustration_visualizer import IllustrationWindow
+from visualizers.illustration_visualizer import (
+    IllustrationPane,
+    IllustrationWindow,
+    open_at_illustration,
+)
 
 
 def _fake_window(is_fullscreen: bool) -> MagicMock:
@@ -52,3 +56,35 @@ def test_ipc_navigate_shows_windowed_when_not_fullscreen() -> None:
     win.showFullScreen.assert_not_called()
     win.raise_.assert_called_once()
     win.activateWindow.assert_called_once()
+
+
+def test_ipc_navigate_selects_requested_engraving_source_tab() -> None:
+    win = _fake_window(is_fullscreen=False)
+
+    IllustrationWindow._on_ipc_navigate(
+        win, "", "", "", "", "movie", "engravings",
+    )
+
+    win._catalog.select_source_tab.assert_called_once_with("engravings")
+
+
+def test_pane_select_source_tab_updates_the_inspector_tab() -> None:
+    pane = MagicMock()
+    pane._side_scroll = MagicMock()
+
+    IllustrationPane.select_source_tab(pane, "engravings")
+
+    pane._side_scroll.setCurrentIndex.assert_called_once_with(1)
+
+
+def test_open_at_illustration_forwards_source_tab_over_ipc(monkeypatch) -> None:
+    sent = {}
+    monkeypatch.setattr(
+        "visualizers.illustration_visualizer._ill_ipc_send_navigate",
+        lambda project_path, **kwargs: sent.update(project_path=project_path, **kwargs) or True,
+    )
+
+    open_at_illustration("/project", source_tab="engravings")
+
+    assert sent["project_path"] == "/project"
+    assert sent["source_tab"] == "engravings"

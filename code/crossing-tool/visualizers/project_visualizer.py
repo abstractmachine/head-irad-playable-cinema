@@ -732,6 +732,8 @@ class _ProjectColumnWidget(QWidget):
     may additionally carry ordered word/count data for their DATAVIS regions.
     """
 
+    headerActivated = pyqtSignal(str)
+
     def __init__(self, column, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("ProjectColumnWidget")
@@ -743,14 +745,28 @@ class _ProjectColumnWidget(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        self._header_label = QLabel()
-        self._header_label.setAlignment(Qt.AlignCenter)
+        self._header_label = QPushButton()
+        self._header_label.setObjectName("ProjectColumnHeader")
+        self._header_label.setCursor(Qt.PointingHandCursor)
+        self._header_label.setFocusPolicy(Qt.NoFocus)
         self._header_label.setFont(theme.font_ui(bold=True))
         self._header_label.setStyleSheet(
-            f"background: {theme.TITLE_BG}; color: {theme.TEXT_DIM}; "
-            f"border: {_PROJECT_ROW_SEAM_H}px solid {theme.UI_BORDER};"
+            f"QPushButton#ProjectColumnHeader {{"
+            f" background: {theme.TITLE_BG}; color: {theme.TEXT_DIM};"
+            f" border: {_PROJECT_ROW_SEAM_H}px solid {theme.UI_BORDER};"
+            f" padding: 0px; margin: 0px;"
+            f"}}"
+            f"QPushButton#ProjectColumnHeader:hover {{"
+            f" background: {theme.ACCENT}; color: {theme.ACCENT_TEXT};"
+            f"}}"
+            f"QPushButton#ProjectColumnHeader:pressed {{"
+            f" background: {theme.BTN_PRESSED}; color: {theme.ACCENT_TEXT};"
+            f"}}"
         )
         self._header_label.setFixedHeight(_COLUMN_ROW_H)
+        self._header_label.clicked.connect(
+            lambda _checked=False: self.headerActivated.emit(self.column.id)
+        )
         outer.addWidget(self._header_label)
 
         # Shared loading indicator (see visualizers/components/sweep_bar.py),
@@ -2024,6 +2040,7 @@ class ProjectVisualizer(WindowVisualizer):
             col_widget._datavis_widget.syntheticActivated.connect(
                 self._open_untyped_audit
             )
+            col_widget.headerActivated.connect(self._open_column_visualizer)
             self._project_column_widgets[col_id] = col_widget
             layout.addWidget(col_widget, 1)
 
@@ -2043,6 +2060,19 @@ class ProjectVisualizer(WindowVisualizer):
             return
         from visualizers.shot_visualizer import open_at_shot
         open_at_shot(project_path, filename, media_type=media_type)
+
+    def _open_column_visualizer(self, column_id: str) -> None:
+        """Open the visualizer represented by a Project dashboard header."""
+        if column_id == "movies":
+            self._launch("metadata", media_type="movie")
+        elif column_id == "gameplay":
+            self._launch("metadata", media_type="gameplay")
+        elif column_id == "shots":
+            self._launch("shotlist")
+        elif column_id == "vocabulary":
+            self._launch("mosaic")
+        elif column_id in ("silhouettes", "engravings"):
+            self._launch("illustration", source_tab=column_id)
 
     def _open_untyped_audit(self, datavis_kind: str) -> None:
         source = {
@@ -2141,15 +2171,28 @@ class ProjectVisualizer(WindowVisualizer):
 
     # Splitter/panel behavior provided by WindowVisualizer
 
-    def _launch(self, subcommand: str) -> None:
+    def _launch(
+        self,
+        subcommand: str,
+        *,
+        media_type: str = "movie",
+        source_tab: str | None = None,
+    ) -> None:
         if not _prefs.get("path"):
             QMessageBox.warning(self, "No Project", "Please set a project folder first.")
             return
 
         # Raise an already-open in-process window (works because all visualizers
         # opened via this launcher share the same QApplication event loop).
+        existing_window = self._windows.get(subcommand)
+        if subcommand == "metadata" and existing_window is not None:
+            try:
+                existing_window.select_media_type(media_type)
+            except RuntimeError:
+                self._windows.pop(subcommand, None)
+
         from visualizers._window_helpers import raise_existing_window
-        if raise_existing_window(subcommand):
+        if subcommand != "illustration" and raise_existing_window(subcommand):
             return
 
         project_path = _prefs.get("path")
@@ -2169,7 +2212,12 @@ class ProjectVisualizer(WindowVisualizer):
 
         # Open the visualizer in-process so future raises are always reliable.
         try:
-            win = self._create_in_process_window(subcommand, project_path)
+            win = self._create_in_process_window(
+                subcommand,
+                project_path,
+                media_type=media_type,
+                source_tab=source_tab,
+            )
         except Exception as exc:
             import traceback
             QMessageBox.critical(
@@ -2209,16 +2257,22 @@ class ProjectVisualizer(WindowVisualizer):
             [sys.executable, str(_CLI_PATH), "visualizer", subcommand]
         )
 
-    def _create_in_process_window(self, subcommand: str, project_path: str):
+    def _create_in_process_window(
+        self,
+        subcommand: str,
+        project_path: str,
+        *,
+        media_type: str = "movie",
+        source_tab: str | None = None,
+    ):
         """Instantiate the named visualizer as a window inside this process.
 
         Returns the window (not yet shown) or None for subcommands that must
         run as separate processes (e.g. shotlist with its own IPC server).
         """
-        media_type = "movie"
         if subcommand == "metadata":
             from visualizers.metadata_visualizer import MetadataVisualizer
-            return MetadataVisualizer(project_path)
+            return MetadataVisualizer(project_path, media_type=media_type)
         elif subcommand == "cloud":
             from visualizers.cloud_visualizer import CloudVisualizer
             return CloudVisualizer(project_path)
@@ -2234,7 +2288,11 @@ class ProjectVisualizer(WindowVisualizer):
             # via the Illustration helper which will try IPC and otherwise
             # delegate process creation to the canonical launcher.
             from visualizers.illustration_visualizer import open_at_illustration
-            open_at_illustration(project_path, media_type=media_type)
+            open_at_illustration(
+                project_path,
+                media_type=media_type,
+                source_tab=source_tab or "silhouettes",
+            )
             return None
         elif subcommand == "palette":
             from visualizers.palette_visualizer import PaletteVisualizerWindow

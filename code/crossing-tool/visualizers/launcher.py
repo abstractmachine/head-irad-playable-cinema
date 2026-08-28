@@ -103,6 +103,7 @@ def launch_visualizer(
     initial_field: Optional[str] = None,
     initial_label: Optional[str] = None,
     initial_shot: Optional[str] = None,
+    initial_source_tab: str = "silhouettes",
 ) -> None:
     """Launch a visualizer that must never be constructed in-process when
     another `QApplication` is already running (spawns an independent OS
@@ -142,6 +143,7 @@ def launch_visualizer(
             initial_field=initial_field or field,
             initial_label=initial_label,
             initial_shot=initial_shot,
+            initial_source_tab=initial_source_tab,
         )
         win.show()
 
@@ -167,6 +169,8 @@ def launch_visualizer(
         cmd += ["--label", initial_label]
     if initial_shot:
         cmd += ["--shot", str(initial_shot)]
+    if initial_source_tab == "engravings":
+        cmd += ["--source-tab", initial_source_tab]
 
     try:
         _sp.Popen(cmd)

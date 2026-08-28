@@ -553,10 +553,11 @@ class _BrowserItem(QWidget):
 
 
 class MetadataVisualizer(WindowVisualizer):
-    def __init__(self, project_path: str) -> None:
+    def __init__(self, project_path: str, media_type: str = "movie") -> None:
         # Initialize attributes required by create_browser()/create_inspector()
         # before the WindowVisualizer constructor runs (it calls those hooks).
         self._project_path = project_path
+        self._initial_media_type = media_type if media_type in ("movie", "gameplay") else "movie"
         # Let the window shell persist geometry under this pref key
         super().__init__(pref_key="window_metadata")
         self._inspector_hidden = False
@@ -588,6 +589,7 @@ class MetadataVisualizer(WindowVisualizer):
 
         # Populate browser/inspector content and load records
         self._load_records()
+        self.select_media_type(self._initial_media_type)
 
     def closeEvent(self, event) -> None:
         # Geometry persistence handled by WindowVisualizer; just propagate.
@@ -907,6 +909,10 @@ class MetadataVisualizer(WindowVisualizer):
     def _on_source_tab_changed(self, index: int) -> None:
         self._browser_stack.setCurrentIndex(index)
         self._sync_inspector_to_current_tab()
+
+    def select_media_type(self, media_type: str) -> None:
+        """Select the requested Movies or Gameplay browser and inspector tab."""
+        self._inspector.setCurrentIndex(0 if media_type == "movie" else 1)
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)

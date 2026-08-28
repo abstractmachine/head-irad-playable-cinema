@@ -183,8 +183,8 @@ class _IllIpcServer(IpcServer):
     this subclass only supplies the socket path and message handling.
     """
 
-    # film, field, label, shot_id, media_type
-    navigate_requested = pyqtSignal(str, str, str, str, str)
+    # film, field, label, shot_id, media_type, source_tab
+    navigate_requested = pyqtSignal(str, str, str, str, str, str)
 
     def __init__(self, project_path: str, parent=None) -> None:
         super().__init__(_ill_ipc_socket_path(project_path), parent)
@@ -197,6 +197,7 @@ class _IllIpcServer(IpcServer):
                 msg.get("label", ""),
                 msg.get("shot_id", ""),
                 msg.get("media_type", ""),
+                msg.get("source_tab", ""),
             )
 
 
@@ -207,6 +208,7 @@ def _ill_ipc_send_navigate(
     label: str = "",
     shot_id: str = "",
     media_type: str = "",
+    source_tab: str = "",
 ) -> bool:
     """Send a navigate request to a running Illustration Visualizer.
 
@@ -228,6 +230,7 @@ def _ill_ipc_send_navigate(
             "label":      label,
             "shot_id":    shot_id,
             "media_type": media_type,
+            "source_tab": source_tab,
         })
         conn.sendall(msg.encode())
         conn.close()
@@ -828,6 +831,13 @@ class IllustrationPane(QWidget):
             self._on_selection_changed(rec)
         else:
             self._clear_meta()
+
+    def select_source_tab(self, source_tab: str) -> None:
+        """Select the Silhouettes or Engravings source tab."""
+        if source_tab in ("silhouettes", "engravings"):
+            self._side_scroll.setCurrentIndex(
+                0 if source_tab == "silhouettes" else 1
+            )
 
     @property
     def _active_best_btn(self):
@@ -1760,6 +1770,7 @@ class IllustrationWindow(WindowVisualizer):
         initial_field: Optional[str] = None,
         initial_label: Optional[str] = None,
         initial_shot: Optional[str] = None,
+        initial_source_tab: str = "silhouettes",
     ) -> None:
         # Initialize attributes used by create_browser/create_inspector
         # before WindowVisualizer.__init__ runs (it calls those hooks).
@@ -1770,6 +1781,7 @@ class IllustrationWindow(WindowVisualizer):
         self._initial_field = initial_field
         self._initial_label = initial_label
         self._initial_shot = initial_shot
+        self._initial_source_tab = initial_source_tab
 
         from tool import prefs as _prefs
         saved_geometry = _prefs.get("window_illustration")
@@ -1798,7 +1810,8 @@ class IllustrationWindow(WindowVisualizer):
         self._ipc_server.start()
 
     def _on_ipc_navigate(
-            self, film: str, field: str, label: str, shot_id: str, media_type: str
+            self, film: str, field: str, label: str, shot_id: str, media_type: str,
+            source_tab: str = "",
     ) -> None:
             """Raise this window, switch media type if requested, then navigate."""
             # Preserve fullscreen state instead of unconditionally calling
@@ -1814,6 +1827,8 @@ class IllustrationWindow(WindowVisualizer):
                 self.showNormal()
             self.raise_()
             self.activateWindow()
+
+            self._catalog.select_source_tab(source_tab)
 
             # If a media_type was requested and it differs from the current
             # catalog mode, update the UI controls first so the browser reloads
@@ -1867,7 +1882,9 @@ class IllustrationWindow(WindowVisualizer):
 
     def create_inspector(self) -> QWidget:
         # Return the side inspector/filter pane created by the catalog.
-        return getattr(self, "_catalog", None)._side_scroll
+        inspector = getattr(self, "_catalog", None)._side_scroll
+        self._catalog.select_source_tab(self._initial_source_tab)
+        return inspector
 
     def _fit_splitter_width(self) -> None:
         """Same shape as `WindowVisualizer._fit_splitter_width()`, but with
@@ -2004,6 +2021,7 @@ def open_at_illustration(
     media_type: str = "movie",
     label: Optional[str] = None,
     shot_id: Optional[str] = None,
+    source_tab: str = "silhouettes",
 ) -> None:
     """Open (or navigate) the Illustration Visualizer.
 
@@ -2019,6 +2037,7 @@ def open_at_illustration(
         label=label or "",
         shot_id=str(shot_id) if shot_id else "",
         media_type=media_type or "",
+        source_tab=source_tab,
     ):
         # Also raise any in-process window
         from visualizers._window_helpers import raise_existing_window
@@ -2039,6 +2058,7 @@ def open_at_illustration(
         initial_field=field,
         initial_label=label,
         initial_shot=shot_id,
+        initial_source_tab=source_tab,
     )
 
 
@@ -2052,6 +2072,7 @@ if __name__ == "__main__":
     ap.add_argument("--film",   default=None, help="Initial film stem to select")
     ap.add_argument("--label",  default=None, help="Initial label to select")
     ap.add_argument("--shot",   default=None, help="Initial shot_id to select")
+    ap.add_argument("--source-tab", choices=("silhouettes", "engravings"), default="silhouettes")
     parsed = ap.parse_args()
     from visualizers.launcher import launch_visualizer
     launch_visualizer(
@@ -2062,4 +2083,5 @@ if __name__ == "__main__":
         initial_field=parsed.field,
         initial_label=parsed.label,
         initial_shot=parsed.shot,
+        initial_source_tab=parsed.source_tab,
     )

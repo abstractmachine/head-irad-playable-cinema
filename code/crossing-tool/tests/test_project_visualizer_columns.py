@@ -2297,6 +2297,110 @@ def test_media_item_double_click_opens_only_the_activated_cell(
         app.processEvents()
 
 
+@pytest.mark.parametrize(
+    ("column_id", "expected_subcommand", "expected_kwargs"),
+    [
+        ("movies", "metadata", {"media_type": "movie"}),
+        ("gameplay", "metadata", {"media_type": "gameplay"}),
+        ("shots", "shotlist", {}),
+        ("vocabulary", "mosaic", {}),
+        ("silhouettes", "illustration", {"source_tab": "silhouettes"}),
+        ("engravings", "illustration", {"source_tab": "engravings"}),
+    ],
+)
+def test_project_column_header_click_and_double_click_open_expected_visualizer(
+    app, fake_prefs, monkeypatch, column_id, expected_subcommand, expected_kwargs,
+):
+    fake_prefs["path"] = "/fake/project"
+    monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    launched = []
+    window = ProjectVisualizer()
+    try:
+        monkeypatch.setattr(
+            window,
+            "_launch",
+            lambda subcommand, **kwargs: launched.append((subcommand, kwargs)),
+        )
+        window.resize(1000, 700)
+        window.show()
+        app.processEvents()
+
+        header = window._project_column_widgets[column_id]._header_label
+        QTest.mouseClick(header, Qt.LeftButton)
+        QTest.mouseDClick(header, Qt.LeftButton)
+
+        assert launched
+        assert all(call == (expected_subcommand, expected_kwargs) for call in launched)
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_project_column_headers_use_token_driven_hover_style(app):
+    from visualizers.project_visualizer import _ProjectColumnWidget
+
+    widget = _ProjectColumnWidget(ProjectColumn(
+        id="movies", title="Movies", count=1,
+        datavis={"kind": "empty"}, state="ready",
+    ))
+    try:
+        widget.show()
+        app.processEvents()
+        header = widget._header_label
+        assert header.cursor().shape() == Qt.PointingHandCursor
+        assert f"background: {theme.ACCENT};" in header.styleSheet()
+        assert f"color: {theme.ACCENT_TEXT};" in header.styleSheet()
+    finally:
+        widget.close()
+        widget.deleteLater()
+        app.processEvents()
+
+
+def test_project_launch_selects_requested_tab_in_existing_metadata_window(
+    app, fake_prefs, monkeypatch,
+):
+    from unittest.mock import MagicMock
+
+    fake_prefs["path"] = "/fake/project"
+    monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
+    monkeypatch.setattr("visualizers._window_helpers.raise_existing_window", lambda _subcommand: True)
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    window = ProjectVisualizer()
+    existing_metadata = MagicMock()
+    window._windows["metadata"] = existing_metadata
+    try:
+        window._launch("metadata", media_type="gameplay")
+        existing_metadata.select_media_type.assert_called_once_with("gameplay")
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_metadata_visualizer_selects_requested_initial_media_tab(app, fake_prefs, tmp_path):
+    from visualizers.metadata_visualizer import MetadataVisualizer
+
+    fake_prefs["path"] = str(tmp_path)
+    window = MetadataVisualizer(str(tmp_path), media_type="gameplay")
+    try:
+        assert window._inspector.currentIndex() == 1
+        assert window._browser_stack.currentIndex() == 1
+
+        window.select_media_type("movie")
+        assert window._inspector.currentIndex() == 0
+        assert window._browser_stack.currentIndex() == 0
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
 @pytest.mark.parametrize(("counts", "height", "expected_heights", "expected_y"), [
     ([3, 1], 199, [144, 49], [3, 150]),
     ([8, 1, 1], 109, [52, 24, 24], [3, 58, 85]),
