@@ -1651,11 +1651,14 @@ class MosaicVisualizer(WindowVisualizer):
         self._current_results = []
         self._update_result_controls()
         self._update_best_button()
+        self._begin_vocabulary_reload(reset_navigation=True)
         self.movie_combo.blockSignals(True)
         self.movie_combo.clear()
         add_combo_all_item(self.movie_combo)
         self.movie_combo.setItemText(0, "<All Titles>")
         self.movie_combo.blockSignals(False)
+        self._reset_shot_type_options()
+        self._reset_field_options()
         self._populate_movies()
         self._request_shot_type_load()
 
@@ -1667,10 +1670,30 @@ class MosaicVisualizer(WindowVisualizer):
             or not hasattr(self, "vocab_table")
         ):
             return
+        self._begin_vocabulary_reload(reset_navigation=True)
+        self._reset_field_options()
         if self._selected_shot_type() is None:
             self._set_field_options(ANNOTATION_FIELDS[1:])
         else:
             self._request_shot_type_facets("fields")
+
+    def _reset_shot_type_options(self) -> None:
+        """Show only the generic Shot Type while its fresh facet loads."""
+        self.shot_type_combo.blockSignals(True)
+        self.shot_type_combo.clear()
+        self.shot_type_combo.addItem("<All Shot Types>", userData="--all")
+        self.shot_type_combo.setCurrentIndex(0)
+        self.shot_type_combo.setEnabled(False)
+        self.shot_type_combo.blockSignals(False)
+
+    def _reset_field_options(self) -> None:
+        """Show only the generic Field while its fresh facet loads."""
+        self.field_combo.blockSignals(True)
+        self.field_combo.clear()
+        self.field_combo.addItem("<All Fields>", userData="--all")
+        self.field_combo.setCurrentIndex(0)
+        self.field_combo.setEnabled(False)
+        self.field_combo.blockSignals(False)
 
     def _request_shot_type_load(self) -> None:
         """Refresh available shot types for the current media scope off-thread."""
@@ -1708,6 +1731,7 @@ class MosaicVisualizer(WindowVisualizer):
             self.shot_type_combo.addItem(selected, userData=selected)
         selected_index = self.shot_type_combo.findData(selected)
         self.shot_type_combo.setCurrentIndex(max(0, selected_index))
+        self.shot_type_combo.setEnabled(True)
         self.shot_type_combo.blockSignals(False)
         self.shot_type_combo.currentIndexChanged.emit(self.shot_type_combo.currentIndex())
 
@@ -1728,6 +1752,7 @@ class MosaicVisualizer(WindowVisualizer):
             self.field_combo.addItem(field, userData=field)
         index = self.field_combo.findData(selected)
         self.field_combo.setCurrentIndex(max(0, index))
+        self.field_combo.setEnabled(True)
         self.field_combo.blockSignals(False)
         self._on_field_changed()
 
@@ -2089,19 +2114,27 @@ class MosaicVisualizer(WindowVisualizer):
 
     def _on_field_changed(self) -> None:
         field = self.field_combo.currentData()
-        self.vocab_table.clear()
-        self.vocab_nav_combo.blockSignals(True)
-        self.vocab_nav_combo.clear()
-        self.vocab_nav_combo.setVisible(False)
-        self.vocab_nav_combo.blockSignals(False)
-        self._vocab_loading_timer.stop()
-        self._vocab_loading_bar.stop()
+        self._begin_vocabulary_reload(reset_navigation=True)
         if not field:
             return
         if self._selected_shot_type() is None:
             self._start_vocabulary_load()
         else:
             self._request_shot_type_facets("vocabulary")
+
+    def _begin_vocabulary_reload(self, *, reset_navigation: bool) -> None:
+        """Clear stale vocabulary UI and invalidate any earlier async result."""
+        self._vocab_request_id += 1
+        self._shot_type_facet_request_id += 1
+        self.vocab_table.clear()
+        if reset_navigation:
+            self.vocab_nav_combo.blockSignals(True)
+            self.vocab_nav_combo.clear()
+            self.vocab_nav_combo.setVisible(False)
+            self.vocab_nav_combo.blockSignals(False)
+        self.vocab_rebuild_btn.setEnabled(False)
+        self._vocab_loading_bar.start()
+        self._vocab_loading_timer.start()
 
     def _start_vocabulary_load(self, prefix: Optional[str] = None) -> None:
         field = self.field_combo.currentData()
@@ -2112,12 +2145,8 @@ class MosaicVisualizer(WindowVisualizer):
         scope_data = self.movie_combo.currentData()
         scope      = scope_data if scope_data else None
 
-        self._vocab_request_id += 1
+        self._begin_vocabulary_reload(reset_navigation=True)
         request_id = self._vocab_request_id
-        self.vocab_table.clear()
-        self.vocab_rebuild_btn.setEnabled(False)
-        self._vocab_loading_bar.start()
-        self._vocab_loading_timer.start()
 
         self._vocab_worker = VocabularyWorker(
             field        = field,
@@ -2209,6 +2238,7 @@ class MosaicVisualizer(WindowVisualizer):
             if self._selected_shot_type() is None:
                 self._start_vocabulary_load(prefix)
             else:
+                self._begin_vocabulary_reload(reset_navigation=True)
                 self._request_shot_type_facets("vocabulary", prefix)
 
     def _on_vocab_sort_changed(self, _index: int) -> None:
@@ -2218,6 +2248,7 @@ class MosaicVisualizer(WindowVisualizer):
         if self._selected_shot_type() is None:
             self._start_vocabulary_load(prefix)
         else:
+            self._begin_vocabulary_reload(reset_navigation=True)
             self._request_shot_type_facets("vocabulary", prefix)
 
     def _on_vocab_population_finished(self) -> None:

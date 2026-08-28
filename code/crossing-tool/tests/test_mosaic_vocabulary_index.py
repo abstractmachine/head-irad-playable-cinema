@@ -339,7 +339,11 @@ def test_rebuild_worker_can_target_derived_vocabulary(monkeypatch):
 def test_mosaic_uses_annotation_field_for_derived_vocabulary(tmp_path, app, fake_prefs, monkeypatch):
     window = MosaicVisualizer(str(tmp_path))
     requested = []
-    monkeypatch.setattr(window, "_start_vocabulary_load", lambda prefix=None: requested.append(prefix))
+    monkeypatch.setattr(
+        window,
+        "_start_vocabulary_load",
+        lambda prefix=None, **_kwargs: requested.append(prefix),
+    )
 
     window.field_combo.setCurrentIndex(window.field_combo.findData("description"))
 
@@ -357,7 +361,7 @@ def test_mosaic_select_field_uses_the_normal_field_combo_path(
     monkeypatch.setattr(
         window,
         "_start_vocabulary_load",
-        lambda prefix=None: requested.append(prefix),
+        lambda prefix=None, **_kwargs: requested.append(prefix),
     )
     try:
         assert window.select_field("wearing") is True
@@ -469,7 +473,7 @@ def test_all_annotation_field_starts_vocabulary_worker(tmp_path, monkeypatch, ap
     monkeypatch.setattr(
         window,
         "_start_vocabulary_load",
-        lambda prefix=None: requested.append(prefix),
+        lambda prefix=None, **_kwargs: requested.append(prefix),
     )
     window.field_combo.setCurrentText("--all")
 
@@ -487,16 +491,18 @@ def test_annotation_field_change_resets_vocabulary_navigation_to_all(
     window.vocab_nav_combo.addItem("a", "a")
     window.vocab_nav_combo.setCurrentIndex(0)
     window.vocab_nav_combo.blockSignals(False)
+    window.vocab_table.set_items([{"value": "apple", "count": 1}])
     requested = []
     monkeypatch.setattr(
         window,
         "_start_vocabulary_load",
-        lambda prefix=None: requested.append(prefix),
+        lambda prefix=None, **_kwargs: requested.append(prefix),
     )
 
     window.field_combo.setCurrentIndex(window.field_combo.findData("objects"))
 
     assert window.vocab_nav_combo.count() == 0
+    assert window.vocab_table._rows == []
     assert requested == [None]
 
     window._on_vocab_result({
@@ -510,6 +516,50 @@ def test_annotation_field_change_resets_vocabulary_navigation_to_all(
     assert window.vocab_nav_combo.currentText() == "<A-Z>"
     assert window.vocab_nav_combo.currentData() == "--all"
     window.close()
+
+
+def test_media_type_change_clears_dependent_filters_before_facet_worker_starts(
+    tmp_path, monkeypatch, app, fake_prefs,
+):
+    window = MosaicVisualizer(str(tmp_path))
+    started = []
+    monkeypatch.setattr(window, "_populate_movies", lambda: None)
+    monkeypatch.setattr(window, "_request_shot_type_facets", lambda *_args: None)
+    monkeypatch.setattr(
+        ShotTypeWorker,
+        "start",
+        lambda worker: started.append(worker),
+    )
+    try:
+        window._initial_shot_type_load_started = True
+        window.shot_type_combo.blockSignals(True)
+        window.shot_type_combo.addItem("diegetic", userData="diegetic")
+        window.shot_type_combo.setCurrentIndex(
+            window.shot_type_combo.findData("diegetic")
+        )
+        window.shot_type_combo.blockSignals(False)
+        window.field_combo.blockSignals(True)
+        window.field_combo.setCurrentIndex(window.field_combo.findData("objects"))
+        window.field_combo.blockSignals(False)
+        window.vocab_nav_combo.blockSignals(True)
+        window.vocab_nav_combo.addItem("t", "t")
+        window.vocab_nav_combo.setCurrentIndex(0)
+        window.vocab_nav_combo.blockSignals(False)
+        window.vocab_table.set_items([{"value": "tree", "count": 1}])
+
+        window._on_media_type_changed("gameplay")
+
+        assert len(started) == 1
+        assert [window.shot_type_combo.itemData(index) for index in range(window.shot_type_combo.count())] == ["--all"]
+        assert [window.field_combo.itemData(index) for index in range(window.field_combo.count())] == ["--all"]
+        assert not window.shot_type_combo.isEnabled()
+        assert not window.field_combo.isEnabled()
+        assert window.vocab_nav_combo.count() == 0
+        assert not window.vocab_nav_combo.isVisible()
+        assert window.vocab_table._rows == []
+        assert window._vocab_loading_bar._active is True
+    finally:
+        window.close()
 
 
 def test_first_show_loads_all_field_vocabulary_once(
@@ -558,7 +608,11 @@ def test_vocabulary_reload_clears_and_shows_loading_before_worker_starts(
 def test_navigation_change_starts_worker_request(tmp_path, monkeypatch, app, fake_prefs):
     window = MosaicVisualizer(str(tmp_path))
     requested = []
-    monkeypatch.setattr(window, "_start_vocabulary_load", requested.append)
+    monkeypatch.setattr(
+        window,
+        "_start_vocabulary_load",
+        lambda prefix=None, **_kwargs: requested.append(prefix),
+    )
     window.vocab_nav_combo.blockSignals(True)
     window.vocab_nav_combo.addItem("--all", "--all")
     window.vocab_nav_combo.addItem("a", "a")
@@ -798,7 +852,7 @@ def test_mosaic_all_shot_types_keeps_existing_annotation_field_choices(
     monkeypatch.setattr(
         window,
         "_start_vocabulary_load",
-        lambda prefix=None: requested.append(prefix),
+        lambda prefix=None, **_kwargs: requested.append(prefix),
     )
     try:
         window._initial_shot_type_load_started = True

@@ -32,6 +32,11 @@ The annotation field the silhouettes were extracted from (e.g. `objects`, `anima
 
 The vocabulary term to browse. The count of matching objects is shown in parentheses (e.g. `American flag (327)`).
 
+Changing a filter clears every control below it to its generic value and removes
+the current thumbnail page before fresh facets are loaded. The dependent controls
+remain disabled until their replacement values are ready, so stale filter choices
+and thumbnails are never displayed during a refresh.
+
 #### Quality Filters
 
 Sliders to refine which silhouettes are shown:

@@ -535,21 +535,15 @@ class IllustrationBrowser(QWidget):
         self._timing_last_heartbeat = time.perf_counter()
         if self._timing_start is not None:
             self._timing_heartbeat.start()
-        self._stop_keyword_loader()
         self._stop_catalog_loader()
         self._index_status = {
             "status": "loading" if self._media_type else "idle"
         }
         # Always clear combos and grid immediately so the UI reflects the new
         # (possibly empty) state even before the background scan finishes.
+        self._reset_filter_descendants("media")
         self._all_items      = []
-        self._filtered_items = []
-        self._total_items    = 0
         self._filter_cache   = {}  # invalidate stale cache
-        self._selected_index = -1
-        self._page_index     = 0
-        self._rebuild_item_combo()
-        self._update_pagination()
 
         if not self._media_type:
             self._loading_timer.stop()
@@ -1242,29 +1236,30 @@ class IllustrationBrowser(QWidget):
     def _on_item_changed(self, _idx: int) -> None:
         if self._updating:
             return
-        self._selected_index = -1
-        self._page_index     = 0
+        self._reset_filter_descendants("item")
         self._rebuild_field_combo()
 
     def _on_field_changed(self, _idx: int) -> None:
         if self._updating:
             return
-        self._selected_index = -1
-        self._page_index     = 0
+        self._reset_filter_descendants("field")
         self._rebuild_letter_combo()
 
     def _on_letter_changed(self, _idx: int) -> None:
         if self._updating:
             return
-        self._selected_index = -1
-        self._page_index     = 0
+        self._reset_filter_descendants("letter")
         self._rebuild_keyword_combo()
 
     def _on_keyword_changed(self, _idx: int) -> None:
         if self._updating:
             return
+        self._filtered_items = []
+        self._total_items = 0
         self._selected_index = -1
         self._page_index     = 0
+        self._clear_grid_presentation()
+        self._update_pagination()
         self._apply_filters()
 
     # ------------------------------------------------------------------ combo rebuilds
@@ -1276,6 +1271,70 @@ class IllustrationBrowser(QWidget):
     # QTimer.singleShot(0, …) so the event loop can repaint / animate
     # between steps.  A deferred lambda is a no-op when _cascade_id has
     # changed (i.e. a newer interaction started a fresh cascade).
+
+    def _reset_filter_descendants(self, parent: str) -> None:
+        """Clear controls and results below *parent* before fresh facets load."""
+        descendants = {
+            "media": (
+                (self._item_combo, "<All Titles>", None),
+                (self._field_combo, "<All Fields>", ALL),
+                (self._letter_combo, "<A-Z>", ALL),
+                (self._keyword_combo, "<All Keywords>", ALL),
+            ),
+            "item": (
+                (self._field_combo, "<All Fields>", ALL),
+                (self._letter_combo, "<A-Z>", ALL),
+                (self._keyword_combo, "<All Keywords>", ALL),
+            ),
+            "field": (
+                (self._letter_combo, "<A-Z>", ALL),
+                (self._keyword_combo, "<All Keywords>", ALL),
+            ),
+            "letter": ((self._keyword_combo, "<All Keywords>", ALL),),
+        }[parent]
+        self._cascade_id += 1
+        self._stop_keyword_loader()
+        self._keyword_scope_items = None
+        self._pending_keyword_labels = []
+        self._pending_keyword_counts = {}
+        self._pending_keyword_index = 0
+        self._filtered_items = []
+        self._total_items = 0
+        self._selected_index = -1
+        self._page_index = 0
+        self._clear_grid_presentation()
+        self._update_pagination()
+
+        previous_updating = self._updating
+        self._updating = True
+        for combo, label, value in descendants:
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem(label, userData=value)
+            combo.setCurrentIndex(0)
+            combo.setEnabled(False)
+            combo.blockSignals(False)
+            combo.currentIndexChanged.emit(combo.currentIndex())
+        self._updating = previous_updating
+
+    def _clear_grid_presentation(self) -> None:
+        """Remove displayed thumbnails without querying the former filters."""
+        self._stop_loader()
+        self._grid_population_timer.stop()
+        self._pending_page_records = []
+        self._pending_cell_index = 0
+        self._pending_abs_start = 0
+        self._grid_layout.setEnabled(True)
+        self._grid_widget.setUpdatesEnabled(True)
+        self._grid_widget.setVisible(True)
+        while self._grid_layout.count():
+            item = self._grid_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.hide()
+                widget.deleteLater()
+        self._cells = []
+        self._grid_widget.update()
 
     def _rebuild_item_combo(self) -> None:
         """Rebuild the Item (film) combo from all loaded items."""
@@ -1301,6 +1360,7 @@ class IllustrationBrowser(QWidget):
             self._item_combo.addItem(stem, userData=stem)
         idx = self._item_combo.findData(prev)
         self._item_combo.setCurrentIndex(max(0, idx))
+        self._item_combo.setEnabled(bool(self._media_type))
         self._item_combo.blockSignals(False)
         self._item_combo.currentIndexChanged.emit(self._item_combo.currentIndex())
         _timing_print(
@@ -1331,6 +1391,7 @@ class IllustrationBrowser(QWidget):
             self._field_combo.addItem(f, userData=f)
         idx = self._field_combo.findData(prev)
         self._field_combo.setCurrentIndex(max(0, idx))
+        self._field_combo.setEnabled(True)
         self._field_combo.blockSignals(False)
         self._field_combo.currentIndexChanged.emit(self._field_combo.currentIndex())
         _timing_print(
@@ -1358,6 +1419,7 @@ class IllustrationBrowser(QWidget):
             self._letter_combo.addItem(ch, userData=ch)
         idx = self._letter_combo.findData(prev)
         self._letter_combo.setCurrentIndex(max(0, idx))
+        self._letter_combo.setEnabled(True)
         self._letter_combo.blockSignals(False)
         self._letter_combo.currentIndexChanged.emit(self._letter_combo.currentIndex())
         _timing_print(

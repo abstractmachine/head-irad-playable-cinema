@@ -387,6 +387,40 @@ def test_stale_keyword_worker_result_is_ignored(app, tmp_path):
     browser.deleteLater()
 
 
+def test_item_filter_change_clears_lower_filters_and_grid_before_rebuilding(app, tmp_path):
+    browser = IllustrationBrowser(
+        _MemorySource(str(tmp_path)), media_type=None, auto_load=False,
+    )
+    browser._item_combo.addItem("film", userData="film")
+    browser._item_combo.setCurrentIndex(1)
+    browser._field_combo.addItem("animals", userData="animals")
+    browser._field_combo.setCurrentIndex(1)
+    browser._letter_combo.addItem("H", userData="H")
+    browser._letter_combo.setCurrentIndex(1)
+    browser._keyword_combo.addItem("horse  (1)", userData="horse")
+    browser._keyword_combo.setCurrentIndex(1)
+    browser._filtered_items = [{"label": "horse", "filename_stem": "film"}]
+    browser._current_page_records = lambda: list(browser._filtered_items)
+    browser._rebuild_grid()
+    browser._grid_population_timer.stop()
+    browser._append_cell_batch()
+    assert len(browser._cells) == 1
+
+    with patch.object(browser, "_rebuild_field_combo") as rebuild:
+        browser._on_item_changed(browser._item_combo.currentIndex())
+
+    assert rebuild.called
+    assert [browser._field_combo.itemData(index) for index in range(browser._field_combo.count())] == ["--all"]
+    assert [browser._letter_combo.itemData(index) for index in range(browser._letter_combo.count())] == ["--all"]
+    assert [browser._keyword_combo.itemData(index) for index in range(browser._keyword_combo.count())] == ["--all"]
+    assert not browser._field_combo.isEnabled()
+    assert not browser._letter_combo.isEnabled()
+    assert not browser._keyword_combo.isEnabled()
+    assert browser._cells == []
+    assert browser._total_items == 0
+    browser.deleteLater()
+
+
 def test_keyword_navigation_retries_until_async_population_finishes(app, tmp_path):
     browser = IllustrationBrowser(
         _MemorySource(str(tmp_path)), media_type=None, auto_load=False

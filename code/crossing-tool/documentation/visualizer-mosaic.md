@@ -87,6 +87,11 @@ type-conditioned silhouette-label counts from the Illustration index. This keeps
 Shot Type, Field, and Vocabulary facets aligned without reopening annotation JSON
 files at runtime.
 
+Changing Media, Shot Type, or Field immediately clears dependent controls and the
+Vocabulary table before the next index query starts. Fresh Field choices and the
+**<A-Z>** menu appear only with the replacement vocabulary result, so stale terms
+and filter choices never remain visible during a refresh.
+
 Large **<A-Z>** lists are built in background-sized GUI batches: the dropdown and Vocabulary loading indicator remain visible, while the completed table is laid out once to avoid repeatedly resizing the Inspector. If the vocabulary index is missing or stale, Mosaic shows that state instead of scanning annotations; use **Rebuild Vocabulary** in the Tools section to rebuild it through the canonical CLI index command.
 
 Canonical and derived browse vocabulary are distinct from the typed free-text
