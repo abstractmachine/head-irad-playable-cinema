@@ -67,9 +67,11 @@ if "QT_QPA_PLATFORM_PLUGIN_PATH" in os.environ:
 
 from PyQt5.QtCore import Qt, QEvent, QSize, QThread, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QComboBox,
     QGridLayout,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
     QListView,
@@ -80,6 +82,8 @@ from PyQt5.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QStackedWidget,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -156,7 +160,7 @@ _THUMB_SIZE  = 120   # px per thumbnail cell — passed to IllustrationBrowser
 _SIL_INFO_KEYS = (
     "label", "film", "shot", "frame", "confidence",
     "usefulness", "fullness", "size", "overlap",
-    "semantic_label", "semantic_field", "model",
+    "semantic_label", "semantic_field", "assignment_state", "recheck_state", "model",
 )
 _ENG_INFO_KEYS = (
     "label", "film", "mode", "model", "object_id",
@@ -286,6 +290,33 @@ class _EngravingWorker(QThread):
             self.finished.emit(ok, err)
         except subprocess.TimeoutExpired:
             self.finished.emit(False, "Timed out after 10 min")
+        except Exception as exc:
+            self.finished.emit(False, str(exc))
+
+
+class _SilhouetteDeassignWorker(QThread):
+    """Run the canonical CLI de-assignment command away from the GUI thread."""
+    finished = pyqtSignal(bool, str)
+
+    def __init__(self, cmd: list[str], parent=None) -> None:
+        super().__init__(parent)
+        self._cmd = cmd
+
+    def run(self) -> None:
+        import subprocess
+        try:
+            result = subprocess.run(
+                self._cmd,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            self.finished.emit(
+                result.returncode == 0,
+                result.stderr.strip() if result.returncode else "",
+            )
+        except subprocess.TimeoutExpired:
+            self.finished.emit(False, "Timed out after 60 s")
         except Exception as exc:
             self.finished.emit(False, str(exc))
 
@@ -487,7 +518,7 @@ class IllustrationPane(QWidget):
         ) = self._build_source_panel(
             self._browser_sil, "ill_sil", _SIL_INFO_KEYS,
             has_sort=True, has_tools=True, has_provenance_filter=True,
-            has_provenance_details=True,
+            has_provenance_details=True, has_annotation=True,
         )
         (
             eng_panel,
@@ -580,7 +611,13 @@ class IllustrationPane(QWidget):
         """Build and add a Provenance evidence section; return {key: QLabel} dict."""
         provenance_sec = CollapsibleSection("Provenance", pref_key=pref_key)
         block = MetadataBlock([
+            "Method",
+            "Historical query",
+            "Field",
             "Original annotation",
+            "Canonical result count",
+            "Source shot returned",
+            "Matching shot IDs",
             "Matched",
             "Missing",
             "Classification",
@@ -594,6 +631,51 @@ class IllustrationPane(QWidget):
         self._sil_provenance_details_rows = block.labels()
         return self._sil_provenance_details_rows
 
+    def _make_annotation_section(self, panel: TabPanel) -> None:
+        """Add the source-shot Annotation view used by silhouette curation."""
+        section = CollapsibleSection("Annotation", pref_key="ill_sil_section_annotation")
+        table = QTableWidget()
+        table.setColumnCount(2)
+        table.horizontalHeader().hide()
+        table.verticalHeader().hide()
+        table.verticalHeader().setDefaultSectionSize(theme.BTN_H)
+        table.verticalHeader().setMinimumSectionSize(theme.BTN_H)
+        table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        table.setSelectionMode(QAbstractItemView.NoSelection)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.setWordWrap(True)
+        table.setTextElideMode(Qt.ElideNone)
+        table.setFont(theme.font_ui())
+        table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        table.setStyleSheet(f"""
+            QTableWidget {{
+                background: {theme.TAB_BG};
+                border: none;
+                gridline-color: {theme.TAB_BG};
+                font-family: '{theme.FAMILY_UI}';
+                font-size: {theme.BASE_PT}pt;
+                font-weight: {theme.WEIGHT_UI};
+            }}
+            QTableWidget::item {{
+                background: {theme.CELL_BG};
+                border: none;
+                padding: 0px 2px 0px 3px;
+                font-size: {theme.BASE_PT}pt;
+            }}
+        """)
+        table.horizontalHeader().sectionResized.connect(
+            lambda _index, _old, _new: self._schedule_sil_annotation_refit()
+        )
+        section.add_widget(table)
+        panel.add_widget(section)
+        self._sil_annotation_section = section
+        self._sil_annotation_table = table
+        self._clear_sil_annotation()
+
     def _build_source_panel(
         self,
         browser: "IllustrationBrowser",
@@ -605,6 +687,7 @@ class IllustrationPane(QWidget):
         has_eng_tools: bool = False,
         has_provenance_filter: bool = False,
         has_provenance_details: bool = False,
+        has_annotation: bool = False,
     ) -> tuple:
         """Build a complete Filter/[Sort]/[Mode]/Info/[Provenance]/[Tools] `TabPanel` for
         *browser*.
@@ -655,6 +738,9 @@ class IllustrationPane(QWidget):
                 panel, f"{pref_prefix}_section_provenance_details"
             )
 
+        if has_annotation:
+            self._make_annotation_section(panel)
+
         # ── Tools ─────────────────────────────────────────────────────────
         if has_tools:
             self._build_tools_section(panel)
@@ -685,6 +771,7 @@ class IllustrationPane(QWidget):
         combo.addItem("All", userData=None)
         combo.addItem("✓ Valid", userData="valid")
         combo.addItem("? Questionable", userData="questionable")
+        combo.addItem("Unverifiable", userData="unverifiable")
         style_canonical_combo(combo)
 
         def _on_provenance_changed(_idx: int) -> None:
@@ -734,6 +821,17 @@ class IllustrationPane(QWidget):
         self._best_btn.setStyleSheet(_abtn)
         self._best_btn.clicked.connect(self._on_best_btn_clicked)
         tools_sec.add_widget(self._best_btn)
+
+        self._sil_deassign_btn = QPushButton("De-assign")
+        self._sil_deassign_btn.setFocusPolicy(Qt.NoFocus)
+        self._sil_deassign_btn.setEnabled(False)
+        self._sil_deassign_btn.setFixedHeight(theme.BTN_H)
+        self._sil_deassign_btn.setStyleSheet(_abtn)
+        self._sil_deassign_btn.setToolTip(
+            "Deactivate this exact silhouette while preserving its PNG and JSON"
+        )
+        self._sil_deassign_btn.clicked.connect(self._start_silhouette_deassign)
+        tools_sec.add_widget(self._sil_deassign_btn)
 
         self._shotlist_btn = HoverIconButton("Shotlist", _open_icon, _open_icon_hover)
         self._shotlist_btn.setIconSize(_icon_sz)
@@ -1079,6 +1177,8 @@ class IllustrationPane(QWidget):
             return "✓ Valid"
         if state == "questionable":
             return "? Questionable"
+        if state == "unverifiable":
+            return "Unverifiable"
         return "—"
 
     def _clear_provenance_meta(self) -> None:
@@ -1110,20 +1210,148 @@ class IllustrationPane(QWidget):
             if lbl is not None:
                 lbl.setText(value or "—")
 
+        method = str(provenance.get("method") or "")
+        _set("Method", method)
         _set("Original annotation", self._format_provenance_values(provenance.get("annotation_values")))
-        _set("Matched", self._format_provenance_values(provenance.get("matched_words")))
-        _set("Missing", self._format_provenance_values(provenance.get("missing_words")))
+        if method == "canonical_search":
+            _set("Historical query", str(provenance.get("historical_search_label") or "—"))
+            _set("Field", str(provenance.get("field") or "—"))
+            result_count = provenance.get("canonical_search_result_count")
+            _set("Canonical result count", "—" if result_count is None else str(result_count))
+            _set("Source shot returned", self._format_provenance_flag(
+                provenance.get("source_shot_returned")
+            ))
+            _set("Matching shot IDs", self._format_provenance_values(
+                provenance.get("canonical_matching_shot_ids")
+            ))
+            _set("Matched", "—")
+            _set("Missing", "—")
+            _set("Support values", "—")
+            _set("Flags", "—")
+        else:
+            _set("Historical query", "—")
+            _set("Field", "—")
+            _set("Canonical result count", "—")
+            _set("Source shot returned", "—")
+            _set("Matching shot IDs", "—")
+            _set("Matched", self._format_provenance_values(provenance.get("matched_words")))
+            _set("Missing", self._format_provenance_values(provenance.get("missing_words")))
+            _set("Support values", self._format_provenance_support(provenance.get("support_values")))
+            flags = "; ".join([
+                f"exact annotation match: {self._format_provenance_flag(provenance.get('exact_annotation_match'))}",
+                f"all words present: {self._format_provenance_flag(provenance.get('all_words_present'))}",
+                f"all words present as one value: {self._format_provenance_flag(provenance.get('all_words_present_as_one_value'))}",
+                f"separate component values: {self._format_provenance_flag(provenance.get('separate_component_values'))}",
+            ])
+            _set("Flags", flags)
         classification = provenance.get("audit_classification") or str(provenance.get("state") or "").upper() or "—"
         _set("Classification", str(classification))
         _set("Reason", str(provenance.get("reason") or "—"))
-        _set("Support values", self._format_provenance_support(provenance.get("support_values")))
-        flags = "; ".join([
-            f"exact annotation match: {self._format_provenance_flag(provenance.get('exact_annotation_match'))}",
-            f"all words present: {self._format_provenance_flag(provenance.get('all_words_present'))}",
-            f"all words present as one value: {self._format_provenance_flag(provenance.get('all_words_present_as_one_value'))}",
-            f"separate component values: {self._format_provenance_flag(provenance.get('separate_component_values'))}",
-        ])
-        _set("Flags", flags)
+
+    def _resize_sil_annotation_table(self) -> None:
+        table = self._sil_annotation_table
+        total_height = sum(table.rowHeight(row) for row in range(table.rowCount()))
+        table.setFixedHeight(total_height + 2 * table.frameWidth())
+
+    def _refit_sil_annotation_table(self) -> None:
+        table = self._sil_annotation_table
+        table.resizeRowsToContents()
+        for row in range(table.rowCount()):
+            table.setRowHeight(row, max(table.rowHeight(row), theme.BTN_H))
+        self._resize_sil_annotation_table()
+
+    def _schedule_sil_annotation_refit(self) -> None:
+        QTimer.singleShot(0, self._refit_sil_annotation_table)
+
+    def _clear_sil_annotation(self) -> None:
+        table = getattr(self, "_sil_annotation_table", None)
+        if table is None:
+            return
+        table.blockSignals(True)
+        table.clearContents()
+        table.setRowCount(0)
+        table.blockSignals(False)
+        self._sil_annotation_section.set_subtitle("")
+        self._resize_sil_annotation_table()
+
+    def _source_annotation_for_record(self, rec: dict) -> tuple[Optional[dict], str]:
+        """Load the actual source-shot annotation without modifying its sidecar."""
+        import json
+        from data.annotate import get_annotation_json_path
+
+        filename = str(rec.get("filename") or "")
+        media_type = str(rec.get("media_type") or "")
+        shot_id = str(rec.get("shot_id") or "")
+        if not all((filename, media_type, shot_id)):
+            return None, "Unavailable"
+        annotation_path = get_annotation_json_path(
+            self._project_path, filename, media_type
+        )
+        try:
+            entries = json.loads(annotation_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None, "Unavailable"
+        if not isinstance(entries, list):
+            return None, "Unavailable"
+        for entry in entries:
+            shot = entry.get("shot") if isinstance(entry, dict) else None
+            if isinstance(shot, dict) and str(shot.get("shot_id") or "") == shot_id:
+                annotation = shot.get("annotation")
+                if isinstance(annotation, dict):
+                    return annotation, ""
+                break
+        return None, "No annotation"
+
+    def _show_sil_annotation(self, rec: dict) -> None:
+        table = self._sil_annotation_table
+        annotation, status = self._source_annotation_for_record(rec)
+        table.blockSignals(True)
+        table.clearContents()
+        if table.columnSpan(0, 0) > 1:
+            table.setSpan(0, 0, 1, 1)
+        if annotation is None:
+            table.setRowCount(1)
+            item = QTableWidgetItem("(no source annotation)")
+            item.setFlags(Qt.ItemIsEnabled)
+            item.setBackground(QColor(theme.CELL_BG))
+            item.setForeground(QColor(theme.TEXT_DIM))
+            table.setItem(0, 0, item)
+            table.setSpan(0, 0, 1, 2)
+            self._sil_annotation_section.set_subtitle(status)
+            table.blockSignals(False)
+            self._schedule_sil_annotation_refit()
+            return
+
+        try:
+            from data.index import load_fields
+            ordered_keys = load_fields(self._project_path)
+        except Exception:
+            ordered_keys = [key for key in annotation if key != "shot_index"]
+        keys = [key for key in ordered_keys if key in annotation]
+        table.setRowCount(len(keys))
+        for row, key in enumerate(keys):
+            key_label = QLabel(key)
+            key_label.setFont(theme.font_ui())
+            key_label.setAlignment(Qt.AlignRight | Qt.AlignTop)
+            key_label.setStyleSheet(
+                f"background: {theme.CELL_BG}; color: {theme.TEXT_DIM};"
+                f" font-family: '{theme.FAMILY_UI}'; font-size: {theme.BASE_PT}pt;"
+                f" font-weight: {theme.WEIGHT_UI}; padding: 0px 2px 0px 2px;"
+            )
+            key_label.setMinimumHeight(theme.BTN_H)
+            table.setCellWidget(row, 0, key_label)
+            value = annotation[key]
+            text = ", ".join(str(item) for item in value) if isinstance(value, list) else str(value)
+            value_item = QTableWidgetItem(text)
+            value_item.setFont(theme.font_mono())
+            value_item.setBackground(QColor(theme.CELL_BG))
+            value_item.setForeground(QColor(theme.TEXT))
+            value_item.setTextAlignment(Qt.AlignLeft | Qt.AlignTop)
+            value_item.setFlags(Qt.ItemIsEnabled)
+            table.setItem(row, 1, value_item)
+        self._sil_annotation_section.set_subtitle("")
+        table.blockSignals(False)
+        self._schedule_sil_annotation_refit()
 
     # ------------------------------------------------------------------
     # Object inspector
@@ -1132,7 +1360,11 @@ class IllustrationPane(QWidget):
         for lbl in self._meta_rows.values():
             lbl.setText("—")
         self._clear_provenance_meta()
+        self._clear_sil_annotation()
         self._current_rec = None
+        if hasattr(self, "_sil_deassign_btn"):
+            self._sil_deassign_btn.setEnabled(False)
+            self._sil_deassign_btn.setText("De-assign")
         if hasattr(self, "_eng_view_btn"):
             self._eng_view_btn.setEnabled(False)
         if hasattr(self, "_eng_sil_btn"):
@@ -1220,8 +1452,16 @@ class IllustrationPane(QWidget):
         _set("overlap",        _fmt(_stored("overlap")))
         _set("semantic_label", _fmt(_stored("semantic_label")))
         _set("semantic_field", _fmt(_stored("semantic_field")))
+        assignment = rec.get("assignment") if isinstance(rec.get("assignment"), dict) else {}
+        _set("assignment_state", str(assignment.get("state") or "active"))
+        recheck = assignment.get("recheck") if isinstance(assignment.get("recheck"), dict) else {}
+        _set("recheck_state", str(recheck.get("state") or "—"))
 
         self._show_provenance_meta(rec)
+        if self._browser is self._browser_sil:
+            self._show_sil_annotation(rec)
+        else:
+            self._clear_sil_annotation()
 
         # Engraving-only keys
         _set("mode",      rec.get("mode", "—"))
@@ -1245,6 +1485,7 @@ class IllustrationPane(QWidget):
         if hasattr(self, "_shotlist_btn"):
             self._shotlist_btn.setEnabled(_can_open)
             self._sam_btn.setEnabled(_can_open)
+        self._update_deassign_button()
         self._update_eng_buttons()
 
     # ------------------------------------------------------------------
@@ -1346,6 +1587,68 @@ class IllustrationPane(QWidget):
         self._eng_batch_btn.setEnabled(n > 0)
         self._eng_batch_btn.setChecked(False)
         self._eng_batch_btn.setText(f"Generate Marked ({n})" if n > 0 else "Generate Marked")
+
+    def _deassign_identity(self, rec: Optional[dict]) -> Optional[dict[str, str]]:
+        if not rec:
+            return None
+        path = Path(str(rec.get("path") or ""))
+        identity = {
+            "media_type": str(rec.get("media_type") or ""),
+            "filename_stem": str(rec.get("filename_stem") or ""),
+            "media_id": str(rec.get("media_id") or ""),
+            "shot_id": str(rec.get("shot_id") or ""),
+            "field": str(rec.get("field") or ""),
+            "label": str(rec.get("label") or ""),
+            "object_id": str(rec.get("object_id") or path.stem),
+        }
+        return identity if all(identity.values()) else None
+
+    def _update_deassign_button(self) -> None:
+        button = getattr(self, "_sil_deassign_btn", None)
+        if button is None or getattr(self, "_sil_deassign_worker", None) is not None:
+            return
+        identity = self._deassign_identity(
+            self._current_rec if self._browser is self._browser_sil else None
+        )
+        button.setEnabled(identity is not None)
+        button.setText("De-assign")
+
+    def _start_silhouette_deassign(self) -> None:
+        if getattr(self, "_sil_deassign_worker", None) is not None:
+            return
+        identity = self._deassign_identity(
+            self._current_rec if self._browser is self._browser_sil else None
+        )
+        if identity is None:
+            return
+        self._sil_deassign_btn.setEnabled(False)
+        self._sil_deassign_btn.setText("De-assigning...")
+        cmd = [
+            sys.executable,
+            str(Path(__file__).parent.parent / "cli.py"),
+            "index", "silhouette", "deassign",
+            "--media", identity["media_type"],
+            "--filename-stem", identity["filename_stem"],
+            "--media-id", identity["media_id"],
+            "--shot", identity["shot_id"],
+            "--field", identity["field"],
+            "--label", identity["label"],
+            "--object-id", identity["object_id"],
+        ]
+        self._sil_deassign_worker = _SilhouetteDeassignWorker(cmd, parent=self)
+        self._sil_deassign_worker.finished.connect(self._on_silhouette_deassign_finished)
+        self._sil_deassign_worker.start()
+
+    def _on_silhouette_deassign_finished(self, ok: bool, error: str) -> None:
+        self._sil_deassign_worker = None
+        if not ok:
+            self._sil_deassign_btn.setText("Failed")
+            self._sil_deassign_btn.setToolTip(error or "Could not de-assign silhouette")
+            QTimer.singleShot(4000, self._update_deassign_button)
+            return
+        self._clear_meta()
+        self._browser_sil.clear_view()
+        self._browser_sil.reload()
 
     def _refresh_batch_count(self) -> None:
         """Re-check pending count while batch is running and update button label."""

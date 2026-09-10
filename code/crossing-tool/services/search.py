@@ -146,34 +146,6 @@ def _resolve_movies_exact_first(
     return _resolve_movies(scopes, use_all, all_entries)
 
 
-def _annotation_searchable_text(
-    ann: dict, field: str | None
-) -> tuple[str, list[str]]:
-    """Return (concatenated_text, fields_included) for searching.
-
-    If *field* is given, restrict to that single field.
-    Otherwise concatenate all annotation fields.
-    """
-    if field is not None:
-        val = ann.get(field)
-        if val is None:
-            return "", []
-        text = " ".join(str(v) for v in val) if isinstance(val, list) else str(val)
-        return text, [field]
-
-    parts: list[str] = []
-    fields_included: list[str] = []
-    for key, val in ann.items():
-        if isinstance(val, list):
-            part = " ".join(str(v) for v in val)
-        else:
-            part = str(val) if val is not None else ""
-        if part.strip():
-            parts.append(part)
-            fields_included.append(key)
-    return " ".join(parts), fields_included
-
-
 def _annotation_type_matches(ann: dict, shot_type: str | None) -> bool:
     """Return whether an annotation matches one exact Project shot-type value.
 
@@ -224,6 +196,18 @@ def _score_text(query: str, text: str) -> float:
     return round(ratio * base, 4)
 
 
+def _score_annotation_value(query: str, value: Any) -> float:
+    """Score one annotation value without joining distinct list labels.
+
+    List entries are separate source expressions. In particular, a phrase
+    query such as ``"yellow coat"`` must not match ``["yellow", "coat"]``
+    merely because those entries were concatenated for searching.
+    """
+    values = value if isinstance(value, list) else [value]
+    scores = [_score_text(query, str(item)) for item in values if item is not None]
+    return max(scores, default=0.0)
+
+
 def _find_matched_fields(query: str, ann: dict, field: str | None) -> list[str]:
     """Return the field names within *ann* that contain a match for *query*."""
     q = query.lower().strip()
@@ -233,15 +217,23 @@ def _find_matched_fields(query: str, ann: dict, field: str | None) -> list[str]:
         val = ann.get(field)
         if val is None:
             return []
-        text = " ".join(str(v) for v in val) if isinstance(val, list) else str(val)
-        return [field] if _score_text(q, text) > 0 else []
+        return [field] if _score_annotation_value(q, val) > 0 else []
 
     matched: list[str] = []
     for key, val in ann.items():
-        text = " ".join(str(v) for v in val) if isinstance(val, list) else str(val or "")
-        if _score_text(q, text) > 0:
+        if _score_annotation_value(q, val) > 0:
             matched.append(key)
     return matched
+
+
+def _score_annotation(query: str, ann: dict, field: str | None) -> float:
+    """Return the highest score for *query* within its original annotation value."""
+    if field is not None:
+        return _score_annotation_value(query, ann.get(field))
+    return max(
+        (_score_annotation_value(query, value) for value in ann.values()),
+        default=0.0,
+    )
 
 
 def _build_matched_text(ann: dict, matched_fields: list[str]) -> str:
@@ -265,6 +257,193 @@ def _safe_int(val: Any) -> int | None:
         return None
 
 
+def _load_search_source(
+    project_path: str,
+    media_type: str,
+    filename: str,
+) -> dict[str, Any] | None:
+    """Load one annotation source using the same inputs as ``search_shots``."""
+    from data.shotlist import read_shotlist
+
+    ann_path = Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{Path(filename).stem}.annotations.json"
+    if not ann_path.exists():
+        return None
+    try:
+        raw_entries = json.loads(ann_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    ann_entries = raw_entries if isinstance(raw_entries, list) else []
+
+    shot_timing: dict[int, dict] = {}
+    shot_timing_by_frame: dict[int, dict] = {}
+    try:
+        shots_csv = read_shotlist(project_path, filename, media_type)
+        for index, row in enumerate(shots_csv):
+            timing_row = {
+                "start_time": row.get("start_time", ""),
+                "end_time": row.get("end_time", ""),
+                "start_frame": _safe_int(row.get("start_frame")),
+                "end_frame": _safe_int(row.get("end_frame")),
+            }
+            shot_timing[index] = timing_row
+            start_frame = _safe_int(row.get("start_frame"))
+            if start_frame is not None:
+                shot_timing_by_frame[start_frame] = timing_row
+    except FileNotFoundError:
+        pass
+    return {
+        "ann_entries": ann_entries,
+        "shot_timing": shot_timing,
+        "shot_timing_by_frame": shot_timing_by_frame,
+    }
+
+
+class SearchCorpus:
+    """Reusable in-memory source cache for repeated canonical annotation searches.
+
+    This deliberately caches only parsed project inputs. Every query still
+    uses ``_score_annotation`` and the ordinary ``search_shots`` result path;
+    it is neither a persisted index nor a second matching implementation.
+    """
+
+    def __init__(self, project_path: str) -> None:
+        self.project_path = str(Path(project_path).resolve())
+        self._metadata: dict[str, list[dict]] = {}
+        self._states: dict[str, dict[str, Any]] = {}
+
+    def metadata(self, media_type: str) -> list[dict]:
+        if media_type not in self._metadata:
+            from data.metadata import get_metadata
+
+            self._metadata[media_type] = get_metadata(
+                self.project_path,
+                media_type=media_type,
+            )
+        return self._metadata[media_type]
+
+    def source(self, media_type: str, filename: str) -> dict[str, Any] | None:
+        self._ensure_media(media_type)
+        return self._states[media_type]["sources"].get(filename)
+
+    def prepare_queries(
+        self,
+        media_type: str,
+        queries: set[tuple[str | None, str]],
+    ) -> None:
+        """Prepare bounded candidate sets for repeated exact search queries.
+
+        A query's first three lower-cased characters are an intentionally
+        broad anchor only. A true canonical match must contain that anchor, so
+        no valid result is excluded. ``search_shots`` still applies
+        ``_score_annotation`` to every retained candidate before it returns a
+        result.
+        """
+        self._ensure_media(media_type)
+        state = self._states[media_type]
+        prepared = state["prepared_queries"]
+        missing = {
+            (field, query)
+            for field, query in queries
+            if (field, query) not in prepared
+        }
+        if not missing:
+            return
+
+        anchors: dict[str | None, dict[str, set[tuple[str | None, str]]]] = {}
+        short_queries: dict[str | None, set[tuple[str | None, str]]] = {}
+        for field, query in missing:
+            normalised_query = query.lower().strip()
+            if not normalised_query:
+                prepared[(field, query)] = {}
+            elif len(normalised_query) < 3:
+                short_queries.setdefault(field, set()).add((field, query))
+            else:
+                anchors.setdefault(field, {}).setdefault(normalised_query[:3], set()).add((field, query))
+
+        anchor_patterns = {
+            field: re.compile("(?=(" + "|".join(re.escape(anchor) for anchor in values) + "))")
+            for field, values in anchors.items()
+            if values
+        }
+        candidates: dict[tuple[str | None, str], dict[str, list[dict]]] = {
+            query: {} for query in missing
+        }
+        for record in state["records"]:
+            ann = record["annotation"]
+            filename = record["filename"]
+            for current_field, value in ann.items():
+                index_fields = (current_field, None)
+                values = value if isinstance(value, list) else [value]
+                lower_values = [str(item).lower() for item in values if item is not None]
+                if not lower_values:
+                    continue
+                for index_field in index_fields:
+                    candidates_for_record = set(short_queries.get(index_field, set()))
+                    matching_anchors = anchors.get(index_field, {})
+                    pattern = anchor_patterns.get(index_field)
+                    if pattern is not None:
+                        for text in lower_values:
+                            for match in pattern.finditer(text):
+                                candidates_for_record.update(matching_anchors[match.group(1)])
+                    for query_key in candidates_for_record:
+                        candidates[query_key].setdefault(filename, []).append(record["ann_entry"])
+
+        prepared.update(candidates)
+
+    def matching_entries(
+        self,
+        media_type: str,
+        field: str | None,
+        query: str,
+    ) -> dict[str, list[dict]]:
+        """Return possible matches grouped by filename for one exact query.
+
+        A prepared bounded candidate set avoids scanning the full parsed corpus
+        for each query. Unprepared queries correctly fall back to all records.
+        """
+        self._ensure_media(media_type)
+        state = self._states[media_type]
+        query_key = (field, query)
+        if query_key in state["prepared_queries"]:
+            return state["prepared_queries"][query_key]
+
+        by_filename: dict[str, list[dict]] = {}
+        for record in state["records"]:
+            by_filename.setdefault(record["filename"], []).append(record["ann_entry"])
+        return by_filename
+
+    def _ensure_media(self, media_type: str) -> None:
+        if media_type in self._states:
+            return
+
+        sources: dict[str, dict[str, Any]] = {}
+        records: list[dict[str, Any]] = []
+        for entry in self.metadata(media_type):
+            filename = entry.get("filename", "")
+            if not filename:
+                continue
+            if filename not in sources:
+                source = _load_search_source(self.project_path, media_type, filename)
+                if source is not None:
+                    sources[filename] = source
+            source = sources.get(filename)
+            if source is None:
+                continue
+
+            for ann_entry in source["ann_entries"]:
+                shot_meta = ann_entry.get("shot") if isinstance(ann_entry, dict) else None
+                ann = shot_meta.get("annotation") if isinstance(shot_meta, dict) else None
+                if not isinstance(ann, dict):
+                    continue
+                records.append({"filename": filename, "ann_entry": ann_entry, "annotation": ann})
+
+        self._states[media_type] = {
+            "sources": sources,
+            "records": records,
+            "prepared_queries": {},
+        }
+
+
 # ---------------------------------------------------------------------------
 # Core API
 # ---------------------------------------------------------------------------
@@ -279,6 +458,7 @@ def search_shots(
     project_path: str | None = None,
     media_type: str = "movie",
     shot_type: str | None = None,
+    corpus: SearchCorpus | None = None,
 ) -> dict:
     """Search shot annotations and return a structured result dict.
 
@@ -295,19 +475,25 @@ def search_shots(
     use_all:        Force search across all movies, ignoring *scopes*.
     project_path:   Project root directory.
     media_type:     "movie" or "gameplay".
+    corpus:         Optional in-memory source cache for repeated searches.
 
     Returns
     -------
     dict with keys: query, scopes, field, limit, limit_per_item, results
     """
-    from data.metadata import get_metadata
-    from data.shotlist import read_shotlist
-
     if not project_path:
         raise RuntimeError("project_path is required")
+    resolved_project_path = str(Path(project_path).resolve())
+    if corpus is not None and corpus.project_path != resolved_project_path:
+        raise ValueError("corpus project_path does not match project_path")
 
     # Step 1 – resolve movies
-    all_entries = get_metadata(project_path, media_type=media_type)
+    if corpus is not None:
+        all_entries = corpus.metadata(media_type)
+    else:
+        from data.metadata import get_metadata
+
+        all_entries = get_metadata(project_path, media_type=media_type)
     selected, effective_scopes = _resolve_movies_exact_first(scopes, use_all, all_entries)
 
     if scopes and not use_all and not selected:
@@ -316,10 +502,13 @@ def search_shots(
             file=sys.stderr,
         )
 
-    ann_base = Path(project_path) / "data" / "annotations" / "shots" / media_type
-
     # Steps 2–4 – load shots, build searchable text, score
     results: list[dict] = []
+    indexed_candidates = (
+        corpus.matching_entries(media_type, field, query)
+        if corpus is not None
+        else None
+    )
 
     for entry in selected:
         filename = entry.get("filename", "")
@@ -333,35 +522,20 @@ def search_shots(
         movie_title = f"{movie_title_raw} ({year})" if year else movie_title_raw
         tmdb_id = entry.get("tmdb") or entry.get("tmdb_id")
 
-        ann_path = ann_base / f"{stem}.annotations.json"
-        if not ann_path.exists():
+        source = (
+            corpus.source(media_type, filename)
+            if corpus is not None
+            else _load_search_source(project_path, media_type, filename)
+        )
+        if source is None:
             continue
-
-        try:
-            ann_entries: list[Any] = json.loads(ann_path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-
-        # Build timing lookups from shotlist CSV.
-        # shot_timing: 0-based index → timing dict  (legacy integer shot_ids)
-        # shot_timing_by_frame: start_frame → timing dict  (stable string shot_ids)
-        shot_timing: dict[int, dict] = {}
-        shot_timing_by_frame: dict[int, dict] = {}
-        try:
-            shots_csv = read_shotlist(project_path, filename, media_type)
-            for idx, row in enumerate(shots_csv):
-                timing_row = {
-                    "start_time": row.get("start_time", ""),
-                    "end_time": row.get("end_time", ""),
-                    "start_frame": _safe_int(row.get("start_frame")),
-                    "end_frame": _safe_int(row.get("end_frame")),
-                }
-                shot_timing[idx] = timing_row
-                sf_key = _safe_int(row.get("start_frame"))
-                if sf_key is not None:
-                    shot_timing_by_frame[sf_key] = timing_row
-        except FileNotFoundError:
-            pass  # timing fields will be empty strings / None
+        ann_entries = (
+            indexed_candidates.get(filename, [])
+            if indexed_candidates is not None
+            else source["ann_entries"]
+        )
+        shot_timing = source["shot_timing"]
+        shot_timing_by_frame = source["shot_timing_by_frame"]
 
         for ann_entry in ann_entries:
             shot_meta = ann_entry.get("shot") if isinstance(ann_entry, dict) else None
@@ -397,8 +571,7 @@ def search_shots(
                 start_frame = timing.get("start_frame")
                 end_frame = timing.get("end_frame")
 
-            searchable, _ = _annotation_searchable_text(ann, field)
-            score = _score_text(query, searchable)
+            score = _score_annotation(query, ann, field)
             if score <= 0.0:
                 continue
 

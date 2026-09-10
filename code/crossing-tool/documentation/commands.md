@@ -467,6 +467,26 @@ crossing index illustration
 crossing index illustration --media gameplay
 crossing index illustration --media both       # movies and gameplay
 
+# Transfer the completed canonical-search audit into authoritative silhouette
+# search_provenance records. Always begin with the no-write preflight.
+crossing index silhouette canonical-search-provenance --dry-run
+crossing index silhouette canonical-search-provenance
+crossing index silhouette canonical-search-provenance --media movie --dry-run
+  --audit-dir outputs/tests/silhouette-canonical-search-audit
+
+# Reprocess canonical-search-questionable silhouettes from their current source
+# annotations. Choose exactly one explicit processing mode.
+crossing index silhouette recheck --media movie --field objects --limit-sources 100
+crossing index silhouette recheck --media movie --field objects --limit-records 1000
+crossing index silhouette recheck --dry-run --media movie --field objects --all
+crossing index silhouette recheck --media movie --field objects --all --verbose \
+  --log ~/playable/dead-crossing/logs/silhouette-recheck-objects.log
+
+# --all intentionally processes every eligible source job. --limit-sources and
+# --limit-records remain bounded modes; omitting all three is an error. The
+# optional --log file appends a flushed UTF-8 execution transcript and does not
+# replace the structured JSON/CSV reports under outputs/tests/silhouette-recheck/.
+
 # Write a timestamped Markdown audit and open it with the default OS app.
 crossing index untyped --source shot
 crossing index untyped --source silhouettes
@@ -490,6 +510,15 @@ that owns the feature you want to refresh:
 `crossing index stats --force` is sufficient when the goal is to refresh the
 Project browser after editing an annotation field such as `type`. It does not
 re-serialize or re-embed semantic-search data.
+
+`crossing index silhouette canonical-search-provenance` reads the completed
+canonical-search audit; it does not run `search_shots()` again or use morphology
+or older provenance classifications. Its preflight requires one matching audit
+row for every selected live silhouette JSON and verifies the stored media,
+source filename, source shot, field, and historical label before any write. It
+atomically updates only `search_provenance`, rebuilds selected Illustration
+silhouette indexes after a clean apply, and writes its migration report to
+`<project>/outputs/tests/silhouette-canonical-search-provenance-migration/`.
 
 ## Generate
 

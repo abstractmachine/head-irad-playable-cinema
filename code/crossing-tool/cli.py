@@ -5640,6 +5640,10 @@ def _index_silhouette(args):
         _silhouette_catalog_audit(args)
     elif silhouette_action == "clear":
         _silhouette_catalog_clear(args)
+    elif silhouette_action == "deassign":
+        _silhouette_catalog_deassign(args)
+    elif silhouette_action == "recheck":
+        _silhouette_catalog_recheck(args)
     elif silhouette_action == "score":
         # Compute and persist silhouette quality scores
         from services.silhouette_scoring import compute_scores_for_catalog
@@ -5666,6 +5670,10 @@ def _index_silhouette(args):
         _silhouette_enrich(args)
     elif silhouette_action == "provenance":
         _silhouette_provenance(args)
+    elif silhouette_action == "canonical-search-audit":
+        _silhouette_canonical_search_audit(args)
+    elif silhouette_action == "canonical-search-provenance":
+        _silhouette_canonical_search_provenance(args)
     elif silhouette_action == "morphology-audit":
         _silhouette_number_morphology_audit(args)
     elif silhouette_action == "number-direction-audit":
@@ -5673,7 +5681,7 @@ def _index_silhouette(args):
     elif silhouette_action == "number-ambiguity-audit":
         _silhouette_number_ambiguity_audit(args)
     else:
-        print("✗ index silhouette: specify a subcommand (extract, audit, clear, score, enrich, provenance, morphology-audit, number-direction-audit, number-ambiguity-audit, backfill-scanned)", file=sys.stderr)
+        print("✗ index silhouette: specify a subcommand (extract, audit, clear, deassign, recheck, score, enrich, provenance, canonical-search-audit, canonical-search-provenance, morphology-audit, number-direction-audit, number-ambiguity-audit, backfill-scanned)", file=sys.stderr)
         sys.exit(1)
 
 
@@ -5721,6 +5729,22 @@ def _open_with_default_app(path: str | Path) -> None:
 
 
 def _silhouette_catalog_extract(args):
+    """Lock the catalog before dispatching a normal extraction batch."""
+    from services.silhouette_catalog import exclusive_catalog_extraction_lock
+
+    lock = exclusive_catalog_extraction_lock(prefs.get("path"))
+    try:
+        lock.__enter__()
+    except RuntimeError as exc:
+        print(f"✗ Silhouette extraction cannot start: {exc}", file=sys.stderr)
+        sys.exit(1)
+    try:
+        return _silhouette_catalog_extract_unlocked(args)
+    finally:
+        lock.__exit__(None, None, None)
+
+
+def _silhouette_catalog_extract_unlocked(args):
     """Extract transparent PNG objects for a label and save to the catalog."""
     from data.metadata import get_metadata
     from data.media_id import compute_media_id
@@ -6293,6 +6317,70 @@ def _silhouette_provenance(args):
         )
 
 
+def _silhouette_canonical_search_audit(args):
+    """Run the read-only source-shot membership audit against canonical search."""
+    from services.silhouette_canonical_search_audit import audit_silhouette_canonical_search
+
+    report = audit_silhouette_canonical_search(
+        prefs.get("path"),
+        media_type=getattr(args, "media", "both"),
+        output_dir=getattr(args, "output_dir", None),
+        sample_size=getattr(args, "sample_size", 25),
+        probe=getattr(args, "probe", False),
+    )
+    summary = report["summary"]
+    print(
+        "Canonical search audit: "
+        f"records={summary['total_records']}  "
+        f"valid={summary['valid']}  "
+        f"questionable={summary['questionable']}  "
+        f"unverifiable={summary['unverifiable']}  "
+        f"questionable_percentage={summary['questionable_percentage']}%"
+    )
+    safety = report["live_data_safety"]
+    print(f"LIVE SILHOUETTE DATA MODIFIED = {safety['live_silhouette_data_modified']}")
+    print(f"LIVE PNG DATA MODIFIED = {safety['live_png_data_modified']}")
+    print(f"LIVE ANNOTATIONS MODIFIED = {safety['live_annotations_modified']}")
+    print(f"  Saved: {report['artifacts']['report_md']}")
+
+
+def _silhouette_canonical_search_provenance(args):
+    """Persist authoritative provenance from the completed canonical audit."""
+    from services.silhouette_canonical_search_provenance import (
+        migrate_canonical_search_provenance,
+    )
+
+    report = migrate_canonical_search_provenance(
+        prefs.get("path"),
+        audit_dir=getattr(args, "audit_dir", None),
+        media_type=getattr(args, "media", "both"),
+        dry_run=getattr(args, "dry_run", False),
+    )
+    mode = " (dry-run)" if report["dry_run"] else ""
+    print(
+        "Canonical provenance migration"
+        f"{mode}: audit_records={report['selected_audit_records']}  "
+        f"catalog_records={report['selected_catalog_records']}  "
+        f"valid={report['valid']}  "
+        f"questionable={report['questionable']}  "
+        f"unverifiable={report['unverifiable']}  "
+        f"would_update={report['would_update']}  "
+        f"errors={report['errors']}"
+    )
+    if report["safe_to_apply"]:
+        print("  Completed audit and live archive agree; migration may apply.")
+    else:
+        print("  Migration blocked: completed audit and live archive do not agree.")
+    if report.get("applied"):
+        for current_media_type, index_result in report.get("index_results", {}).items():
+            print(
+                f"  {current_media_type} silhouette index rebuilt: "
+                f"status={index_result.get('status', 'unknown')} "
+                f"count={index_result.get('count', 0)}"
+            )
+    print(f"  Saved: {report['report_path']}")
+
+
 def _silhouette_number_morphology_audit(args):
     """Run the read-only number-morphology audit over the completed number audit."""
     from services.silhouette_number_morphology_audit import audit_silhouette_number_morphology
@@ -6440,6 +6528,125 @@ def _silhouette_catalog_audit(args):
             print(f"    {lbl:<25s} {count:>5d}  {bar}")
         if len(by_lbl) > 30:
             print(f"    … and {len(by_lbl) - 30} more labels")
+
+def _silhouette_catalog_deassign(args):
+    """De-assign one catalog object through the canonical curation service."""
+    from services.silhouette_curation import deassign_catalog_object
+
+    try:
+        result = deassign_catalog_object(
+            prefs.get("path"),
+            media_type=normalize_media_type(getattr(args, "media", "movie")),
+            filename_stem=args.filename_stem,
+            media_id=args.media_id,
+            shot_id=args.shot,
+            field=args.field,
+            label=args.label,
+            object_id=args.object_id,
+        )
+    except (RuntimeError, ValueError) as exc:
+        print(f"✗ Could not de-assign silhouette: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if result["status"] == "already_inactive":
+        print("Silhouette already inactive; pending recheck preserved")
+        return
+
+    record = result["record"]
+    index = result["index"] or {}
+    print("Silhouette de-assigned")
+    print(f"  object: {record.get('filename_stem', '')}/{record.get('label', '')}/{args.object_id}")
+    print("  state: inactive")
+    print("  recheck: pending")
+    print("  PNG preserved")
+    print("  JSON preserved")
+    print(f"  Illustration index rebuilt: {index.get('count', 0)} indexed")
+
+
+def _silhouette_catalog_recheck(args):
+    """Run a bounded source-annotation-driven recheck batch."""
+    from services.silhouette_recheck import run_silhouette_rechecks
+
+    selected_media = getattr(args, "media", "both")
+    media_type = None if selected_media == "both" else normalize_media_type(selected_media)
+    sam_model = (
+        getattr(args, "model", None)
+        or prefs.get(_MODEL_KEYS["segmentation"], _MODEL_DEFAULTS["segmentation"])
+    )
+    frame_model = (
+        getattr(args, "frame_model", None)
+        or prefs.get(_MODEL_KEYS["frame_match"], _MODEL_DEFAULTS["frame_match"])
+    )
+    try:
+        report = run_silhouette_rechecks(
+            prefs.get("path"),
+            media_type=media_type,
+            field=getattr(args, "field", None),
+            limit_records=getattr(args, "limit_records", None),
+            limit_sources=getattr(args, "limit_sources", None),
+            all_sources=getattr(args, "all_sources", False),
+            dry_run=getattr(args, "dry_run", False),
+            retry_errors=getattr(args, "retry_errors", False),
+            sam_model_name=sam_model,
+            frame_model_name=frame_model,
+            verbose=getattr(args, "verbose", False),
+            log_path=getattr(args, "log_path", None),
+        )
+    except (RuntimeError, ValueError) as exc:
+        print(f"✗ Silhouette recheck failed to start: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    mode = " (dry-run)" if report["command"]["dry_run"] else ""
+    print(f"Silhouette recheck{mode}")
+    print(
+        "  Source jobs: "
+        f"available={report['source_jobs_available']}  "
+        f"examined={report['source_jobs_examined']}  "
+        f"attempted={report['source_jobs_attempted']}  "
+        f"completed={report['source_jobs_completed']}  "
+        f"zero_result={report['source_jobs_zero_result']}  "
+        f"failed={report['source_jobs_failed']}"
+    )
+    print(
+        "  Historical records: "
+        f"available={report['historical_records_available']}  "
+        f"examined={report['historical_records_examined']}  "
+        f"superseded={report['historical_records_superseded']}  "
+        f"skipped={report['historical_records_skipped']}  "
+        f"failed={report['historical_records_failed']}"
+    )
+    print(
+        f"  Deduplication: {report['deduplication_ratio']:.3f} historical records/source job  "
+        f"duplicate source jobs avoided={report['duplicate_source_jobs_avoided']}  "
+        f"produced_objects={report['produced_objects']}  model_loads={report.get('model_loads', 0)}  "
+        f"errors={report['errors']}"
+    )
+    for outcome in report["outcomes"][:10]:
+        values = ", ".join(outcome.get("recheck_values") or []) or "(unavailable)"
+        print(
+            f"  {outcome['outcome']}: {outcome['source_job']}  "
+            f"historical_records={outcome['historical_record_count']}  values={values}"
+        )
+        if outcome.get("error"):
+            print(f"    error: {outcome['error']}")
+    for current_media_type, result in report.get("index_results", {}).items():
+        print(
+            f"  {current_media_type} silhouette index: "
+            f"{result.get('status', 'unknown')} ({result.get('count', 0)} indexed)"
+        )
+    print(
+        f"  Run: mode={report['command'].get('mode', 'unknown')}  "
+        f"elapsed={float(report.get('elapsed_seconds') or 0):.1f}s  "
+        f"interrupted={report.get('interrupted', False)}"
+    )
+    if report.get("fatal_error"):
+        print(f"  Fatal error: {report['fatal_error']}", file=sys.stderr)
+    print(f"  Report: {report['artifacts']['report_json']}")
+    print(f"  Outcomes: {report['artifacts']['outcomes_csv']}")
+    if report.get("fatal_error"):
+        sys.exit(1)
+    if report.get("interrupted"):
+        sys.exit(130)
 
 
 def _silhouette_catalog_clear(args):
@@ -9046,6 +9253,8 @@ def build_parser():
             "Subcommands:\n"
             "  extract   Extract transparent PNG objects for a label\n"
             "  audit     Show catalog statistics\n"
+            "  canonical-search-audit  Revalidate historical source-shot membership with current search\n"
+            "  canonical-search-provenance  Persist a completed canonical audit as authoritative provenance\n"
             "  morphology-audit  Reclassify historical QUESTIONABLE_NUMBER rows\n"
             "  number-direction-audit  Read-only forensic audit of reverse-direction number variants\n"
             "  number-ambiguity-audit  Read-only forensic audit of semantic number ambiguities\n"
@@ -9057,6 +9266,8 @@ def build_parser():
             "  crossing index silhouette extract cowboy --field characters --shot tmdb_281957@f001240-f001310\n"
             "  crossing index silhouette audit\n"
             "  crossing index silhouette audit --label horse\n"
+            "  crossing index silhouette canonical-search-audit --probe\n"
+            "  crossing index silhouette canonical-search-provenance --dry-run\n"
             "  crossing index silhouette morphology-audit\n"
             "  crossing index silhouette number-direction-audit\n"
             "  crossing index silhouette number-ambiguity-audit\n"
@@ -9219,6 +9430,105 @@ def build_parser():
         help="Output raw JSON instead of formatted text",
     )
 
+    # ── deassign ──────────────────────────────────────────────────────────
+    p_sil_deassign = silhouette_sub.add_parser(
+        "deassign",
+        help="Non-destructively deactivate one exact silhouette and queue its recheck",
+        epilog=(
+            "Keeps the historical PNG and JSON. The object becomes inactive and gains a\n"
+            "pending recheck request using its original source-shot annotation value.\n\n"
+            "Example:\n"
+            "  crossing index silhouette deassign --filename-stem film --media-id tmdb_1 "
+            "--shot tmdb_1@f000010-f000020 --field wearing --label 'arm band' "
+            "--object-id object_0001"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_sil_deassign.set_defaults(func=cmd_index)
+    _add_media_arg(p_sil_deassign)
+    p_sil_deassign.add_argument(
+        "--filename-stem", required=True, metavar="STEM",
+        help="Exact source media filename stem from the selected catalog object",
+    )
+    p_sil_deassign.add_argument(
+        "--media-id", required=True, metavar="MEDIA_ID",
+        help="Exact source media ID from the selected catalog object",
+    )
+    p_sil_deassign.add_argument(
+        "--shot", required=True, metavar="SHOT_ID",
+        help="Exact source shot ID from the selected catalog object",
+    )
+    p_sil_deassign.add_argument(
+        "--field", required=True, metavar="FIELD",
+        help="Exact source annotation field from the selected catalog object",
+    )
+    p_sil_deassign.add_argument(
+        "--label", required=True, metavar="LABEL",
+        help="Exact catalog label from the selected catalog object",
+    )
+    p_sil_deassign.add_argument(
+        "--object-id", required=True, metavar="OBJECT_ID",
+        help="Exact object ID (normally the catalog JSON filename stem)",
+    )
+
+    # ── recheck ───────────────────────────────────────────────────────────
+    p_sil_recheck = silhouette_sub.add_parser(
+        "recheck",
+        help="Re-extract active questionable silhouettes from current source annotations",
+        epilog=(
+            "Streams the existing pending queue plus active canonical-search QUESTIONABLE\n"
+            "objects. The historical label is evidence only: each recheck uses separate\n"
+            "current source annotation values and the normal production extractor.\n\n"
+            "Examples:\n"
+            "  crossing index silhouette recheck --dry-run --field objects --limit-sources 10\n"
+            "  crossing index silhouette recheck --field objects --limit-sources 10\n"
+            "  crossing index silhouette recheck --media gameplay --field objects --limit-records 25\n"
+            "  crossing index silhouette recheck --media movie --field objects --all --verbose "
+            "--log ~/playable/dead-crossing/logs/silhouette-recheck-objects.log"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_sil_recheck.set_defaults(func=cmd_index)
+    _add_media_arg(p_sil_recheck, default="both", allow_both=True)
+    p_sil_recheck.add_argument(
+        "--field", default=None, metavar="FIELD",
+        help="Restrict the recheck queue to one original annotation field",
+    )
+    recheck_mode = p_sil_recheck.add_mutually_exclusive_group(required=True)
+    recheck_mode.add_argument(
+        "--all", action="store_true", dest="all_sources",
+        help="Intentionally process every eligible source job matching the selected filters",
+    )
+    recheck_mode.add_argument(
+        "--limit-records", type=int, default=None, metavar="N",
+        help="Process complete source jobs totaling at most N historical records",
+    )
+    recheck_mode.add_argument(
+        "--limit-sources", type=int, default=None, metavar="N",
+        help="Process at most N unique (media, media_id, shot, field) source jobs",
+    )
+    _add_dry_run_arg(
+        p_sil_recheck,
+        help="Preview source annotations and recheck values without mutating catalog objects or PNGs",
+    )
+    p_sil_recheck.add_argument(
+        "--retry-errors", action="store_true",
+        help="Retry records whose prior recheck ended with an explicit error",
+    )
+    p_sil_recheck.add_argument(
+        "--model", default=None, metavar="NAME",
+        help="SAM3 model bundle (default: configured segmentation model)",
+    )
+    p_sil_recheck.add_argument(
+        "--frame-model", default=None, metavar="NAME",
+        help="CLIP frame model (default: configured frame-match model)",
+    )
+    p_sil_recheck.add_argument(
+        "--log", dest="log_path", default=None, metavar="FILE",
+        help="Append durable UTF-8 operational progress to FILE",
+    )
+    _add_verbose_arg(p_sil_recheck, help="Show production extractor progress for each source value")
+
     # ── clear ──────────────────────────────────────────────────────────────
     p_sil_clear = silhouette_sub.add_parser(
         "clear",
@@ -9335,6 +9645,67 @@ def build_parser():
     p_sil_provenance.add_argument(
         "--audit-dir", default=None, metavar="PATH",
         help="Path to the completed semantic audit directory (default: discovered automatically)",
+    )
+
+    # ── canonical-search-audit ────────────────────────────────────────
+    p_sil_canonical_search_audit = silhouette_sub.add_parser(
+        "canonical-search-audit",
+        help="Read-only audit: does current search return each historical silhouette's source shot?",
+        epilog=(
+            "Examples:\n"
+            "  crossing index silhouette canonical-search-audit\n"
+            "  crossing index silhouette canonical-search-audit --probe\n"
+            "  crossing index silhouette canonical-search-audit --media movie --sample-size 40\n"
+            "  crossing index silhouette canonical-search-audit --output-dir outputs/tests/silhouette-canonical-search-audit-run-2"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_sil_canonical_search_audit.set_defaults(func=cmd_index)
+    _add_media_arg(p_sil_canonical_search_audit, default="both", allow_both=True)
+    p_sil_canonical_search_audit.add_argument(
+        "--output-dir",
+        default=None,
+        metavar="PATH",
+        help="Audit artifact directory beneath the active project's outputs/tests/",
+    )
+    p_sil_canonical_search_audit.add_argument(
+        "--sample-size",
+        type=int,
+        default=25,
+        metavar="COUNT",
+        help="Maximum representative questionable evidence panels to render (default: 25)",
+    )
+    p_sil_canonical_search_audit.add_argument(
+        "--probe",
+        action="store_true",
+        help="Audit only the known labels: coat, yellow coat, wooden post, wanted poster, arm band, wooden plank, sign",
+    )
+
+    # ── canonical-search-provenance ──────────────────────────────────
+    p_sil_canonical_search_provenance = silhouette_sub.add_parser(
+        "canonical-search-provenance",
+        help="Persist authoritative search provenance from a completed canonical-search audit",
+        epilog=(
+            "Reads the completed canonical-search audit and transfers its already-decided\n"
+            "VALID/QUESTIONABLE/UNVERIFIABLE state into catalog JSON atomically.\n"
+            "It never reruns search or consults morphology or old provenance.\n\n"
+            "Examples:\n"
+            "  crossing index silhouette canonical-search-provenance --dry-run\n"
+            "  crossing index silhouette canonical-search-provenance\n"
+            "  crossing index silhouette canonical-search-provenance --media movie --dry-run\n"
+            "  crossing index silhouette canonical-search-provenance --audit-dir outputs/tests/silhouette-canonical-search-audit --dry-run"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_sil_canonical_search_provenance.set_defaults(func=cmd_index)
+    _add_media_arg(p_sil_canonical_search_provenance, default="both", allow_both=True)
+    _add_dry_run_arg(
+        p_sil_canonical_search_provenance,
+        help="Validate the completed audit against the live archive without writing JSON or rebuilding indexes",
+    )
+    p_sil_canonical_search_provenance.add_argument(
+        "--audit-dir", default=None, metavar="PATH",
+        help="Completed canonical-search audit directory beneath the active project",
     )
 
     # ── morphology-audit ───────────────────────────────────────────────

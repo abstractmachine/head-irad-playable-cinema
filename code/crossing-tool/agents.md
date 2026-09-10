@@ -297,22 +297,58 @@ paint/behavior level without forcing a structurally incompatible base class.
   `data/palette.py` (`data/palettes/`, SAM3 via the canonical
   `segment_palette(image_pil)` adapter), `services/silhouette*.py` (silhouette cache +
   object catalog), `services/illustration_index.py` (browse index + indexed
-  `search_provenance` for silhouette records), `services/silhouette_provenance.py`
-  (one-time provenance migration from the completed semantic audit),
+  `search_provenance` for silhouette records),
+  `services/silhouette_canonical_search_provenance.py` (authoritative provenance
+  migration from the completed canonical-search audit),
+  `services/silhouette_provenance.py` (legacy semantic-audit migration),
   `services/vocabulary_index.py`, `services/frame_embeddings.py`
   (`.npy` + manifest), `services/engraving_*` (PNG/JSON per generation run — cache-like,
   each `engraving_id` unique, no cross-run collision).
 - **Silhouette lifecycle metadata** lives additively in each canonical catalog object
-  JSON, beside but independent from `search_provenance`. `search_provenance` answers
-  why a label is semantically related to the source annotation; `assignment` answers
+  JSON, beside but independent from `search_provenance`. Authoritative canonical
+  `search_provenance` records answer whether current production search returns the
+  historical source shot; `assignment` answers
   whether that particular extracted object is the current representation. Missing
   `assignment` is backward-compatible `active`; explicit states are `active`,
   `inactive`, and `superseded`. A curatorially rejected object becomes inactive with
   an embedded `assignment.recheck` request containing the original search label and
   the distinct annotation value. `human_best` remains a separate positive selection
   marker for engraving workflows and must never be overloaded as lifecycle state.
-  Rechecks preserve the old PNG/JSON and supersede rather than delete assets. Do not
-  bulk-migrate historical JSON records without explicit user direction.
+  Rechecks preserve the old PNG/JSON and supersede rather than delete assets.
+  `crossing index silhouette deassign` resolves the exact catalog identity, derives
+  its source-shot annotation value, makes this transition atomically, and rebuilds
+  only the affected silhouette browse index; it never changes `search_provenance`.
+  `crossing index silhouette recheck` is the bounded automated follow-up. Historical
+  records are not the extraction unit: it groups pending records first, then active
+  canonical-search `questionable` records, by the exact source key
+  `(media_type, media_id, shot_id, field)`. Each source key is reprocessed once;
+  all linked historical records receive the same replacement set. It reads the
+  current source-shot annotation field and reruns the existing per-shot extractor
+  once per distinct atomic source value. It never uses the historical silhouette
+  label as a new query and never concatenates separate annotation values. The CLI
+  reports source-job and historical-record counts separately. A recheck requires an
+  explicit `--limit-sources`, `--limit-records`, or intentionally requested `--all`
+  mode; omitted bounds never imply a full archive pass. `--log FILE` appends a
+  flushed operational transcript while JSON/CSV reports remain authoritative.
+  Zero objects is a completed recheck that supersedes every historical record in the source job with no
+  replacement; extraction/input failures leave every linked record inactive with an
+  explicit `assignment.recheck.state = "error"`, retryable through `--retry-errors`.
+  Fresh replacement objects are staged inactive while a source job is in progress;
+  only a completed job activates the shared replacement set and links every
+  historical predecessor. A retry reuses staged objects rather than repeating
+  already-successful atomic extraction values. The recheck executor owns one
+  run-scoped CLIP model/processor/device tuple and one SAM3 segmenter, loading each
+  lazily at the first fresh extraction and passing them to every subsequent source
+  value/source job; it must never instantiate either model once per extraction.
+  Full runs report periodic source-job progress, rate, and a post-startup ETA. A
+  caught SIGINT leaves the current source job incomplete, skips the final derived
+  index rebuild, writes the structured report, and relies on lifecycle state for
+  natural resume.
+  Rechecks and ordinary CLI extraction share an exclusive catalog lock; do not run a
+  recheck while an older uncoordinated extraction process is still active.
+  The Illustration visualizer is a curator-facing CLI client for this operation and
+  must never write catalog JSON or SQLite directly. Do not bulk-migrate historical
+  JSON records without explicit user direction.
 - **Shot type is derived index metadata, not catalog lifecycle state.**
   `data.annotate.canonical_shot_type()` is the only canonical conversion of
   `shot.annotation.type`: missing/blank/null values become `<untyped>`, while
@@ -555,6 +591,22 @@ there too instead of letting the gap grow further).
   morphology audit, writes only to `outputs/tests/silhouette-number-direction-audit/`,
   and uses exact normalized label matching for same-shot/same-frame sibling checks
   so inflected variants do not overmatch.
+- The canonical search revalidation audit lives in
+  `services/silhouette_canonical_search_audit.py` and runs via
+  `crossing index silhouette canonical-search-audit`. It asks whether today's
+  `services.search.search_shots` returns the historical silhouette's exact source
+  shot for its historical field and search label. `VALID` means exact source-shot
+  membership; `QUESTIONABLE` means the source shot is not returned. Original
+  annotation values are provenance/context only; canonical search membership is the
+  validity criterion. The audit writes only beneath
+  `outputs/tests/silhouette-canonical-search-audit/` and never modifies the archive.
+  `crossing index silhouette canonical-search-provenance` is the separate,
+  atomic migration that consumes that completed audit and copies its exact
+  `VALID`/`QUESTIONABLE`/`UNVERIFIABLE` classification into authoritative
+  `search_provenance.state` values. It never reruns search, consults morphology,
+  or uses older provenance as an input; it blocks all writes unless the selected
+  live archive and completed audit agree exactly, then rebuilds only the selected
+  Illustration silhouette indexes.
 
 **Future opportunities (no action needed unless asked):**
 - Renaming `illustration_browser.py`/`illustration_inspector.py` to something

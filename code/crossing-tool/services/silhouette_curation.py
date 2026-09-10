@@ -19,6 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 import json
 from datetime import datetime, timezone
+from contextlib import contextmanager
 from typing import Any
 
 from services.silhouette_catalog import (
@@ -27,6 +28,7 @@ from services.silhouette_catalog import (
     ASSIGNMENT_INACTIVE,
     ASSIGNMENT_SUPERSEDED,
     RECHECK_COMPLETED,
+    RECHECK_ERROR,
     RECHECK_FIELD,
     RECHECK_NO_RESULT,
     RECHECK_PENDING,
@@ -35,15 +37,46 @@ from services.silhouette_catalog import (
     assignment_state_for_record,
     catalog_object_reference,
     extraction_identity,
+    iter_catalog,
     same_extraction_identity,
 )
 
 HUMAN_BEST_FIELD = "human_best"
 CURATORIAL_REJECTION = "curatorial_rejection"
+SOURCE_RECHECK_STAGED = "source_recheck_staged"
+SOURCE_RECHECK_JOB_FIELD = "source_recheck_job"
+
+
+class SourceJobCommitInterrupted(KeyboardInterrupt):
+    """SIGINT delivered immediately after a complete source-job persistence pass."""
+
+    def __init__(
+        self,
+        historical: list[dict[str, Any]],
+        replacements: list[dict[str, Any]],
+    ) -> None:
+        super().__init__("Source job committed before SIGINT delivery")
+        self.historical = historical
+        self.replacements = replacements
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+@contextmanager
+def _defer_sigint_during_source_commit():
+    """Deliver Ctrl-C after, rather than during, one multi-file source commit."""
+    try:
+        import signal
+        previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
+    except (AttributeError, OSError):
+        yield
+        return
+    try:
+        yield
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
 
 
 def _load_json_record(json_path: str | Path) -> tuple[Path, dict[str, Any]]:
@@ -91,6 +124,10 @@ def pending_recheck_matches(
         return False
     if not recheck or recheck.get("state") != RECHECK_PENDING:
         return False
+    # Automated rechecks carry separate current source values and must never
+    # fall back to the old historical search label.
+    if "annotation_values" in recheck:
+        return False
     requested_identity = {
         "media_type": media_type,
         "media_id": media_id,
@@ -115,12 +152,12 @@ def mark_recheck_pending(
     because catalog extraction JSON records historical search labels but does
     not universally persist one canonical original annotation value.
     """
-    path, record = _load_json_record(json_path)
-    if assignment_state_for_record(record) == ASSIGNMENT_SUPERSEDED:
-        raise ValueError("Cannot request a recheck for a superseded silhouette")
     if not annotation_value.strip():
         raise ValueError("annotation_value is required for a recheck request")
 
+    path, record = _load_json_record(json_path)
+    if assignment_state_for_record(record) == ASSIGNMENT_SUPERSEDED:
+        raise ValueError("Cannot request a recheck for a superseded silhouette")
     identity = extraction_identity(record)
     if not all(identity.values()):
         raise ValueError("Catalog record does not contain a complete extraction identity")
@@ -138,6 +175,483 @@ def mark_recheck_pending(
     record[ASSIGNMENT_FIELD] = assignment
     _persist_record(path, record)
     return record
+
+
+def _normalise_annotation_values(values: list[str]) -> list[str]:
+    """Return ordered, non-empty source annotation values without joining them."""
+    result: list[str] = []
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        value = value.strip()
+        if value and value not in result:
+            result.append(value)
+    if not result:
+        raise ValueError("At least one source annotation value is required")
+    return result
+
+
+def _recheck_annotation_values(recheck: dict[str, Any]) -> list[str]:
+    raw_values = recheck.get("annotation_values")
+    if isinstance(raw_values, list):
+        return _normalise_annotation_values(raw_values)
+    return []
+
+
+def queue_recheck_pending(
+    json_path: str | Path,
+    *,
+    annotation_values: list[str],
+    reason: str = "canonical_search_recheck",
+) -> dict[str, Any]:
+    """Make one object inactive and queue exact current source values for recheck."""
+    path, record = _load_json_record(json_path)
+    if assignment_state_for_record(record) == ASSIGNMENT_SUPERSEDED:
+        raise ValueError("Cannot request a recheck for a superseded silhouette")
+
+    identity = extraction_identity(record)
+    if not all(identity.values()):
+        raise ValueError("Catalog record does not contain a complete extraction identity")
+    values = _normalise_annotation_values(annotation_values)
+    assignment = dict(record.get(ASSIGNMENT_FIELD) or {})
+    existing = _pending_recheck(record)
+    requested_at = (
+        existing.get("requested_at")
+        if isinstance(existing, dict) and existing.get("state") == RECHECK_PENDING
+        else _now()
+    )
+    recheck = {
+        "state": RECHECK_PENDING,
+        "requested_at": requested_at,
+        "annotation_values": values,
+        **identity,
+    }
+    if len(values) == 1:
+        recheck["annotation_value"] = values[0]
+    assignment.update({
+        "state": ASSIGNMENT_INACTIVE,
+        "reason": reason,
+        RECHECK_FIELD: recheck,
+    })
+    record[ASSIGNMENT_FIELD] = assignment
+    _persist_record(path, record)
+    return record
+
+
+def pending_recheck_allows_annotation_value(
+    record: dict[str, Any],
+    *,
+    media_type: str,
+    media_id: str,
+    shot_id: str,
+    field: str,
+    annotation_value: str,
+) -> bool:
+    """Return whether a pending recheck authorizes one exact atomic source value."""
+    recheck = _pending_recheck(record)
+    if assignment_state_for_record(record) != ASSIGNMENT_INACTIVE:
+        return False
+    if not recheck or recheck.get("state") != RECHECK_PENDING:
+        return False
+    identity = extraction_identity(record)
+    if not all(identity.values()) or not all(
+        str(recheck.get(key) or "") == value for key, value in identity.items()
+    ):
+        return False
+    if (
+        identity["media_type"] != media_type
+        or identity["media_id"] != media_id
+        or identity["shot_id"] != shot_id
+        or identity["field"] != field
+    ):
+        return False
+    try:
+        return annotation_value in _recheck_annotation_values(recheck)
+    except ValueError:
+        return False
+
+
+def mark_recheck_error(
+    json_path: str | Path,
+    *,
+    error: str,
+    annotation_values: list[str] | None = None,
+) -> dict[str, Any]:
+    """Persist an explicit failed recheck without deleting historical evidence."""
+    path, record = _load_json_record(json_path)
+    if assignment_state_for_record(record) == ASSIGNMENT_SUPERSEDED:
+        raise ValueError("Cannot mark a superseded silhouette recheck as failed")
+    identity = extraction_identity(record)
+    if not all(identity.values()):
+        raise ValueError("Catalog record does not contain a complete extraction identity")
+    existing = _pending_recheck(record)
+    values = annotation_values
+    if values is None and isinstance(existing, dict):
+        try:
+            values = _recheck_annotation_values(existing)
+        except ValueError:
+            values = []
+    values = _normalise_annotation_values(values or ["(unavailable)"])
+    recheck = {
+        "state": RECHECK_ERROR,
+        "requested_at": existing.get("requested_at") if isinstance(existing, dict) else _now(),
+        "failed_at": _now(),
+        "error": str(error).strip()[:500] or "Unknown recheck failure",
+        "annotation_values": values,
+        **identity,
+    }
+    if len(values) == 1:
+        recheck["annotation_value"] = values[0]
+    assignment = dict(record.get(ASSIGNMENT_FIELD) or {})
+    assignment.update({
+        "state": ASSIGNMENT_INACTIVE,
+        "reason": "canonical_search_recheck_error",
+        RECHECK_FIELD: recheck,
+    })
+    record[ASSIGNMENT_FIELD] = assignment
+    _persist_record(path, record)
+    return record
+
+
+def _normalise_source_job(source_job: dict[str, str]) -> dict[str, str]:
+    """Validate the historical-label-free key of one source recheck job."""
+    keys = ("media_type", "media_id", "shot_id", "field")
+    result = {key: str(source_job.get(key) or "") for key in keys}
+    if not all(result.values()):
+        raise ValueError("Source recheck job requires media type, media ID, shot ID, and field")
+    return result
+
+
+def stage_recheck_replacements(
+    *,
+    source_job: dict[str, str],
+    replacement_json_paths: list[str | Path],
+) -> list[dict[str, Any]]:
+    """Hide freshly extracted replacements until their whole source job succeeds."""
+    source_job = _normalise_source_job(source_job)
+    staged: list[dict[str, Any]] = []
+    for raw_path in replacement_json_paths:
+        path, record = _load_json_record(raw_path)
+        if any(str(record.get(key) or "") != value for key, value in source_job.items()):
+            raise ValueError("Replacement does not match the staged source recheck job")
+        if assignment_state_for_record(record) == ASSIGNMENT_SUPERSEDED:
+            raise ValueError("Cannot stage a superseded replacement")
+        assignment = dict(record.get(ASSIGNMENT_FIELD) or {})
+        assignment.update({
+            "state": ASSIGNMENT_INACTIVE,
+            "reason": SOURCE_RECHECK_STAGED,
+            SOURCE_RECHECK_JOB_FIELD: source_job,
+        })
+        record[ASSIGNMENT_FIELD] = assignment
+        _persist_record(path, record)
+        staged.append(record)
+    return staged
+
+
+def staged_recheck_replacement_matches(
+    record: dict[str, Any],
+    *,
+    source_job: dict[str, str],
+    annotation_value: str,
+) -> bool:
+    """Return whether an inactive object is a reusable staged source result."""
+    source_job = _normalise_source_job(source_job)
+    assignment = record.get(ASSIGNMENT_FIELD)
+    return bool(
+        assignment_state_for_record(record) == ASSIGNMENT_INACTIVE
+        and isinstance(assignment, dict)
+        and assignment.get("reason") == SOURCE_RECHECK_STAGED
+        and assignment.get(SOURCE_RECHECK_JOB_FIELD) == source_job
+        and str(record.get("label") or "") == annotation_value
+        and all(str(record.get(key) or "") == value for key, value in source_job.items())
+    )
+
+
+def complete_recheck_source(
+    project_path: str | Path,
+    *,
+    old_json_paths: list[str | Path],
+    replacement_json_paths: list[str | Path],
+    annotation_values: list[str],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Complete one source recheck for every linked historical object.
+
+    Historical labels are deliberately excluded from the source-job identity:
+    all records must agree only on media type, media ID, source shot, and
+    field. Each JSON is written atomically; cross-file lifecycle updates are a
+    recoverable sequence because no filesystem-wide transaction exists.
+    """
+    old_paths = [Path(path) for path in old_json_paths]
+    if not old_paths:
+        raise ValueError("At least one historical silhouette is required")
+    if len({str(path.resolve()) for path in old_paths}) != len(old_paths):
+        raise ValueError("Historical source job contains duplicate object paths")
+
+    historical: list[tuple[Path, dict[str, Any], dict[str, Any]]] = []
+    source_identity: dict[str, str] | None = None
+    for old_path in old_paths:
+        path, old_record = _load_json_record(old_path)
+        old_recheck = _pending_recheck(old_record)
+        if assignment_state_for_record(old_record) != ASSIGNMENT_INACTIVE or not old_recheck:
+            raise ValueError("Historical silhouette is not an inactive recheck request")
+        if old_recheck.get("state") != RECHECK_PENDING:
+            raise ValueError("Historical recheck request is not pending")
+        identity = extraction_identity(old_record)
+        if not all(identity.values()):
+            raise ValueError("Historical catalog record lacks a complete extraction identity")
+        base_identity = {
+            key: identity[key]
+            for key in ("media_type", "media_id", "shot_id", "field")
+        }
+        if source_identity is None:
+            source_identity = base_identity
+        elif base_identity != source_identity:
+            raise ValueError("Historical silhouettes do not belong to one source recheck job")
+        historical.append((path, old_record, old_recheck))
+
+    source_values = _normalise_annotation_values(annotation_values)
+    assert source_identity is not None
+
+    paths = [Path(path) for path in replacement_json_paths]
+    if len({str(path.resolve()) for path in paths}) != len(paths):
+        raise ValueError("Replacement list contains duplicate object paths")
+    replacements: list[tuple[Path, dict[str, Any]]] = []
+    for path in paths:
+        if path in old_paths:
+            raise ValueError("Replacement must be distinct from the historical object")
+        replacement_path, replacement = _load_json_record(path)
+        if any(
+            str(replacement.get(key) or "") != source_identity[key]
+            for key in ("media_type", "media_id", "shot_id", "field")
+        ):
+            raise ValueError("Replacement does not match the source media, shot, and field")
+        if str(replacement.get("label") or "") not in source_values:
+            raise ValueError("Replacement does not contain a current source annotation value")
+        replacements.append((replacement_path, replacement))
+
+    return _commit_completed_source_job(
+        historical=historical,
+        replacements=replacements,
+        source_identity=source_identity,
+        source_values=source_values,
+    )
+
+
+def _commit_completed_source_job(
+    *,
+    historical: list[tuple[Path, dict[str, Any], dict[str, Any]]],
+    replacements: list[tuple[Path, dict[str, Any]]],
+    source_identity: dict[str, str],
+    source_values: list[str],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Persist one fully prepared source job without an interleaved SIGINT."""
+    references: list[dict[str, str]] = []
+    updated_replacements: list[dict[str, Any]] = []
+    updated_historical: list[dict[str, Any]] = []
+    try:
+        with _defer_sigint_during_source_commit():
+            for replacement_path, replacement in replacements:
+                reference = catalog_object_reference(replacement, replacement_path)
+                assignment = active_assignment()
+                previous = replacement.get(ASSIGNMENT_FIELD)
+                previous_refs = previous.get("supersedes") if isinstance(previous, dict) else None
+                if isinstance(previous_refs, list):
+                    supersedes = list(previous_refs)
+                elif isinstance(previous_refs, dict):
+                    supersedes = [previous_refs]
+                else:
+                    supersedes = []
+                for old_path, old_record, _old_recheck in historical:
+                    old_reference = catalog_object_reference(old_record, old_path)
+                    if old_reference not in supersedes:
+                        supersedes.append(old_reference)
+                assignment["supersedes"] = supersedes[0] if len(supersedes) == 1 else supersedes
+                assignment.pop("reason", None)
+                assignment.pop(SOURCE_RECHECK_JOB_FIELD, None)
+                replacement[ASSIGNMENT_FIELD] = assignment
+                if not isinstance(replacement.get("search_provenance"), dict):
+                    replacement["search_provenance"] = {
+                        "state": "valid",
+                        "method": "recheck_source_annotation",
+                        "rechecked_at": _now(),
+                        "annotation_values": [str(replacement.get("label"))],
+                    }
+                _persist_record(replacement_path, replacement)
+                references.append(reference)
+                updated_replacements.append(replacement)
+
+            for old_path, old_record, old_recheck in historical:
+                completed_recheck = dict(old_recheck)
+                completed_recheck.update({
+                    "state": RECHECK_COMPLETED,
+                    "completed_at": _now(),
+                    "annotation_values": source_values,
+                    "source_job": source_identity,
+                    "result": "objects" if references else "no_objects",
+                    "replacement_objects": references,
+                })
+                old_assignment = dict(old_record.get(ASSIGNMENT_FIELD) or {})
+                old_assignment.update({
+                    "state": ASSIGNMENT_SUPERSEDED,
+                    "superseded_by": references,
+                    RECHECK_FIELD: completed_recheck,
+                })
+                old_assignment.pop("reason", None)
+                old_record[ASSIGNMENT_FIELD] = old_assignment
+                _persist_record(old_path, old_record)
+                updated_historical.append(old_record)
+    except KeyboardInterrupt as exc:
+        raise SourceJobCommitInterrupted(
+            updated_historical, updated_replacements,
+        ) from exc
+    return updated_historical, updated_replacements
+
+
+def complete_recheck_replacements(
+    project_path: str | Path,
+    *,
+    old_json_path: str | Path,
+    replacement_json_paths: list[str | Path],
+    annotation_values: list[str],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Backward-compatible single-record wrapper around source-job completion."""
+    historical, replacements = complete_recheck_source(
+        project_path,
+        old_json_paths=[old_json_path],
+        replacement_json_paths=replacement_json_paths,
+        annotation_values=annotation_values,
+    )
+    return historical[0], replacements
+
+
+def _annotation_value_for_record(project_path: str | Path, record: dict[str, Any]) -> str:
+    """Return one unambiguous source-shot annotation value for *record*."""
+    from data.annotate import get_annotation_json_path
+
+    filename = str(record.get("filename") or "")
+    media_type = str(record.get("media_type") or "")
+    shot_id = str(record.get("shot_id") or "")
+    field = str(record.get("field") or "")
+    if not all((filename, media_type, shot_id, field)):
+        raise ValueError("Catalog record cannot resolve its source annotation")
+
+    annotation_path = get_annotation_json_path(str(project_path), filename, media_type)
+    try:
+        entries = json.loads(annotation_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Could not read source annotation: {annotation_path}") from exc
+
+    annotation: dict[str, Any] | None = None
+    if isinstance(entries, list):
+        for entry in entries:
+            shot = entry.get("shot") if isinstance(entry, dict) else None
+            if isinstance(shot, dict) and str(shot.get("shot_id") or "") == shot_id:
+                candidate = shot.get("annotation")
+                annotation = candidate if isinstance(candidate, dict) else None
+                break
+    if annotation is None:
+        raise ValueError(f"Source shot is not annotated: {shot_id}")
+
+    raw_values = annotation.get(field)
+    values = [
+        value.strip()
+        for value in (raw_values if isinstance(raw_values, list) else [raw_values])
+        if isinstance(value, str) and value.strip()
+    ]
+    if not values:
+        raise ValueError(f"Source shot has no usable annotation for field '{field}'")
+
+    provenance = record.get("search_provenance")
+    provenance_values = (
+        provenance.get("annotation_values")
+        if isinstance(provenance, dict) else None
+    )
+    candidates = [
+        value for value in values
+        if isinstance(provenance_values, list) and value in provenance_values
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(values) == 1:
+        return values[0]
+    raise ValueError(
+        f"Source annotation for field '{field}' is ambiguous; cannot queue a recheck safely"
+    )
+
+
+def deassign_catalog_object(
+    project_path: str | Path,
+    *,
+    media_type: str,
+    filename_stem: str,
+    media_id: str,
+    shot_id: str,
+    field: str,
+    label: str,
+    object_id: str,
+) -> dict[str, Any]:
+    """De-assign one exact catalog object and rebuild its scoped browse index.
+
+    All catalog identity fields are required so a stale curator client cannot
+    target a same-labeled object from another source shot. Historical PNG/JSON
+    assets, search provenance, and human-best selection remain untouched.
+    """
+    request = {
+        "media_type": str(media_type or ""),
+        "filename_stem": str(filename_stem or ""),
+        "media_id": str(media_id or ""),
+        "shot_id": str(shot_id or ""),
+        "field": str(field or ""),
+        "label": str(label or ""),
+        "object_id": str(object_id or ""),
+    }
+    if not all(request.values()):
+        raise ValueError("Complete catalog object identity is required for de-assignment")
+
+    matches: list[dict[str, Any]] = []
+    for record in iter_catalog(
+        str(project_path),
+        media_type=request["media_type"],
+        filename_stem=request["filename_stem"],
+        label=request["label"],
+    ):
+        if "error" in record:
+            continue
+        reference = catalog_object_reference(record, record.get("path"))
+        if (
+            str(record.get("media_type") or "") == request["media_type"]
+            and str(record.get("filename_stem") or "") == request["filename_stem"]
+            and str(record.get("media_id") or "") == request["media_id"]
+            and str(record.get("shot_id") or "") == request["shot_id"]
+            and str(record.get("field") or "") == request["field"]
+            and str(record.get("label") or "") == request["label"]
+            and str(reference.get("object_id") or "") == request["object_id"]
+        ):
+            matches.append(record)
+
+    if not matches:
+        raise ValueError("No catalog object matches the requested identity")
+    if len(matches) != 1:
+        raise ValueError("Catalog object identity is ambiguous; refusing de-assignment")
+
+    record = matches[0]
+    path = Path(record["path"])
+    identity = extraction_identity(record)
+    if assignment_state_for_record(record) == ASSIGNMENT_INACTIVE:
+        if pending_recheck_matches(record, **identity):
+            return {"status": "already_inactive", "record": record, "index": None}
+        raise ValueError("Catalog object is inactive without a matching pending recheck")
+    if assignment_state_for_record(record) == ASSIGNMENT_SUPERSEDED:
+        raise ValueError("Cannot de-assign a superseded silhouette")
+
+    annotation_value = _annotation_value_for_record(project_path, record)
+    updated = mark_recheck_pending(path, annotation_value=annotation_value)
+    from services.illustration_index import rebuild_index
+
+    index = rebuild_index(project_path, "silhouettes", request["media_type"])
+    if index.get("status") != "ready":
+        raise RuntimeError("Silhouette was de-assigned but the Illustration index did not rebuild")
+    return {"status": "deassigned", "record": updated, "index": index}
 
 
 def get_pending_rechecks(

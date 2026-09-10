@@ -57,6 +57,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -85,10 +86,12 @@ RECHECK_FIELD = "recheck"
 RECHECK_PENDING = "pending"
 RECHECK_COMPLETED = "completed"
 RECHECK_NO_RESULT = "no_result"
+RECHECK_ERROR = "error"
 RECHECK_STATES = frozenset({
     RECHECK_PENDING,
     RECHECK_COMPLETED,
     RECHECK_NO_RESULT,
+    RECHECK_ERROR,
 })
 
 # Quality filters that intentionally differ from services.silhouette (looser
@@ -159,6 +162,29 @@ def catalog_object_reference(record: dict[str, Any], json_path: str | Path | Non
 def active_assignment() -> dict[str, str]:
     """Return the lifecycle block for a newly extracted active object."""
     return {"state": ASSIGNMENT_ACTIVE}
+
+
+@contextmanager
+def exclusive_catalog_extraction_lock(project_path: str | Path):
+    """Prevent concurrent CLI-driven catalog extraction and recheck mutation."""
+    import fcntl
+
+    lock_path = Path(project_path) / "data" / "silhouettes" / ".catalog-extraction.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = lock_path.open("a", encoding="utf-8")
+    try:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError(
+                "Another silhouette extraction or recheck is already running; wait for it to finish"
+            ) from exc
+        yield
+    finally:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
 
 
 def _scanned_marker_path(
@@ -469,26 +495,38 @@ def extract_objects_for_shot(
     filename_stem = Path(filename).stem
     label_dir = catalog_item_dir(project_path, media_type, filename_stem, label)
 
-    # A future recheck runner must prove that the selected historical object
-    # carries a pending request for this exact source/label before it can bypass
-    # the ordinary per-shot cache. This intentionally does not consult or
-    # mutate the corpus-wide (field, label) ``.scanned`` optimization.
+    # A recheck runner must prove that its selected historical object carries a
+    # pending request for this exact source and current atomic annotation value
+    # before it can bypass the ordinary per-shot cache. This intentionally does
+    # not consult or mutate the corpus-wide (field, label) ``.scanned`` state.
     recheck_cache_bypass = False
     if recheck_source_json_path is not None:
-        from services.silhouette_curation import pending_recheck_matches
+        from services.silhouette_curation import (
+            pending_recheck_allows_annotation_value,
+            pending_recheck_matches,
+        )
 
         try:
             source_path = Path(recheck_source_json_path)
             source_record = json.loads(source_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return {"saved": [], "skipped": 0, "reason": "recheck source JSON is unreadable"}
-        recheck_cache_bypass = isinstance(source_record, dict) and pending_recheck_matches(
-            source_record,
-            media_type=media_type,
-            media_id=media_id,
-            shot_id=shot_id,
-            field=field,
-            search_label=label,
+        recheck_cache_bypass = isinstance(source_record, dict) and (
+            pending_recheck_matches(
+                source_record,
+                media_type=media_type,
+                media_id=media_id,
+                shot_id=shot_id,
+                field=field,
+                search_label=label,
+            ) or pending_recheck_allows_annotation_value(
+                source_record,
+                media_type=media_type,
+                media_id=media_id,
+                shot_id=shot_id,
+                field=field,
+                annotation_value=label,
+            )
         )
         if not recheck_cache_bypass:
             return {"saved": [], "skipped": 0, "reason": "recheck request is not pending for this extraction identity"}
@@ -1032,13 +1070,13 @@ def extract_catalog_for_all(
 # Catalog scanning
 # ---------------------------------------------------------------------------
 
-def scan_catalog(
+def iter_catalog(
     project_path: str,
     media_type: str = "movie",
     label: str | None = None,
     filename_stem: str | None = None,
-) -> list[dict]:
-    """Return a flat list of all catalog entries (one dict per object JSON).
+) -> "Iterator[dict]":
+    """Yield catalog entries, one dict per object JSON.
 
     Each dict contains the full metadata from the JSON file plus a ``path``
     key (Path to the JSON file).
@@ -1047,10 +1085,25 @@ def scan_catalog(
     Pass *filename_stem* to restrict to one media item.
     """
     base = catalog_base_dir(project_path, media_type)
-    records: list[dict] = []
 
     if not base.exists():
-        return records
+        return
+
+    if label is not None:
+        label_dirs = (
+            [catalog_item_dir(project_path, media_type, filename_stem, label)]
+            if filename_stem is not None
+            else sorted(path for path in base.glob(f"*/{_safe_label(label)}") if path.is_dir())
+        )
+        for label_dir in label_dirs:
+            for json_file in sorted(label_dir.glob("object_????.json")):
+                try:
+                    meta = json.loads(json_file.read_text(encoding="utf-8"))
+                    meta["path"] = json_file
+                    yield meta
+                except Exception:
+                    yield {"path": json_file, "error": "unreadable"}
+        return
 
     item_dirs = sorted(base.iterdir()) if base.exists() else []
     for item_dir in item_dirs:
@@ -1062,16 +1115,34 @@ def scan_catalog(
         for label_dir in sorted(item_dir.iterdir()):
             if not label_dir.is_dir():
                 continue
-            if label is not None and label_dir.name != _safe_label(label):
-                continue
-
             for json_file in sorted(label_dir.glob("object_????.json")):
                 try:
                     meta = json.loads(json_file.read_text(encoding="utf-8"))
                     meta["path"] = json_file
-                    records.append(meta)
+                    yield meta
                 except Exception:
-                    records.append({"path": json_file, "error": "unreadable"})
+                    yield {"path": json_file, "error": "unreadable"}
+
+
+def scan_catalog(
+    project_path: str,
+    media_type: str = "movie",
+    label: str | None = None,
+    filename_stem: str | None = None,
+) -> list[dict]:
+    """Return a flat list of all catalog entries (one dict per object JSON).
+
+    Use ``iter_catalog`` when processing a large archive sequentially without
+    retaining every decoded historical record in memory.
+    """
+    return list(
+        iter_catalog(
+            project_path,
+            media_type=media_type,
+            label=label,
+            filename_stem=filename_stem,
+        )
+    )
 
     return records
 

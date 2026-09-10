@@ -365,6 +365,48 @@ def test_migrate_search_provenance_is_idempotent(tmp_path):
     assert png_path.read_bytes() == original["_png_bytes"]
 
 
+def test_legacy_migration_preserves_authoritative_canonical_provenance(tmp_path):
+    json_path, png_path, original = _write_catalog_entry(
+        tmp_path,
+        media_type="movie",
+        filename_stem="film",
+        label="coat",
+        index=1,
+        extra={
+            "search_provenance": {
+                "state": "questionable",
+                "method": "canonical_search",
+                "audit_version": "canonical-search-v1",
+            }
+        },
+    )
+    audit_dir = _write_audit(tmp_path, [
+        _audit_row(
+            json_path=json_path,
+            png_path=png_path,
+            label="coat",
+            classification="VALID_SINGLE",
+            annotation_values=["coat"],
+            matched_words=["coat"],
+            missing_words=[],
+            support_values={"coat": ["coat"]},
+            frame=original["frame"],
+            shot_id=original["shot_id"],
+            media_type=original["media_type"],
+            media_id=original["media_id"],
+        )
+    ])
+
+    result = migrate_search_provenance(tmp_path, audit_dir=audit_dir, dry_run=False)
+
+    assert result["applied"] is True
+    assert result["canonical_authoritative"] == 1
+    assert result["updated"] == 0
+    assert _read_json(json_path)["search_provenance"]["method"] == "canonical_search"
+    assert _read_json(json_path)["search_provenance"]["state"] == "questionable"
+    assert png_path.read_bytes() == original["_png_bytes"]
+
+
 def test_migrate_search_provenance_rejects_unmatched_or_unverifiable_rows(tmp_path):
     project = tmp_path
     json_path, png_path, original = _write_catalog_entry(

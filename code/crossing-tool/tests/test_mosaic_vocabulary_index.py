@@ -1001,3 +1001,43 @@ def test_search_shots_multiword_query_requires_exact_phrase(tmp_path):
         build_shot_id(media_id, 0, 240),
     ]
     assert result["results"][0]["matched_text"] == "black neckerchief"
+
+
+def test_search_shots_multiword_query_does_not_join_distinct_labels(tmp_path):
+    filename = "Film Three.mp4"
+    media_id = "file_film_three"
+    shot_id = build_shot_id(media_id, 0, 240)
+    save_json_metadata(tmp_path, "movie", [{
+        "filename": filename,
+        "title": "Film Three",
+        "media_id": media_id,
+    }])
+    write_shotlist(tmp_path, filename, "movie", [{
+        "Scene": "1",
+        "start_time": "00:00:00.000",
+        "end_time": "00:00:10.000",
+        "start_frame": 0,
+        "end_frame": 240,
+        "shot_id": shot_id,
+    }])
+    ann_dir = tmp_path / "data" / "annotations" / "shots" / "movie"
+    ann_dir.mkdir(parents=True, exist_ok=True)
+    (ann_dir / "Film Three.annotations.json").write_text(
+        json.dumps([
+            {"shot": {"shot_id": shot_id, "annotation": {"objects": ["yellow", "coat"]}}},
+        ]),
+        encoding="utf-8",
+    )
+
+    result = search_mod.search_shots(
+        query="yellow coat",
+        scopes=None,
+        field="objects",
+        limit=None,
+        limit_per_item=None,
+        use_all=True,
+        project_path=str(tmp_path),
+        media_type="movie",
+    )
+
+    assert result["results"] == []

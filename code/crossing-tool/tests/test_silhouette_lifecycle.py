@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import json
+from argparse import Namespace
 from pathlib import Path
 
 import numpy as np
 from PIL import Image
+import pytest
+
+import cli
+from services import silhouette_curation
 
 from services.illustration_index import ALL, query_page, rebuild_index
 from services.silhouette_catalog import (
@@ -23,6 +28,7 @@ from services.silhouette_catalog import (
 from services.silhouette_curation import (
     CURATORIAL_REJECTION,
     complete_recheck,
+    deassign_catalog_object,
     get_pending_rechecks,
     mark_recheck_no_result,
     mark_recheck_pending,
@@ -157,6 +163,91 @@ def test_deassign_embeds_bounded_recheck_without_deleting_assets(tmp_path):
     assert old_path.exists()
     assert old_png.exists()
     assert get_pending_rechecks(tmp_path) == []
+
+
+def test_cli_deassign_preserves_historical_assets_and_rebuilds_active_index(
+    tmp_path, monkeypatch, capsys,
+):
+    json_path, png_path = _write_catalog_object(tmp_path, object_index=1)
+    original = _load(json_path)
+    original["human_best"] = True
+    json_path.write_text(json.dumps(original, indent=2) + "\n", encoding="utf-8")
+    png_bytes = png_path.read_bytes()
+    provenance = original["search_provenance"]
+
+    annotation_path = (
+        tmp_path / "data" / "annotations" / "shots" / "movie"
+        / "film_a.annotations.json"
+    )
+    annotation_path.parent.mkdir(parents=True)
+    annotation_path.write_text(json.dumps([{
+        "shot": {
+            "shot_id": original["shot_id"],
+            "annotation": {"wearing": ["arm bands"]},
+        },
+    }]), encoding="utf-8")
+    rebuild_index(tmp_path, "silhouettes", "movie")
+
+    monkeypatch.setattr(
+        cli.prefs,
+        "get",
+        lambda key, default=None: str(tmp_path) if key == "path" else default,
+    )
+    args = Namespace(
+        silhouette_action="deassign",
+        media="movie",
+        filename_stem="film_a",
+        media_id="tmdb_1",
+        shot=original["shot_id"],
+        field="wearing",
+        label="arm band",
+        object_id=json_path.stem,
+        annotation_value=None,
+    )
+
+    cli._index_silhouette(args)
+
+    updated = _load(json_path)
+    assert updated["assignment"]["state"] == ASSIGNMENT_INACTIVE
+    assert updated["assignment"]["recheck"]["state"] == "pending"
+    assert updated["assignment"]["recheck"]["annotation_value"] == "arm bands"
+    assert updated["search_provenance"] == provenance
+    assert updated["human_best"] is True
+    assert png_path.read_bytes() == png_bytes
+    assert json_path.exists()
+    assert query_page(tmp_path, "silhouettes", "movie", limit=10)["records"] == []
+    historical = query_page(
+        tmp_path, "silhouettes", "movie", assignment_state=ALL, limit=10,
+    )
+    assert [record["path"] for record in historical["records"]] == [json_path]
+    assert "Silhouette de-assigned" in capsys.readouterr().out
+
+    cli._index_silhouette(args)
+
+    assert _load(json_path) == updated
+    assert "already inactive" in capsys.readouterr().out
+
+
+def test_deassign_refuses_missing_and_ambiguous_targets(tmp_path, monkeypatch):
+    identity = {
+        "media_type": "movie",
+        "filename_stem": "film_a",
+        "media_id": "tmdb_1",
+        "shot_id": "tmdb_1@f000001-f000010",
+        "field": "wearing",
+        "label": "arm band",
+        "object_id": "object_0001",
+    }
+
+    with pytest.raises(ValueError, match="No catalog object"):
+        deassign_catalog_object(tmp_path, **identity)
+
+    duplicate = {**identity, "path": tmp_path / "object_0001.json"}
+    monkeypatch.setattr(
+        silhouette_curation, "iter_catalog", lambda *_args, **_kwargs: [duplicate, duplicate],
+    )
+    with pytest.raises(ValueError, match="ambiguous"):
+        deassign_catalog_object(tmp_path, **identity)
 
 
 def test_pending_recheck_bypasses_only_matching_per_shot_cache(tmp_path):

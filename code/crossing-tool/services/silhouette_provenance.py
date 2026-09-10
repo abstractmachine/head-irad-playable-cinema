@@ -230,6 +230,7 @@ def migrate_search_provenance(
         "valid": derived_valid,
         "questionable": derived_questionable,
         "already_classified": 0,
+        "canonical_authoritative": 0,
         "updated": 0,
         "unmatched_audit_records": len(unmatched_audit_paths),
         "unmatched_catalog_records": len(unmatched_catalog_paths),
@@ -254,6 +255,11 @@ def migrate_search_provenance(
         if desired is None:
             continue
         meta = json.loads(archive_path.read_text(encoding="utf-8"))
+        existing = meta.get("search_provenance")
+        if isinstance(existing, dict) and existing.get("method") == "canonical_search":
+            already_classified += 1
+            result["canonical_authoritative"] += 1
+            continue
         if meta.get("search_provenance") == desired:
             already_classified += 1
             continue
