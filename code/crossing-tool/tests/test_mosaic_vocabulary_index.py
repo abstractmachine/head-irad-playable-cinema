@@ -10,6 +10,7 @@ from data.shotlist import write_shotlist
 import services.search as search_mod
 import services.vocabulary_index as vocabulary_index_mod
 import visualizers.mosaic_visualizer as mosaic_mod
+from styles import theme
 from data.index import save_atomic_fields, save_vocabulary_fields
 from services.derived_vocabulary import build_derived_vocabulary
 from services.vocabulary_index import build_vocabulary_index
@@ -51,6 +52,12 @@ def _write_annotations(project_path, values):
         encoding="utf-8",
     )
     return annotation_path
+
+
+def test_tooltip_text_uses_the_primary_white_theme_token():
+    tooltip_rule = theme._STYLESHEET.split("QToolTip {", 1)[1].split("}", 1)[0]
+
+    assert f"color: {theme.TEXT};" in tooltip_rule
 
 
 def test_index_only_vocabulary_reports_missing_without_raw_scan(tmp_path, monkeypatch):
@@ -371,6 +378,10 @@ def test_mosaic_select_field_uses_the_normal_field_combo_path(
 
         assert window.select_field("not-a-configured-field") is False
         assert requested == [None]
+
+        assert window.select_field("project-only", preserve_missing=True) is True
+        assert window.field_combo.currentData() == "project-only"
+        assert requested == [None, None]
     finally:
         window.close()
 
@@ -583,6 +594,95 @@ def test_first_show_loads_all_field_vocabulary_once(
     assert window.field_combo.currentData() == "--all"
     assert started_fields == ["--all"]
     window.close()
+
+
+def test_first_show_loads_requested_initial_field_without_all_field_work(
+    tmp_path, monkeypatch, app, fake_prefs,
+):
+    started_fields = []
+    monkeypatch.setattr(
+        VocabularyWorker,
+        "start",
+        lambda self: started_fields.append(self.field),
+    )
+    monkeypatch.setattr(MosaicVisualizer, "_request_shot_type_load", lambda _self: None)
+    window = MosaicVisualizer(str(tmp_path), initial_field="wearing")
+
+    try:
+        assert window.field_combo.currentData() == "wearing"
+        window.show()
+        app.processEvents()
+
+        assert started_fields == ["wearing"]
+        assert window._pending_field is None
+
+        window._on_shot_type_values_loaded([], 0)
+
+        assert window.field_combo.currentData() == "wearing"
+        assert started_fields == ["wearing"]
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_first_show_defers_vocabulary_for_requested_shot_type(
+    tmp_path, monkeypatch, app, fake_prefs,
+):
+    started_fields = []
+    started_type_loads = []
+    monkeypatch.setattr(
+        VocabularyWorker,
+        "start",
+        lambda self: started_fields.append(self.field),
+    )
+    monkeypatch.setattr(
+        MosaicVisualizer,
+        "_request_shot_type_load",
+        lambda _self: started_type_loads.append(True),
+    )
+    window = MosaicVisualizer(
+        str(tmp_path), shot_type="diegetic", initial_field="wearing",
+    )
+
+    try:
+        assert window.field_combo.currentData() == "wearing"
+        assert window.shot_type_combo.currentData() == "diegetic"
+        window.show()
+        app.processEvents()
+
+        assert started_type_loads == [True]
+        assert started_fields == []
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_all_shot_type_response_refreshes_field_after_media_change(
+    tmp_path, monkeypatch, app, fake_prefs,
+):
+    requested = []
+    window = MosaicVisualizer(str(tmp_path))
+    monkeypatch.setattr(
+        window,
+        "_start_vocabulary_load",
+        lambda prefix=None, **_kwargs: requested.append(prefix),
+    )
+    try:
+        window._initial_shot_type_load_started = True
+        window._refresh_fields_after_shot_type_load = True
+        window._shot_type_request_id = 1
+
+        window._on_shot_type_values_loaded([], 1)
+
+        assert window.field_combo.currentData() == "--all"
+        assert requested == [None]
+        assert window._refresh_fields_after_shot_type_load is False
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
 
 
 def test_vocabulary_reload_clears_and_shows_loading_before_worker_starts(

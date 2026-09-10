@@ -473,6 +473,33 @@ def test_catalog_loader_uses_facets_from_index(app, tmp_path):
     }
 
 
+def test_catalog_loader_skips_unscoped_lower_facets(app, tmp_path):
+    class _FacetSource(_MemorySource):
+        def __init__(self, project_path):
+            super().__init__(project_path)
+            self.calls = []
+
+        def facets(self, **filters):
+            self.calls.append(filters)
+            return {"titles": ["film"]}
+
+    source = _FacetSource(str(tmp_path))
+    loader = _CatalogLoader(source, "movie")
+    loader.run()
+
+    assert source.calls == [{
+        "include_fields": False,
+        "include_letters": False,
+        "include_labels": False,
+    }]
+    assert loader.result_cache == {
+        "films": ["film"],
+        "fields": set(),
+        "letters": [],
+        "counts": {},
+    }
+
+
 def test_keyword_worker_returns_counts_and_scoped_records(app):
     records = [
         {"filename_stem": "film", "field": "animals", "label": "horse"},
@@ -609,6 +636,167 @@ def test_keyword_navigation_retries_until_async_population_finishes(app, tmp_pat
     browser._keyword_combo.addItem("horse  (2)", userData="horse")
     retries[0][1]()
     assert browser._keyword_combo.currentData() == "horse"
+    browser.deleteLater()
+
+
+def test_field_navigation_retries_until_initial_catalog_population_finishes(app, tmp_path):
+    browser = IllustrationBrowser(
+        _MemorySource(str(tmp_path)), media_type="movie", auto_load=False,
+    )
+    browser._field_combo.addItem("<All Fields>", userData="--all")
+    browser._field_combo.setEnabled(False)
+    retries = []
+
+    with patch(
+        "visualizers.components.illustration_browser.QTimer.singleShot",
+        side_effect=lambda delay, callback: retries.append((delay, callback)),
+    ):
+        browser.navigate_to_filters(field="wearing")
+
+    assert [delay for delay, _callback in retries] == [50]
+
+    browser._field_combo.addItem("wearing", userData="wearing")
+    browser._field_combo.setEnabled(True)
+    retries[0][1]()
+
+    assert browser._field_combo.currentData() == "wearing"
+    browser.deleteLater()
+
+
+def test_field_navigation_retries_while_later_index_reload_is_loading(app, tmp_path):
+    browser = IllustrationBrowser(
+        _MemorySource(str(tmp_path)), media_type="movie", auto_load=False,
+    )
+    browser._field_combo.addItem("<All Fields>", userData="--all")
+    browser._field_combo.setEnabled(True)
+    browser._index_status = {"status": "loading"}
+    browser._has_completed_catalog_load = True
+    retries = []
+
+    with patch(
+        "visualizers.components.illustration_browser.QTimer.singleShot",
+        side_effect=lambda delay, callback: retries.append((delay, callback)),
+    ):
+        browser.navigate_to_filters(field="wearing")
+
+    assert [delay for delay, _callback in retries] == [50]
+
+    browser._index_status = {"status": "ready"}
+    browser._field_combo.addItem("wearing", userData="wearing")
+    retries[0][1]()
+
+    assert browser._field_combo.currentData() == "wearing"
+    browser.deleteLater()
+
+
+def test_initial_navigation_applies_requested_filters_before_default_field_query(
+    app, tmp_path, monkeypatch,
+):
+    class _FacetSource(_MemorySource):
+        def __init__(self, project_path):
+            super().__init__(project_path)
+            self.calls = []
+
+        def facets(self, **filters):
+            self.calls.append(filters)
+            if "field" not in filters:
+                return {"fields": ["wearing", "objects"]}
+            if filters["field"] == "wearing":
+                return {"letters": ["W"]}
+            pytest.fail(f"initial navigation queried the default field: {filters}")
+
+    source = _FacetSource(str(tmp_path))
+    browser = IllustrationBrowser(source, media_type="movie", auto_load=False)
+    browser._index_status = {"status": "loading"}
+    browser.navigate_to_filters(
+        item="film", field="wearing", letter="W", keyword="watch",
+    )
+    browser._index_status = {"status": "ready"}
+    browser._filter_cache = {"films": ["film"]}
+    browser._all_items = [{"filename_stem": "film", "field": "wearing", "label": "watch"}]
+
+    captured = []
+    monkeypatch.setattr(
+        browser,
+        "_rebuild_keyword_combo",
+        lambda: captured.append((
+            browser._item_combo.currentData(),
+            browser._field_combo.currentData(),
+            browser._letter_combo.currentData(),
+            browser._pending_initial_filters,
+        )),
+    )
+    browser._rebuild_item_combo()
+    for _ in range(3):
+        app.processEvents()
+
+    assert browser._item_combo.currentData() == "film"
+    assert browser._field_combo.currentData() == "wearing"
+    assert browser._letter_combo.currentData() == "W"
+    assert source.calls == [
+        {
+            "title": "film",
+            "include_titles": False,
+            "include_letters": False,
+            "include_labels": False,
+        },
+        {
+            "title": "film",
+            "field": "wearing",
+            "include_titles": False,
+            "include_fields": False,
+            "include_labels": False,
+        },
+    ]
+    assert captured == [("film", "wearing", "W", {
+        "item": "film", "field": "wearing", "letter": "W", "keyword": "watch",
+    })]
+    browser.deleteLater()
+
+
+def test_initial_navigation_displays_requested_filters_while_catalog_loads(
+    app, tmp_path,
+):
+    browser = IllustrationBrowser(
+        _MemorySource(str(tmp_path)), media_type="movie", auto_load=False,
+    )
+    browser._index_status = {"status": "loading"}
+
+    browser.navigate_to_filters(
+        item="film", field="wearing", letter="W", keyword="watch",
+    )
+
+    assert browser._item_combo.currentData() == "film"
+    assert browser._field_combo.currentData() == "wearing"
+    assert browser._letter_combo.currentData() == "W"
+    assert browser._keyword_combo.currentData() == "watch"
+    assert not browser._item_combo.isEnabled()
+    assert not browser._field_combo.isEnabled()
+    assert not browser._letter_combo.isEnabled()
+    assert not browser._keyword_combo.isEnabled()
+    browser.deleteLater()
+
+
+def test_initial_reload_preserves_displayed_requested_filters(app, tmp_path):
+    browser = IllustrationBrowser(
+        _MemorySource(str(tmp_path)), media_type="movie", auto_load=False,
+    )
+    browser._index_status = {"status": "loading"}
+    browser.navigate_to_filters(
+        item="film", field="wearing", letter="W", keyword="watch",
+    )
+
+    with patch.object(_CatalogLoader, "start"):
+        browser.reload()
+
+    assert browser._item_combo.currentData() == "film"
+    assert browser._field_combo.currentData() == "wearing"
+    assert browser._letter_combo.currentData() == "W"
+    assert browser._keyword_combo.currentData() == "watch"
+    assert not browser._item_combo.isEnabled()
+    assert not browser._field_combo.isEnabled()
+    assert not browser._letter_combo.isEnabled()
+    assert not browser._keyword_combo.isEnabled()
     browser.deleteLater()
 
 

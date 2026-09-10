@@ -272,11 +272,16 @@ def query_facets(
     provenance_state: str | None = None,
     assignment_state: str | None = None,
     shot_type: str | None = None,
+    include_titles: bool = True,
+    include_fields: bool = True,
+    include_letters: bool = True,
+    include_labels: bool = True,
 ) -> dict:
-    """Return distinct facets and label counts for a browse scope.
+    """Return requested distinct facets and label counts for a browse scope.
 
     ``media_type == ALL_MEDIA`` merges facets across every entry in
-    ``MEDIA_TYPES``.
+    ``MEDIA_TYPES``. Optional facet flags avoid aggregating controls that the
+    caller does not currently need.
     """
     if media_type == ALL_MEDIA:
         return _query_facets_all_media(
@@ -296,25 +301,37 @@ def query_facets(
         shot_type=shot_type,
     )
     with sqlite3.connect(index_path(project_path, source, media_type)) as connection:
-        titles = [row[0] for row in connection.execute(
-            "SELECT DISTINCT title FROM records ORDER BY title COLLATE NOCASE"
-        )]
-        fields = [row[0] for row in connection.execute(
-            f"SELECT DISTINCT field FROM records {where} ORDER BY field COLLATE NOCASE",
-            params,
-        )]
-        letters = [row[0] for row in connection.execute(
-            f"SELECT DISTINCT initial FROM records {where} ORDER BY initial COLLATE NOCASE",
-            params,
-        )]
-        labels = [
-            {"label": row[0], "count": row[1]}
-            for row in connection.execute(
-                f"SELECT label, COUNT(*) FROM records {where} "
-                "GROUP BY label ORDER BY label COLLATE NOCASE",
+        titles = (
+            [row[0] for row in connection.execute(
+                "SELECT DISTINCT title FROM records ORDER BY title COLLATE NOCASE"
+            )]
+            if include_titles else []
+        )
+        fields = (
+            [row[0] for row in connection.execute(
+                f"SELECT DISTINCT field FROM records {where} ORDER BY field COLLATE NOCASE",
                 params,
-            )
-        ]
+            )]
+            if include_fields else []
+        )
+        letters = (
+            [row[0] for row in connection.execute(
+                f"SELECT DISTINCT initial FROM records {where} ORDER BY initial COLLATE NOCASE",
+                params,
+            )]
+            if include_letters else []
+        )
+        labels = (
+            [
+                {"label": row[0], "count": row[1]}
+                for row in connection.execute(
+                    f"SELECT label, COUNT(*) FROM records {where} "
+                    "GROUP BY label ORDER BY label COLLATE NOCASE",
+                    params,
+                )
+            ]
+            if include_labels else []
+        )
     return {**status, "titles": titles, "fields": fields, "letters": letters, "labels": labels}
 
 
@@ -348,6 +365,9 @@ def query_field_counts(
                 "GROUP BY field ORDER BY COUNT(*) DESC, field",
                 params,
             )
+            expected_count = int(connection.execute(
+                f"SELECT COUNT(*) FROM records {where}", params,
+            ).fetchone()[0])
             fields = []
             for field, count in rows:
                 name = str(field)
@@ -366,7 +386,7 @@ def query_field_counts(
         return {"status": "error", "count": 0, "fields": []}
     fields.sort(key=lambda item: (-item["count"], item["field"], item.get("synthetic", False)))
     count = sum(item["count"] for item in fields)
-    if shot_type in (None, "", ALL) and count != int(status.get("count", 0)):
+    if count != expected_count:
         return {"status": "error", "count": 0, "fields": []}
     return {"status": status["status"], "count": count, "fields": fields}
 

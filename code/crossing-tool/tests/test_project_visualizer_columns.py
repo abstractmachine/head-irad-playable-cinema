@@ -2523,6 +2523,58 @@ def test_project_launch_selects_requested_scope_and_type_in_existing_mosaic(
         app.processEvents()
 
 
+def test_project_launch_selects_exact_field_in_existing_mosaic(
+    app, fake_prefs, monkeypatch,
+):
+    from unittest.mock import MagicMock
+
+    fake_prefs["path"] = "/fake/project"
+    monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
+    monkeypatch.setattr("visualizers._window_helpers.raise_existing_window", lambda _subcommand: True)
+
+    from visualizers.project_visualizer import ProjectVisualizer
+
+    window = ProjectVisualizer()
+    existing_mosaic = MagicMock()
+    window._windows["mosaic"] = existing_mosaic
+    try:
+        window._launch("mosaic", field="project-only")
+
+        existing_mosaic.select_field.assert_called_once_with(
+            "project-only", preserve_missing=True,
+        )
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_project_constructs_new_mosaic_with_requested_initial_field(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from visualizers.project_visualizer import ProjectVisualizer
+    import visualizers.mosaic_visualizer as mosaic_mod
+
+    mosaic = MagicMock()
+    monkeypatch.setattr(mosaic_mod, "MosaicVisualizer", mosaic)
+    owner = SimpleNamespace()
+
+    result = ProjectVisualizer._create_in_process_window(
+        owner,
+        "mosaic",
+        "/fake/project",
+        field="wearing",
+    )
+
+    assert result is mosaic.return_value
+    mosaic.assert_called_once_with(
+        "/fake/project",
+        media_type="movie",
+        shot_type=None,
+        initial_field="wearing",
+    )
+
+
 def test_project_vocabulary_cell_click_and_double_click_open_mosaic_at_field(
     app, fake_prefs, monkeypatch,
 ):

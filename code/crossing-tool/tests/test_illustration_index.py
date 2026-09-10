@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from argparse import Namespace
 from pathlib import Path
 from unittest.mock import call, patch
@@ -405,6 +406,61 @@ def test_silhouette_field_counts_use_synthetic_untyped_for_missing_field(tmp_pat
     }
 
 
+def test_silhouette_field_counts_validate_the_active_browse_scope(tmp_path):
+    records = [
+        {
+            "filename_stem": "film", "field": "objects", "label": "active object",
+            "assignment": {"state": "active"},
+        },
+        {
+            "filename_stem": "film", "field": "animals", "label": "active animal",
+        },
+        {
+            "filename_stem": "film", "field": "objects", "label": "inactive object",
+            "assignment": {"state": "inactive"},
+        },
+        {
+            "filename_stem": "film", "field": "wearing", "label": "superseded coat",
+            "assignment": {"state": "superseded"},
+        },
+    ]
+    with patch("services.illustration_index._scan_silhouettes", return_value=records):
+        rebuilt = rebuild_index(tmp_path, "silhouettes", "movie")
+
+    assert rebuilt["count"] == 4  # Physical index rows retain lifecycle history.
+    loaded = load_index(tmp_path, "silhouettes", "movie")
+    assert loaded["status"] == "ready"
+    assert loaded["usable"] is True
+    assert loaded["count"] == 4
+    assert query_field_counts(tmp_path, "silhouettes", "movie") == {
+        "status": "ready",
+        "count": 2,
+        "fields": [
+            {"field": "animals", "count": 1},
+            {"field": "objects", "count": 1},
+        ],
+    }
+
+
+def test_silhouette_field_counts_reject_invalid_active_field_within_query_scope(tmp_path):
+    with patch(
+        "services.illustration_index._scan_silhouettes",
+        return_value=[{
+            "filename_stem": "film", "field": "objects", "label": "horse",
+            "assignment": {"state": "active"},
+        }],
+    ):
+        rebuild_index(tmp_path, "silhouettes", "movie")
+
+    with sqlite3.connect(index_path(tmp_path, "silhouettes", "movie")) as connection:
+        connection.execute("UPDATE records SET field = '' WHERE assignment_state = 'active'")
+        connection.commit()
+
+    assert query_field_counts(tmp_path, "silhouettes", "movie") == {
+        "status": "error", "count": 0, "fields": [],
+    }
+
+
 def test_engraving_field_counts_reject_missing_source_field(tmp_path):
     records = [{"filename_stem": "film", "label": "horse"}]
     with patch("services.illustration_index._scan_engravings", return_value=records):
@@ -480,6 +536,30 @@ def test_index_queries_facets_and_pages_without_materializing_catalog(tmp_path):
     ]
     assert animals["total"] == 1
     assert animals["records"][0]["label"] == "horse"
+
+
+def test_index_facets_skip_unrequested_aggregations(tmp_path):
+    records = [{
+        "filename_stem": "Film {tmdb-12}",
+        "field": "animals",
+        "label": "horse",
+    }]
+    with patch("services.illustration_index._scan_silhouettes", return_value=records):
+        rebuild_index(tmp_path, "silhouettes", "movie")
+
+    facets = query_facets(
+        tmp_path,
+        "silhouettes",
+        "movie",
+        include_fields=False,
+        include_letters=False,
+        include_labels=False,
+    )
+
+    assert facets["titles"] == ["Film"]
+    assert facets["fields"] == []
+    assert facets["letters"] == []
+    assert facets["labels"] == []
 
 
 def test_silhouette_index_derives_object_id_and_engraved_first_sort(tmp_path):

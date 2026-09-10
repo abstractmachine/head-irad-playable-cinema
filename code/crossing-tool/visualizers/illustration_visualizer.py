@@ -2177,10 +2177,11 @@ class IllustrationWindow(WindowVisualizer):
     def create_browser(self) -> QWidget:
         # Instantiate the IllustrationPane (catalog) and return its browser widget.
         self._catalog = IllustrationPane(self._project_path, media_type=self._media_type)
+        self._catalog.select_source_tab(self._initial_source_tab)
         if self._initial_film or self._initial_field or self._initial_label or self._initial_shot:
-            QTimer.singleShot(0, lambda: self._catalog.navigate_to(
+            self._catalog.navigate_to(
                 self._initial_film, self._initial_field, self._initial_label, self._initial_shot
-            ))
+            )
         return self._catalog._browser_stack
 
     def create_inspector(self) -> QWidget:

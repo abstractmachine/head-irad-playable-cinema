@@ -2484,7 +2484,7 @@ class ProjectVisualizer(WindowVisualizer):
             try:
                 existing_window.select_media_type(media_type)
                 if field:
-                    existing_window.select_field(field)
+                    existing_window.select_field(field, preserve_missing=True)
                 if shot_type:
                     existing_window.select_shot_type(shot_type)
             except RuntimeError:
@@ -2581,14 +2581,12 @@ class ProjectVisualizer(WindowVisualizer):
             return CloudVisualizer(project_path)
         elif subcommand == "mosaic":
             from visualizers.mosaic_visualizer import MosaicVisualizer
-            window = MosaicVisualizer(
+            return MosaicVisualizer(
                 project_path,
                 media_type=media_type,
                 shot_type=shot_type,
+                initial_field=field,
             )
-            if field:
-                window.select_field(field)
-            return window
         elif subcommand == "book":
             from visualizers.book_visualizer import BookVisualizerWindow
             return BookVisualizerWindow(project_path)

@@ -1232,6 +1232,7 @@ class MosaicVisualizer(WindowVisualizer):
         project_path: str,
         media_type: str = "movie",
         shot_type: Optional[str] = None,
+        initial_field: Optional[str] = None,
     ):
         # Instance attributes must be set before super().__init__() since the
         # base class calls create_browser()/create_inspector() synchronously.
@@ -1247,6 +1248,8 @@ class MosaicVisualizer(WindowVisualizer):
         self._shot_type_request_id = 0
         self._initial_shot_type_load_started = False
         self._pending_shot_type = shot_type
+        self._pending_field = initial_field or None
+        self._refresh_fields_after_shot_type_load = False
         self._shot_type_facet_worker: Optional[ShotTypeFacetWorker] = None
         self._shot_type_facet_request_id = 0
         self._export_worker: Optional[ExportWorker] = None
@@ -1265,12 +1268,12 @@ class MosaicVisualizer(WindowVisualizer):
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
-        if not self._initial_vocab_load_started:
-            self._initial_vocab_load_started = True
-            self._on_field_changed()
         if not self._initial_shot_type_load_started:
             self._initial_shot_type_load_started = True
             self._request_shot_type_load()
+        if not self._initial_vocab_load_started and self._selected_shot_type() is None:
+            self._initial_vocab_load_started = True
+            self._on_field_changed()
 
     def closeEvent(self, event) -> None:  # noqa: N802
         # Workers read compact SQLite facets and cannot be force-cancelled
@@ -1368,6 +1371,14 @@ class MosaicVisualizer(WindowVisualizer):
                 self.field_combo.setItemText(self.field_combo.count() - 1, "<All Fields>")
             else:
                 self.field_combo.addItem(f, userData=f)
+        if (
+            self._pending_field
+            and self.field_combo.findData(self._pending_field) < 0
+        ):
+            self.field_combo.addItem(self._pending_field, userData=self._pending_field)
+        initial_field_index = self.field_combo.findData(self._pending_field)
+        if initial_field_index >= 0:
+            self.field_combo.setCurrentIndex(initial_field_index)
         style_canonical_combo(self.field_combo)
         self.field_combo.currentIndexChanged.connect(self._on_field_changed)
         self.field_combo.installEventFilter(self)
@@ -1647,6 +1658,7 @@ class MosaicVisualizer(WindowVisualizer):
     def _on_media_type_changed(self, media_type: str) -> None:
         """Called when the media type combo changes."""
         self.media_type = media_type
+        self._refresh_fields_after_shot_type_load = True
         self.canvas.clear()
         self._current_results = []
         self._update_result_controls()
@@ -1691,7 +1703,11 @@ class MosaicVisualizer(WindowVisualizer):
         self.field_combo.blockSignals(True)
         self.field_combo.clear()
         self.field_combo.addItem("<All Fields>", userData="--all")
-        self.field_combo.setCurrentIndex(0)
+        if self._pending_field:
+            self.field_combo.addItem(self._pending_field, userData=self._pending_field)
+            self.field_combo.setCurrentIndex(1)
+        else:
+            self.field_combo.setCurrentIndex(0)
         self.field_combo.setEnabled(False)
         self.field_combo.blockSignals(False)
 
@@ -1716,6 +1732,10 @@ class MosaicVisualizer(WindowVisualizer):
         if request_id != self._shot_type_request_id:
             return
         selected = self._pending_shot_type or self.shot_type_combo.currentData() or "--all"
+        refresh_fields = (
+            selected != "--all" or self._refresh_fields_after_shot_type_load
+        )
+        self._refresh_fields_after_shot_type_load = False
         self._pending_shot_type = None
         self.shot_type_combo.blockSignals(True)
         self.shot_type_combo.clear()
@@ -1733,7 +1753,8 @@ class MosaicVisualizer(WindowVisualizer):
         self.shot_type_combo.setCurrentIndex(max(0, selected_index))
         self.shot_type_combo.setEnabled(True)
         self.shot_type_combo.blockSignals(False)
-        self.shot_type_combo.currentIndexChanged.emit(self.shot_type_combo.currentIndex())
+        if refresh_fields:
+            self.shot_type_combo.currentIndexChanged.emit(self.shot_type_combo.currentIndex())
 
     def _selected_shot_type(self) -> Optional[str]:
         value = self.shot_type_combo.currentData()
@@ -1741,7 +1762,7 @@ class MosaicVisualizer(WindowVisualizer):
 
     def _set_field_options(self, fields: list[str]) -> None:
         """Populate Field from the active type scope without altering Field semantics."""
-        selected = self.field_combo.currentData() or "--all"
+        selected = self._pending_field or self.field_combo.currentData() or "--all"
         present = {str(field) for field in fields if field and field != "--all"}
         ordered = [field for field in ANNOTATION_FIELDS[1:] if field in present]
         ordered.extend(sorted(present - set(ordered), key=str.casefold))
@@ -1750,10 +1771,13 @@ class MosaicVisualizer(WindowVisualizer):
         self.field_combo.addItem("<All Fields>", userData="--all")
         for field in ordered:
             self.field_combo.addItem(field, userData=field)
+        if selected != "--all" and self.field_combo.findData(selected) < 0:
+            self.field_combo.addItem(selected, userData=selected)
         index = self.field_combo.findData(selected)
         self.field_combo.setCurrentIndex(max(0, index))
         self.field_combo.setEnabled(True)
         self.field_combo.blockSignals(False)
+        self._pending_field = None
         self._on_field_changed()
 
     def _request_shot_type_facets(self, purpose: str, prefix: str = "--all") -> None:
@@ -1828,11 +1852,15 @@ class MosaicVisualizer(WindowVisualizer):
         self.media_type_combo.setCurrentIndex(index)
         return True
 
-    def select_field(self, field: str) -> bool:
-        """Select one configured annotation field through the normal combo path."""
+    def select_field(self, field: str, *, preserve_missing: bool = False) -> bool:
+        """Select one annotation field through the normal combo path."""
         index = self.field_combo.findData(field)
         if index < 0:
-            return False
+            if not preserve_missing or not field:
+                return False
+            self._pending_field = field
+            self.field_combo.addItem(field, userData=field)
+            index = self.field_combo.count() - 1
         self._initial_vocab_load_started = True
         if index == self.field_combo.currentIndex():
             self._on_field_changed()
@@ -2119,6 +2147,7 @@ class MosaicVisualizer(WindowVisualizer):
             return
         if self._selected_shot_type() is None:
             self._start_vocabulary_load()
+            self._pending_field = None
         else:
             self._request_shot_type_facets("vocabulary")
 

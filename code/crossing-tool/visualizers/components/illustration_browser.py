@@ -128,10 +128,9 @@ class _CatalogLoader(QThread):
     """Background worker: calls ``IllustrationSource._load()`` off the main
     thread so the UI stays responsive during a catalog scan.
 
-    After loading the raw items it performs a single combined pass to extract
-    all data needed to populate the four filter combos (films, fields, letters,
-    label counts).  Both results are emitted together so the main thread never
-    has to scan the full item list again — it just calls addItem().
+    After loading the raw items it fetches the title list required for the
+    first combo. Lower filter levels load their scoped facets only after the
+    initial filter state has been established.
 
     The caller is responsible for disconnecting stale loaders before starting
     a new one (see ``IllustrationBrowser._stop_catalog_loader``).
@@ -211,7 +210,11 @@ class _CatalogLoader(QThread):
         if not self._cancelled:
             cache_start = time.perf_counter()
             status = self._source.load_status()
-            facets = self._source.facets()
+            facets = self._source.facets(
+                include_fields=False,
+                include_letters=False,
+                include_labels=False,
+            )
             cache = {
                 "films": facets.get("titles", []),
                 "fields": set(facets.get("fields", [])),
@@ -270,7 +273,12 @@ class _KeywordLoader(QThread):
         phase_start = time.perf_counter()
         if isinstance(self._items, IllustrationSource):
             facets = self._items.facets(
-                title=self._scope, field=self._field, letter=self._letter
+                title=self._scope,
+                field=self._field,
+                letter=self._letter,
+                include_titles=False,
+                include_fields=False,
+                include_letters=False,
             )
             if self._cancelled:
                 return
@@ -483,6 +491,9 @@ class IllustrationBrowser(QWidget):
         self._pending_keyword_index = 0
         self._pending_keyword_previous = ALL
         self._pending_keyword_cascade = -1
+        self._pending_initial_filters: Optional[dict[str, Optional[str]]] = None
+        self._provisional_keyword: Optional[str] = None
+        self._has_completed_catalog_load = False
         self._keyword_population_timer = QTimer(self)
         self._keyword_population_timer.setSingleShot(True)
         self._keyword_population_timer.timeout.connect(self._append_keyword_batch)
@@ -542,6 +553,8 @@ class IllustrationBrowser(QWidget):
         # Always clear combos and grid immediately so the UI reflects the new
         # (possibly empty) state even before the background scan finishes.
         self._reset_filter_descendants("media")
+        if self._pending_initial_filters and not self._has_completed_catalog_load:
+            self._show_pending_initial_filters()
         self._all_items      = []
         self._filter_cache   = {}  # invalidate stale cache
 
@@ -570,6 +583,7 @@ class IllustrationBrowser(QWidget):
         items  = loader.result_items
         cache  = loader.result_cache
         self._index_status = loader.result_status
+        self._has_completed_catalog_load = True
         self._loading_timer.stop()
         self._loading_bar.stop()
         self._stop_loader()          # cancel any stale thumbnail loader
@@ -887,6 +901,20 @@ class IllustrationBrowser(QWidget):
         combo completes. Keyword selection retries while its worker or bounded
         GUI population is active instead of assuming a fixed completion time.
         """
+        if (
+            self._index_status.get("status") == "loading"
+            and not self._has_completed_catalog_load
+            and any(value is not None for value in (item, field, letter, keyword))
+        ):
+            self._pending_initial_filters = {
+                "item": item,
+                "field": field,
+                "letter": letter,
+                "keyword": keyword,
+            }
+            self._show_pending_initial_filters()
+            return
+
         if item is not None:
             for i in range(self._item_combo.count()):
                 if self._item_combo.itemData(i) == item:
@@ -899,10 +927,24 @@ class IllustrationBrowser(QWidget):
             return
 
         if field is not None:
+            field_found = False
             for i in range(self._field_combo.count()):
                 if self._field_combo.itemData(i) == field:
                     self._field_combo.setCurrentIndex(i)
+                    field_found = True
                     break
+            field_loading = self._index_status.get("status") == "loading"
+            if not field_found and (field_loading or not self._field_combo.isEnabled()):
+                # Initial cross-process navigation can arrive before the
+                # catalog worker has populated Field. Retry only during that
+                # transient unavailable state; an absent field remains a
+                # harmless no-op once the cascade is ready.
+                QTimer.singleShot(
+                    50, lambda: self.navigate_to_filters(
+                        field=field, letter=letter, keyword=keyword,
+                    )
+                )
+                return
             if letter is not None or keyword is not None:
                 _l, _kw = letter, keyword
                 QTimer.singleShot(250, lambda: self.navigate_to_filters(
@@ -1317,6 +1359,30 @@ class IllustrationBrowser(QWidget):
             combo.currentIndexChanged.emit(combo.currentIndex())
         self._updating = previous_updating
 
+    def _show_pending_initial_filters(self) -> None:
+        filters = self._pending_initial_filters or {}
+        combos = (
+            (self._item_combo, "<All Titles>", None, filters.get("item")),
+            (self._field_combo, "<All Fields>", ALL, filters.get("field")),
+            (self._letter_combo, "<A-Z>", ALL, filters.get("letter")),
+            (self._keyword_combo, "<All Keywords>", ALL, filters.get("keyword")),
+        )
+        previous_updating = self._updating
+        self._updating = True
+        for combo, label, generic_value, value in combos:
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem(label, userData=generic_value)
+            if value not in (None, "", ALL):
+                combo.addItem(str(value), userData=value)
+                combo.setCurrentIndex(1)
+            else:
+                combo.setCurrentIndex(0)
+            combo.setEnabled(False)
+            combo.blockSignals(False)
+            combo.currentIndexChanged.emit(combo.currentIndex())
+        self._updating = previous_updating
+
     def _clear_grid_presentation(self) -> None:
         """Remove displayed thumbnails without querying the former filters."""
         self._stop_loader()
@@ -1352,7 +1418,8 @@ class IllustrationBrowser(QWidget):
                 ),
                 key=str.casefold,
             )
-        prev = self._item_combo.currentData()
+        initial_filters = self._pending_initial_filters or {}
+        prev = initial_filters.get("item", self._item_combo.currentData())
         self._item_combo.blockSignals(True)
         self._item_combo.clear()
         self._item_combo.addItem("<All Titles>", userData=None)
@@ -1362,7 +1429,11 @@ class IllustrationBrowser(QWidget):
         self._item_combo.setCurrentIndex(max(0, idx))
         self._item_combo.setEnabled(bool(self._media_type))
         self._item_combo.blockSignals(False)
+        previous_updating = self._updating
+        if initial_filters:
+            self._updating = True
         self._item_combo.currentIndexChanged.emit(self._item_combo.currentIndex())
+        self._updating = previous_updating
         _timing_print(
             self._timing_start,
             "GUI",
@@ -1377,10 +1448,16 @@ class IllustrationBrowser(QWidget):
         self._cascade_id += 1
         _cid = self._cascade_id
         scope = self._item_combo.currentData()  # None → all
-        facets = self._source.facets(title=scope)
+        facets = self._source.facets(
+            title=scope,
+            include_titles=False,
+            include_letters=False,
+            include_labels=False,
+        )
         present = set(facets.get("fields", []))
 
-        prev = self._field_combo.currentData()
+        initial_filters = self._pending_initial_filters or {}
+        prev = initial_filters.get("field", self._field_combo.currentData())
         self._field_combo.blockSignals(True)
         self._field_combo.clear()
         self._field_combo.addItem("<All Fields>", userData=ALL)
@@ -1393,7 +1470,11 @@ class IllustrationBrowser(QWidget):
         self._field_combo.setCurrentIndex(max(0, idx))
         self._field_combo.setEnabled(True)
         self._field_combo.blockSignals(False)
+        previous_updating = self._updating
+        if initial_filters:
+            self._updating = True
         self._field_combo.currentIndexChanged.emit(self._field_combo.currentIndex())
+        self._updating = previous_updating
         _timing_print(
             self._timing_start,
             "GUI",
@@ -1409,9 +1490,16 @@ class IllustrationBrowser(QWidget):
         _cid = self._cascade_id
         scope = self._item_combo.currentData()
         field = self._field_combo.currentData() or ALL
-        facets = self._source.facets(title=scope, field=field)
+        facets = self._source.facets(
+            title=scope,
+            field=field,
+            include_titles=False,
+            include_fields=False,
+            include_labels=False,
+        )
         letters = facets.get("letters", [])
-        prev = self._letter_combo.currentData()
+        initial_filters = self._pending_initial_filters or {}
+        prev = initial_filters.get("letter", self._letter_combo.currentData())
         self._letter_combo.blockSignals(True)
         self._letter_combo.clear()
         self._letter_combo.addItem("<A-Z>", userData=ALL)
@@ -1421,7 +1509,11 @@ class IllustrationBrowser(QWidget):
         self._letter_combo.setCurrentIndex(max(0, idx))
         self._letter_combo.setEnabled(True)
         self._letter_combo.blockSignals(False)
+        previous_updating = self._updating
+        if initial_filters:
+            self._updating = True
         self._letter_combo.currentIndexChanged.emit(self._letter_combo.currentIndex())
+        self._updating = previous_updating
         _timing_print(
             self._timing_start,
             "GUI",
@@ -1439,10 +1531,28 @@ class IllustrationBrowser(QWidget):
         letter = self._letter_combo.currentData() or ALL
         self._stop_keyword_loader()
         self._keyword_scope_items = None
-        self._pending_keyword_previous = self._keyword_combo.currentData() or ALL
+        initial_filters = self._pending_initial_filters or {}
+        self._pending_keyword_previous = (
+            initial_filters.get("keyword")
+            if initial_filters.get("keyword") is not None
+            else self._keyword_combo.currentData() or ALL
+        )
+        self._provisional_keyword = (
+            self._pending_keyword_previous
+            if self._pending_keyword_previous not in (None, "", ALL)
+            else None
+        )
+        self._pending_initial_filters = None
         self._keyword_combo.blockSignals(True)
         self._keyword_combo.clear()
         self._keyword_combo.addItem("<All Keywords>", userData=ALL)
+        if self._provisional_keyword is not None:
+            self._keyword_combo.addItem(
+                self._provisional_keyword, userData=self._provisional_keyword,
+            )
+            self._keyword_combo.setCurrentIndex(1)
+        else:
+            self._keyword_combo.setCurrentIndex(0)
         self._keyword_combo.blockSignals(False)
         self._keyword_combo.setEnabled(False)
         self._loading_bar.start()
@@ -1494,6 +1604,14 @@ class IllustrationBrowser(QWidget):
         )
         for index in range(self._pending_keyword_index, stop):
             label = self._pending_keyword_labels[index]
+            if label == self._provisional_keyword:
+                provisional_index = self._keyword_combo.findData(label)
+                if provisional_index >= 0:
+                    self._keyword_combo.setItemText(
+                        provisional_index,
+                        f"{label}  ({self._pending_keyword_counts[label]})",
+                    )
+                    continue
             self._keyword_combo.addItem(
                 f"{label}  ({self._pending_keyword_counts[label]})", userData=label
             )
@@ -1509,11 +1627,19 @@ class IllustrationBrowser(QWidget):
             self._keyword_population_timer.start(0)
             return
 
+        if (
+            self._provisional_keyword is not None
+            and self._provisional_keyword not in self._pending_keyword_counts
+        ):
+            provisional_index = self._keyword_combo.findData(self._provisional_keyword)
+            if provisional_index >= 0:
+                self._keyword_combo.removeItem(provisional_index)
         index = self._keyword_combo.findData(self._pending_keyword_previous)
         self._keyword_combo.blockSignals(True)
         self._keyword_combo.setCurrentIndex(max(0, index))
         self._keyword_combo.blockSignals(False)
         self._keyword_combo.setEnabled(True)
+        self._provisional_keyword = None
         self._pending_keyword_labels = []
         self._pending_keyword_counts = {}
         self._keyword_combo.currentIndexChanged.emit(self._keyword_combo.currentIndex())

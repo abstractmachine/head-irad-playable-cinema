@@ -19,7 +19,8 @@ requires a full project/catalog on disk — this test only needs to verify
 the window-state branch, not the catalog navigation itself.
 """
 
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import MagicMock, call
 
 from services.illustration_index import ALL_MEDIA
 from visualizers.illustration_visualizer import (
@@ -115,3 +116,54 @@ def test_illustration_process_launcher_keeps_all_media_sentinel_as_media_value(m
         "--field", "wearing",
         "--source-tab", "engravings",
     ]]
+
+
+def test_initial_window_navigation_applies_before_first_catalog_reload(monkeypatch) -> None:
+    pane = MagicMock()
+    pane._browser_stack = object()
+    monkeypatch.setattr(
+        "visualizers.illustration_visualizer.IllustrationPane",
+        lambda _project_path, media_type: pane,
+    )
+    window = SimpleNamespace(
+        _project_path="/project",
+        _media_type=ALL_MEDIA,
+        _initial_film=None,
+        _initial_field="wearing",
+        _initial_label=None,
+        _initial_shot=None,
+        _initial_source_tab="",
+    )
+
+    browser = IllustrationWindow.create_browser(window)
+
+    assert browser is pane._browser_stack
+    assert pane.mock_calls == [
+        call.select_source_tab(""),
+        call.navigate_to(None, "wearing", None, None),
+    ]
+
+
+def test_initial_window_selects_requested_source_before_navigation(monkeypatch) -> None:
+    pane = MagicMock()
+    pane._browser_stack = object()
+    monkeypatch.setattr(
+        "visualizers.illustration_visualizer.IllustrationPane",
+        lambda _project_path, media_type: pane,
+    )
+    window = SimpleNamespace(
+        _project_path="/project",
+        _media_type=ALL_MEDIA,
+        _initial_film=None,
+        _initial_field="wearing",
+        _initial_label=None,
+        _initial_shot=None,
+        _initial_source_tab="engravings",
+    )
+
+    IllustrationWindow.create_browser(window)
+
+    assert pane.mock_calls == [
+        call.select_source_tab("engravings"),
+        call.navigate_to(None, "wearing", None, None),
+    ]
