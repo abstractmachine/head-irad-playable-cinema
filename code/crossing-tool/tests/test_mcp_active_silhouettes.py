@@ -10,6 +10,7 @@ from PIL import Image
 
 import mcp_server.mcp_server as mcp_server
 from services.illustration_index import rebuild_index
+from services.silhouette_discovery import list_active_candidate_references
 
 
 class _FakeMCPImage:
@@ -72,10 +73,15 @@ def test_mcp_normal_candidate_listing_excludes_historical_same_shot(active_catal
     )
     candidates = _payload(mcp_server.list_silhouette_candidates("gun", field="objects"))
     listing = _payload(mcp_server.list_silhouettes("gun", field="objects"))
+    canonical = list_active_candidate_references(
+        active_catalog, word="gun", field="objects", media_type="movie",
+    )
 
     assert candidates["active_candidate_count"] == 1
     assert candidates["returned_count"] == 1
     assert [entry["object_id"] for entry in candidates["entries"]] == ["object_0001"]
+    assert candidates["active_candidate_count"] == canonical["active_candidate_count"]
+    assert candidates["entries"] == canonical["entries"]
     assert listing["count"] == 1
     assert [entry["object_id"] for entry in listing["entries"]] == ["object_0001"]
 
@@ -207,3 +213,32 @@ def test_active_silhouette_mcp_analysis_tools_are_registered():
         tool = mcp_server.mcp._tool_manager.get_tool(name)
         assert tool is not None
         assert tool.output_schema is not None
+
+
+def test_mcp_candidate_listing_reflects_the_canonical_service_result(monkeypatch, tmp_path):
+    monkeypatch.setenv("CROSSING_PROJECT", str(tmp_path))
+    expected = {
+        "status": "ready",
+        "media_type": "movie",
+        "word": "gun",
+        "field": "objects",
+        "scope": "all",
+        "sort_by": "catalog_order",
+        "descending": False,
+        "min_pixel_area": None,
+        "min_score": None,
+        "cursor": "0",
+        "next_cursor": None,
+        "active_candidate_count": 7,
+        "returned_count": 1,
+        "entries": [{"candidate_id": "canonical-service-result"}],
+    }
+    monkeypatch.setattr(
+        "services.silhouette_discovery.list_active_candidate_references",
+        lambda _project_path, **_kwargs: expected,
+    )
+
+    result = _payload(mcp_server.list_silhouette_candidates("gun", field="objects"))
+
+    assert result["active_candidate_count"] == 7
+    assert result["entries"] == [{"candidate_id": "canonical-service-result"}]

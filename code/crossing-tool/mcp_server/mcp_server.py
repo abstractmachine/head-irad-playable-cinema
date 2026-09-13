@@ -209,16 +209,6 @@ def _poster_reference(
         return poster_path, str(poster_path)
 
 
-def _metadata_by_stem(project_path: str, media_type: str) -> dict:
-    """Return ``{filename_stem: metadata_entry}`` for quick lookups."""
-    try:
-        from data.metadata import get_metadata as _gm
-        entries = _gm(project_path, media_type=media_type)
-        return {Path(e.get("filename", "")).stem: e for e in entries if e.get("filename")}
-    except Exception:
-        return {}
-
-
 def _render_silhouette_png_bytes(png_path: str, width: int) -> "bytes | None":
     """Load a silhouette RGBA PNG and return PNG bytes, optionally resized."""
     try:
@@ -724,19 +714,17 @@ def list_silhouettes(
     try:
         from services.silhouette_discovery import (
             ActiveSilhouetteIndexError,
-            active_candidate_page,
-            candidate_reference,
+            list_active_candidate_references,
         )
 
-        page = active_candidate_page(
+        listing = list_active_candidate_references(
             project_path, word=word, field=field, scope=scope,
             media_type=media_type,
         )
-        entries = [candidate_reference(project_path, record) for record in page["records"]]
         return _ok(
-            word=word, field=field, scope=scope,
-            found=bool(entries), count=page["total"],
-            returned_count=len(entries), entries=entries,
+            found=bool(listing["entries"]),
+            count=listing["active_candidate_count"],
+            **listing,
         )
     except ActiveSilhouetteIndexError as exc:
         return json.dumps(exc.payload(), indent=2)
@@ -791,11 +779,10 @@ def list_silhouette_candidates(
     try:
         from services.silhouette_discovery import (
             ActiveSilhouetteIndexError,
-            active_candidate_page,
-            candidate_reference,
+            list_active_candidate_references,
         )
 
-        page = active_candidate_page(
+        listing = list_active_candidate_references(
             project_path,
             word=word,
             field=field,
@@ -808,14 +795,9 @@ def list_silhouette_candidates(
             limit=limit,
             cursor=cursor,
         )
-        entries = [candidate_reference(project_path, record) for record in page["records"]]
         return _ok(
-            found=bool(entries),
-            active_candidate_count=page["total"],
-            returned_count=len(entries),
-            next_cursor=page["next_cursor"],
-            **{key: value for key, value in page.items() if key not in {"records", "total", "next_cursor"}},
-            entries=entries,
+            found=bool(listing["entries"]),
+            **listing,
         )
     except ActiveSilhouetteIndexError as exc:
         return json.dumps(exc.payload(), indent=2)
@@ -2191,13 +2173,18 @@ def generate_silhouette_booklet(
         # --- Film filter (media_id set) ---
         film_media_ids: set | None = None
         if films:
-            meta_map = _metadata_by_stem(project_path, media_type)
-            film_media_ids = set()
-            for f in films:
-                fl = f.lower()
-                for stem, e in meta_map.items():
-                    if fl in e.get("title", "").lower() or fl in stem.lower():
-                        film_media_ids.add(e.get("media_id", ""))
+            from data.media_id import compute_media_id
+            from data.metadata import get_metadata
+            from services.search import _resolve_movies_exact_first
+
+            selected_films, _ = _resolve_movies_exact_first(
+                films,
+                False,
+                get_metadata(project_path, media_type=media_type),
+            )
+            film_media_ids = {
+                compute_media_id(entry, media_type) for entry in selected_films
+            }
 
         from services.silhouette_discovery import (
             ActiveSilhouetteIndexError,

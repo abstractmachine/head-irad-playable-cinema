@@ -11,6 +11,24 @@
 - Generation tools write only to `outputs/` subdirectories.
 - No tool may write to source data (`data/annotations/`, `data/shotlists/`, `data/metadata/`, or `preferences/`).
 
+**Architecture: one canonical implementation**
+
+Crossing services define project semantics. The CLI, local Python scripts, visualizers,
+and MCP are interfaces over those shared services; MCP augments the CLI/service ecosystem
+and does not replace it. Domain operations such as search, source and shot resolution,
+catalog/lifecycle semantics, indexing, extraction, statistics, ranking, and clustering
+live in canonical Crossing services and have CLI surfaces when useful to local workflows.
+
+MCP owns only protocol-specific presentation: tool argument validation, structured MCP
+errors, text/image content blocks, transport cursors, and compact agent-oriented response
+shapes. An MCP-only convenience packet may compose existing services, but it must not
+create a different definition of the catalog, candidate identity, lifecycle, or source.
+
+Normal silhouette MCP access is a concrete example: it always queries the ready
+Illustration index with `assignment_state=active`. Historical inactive/superseded JSON and
+PNG assets can remain on disk for provenance, but they are not ordinary MCP candidates and
+MCP never falls back to raw catalog traversal when the index is missing or stale.
+
 **Normal silhouette MCP access**
 
 Normal silhouette discovery, counts, summaries, ranking, clustering, and booklet selection use **only** the ready Illustration index with `assignment_state=active`. Catalog JSON and PNG files for inactive or superseded records remain on disk for lifecycle history and provenance, but are deliberately invisible to ordinary MCP catalog operations. A missing or stale Illustration index is reported as unavailable; MCP never falls back to scanning `data/silhouettes/catalog/`.

@@ -411,13 +411,35 @@ file matching that file's own idiom** — do not force a single cross-file share
 signature (this was tried and explicitly rejected; see `cli.py`'s
 `_resolve_single_normalize_match_or_exit` vs. `mcp_server.py`'s `_resolve_single_film`).
 
+### Permanent canonical-operation rule
+
+**One canonical implementation; many interfaces.** Before adding an MCP tool, classify
+it explicitly:
+
+1. **Canonical Crossing operation** — changes project state, defines data/catalog/
+  lifecycle semantics, resolves sources, searches/indexes, extracts, computes reusable
+  statistics, or performs reusable analysis. Implement it first in `data.*`/`services.*`;
+  expose it through the CLI when local scripts, batch workflows, or human operators can
+  use it; make MCP a thin wrapper over that service.
+2. **MCP-specific presentation/access operation** — protocol content blocks, structured
+  MCP errors, response serialization, cursor presentation, compact agent-oriented
+  shaping, or multimodal composition of already-canonical results. It may stay MCP-only,
+  but it must not redefine the domain inputs, candidate population, resolution rules, or
+  analysis semantics it packages.
+
+Do not require every MCP convenience composition to shell out to `crossing ...`; a
+shared Python service called directly by CLI and MCP is preferable. Conversely, do not
+put a reusable domain operation exclusively in `mcp_server/` merely because an agent is
+its first caller. **MCP augments the CLI/service ecosystem; it does not supersede it.**
+
 ---
 
 ## 9. MCP philosophy
 
 `mcp_server/mcp_server.py` (FastMCP-based, `from mcp.server.fastmcp import FastMCP`) is
-**another interface over the same project data — not a place to implement anything
-new.** Every tool calls straight into `data.*`/`services.*`/`generators.*`, using the
+**another interface over the same project data — not a place to independently implement
+canonical domain behavior.** Every tool calls straight into
+`data.*`/`services.*`/`generators.*`, using the
 same shared `_ctx()` (resolve/validate project path), `_ok(**payload)`/`_err(message,
 detail)` response-JSON helpers, and a film-resolution helper
 (`_resolve_single_film(project_path, film, media_type) -> tuple[dict, str] | str`)
@@ -440,6 +462,21 @@ that way unless the user explicitly asks to add it. The silhouette provenance
 migration is part of that CLI-only set; it reads the completed audit and writes the
 additive `search_provenance` field back into existing silhouette JSON records, then
 rebuilds the browse index.
+
+MCP-specific code is appropriate for FastMCP registration, content-block construction,
+image encoding, JSON/error serialization, cursor tokens, and compact agent-facing
+aggregation. It is not appropriate for a second catalog traversal, active/inactive
+lifecycle interpretation, media/shot resolution, decoding/extraction, index semantics,
+ranking, clustering, provenance mutation, or archive-statistics definition. If an MCP
+tool would need any of those, find or create the canonical service first.
+
+**Silhouette example:** normal MCP silhouette listing, candidate paging, summary,
+ranking, clustering, best-candidate selection, and booklet candidate discovery use
+`services.silhouette_discovery`, backed by the ready Illustration index with
+`assignment_state=active`. Physical catalog JSON/PNG assets with inactive or superseded
+assignment remain historical evidence, never normal MCP candidates. The MCP-only
+`get_silhouette_reference_packet` may package image content blocks, but it first asks
+the same active-index service to authorize the exact candidate.
 
 Tools are organized in tiers (see `documentation/mcp.md` for the maintained reference,
 though it currently under-documents ~16 of the ~30 real tools — Tier 3 analysis tools
@@ -643,6 +680,11 @@ there too instead of letting the gap grow further).
 - Prefer many small, verified edits over one large edit — verify after each one
   (`get_errors`, `py_compile`, full suite) rather than batching several risky changes
   before checking anything.
+- For every proposed MCP tool, state whether it is a canonical Crossing operation or an
+  MCP-specific presentation/access operation. For canonical work, identify the owning
+  `data.*`/`services.*` function and whether a local CLI surface is useful before
+  writing the wrapper. Tests must prove the MCP result changes with that service rather
+  than surviving as a parallel implementation.
 
 ---
 
@@ -678,6 +720,10 @@ there too instead of letting the gap grow further).
 - **Deleting a visualizer's GUI without checking for a same-named headless CLI/MCP
   command sharing its generator module** (Composition's headless CLI/MCP path was
   correctly kept when its GUI was removed).
+- **Implementing catalog, lifecycle, source-resolution, ranking, clustering, or
+  statistics semantics directly in `mcp_server/`** instead of calling a canonical
+  Crossing service. MCP may shape a result for transport, but it must not establish a
+  second data model that disagrees with CLI/Python/Illustration behavior.
 
 ---
 
@@ -705,3 +751,8 @@ Before considering a change complete:
 - [ ] If a test constructs a real visualizer window, monkeypatched **both**
       `tool.prefs.get` and `tool.prefs.set`.
 - [ ] Kept the change incremental/scoped rather than a big-bang rewrite.
+- [ ] Classified each new MCP tool as canonical Crossing work or MCP-specific
+  presentation/access; canonical work has one shared service and a CLI surface when
+  local workflows would benefit from it.
+- [ ] Verified that MCP wrappers agree with their canonical service results and do not
+  recreate catalog/lifecycle/source/index semantics or fall back to raw data.

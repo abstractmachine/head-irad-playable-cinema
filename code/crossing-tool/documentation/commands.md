@@ -467,6 +467,16 @@ crossing index illustration
 crossing index illustration --media gameplay
 crossing index illustration --media both       # movies and gameplay
 
+# Query the canonical active Illustration population without scanning catalog JSON.
+# These commands are read-only; inactive/superseded historical assets are excluded.
+crossing index silhouette list saddle --field objects --sort-by pixel_area --descending
+crossing index silhouette list saddle --field objects --limit 50 --cursor 50 --json
+crossing index silhouette summary saddle --field objects --top-n 10 --json
+crossing index silhouette rank saddle --field objects --limit 20 --json
+crossing index silhouette cluster saddle --field objects --limit 20 \
+  --candidates-per-cluster 10 --json
+crossing index silhouette list saddle --field objects --media both --json
+
 # Transfer the completed canonical-search audit into authoritative silhouette
 # search_provenance records. Always begin with the no-write preflight.
 crossing index silhouette canonical-search-provenance --dry-run
@@ -510,6 +520,12 @@ that owns the feature you want to refresh:
 `crossing index stats --force` is sufficient when the goal is to refresh the
 Project browser after editing an annotation field such as `type`. It does not
 re-serialize or re-embed semantic-search data.
+
+`crossing index silhouette list`, `summary`, `rank`, and `cluster` are read-only
+operations over the canonical active Illustration index. They share the exact same
+candidate population with Illustration and MCP: `assignment_state=active`. They do not
+scan the physical silhouette catalog and will report that the Illustration index is not
+ready rather than exposing inactive or superseded historical records.
 
 `crossing index silhouette canonical-search-provenance` reads the completed
 canonical-search audit; it does not run `search_shots()` again or use morphology

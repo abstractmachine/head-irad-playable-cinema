@@ -274,6 +274,23 @@ def active_candidate_page(
     }
 
 
+def list_active_candidate_references(
+    project_path: str | Path,
+    **filters: Any,
+) -> dict[str, Any]:
+    """Return one active-index page with stable, public candidate references."""
+    page = active_candidate_page(project_path, **filters)
+    records = page.pop("records")
+    total = int(page.pop("total"))
+    entries = [candidate_reference(project_path, record) for record in records]
+    return {
+        **page,
+        "active_candidate_count": total,
+        "returned_count": len(entries),
+        "entries": entries,
+    }
+
+
 def iter_active_candidates(
     project_path: str | Path,
     **filters: Any,

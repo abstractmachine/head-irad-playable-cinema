@@ -5680,9 +5680,103 @@ def _index_silhouette(args):
         _silhouette_number_direction_audit(args)
     elif silhouette_action == "number-ambiguity-audit":
         _silhouette_number_ambiguity_audit(args)
+    elif silhouette_action in {"list", "summary", "rank", "cluster"}:
+        _silhouette_active_discovery(args)
     else:
-        print("✗ index silhouette: specify a subcommand (extract, audit, clear, deassign, recheck, score, enrich, provenance, canonical-search-audit, canonical-search-provenance, morphology-audit, number-direction-audit, number-ambiguity-audit, backfill-scanned)", file=sys.stderr)
+        print("✗ index silhouette: specify a subcommand (extract, audit, clear, deassign, recheck, score, enrich, provenance, canonical-search-audit, canonical-search-provenance, morphology-audit, number-direction-audit, number-ambiguity-audit, backfill-scanned, list, summary, rank, cluster)", file=sys.stderr)
         sys.exit(1)
+
+
+def _silhouette_active_discovery(args):
+    """Run a read-only active Illustration-index discovery operation."""
+    from services.illustration_index import ALL_MEDIA
+    from services.silhouette_discovery import (
+        ActiveSilhouetteIndexError,
+        cluster_active_variants,
+        list_active_candidate_references,
+        rank_active_candidates,
+        summarize_active_catalog,
+    )
+
+    media = getattr(args, "media", "movie")
+    media_type = ALL_MEDIA if media == "both" else normalize_media_type(media)
+    filters = {
+        "word": getattr(args, "word", None) or getattr(args, "term", ""),
+        "field": getattr(args, "field", ""),
+        "scope": getattr(args, "scope", "all"),
+        "media_type": media_type,
+    }
+    try:
+        if args.silhouette_action == "list":
+            result = list_active_candidate_references(
+                prefs.get("path"),
+                **filters,
+                sort_by=args.sort_by,
+                descending=args.descending,
+                min_pixel_area=args.min_pixel_area,
+                min_score=args.min_score,
+                limit=args.limit,
+                cursor=args.cursor,
+            )
+        elif args.silhouette_action == "summary":
+            result = summarize_active_catalog(
+                prefs.get("path"), **filters, top_n=args.top_n,
+            )
+        elif args.silhouette_action == "rank":
+            result = rank_active_candidates(
+                prefs.get("path"),
+                **filters,
+                min_pixel_area=args.min_pixel_area,
+                min_score=args.min_score,
+                limit=args.limit,
+            )
+        else:
+            result = cluster_active_variants(
+                prefs.get("path"),
+                **filters,
+                limit=args.limit,
+                candidates_per_cluster=args.candidates_per_cluster,
+            )
+    except ActiveSilhouetteIndexError as exc:
+        print(f"✗ {exc.message}", file=sys.stderr)
+        sys.exit(1)
+
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+        return
+
+    if args.silhouette_action == "list":
+        print(
+            f"Active silhouettes: {result['active_candidate_count']} total; "
+            f"showing {result['returned_count']}"
+        )
+        for item in result["entries"]:
+            print(
+                f"  {item['object_id']}  {item['word']}  "
+                f"{item['film_title']}  {item['shot_id']}  frame={item['frame_index']}"
+            )
+        if result["next_cursor"] is not None:
+            print(f"Next cursor: {result['next_cursor']}")
+        return
+    if args.silhouette_action == "summary":
+        print(
+            f"Active silhouettes: {result['active_candidate_count']}  "
+            f"films={result['distinct_active_films']}  "
+            f"shots={result['distinct_active_shots']}"
+        )
+        return
+    if args.silhouette_action == "rank":
+        print(f"Ranked active silhouettes: {result['count']}")
+        for item in result["candidates"]:
+            print(f"  {item['rank']:>3d}  {item['rank_score']:.6f}  {item['candidate_id']}")
+        return
+    print(f"Active variant clusters: {result['cluster_count']}")
+    for cluster in result["clusters"]:
+        print(
+            f"  {cluster['cluster_id']}  "
+            f"candidates={cluster['active_candidate_count']}  "
+            f"representative={cluster['representative']['candidate_id']}"
+        )
 
 
 def _index_illustration(args):
@@ -9253,6 +9347,10 @@ def build_parser():
             "Subcommands:\n"
             "  extract   Extract transparent PNG objects for a label\n"
             "  audit     Show catalog statistics\n"
+            "  list      Page active Illustration-index candidates\n"
+            "  summary   Summarize active candidates for one term\n"
+            "  rank      Rank active candidates from persisted metadata\n"
+            "  cluster   Group active candidates by persisted variant metadata\n"
             "  canonical-search-audit  Revalidate historical source-shot membership with current search\n"
             "  canonical-search-provenance  Persist a completed canonical audit as authoritative provenance\n"
             "  morphology-audit  Reclassify historical QUESTIONABLE_NUMBER rows\n"
@@ -9277,6 +9375,102 @@ def build_parser():
     )
     p_index_silhouette.set_defaults(func=cmd_index)
     silhouette_sub = p_index_silhouette.add_subparsers(dest="silhouette_action", required=True)
+
+    def _add_active_silhouette_filters(parser, *, term_name: str) -> None:
+        parser.add_argument(
+            term_name, metavar="TERM",
+            help="Exact silhouette label / vocabulary term",
+        )
+        parser.add_argument(
+            "--field", default="", metavar="FIELD",
+            help="Restrict to one exact annotation field",
+        )
+        parser.add_argument(
+            "--scope", default="all", metavar="SCOPE",
+            help="'all' or 'movie-<media_id>' (default: all)",
+        )
+        _add_media_arg(parser, allow_both=True)
+        parser.add_argument(
+            "--json", action="store_true",
+            help="Output canonical service result as JSON",
+        )
+
+    # ── active discovery ─────────────────────────────────────────────────
+    p_sil_list = silhouette_sub.add_parser(
+        "list",
+        help="Page active Illustration-index candidates without catalog traversal",
+    )
+    p_sil_list.set_defaults(func=cmd_index)
+    _add_active_silhouette_filters(p_sil_list, term_name="word")
+    p_sil_list.add_argument(
+        "--sort-by", default="catalog_order", metavar="SORT",
+        help="catalog_order, alphabetical, score, pixel_area, or a persisted quality metric",
+    )
+    p_sil_list.add_argument(
+        "--descending", action="store_true",
+        help="Reverse the selected deterministic order",
+    )
+    p_sil_list.add_argument(
+        "--min-pixel-area", type=float, default=None, metavar="PIXELS",
+        help="Inclusive minimum mask area",
+    )
+    p_sil_list.add_argument(
+        "--min-score", type=float, default=None, metavar="SCORE",
+        help="Inclusive minimum confidence score",
+    )
+    p_sil_list.add_argument(
+        "--limit", type=int, default=100, metavar="N",
+        help="Maximum candidates to return (default: 100; max: 250)",
+    )
+    p_sil_list.add_argument(
+        "--cursor", default=None, metavar="OFFSET",
+        help="Continuation cursor returned by a prior identical query",
+    )
+
+    p_sil_summary = silhouette_sub.add_parser(
+        "summary",
+        help="Summarize active candidates for one term",
+    )
+    p_sil_summary.set_defaults(func=cmd_index)
+    _add_active_silhouette_filters(p_sil_summary, term_name="term")
+    p_sil_summary.add_argument(
+        "--top-n", type=int, default=10, metavar="N",
+        help="Number of largest active candidates to include (default: 10)",
+    )
+
+    p_sil_rank = silhouette_sub.add_parser(
+        "rank",
+        help="Rank active candidates by persisted deterministic quality metadata",
+    )
+    p_sil_rank.set_defaults(func=cmd_index)
+    _add_active_silhouette_filters(p_sil_rank, term_name="term")
+    p_sil_rank.add_argument(
+        "--min-pixel-area", type=float, default=None, metavar="PIXELS",
+        help="Inclusive minimum mask area",
+    )
+    p_sil_rank.add_argument(
+        "--min-score", type=float, default=None, metavar="SCORE",
+        help="Inclusive minimum confidence score",
+    )
+    p_sil_rank.add_argument(
+        "--limit", type=int, default=20, metavar="N",
+        help="Maximum active candidates to rank (default: 20; max: 250)",
+    )
+
+    p_sil_cluster = silhouette_sub.add_parser(
+        "cluster",
+        help="Group active candidates by persisted semantic variant metadata",
+    )
+    p_sil_cluster.set_defaults(func=cmd_index)
+    _add_active_silhouette_filters(p_sil_cluster, term_name="term")
+    p_sil_cluster.add_argument(
+        "--limit", type=int, default=20, metavar="N",
+        help="Maximum clusters to return (default: 20; max: 250)",
+    )
+    p_sil_cluster.add_argument(
+        "--candidates-per-cluster", type=int, default=20, metavar="N",
+        help="Maximum candidate references per cluster (default: 20; max: 250)",
+    )
 
     # ── extract ────────────────────────────────────────────────────────────
     p_sil_extract = silhouette_sub.add_parser(
