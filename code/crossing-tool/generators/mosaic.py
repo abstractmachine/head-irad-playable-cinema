@@ -82,7 +82,12 @@ def _get_sar(video_path: str) -> tuple:
         return (1, 1)
 
 
-def extract_frame_pil(video_path: Path, frame_index: int) -> "Image.Image | None":
+def extract_frame_pil(
+    video_path: Path,
+    frame_index: int,
+    *,
+    apply_sample_aspect_ratio: bool = True,
+) -> "Image.Image | None":
     """Extract a single video frame as a PIL Image.
 
     Uses cv2 (OpenCV) for fast random-access frame seeking.
@@ -103,7 +108,7 @@ def extract_frame_pil(video_path: Path, frame_index: int) -> "Image.Image | None
             return None
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         sar = _get_sar(str(video_path))
-        if sar != (1, 1):
+        if apply_sample_aspect_ratio and sar != (1, 1):
             display_w = int(round(rgb.shape[1] * sar[0] / sar[1]))
             rgb = cv2.resize(rgb, (display_w, rgb.shape[0]), interpolation=cv2.INTER_LINEAR)
         return Image.fromarray(rgb)

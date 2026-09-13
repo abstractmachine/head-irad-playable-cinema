@@ -428,20 +428,9 @@ def sample_frames_for_shot(
     Returns list of file paths to the extracted images. If ffmpeg is not
     available or extraction fails the returned list may be shorter or empty.
     """
-    s = _timecode_to_seconds(start_time)
-    e = _timecode_to_seconds(end_time)
-    if e <= s:
-        positions = [s] * frames_per_shot
-    else:
-        duration = e - s
-        if sample_mode == "center":
-            positions = [s + (i + 1) / (frames_per_shot + 1) * duration for i in range(frames_per_shot)]
-        elif sample_mode == "start":
-            positions = [s + i * (duration / frames_per_shot) for i in range(frames_per_shot)]
-        elif sample_mode == "end":
-            positions = [e - (i + 1) / (frames_per_shot + 1) * duration for i in range(frames_per_shot)]
-        else:
-            positions = [s + (i + 1) / (frames_per_shot + 1) * duration for i in range(frames_per_shot)]
+    positions = canonical_shot_sample_positions(
+        start_time, end_time, frames_per_shot, sample_mode,
+    )
 
     tmp = Path(out_dir) if out_dir else Path(tempfile.mkdtemp(prefix="crossing-frames-"))
     tmp.mkdir(parents=True, exist_ok=True)
@@ -481,6 +470,40 @@ def sample_frames_for_shot(
     return frame_paths
 
 
+def canonical_shot_sample_positions(
+    start_time: str,
+    end_time: str,
+    frames_per_shot: int,
+    sample_mode: str = "center",
+) -> list[float]:
+    """Return the canonical annotator sample positions for one shot.
+
+    The existing annotation pipeline uses these positions before extracting
+    frames with ffmpeg. Keeping the timing formula here lets read-only
+    evidence consumers reuse it without introducing another sampler.
+    """
+    start_seconds = _timecode_to_seconds(start_time)
+    end_seconds = _timecode_to_seconds(end_time)
+    count = max(0, int(frames_per_shot))
+    if count == 0:
+        return []
+    if end_seconds <= start_seconds:
+        return [start_seconds] * count
+
+    duration = end_seconds - start_seconds
+    if sample_mode == "start":
+        return [start_seconds + index * (duration / count) for index in range(count)]
+    if sample_mode == "end":
+        return [
+            end_seconds - (index + 1) / (count + 1) * duration
+            for index in range(count)
+        ]
+    return [
+        start_seconds + (index + 1) / (count + 1) * duration
+        for index in range(count)
+    ]
+
+
 def _adaptive_frames_for_duration(
     duration_s: float,
     frames_per_shot: int,
@@ -514,6 +537,52 @@ def _adaptive_frames_for_duration(
     # honoring user baseline and max cap.
     required_by_interval = int(math.ceil(duration_s / interval))
     return min(max(base, required_by_interval), max_cap)
+
+
+def canonical_context_frame_indices(
+    start_frame: int,
+    end_frame: int,
+    start_time: str,
+    end_time: str,
+    fps: float,
+    *,
+    frames_per_shot: int = FRAMES_PER_SHOT,
+    min_frame_interval_s: float = 4.0,
+    max_frames_per_shot: int = 16,
+    sample_mode: str = "center",
+) -> list[int]:
+    """Return the annotator's canonical frame indices for one shot.
+
+    Count adaptation and temporal distribution are the exact same decisions
+    used by ``annotate_file_shots``. Indices are clamped to the known inclusive
+    shot bounds and deduplicated in chronological order because a read-only
+    evidence sequence must not pad a short shot with repeated images.
+    """
+    start = int(start_frame)
+    end = max(start, int(end_frame))
+    frame_rate = float(fps)
+    if frame_rate <= 0:
+        return []
+
+    duration = max(
+        0.0,
+        _timecode_to_seconds(end_time) - _timecode_to_seconds(start_time),
+    )
+    count = _adaptive_frames_for_duration(
+        duration,
+        frames_per_shot,
+        min_frame_interval_s,
+        max_frames_per_shot,
+    )
+    positions = canonical_shot_sample_positions(
+        start_time, end_time, count, sample_mode,
+    )
+    indices: list[int] = []
+    for position in positions:
+        frame_index = max(start, min(end, int(round(position * frame_rate))))
+        if frame_index not in indices:
+            indices.append(frame_index)
+    return indices
 
 
 def _find_prebaked_frames(project_path: str, media_type: str, filename: str, shot_index: int, frames_per_shot: int) -> List[str]:

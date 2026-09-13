@@ -11,6 +11,12 @@
 - Generation tools write only to `outputs/` subdirectories.
 - No tool may write to source data (`data/annotations/`, `data/shotlists/`, `data/metadata/`, or `preferences/`).
 
+**Normal silhouette MCP access**
+
+Normal silhouette discovery, counts, summaries, ranking, clustering, and booklet selection use **only** the ready Illustration index with `assignment_state=active`. Catalog JSON and PNG files for inactive or superseded records remain on disk for lifecycle history and provenance, but are deliberately invisible to ordinary MCP catalog operations. A missing or stale Illustration index is reported as unavailable; MCP never falls back to scanning `data/silhouettes/catalog/`.
+
+`get_silhouette_reference_packet` also requires an active indexed candidate before it reads that candidate's existing PNG. `get_best_frame`, by contrast, remains an explicit shot/frame retrieval tool: it can retrieve a source frame from a caller-supplied film and shot identity without discovering a silhouette candidate.
+
 ---
 
 ### Tier 1 — Read-only tools
@@ -24,7 +30,13 @@
 | `get_subtitles` | Subtitle cues, optional time window | `film`, `start_secs`, `end_secs` |
 | `list_motifs` | Per-shot motif sequence + film semantic title | `film` |
 | `list_palettes` | Per-shot fg/bg dominant colours (RGB/LAB) | `film` |
-| `list_silhouettes` | Cached CLIP+SAM polygon masks by word | `word`, `field`, `scope` |
+| `list_silhouettes` | Bounded active silhouette listing | `word`, `field`, `scope` |
+| `list_silhouette_candidates` | Paginated active candidate listing | `word`, `field`, `sort_by`, `limit`, `cursor` |
+| `summarize_silhouette_catalog` | Active per-term counts, area statistics, and largest candidates | `term`, `field`, `top_n` |
+| `rank_silhouette_candidates` | Deterministic ranking over active candidates | `term`, `field`, `limit` |
+| `cluster_silhouette_variants` | Groups active candidates by persisted semantic variant metadata | `term`, `field`, `limit` |
+| `get_best_silhouette` | Largest active silhouette plus representative frame | `word`, `field`, `scope` |
+| `get_silhouette_reference_packet` | Exact active silhouette, its exact source frame, and canonical same-shot context | `media_id`, `shot_id`, `frame_index`, `word`, `field` |
 | `search_shots` | Full-text search across shot annotations | `query`, `films`, `field`, `limit` |
 | `search_vocabulary` | Vocabulary index by field, sorted by frequency | `field`, `top`, `sort` |
 
@@ -74,7 +86,202 @@ Returns per-shot `fg_rgb`, `bg_rgb`, luminance, and chroma. Requires palette cac
 ```json
 { "word": "horse", "field": "animals", "scope": "all" }
 ```
-Lists cached silhouette JSON files for a term. `scope` can be `"all"` or `"movie-<media_id>"`.
+Lists up to 100 active Illustration-index candidates for a term. `scope` can be `"all"` or `"movie-<media_id>"`. Its `count` is the active population, never a raw catalog or physical SQLite row count.
+
+**`list_silhouette_candidates`**
+```json
+{
+  "word": "saddle",
+  "field": "objects",
+  "sort_by": "pixel_area",
+  "descending": true,
+  "min_pixel_area": 2000,
+  "min_score": 0.25,
+  "limit": 50,
+  "cursor": "0"
+}
+```
+Returns one deterministic page from the active Illustration population. `sort_by` accepts `catalog_order`, `alphabetical`, `score`/`confidence`, `pixel_area`, and persisted quality metrics such as `usefulness`, `fullness`, `size`, `completeness`, and `isolation`. `next_cursor` is either a deterministic offset for the same query or `null`. Default `limit` is 100 and the maximum is 250.
+
+**`summarize_silhouette_catalog`**
+```json
+{ "term": "saddle", "field": "objects", "top_n": 10 }
+```
+Returns active candidate count, distinct active films and shots, min/mean/max and 25th/50th/75th percentile mask areas, plus the largest active candidate references.
+
+**`rank_silhouette_candidates`**
+```json
+{ "term": "saddle", "field": "objects", "limit": 20 }
+```
+Ranks only active candidates using already-persisted quality metadata: usefulness, confidence, isolation, completeness, and occlusion. It does not load CLIP, SAM, embeddings, or another model.
+
+**`cluster_silhouette_variants`**
+```json
+{ "term": "saddle", "field": "objects", "limit": 20 }
+```
+Groups only active candidates by their persisted `viewpoint`, `completeness`, `occlusion`, and `isolation` values. Each cluster has a stable ID, active film/shot/candidate counts, a deterministic representative, and bounded candidate references. It is analysis only and never changes the catalog.
+
+**`get_best_silhouette`**
+
+Selects the largest candidate from the active Illustration index only. It must not be used as an exact-candidate API; use `get_silhouette_reference_packet` with the returned active `candidate_id` when the specific existing object matters.
+
+**`get_archive_stats` silhouette counts**
+
+`silhouette_entries` means the active Illustration-index population. `silhouette_physical_index_records` is a separate diagnostic count of all SQLite rows, including inactive and superseded history. The two are expected to differ after rehabilitation. `silhouette_index_status` reports whether normal active MCP access is currently available; a stale or missing index never triggers a raw-catalog fallback.
+
+**`get_silhouette_reference_packet`**
+
+Returns a read-only visual-evidence packet for one **exact existing** silhouette catalog object. It is for downstream inspection of the selected object, not for choosing a better candidate and not for engraving generation.
+
+```json
+{
+  "media_id": "tmdb_83831",
+  "shot_id": "tmdb_83831@f047842-f047878",
+  "frame_index": 47854,
+  "word": "gun",
+  "field": "objects",
+  "media_type": "movie",
+  "candidate_id": "data/silhouettes/catalog/movie/Charley One-Eye/gun/object_0001.json"
+}
+```
+
+Required selectors are `media_id`, `shot_id`, `frame_index`, `word`, and `field`; `media_type` defaults to `"movie"`. The tool applies every supplied selector exactly. There is no substring matching, score sorting, area sorting, newest-record preference, or fallback candidate selection.
+
+`candidate_id` is the project-relative canonical catalog JSON path returned in a previous packet's `candidate_ref.candidate_id`. It must identify a record that is currently active in the Illustration index. Crossing catalog `object_id` values such as `object_0001` are only unique within their existing canonical catalog reference `(media_type, filename_stem, label, object_id)`, so they are not used as globally unique selectors. Supplying `candidate_id` still validates all required composite selectors against that exact active object. Without it, the complete composite identity must resolve to exactly one active object. `png_path` is an optional project-relative catalog PNG discriminator; it must resolve beneath `data/silhouettes/catalog/<media_type>/`, otherwise the request is rejected. Neither parameter can read arbitrary filesystem paths or make a historical object current.
+
+The result content blocks are always ordered as:
+
+1. JSON metadata
+2. exact cached silhouette PNG
+3. exact photographic source frame from the catalog's `frame_index`
+4. canonical same-shot context frames in chronological order
+
+The silhouette PNG is returned byte-for-byte from the catalog, preserving its original dimensions, alpha channel, and pixel data. The exact source frame is independently extracted from the authorized original video at the catalog's recorded frame index; it is never replaced by a cached best frame, midpoint, representative frame, or first context frame. Photographic frames use native stored-video dimensions and JPEG encoding without resizing.
+
+Context uses `data.annotate.canonical_context_frame_indices`, the same adaptive frame-count and temporal sampling policy used by Crossing's shot annotator. The tool exposes no new context count or spacing parameter. It returns the available in-shot canonical set, reports the actual indices, preserves chronological ordering, and does not emit a duplicate context image when the canonical sequence already includes the exact extraction frame.
+
+Example metadata block (the following JSON block is the first returned content block):
+
+```json
+{
+  "ok": true,
+  "candidate_ref": {
+    "candidate_id": "data/silhouettes/catalog/movie/Charley One-Eye/gun/object_0001.json",
+    "object_id": "object_0001",
+    "media_type": "movie",
+    "media_id": "tmdb_83831",
+    "shot_id": "tmdb_83831@f047842-f047878",
+    "field": "objects",
+    "word": "gun"
+  },
+  "candidate": {
+    "candidate_id": "data/silhouettes/catalog/movie/Charley One-Eye/gun/object_0001.json",
+    "object_id": "object_0001",
+    "media_type": "movie",
+    "media_id": "tmdb_83831",
+    "shot_id": "tmdb_83831@f047842-f047878",
+    "field": "objects",
+    "word": "gun",
+    "frame_index": 47854,
+    "bbox": [122, 142, 589, 919],
+    "score": 0.260776,
+    "mask_area": 369771,
+    "silhouette_path": "data/silhouettes/catalog/movie/Charley One-Eye/gun/object_0001.png",
+    "scope": "movie-tmdb_83831",
+    "film_title": "Charley One-Eye",
+    "film_filename": "Charley One-Eye.mp4",
+    "shot_start_frame": 47842,
+    "shot_end_frame": 47878,
+    "timestamp_seconds": 1595.133333,
+    "fps": 30.0,
+    "silhouette_width": 601,
+    "silhouette_height": 931,
+    "silhouette_mode": "RGBA",
+    "silhouette_sha256": "..."
+  },
+  "source_frame": {
+    "frame_index": 47854,
+    "timestamp_seconds": 1595.133333,
+    "width": 1920,
+    "height": 1080,
+    "mime_type": "image/jpeg",
+    "sha256": "...",
+    "is_exact_extraction_frame": true,
+    "content_id": "exact_source_frame"
+  },
+  "context": {
+    "selection_method": "canonical_shot_frame_selection",
+    "frames": [
+      {
+        "frame_index": 47848,
+        "timestamp_seconds": 1595.0,
+        "relative_frame": -6,
+        "is_source_frame": false,
+        "width": 1920,
+        "height": 1080,
+        "mime_type": "image/jpeg",
+        "sha256": "...",
+        "content_id": "context_frame_01"
+      },
+      {
+        "frame_index": 47854,
+        "timestamp_seconds": 1595.133333,
+        "relative_frame": 0,
+        "is_source_frame": true,
+        "width": 1920,
+        "height": 1080,
+        "mime_type": "image/jpeg",
+        "sha256": "...",
+        "content_id": "exact_source_frame"
+      }
+    ]
+  },
+  "shot": {
+    "scene": "12",
+    "start_time": "00:26:34.733",
+    "end_time": "00:26:35.933",
+    "caption": null,
+    "scene_caption": null,
+    "subtitles": []
+  },
+  "provenance": {
+    "silhouette_is_existing_cache": true,
+    "source_frame_is_exact": true,
+    "context_selection_method": "canonical_shot_frame_selection",
+    "new_inference_performed": false,
+    "selection_changed": false
+  },
+  "content_order": [
+    "metadata",
+    "silhouette",
+    "exact_source_frame",
+    "context_frame_01"
+  ],
+  "warnings": [
+    "Canonical context included the extraction frame; it is emitted only as exact_source_frame."
+  ]
+}
+```
+
+Failures return one JSON metadata block and no images:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "code": "CANDIDATE_AMBIGUOUS",
+    "stage": "CANDIDATE_RESOLUTION",
+    "message": "Multiple catalog objects match every supplied exact selector.",
+    "details": {
+      "candidates": []
+    }
+  }
+}
+```
+
+Stages are `FILM_RESOLUTION`, `SHOT_RESOLUTION`, `CANDIDATE_RESOLUTION`, `SILHOUETTE_DECODING`, `EXACT_FRAME_EXTRACTION`, `CONTEXT_FRAME_EXTRACTION`, `MCP_IMAGE_ENCODING`, and `PAYLOAD_SIZE_VALIDATION`. The native-resolution packet has a conservative 900 KB total image-byte budget matching Crossing's existing MCP transport budget. If the exact evidence exceeds it, the tool returns `PAYLOAD_TOO_LARGE` with per-content byte counts rather than silently resizing, omitting, or substituting any image.
+
+`get_silhouette_reference_packet` is deliberately different from `get_best_silhouette`: `get_best_silhouette` ranks a term's candidates by area, while this tool retrieves only the exact catalog object identified by the caller. It never loads CLIP, SAM/SAM3, embeddings, or any other model; `provenance.new_inference_performed` is always `false`.
 
 **`search_shots`**
 ```json

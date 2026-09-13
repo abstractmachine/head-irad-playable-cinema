@@ -44,6 +44,7 @@ ALL = "--all"
 UNTYPED_FIELD = "<untyped>"
 
 _SORT_COLUMNS = {
+    "pixel_area": "CAST(json_extract(payload, '$.mask_area') AS REAL)",
     "confidence": "confidence_score",
     "usefulness": "usefulness_score",
     "engraving": "engraving_score",
@@ -286,7 +287,13 @@ def query_facets(
     if media_type == ALL_MEDIA:
         return _query_facets_all_media(
             project_path, source, title=title, field=field, letter=letter, mode=mode,
-            assignment_state=assignment_state, shot_type=shot_type,
+            provenance_state=provenance_state,
+            assignment_state=assignment_state,
+            shot_type=shot_type,
+            include_titles=include_titles,
+            include_fields=include_fields,
+            include_letters=include_letters,
+            include_labels=include_labels,
         )
     status = load_index(project_path, source, media_type)
     if not status.get("usable"):
@@ -303,7 +310,8 @@ def query_facets(
     with sqlite3.connect(index_path(project_path, source, media_type)) as connection:
         titles = (
             [row[0] for row in connection.execute(
-                "SELECT DISTINCT title FROM records ORDER BY title COLLATE NOCASE"
+                f"SELECT DISTINCT title FROM records {where} ORDER BY title COLLATE NOCASE",
+                params,
             )]
             if include_titles else []
         )
@@ -482,13 +490,20 @@ def query_page(
     field: str | None = None,
     letter: str | None = None,
     label: str | None = None,
+    media_id: str | None = None,
+    shot_id: str | None = None,
+    frame_index: int | None = None,
+    record_path: str | None = None,
     mode: str | None = None,
     object_id: str | None = None,
     human_best: bool | None = None,
     provenance_state: str | None = None,
     assignment_state: str | None = None,
     shot_type: str | None = None,
+    min_mask_area: float | None = None,
+    min_confidence: float | None = None,
     sort_keys: list[str] | None = None,
+    descending: bool | None = None,
     offset: int = 0,
     limit: int = 50,
 ) -> dict:
@@ -502,30 +517,38 @@ def query_page(
     if media_type == ALL_MEDIA:
         return _query_page_all_media(
             project_path, source,
-            title=title, field=field, letter=letter, label=label, mode=mode,
+            title=title, field=field, letter=letter, label=label,
+            media_id=media_id, shot_id=shot_id, frame_index=frame_index,
+            record_path=record_path, mode=mode,
             object_id=object_id, human_best=human_best,
             provenance_state=provenance_state,
             assignment_state=assignment_state,
             shot_type=shot_type,
-            sort_keys=sort_keys,
+            min_mask_area=min_mask_area,
+            min_confidence=min_confidence,
+            sort_keys=sort_keys, descending=descending,
             offset=offset, limit=limit,
         )
     status = load_index(project_path, source, media_type)
     if not status.get("usable"):
         return {**status, "total": 0, "records": []}
     where, params = _where(
-        title=title, field=field, letter=letter, label=label, mode=mode,
+        title=title, field=field, letter=letter, label=label,
+        media_id=media_id, shot_id=shot_id, frame_index=frame_index,
+        record_path=record_path, mode=mode,
         object_id=object_id, human_best=human_best,
         provenance_state=provenance_state,
         assignment_state=_default_assignment_state(source, assignment_state),
         shot_type=shot_type,
+        min_mask_area=min_mask_area,
+        min_confidence=min_confidence,
     )
     with sqlite3.connect(index_path(project_path, source, media_type)) as connection:
         total = int(connection.execute(
             f"SELECT COUNT(*) FROM records {where}", params
         ).fetchone()[0])
         rows = connection.execute(
-            f"SELECT payload FROM records {where} {_order_by(sort_keys or [])} "
+            f"SELECT payload FROM records {where} {_order_by(sort_keys or [], descending)} "
             "LIMIT ? OFFSET ?",
             [*params, max(1, int(limit)), max(0, int(offset))],
         )
@@ -538,6 +561,7 @@ def _query_page_all_media(
     source: str,
     *,
     sort_keys: list[str] | None = None,
+    descending: bool | None = None,
     offset: int = 0,
     limit: int = 50,
     **filters,
@@ -564,17 +588,21 @@ def _query_page_all_media(
         if not sub_status.get("usable"):
             continue
         sub = query_page(
-            project_path, source, mt, sort_keys=sort_keys,
+            project_path, source, mt, sort_keys=sort_keys, descending=descending,
             offset=0, limit=prefix_size, **filters,
         )
         total += int(sub.get("total", 0))
         merged.extend(sub.get("records", []))
-    merged = _sort_merged_records(merged, sort_keys)
+    merged = _sort_merged_records(merged, sort_keys, descending)
     end = start + page_size
     return {**status, "total": total, "records": merged[start:end]}
 
 
-def _sort_merged_records(records: list[dict], sort_keys: list[str] | None) -> list[dict]:
+def _sort_merged_records(
+    records: list[dict],
+    sort_keys: list[str] | None,
+    descending: bool | None = None,
+) -> list[dict]:
     """Python-side equivalent of ``_order_by`` for merging already-sorted
     per-media-type record lists into one cross-media order.
 
@@ -590,10 +618,14 @@ def _sort_merged_records(records: list[dict], sort_keys: list[str] | None) -> li
         return sorted(
             records,
             key=lambda r: sum(_numeric_score(r, key) for key in numeric) / count,
-            reverse=True,
+            reverse=descending is not False,
         )
     if "alphabetical" in keys:
-        return sorted(records, key=lambda r: str(r.get("label") or "").casefold())
+        return sorted(
+            records,
+            key=lambda r: str(r.get("label") or "").casefold(),
+            reverse=descending is True,
+        )
     # No sort keys — preserve MEDIA_TYPES order, each sub-list's own id order.
     return records
 
@@ -721,6 +753,11 @@ def _numeric_score(record: dict, key: str) -> float:
     except (TypeError, ValueError):
         pass
     mask_area = record.get("mask_area")
+    if key == "pixel_area" and mask_area is not None:
+        try:
+            return float(mask_area)
+        except (TypeError, ValueError):
+            return 0.0
     if key == "fullness" and mask_area is not None:
         bbox = record.get("bbox") or []
         if len(bbox) >= 4:
@@ -739,6 +776,10 @@ def _where(**filters) -> tuple[str, list]:
     columns = {
         "title": "title", "field": "field", "letter": "initial",
         "label": "label", "mode": "mode", "object_id": "object_id",
+        "media_id": "json_extract(payload, '$.media_id')",
+        "shot_id": "json_extract(payload, '$.shot_id')",
+        "frame_index": "CAST(json_extract(payload, '$.frame') AS INTEGER)",
+        "record_path": "json_extract(payload, '$.path')",
         "provenance_state": "search_provenance_state",
         "assignment_state": "assignment_state",
         "shot_type": "shot_type",
@@ -751,6 +792,12 @@ def _where(**filters) -> tuple[str, list]:
     if filters.get("human_best") is not None:
         clauses.append("human_best = ?")
         params.append(1 if filters["human_best"] else 0)
+    if filters.get("min_mask_area") is not None:
+        clauses.append("CAST(json_extract(payload, '$.mask_area') AS REAL) >= ?")
+        params.append(float(filters["min_mask_area"]))
+    if filters.get("min_confidence") is not None:
+        clauses.append("confidence_score >= ?")
+        params.append(float(filters["min_confidence"]))
     return ("WHERE " + " AND ".join(clauses) if clauses else ""), params
 
 
@@ -763,13 +810,19 @@ def _default_assignment_state(source: str, assignment_state: str | None) -> str 
     return ASSIGNMENT_ACTIVE
 
 
-def _order_by(sort_keys: list[str]) -> str:
+def _order_by(sort_keys: list[str], descending: bool | None = None) -> str:
     numeric = [_SORT_COLUMNS[key] for key in sort_keys if key in _SORT_COLUMNS]
     if numeric:
-        return f"ORDER BY ({' + '.join(numeric)}) / {len(numeric)} DESC, id"
+        direction = "ASC" if descending is False else "DESC"
+        tie_direction = direction if descending is not None else "ASC"
+        return (
+            f"ORDER BY ({' + '.join(numeric)}) / {len(numeric)} "
+            f"{direction}, id {tie_direction}"
+        )
     if "alphabetical" in sort_keys:
-        return "ORDER BY label COLLATE NOCASE, id"
-    return "ORDER BY id"
+        direction = "DESC" if descending is True else "ASC"
+        return f"ORDER BY label COLLATE NOCASE {direction}, id {direction}"
+    return "ORDER BY id DESC" if descending is True else "ORDER BY id"
 
 
 def _serialize_record(project: Path, record: dict) -> dict:

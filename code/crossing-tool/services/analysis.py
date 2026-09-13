@@ -777,7 +777,6 @@ def get_archive_stats(
 
     base = Path(project_path)
     ann_dir = base / "data" / "annotations" / "shots" / media_type
-    sil_dir = base / "data" / "silhouettes" / media_type
 
     entries = _get_metadata(project_path, media_type=media_type)
     film_count = len(entries)
@@ -828,13 +827,24 @@ def get_archive_stats(
         if subtitle_exists(project_path, media_type, filename):
             films_with_subtitles += 1
 
-    # Silhouette coverage: count unique (scope, field, word) directories
-    silhouette_entries = 0
-    if sil_dir.exists():
-        silhouette_entries = sum(
-            1 for p in sil_dir.rglob("*.json")
-            if p.name.startswith("best__")
+    try:
+        from services.illustration_index import load_index
+        from services.silhouette_discovery import (
+            ActiveSilhouetteIndexError,
+            active_candidate_page,
         )
+
+        silhouette_index = load_index(project_path, "silhouettes", media_type)
+        active_silhouettes = active_candidate_page(
+            project_path, media_type=media_type, limit=1,
+        )
+        silhouette_entries = active_silhouettes["total"]
+        silhouette_index_status = active_silhouettes["status"]
+        silhouette_physical_index_records = silhouette_index.get("count")
+    except ActiveSilhouetteIndexError as exc:
+        silhouette_entries = None
+        silhouette_index_status = exc.details.get("index_status") or "unknown"
+        silhouette_physical_index_records = exc.details.get("physical_record_count")
 
     # Vocabulary stats from index meta
     vocab_stats: dict = {}
@@ -862,6 +872,9 @@ def get_archive_stats(
         "total_shots":             shot_count,
         "annotated_shots":         annotated_shots,
         "silhouette_entries":      silhouette_entries,
+        "silhouette_population":   "active_illustration_index",
+        "silhouette_index_status": silhouette_index_status,
+        "silhouette_physical_index_records": silhouette_physical_index_records,
         "vocabulary":              vocab_stats,
     }
 

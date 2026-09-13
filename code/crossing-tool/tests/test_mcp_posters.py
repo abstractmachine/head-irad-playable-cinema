@@ -85,6 +85,7 @@ def test_mixed_image_tools_disable_structured_output():
         "get_motif_frames",
         "get_context_frames",
         "get_best_silhouette",
+        "get_silhouette_reference_packet",
     )
 
     for name in image_tools:

@@ -209,15 +209,6 @@ def _poster_reference(
         return poster_path, str(poster_path)
 
 
-# ---------------------------------------------------------------------------
-# Silhouette catalog helpers (private)
-# ---------------------------------------------------------------------------
-
-def _silhouette_catalog_dir(project_path: str, media_type: str) -> Path:
-    """Return the catalog root directory for the PNG-pipeline silhouettes."""
-    return Path(project_path) / "data" / "silhouettes" / "catalog" / media_type
-
-
 def _metadata_by_stem(project_path: str, media_type: str) -> dict:
     """Return ``{filename_stem: metadata_entry}`` for quick lookups."""
     try:
@@ -226,90 +217,6 @@ def _metadata_by_stem(project_path: str, media_type: str) -> dict:
         return {Path(e.get("filename", "")).stem: e for e in entries if e.get("filename")}
     except Exception:
         return {}
-
-
-def _load_catalog_entries_for_word(
-    project_path: str,
-    media_type: str,
-    word: str,
-    field: str,
-    scope: str,
-) -> list[dict]:
-    """Scan the silhouette catalog for all PNG-pipeline entries matching *word*.
-
-    Supports ``scope="all"`` or ``scope="movie-<media_id>"``.
-    Filters by *field* when *field* is non-empty.
-    """
-    import re as _re
-
-    catalog_root = _silhouette_catalog_dir(project_path, media_type)
-    if not catalog_root.exists():
-        return []
-
-    safe_label = _re.sub(r"[^a-z0-9_]", "_", word.lower().strip())
-    meta_map = _metadata_by_stem(project_path, media_type)
-
-    # Build scope filter (None = allow all)
-    scope_stems: set | None = None
-    if scope != "all" and scope.startswith("movie-"):
-        target_media_id = scope[6:]
-        scope_stems = {
-            stem for stem, e in meta_map.items()
-            if e.get("media_id") == target_media_id
-        }
-
-    entries: list[dict] = []
-    for stem_dir in sorted(catalog_root.iterdir()):
-        if not stem_dir.is_dir():
-            continue
-        filename_stem = stem_dir.name
-        if scope_stems is not None and filename_stem not in scope_stems:
-            continue
-
-        label_dir = stem_dir / safe_label
-        if not label_dir.exists():
-            continue
-
-        film_meta  = meta_map.get(filename_stem, {})
-        film_title = film_meta.get("title", filename_stem)
-
-        for json_file in sorted(label_dir.glob("object_????.json")):
-            try:
-                meta = json.loads(json_file.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            # Filter by field when specified
-            if field and meta.get("field") and meta["field"] != field:
-                continue
-
-            png_name = meta.get("png", "")
-            png_path = (label_dir / png_name) if png_name else None
-
-            entries.append({
-                "cache_path":    str(json_file),
-                "png_path":      str(png_path) if (png_path and png_path.exists()) else None,
-                "media_id":      meta.get("media_id", ""),
-                "film_title":    film_title,
-                "shot_id":       meta.get("shot_id", ""),
-                "frame_index":   meta.get("frame"),
-                "score":         meta.get("confidence"),
-                "pixel_area":    meta.get("mask_area"),
-                "bbox":          meta.get("bbox"),
-                "polygon_points": None,
-                "source_frame":  meta.get("source_frame"),
-                "filename":      meta.get("filename", ""),
-            })
-
-    return entries
-
-
-def _pick_largest_silhouette(entries: list[dict]) -> "dict | None":
-    """Return the entry with the greatest *pixel_area* (mask_area)."""
-    if not entries:
-        return None
-    valid = [e for e in entries if e.get("pixel_area") is not None]
-    pool  = valid if valid else entries
-    return max(pool, key=lambda e: e.get("pixel_area") or 0)
 
 
 def _render_silhouette_png_bytes(png_path: str, width: int) -> "bytes | None":
@@ -796,10 +703,10 @@ def list_silhouettes(
     scope: str = "all",
     media_type: str = "movie",
 ) -> str:
-    """List cached silhouette extractions for a vocabulary word.
+    """List active Illustration-index silhouette candidates for a vocabulary word.
 
-    Silhouettes are CLIP+SAM polygon masks of the best frame for a given
-    word+field combination. This tool lists what has already been extracted.
+    Historical inactive and superseded catalog assets are not visible through
+    this ordinary discovery API.
 
     Args:
         word:       The vocabulary term to look up (e.g. "horse", "gun").
@@ -807,7 +714,7 @@ def list_silhouettes(
         scope:      "all" (full corpus) or "movie-<media_id>" for one film.
         media_type: "movie" (default) or "gameplay".
 
-    Read-only. Reads: data/silhouettes/<media_type>/<scope>/<field>/<word>/
+    Read-only. Reads: active Illustration index only.
     """
     result = _ctx()
     if isinstance(result, str):
@@ -815,37 +722,24 @@ def list_silhouettes(
     project_path, _ = result
 
     try:
-        from services.silhouette import silhouette_cache_dir, load_silhouette, SILHOUETTE_VERSION
-
-        cache_dir = silhouette_cache_dir(project_path, media_type, scope, field, word)
-        if not cache_dir.exists():
-            return _ok(
-                word=word, field=field, scope=scope,
-                found=False, count=0, entries=[],
-            )
-
-        entries = sorted(cache_dir.glob(f"best__*__{SILHOUETTE_VERSION}.json"))
-        loaded = []
-        for p in entries:
-            doc = load_silhouette(p)
-            if doc:
-                loaded.append({
-                    "file": p.name,
-                    "media_id":    doc.get("media_id", ""),
-                    "shot_id":     doc.get("shot_id", ""),
-                    "frame_index": doc.get("frame_index"),
-                    "score":       doc.get("score"),
-                    "polygon_points": len(doc.get("polygon", [])),
-                })
-
-        return _ok(
-            word=word, field=field, scope=scope,
-            found=len(loaded) > 0,
-            count=len(loaded),
-            cache_dir=str(cache_dir),
-            entries=loaded,
+        from services.silhouette_discovery import (
+            ActiveSilhouetteIndexError,
+            active_candidate_page,
+            candidate_reference,
         )
 
+        page = active_candidate_page(
+            project_path, word=word, field=field, scope=scope,
+            media_type=media_type,
+        )
+        entries = [candidate_reference(project_path, record) for record in page["records"]]
+        return _ok(
+            word=word, field=field, scope=scope,
+            found=bool(entries), count=page["total"],
+            returned_count=len(entries), entries=entries,
+        )
+    except ActiveSilhouetteIndexError as exc:
+        return json.dumps(exc.payload(), indent=2)
     except Exception as exc:
         return _err(str(exc), traceback.format_exc())
 
@@ -856,12 +750,18 @@ def list_silhouette_candidates(
     field: str = "objects",
     scope: str = "all",
     media_type: str = "movie",
+    sort_by: str = "catalog_order",
+    descending: bool = False,
+    min_pixel_area: float | None = None,
+    min_score: float | None = None,
+    limit: int = 100,
+    cursor: str = "",
 ) -> str:
-    """List all cached silhouette candidates for a vocabulary term (catalog pipeline).
+    """Page active Illustration-index candidates for one vocabulary term.
 
-    Scans the PNG-pipeline silhouette catalog for every extracted object
-    matching *word*, returning metadata without loading any images.
-    Use get_best_silhouette to retrieve the actual PNG and source frame.
+    This is the ordinary silhouette discovery API. It uses only
+    ``assignment_state=active`` records from the ready Illustration index;
+    inactive and superseded catalog assets are never returned.
 
     Each entry reports: cache path, PNG path, media_id, film title, shot_id,
     frame index, CLIP confidence score, pixel area (mask_area), bounding box.
@@ -873,7 +773,15 @@ def list_silhouette_candidates(
         scope:      "all" (full corpus) or "movie-<media_id>" for one film.
         media_type: "movie" (default) or "gameplay".
 
-    Read-only. Reads: data/silhouettes/catalog/<media_type>/
+        sort_by:        ``catalog_order``, ``alphabetical``, ``score``,
+                        ``pixel_area``, or a persisted quality metric.
+        descending:     Reverse the selected deterministic sort order.
+        min_pixel_area: Optional inclusive mask-area threshold.
+        min_score:      Optional inclusive confidence threshold.
+        limit:          Maximum returned entries (default 100, max 250).
+        cursor:         Offset cursor returned as ``next_cursor``.
+
+    Read-only. Reads: active Illustration index only.
     """
     result = _ctx()
     if isinstance(result, str):
@@ -881,35 +789,185 @@ def list_silhouette_candidates(
     project_path, _ = result
 
     try:
-        entries = _load_catalog_entries_for_word(
-            project_path, media_type, word, field, scope
+        from services.silhouette_discovery import (
+            ActiveSilhouetteIndexError,
+            active_candidate_page,
+            candidate_reference,
         )
 
-        public = [
-            {
-                "cache_path":    e["cache_path"],
-                "png_path":      e["png_path"],
-                "media_id":      e["media_id"],
-                "film_title":    e["film_title"],
-                "shot_id":       e["shot_id"],
-                "frame_index":   e["frame_index"],
-                "score":         e["score"],
-                "pixel_area":    e["pixel_area"],
-                "bbox":          e["bbox"],
-                "polygon_points": e["polygon_points"],
-            }
-            for e in entries
-        ]
-
-        return _ok(
+        page = active_candidate_page(
+            project_path,
             word=word,
             field=field,
             scope=scope,
-            found=len(public) > 0,
-            count=len(public),
-            entries=public,
+            media_type=media_type,
+            sort_by=sort_by,
+            descending=descending,
+            min_pixel_area=min_pixel_area,
+            min_score=min_score,
+            limit=limit,
+            cursor=cursor,
+        )
+        entries = [candidate_reference(project_path, record) for record in page["records"]]
+        return _ok(
+            found=bool(entries),
+            active_candidate_count=page["total"],
+            returned_count=len(entries),
+            next_cursor=page["next_cursor"],
+            **{key: value for key, value in page.items() if key not in {"records", "total", "next_cursor"}},
+            entries=entries,
+        )
+    except ActiveSilhouetteIndexError as exc:
+        return json.dumps(exc.payload(), indent=2)
+    except Exception as exc:
+        return _err(str(exc), traceback.format_exc())
+
+
+@mcp.tool()
+def summarize_silhouette_catalog(
+    term: str,
+    field: str = "",
+    scope: str = "all",
+    media_type: str = "movie",
+    top_n: int = 10,
+) -> str:
+    """Summarize active Illustration-index candidates for one term.
+
+    Returns active candidate, film, and shot counts; mask-area distribution
+    statistics; and the largest active candidates. Historical inactive and
+    superseded records are deliberately excluded.
+    """
+    result = _ctx()
+    if isinstance(result, str):
+        return result
+    project_path, _ = result
+
+    try:
+        from services.silhouette_discovery import (
+            ActiveSilhouetteIndexError,
+            summarize_active_catalog,
         )
 
+        summary = summarize_active_catalog(
+            project_path,
+            word=term,
+            field=field,
+            scope=scope,
+            media_type=media_type,
+            top_n=top_n,
+        )
+        return _ok(
+            term=term,
+            field=field or None,
+            scope=scope,
+            media_type=media_type,
+            population="active_illustration_index",
+            **summary,
+        )
+    except ActiveSilhouetteIndexError as exc:
+        return json.dumps(exc.payload(), indent=2)
+    except Exception as exc:
+        return _err(str(exc), traceback.format_exc())
+
+
+@mcp.tool()
+def rank_silhouette_candidates(
+    term: str,
+    field: str = "",
+    scope: str = "all",
+    media_type: str = "movie",
+    min_pixel_area: float | None = None,
+    min_score: float | None = None,
+    limit: int = 20,
+) -> str:
+    """Rank existing active candidates using stored deterministic metadata.
+
+    Ranking reads persisted quality, confidence, isolation, completeness, and
+    occlusion values only. It never loads a model, changes lifecycle state, or
+    promotes historical candidates into the active population.
+    """
+    result = _ctx()
+    if isinstance(result, str):
+        return result
+    project_path, _ = result
+
+    try:
+        from services.silhouette_discovery import (
+            ActiveSilhouetteIndexError,
+            rank_active_candidates,
+        )
+
+        ranking = rank_active_candidates(
+            project_path,
+            word=term,
+            field=field,
+            scope=scope,
+            media_type=media_type,
+            min_pixel_area=min_pixel_area,
+            min_score=min_score,
+            limit=limit,
+        )
+        return _ok(
+            term=term,
+            field=field or None,
+            scope=scope,
+            media_type=media_type,
+            population="active_illustration_index",
+            new_inference_performed=False,
+            **ranking,
+        )
+    except ActiveSilhouetteIndexError as exc:
+        return json.dumps(exc.payload(), indent=2)
+    except Exception as exc:
+        return _err(str(exc), traceback.format_exc())
+
+
+@mcp.tool()
+def cluster_silhouette_variants(
+    term: str,
+    field: str = "",
+    scope: str = "all",
+    media_type: str = "movie",
+    limit: int = 20,
+    candidates_per_cluster: int = 20,
+) -> str:
+    """Group active candidates by their existing semantic-variant metadata.
+
+    Cluster signatures use persisted viewpoint, completeness, occlusion, and
+    isolation metadata. No image inference runs, and historical records do not
+    expand or appear in any cluster.
+    """
+    result = _ctx()
+    if isinstance(result, str):
+        return result
+    project_path, _ = result
+
+    try:
+        from services.silhouette_discovery import (
+            ActiveSilhouetteIndexError,
+            cluster_active_variants,
+        )
+
+        clusters = cluster_active_variants(
+            project_path,
+            word=term,
+            field=field,
+            scope=scope,
+            media_type=media_type,
+            limit=limit,
+            candidates_per_cluster=candidates_per_cluster,
+        )
+        return _ok(
+            term=term,
+            field=field or None,
+            scope=scope,
+            media_type=media_type,
+            population="active_illustration_index",
+            new_inference_performed=False,
+            **clusters,
+        )
+    except ActiveSilhouetteIndexError as exc:
+        return json.dumps(exc.payload(), indent=2)
     except Exception as exc:
         return _err(str(exc), traceback.format_exc())
 
@@ -1523,11 +1581,10 @@ def get_best_silhouette(
     media_type: str = "movie",
     width: int = 400,
 ) -> list:
-    """Return the best silhouette for a vocabulary term, plus its source frame.
+    """Return the largest active silhouette for a vocabulary term plus a frame.
 
-    Selects the catalog entry with the greatest pixel area, then returns
-    both the transparent silhouette PNG and the original source frame as
-    inline images — mirroring the image-return pattern of get_best_frames.
+    Selects the largest candidate only from the active Illustration index.
+    Historical inactive and superseded catalog assets cannot participate.
 
     Return value: [metadata_json_str, silhouette_png, source_frame_jpeg]
     The silhouette is a transparent RGBA PNG; the frame is a JPEG thumbnail.
@@ -1540,7 +1597,7 @@ def get_best_silhouette(
         media_type: "movie" (default) or "gameplay".
         width:      Thumbnail width in pixels (default 400).
 
-    Read-only. Reads: data/silhouettes/catalog/, media/frames/best/
+    Read-only. Reads: active Illustration index, selected PNG, media frames.
     """
     result = _ctx()
     if isinstance(result, str):
@@ -1548,51 +1605,40 @@ def get_best_silhouette(
     project_path, _ = result
 
     try:
-        entries = _load_catalog_entries_for_word(
-            project_path, media_type, word, field, scope
+        from services.silhouette_discovery import (
+            ActiveSilhouetteIndexError,
+            candidate_reference,
+            select_largest_active_candidate,
         )
-        if not entries:
-            return [_err(
-                f"No silhouette candidates found for {word!r} "
-                f"(field={field!r}, scope={scope!r}).",
-                "Run: crossing silhouette catalog scan  to populate the catalog.",
-            )]
 
-        best = _pick_largest_silhouette(entries)
+        best = select_largest_active_candidate(
+            project_path, word=word, field=field, scope=scope,
+            media_type=media_type,
+        )
         if best is None:
-            return [_err(f"Could not select a best silhouette for {word!r}.")]
+            return [_err(
+                f"No active silhouette candidates found for {word!r} "
+                f"(field={field!r}, scope={scope!r}).",
+                "Build the Illustration index after extracting or curating silhouettes.",
+            )]
+        best_ref = candidate_reference(project_path, best)
 
         # --- Load silhouette PNG ---
         sil_bytes: bytes | None = None
-        if best.get("png_path"):
-            sil_bytes = _render_silhouette_png_bytes(best["png_path"], width)
+        if best_ref.get("silhouette_path"):
+            sil_bytes = _render_silhouette_png_bytes(
+                str(Path(project_path) / best_ref["silhouette_path"]), width,
+            )
 
         # --- Load source frame ---
         frame_bytes: bytes | None = None
-        source_frame = best.get("source_frame", "")
-        if source_frame and not source_frame.startswith("frame:"):
-            src_path = Path(source_frame)
-            if not src_path.is_absolute():
-                src_path = Path(project_path) / source_frame
-            if src_path.exists():
-                try:
-                    import io as _io
-                    from PIL import Image as _PIL
-                    from services.frame_retrieval import _resize_pil, _pil_to_jpeg_bytes
-                    img = _PIL.open(src_path).convert("RGB")
-                    img = _resize_pil(img, width)
-                    frame_bytes = _pil_to_jpeg_bytes(img)
-                except Exception:
-                    pass
-
-        # Fallback: frame retrieval service
-        if frame_bytes is None and best.get("shot_id") and best.get("filename"):
+        if best_ref.get("shot_id") and best_ref.get("film_filename"):
             try:
                 from services.frame_retrieval import retrieve_single_frame
                 fr = retrieve_single_frame(
                     project_path,
-                    best["filename"],
-                    best["shot_id"],
+                    best_ref["film_filename"],
+                    best_ref["shot_id"],
                     media_type,
                     width=width,
                 )
@@ -1604,13 +1650,14 @@ def get_best_silhouette(
             word=word,
             field=field,
             scope=scope,
-            film_title=best.get("film_title", ""),
-            shot_id=best.get("shot_id", ""),
-            frame_index=best.get("frame_index"),
-            pixel_area=best.get("pixel_area"),
-            score=best.get("score"),
-            bbox=best.get("bbox"),
-            source_cache_path=best.get("cache_path"),
+            candidate=best_ref,
+            film_title=best_ref.get("film_title", ""),
+            shot_id=best_ref.get("shot_id", ""),
+            frame_index=best_ref.get("frame_index"),
+            pixel_area=best_ref.get("mask_area"),
+            score=best_ref.get("score"),
+            bbox=best_ref.get("bbox"),
+            source_cache_path=best_ref.get("candidate_id"),
             has_silhouette_png=sil_bytes is not None,
             has_source_frame=frame_bytes is not None,
         )
@@ -1622,8 +1669,86 @@ def get_best_silhouette(
             out.append(_MCPImage(data=frame_bytes, format="jpeg"))
         return out
 
+    except ActiveSilhouetteIndexError as exc:
+        return [json.dumps(exc.payload(), indent=2)]
     except Exception as exc:
         return [_err(str(exc), traceback.format_exc())]
+
+
+@mcp.tool(structured_output=False)
+def get_silhouette_reference_packet(
+    media_id: str,
+    shot_id: str,
+    frame_index: int,
+    word: str,
+    field: str,
+    candidate_id: str = "",
+    png_path: str = "",
+    media_type: str = "movie",
+) -> list:
+    """Return exact existing visual evidence for one silhouette catalog object.
+
+    ``candidate_id`` is the project-relative path to the canonical catalog JSON
+    object returned by this tool. When it is omitted, every supplied composite
+    selector must match exactly; ambiguous candidates return an error rather
+    than being ranked. The source frame is extracted from the catalog's exact
+    ``frame_index``. Context frames use Crossing's canonical same-shot
+    annotator frame-selection algorithm and never replace the source frame.
+
+    Returns ``[metadata, silhouette, exact_source_frame, context_frame_01, …]``.
+    The silhouette is its original RGBA PNG bytes; photographic frames are
+    native-resolution JPEGs. Read-only: no catalog mutation, candidate
+    selection, or model inference is performed.
+    """
+    result = _ctx()
+    if isinstance(result, str):
+        context_error = json.loads(result)
+        return [json.dumps({
+            "ok": False,
+            "error": {
+                "code": "PROJECT_CONTEXT_INVALID",
+                "stage": "FILM_RESOLUTION",
+                "message": context_error.get("error", "Project context is unavailable."),
+                "details": {"detail": context_error.get("detail", "")},
+            },
+        }, indent=2)]
+    project_path, _ = result
+
+    try:
+        from services.silhouette_reference import retrieve_silhouette_reference_packet
+
+        packet = retrieve_silhouette_reference_packet(
+            project_path,
+            media_id=media_id,
+            shot_id=shot_id,
+            frame_index=frame_index,
+            word=word,
+            field=field,
+            candidate_id=candidate_id or None,
+            png_path=png_path or None,
+            media_type=media_type,
+        )
+        return [
+            json.dumps(packet["metadata"], indent=2, default=str),
+            *[
+                _MCPImage(data=item["data"], format=item["format"])
+                for item in packet["content"]
+            ],
+        ]
+    except Exception as exc:
+        from services.silhouette_reference import SilhouetteReferenceError
+
+        if isinstance(exc, SilhouetteReferenceError):
+            return [json.dumps(exc.payload(), indent=2, default=str)]
+        return [json.dumps({
+            "ok": False,
+            "error": {
+                "code": "MCP_IMAGE_ENCODING_FAILED",
+                "stage": "MCP_IMAGE_ENCODING",
+                "message": str(exc),
+                "details": {"traceback": traceback.format_exc()},
+            },
+        }, indent=2)]
 
 
 # ===========================================================================
@@ -2031,7 +2156,7 @@ def generate_silhouette_booklet(
         output_format: "pdf" (default).
         media_type:    "movie" (default) or "gameplay".
 
-    Output-writing. Reads: data/silhouettes/catalog/, media/frames/best/
+    Output-writing. Reads: active Illustration index, selected PNG, media frames.
                    Writes: outputs/booklets/
     """
     if not words:
@@ -2074,47 +2199,55 @@ def generate_silhouette_booklet(
                     if fl in e.get("title", "").lower() or fl in stem.lower():
                         film_media_ids.add(e.get("media_id", ""))
 
+        from services.silhouette_discovery import (
+            ActiveSilhouetteIndexError,
+            candidate_reference,
+            iter_active_candidates,
+        )
+
         words_to_use = words[:limit]
         pages: list  = []
         summary: list[dict] = []
 
         for word in words_to_use:
-            entries = _load_catalog_entries_for_word(
-                project_path, media_type, word, "", "all"
-            )
+            entries = list(iter_active_candidates(
+                project_path, word=word, media_type=media_type,
+            ))
             if film_media_ids is not None:
-                entries = [e for e in entries if e.get("media_id") in film_media_ids]
+                entries = [entry for entry in entries if entry.get("media_id") in film_media_ids]
 
-            best = _pick_largest_silhouette(entries)
+            best = max(
+                entries,
+                key=lambda entry: (
+                    float(entry.get("mask_area") or 0),
+                    candidate_reference(project_path, entry)["candidate_id"],
+                ),
+                default=None,
+            )
             if best is None:
                 summary.append({"word": word, "status": "no_silhouette"})
                 continue
+            best_ref = candidate_reference(project_path, best)
 
             # Load silhouette image
             sil_img: object | None = None
-            if best.get("png_path"):
+            if best_ref.get("silhouette_path"):
                 try:
-                    sil_img = _PIL.open(best["png_path"]).convert("RGBA")
+                    sil_img = _PIL.open(
+                        Path(project_path) / best_ref["silhouette_path"]
+                    ).convert("RGBA")
                 except Exception:
                     pass
 
             # Load source frame
             frame_img: object | None = None
-            source_frame = best.get("source_frame", "")
-            if source_frame and not source_frame.startswith("frame:"):
-                src_path = Path(source_frame)
-                if not src_path.is_absolute():
-                    src_path = Path(project_path) / source_frame
-                if src_path.exists():
-                    try:
-                        frame_img = _PIL.open(src_path).convert("RGB")
-                    except Exception:
-                        pass
-            if frame_img is None and best.get("shot_id") and best.get("filename"):
+            if best_ref.get("shot_id") and best_ref.get("film_filename"):
                 try:
                     from services.frame_retrieval import retrieve_single_frame
                     fr = retrieve_single_frame(
-                        project_path, best["filename"], best["shot_id"],
+                        project_path,
+                        best_ref["film_filename"],
+                        best_ref["shot_id"],
                         media_type, width=900,
                     )
                     if fr.get("image_data"):
@@ -2127,7 +2260,7 @@ def generate_silhouette_booklet(
             draw = _Draw.Draw(page)
 
             draw.text((MARGIN, MARGIN), word.upper(), fill=(0, 0, 0), font=font_word)
-            subtitle = best.get("film_title", "")
+            subtitle = best_ref.get("film_title", "")
             if subtitle:
                 draw.text((MARGIN, MARGIN + 90), subtitle, fill=(100, 100, 100), font=font_sub)
 
@@ -2165,16 +2298,16 @@ def generate_silhouette_booklet(
             summary.append({
                 "word":       word,
                 "status":     "ok",
-                "film_title": best.get("film_title", ""),
-                "shot_id":    best.get("shot_id", ""),
-                "pixel_area": best.get("pixel_area"),
+                "film_title": best_ref.get("film_title", ""),
+                "shot_id":    best_ref.get("shot_id", ""),
+                "pixel_area": best_ref.get("mask_area"),
             })
 
         if not pages:
             return _err(
-                "No pages generated — no silhouette catalog entries found for "
+                "No pages generated — no active Illustration-index entries found for "
                 "the given words.",
-                "Run: crossing silhouette catalog scan  to populate the catalog.",
+                "Build the Illustration index after extracting or curating silhouettes.",
             )
 
         out_dir   = _output_dir(project_path, "booklets")
@@ -2201,6 +2334,8 @@ def generate_silhouette_booklet(
             ],
         )
 
+    except ActiveSilhouetteIndexError as exc:
+        return json.dumps(exc.payload(), indent=2)
     except Exception as exc:
         return _err(str(exc), traceback.format_exc())
 

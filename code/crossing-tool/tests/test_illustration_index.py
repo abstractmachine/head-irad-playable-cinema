@@ -562,6 +562,81 @@ def test_index_facets_skip_unrequested_aggregations(tmp_path):
     assert facets["labels"] == []
 
 
+def test_index_pages_filter_exact_payload_fields_and_sort_direction(tmp_path):
+    records = [
+        {
+            "path": tmp_path / "data" / "silhouettes" / "catalog" / "movie" / "film" / "gun" / "object_0001.json",
+            "media_type": "movie",
+            "media_id": "tmdb_1",
+            "shot_id": "tmdb_1@f000001-f000010",
+            "frame": 5,
+            "filename_stem": "film",
+            "field": "objects",
+            "label": "gun",
+            "confidence": 0.2,
+            "mask_area": 20,
+            "assignment": {"state": "active"},
+        },
+        {
+            "path": tmp_path / "data" / "silhouettes" / "catalog" / "movie" / "film" / "gun" / "object_0002.json",
+            "media_type": "movie",
+            "media_id": "tmdb_1",
+            "shot_id": "tmdb_1@f000001-f000010",
+            "frame": 6,
+            "filename_stem": "film",
+            "field": "objects",
+            "label": "gun",
+            "confidence": 0.9,
+            "mask_area": 90,
+            "assignment": {"state": "active"},
+        },
+    ]
+    with patch("services.illustration_index._scan_silhouettes", return_value=records):
+        rebuild_index(tmp_path, "silhouettes", "movie")
+
+    result = query_page(
+        tmp_path,
+        "silhouettes",
+        "movie",
+        media_id="tmdb_1",
+        shot_id="tmdb_1@f000001-f000010",
+        frame_index=6,
+        record_path="data/silhouettes/catalog/movie/film/gun/object_0002.json",
+        min_mask_area=50,
+        min_confidence=0.5,
+        sort_keys=["pixel_area"],
+        descending=False,
+        limit=10,
+    )
+
+    assert result["total"] == 1
+    assert result["records"][0]["frame"] == 6
+    assert result["records"][0]["path"].name == "object_0002.json"
+
+
+def test_silhouette_facets_exclude_historical_titles(tmp_path):
+    records = [
+        {
+            "filename_stem": "active-film",
+            "field": "objects",
+            "label": "gun",
+            "assignment": {"state": "active"},
+        },
+        {
+            "filename_stem": "historical-film",
+            "field": "objects",
+            "label": "gun",
+            "assignment": {"state": "superseded"},
+        },
+    ]
+    with patch("services.illustration_index._scan_silhouettes", return_value=records):
+        rebuild_index(tmp_path, "silhouettes", "movie")
+
+    facets = query_facets(tmp_path, "silhouettes", "movie")
+
+    assert facets["titles"] == ["active-film"]
+
+
 def test_silhouette_index_derives_object_id_and_engraved_first_sort(tmp_path):
     catalog = tmp_path / "data" / "silhouettes" / "catalog" / "movie" / "film" / "horse"
     catalog.mkdir(parents=True)

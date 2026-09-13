@@ -1848,8 +1848,11 @@ class ShotlistVisualizer(WindowVisualizer):
         """
         if self._last_pixmap is None or self._last_pixmap.isNull():
             return
+        target_size = self.frame_label.size()
+        if target_size.width() <= 0 or target_size.height() <= 0:
+            return
         scaled_pixmap = self._last_pixmap.scaled(
-            self.frame_label.size(),
+            target_size,
             Qt.KeepAspectRatio,
             Qt.SmoothTransformation
         )
@@ -1867,6 +1870,11 @@ class ShotlistVisualizer(WindowVisualizer):
         self._subtitle_overlay_layout.setContentsMargins(
             horizontal_inset, 0, horizontal_inset, bottom_inset
         )
+
+    def changeEvent(self, event):  # noqa: N802
+        super().changeEvent(event)
+        if event.type() == QEvent.WindowStateChange:
+            QTimer.singleShot(0, self._rescale_current_frame)
     
     def toggle_play_pause(self):
         """Toggle video playback."""

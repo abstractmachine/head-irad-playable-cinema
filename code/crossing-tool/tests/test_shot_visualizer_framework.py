@@ -8,8 +8,11 @@ is stubbed out entirely (no real video file is needed) so the test can
 focus purely on shell construction.
 """
 
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
 import pytest
-from PyQt5.QtCore import QPoint, Qt
+from PyQt5.QtCore import QEvent, QPoint, Qt
 from PyQt5.QtGui import QKeyEvent, QPixmap
 from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import QApplication
@@ -202,6 +205,77 @@ def test_video_container_fills_browser_with_no_scrubber_carveout(
         assert win.timeline_hit_area.y() == video_container.height() - hit_height
     finally:
         win.close()
+
+
+def test_fullscreen_keeps_the_cached_video_frame_visible(
+    app, fake_prefs, fake_movie, tmp_path,
+):
+    win = _make_window(app, tmp_path)
+    frame = QPixmap(320, 180)
+    frame.fill(Qt.red)
+    try:
+        win._last_pixmap = frame
+        win.show()
+        win.resize(900, 500)
+        app.processEvents()
+        win._rescale_current_frame()
+
+        event = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Backtab, Qt.ShiftModifier)
+        win.keyPressEvent(event)
+        app.processEvents()
+
+        displayed = win.frame_label.pixmap()
+        assert win.isFullScreen()
+        assert win.frame_label.isVisible()
+        assert win.frame_label.width() > 0
+        assert win.frame_label.height() > 0
+        assert displayed is not None and not displayed.isNull()
+    finally:
+        win.close()
+        win.deleteLater()
+        app.processEvents()
+
+
+def test_window_state_change_restores_the_cached_video_frame(
+    app, fake_prefs, fake_movie, tmp_path,
+):
+    win = _make_window(app, tmp_path)
+    frame = QPixmap(320, 180)
+    frame.fill(Qt.red)
+    try:
+        win._last_pixmap = frame
+        win.show()
+        win.resize(900, 500)
+        app.processEvents()
+        win.frame_label.setPixmap(QPixmap())
+
+        win.changeEvent(QEvent(QEvent.WindowStateChange))
+        app.processEvents()
+
+        displayed = win.frame_label.pixmap()
+        assert displayed is not None and not displayed.isNull()
+    finally:
+        win.close()
+        win.deleteLater()
+        app.processEvents()
+
+
+def test_zero_sized_video_label_does_not_clear_the_cached_frame(app):
+    frame = QPixmap(320, 180)
+    frame.fill(Qt.red)
+    label = MagicMock()
+    label.size.return_value.width.return_value = 0
+    label.size.return_value.height.return_value = 0
+    window = SimpleNamespace(
+        _last_pixmap=frame,
+        frame_label=label,
+        _position_subtitle_overlay=MagicMock(),
+    )
+
+    ShotlistVisualizer._rescale_current_frame(window)
+
+    label.setPixmap.assert_not_called()
+    window._position_subtitle_overlay.assert_not_called()
 
 
 def test_tab_toggles_scene_shot_and_inspector_together(app, fake_prefs, fake_movie, tmp_path):
