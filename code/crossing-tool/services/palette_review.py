@@ -422,6 +422,13 @@ def reset(project_path: str, filename: str, media_type: str, shot_id: str) -> di
     return _mutate(project_path, filename, media_type, shot_id, store.reset_frame)
 
 
+def clear_proposals(project_path: str, filename: str, media_type: str,
+                    shot_id: str) -> dict:
+    """Clear one frame's generated proposals as well as its human result."""
+    return _mutate(project_path, filename, media_type, shot_id,
+                   store.clear_proposals)
+
+
 def set_manual(project_path: str, filename: str, media_type: str, shot_id: str,
                role: str, colour: dict, *, masks: list | None = None) -> dict:
     """Store a hand-authored role colour exactly as supplied."""

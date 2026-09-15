@@ -38,6 +38,7 @@ class AspectGridWidget(QWidget):
         self._gap = gap
         self._margin = margin
         self._zoom = 1.0
+        self._columns = 1
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     # ------------------------------------------------------------------ cells
@@ -59,6 +60,21 @@ class AspectGridWidget(QWidget):
 
     def cells(self) -> List[QWidget]:
         return list(self._cells)
+
+    def columns(self) -> int:
+        """Columns in the current layout, for row-wise keyboard navigation."""
+        return max(1, self._columns)
+
+    # ------------------------------------------------------------------ aspect
+    def aspect(self) -> float:
+        return self._aspect
+
+    def set_aspect(self, aspect: float) -> None:
+        """Set the cell width:height ratio, e.g. a movie's real frame ratio."""
+        aspect = float(aspect)
+        if aspect > 0 and abs(aspect - self._aspect) > 1e-6:
+            self._aspect = aspect
+            self.request_reflow()
 
     # ------------------------------------------------------------------ zoom
     def zoom(self) -> float:
@@ -132,6 +148,7 @@ class AspectGridWidget(QWidget):
             cell_h = max(1, int(cell_w / self._aspect))
 
         rows = math.ceil(n / cols)
+        self._columns = cols
         grid_w = cols * cell_w + (cols - 1) * self._gap
         grid_h = rows * cell_h + (rows - 1) * self._gap
 

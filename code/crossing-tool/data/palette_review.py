@@ -147,13 +147,21 @@ def has_proposals(entry: dict | None) -> bool:
 
 
 def selectable_choices(entry: dict | None) -> list[str]:
-    """Choice keys a reviewer may actually press. Inactive ones are excluded."""
+    """Choice keys a reviewer may actually accept.
+
+    A choice must be active *and* carry both measured colours. The refusal
+    quadrant is active but has no palette, so it is never acceptable — without
+    this the caller would reach ``accept_proposal`` and raise.
+    """
     entry = entry or {}
     proposals = entry.get("proposals") or {}
-    return [
-        key for key in sorted(proposals, key=lambda value: int(value))
-        if (proposals[key] or {}).get("active")
-    ]
+    keys = []
+    for key in sorted(proposals, key=lambda value: int(value)):
+        proposal = proposals[key] or {}
+        colours = [item for item in (proposal.get("colours") or []) if item]
+        if proposal.get("active") and len(colours) == 2:
+            keys.append(key)
+    return keys
 
 
 def begin_generation(entry: dict, version: str, generation_id: str) -> dict:
@@ -309,6 +317,18 @@ def reset_frame(entry: dict) -> dict:
     entry.pop("review", None)
     entry.pop("manual", None)
     entry.pop("final_palette", None)
+    return entry
+
+
+def clear_proposals(entry: dict) -> dict:
+    """Drop the generated proposals too, returning the frame to not_generated.
+
+    The deeper half of the staged reset: once the proposals are gone a human
+    answer could no longer refer to anything, so that goes with them.
+    """
+    reset_frame(entry)
+    entry.pop("proposal_generation", None)
+    entry.pop("proposals", None)
     return entry
 
 

@@ -99,6 +99,7 @@ INSPECTOR_GAP = 3          # canonical inspector spacing/margins (px)
 SECTION_GAP  = INSPECTOR_GAP
 TEXT         = "#ffffff"   # primary text — white
 TEXT_DIM     = "#909090"   # secondary / hint text
+SHORTCUT_TEXT = TEXT_DIM   # keyboard-shortcut hints on buttons (see ShortcutButton)
 TRIANGLE     = "#bfbfbf"   # 75% grey — disclosure and dropdown indicators
 BORDER       = "#ffffff"   # interactive element borders (buttons, inputs) — white
 UI_BORDER    = "#404040"   # structural chrome borders (group boxes, frames) — 25% grey

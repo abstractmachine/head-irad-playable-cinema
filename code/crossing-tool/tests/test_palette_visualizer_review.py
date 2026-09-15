@@ -54,6 +54,29 @@ def _press(window, key, text="", modifiers=Qt.NoModifier):
     window.keyPressEvent(QKeyEvent(QEvent.KeyPress, key, modifiers, text))
 
 
+def _double_click(x=10, y=10):
+    from PyQt5.QtCore import QPoint
+    from PyQt5.QtGui import QMouseEvent
+
+    return QMouseEvent(QEvent.MouseButtonDblClick, QPoint(x, y),
+                       Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+
+
+def _generated_entry(choices=("1", "2")):
+    """A standalone generated frame record, for pure store-level assertions."""
+    from services import palette_review as service
+
+    return store.record_generation(
+        {}, service.PROPOSAL_VERSION, "gen-x",
+        {key: {"strategy": "direct", "label": "DIRECT", "active": True,
+               "materials": ["a", "b"], "converges_with": [],
+               "colours": [{"rgb": [1, 2, 3], "hex": "#010203"},
+                           {"rgb": [4, 5, 6], "hex": "#040506"}]}
+         for key in choices},
+        {"source_image": "x.png"},
+    )
+
+
 def _generated(window, choices=("1", "2")):
     """Give the current frame stored proposals, through the real store."""
     from services import palette_review as service
@@ -139,11 +162,17 @@ class TestNavigation:
         assert window.mode() == "all"
 
     def test_the_inspector_exposes_both_modes_as_buttons(self, window):
-        labels = {mode: button.text()
+        labels = {mode: (button.text(), button.shortcut_text())
                   for mode, button in window._mode_btns.items()}
-        assert labels == {"single": "Single Frame   S", "all": "All Frames   A"}
+        assert labels == {"single": ("Single Frame", "S"),
+                          "all": ("All Frames", "A")}
         assert all(button.isVisibleTo(window._inspector)
                    for button in window._mode_btns.values())
+
+    def test_the_two_modes_share_one_row(self, window):
+        single = window._mode_btns["single"]
+        assert single.parentWidget() is window._mode_btns["all"].parentWidget()
+        assert single.parentWidget() is not window._toggle_btns["palette"].parentWidget()
 
     def test_the_buttons_and_the_keys_drive_the_same_transition(self, window):
         window._mode_btns["single"].click()
@@ -181,6 +210,73 @@ class TestNavigation:
         assert isinstance(window._browser._scrub, TimelineHitArea)
         assert isinstance(window._browser._scrub_bar, TimelineScrollBar)
 
+    def test_up_and_down_step_a_grid_row_in_all_frames(self, window):
+        window.set_mode("all")
+        window._select_frame(0)
+        columns = window._browser.columns()
+        _press(window, Qt.Key_Down)
+        assert window._current == min(columns, len(window._frames) - 1)
+        _press(window, Qt.Key_Up)
+        assert window._current == 0
+
+    def test_up_and_down_do_nothing_in_single_frame(self, window):
+        window.set_mode("single")
+        window._select_frame(1)
+        _press(window, Qt.Key_Down)
+        assert window._current == 1
+        _press(window, Qt.Key_Up)
+        assert window._current == 1
+
+    def test_left_and_right_still_work_in_single_frame(self, window):
+        window.set_mode("single")
+        window._select_frame(1)
+        _press(window, Qt.Key_Right)
+        assert window._current == 2
+        _press(window, Qt.Key_Left)
+        assert window._current == 1
+
+    def test_row_stepping_is_clamped_to_the_frame_list(self, window):
+        window.set_mode("all")
+        window._select_frame(0)
+        window.step_row(-1)
+        assert window._current == 0
+        for _ in range(20):
+            window.step_row(1)
+        assert 0 <= window._current < len(window._frames)
+
+    def test_selecting_a_frame_scrolls_it_into_view(self, window):
+        window.set_mode("all")
+        page = window._browser
+        page.resize(300, 200)
+        page.layout().activate()
+        calls = []
+        page._scroll.ensureWidgetVisible = lambda widget, *a, **k: calls.append(widget)
+        window._select_frame(len(window._frames) - 1)
+        assert calls and calls[-1] is page._cells[len(window._frames) - 1]
+
+    def test_double_click_in_all_frames_opens_that_frame(self, window):
+        window.set_mode("all")
+        window._browser.frame_activated.emit(2)
+        assert window._current == 2
+        assert window.mode() == "single"
+
+    def test_double_click_in_single_frame_returns_to_all_frames(self, window):
+        window.set_mode("single")
+        window._select_frame(2)
+        window._browser.canvas().double_clicked.emit()
+        assert window.mode() == "all"
+        assert window._current == 2
+
+    def test_a_double_click_while_armed_does_not_change_mode(self, window):
+        window.set_mode("single")
+        window.assign_role(store.ROLE_FIGURE)
+        canvas = window._browser.canvas()
+        emitted = []
+        canvas.double_clicked.connect(lambda: emitted.append(True))
+        canvas.mouseDoubleClickEvent(_double_click())
+        assert emitted == []
+        assert window.mode() == "single"
+
     def test_the_scrub_area_does_not_leave_a_tall_empty_band(self, window):
         from styles import theme
         from visualizers.palette_visualizer import SCRUB_BARS
@@ -189,21 +285,39 @@ class TestNavigation:
         assert scrub.height() == theme.SCROLLBAR_W * SCRUB_BARS
         assert SCRUB_BARS < 15
 
-    def test_the_scrub_area_paints_the_browser_background(self, window):
-        from styles import theme
-
-        scrub = window._browser._scrub
-        # A bare QWidget ignores an ancestor's stylesheet without this, and
-        # falls back to the light window grey.
+    def test_the_scrub_area_floats_over_the_frames(self, window):
+        page = window._browser
+        scrub = page._scrub
+        # Parented to the page, not added to its layout, so it overlays.
+        assert scrub.parentWidget() is page
+        assert page.layout().indexOf(scrub) == -1
+        assert "transparent" in scrub.styleSheet()
         assert scrub.testAttribute(Qt.WA_StyledBackground) is True
-        assert theme.CANVAS_BG in scrub.styleSheet()
-        assert theme.BG not in scrub.styleSheet()
 
-    def test_the_browser_stack_absorbs_the_remaining_height(self, window):
+    def test_the_frames_reach_the_bottom_of_the_browser(self, window):
         page = window._browser
         page.resize(800, 600)
         page.layout().activate()
-        assert page._stack.height() + page._scrub.height() == page.height()
+        assert page._stack.height() == page.height()
+        assert page._stack.geometry().bottom() == page.rect().bottom()
+
+    def test_the_scrubber_sits_on_the_bottom_edge(self, window):
+        from PyQt5.QtCore import QSize
+        from PyQt5.QtGui import QResizeEvent
+
+        page = window._browser
+        page.resize(800, 600)
+        page.resizeEvent(QResizeEvent(QSize(800, 600), QSize(0, 0)))
+        assert page._scrub.geometry().bottom() == page.rect().bottom()
+        assert page._scrub.width() == page.width()
+
+    def test_the_floating_grab_band_stays_tight(self, window):
+        from styles import theme
+        from visualizers.palette_visualizer import SCRUB_BARS
+
+        # Every pixel of the band is a pixel of grid that cannot be clicked.
+        assert SCRUB_BARS == 2
+        assert window._browser._scrub.height() == theme.SCROLLBAR_W * SCRUB_BARS
 
 
 class TestKeyboardModel:
@@ -298,6 +412,35 @@ class TestProposalReview:
         assert window.accept_choice("1") is False
         assert window._current == before
 
+    def test_a_choice_without_two_colours_is_not_selectable(self, window):
+        _generated(window)
+        entry = window._entry()
+        entry["proposals"]["2"]["colours"] = []
+        assert "2" not in store.selectable_choices(entry)
+
+    def test_pressing_a_refusal_choice_does_not_raise(self, window):
+        """The refusal quadrant is active but has no palette — it must be inert."""
+        _generated(window)
+        record = store.load_review(window._project_path, window._filename,
+                                   window._media_type)
+        entry = record["frames"]["first.mkv@0"]
+        entry["proposals"]["3"] = {
+            "strategy": "no_adequate_two_colour",
+            "label": "NO ADEQUATE TWO-COLOUR PALETTE",
+            "active": True, "materials": [], "converges_with": [], "colours": [],
+        }
+        store.save_review(window._project_path, window._filename,
+                          window._media_type, record)
+        window.reload()
+        window._select_frame(0)
+
+        assert window._choice_btns["3"].isEnabled() is False
+        assert window.accept_choice("3") is False
+        _press(window, Qt.Key_3, "3")
+        reloaded = store.load_review(window._project_path, window._filename,
+                                     window._media_type)["frames"]["first.mkv@0"]
+        assert "review" not in reloaded
+
     def test_unavailable_choices_are_greyed_out(self, window):
         _generated(window, choices=("1",))
         assert window._choice_btns["1"].isEnabled() is True
@@ -337,37 +480,50 @@ class TestProposalReview:
 
 
 class TestManualAuthoring:
-    def test_a_single_region_can_be_selected(self, window):
+    def test_a_role_button_arms_a_colour_pick(self, window):
+        window.assign_role(store.ROLE_FIGURE)
+        assert window._pick_role == store.ROLE_FIGURE
+        assert window._role_btns[store.ROLE_FIGURE].isChecked() is True
+        assert window._browser.canvas().pick_role() == store.ROLE_FIGURE
+
+    def test_pressing_the_same_role_again_disarms(self, window):
+        window.assign_role(store.ROLE_FIGURE)
+        window.assign_role(store.ROLE_FIGURE)
+        assert window._pick_role is None
+        assert window._role_btns[store.ROLE_FIGURE].isChecked() is False
+        assert window._browser.canvas().pick_role() is None
+
+    def test_arming_one_role_disarms_the_other(self, window):
+        window.assign_role(store.ROLE_FIGURE)
+        window.assign_role(store.ROLE_BACKGROUND)
+        assert window._pick_role == store.ROLE_BACKGROUND
+        assert window._role_btns[store.ROLE_FIGURE].isChecked() is False
+        assert window._role_btns[store.ROLE_BACKGROUND].isChecked() is True
+
+    def test_the_f_and_b_keys_arm_the_same_way_as_the_buttons(self, window):
+        _press(window, Qt.Key_F, "f")
+        assert window._pick_role == store.ROLE_FIGURE
+        _press(window, Qt.Key_B, "b")
+        assert window._pick_role == store.ROLE_BACKGROUND
+
+    def test_a_pick_assigns_the_clicked_colour_and_disarms(self, window):
+        window.assign_role(store.ROLE_FIGURE)
+        window._on_pipette(220, 30, 25, store.ROLE_FIGURE)
+        entry = store.load_review(window._project_path, window._filename,
+                                  window._media_type)["frames"]["first.mkv@0"]
+        stored = entry["manual"][store.ROLE_FIGURE]
+        assert stored["rgb"] == [220, 30, 25]
+        assert stored["pipette"] is True
+        assert window._pick_role is None
+
+    def test_an_armed_canvas_click_needs_no_segmentation(self, window, monkeypatch):
+        started = []
+        monkeypatch.setattr(window, "_on_sam_requested",
+                            lambda *a: started.append(True))
         canvas = window._browser.canvas()
-        canvas.set_blobs([{"polygon": [[0, 0], [1, 0], [1, 1]], "area": 3, "mask": None}])
-        canvas.toggle_selection(0, additive=False)
-        assert canvas.selected_indices() == [0]
-
-    def test_shift_accumulates_regions(self, window):
-        canvas = window._browser.canvas()
-        canvas.set_blobs([{"polygon": [], "area": 1, "mask": None} for _ in range(3)])
-        canvas.toggle_selection(0, additive=False)
-        canvas.toggle_selection(2, additive=True)
-        assert canvas.selected_indices() == [0, 2]
-
-    def test_a_selected_region_can_be_removed(self, window):
-        canvas = window._browser.canvas()
-        canvas.set_blobs([{"polygon": [], "area": 1, "mask": None} for _ in range(2)])
-        canvas.toggle_selection(0, additive=False)
-        canvas.toggle_selection(1, additive=True)
-        canvas.toggle_selection(0, additive=True)
-        assert canvas.selected_indices() == [1]
-
-    def test_masks_are_never_unioned_automatically(self, window):
-        from visualizers.palette_visualizer import build_blobs
-        import numpy as np
-
-        masks = [{"segmentation": np.ones((6, 6), dtype=bool)},
-                 {"segmentation": np.zeros((6, 6), dtype=bool)}]
-        masks[1]["segmentation"][0:3, 0:3] = True
-        blobs = build_blobs(masks)
-        assert len(blobs) == 2
-        assert window._browser.canvas().selected_indices() == []
+        canvas.set_pick_role(store.ROLE_FIGURE)
+        assert canvas.pick_role() == store.ROLE_FIGURE
+        assert started == []
 
     def test_a_pipetted_figure_colour_persists_verbatim(self, window):
         window._on_pipette(220, 30, 25, store.ROLE_FIGURE)
@@ -395,19 +551,42 @@ class TestManualAuthoring:
         window._on_pipette(4, 5, 6, store.ROLE_BACKGROUND)
         assert window._current == before
 
-    def test_assigning_with_no_selection_does_not_persist_anything(self, window):
-        window._browser.canvas().clear_selection()
-        window.assign_role(store.ROLE_FIGURE)
-        entry = store.load_review(window._project_path, window._filename,
-                                  window._media_type).get("frames", {})
-        assert "manual" not in entry.get("first.mkv@0", {})
+    def test_segmentation_reports_no_status_text_on_success(self, window):
+        window._on_masks_ready([])
+        assert window._manual_lbl.isVisible() is False
+        assert window._manual_lbl.text() == ""
+
+    def test_segmentation_failure_stays_visible(self, window):
+        window._on_masks_failed("no model")
+        assert "no model" in window._manual_lbl.text()
+
+    def test_the_manual_section_has_its_own_sweep_bar(self, window):
+        from visualizers.components.sweep_bar import SweepBar
+
+        assert isinstance(window._manual_sweep, SweepBar)
+        assert window._manual_sweep is not window._sweep
+
+    def test_masks_are_never_unioned_automatically(self, window):
+        from visualizers.palette_visualizer import build_blobs
+        import numpy as np
+
+        masks = [{"segmentation": np.ones((6, 6), dtype=bool)},
+                 {"segmentation": np.zeros((6, 6), dtype=bool)}]
+        masks[1]["segmentation"][0:3, 0:3] = True
+        blobs = build_blobs(masks)
+        assert len(blobs) == 2
+        assert window._browser.canvas().selected_indices() == []
 
 
 class TestDisplayToggles:
     def test_the_inspector_exposes_palette_and_image_toggles(self, window):
-        labels = {name: button.text()
+        labels = {name: (button.text(), button.shortcut_text())
                   for name, button in window._toggle_btns.items()}
-        assert labels == {"palette": "Palette   P", "image": "Image   I"}
+        assert labels == {"palette": ("Palette", "P"), "image": ("Image", "I")}
+
+    def test_the_two_toggles_share_one_row(self, window):
+        assert (window._toggle_btns["palette"].parentWidget()
+                is window._toggle_btns["image"].parentWidget())
 
     def test_both_start_on_and_checked(self, window):
         assert (window._show_palette, window._show_image) == (True, True)
@@ -527,9 +706,25 @@ class TestGenerateProgress:
         window._on_progress(3, 9, "shot", "generated")
         assert window._generate_section._header.text() == "Generate: 3 / 9"
 
-    def test_progress_does_not_reopen_the_status_row(self, window):
-        window._on_progress(1, 1, "shot", "generated")
-        assert window._progress_lbl.isVisible() is False
+    def test_there_is_no_progress_text_row(self, window):
+        from PyQt5.QtWidgets import QLabel
+
+        assert not hasattr(window, "_progress_lbl")
+        container = window._create_btn.parentWidget().parentWidget()
+        for label in container.findChildren(QLabel):
+            assert "generated" not in label.text().lower()
+
+    def test_batch_failures_are_printed_not_shown(self, window, capsys):
+        window._on_generation_done(
+            {"generated": 1, "skipped": 0, "failed": 1,
+             "errors": [("shot-7", "SAM exploded")]})
+        captured = capsys.readouterr()
+        assert "shot-7" in captured.err
+        assert "SAM exploded" in captured.err
+
+    def test_a_whole_run_failure_is_printed(self, window, capsys):
+        window._on_generation_failed("RuntimeError: no model")
+        assert "no model" in capsys.readouterr().err
 
     def test_the_title_returns_to_plain_when_generation_stops(self, window):
         window._on_progress(1, 1, "shot", "generated")
@@ -537,26 +732,140 @@ class TestGenerateProgress:
         assert window._generate_section._header.text() == "Generate"
 
 
+class TestStagedReset:
+    def test_an_ungenerated_frame_offers_nothing_to_undo(self, window):
+        from visualizers.palette_visualizer import reset_action
+
+        assert reset_action({}) == ("Reset", False)
+        window._select_frame(0)
+        assert window._reset_btn.text() == "Reset"
+        assert window._reset_btn.isEnabled() is False
+
+    def test_proposals_without_a_choice_offer_reset_proposals(self, window):
+        from visualizers.palette_visualizer import reset_action
+
+        _generated(window)
+        window._select_frame(0)
+        assert reset_action(window._entry()) == ("Reset Proposals", True)
+        assert window._reset_btn.text() == "Reset Proposals"
+        assert window._reset_btn.isEnabled() is True
+
+    def test_a_chosen_palette_offers_reset_palette(self, window):
+        from visualizers.palette_visualizer import reset_action
+
+        _generated(window)
+        window.accept_choice("1")
+        window._select_frame(0)
+        assert reset_action(window._entry()) == ("Reset Palette", True)
+        assert window._reset_btn.text() == "Reset Palette"
+
+    def test_an_incomplete_manual_palette_offers_reset_palette(self, window):
+        from visualizers.palette_visualizer import reset_action
+
+        window._on_pipette(1, 2, 3, store.ROLE_FIGURE)
+        assert reset_action(window._entry())[0] == "Reset Palette"
+
+    def test_a_failed_generation_offers_reset_proposals(self, window):
+        from visualizers.palette_visualizer import reset_action
+
+        entry = store.record_generation_failure({}, "v", "g", "boom")
+        assert reset_action(entry) == ("Reset Proposals", True)
+
+    def test_reset_steps_a_chosen_palette_back_to_its_proposals(self, window):
+        _generated(window)
+        window.accept_choice("1")
+        window._select_frame(0)
+        _press(window, Qt.Key_Delete)
+        entry = window._entry()
+        assert store.frame_state(entry) == store.STATE_UNREVIEWED
+        assert entry["proposals"]
+
+    def test_reset_again_discards_the_proposals(self, window):
+        _generated(window)
+        window.accept_choice("1")
+        window._select_frame(0)
+        _press(window, Qt.Key_Delete)
+        _press(window, Qt.Key_Delete)
+        entry = window._entry()
+        assert store.frame_state(entry) == store.STATE_NOT_GENERATED
+        assert "proposals" not in entry
+        assert "proposal_generation" not in entry
+
+    def test_a_third_reset_does_nothing(self, window):
+        _generated(window)
+        for _ in range(3):
+            window._select_frame(0)
+            _press(window, Qt.Key_Delete)
+        assert store.frame_state(window._entry()) == store.STATE_NOT_GENERATED
+
+    def test_the_store_keeps_reset_and_clear_distinct(self):
+        kept = store.reset_frame(store.accept_proposal(_generated_entry(), "1"))
+        assert kept["proposals"] and kept["proposal_generation"]
+        cleared = store.clear_proposals(store.accept_proposal(_generated_entry(), "1"))
+        assert "proposals" not in cleared
+        assert "proposal_generation" not in cleared
+        assert "review" not in cleared
+
+
+class TestPartialManualDisplay:
+    def test_a_complete_palette_is_displayed(self, window):
+        from visualizers.palette_visualizer import display_palette
+
+        _generated(window)
+        window.accept_choice("1")
+        window._select_frame(0)
+        shown = display_palette(window._entry())
+        assert shown[store.ROLE_FIGURE]["hex"] == "#010203"
+        assert shown[store.ROLE_BACKGROUND]["hex"] == "#040506"
+
+    def test_a_figure_only_manual_palette_still_shows_the_figure(self, window):
+        from visualizers.palette_visualizer import display_palette
+
+        window._on_pipette(220, 30, 25, store.ROLE_FIGURE)
+        shown = display_palette(window._entry())
+        assert shown[store.ROLE_FIGURE]["rgb"] == [220, 30, 25]
+        assert store.ROLE_BACKGROUND not in shown
+
+    def test_a_background_only_manual_palette_still_shows_the_background(self, window):
+        from visualizers.palette_visualizer import display_palette
+
+        window._on_pipette(8, 9, 10, store.ROLE_BACKGROUND)
+        shown = display_palette(window._entry())
+        assert shown[store.ROLE_BACKGROUND]["rgb"] == [8, 9, 10]
+        assert store.ROLE_FIGURE not in shown
+
+    def test_an_empty_frame_displays_nothing(self):
+        from visualizers.palette_visualizer import display_palette
+
+        assert display_palette({}) == {}
+
+    def test_the_partial_palette_reaches_the_canvas(self, window):
+        window.set_mode("single")
+        window._on_pipette(220, 30, 25, store.ROLE_FIGURE)
+        assert window._browser.canvas()._palette[store.ROLE_FIGURE]["rgb"] == [220, 30, 25]
+
+    def test_the_centre_disc_is_twice_the_border_thickness(self):
+        from visualizers.palette_visualizer import (
+            SINGLE_BORDER_RATIO, SINGLE_FIGURE_RATIO,
+        )
+
+        assert SINGLE_BORDER_RATIO == 0.10
+        assert SINGLE_FIGURE_RATIO == 0.20
+
+
 class TestInspectorLayout:
     def test_generate_contains_only_intentional_controls(self, window):
-        from PyQt5.QtWidgets import QPushButton
+        from visualizers.components.shortcut_button import ShortcutButton
 
-        container = window._create_btn.parentWidget()
-        buttons = [child for child in container.children()
-                   if isinstance(child, QPushButton)]
-        assert [button.text() for button in buttons] == [
-            "Create Palette   C", "Create All Palettes"]
+        section = window._generate_section
+        buttons = section.findChildren(ShortcutButton)
+        assert [(b.text(), b.shortcut_text()) for b in buttons] == [
+            ("Create Proposals", "C"), ("Propose Remaining", "")]
         assert all(button.text().strip() for button in buttons)
 
-    def test_the_generate_progress_row_is_hidden_while_empty(self, window):
-        assert window._progress_lbl.text() == ""
-        assert window._progress_lbl.isVisible() is False
-
-    def test_the_progress_row_appears_only_when_it_has_something_to_say(self, window):
-        window._set_progress("Generating palettes\n3 / 9")
-        assert window._progress_lbl.isVisibleTo(window._progress_lbl.parentWidget())
-        window._set_progress("")
-        assert window._progress_lbl.isVisible() is False
+    def test_the_two_generate_controls_share_one_row(self, window):
+        assert (window._create_btn.parentWidget()
+                is window._create_all_btn.parentWidget())
 
     def test_manual_has_no_explanatory_prose_block(self, window):
         from PyQt5.QtWidgets import QLabel
@@ -568,25 +877,63 @@ class TestInspectorLayout:
         assert window._manual_lbl.isVisible() is False
 
     def test_manual_contains_the_two_role_controls(self, window):
-        from PyQt5.QtWidgets import QPushButton
+        buttons = window._role_btns
+        assert [(b.text(), b.shortcut_text()) for b in buttons.values()] == [
+            ("Figure", "F"), ("Background", "B")]
 
-        container = window._manual_lbl.parentWidget()
-        buttons = [child for child in container.children()
-                   if isinstance(child, QPushButton)]
-        assert [button.text() for button in buttons] == [
-            "Figure   F", "Background   B"]
+    def test_the_two_role_controls_share_one_row(self, window):
+        figure = window._role_btns[store.ROLE_FIGURE]
+        assert figure.parentWidget() is window._role_btns[store.ROLE_BACKGROUND].parentWidget()
+
+    def test_clear_all_explains_itself_in_a_tooltip(self, window):
+        tooltip = window._clear_btn.toolTip()
+        assert "Generated proposals are kept" in tooltip
+        assert "movie/gameplay" in tooltip
+
+    def test_shortcut_hints_use_the_shared_token(self, window):
+        from styles import theme
+
+        assert theme.SHORTCUT_TEXT == theme.TEXT_DIM
+        hint = window._create_btn._shortcut_label
+        assert theme.SHORTCUT_TEXT in hint.styleSheet()
+
+    def test_buttons_without_a_shortcut_have_no_hint(self, window):
+        assert window._create_all_btn._shortcut_label is None
+        assert window._clear_btn._shortcut_label is None
 
     def test_the_manual_instructions_live_in_tooltips(self, window):
-        from PyQt5.QtWidgets import QPushButton
         from visualizers.palette_visualizer import MANUAL_HELP
 
         container = window._manual_lbl.parentWidget()
         assert container.toolTip() == MANUAL_HELP
-        for button in container.findChildren(QPushButton):
+        for button in window._role_btns.values():
             assert button.toolTip() == MANUAL_HELP
-        for phrase in ("Shift+Click", "Alt+Click", "Ctrl+Click",
-                       "click the frame to segment"):
+        for phrase in ("arms a colour pick", "Alt+Click", "Ctrl+Click",
+                       "Press the button again to cancel"):
             assert phrase.lower() in MANUAL_HELP.lower()
+
+    def test_review_has_no_explanatory_prose_block(self, window):
+        from PyQt5.QtWidgets import QLabel
+
+        assert not hasattr(window, "_choice_lbl")
+        container = window._reset_btn.parentWidget()
+        for label in container.findChildren(QLabel):
+            assert len(label.text()) < 40, label.text()
+
+    def test_the_choice_meanings_live_in_tooltips(self, window):
+        from visualizers.palette_visualizer import CHOICE_HELP
+
+        for button in window._choice_btns.values():
+            assert CHOICE_HELP in button.toolTip()
+        for phrase in ("DIRECT", "FIELD", "ALTERNATIVE", "CONTROL"):
+            assert phrase in CHOICE_HELP
+
+    def test_the_reject_button_is_gone(self, window):
+        assert not hasattr(window, "_reject_btn")
+        from visualizers.components.shortcut_button import ShortcutButton
+
+        labels = [b.text() for b in window._inspector.findChildren(ShortcutButton)]
+        assert not any("Reject" in label for label in labels)
 
     def test_manual_status_is_transient_state_not_documentation(self, window):
         window._set_manual_status("4 region(s) found")
@@ -669,9 +1016,82 @@ class TestThemeHighlightPair:
         assert "QPalette.ToolTipText,     QColor(TOOLTIP_TEXT)" in source
 
 
-class TestMosaicState:
-    def test_every_state_has_a_distinct_mosaic_mark(self):
-        from visualizers.palette_visualizer import STATE_COLOURS
+class TestBrowserGrid:
+    def test_unselected_cells_have_no_border(self, window):
+        from visualizers import palette_visualizer
 
-        assert set(STATE_COLOURS) == set(store.STATES)
-        assert len(set(STATE_COLOURS.values())) == len(store.STATES)
+        assert not hasattr(palette_visualizer, "STATE_COLOURS")
+
+    def test_only_the_current_cell_is_marked_selected(self, window):
+        window.set_mode("all")
+        window._select_frame(2)
+        flags = [cell._selected for cell in window._browser._cells]
+        assert flags.count(True) == 1
+        assert flags[2] is True
+
+    def test_the_selection_border_matches_the_canonical_width(self):
+        from visualizers.palette_visualizer import SELECTION_BORDER
+
+        assert SELECTION_BORDER == 2
+
+    def test_the_grid_uses_the_canonical_spacing(self):
+        from styles import theme
+        from visualizers.palette_visualizer import _GAP, _MARGIN
+
+        assert _GAP == theme.SECTION_GAP
+        assert _MARGIN == theme.SECTION_GAP
+
+    def test_the_grid_aspect_follows_the_real_frame_ratio(self, window, tmp_path):
+        from PyQt5.QtGui import QImage
+        from visualizers.palette_visualizer import frame_aspect
+
+        path = tmp_path / "wide.png"
+        QImage(240, 100, QImage.Format_RGB32).save(str(path))
+        frames = [{"available": True, "image": str(path)}]
+        assert abs(frame_aspect(frames) - 2.4) < 0.01
+
+    def test_an_unreadable_frame_falls_back_to_the_default_ratio(self, window):
+        from visualizers.palette_visualizer import _DEFAULT_ASPECT, frame_aspect
+
+        assert frame_aspect([]) == _DEFAULT_ASPECT
+        assert frame_aspect([{"available": False, "image": "nope.png"}]) == _DEFAULT_ASPECT
+
+    def test_loading_frames_applies_the_ratio_to_the_grid(self, window, tmp_path):
+        from PyQt5.QtGui import QImage
+
+        path = tmp_path / "tall.png"
+        QImage(100, 200, QImage.Format_RGB32).save(str(path))
+        window._browser.set_frames([
+            {"index": 0, "shot_id": "s", "image": str(path), "available": True}])
+        assert abs(window._browser._grid.aspect() - 0.5) < 0.01
+
+    def test_the_cell_background_is_a_ring_over_the_image(self):
+        from visualizers.palette_visualizer import CELL_BORDER_RATIO
+
+        assert CELL_BORDER_RATIO == 0.10
+
+    def test_the_cell_figure_disc_is_one_size_in_both_modes(self, window, tmp_path):
+        from PyQt5.QtGui import QImage
+        from visualizers.palette_visualizer import CELL_FIGURE_RATIO, _FrameCell
+
+        path = tmp_path / "f.png"
+        QImage(240, 100, QImage.Format_RGB32).save(str(path))
+        item = {"shot_id": "s", "image": str(path), "available": True,
+                "state": store.STATE_ACCEPTED, "preview": [],
+                "final": {store.ROLE_FIGURE: {"rgb": [1, 2, 3]},
+                          store.ROLE_BACKGROUND: {"rgb": [4, 5, 6]}}}
+        cell = _FrameCell(0, item)
+        cell.resize(240, 100)
+        expected = int(cell.height() * CELL_FIGURE_RATIO)
+        for image_on in (True, False):
+            cell.set_visibility(True, image_on)
+            assert int(cell.height() * CELL_FIGURE_RATIO) == expected
+
+    def test_cells_never_paint_semi_transparently(self):
+        import inspect
+
+        from visualizers import palette_visualizer
+
+        source = inspect.getsource(palette_visualizer._FrameCell.paintEvent)
+        assert "setOpacity" not in source
+

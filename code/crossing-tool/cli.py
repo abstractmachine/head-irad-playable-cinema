@@ -6940,6 +6940,10 @@ def _index_palette_reset(args):
 
     project_path, filename, media_type = _palette_review_target(args)
     shot_id = _palette_review_shot(args, project_path, filename, media_type)
+    if getattr(args, "proposals", False):
+        palette_review.clear_proposals(project_path, filename, media_type, shot_id)
+        print(f"✓ reset: {shot_id}  (generated proposals also cleared)")
+        return
     palette_review.reset(project_path, filename, media_type, shot_id)
     print(f"✓ reset: {shot_id}  (generated proposals preserved)")
 
@@ -10357,7 +10361,10 @@ def build_parser():
     _add_palette_review_target(palette_sub.add_parser(
         "reset",
         help="Clear one frame's accepted/manual palette, keeping its proposals",
-    ))
+    )).add_argument(
+        "--proposals", action="store_true",
+        help="Also discard the generated proposals, returning the frame to ungenerated",
+    )
 
     p_palette_manual = _add_palette_review_target(palette_sub.add_parser(
         "manual", help="Assign a hand-authored figure/background colour",

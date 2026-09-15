@@ -42,6 +42,7 @@ from PyQt5.QtWidgets import (
 
 from tool import prefs as _prefs
 from tool.shortcuts import shortcut_label_for
+from visualizers.components.shortcut_button import ShortcutButton
 
 _CLI_PATH = Path(__file__).parent.parent / "cli.py"
 _THUMBNAIL_PALETTE_MEDIA_TYPES = ("movie", "gameplay")
@@ -1166,69 +1167,13 @@ class _ProjectColumnsWorker(QThread):
 # ---------------------------------------------------------------------------
 
 
-class _LauncherButton(QPushButton):
-    """Visualizer launcher button whose name and F-key shortcut hint are
-    laid out with a `QHBoxLayout` stretch (Qt's "horizontal spacer") so the
-    shortcut always sits flush against the button's right edge, regardless
-    of how long the visualizer name is. A single text string with fixed
-    padding spaces (the previous approach) doesn't line up across buttons
-    whose names differ in length.
+class _LauncherButton(ShortcutButton):
+    """Visualizer launcher button whose name and F-key shortcut hint are laid
+    out with a stretch so the hint sits flush against the right edge.
 
-    Painting the name/shortcut as child QLabels means they don't
-    automatically pick up `theme.action_button_stylesheet()`'s hover/
-    pressed/disabled QSS colors the way plain button text would, so this
-    class mirrors those same state colors manually. Font weight is also
-    set explicitly per label for the same reason: the name is bold, the
-    shortcut hint stays normal weight.
+    The implementation is shared with every other visualizer that shows a key
+    hint on a button — see `visualizers.components.shortcut_button`.
     """
-
-    def __init__(self, label: str, shortcut: str | None, parent=None) -> None:
-        super().__init__(parent)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(_SPACER_ROW_INSET, 0, _SPACER_ROW_INSET, 0)
-        layout.setSpacing(_SPACER_ROW_GAP)
-
-        self._name_label = QLabel(label)
-        self._name_label.setAttribute(Qt.WA_TransparentForMouseEvents)
-        self._name_label.setFont(theme.font_ui(bold=True))
-        layout.addWidget(self._name_label)
-
-        layout.addStretch(1)
-
-        self._shortcut_label = None
-        if shortcut:
-            self._shortcut_label = QLabel(shortcut)
-            self._shortcut_label.setAttribute(Qt.WA_TransparentForMouseEvents)
-            self._shortcut_label.setFont(theme.font_ui(bold=False))
-            layout.addWidget(self._shortcut_label)
-
-        self._apply_colors()
-
-    def _apply_colors(self) -> None:
-        if not self.isEnabled():
-            color = dim_color = "rgba(255,255,255,0.15)"
-        elif self.isDown():
-            color = dim_color = theme.ACCENT
-        elif self.underMouse():
-            color = dim_color = theme.ACCENT_TEXT
-        else:
-            color = theme.TEXT
-            dim_color = theme.TEXT_DIM
-        self._name_label.setStyleSheet(f"color: {color}; background: transparent;")
-        if self._shortcut_label is not None:
-            self._shortcut_label.setStyleSheet(f"color: {dim_color}; background: transparent;")
-
-    def setEnabled(self, enabled: bool) -> None:  # noqa: N802
-        super().setEnabled(enabled)
-        self._apply_colors()
-
-    def enterEvent(self, event) -> None:
-        super().enterEvent(event)
-        self._apply_colors()
-
-    def leaveEvent(self, event) -> None:
-        super().leaveEvent(event)
-        self._apply_colors()
 
     def mousePressEvent(self, event) -> None:
         super().mousePressEvent(event)

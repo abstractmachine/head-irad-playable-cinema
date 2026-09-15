@@ -58,44 +58,70 @@ from visualizers.components.combo_popup import style_canonical_combo
 from visualizers.components.inspector import Inspector
 from visualizers.components.metadata_block import MetadataBlock, status_label_stylesheet
 from visualizers.components.sweep_bar import SweepBar
+from visualizers.components.shortcut_button import ShortcutButton
 from visualizers.components.tab_panel import TabPanel
 from visualizers.components.timeline_scrubber import TimelineHitArea, TimelineScrollBar
 from visualizers.components.zoom_manager import ZoomManager
 
-_ASPECT = 16 / 9
-_GAP, _MARGIN = 4, 10
+_DEFAULT_ASPECT = 16 / 9
+# Canonical browser spacing, as used by Metadata's thumbnail grid.
+_GAP = _MARGIN = theme.SECTION_GAP
 _ZOOM_MIN, _ZOOM_MAX, _ZOOM_STEP, _ZOOM_DEFAULT = 0.60, 3.00, 0.20, 1.00
-# Scrub grab target, in SCROLLBAR_W units. Shotlist's default of 15 leaves a
-# tall empty band under a browser grid; four is a normal control strip.
-SCRUB_BARS = 4
+# Scrub grab target, in SCROLLBAR_W units. It now floats over the frames, so
+# keep the band tight: every pixel of it is a pixel of grid you cannot click.
+SCRUB_BARS = 2
+# Canonical selection border, matching ThumbnailCell's 2px accent ring.
+SELECTION_BORDER = 2
+# All Frames: the background colour is a ring over the image, or the whole cell
+# when the image is hidden. The figure disc keeps one size either way.
+CELL_BORDER_RATIO = 0.10
+CELL_FIGURE_RATIO = 3 / 5
+# Single Frame palette overlay: a border of the background colour around the
+# frame edge, and a centred disc of the figure colour, both as a fraction of
+# the frame's shorter side.
+SINGLE_BORDER_RATIO = 0.10
+SINGLE_FIGURE_RATIO = 0.20
 
 MODE_ALL = "all"
 MODE_SINGLE = "single"
 CHOICE_KEYS = ("1", "2", "3", "4")
 
-# How the manual SAM/pipette interaction works. Kept as hover help rather than
-# a paragraph in the Inspector — see the Inspector prose rule in agents.md.
+# Interaction help lives in tooltips, never as Inspector prose — see the
+# Inspector prose rule in agents.md.
 MANUAL_HELP = (
-    "Click the frame to segment it\n"
-    "Click a region to select it\n"
-    "Shift+Click to add another region\n"
-    "Click a selected region to remove it\n"
-    "Alt+Click pipettes Figure\n"
-    "Ctrl+Click pipettes Background\n"
-    "F assigns Figure   ·   B assigns Background"
+    "Figure or Background arms a colour pick\n"
+    "While armed, click the frame to take the colour under the cursor\n"
+    "Press the button again to cancel\n"
+    "Alt+Click picks Figure   ·   Ctrl+Click picks Background\n"
+    "Clicking the frame unarmed segments it, for orientation only"
 )
 
-# Small state marks in Mosaic — borders, not text overlays.
-STATE_COLOURS = {
-    store.STATE_NOT_GENERATED: (70, 70, 78),
-    store.STATE_GENERATING: (90, 150, 220),
-    store.STATE_GENERATION_FAILED: (216, 92, 84),
-    store.STATE_UNREVIEWED: (226, 196, 90),
-    store.STATE_ACCEPTED: (110, 190, 120),
-    store.STATE_REJECTED: (200, 110, 200),
-    store.STATE_MANUAL: (90, 200, 200),
-    store.STATE_MANUAL_INCOMPLETE: (226, 148, 60),
-}
+CHOICE_HELP = (
+    "1  DIRECT — the materials carrier-v1 named for each side\n"
+    "2  FIELD — articulation-v1's distinguished material and counterfield\n"
+    "3  ALTERNATIVE — a second relation narratology-v1 recorded,\n"
+    "      or a refusal when it recorded only one\n"
+    "4  CONTROL — the deterministic bottom-up production palette\n"
+    "\n"
+    "Accepting advances to the next frame. A choice without two measured\n"
+    "colours is greyed out and does nothing."
+)
+
+def frame_aspect(frames: list, default: float = _DEFAULT_ASPECT) -> float:
+    """The width:height ratio of this media's frames.
+
+    Read from the first available frame's header rather than assuming 16:9, so
+    the grid cells match the film and the image fills them exactly.
+    """
+    from PyQt5.QtGui import QImageReader
+
+    for item in frames or []:
+        if not item.get("available"):
+            continue
+        size = QImageReader(item["image"]).size()
+        if size.isValid() and size.height() > 0:
+            return size.width() / size.height()
+    return default
 
 
 def _zoom_key(media_type: str) -> str:
@@ -117,6 +143,22 @@ def _readable_on(colour: dict | None) -> QColor:
     rgb = (colour or {}).get("rgb") or [0, 0, 0]
     luminance = (rgb[0] * 299 + rgb[1] * 587 + rgb[2] * 114) / 1000
     return QColor(theme.ACCENT_TEXT) if luminance > 140 else QColor(theme.TEXT)
+
+
+def display_palette(entry: dict | None) -> dict:
+    """The palette to draw for a frame.
+
+    The accepted/complete palette when there is one, otherwise whichever manual
+    roles have been picked so far — a half-finished manual palette should still
+    show the half that exists.
+    """
+    entry = entry or {}
+    final = entry.get("final_palette") or {}
+    if final:
+        return final
+    manual = entry.get("manual") or {}
+    return {role: manual[role] for role in store.ROLES
+            if isinstance(manual.get(role), dict)}
 
 
 def preview_quadrants(entry: dict | None) -> list:
@@ -150,6 +192,71 @@ def _paint_pair(painter, rect, figure, background) -> None:
                         rect.center().y() - diameter // 2, diameter, diameter)
 
 
+def _paint_border(painter, rect, colour, ratio: float) -> None:
+    """An inset ring of *colour*, *ratio* of the shorter side thick."""
+    thickness = max(1, int(min(rect.width(), rect.height()) * ratio))
+    pen = QPen(_qcolor(colour), thickness)
+    pen.setJoinStyle(Qt.MiterJoin)
+    painter.setBrush(Qt.NoBrush)
+    painter.setPen(pen)
+    half = thickness // 2
+    painter.drawRect(rect.adjusted(half, half, -half - 1, -half - 1))
+
+
+def _paint_frame_palette(painter, rect, palette: dict) -> None:
+    """Single Frame treatment: background border around the edge, figure disc."""
+    background = palette.get(store.ROLE_BACKGROUND)
+    figure = palette.get(store.ROLE_FIGURE)
+    if background:
+        _paint_border(painter, rect, background, SINGLE_BORDER_RATIO)
+    if figure:
+        diameter = max(6, int(min(rect.width(), rect.height())
+                              * SINGLE_FIGURE_RATIO))
+        painter.setBrush(_qcolor(figure))
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(rect.center().x() - diameter // 2,
+                            rect.center().y() - diameter // 2, diameter, diameter)
+
+
+def reset_action(entry: dict | None) -> tuple[str, bool]:
+    """Label and enabled state for the staged reset control.
+
+    Delete walks a frame backwards: a chosen palette returns to the proposals,
+    the proposals return to ungenerated, and an ungenerated frame has nothing
+    left to undo.
+    """
+    state = store.frame_state(entry)
+    if state in (store.STATE_ACCEPTED, store.STATE_REJECTED,
+                 store.STATE_MANUAL, store.STATE_MANUAL_INCOMPLETE):
+        return "Reset Palette", True
+    if state in (store.STATE_UNREVIEWED, store.STATE_GENERATION_FAILED):
+        return "Reset Proposals", True
+    return "Reset", False
+
+
+def _action(label: str, shortcut: str | None, tooltip: str = "", *,
+            checkable: bool = False) -> ShortcutButton:
+    """An Inspector action button with its key hint flush right."""
+    button = ShortcutButton(label, shortcut)
+    button.setStyleSheet(theme.action_button_stylesheet())
+    button.setFocusPolicy(Qt.NoFocus)
+    button.setCheckable(checkable)
+    if tooltip:
+        button.setToolTip(tooltip)
+    return button
+
+
+def _row(*widgets) -> QWidget:
+    """Lay widgets out side by side on one Inspector row."""
+    wrap = QWidget()
+    layout = QHBoxLayout(wrap)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(theme.SECTION_GAP)
+    for widget in widgets:
+        layout.addWidget(widget)
+    return wrap
+
+
 def preview_cells(rect, count: int = 4, columns: int = 2) -> list:
     """Tile *rect* into *count* cells. Two columns for a frame, four for a strip."""
     rows = max(1, -(-count // columns))
@@ -169,16 +276,20 @@ def paint_preview(painter, rect, quadrants, *, numbers: bool = False,
     """Paint the 1-4 proposal palettes inside *rect*."""
     quadrants = list(quadrants[:4])
     cells = preview_cells(rect, len(quadrants), columns)
-    for quadrant, cell in zip(quadrants, cells):
+    for index, (quadrant, cell) in enumerate(zip(quadrants, cells)):
+        key = quadrant["key"] if quadrant else str(index + 1)
         if quadrant is None:
             painter.fillRect(cell, QColor(theme.CELL_BG))
-            continue
-        _paint_pair(painter, cell, quadrant["figure"], quadrant["background"])
+            pen = QColor(theme.TEXT_DIM)
+        else:
+            _paint_pair(painter, cell, quadrant["figure"], quadrant["background"])
+            pen = _readable_on(quadrant["background"])
+        # The slot number is what the reviewer presses, so label empty slots too.
         if numbers and cell.height() >= 34:
-            painter.setPen(_readable_on(quadrant["background"]))
+            painter.setPen(pen)
             painter.setFont(theme.font_ui(bold=True))
             painter.drawText(cell.adjusted(6, 4, -6, -4),
-                             Qt.AlignTop | Qt.AlignLeft, quadrant["key"])
+                             Qt.AlignTop | Qt.AlignLeft, key)
     painter.setBrush(Qt.NoBrush)
     painter.setPen(QPen(QColor(theme.CANVAS_BG), 1))
     for cell in cells:
@@ -283,6 +394,7 @@ class _FrameCell(QWidget):
     """One frame in Mosaic: its palette, its image, and a state border."""
 
     clicked = pyqtSignal(int)
+    double_clicked = pyqtSignal(int)
 
     def __init__(self, index: int, item: dict, parent=None) -> None:
         super().__init__(parent)
@@ -309,6 +421,11 @@ class _FrameCell(QWidget):
             self.clicked.emit(self._index)
         super().mousePressEvent(event)
 
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.LeftButton:
+            self.double_clicked.emit(self._index)
+        super().mouseDoubleClickEvent(event)
+
     def _load_pixmap(self) -> Optional[QPixmap]:
         if self._pixmap is None and self._item.get("available"):
             pixmap = QPixmap(self._item["image"])
@@ -320,47 +437,53 @@ class _FrameCell(QWidget):
     def paintEvent(self, _event) -> None:  # noqa: N802
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
+        rect = self.rect()
         final = self._item.get("final") or {}
         background = final.get(store.ROLE_BACKGROUND)
         figure = final.get(store.ROLE_FIGURE)
         quadrants = self._item.get("preview") or []
-        previewing = (self._show_palette and not final
-                      and any(quadrants))
+        previewing = self._show_palette and not final and any(quadrants)
+        pixmap = self._load_pixmap() if self._show_image else None
 
-        if self._show_palette and background:
-            painter.fillRect(self.rect(), _qcolor(background))
+        if pixmap is not None:
+            scaled = pixmap.scaled(self.size(), Qt.KeepAspectRatio,
+                                   Qt.SmoothTransformation)
+            painter.fillRect(rect, QColor(theme.CELL_BG))
+            painter.drawPixmap((self.width() - scaled.width()) // 2,
+                               (self.height() - scaled.height()) // 2, scaled)
+        elif self._show_palette and background:
+            painter.fillRect(rect, _qcolor(background))
         elif previewing:
-            paint_preview(painter, self.rect(), quadrants)
+            paint_preview(painter, rect, quadrants)
         else:
-            painter.fillRect(self.rect(), QColor(theme.CELL_BG))
+            painter.fillRect(rect, QColor(theme.CELL_BG))
 
-        if self._show_image:
-            pixmap = self._load_pixmap()
-            if pixmap is not None:
-                scaled = pixmap.scaled(self.size(), Qt.KeepAspectRatio,
-                                       Qt.SmoothTransformation)
-                if self._show_palette and (figure or previewing):
-                    painter.setOpacity(0.55)
-                painter.drawPixmap((self.width() - scaled.width()) // 2,
-                                   (self.height() - scaled.height()) // 2, scaled)
-                painter.setOpacity(1.0)
+        if pixmap is not None and self._show_palette:
+            if background:
+                _paint_border(painter, rect, background, CELL_BORDER_RATIO)
+            elif previewing:
+                # An opaque strip rather than a wash over the frame.
+                bar = max(6, int(self.height() * 0.22))
+                paint_preview(painter, QRect(0, self.height() - bar,
+                                             self.width(), bar),
+                              quadrants, columns=4)
 
         if self._show_palette and figure:
-            diameter = max(6, int(self.height() * 3 / 5))
+            diameter = max(6, int(self.height() * CELL_FIGURE_RATIO))
             painter.setBrush(_qcolor(figure))
             painter.setPen(Qt.NoPen)
-            painter.drawEllipse(self.rect().center().x() - diameter // 2,
-                                self.rect().center().y() - diameter // 2,
+            painter.drawEllipse(rect.center().x() - diameter // 2,
+                                rect.center().y() - diameter // 2,
                                 diameter, diameter)
 
         painter.setBrush(Qt.NoBrush)
-        pen = QPen(QColor(*STATE_COLOURS.get(self._item.get("state"), (70, 70, 78))))
-        pen.setWidth(4 if self._selected else 2)
-        painter.setPen(pen)
-        painter.drawRect(self.rect().adjusted(1, 1, -2, -2))
+        # Only the current selection carries a border; an unselected cell shows
+        # its state through its content, matching ThumbnailCell's convention.
         if self._selected:
-            painter.setPen(QPen(QColor(theme.ACCENT), 2))
-            painter.drawRect(self.rect().adjusted(4, 4, -5, -5))
+            painter.setPen(QPen(QColor(theme.ACCENT), SELECTION_BORDER))
+            inset = SELECTION_BORDER // 2
+            painter.drawRect(self.rect().adjusted(
+                inset, inset, -inset - 1, -inset - 1))
         painter.end()
 
 
@@ -373,6 +496,7 @@ class _FrameCanvas(QLabel):
 
     pipette = pyqtSignal(int, int, int, str)
     sam_requested = pyqtSignal(int, int)
+    double_clicked = pyqtSignal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -390,6 +514,7 @@ class _FrameCanvas(QLabel):
         self._show_palette = True
         self._palette: dict = {}
         self._preview: list = []
+        self._pick_role: str | None = None
 
     def set_frame(self, path: str | None) -> None:
         image = QImage(path) if path else None
@@ -435,6 +560,14 @@ class _FrameCanvas(QLabel):
         self._preview = list(quadrants or [])
         self.update()
 
+    def set_pick_role(self, role: str | None) -> None:
+        """Arm the next click to take the pixel colour for *role*."""
+        self._pick_role = role
+        self.setCursor(Qt.CrossCursor if role else Qt.ArrowCursor)
+
+    def pick_role(self) -> str | None:
+        return self._pick_role
+
     def _layout(self) -> tuple[int, int, float]:
         if self._pixmap is None:
             return 0, 0, 1.0
@@ -471,11 +604,17 @@ class _FrameCanvas(QLabel):
     def mousePressEvent(self, event) -> None:  # noqa: N802
         modifiers = event.modifiers()
         position = self._source_pos(event.x(), event.y())
-        if modifiers & (Qt.AltModifier | Qt.ControlModifier):
+        role = None
+        if modifiers & Qt.AltModifier:
+            role = store.ROLE_FIGURE
+        elif modifiers & Qt.ControlModifier:
+            role = store.ROLE_BACKGROUND
+        elif self._pick_role:
+            role = self._pick_role
+        if role is not None:
+            # The pixel under the cursor is the colour, so no segmentation.
             if position is not None and self._image is not None:
                 colour = self._image.pixelColor(*position)
-                role = (store.ROLE_FIGURE if modifiers & Qt.AltModifier
-                        else store.ROLE_BACKGROUND)
                 self.pipette.emit(colour.red(), colour.green(), colour.blue(), role)
             return
         index = self._blob_at(event.x(), event.y())
@@ -484,6 +623,11 @@ class _FrameCanvas(QLabel):
         elif position is not None:
             self.sam_requested.emit(*position)
         super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.LeftButton and self._pick_role is None:
+            self.double_clicked.emit()
+        super().mouseDoubleClickEvent(event)
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         painter = QPainter(self)
@@ -528,17 +672,15 @@ class _FrameCanvas(QLabel):
             painter.drawPolygon(points)
 
         if self._show_palette and self._palette:
-            bar = max(28, int(height * 0.10))
-            for offset, role in enumerate(store.ROLES):
-                colour = self._palette.get(role)
-                if colour:
-                    painter.fillRect(ox + offset * (width // 2), oy + height - bar,
-                                     width // 2, bar, _qcolor(colour))
+            _paint_frame_palette(painter, frame, self._palette)
         elif previewing and self._show_image:
-            # Image is visible, so the proposals ride along the bottom edge.
+            # With the image visible the proposals go in a strip: just under
+            # the frame when it fits there whole, otherwise inside its bottom.
             bar = max(34, int(height * 0.14))
-            paint_preview(painter, QRect(ox, oy + height - bar, width, bar),
-                          self._preview, numbers=True, columns=4)
+            strip = QRect(ox, oy + height, width, bar)
+            if strip.bottom() > self.rect().bottom():
+                strip = QRect(ox, oy + height - bar, width, bar)
+            paint_preview(painter, strip, self._preview, numbers=True, columns=4)
         painter.end()
 
 
@@ -550,6 +692,7 @@ class _PaletteBrowserPage(QWidget):
     """All Frames / Single Frame stack plus the shared Shotlist scrubber."""
 
     frame_selected = pyqtSignal(int)
+    frame_activated = pyqtSignal(int)
 
     def __init__(self, media_type: str, parent=None) -> None:
         super().__init__(parent)
@@ -581,7 +724,8 @@ class _PaletteBrowserPage(QWidget):
             f"QScrollArea {{ background: {theme.CANVAS_BG}; border: none; }}")
         self._scroll.setVerticalScrollBar(theme.JumpScrollBar())
         self._scroll.viewport().installEventFilter(self)
-        self._grid = AspectGridWidget(aspect=_ASPECT, gap=_GAP, margin=_MARGIN)
+        self._grid = AspectGridWidget(aspect=_DEFAULT_ASPECT, gap=_GAP,
+                                      margin=_MARGIN)
         self._grid.set_zoom(self._zoom_manager.zoom())
         self._scroll.setWidget(self._grid)
 
@@ -593,15 +737,20 @@ class _PaletteBrowserPage(QWidget):
         outer.addWidget(self._stack, 1)
 
         self._scrub_bar = TimelineScrollBar()
-        # A plain QWidget does not paint an ancestor's stylesheet background,
-        # so without this the grab target renders in the default window grey
-        # and reads as a foreign panel under the dark browser canvas.
-        self._scrub = TimelineHitArea(self._scrub_bar, bars=SCRUB_BARS)
+        # Parented to the page rather than added to the layout: the scrubber
+        # floats over the bottom edge so the frames run to the window edge
+        # instead of a band of empty canvas sitting under them.
+        self._scrub = TimelineHitArea(self._scrub_bar, self, bars=SCRUB_BARS)
         self._scrub.setAttribute(Qt.WA_StyledBackground, True)
-        self._scrub.setStyleSheet(f"background: {theme.CANVAS_BG};")
+        self._scrub.setStyleSheet("background: transparent;")
         self._scrub_bar.valueChanged.connect(
             lambda value: self.frame_selected.emit(int(value)))
-        outer.addWidget(self._scrub)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        height = self._scrub.height()
+        self._scrub.setGeometry(0, self.height() - height, self.width(), height)
+        self._scrub.raise_()
 
     def canvas(self) -> _FrameCanvas:
         return self._canvas
@@ -619,11 +768,13 @@ class _PaletteBrowserPage(QWidget):
         self._stack.setCurrentIndex(0 if mode == MODE_ALL else 1)
 
     def set_frames(self, frames: list[dict]) -> None:
+        self._grid.set_aspect(frame_aspect(frames))
         cells = []
         for index, item in enumerate(frames):
             cell = _FrameCell(index, item)
             cell.set_visibility(self._show_palette, self._show_image)
             cell.clicked.connect(self.frame_selected.emit)
+            cell.double_clicked.connect(self.frame_activated.emit)
             cells.append(cell)
         self._cells = cells
         self._grid.set_cells(cells)
@@ -635,9 +786,15 @@ class _PaletteBrowserPage(QWidget):
     def set_current(self, index: int) -> None:
         for position, cell in enumerate(self._cells):
             cell.set_selected(position == index)
+        if 0 <= index < len(self._cells):
+            self._scroll.ensureWidgetVisible(self._cells[index])
         self._scrub_bar.blockSignals(True)
         self._scrub_bar.setValue(index)
         self._scrub_bar.blockSignals(False)
+
+    def columns(self) -> int:
+        """Grid columns, so the window can step a whole row with Up/Down."""
+        return self._grid.columns()
 
     def set_visibility(self, palette: bool, image: bool) -> None:
         self._show_palette, self._show_image = palette, image
@@ -671,6 +828,7 @@ class PaletteVisualizerWindow(WindowVisualizer):
         self._show_palette, self._show_image = True, True
         self._worker: Optional[_GenerationWorker] = None
         self._mask_worker: Optional[_MaskWorker] = None
+        self._pick_role: str | None = None
 
         super().__init__(pref_key="window_palette")
         self.setWindowTitle("Palette")
@@ -683,9 +841,11 @@ class PaletteVisualizerWindow(WindowVisualizer):
     def create_browser(self) -> QWidget:
         self._browser = _PaletteBrowserPage(self._media_type)
         self._browser.frame_selected.connect(self._select_frame)
+        self._browser.frame_activated.connect(self._activate_frame)
         canvas = self._browser.canvas()
         canvas.pipette.connect(self._on_pipette)
         canvas.sam_requested.connect(self._on_sam_requested)
+        canvas.double_clicked.connect(lambda: self.set_mode(MODE_ALL))
         return self._browser
 
     def create_inspector(self) -> QWidget:
@@ -712,66 +872,49 @@ class PaletteVisualizerWindow(WindowVisualizer):
         view_layout.setContentsMargins(0, 0, 0, 0)
         view_layout.setSpacing(theme.SECTION_GAP)
         self._mode_btns: dict[str, QPushButton] = {}
-        for label, mode, tip in (
-            ("Single Frame   S", MODE_SINGLE,
+        for label, key, mode, tip in (
+            ("Single Frame", "S", MODE_SINGLE,
              "Show the selected frame on its own for review and manual editing"),
-            ("All Frames   A", MODE_ALL,
+            ("All Frames", "A", MODE_ALL,
              "Show every frame of the selected movie/gameplay as a grid"),
         ):
-            button = QPushButton(label)
-            button.setStyleSheet(theme.action_button_stylesheet())
-            button.setFocusPolicy(Qt.NoFocus)
-            button.setCheckable(True)
-            button.setToolTip(tip)
+            button = _action(label, key, tip, checkable=True)
             button.clicked.connect(lambda _checked, m=mode: self.set_mode(m))
             self._mode_btns[mode] = button
-            view_layout.addWidget(button)
         self._toggle_btns: dict[str, QPushButton] = {}
-        for label, name, tip in (
-            ("Palette   P", "palette", "Show the measured palette, or the 1-4 "
-                                       "proposal preview when none is chosen yet"),
-            ("Image   I", "image", "Show the source frame"),
+        for label, key, name, tip in (
+            ("Palette", "P", "palette", "Show the measured palette, or the 1-4 "
+                                        "proposal preview when none is chosen yet"),
+            ("Image", "I", "image", "Show the source frame"),
         ):
-            button = QPushButton(label)
-            button.setStyleSheet(theme.action_button_stylesheet())
-            button.setFocusPolicy(Qt.NoFocus)
-            button.setCheckable(True)
+            button = _action(label, key, tip, checkable=True)
             button.setChecked(True)
-            button.setToolTip(tip)
             button.clicked.connect(
                 lambda _checked, n=name: self._toggle_display(n))
             self._toggle_btns[name] = button
-            view_layout.addWidget(button)
+        view_layout.addWidget(_row(self._mode_btns[MODE_SINGLE],
+                                   self._mode_btns[MODE_ALL]))
+        view_layout.addWidget(_row(self._toggle_btns["palette"],
+                                   self._toggle_btns["image"]))
         panel.add_section("View", view, pref_key="palette_section_view")
 
         generate = QWidget()
         generate_layout = QVBoxLayout(generate)
         generate_layout.setContentsMargins(0, 0, 0, 0)
         generate_layout.setSpacing(theme.SECTION_GAP)
-        self._create_btn = QPushButton("Create Palette   C")
-        self._create_btn.setStyleSheet(theme.action_button_stylesheet())
-        self._create_btn.setFocusPolicy(Qt.NoFocus)
-        self._create_btn.setToolTip(
+        self._create_btn = _action(
+            "Create Proposals", "C",
             "Generate palette proposals for the current frame")
         self._create_btn.clicked.connect(self.create_palette)
-        generate_layout.addWidget(self._create_btn)
         # Deliberately no keyboard shortcut: batch generation is an explicit
         # button press (or CLI command), never a rapid-review keystroke.
-        self._create_all_btn = QPushButton("Create All Palettes")
-        self._create_all_btn.setStyleSheet(theme.action_button_stylesheet())
-        self._create_all_btn.setFocusPolicy(Qt.NoFocus)
-        self._create_all_btn.setToolTip(
-            "Generate proposals for every frame of the selected "
-            "movie/gameplay (no keyboard shortcut)")
+        self._create_all_btn = _action(
+            "Propose Remaining", None,
+            "Generate proposals for every frame of the selected movie/gameplay "
+            "that does not have them yet (no keyboard shortcut)")
         self._create_all_btn.clicked.connect(self.create_all_palettes)
-        generate_layout.addWidget(self._create_all_btn)
-        # Progress/summary line. Hidden while empty so Generate never shows a
-        # blank row between runs.
-        self._progress_lbl = QLabel("")
-        self._progress_lbl.setStyleSheet(status_label_stylesheet())
-        self._progress_lbl.setWordWrap(True)
-        self._progress_lbl.setVisible(False)
-        generate_layout.addWidget(self._progress_lbl)
+        generate_layout.addWidget(_row(self._create_btn, self._create_all_btn))
+
         generate_section = panel.add_section("Generate", generate,
                                              pref_key="palette_section_generate")
         self._generate_section = generate_section
@@ -794,25 +937,22 @@ class PaletteVisualizerWindow(WindowVisualizer):
             button = QPushButton(key)
             button.setStyleSheet(theme.action_button_stylesheet())
             button.setFocusPolicy(Qt.NoFocus)
+            button.setToolTip(CHOICE_HELP)
             button.clicked.connect(lambda _checked, k=key: self.accept_choice(k))
             self._choice_btns[key] = button
             choices_row.addWidget(button)
+        choices_wrap.setToolTip(CHOICE_HELP)
+        choices_wrap.setStyleSheet(theme.tooltip_stylesheet())
         review_layout.addWidget(choices_wrap)
-        self._choice_lbl = QLabel("")
-        self._choice_lbl.setStyleSheet(status_label_stylesheet())
-        self._choice_lbl.setWordWrap(True)
-        review_layout.addWidget(self._choice_lbl)
-        self._reject_btn = QPushButton("None / Reject Proposals")
-        self._reject_btn.setStyleSheet(theme.action_button_stylesheet())
-        self._reject_btn.setFocusPolicy(Qt.NoFocus)
-        self._reject_btn.clicked.connect(self.reject_proposals)
-        review_layout.addWidget(self._reject_btn)
-        self._reset_btn = QPushButton("Reset Palette   Del")
-        self._reset_btn.setStyleSheet(theme.action_button_stylesheet())
-        self._reset_btn.setFocusPolicy(Qt.NoFocus)
+        self._reset_btn = _action(
+            "Reset Palette", "Del",
+            "Clear this frame's accepted or manual palette, keeping its proposals")
         self._reset_btn.clicked.connect(self.reset_frame)
         review_layout.addWidget(self._reset_btn)
-        panel.add_section("Review", review, pref_key="palette_section_review")
+        review_section = panel.add_section("Review", review,
+                                           pref_key="palette_section_review")
+        review_section.setToolTip(CHOICE_HELP)
+        review_section.setStyleSheet(theme.tooltip_stylesheet())
 
         manual = QWidget()
         manual_layout = QVBoxLayout(manual)
@@ -822,14 +962,15 @@ class PaletteVisualizerWindow(WindowVisualizer):
         # Not an action button, so it has to carry the canonical tooltip rule
         # itself or the Inspector's bare container styles render it black.
         manual.setStyleSheet(theme.tooltip_stylesheet())
-        for label, role in (("Figure   F", store.ROLE_FIGURE),
-                            ("Background   B", store.ROLE_BACKGROUND)):
-            button = QPushButton(label)
-            button.setStyleSheet(theme.action_button_stylesheet())
-            button.setFocusPolicy(Qt.NoFocus)
-            button.setToolTip(MANUAL_HELP)
+        self._role_btns = {}
+        for label, key, role in (("Figure", "F", store.ROLE_FIGURE),
+                                 ("Background", "B", store.ROLE_BACKGROUND)):
+            # Checkable so the button stays lit while it waits for the click.
+            button = _action(label, key, MANUAL_HELP, checkable=True)
             button.clicked.connect(lambda _checked, r=role: self.assign_role(r))
-            manual_layout.addWidget(button)
+            self._role_btns[role] = button
+        manual_layout.addWidget(_row(self._role_btns[store.ROLE_FIGURE],
+                                     self._role_btns[store.ROLE_BACKGROUND]))
         # Compact transient state only (region count, segmentation errors).
         self._manual_lbl = QLabel("")
         self._manual_lbl.setStyleSheet(
@@ -842,6 +983,11 @@ class PaletteVisualizerWindow(WindowVisualizer):
                                            pref_key="palette_section_manual")
         manual_section.setToolTip(MANUAL_HELP)
         manual_section.setStyleSheet(theme.tooltip_stylesheet())
+        self._manual_sweep = SweepBar(self)
+        self._manual_sweep_timer = QTimer(self)
+        self._manual_sweep_timer.setInterval(20)
+        self._manual_sweep_timer.timeout.connect(self._manual_sweep.tick)
+        manual_section.set_subbar(self._manual_sweep)
 
         info = QWidget()
         info_layout = QVBoxLayout(info)
@@ -857,9 +1003,11 @@ class PaletteVisualizerWindow(WindowVisualizer):
         tools_layout.setContentsMargins(0, 0, 0, 0)
         tools_layout.setSpacing(theme.SECTION_GAP)
         # No keyboard shortcut for Clear All either — it is destructive.
-        self._clear_btn = QPushButton("Clear All")
-        self._clear_btn.setStyleSheet(theme.action_button_stylesheet())
-        self._clear_btn.setFocusPolicy(Qt.NoFocus)
+        self._clear_btn = _action(
+            "Clear All", None,
+            "Clear every accepted, rejected and manual palette for the selected "
+            "movie/gameplay, after a confirmation.\nGenerated proposals are kept, "
+            "so every frame returns to its unreviewed state.")
         self._clear_btn.clicked.connect(self.clear_all)
         tools_layout.addWidget(self._clear_btn)
         panel.add_section("Media Tools", tools, pref_key="palette_section_tools")
@@ -924,6 +1072,7 @@ class PaletteVisualizerWindow(WindowVisualizer):
             item["state"] = store.frame_state(entry)
             item["choices"] = store.selectable_choices(entry)
             item["final"] = entry.get("final_palette") or {}
+            item["display"] = display_palette(entry)
             item["preview"] = preview_quadrants(entry)
         self._frames = frames
         self._browser.set_frames(frames)
@@ -950,9 +1099,14 @@ class PaletteVisualizerWindow(WindowVisualizer):
         item = self.current_frame()
         canvas = self._browser.canvas()
         canvas.set_frame(item["image"] if item and item.get("available") else None)
-        canvas.set_palette((item or {}).get("final") or {})
+        canvas.set_palette((item or {}).get("display") or {})
         canvas.set_preview((item or {}).get("preview") or [])
         self._refresh_inspector()
+
+    def _activate_frame(self, index: int) -> None:
+        """Double-click in All Frames: select that frame and open it."""
+        self._select_frame(index)
+        self.set_mode(MODE_SINGLE)
 
     # ------------------------------------------------------------- inspector
     def _refresh_inspector(self) -> None:
@@ -965,22 +1119,21 @@ class PaletteVisualizerWindow(WindowVisualizer):
             button.setEnabled(key in selectable)
             label = str(proposal.get("label") or "").split(" ")[0][:9]
             button.setText(f"{key}  {label}" if label else key)
-
-        lines = []
-        for key in sorted(proposals, key=lambda value: int(value)):
-            proposal = proposals[key] or {}
             converges = proposal.get("converges_with")
             if converges:
-                suffix = f"  (same as {converges[0]})"
-            elif key not in selectable:
-                suffix = "  (unavailable)"
+                detail = f"{key} converges with choice {converges[0]}"
+            elif proposal and key not in selectable:
+                detail = f"{key} {proposal.get('label', '')} — no measured palette"
+            elif proposal:
+                detail = f"{key} {proposal.get('label', '')}"
             else:
-                suffix = ""
-            lines.append(f"{key} {proposal.get('label', '')}{suffix}")
-        self._choice_lbl.setText(
-            "\n".join(lines) or "No proposals yet — press C to create them.")
+                detail = "No proposals yet — press C to create them"
+            button.setToolTip(f"{detail}\n\n{CHOICE_HELP}")
 
         final = entry.get("final_palette") or {}
+        label, enabled = reset_action(entry)
+        self._reset_btn.setText(label)
+        self._reset_btn.setEnabled(enabled)
         for key, value in (
             ("frame", f"{self._current + 1} / {len(self._frames)}"
                       if self._frames else "\u2014"),
@@ -1024,10 +1177,6 @@ class PaletteVisualizerWindow(WindowVisualizer):
         # message, so the count alone is enough.
         self._generate_section.set_subtitle(f"{done} / {total}")
 
-    def _set_progress(self, text: str) -> None:
-        self._progress_lbl.setText(text)
-        self._progress_lbl.setVisible(bool(text))
-
     def _set_manual_status(self, text: str) -> None:
         self._manual_lbl.setText(text)
         self._manual_lbl.setVisible(bool(text))
@@ -1042,15 +1191,15 @@ class PaletteVisualizerWindow(WindowVisualizer):
 
     def _on_generation_done(self, summary: dict) -> None:
         self._stop_worker()
-        self._set_progress(
-            f"generated {summary.get('generated', 0)}  "
-            f"skipped {summary.get('skipped', 0)}  "
-            f"failed {summary.get('failed', 0)}")
+        # Failures go to the console rather than an Inspector row.
+        for shot_id, error in summary.get("errors") or []:
+            print(f"[palette] generation failed for {shot_id}: {error}",
+                  file=sys.stderr, flush=True)
         self.reload()
 
     def _on_generation_failed(self, message: str) -> None:
         self._stop_worker()
-        self._set_progress(f"Generation failed: {message}")
+        print(f"[palette] generation failed: {message}", file=sys.stderr, flush=True)
 
     # ---------------------------------------------------------------- review
     def accept_choice(self, choice: str) -> bool:
@@ -1079,14 +1228,27 @@ class PaletteVisualizerWindow(WindowVisualizer):
         self.next_frame()
 
     def reset_frame(self) -> None:
-        """Delete/Backspace — clear the human result, keep the proposals."""
+        """Delete/Backspace — step this frame back one stage.
+
+        A chosen palette returns to the proposals; proposals are discarded;
+        an ungenerated frame does nothing.
+        """
         from services import palette_review
 
         item = self.current_frame()
         if not item:
             return
-        palette_review.reset(self._project_path, self._filename,
-                             self._media_type, item["shot_id"])
+        entry = self._entry()
+        _label, enabled = reset_action(entry)
+        if not enabled:
+            return
+        if store.frame_state(entry) in (store.STATE_UNREVIEWED,
+                                        store.STATE_GENERATION_FAILED):
+            palette_review.clear_proposals(self._project_path, self._filename,
+                                           self._media_type, item["shot_id"])
+        else:
+            palette_review.reset(self._project_path, self._filename,
+                                 self._media_type, item["shot_id"])
         self._reload_entry(item["shot_id"])
         self._select_frame(self._current)
 
@@ -1114,6 +1276,7 @@ class PaletteVisualizerWindow(WindowVisualizer):
                 item["state"] = store.frame_state(entry)
                 item["choices"] = store.selectable_choices(entry)
                 item["final"] = entry.get("final_palette") or {}
+                item["display"] = display_palette(entry)
                 item["preview"] = preview_quadrants(entry)
         self._browser.set_frames(self._frames)
         self._browser.set_current(self._current)
@@ -1123,57 +1286,44 @@ class PaletteVisualizerWindow(WindowVisualizer):
         item = self.current_frame()
         if not item or not item.get("available") or self._mask_worker is not None:
             return
-        self._manual_lbl.setText("Segmenting\u2026")
-        self._manual_lbl.setVisible(True)
+        # The sweep on the section title says "working"; no status text needed.
+        self._manual_sweep.start()
+        self._manual_sweep_timer.start()
         worker = _MaskWorker(self._project_path, item["image"], "object", self)
         worker.masks_ready.connect(self._on_masks_ready)
         worker.failed.connect(self._on_masks_failed)
         self._mask_worker = worker
         worker.start()
 
+    def _stop_manual_sweep(self) -> None:
+        self._manual_sweep_timer.stop()
+        self._manual_sweep.stop()
+
     def _on_masks_ready(self, masks: list) -> None:
         self._mask_worker = None
+        self._stop_manual_sweep()
         self._browser.canvas().set_blobs(build_blobs(masks))
-        self._set_manual_status(
-            f"{len(self._browser.canvas().blobs())} region(s) found")
 
     def _on_masks_failed(self, message: str) -> None:
         self._mask_worker = None
+        self._stop_manual_sweep()
+        # Failures stay visible; successes say nothing.
         self._set_manual_status(f"Segmentation failed: {message}")
 
     def _on_pipette(self, red: int, green: int, blue: int, role: str) -> None:
         self._assign(role, [red, green, blue], pipette=True)
+        self.set_pick_role(None)
+
+    def set_pick_role(self, role: str | None) -> None:
+        """Arm (or disarm) the next canvas click to pick a colour for *role*."""
+        self._pick_role = role
+        self._browser.canvas().set_pick_role(role)
+        for name, button in self._role_btns.items():
+            button.setChecked(name == role)
 
     def assign_role(self, role: str) -> None:
-        """F / B — assign the currently selected region(s) to a role.
-
-        The mean of the selected regions is used here. A pipetted colour is
-        stored verbatim instead and is never replaced by a mask mean.
-        """
-        canvas = self._browser.canvas()
-        indices = canvas.selected_indices()
-        item = self.current_frame()
-        if not item or not indices:
-            self._set_manual_status(
-                "Select a region, or Alt/Ctrl+Click to pipette")
-            return
-        from PIL import Image
-
-        with Image.open(item["image"]) as opened:
-            array = np.asarray(opened.convert("RGB"))
-        blobs = canvas.blobs()
-        union = np.zeros(array.shape[:2], dtype=bool)
-        for index in indices:
-            mask = np.asarray(blobs[index]["mask"], dtype=bool)
-            if mask.shape == union.shape:
-                union |= mask
-        if not union.any():
-            return
-        rgb = np.rint(array[union].astype(float).mean(axis=0)).astype(int).tolist()
-        self._assign(role, rgb, pipette=False, masks=[
-            {"index": index, "area": int(blobs[index].get("area", 0))}
-            for index in indices
-        ])
+        """F / B — arm a colour pick; pressing the same role again cancels it."""
+        self.set_pick_role(None if self._pick_role == role else role)
 
     def _assign(self, role: str, rgb: list, *, pipette: bool,
                 masks: list | None = None) -> None:
@@ -1189,8 +1339,7 @@ class PaletteVisualizerWindow(WindowVisualizer):
             masks=masks,
         )
         self._reload_entry(item["shot_id"])
-        self._browser.canvas().set_palette(
-            (self._entry().get("final_palette")) or {})
+        self._browser.canvas().set_palette(display_palette(self._entry()))
         self._refresh_inspector()
         # Manual editing never auto-advances.
 
@@ -1202,6 +1351,14 @@ class PaletteVisualizerWindow(WindowVisualizer):
     def previous_frame(self) -> None:
         if self._frames:
             self._select_frame(max(self._current - 1, 0))
+
+    def step_row(self, direction: int) -> None:
+        """Move one grid row. Clamped, and a no-op outside All Frames."""
+        if not self._frames or self.mode() != MODE_ALL:
+            return
+        target = self._current + direction * self._browser.columns()
+        if 0 <= target < len(self._frames):
+            self._select_frame(target)
 
     def set_mode(self, mode: str) -> None:
         """Single entry point for both the S/A keys and the View buttons."""
@@ -1252,6 +1409,12 @@ class PaletteVisualizerWindow(WindowVisualizer):
             return
         if key == Qt.Key_Left:
             self.previous_frame()
+            return
+        if key in (Qt.Key_Up, Qt.Key_Down):
+            # Row stepping only makes sense over the grid; Single Frame is a
+            # left/right (or scrubber) sequence.
+            if self.mode() == MODE_ALL:
+                self.step_row(1 if key == Qt.Key_Down else -1)
             return
         if key in (Qt.Key_Delete, Qt.Key_Backspace):
             self.reset_frame()
