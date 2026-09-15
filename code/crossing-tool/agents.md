@@ -212,6 +212,15 @@ before writing anything that "feels shared."
   background gets a `SweepBar` on its title (`section.set_subbar(bar)`), started/
   stopped around the async operation — in **every** completion path (success AND
   error), not just success.
+- **Inspectors hold controls and state, never documentation.** Do not put a
+  paragraph of usage instructions in an Inspector section — it breaks the visual
+  language every other visualizer shares and eats the pane's limited height.
+  Interaction help belongs in a tooltip on the relevant control (and/or its
+  section header) via `setToolTip()`, or in `documentation/`. Persistent text is
+  justified only when it reports *current state* (a count, a status, an error),
+  and such a label should hide itself when it has nothing to say rather than
+  leaving a blank row. `QToolTip` is already themed globally — do not build a
+  bespoke help popup.
 - **Large widget-list population**: a worker can make data retrieval cheap while the
   GUI still freezes constructing thousands of row widgets. Use Mosaic's
   `VocabularyTable` pattern for size-to-content Inspector lists: fetch and prepare
@@ -230,6 +239,24 @@ before writing anything that "feels shared."
   `BTN_BG`/`BTN_HOVER`/`BTN_PRESSED`/`BTN_H` (buttons), `SECTION_GAP`/`INSPECTOR_GAP`
   (spacing — these are aliases of each other), `font_ui()`/`font_mono()`/
   `font_subtitle()` (Geist for UI chrome, Geist Mono for data/info fields).
+- **`ACCENT` and `ACCENT_TEXT` are a pair.** Anything painted on the highlight
+  colour takes its foreground from `ACCENT_TEXT`, never from `TEXT` — white on
+  yellow is illegible. They back `QPalette.Highlight`/`HighlightedText` in
+  `apply_theme()`, so prefer those roles over inventing a new token. A rule that
+  sets `background-color: {ACCENT}` and forgets the paired foreground is a bug.
+- **Tooltips are chrome, not a selection.** They use their own pair,
+  `TOOLTIP_BG`/`TOOLTIP_TEXT` (canvas grey + muted text, backed by
+  `QPalette.ToolTipBase`/`ToolTipText`) — never `ACCENT`. The app-wide
+  `QToolTip` rule stops reaching a widget as soon as *any* ancestor sets its own
+  stylesheet, and the Inspector chain is full of bare `background: transparent;`
+  rules which match `QToolTip` too and render it black. Append
+  `theme.tooltip_stylesheet()` to any per-widget stylesheet whose widget or
+  descendants show a tooltip; `action_button_stylesheet()` already does.
+- **A plain `QWidget` subclass does not paint an ancestor's stylesheet
+  background.** Without `setAttribute(Qt.WA_StyledBackground, True)` it falls
+  back to the palette's window colour, which on a dark canvas reads as a foreign
+  light-grey panel. Set the attribute (and a background) on any bare container
+  placed inside a themed browser area.
 - **Scrollbars — read the developer-note comments in `theme.py` before touching
   anything scrollbar-related.** `SCROLLBAR_W` is the container's fixed footprint and
   must **never** change between idle/hover/active/pressed states (a real regression

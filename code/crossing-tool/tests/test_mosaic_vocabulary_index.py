@@ -54,10 +54,18 @@ def _write_annotations(project_path, values):
     return annotation_path
 
 
-def test_tooltip_text_uses_the_primary_white_theme_token():
+def test_tooltip_uses_the_canonical_tooltip_pair():
+    """Tooltips are chrome: browser-canvas grey with muted text.
+
+    This previously asserted the primary white TEXT token, which shipped
+    white-on-yellow and was illegible.
+    """
     tooltip_rule = theme._STYLESHEET.split("QToolTip {", 1)[1].split("}", 1)[0]
 
-    assert f"color: {theme.TEXT};" in tooltip_rule
+    assert f"background-color: {theme.TOOLTIP_BG};" in tooltip_rule
+    assert f"color: {theme.TOOLTIP_TEXT};" in tooltip_rule
+    assert f"color: {theme.TEXT};" not in tooltip_rule
+    assert theme.TOOLTIP_BG == theme.CANVAS_BG
 
 
 def test_index_only_vocabulary_reports_missing_without_raw_scan(tmp_path, monkeypatch):

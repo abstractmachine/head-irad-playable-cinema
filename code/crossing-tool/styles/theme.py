@@ -103,11 +103,20 @@ TRIANGLE     = "#bfbfbf"   # 75% grey — disclosure and dropdown indicators
 BORDER       = "#ffffff"   # interactive element borders (buttons, inputs) — white
 UI_BORDER    = "#404040"   # structural chrome borders (group boxes, frames) — 25% grey
 SPLITTER     = "#737373"   # splitter drag handles — 45% grey (barely visible on BG)
-ACCENT       = "#ffff00"   # selections, active, checked states
+# ACCENT and ACCENT_TEXT are a PAIR: anything painted on ACCENT must take its
+# foreground from ACCENT_TEXT, never from TEXT. They back QPalette.Highlight /
+# QPalette.HighlightedText (see apply_theme) — prefer those roles over new
+# tokens. Normal white TEXT is illegible on yellow.
+ACCENT       = "#ffff00"   # selections, active, checked states, tooltips
 ACCENT_TEXT  = "#333333"   # text on ACCENT background (black on yellow; use #ffffff for dark accents)
 WARNING_COLOR = "#FF5C00"  # stale indexes and synthetic/untyped data warnings
 ACCENT_FILL_ALPHA = 64     # alpha for accent-colored area fills (25% of 255)
 CANVAS_BG    = "#3a3a3a"   # video / image display areas (dark so content pops)
+# Tooltips are chrome, not a selection: they use the browser canvas grey with
+# muted text, NOT the ACCENT highlight pair. Kept as their own named pair so a
+# tooltip is never assumed to inherit ordinary TEXT on an arbitrary background.
+TOOLTIP_BG   = CANVAS_BG   # same grey as the browser canvas
+TOOLTIP_TEXT = TEXT_DIM    # muted white
 TRIANGLE_LEFT = 8          # shared left edge for section/combo triangles
 TRIANGLE_WIDTH = 14        # shared indicator footprint
 TRIANGLE_TEXT_LEFT = 30    # left inset for text following a triangle
@@ -378,9 +387,10 @@ QMessageBox {{ background-color: {BG}; }}
 
 /* ── Tooltips ──────────────────────────────────────────────── */
 QToolTip {{
-    background-color: {ACCENT};
-    color: {TEXT};
-    border: none;
+    background-color: {TOOLTIP_BG};
+    color: {TOOLTIP_TEXT};
+    border: 1px solid {UI_BORDER};
+    padding: 3px;
     font-size: {BASE_PT}pt;
 }}
 """
@@ -422,6 +432,25 @@ def table_stylesheet() -> str:
     """
 
 
+def tooltip_stylesheet() -> str:
+    """Return the canonical ``QToolTip`` rule for use inside a widget stylesheet.
+
+    The app-wide rule in ``_STYLESHEET`` stops reaching a widget as soon as any
+    ancestor sets its own stylesheet — and the Inspector chain is full of bare
+    ``background: transparent;`` rules, which match ``QToolTip`` too and render
+    it black. Append this to any per-widget stylesheet whose widget (or whose
+    descendants) can show a tooltip. ``action_button_stylesheet()`` already
+    does, so Inspector action buttons are covered automatically.
+    """
+    return (
+        f"QToolTip {{"
+        f" background-color: {TOOLTIP_BG}; color: {TOOLTIP_TEXT};"
+        f" border: 1px solid {UI_BORDER}; padding: 3px;"
+        f" font-size: {BASE_PT}pt;"
+        f"}}"
+    )
+
+
 def action_button_stylesheet(*, warning: bool = False) -> str:
     """Return the shared per-button stylesheet used for inspector action buttons.
 
@@ -459,6 +488,9 @@ def action_button_stylesheet(*, warning: bool = False) -> str:
         f"QPushButton:checked  {{ background-color: {ACCENT}; color: {ACCENT_TEXT}; }}"
         f"QPushButton:disabled {{ background-color: {face};"
         f" color: rgba(255,255,255,0.15); }}"
+        # This button is the nearest styled ancestor of its own tooltip, so the
+        # canonical rule has to travel with it.
+        + tooltip_stylesheet()
     )
 
 
@@ -580,6 +612,10 @@ def apply_theme(app) -> None:
     _pal = app.palette()
     _pal.setColor(QPalette.All, QPalette.Highlight,       QColor(ACCENT))
     _pal.setColor(QPalette.All, QPalette.HighlightedText, QColor(ACCENT_TEXT))
+    # Tooltips have their own pair; without these, any path that falls through
+    # to the palette gets Qt's default pale-yellow tooltip.
+    _pal.setColor(QPalette.All, QPalette.ToolTipBase,     QColor(TOOLTIP_BG))
+    _pal.setColor(QPalette.All, QPalette.ToolTipText,     QColor(TOOLTIP_TEXT))
     app.setPalette(_pal)
     combo_indicator_filter = _ComboIndicatorFilter.create(app)
     app.installEventFilter(combo_indicator_filter)

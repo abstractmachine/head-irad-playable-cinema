@@ -59,6 +59,7 @@ from visualizers.components.inspector import Inspector
 from visualizers.components.tab_panel import TabPanel
 from visualizers.components.combo_popup import style_canonical_combo
 from visualizers.components.ipc_server import IpcServer
+from visualizers.components.timeline_scrubber import TimelineHitArea, TimelineScrollBar
 
 from data.shotlist import read_shotlist, write_shotlist, get_shotlist_path, attach_shot_ids
 from data.metadata import get_metadata
@@ -72,83 +73,12 @@ from data.index import (
 )
 
 
-class _TimelineScrollBar(JumpScrollBar):
-    def __init__(self, parent=None) -> None:
-        super().__init__(Qt.Horizontal, parent)
-        self._hit_area = None
-
-    def _on_value_changed(self, _value: int) -> None:
-        """Keep timeline emphasis hover/drag-driven during video playback."""
-        self._activity_timer.stop()
-        self._set_active(self._drag_active or self._cursor_over_bar())
-
-    def _cursor_over_bar(self) -> bool:
-        if self._hit_area is None:
-            return super()._cursor_over_bar()
-        local = self._hit_area.mapFromGlobal(self.cursor().pos())
-        return self._hit_area.rect().contains(local)
-
-    def leaveEvent(self, event) -> None:
-        super().leaveEvent(event)
-        # Moving from the visible bar into the larger host must still count
-        # as hovering the timeline, even though the child itself was left.
-        if self._cursor_over_bar():
-            self._set_active(True)
+class _TimelineScrollBar(TimelineScrollBar):
+    pass
 
 
-class _TimelineHitArea(QWidget):
-    """Fifteen-bar-high mouse target around the unchanged timeline control."""
-
-    def __init__(self, scrollbar: _TimelineScrollBar, parent=None) -> None:
-        super().__init__(parent)
-        self._scrollbar = scrollbar
-        self._scrollbar.setParent(self)
-        self._scrollbar._hit_area = self
-        self.setFixedHeight(theme.SCROLLBAR_W * 15)
-        self.setMouseTracking(True)
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        self._scrollbar.setGeometry(
-            0,
-            self.height() - theme.SCROLLBAR_W,
-            self.width(),
-            theme.SCROLLBAR_W,
-        )
-
-    def enterEvent(self, event) -> None:
-        self._scrollbar._set_active(True)
-        super().enterEvent(event)
-
-    def leaveEvent(self, event) -> None:
-        self._scrollbar._activity_timer.stop()
-        if not self._scrollbar._drag_active:
-            self._scrollbar._set_active(False)
-        super().leaveEvent(event)
-
-    def _forward_mouse_event(self, event) -> None:
-        local = QPointF(
-            event.pos().x(),
-            min(theme.SCROLLBAR_W - 1, max(0, event.pos().y() - self._scrollbar.y())),
-        )
-        forwarded = QMouseEvent(
-            event.type(),
-            local,
-            event.button(),
-            event.buttons(),
-            event.modifiers(),
-        )
-        QApplication.sendEvent(self._scrollbar, forwarded)
-        event.accept()
-
-    def mousePressEvent(self, event) -> None:
-        self._forward_mouse_event(event)
-
-    def mouseMoveEvent(self, event) -> None:
-        self._forward_mouse_event(event)
-
-    def mouseReleaseEvent(self, event) -> None:
-        self._forward_mouse_event(event)
+class _TimelineHitArea(TimelineHitArea):
+    pass
 
 
 # ---------------------------------------------------------------------------

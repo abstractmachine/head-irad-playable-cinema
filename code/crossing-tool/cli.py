@@ -6789,15 +6789,216 @@ def _silhouette_catalog_clear(args):
 
 
 def _index_palette(args):
-    """Dispatch ``crossing index palette <create|get>``."""
+    """Dispatch ``crossing index palette <create|get|propose|…>``."""
     palette_action = getattr(args, "palette_action", None)
     if palette_action == "create":
         _index_palette_create(args)
     elif palette_action == "get":
         _index_palette_get(args)
+    elif palette_action in _PALETTE_REVIEW_ACTIONS:
+        _PALETTE_REVIEW_ACTIONS[palette_action](args)
     else:
-        print("✗ index palette: specify create or get", file=sys.stderr)
+        print("✗ index palette: specify create, get, propose, propose-all, "
+              "state, accept, reject, reset, manual or clear-all",
+              file=sys.stderr)
         sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# index palette — narratological proposal generation and human review
+#
+# Every action here is a thin wrapper over services.palette_review, which is
+# the same module the Palette Visualizer calls. No palette-review business
+# logic lives in the CLI or in Qt code.
+# ---------------------------------------------------------------------------
+
+def _palette_review_target(args):
+    """Resolve (project_path, filename, media_type) for a review command."""
+    from data.shotlist import resolve_filename
+
+    _require_path()
+    project_path = prefs.get("path")
+    media_type = normalize_media_type(getattr(args, "media", "movie")) or "movie"
+    try:
+        filename = resolve_filename(
+            project_path, getattr(args, "tmdb", None),
+            getattr(args, "movie", None), media_type,
+        )
+    except Exception as exc:
+        print(f"✗ Could not resolve {media_type}: {exc}", file=sys.stderr)
+        sys.exit(1)
+    return project_path, filename, media_type
+
+
+def _palette_review_shot(args, project_path, filename, media_type) -> str:
+    from services import palette_review
+
+    shot_id = getattr(args, "shot_id", None)
+    if shot_id:
+        return str(shot_id)
+    index = getattr(args, "shot", None)
+    if index is None:
+        print("✗ specify --shot-id or --shot", file=sys.stderr)
+        sys.exit(1)
+    frames = palette_review.list_frames(project_path, filename, media_type)
+    if not 0 <= int(index) < len(frames):
+        print(f"✗ shot index {index} out of range (0..{len(frames) - 1})",
+              file=sys.stderr)
+        sys.exit(1)
+    return frames[int(index)]["shot_id"]
+
+
+def _index_palette_propose(args):
+    """Generate narratological palette proposals for one frame."""
+    from services import palette_review
+
+    project_path, filename, media_type = _palette_review_target(args)
+    shot_id = _palette_review_shot(args, project_path, filename, media_type)
+    models = palette_review.load_models(project_path)
+    try:
+        result = palette_review.create_frame(
+            project_path, filename, media_type, shot_id,
+            models=models, force=getattr(args, "force", False),
+        )
+    finally:
+        palette_review._free_models(models)
+    if result["status"] == "failed":
+        print(f"✗ {shot_id}: {result['error']}", file=sys.stderr)
+        sys.exit(1)
+    print(f"✓ {result['status']}: {shot_id}")
+    print("  Proposals are unreviewed — generation is not acceptance.")
+
+
+def _index_palette_propose_all(args):
+    """Generate proposals for every frame of ONE selected movie/gameplay."""
+    from services import palette_review
+
+    project_path, filename, media_type = _palette_review_target(args)
+
+    def _progress(done, total, shot_id, status):
+        print(f"  {done}/{total}  {shot_id}  {status}", flush=True)
+
+    summary = palette_review.create_all(
+        project_path, filename, media_type,
+        force=getattr(args, "force", False), on_progress=_progress,
+    )
+    print()
+    print(f"  frames considered: {summary['considered']}")
+    print(f"  generated:         {summary['generated']}")
+    print(f"  skipped:           {summary['skipped']}")
+    print(f"  failed:            {summary['failed']}")
+    print(f"  complete:          {summary['complete']}")
+    for shot_id, error in summary["errors"]:
+        print(f"  ✗ {shot_id}: {error}", file=sys.stderr)
+
+
+def _index_palette_state(args):
+    """Print generation/review state for one movie/gameplay."""
+    from services import palette_review
+
+    project_path, filename, media_type = _palette_review_target(args)
+    state = palette_review.media_state(project_path, filename, media_type)
+    print(f"{filename}  ({media_type})")
+    for name, count in state["counts"].items():
+        if count:
+            print(f"  {name:<20} {count}")
+    if getattr(args, "verbose", False):
+        for item in state["frames"]:
+            print(f"  [{item['index']:>4}] {item['shot_id']}  {item['state']}"
+                  f"  choices={','.join(item['choices']) or '-'}")
+
+
+def _index_palette_accept(args):
+    from services import palette_review
+
+    project_path, filename, media_type = _palette_review_target(args)
+    shot_id = _palette_review_shot(args, project_path, filename, media_type)
+    try:
+        palette_review.accept(project_path, filename, media_type, shot_id,
+                              str(args.choice), reviewer=getattr(args, "reviewer", None))
+    except ValueError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    print(f"✓ accepted choice {args.choice}: {shot_id}")
+
+
+def _index_palette_reject(args):
+    from services import palette_review
+
+    project_path, filename, media_type = _palette_review_target(args)
+    shot_id = _palette_review_shot(args, project_path, filename, media_type)
+    palette_review.reject(project_path, filename, media_type, shot_id,
+                          reviewer=getattr(args, "reviewer", None),
+                          note=getattr(args, "note", None))
+    print(f"✓ rejected proposals: {shot_id}")
+    print("  This records a reviewer judgement, not an algorithmic "
+          "'no adequate two-colour palette'.")
+
+
+def _index_palette_reset(args):
+    from services import palette_review
+
+    project_path, filename, media_type = _palette_review_target(args)
+    shot_id = _palette_review_shot(args, project_path, filename, media_type)
+    palette_review.reset(project_path, filename, media_type, shot_id)
+    print(f"✓ reset: {shot_id}  (generated proposals preserved)")
+
+
+def _index_palette_manual(args):
+    """Assign a hand-authored figure/background colour."""
+    from data import palette_review as store
+    from services import palette_review
+
+    project_path, filename, media_type = _palette_review_target(args)
+    shot_id = _palette_review_shot(args, project_path, filename, media_type)
+    try:
+        rgb = [int(part) for part in str(args.rgb).replace(",", " ").split()]
+    except ValueError:
+        rgb = []
+    if len(rgb) != 3 or not all(0 <= value <= 255 for value in rgb):
+        print("✗ --rgb must be three values 0-255, e.g. --rgb 200,12,10",
+              file=sys.stderr)
+        sys.exit(1)
+    role = store.ROLE_FIGURE if args.role in ("figure", "foreground", "front") \
+        else store.ROLE_BACKGROUND
+    colour = {
+        "rgb": rgb,
+        "hex": "#{:02x}{:02x}{:02x}".format(*rgb),
+        "pipette": bool(getattr(args, "pipette", False)),
+    }
+    palette_review.set_manual(project_path, filename, media_type, shot_id,
+                              role, colour)
+    print(f"✓ manual {role}: {colour['hex']}  {shot_id}")
+
+
+def _index_palette_clear_all(args):
+    """Clear human review/manual results for ONE selected movie/gameplay."""
+    from services import palette_review
+
+    project_path, filename, media_type = _palette_review_target(args)
+    if not getattr(args, "yes", False):
+        answer = input(
+            f"Clear all palette review/manual results for {filename}? [y/N] "
+        ).strip().lower()
+        if answer not in ("y", "yes"):
+            print("Cancelled.")
+            return
+    summary = palette_review.clear_all(project_path, filename, media_type)
+    print(f"✓ cleared {summary['cleared']} human result(s) across "
+          f"{summary['frames']} frame(s) of {filename}")
+    print("  Generated proposals were preserved.")
+
+
+_PALETTE_REVIEW_ACTIONS = {
+    "propose": _index_palette_propose,
+    "propose-all": _index_palette_propose_all,
+    "state": _index_palette_state,
+    "accept": _index_palette_accept,
+    "reject": _index_palette_reject,
+    "reset": _index_palette_reset,
+    "manual": _index_palette_manual,
+    "clear-all": _index_palette_clear_all,
+}
 
 
 def _index_palette_create(args):
@@ -10095,6 +10296,88 @@ def build_parser():
             "incompatible with --thumbnail)"
         ),
     )
+
+    # ── index palette — narratological proposals and human review ─────────
+    # Same service layer the Palette Visualizer uses. There is deliberately no
+    # keyboard shortcut for propose-all or clear-all in the GUI either.
+    def _add_palette_review_target(parser, *, shot: bool = True):
+        parser.set_defaults(func=cmd_index)
+        parser.add_argument(
+            "--title", dest="movie", default=None, metavar="TITLE",
+            help="Title or slug substring identifying one movie/gameplay item",
+        )
+        _add_tmdb_arg(parser, help="TMDb ID (unambiguous alternative to --title)")
+        _add_media_arg(parser)
+        if shot:
+            parser.add_argument("--shot-id", dest="shot_id", default=None,
+                                metavar="SHOT_ID", help="Canonical shot id")
+            parser.add_argument("--shot", type=int, default=None, metavar="INDEX",
+                                help="0-based frame index within the media item")
+        return parser
+
+    _add_palette_review_target(palette_sub.add_parser(
+        "propose",
+        help="Generate narratological palette proposals for one frame",
+    )).add_argument("--force", action="store_true",
+                    help="Regenerate even when compatible proposals exist")
+
+    _add_palette_review_target(palette_sub.add_parser(
+        "propose-all",
+        help="Generate proposals for every frame of ONE selected movie/gameplay",
+        epilog=(
+            "Examples:\n"
+            "  crossing index palette propose-all --title 'The Searchers'\n"
+            "  crossing index palette propose-all --title 'Clip' --media gameplay --force"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    ), shot=False).add_argument(
+        "--force", action="store_true",
+        help="Regenerate frames that already have compatible proposals",
+    )
+
+    p_palette_state = _add_palette_review_target(palette_sub.add_parser(
+        "state", help="Print generation/review state for one movie/gameplay",
+    ), shot=False)
+    _add_verbose_arg(p_palette_state, help="List every frame and its state")
+
+    p_palette_accept = _add_palette_review_target(palette_sub.add_parser(
+        "accept", help="Accept a generated proposal (1-4) for one frame",
+    ))
+    p_palette_accept.add_argument("--choice", required=True, metavar="N",
+                                  help="Proposal number to accept")
+    p_palette_accept.add_argument("--reviewer", default=None, metavar="NAME")
+
+    p_palette_reject = _add_palette_review_target(palette_sub.add_parser(
+        "reject",
+        help="Record that a reviewer judged none of the proposals satisfactory",
+    ))
+    p_palette_reject.add_argument("--reviewer", default=None, metavar="NAME")
+    p_palette_reject.add_argument("--note", default=None, metavar="TEXT")
+
+    _add_palette_review_target(palette_sub.add_parser(
+        "reset",
+        help="Clear one frame's accepted/manual palette, keeping its proposals",
+    ))
+
+    p_palette_manual = _add_palette_review_target(palette_sub.add_parser(
+        "manual", help="Assign a hand-authored figure/background colour",
+    ))
+    p_palette_manual.add_argument(
+        "--role", required=True,
+        choices=("figure", "foreground", "front", "background", "back"),
+    )
+    p_palette_manual.add_argument("--rgb", required=True, metavar="R,G,B")
+    p_palette_manual.add_argument(
+        "--pipette", action="store_true",
+        help="Mark the colour as pipetted rather than mask-averaged",
+    )
+
+    p_palette_clear = _add_palette_review_target(palette_sub.add_parser(
+        "clear-all",
+        help="Clear human review/manual results for ONE movie/gameplay",
+    ), shot=False)
+    p_palette_clear.add_argument("--yes", action="store_true",
+                                 help="Skip the confirmation prompt")
 
     # index motif
     p_index_motif = index_sub.add_parser(
