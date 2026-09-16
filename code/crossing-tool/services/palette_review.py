@@ -438,6 +438,16 @@ def set_manual(project_path: str, filename: str, media_type: str, shot_id: str,
     )
 
 
+def set_role_choice(project_path: str, filename: str, media_type: str,
+                    shot_id: str, role: str, choice: str, *,
+                    reviewer: str | None = None) -> dict:
+    """Take one role from proposal *choice* — a split validation of the proposals."""
+    return _mutate(
+        project_path, filename, media_type, shot_id,
+        lambda entry: store.set_role_from_proposal(entry, role, choice, reviewer),
+    )
+
+
 def clear_manual(project_path: str, filename: str, media_type: str, shot_id: str,
                  role: str) -> dict:
     return _mutate(project_path, filename, media_type, shot_id,

@@ -391,6 +391,150 @@ class TestServiceParity:
 # Derived state
 # ---------------------------------------------------------------------------
 
+class TestSplitValidation:
+    """Figure from one proposal, background from another."""
+
+    def _two(self):
+        entry = {}
+        store.record_generation(entry, service.PROPOSAL_VERSION, "gen-a", {
+            "1": _proposal("1", label="DIRECT", strategy="direct", colours=[
+                {"rgb": [1, 1, 1], "hex": "#010101"},
+                {"rgb": [2, 2, 2], "hex": "#020202"}]),
+            "4": _proposal("4", label="CONTROL", strategy="control", colours=[
+                {"rgb": [3, 3, 3], "hex": "#030303"},
+                {"rgb": [4, 4, 4], "hex": "#040404"}]),
+        }, {})
+        return entry
+
+    def test_each_half_comes_from_its_own_proposal(self):
+        entry = self._two()
+        store.set_role_from_proposal(entry, store.ROLE_FIGURE, "1")
+        store.set_role_from_proposal(entry, store.ROLE_BACKGROUND, "4")
+        final = entry["final_palette"]
+        assert final["source"] == "split"
+        assert final[store.ROLE_FIGURE]["hex"] == "#010101"
+        assert final[store.ROLE_BACKGROUND]["hex"] == "#040404"
+        assert store.frame_state(entry) == store.STATE_SPLIT
+
+    def test_the_record_says_which_strategy_won_each_half(self):
+        entry = self._two()
+        store.set_role_from_proposal(entry, store.ROLE_FIGURE, "1")
+        store.set_role_from_proposal(entry, store.ROLE_BACKGROUND, "4")
+        review = entry["review"]
+        assert review["answer"] == store.ANSWER_SPLIT
+        assert review["choice"] is None
+        assert review["roles"][store.ROLE_FIGURE]["choice"] == "1"
+        assert review["roles"][store.ROLE_FIGURE]["strategy"] == "direct"
+        assert review["roles"][store.ROLE_BACKGROUND]["choice"] == "4"
+        assert review["roles"][store.ROLE_BACKGROUND]["strategy"] == "control"
+
+    def test_the_colours_are_never_copied_into_the_review(self):
+        entry = self._two()
+        store.set_role_from_proposal(entry, store.ROLE_FIGURE, "1")
+        endorsement = entry["review"]["roles"][store.ROLE_FIGURE]
+        assert "rgb" not in endorsement and "hex" not in endorsement
+
+    def test_one_half_alone_is_incomplete_but_still_shows(self):
+        entry = self._two()
+        store.set_role_from_proposal(entry, store.ROLE_FIGURE, "1")
+        assert store.frame_state(entry) == store.STATE_SPLIT_INCOMPLETE
+        assert "final_palette" not in entry
+        resolved = store.resolved_roles(entry)
+        assert resolved[store.ROLE_FIGURE]["hex"] == "#010101"
+        assert store.ROLE_BACKGROUND not in resolved
+
+    def test_both_halves_on_one_proposal_is_a_plain_acceptance(self):
+        entry = self._two()
+        store.set_role_from_proposal(entry, store.ROLE_FIGURE, "4")
+        store.set_role_from_proposal(entry, store.ROLE_BACKGROUND, "4")
+        assert store.frame_state(entry) == store.STATE_ACCEPTED
+        assert entry["review"]["answer"] == store.ANSWER_ACCEPTED
+        assert entry["review"]["choice"] == "4"
+        assert "roles" not in entry["review"]
+
+    def test_taking_one_half_decomposes_a_whole_acceptance(self):
+        entry = self._two()
+        store.accept_proposal(entry, "4")
+        store.set_role_from_proposal(entry, store.ROLE_FIGURE, "1")
+        assert store.frame_state(entry) == store.STATE_SPLIT
+        # The untouched half stays where the reviewer already put it.
+        assert entry["review"]["roles"][store.ROLE_BACKGROUND]["choice"] == "4"
+        assert entry["final_palette"][store.ROLE_BACKGROUND]["hex"] == "#040404"
+        assert entry["final_palette"][store.ROLE_FIGURE]["hex"] == "#010101"
+
+    def test_a_pipette_replaces_only_its_own_half(self):
+        entry = self._two()
+        store.set_role_from_proposal(entry, store.ROLE_FIGURE, "1")
+        store.set_role_from_proposal(entry, store.ROLE_BACKGROUND, "4")
+        store.set_manual_colour(entry, store.ROLE_FIGURE,
+                                {"rgb": [9, 9, 9], "hex": "#090909", "pipette": True})
+        assert store.frame_state(entry) == store.STATE_SPLIT
+        final = entry["final_palette"]
+        assert final[store.ROLE_FIGURE]["hex"] == "#090909"
+        assert final[store.ROLE_BACKGROUND]["choice"] == "4"
+
+    def test_a_pipette_drops_the_endorsement_it_supersedes(self):
+        entry = self._two()
+        store.set_role_from_proposal(entry, store.ROLE_FIGURE, "1")
+        store.set_role_from_proposal(entry, store.ROLE_BACKGROUND, "4")
+        store.set_manual_colour(entry, store.ROLE_FIGURE, {"rgb": [9, 9, 9]})
+        # A stale endorsement would claim proposal 1 was validated when it was not.
+        assert store.ROLE_FIGURE not in entry["review"]["roles"]
+
+    def test_pipetting_the_last_endorsed_half_leaves_no_review(self):
+        entry = self._two()
+        store.set_role_from_proposal(entry, store.ROLE_FIGURE, "1")
+        store.set_manual_colour(entry, store.ROLE_FIGURE, {"rgb": [9, 9, 9]})
+        assert "review" not in entry
+        assert store.frame_state(entry) == store.STATE_MANUAL_INCOMPLETE
+
+    def test_taking_a_half_replaces_a_pipetted_half(self):
+        entry = self._two()
+        store.set_manual_colour(entry, store.ROLE_FIGURE, {"rgb": [9, 9, 9]})
+        store.set_role_from_proposal(entry, store.ROLE_FIGURE, "1")
+        assert (entry.get("manual") or {}).get(store.ROLE_FIGURE) is None
+        assert store.resolved_roles(entry)[store.ROLE_FIGURE]["hex"] == "#010101"
+
+    def test_a_half_from_an_unselectable_proposal_is_refused(self):
+        entry = self._two()
+        entry["proposals"]["3"] = _proposal("3", active=True, colours=[])
+        with pytest.raises(ValueError):
+            store.set_role_from_proposal(entry, store.ROLE_FIGURE, "3")
+        with pytest.raises(ValueError):
+            store.set_role_from_proposal(entry, "middle", "1")
+
+    def test_accepting_a_whole_proposal_clears_the_split(self):
+        entry = self._two()
+        store.set_role_from_proposal(entry, store.ROLE_FIGURE, "1")
+        store.set_role_from_proposal(entry, store.ROLE_BACKGROUND, "4")
+        store.accept_proposal(entry, "1")
+        assert entry["review"]["answer"] == store.ANSWER_ACCEPTED
+        assert "roles" not in entry["review"]
+        assert entry["final_palette"]["source"] == "proposal"
+
+    def test_reset_returns_a_split_frame_to_its_proposals(self):
+        entry = self._two()
+        store.set_role_from_proposal(entry, store.ROLE_FIGURE, "1")
+        store.set_role_from_proposal(entry, store.ROLE_BACKGROUND, "4")
+        store.reset_frame(entry)
+        assert store.frame_state(entry) == store.STATE_UNREVIEWED
+        assert set(entry["proposals"]) == {"1", "4"}
+
+    def test_the_service_persists_a_split(self, project):
+        record = store.empty_record("a.mkv", "movie")
+        store.frame(record, "s1").update(self._two())
+        store.save_review(project, "a.mkv", "movie", record)
+
+        service.set_role_choice(project, "a.mkv", "movie", "s1",
+                                store.ROLE_FIGURE, "1")
+        service.set_role_choice(project, "a.mkv", "movie", "s1",
+                                store.ROLE_BACKGROUND, "4")
+        entry = store.load_review(project, "a.mkv", "movie")["frames"]["s1"]
+        assert store.frame_state(entry) == store.STATE_SPLIT
+        assert entry["final_palette"][store.ROLE_FIGURE]["hex"] == "#010101"
+        assert entry["final_palette"][store.ROLE_BACKGROUND]["hex"] == "#040404"
+
+
 class TestDerivedState:
     def test_every_documented_state_is_reachable(self):
         reachable = {
@@ -405,6 +549,10 @@ class TestDerivedState:
         entry = store.set_manual_colour({}, store.ROLE_FIGURE, {"rgb": [1, 1, 1]})
         reachable.add(store.frame_state(
             store.set_manual_colour(entry, store.ROLE_BACKGROUND, {"rgb": [2, 2, 2]})))
+        half = store.set_role_from_proposal(_generated(), store.ROLE_FIGURE, "1")
+        reachable.add(store.frame_state(half))
+        reachable.add(store.frame_state(
+            store.set_role_from_proposal(half, store.ROLE_BACKGROUND, "2")))
         assert reachable == set(store.STATES)
 
     def test_the_media_summary_counts_by_state(self):

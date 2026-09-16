@@ -78,7 +78,11 @@ def _generated_entry(choices=("1", "2")):
 
 
 def _generated(window, choices=("1", "2")):
-    """Give the current frame stored proposals, through the real store."""
+    """Give the current frame stored proposals, through the real store.
+
+    Each choice gets its own colours so a split between two of them is
+    visible in the resulting palette, not just in the recorded choice.
+    """
     from services import palette_review as service
 
     record = store.load_review(window._project_path, window._filename,
@@ -86,10 +90,12 @@ def _generated(window, choices=("1", "2")):
     entry = store.frame(record, window.current_frame()["shot_id"])
     store.record_generation(
         entry, service.PROPOSAL_VERSION, "gen-test",
-        {key: {"strategy": "direct", "label": "DIRECT", "active": True,
+        {key: {"strategy": f"strategy-{key}", "label": "DIRECT", "active": True,
                "materials": ["a", "b"], "converges_with": [],
-               "colours": [{"rgb": [1, 2, 3], "hex": "#010203"},
-                           {"rgb": [4, 5, 6], "hex": "#040506"}]}
+               "colours": [{"rgb": [int(key), 2, 3],
+                           "hex": "#{:02x}0203".format(int(key))},
+                           {"rgb": [int(key), 5, 6],
+                            "hex": "#{:02x}0506".format(int(key))}]}
          for key in choices},
         {"source_image": "x.png"},
     )
@@ -321,18 +327,24 @@ class TestNavigation:
 
 
 class TestKeyboardModel:
-    def test_c_creates_proposals_and_never_changes_display_mode(self, window, monkeypatch):
+    def test_g_creates_proposals_and_never_changes_display_mode(self, window, monkeypatch):
         called = []
         monkeypatch.setattr(window, "create_palette", lambda: called.append(True))
         before = window.mode()
-        _press(window, Qt.Key_C, "c")
+        _press(window, Qt.Key_G, "g")
         assert called == [True]
         assert window.mode() == before
 
-    def test_c_is_not_bound_to_any_display_action(self, window):
+    def test_c_is_no_longer_bound(self, window, monkeypatch):
+        called = []
+        monkeypatch.setattr(window, "create_palette", lambda: called.append(True))
+        _press(window, Qt.Key_C, "c")
+        assert called == []
+
+    def test_g_is_not_bound_to_any_display_action(self, window):
         before = (window.mode(), window._show_image, window._show_palette)
         window._worker = object()          # suppress real generation
-        _press(window, Qt.Key_C, "c")
+        _press(window, Qt.Key_G, "g")
         window._worker = None
         assert (window.mode(), window._show_image, window._show_palette) == before
 
@@ -393,13 +405,14 @@ class TestKeyboardModel:
 
 
 class TestProposalReview:
-    def test_a_valid_choice_accepts_and_advances(self, window):
+    def test_a_valid_choice_accepts_without_leaving_the_frame(self, window):
         _generated(window)
+        before = window._current
         assert window.accept_choice("1") is True
         entry = store.load_review(window._project_path, window._filename,
                                   window._media_type)["frames"]["first.mkv@0"]
         assert entry["review"]["choice"] == "1"
-        assert window._current == 1
+        assert window._current == before
 
     def test_a_missing_choice_does_nothing(self, window):
         _generated(window, choices=("1",))
@@ -453,13 +466,23 @@ class TestProposalReview:
                                   window._media_type)["frames"]["first.mkv@0"]
         assert entry["review"]["choice"] == "2"
 
-    def test_rejection_is_persisted_and_advances(self, window):
+    def test_rejection_is_persisted_without_leaving_the_frame(self, window):
         _generated(window)
+        before = window._current
         window.reject_proposals()
         entry = store.load_review(window._project_path, window._filename,
                                   window._media_type)["frames"]["first.mkv@0"]
         assert entry["review"]["answer"] == store.ANSWER_REJECTED
-        assert window._current == 1
+        assert window._current == before
+
+    def test_only_the_arrow_keys_change_frame(self, window):
+        _generated(window)
+        before = window._current
+        _press(window, Qt.Key_1, "1")
+        _press(window, Qt.Key_2, "2")
+        assert window._current == before
+        _press(window, Qt.Key_Right)
+        assert window._current == before + 1
 
     def test_reset_returns_the_frame_to_its_proposals(self, window):
         _generated(window)
@@ -627,7 +650,7 @@ class TestProposalPreview:
         quadrants = preview_quadrants(window._entry())
         assert [q["key"] if q else None for q in quadrants] == ["1", None, "3", None]
         assert quadrants[0]["figure"]["hex"] == "#010203"
-        assert quadrants[0]["background"]["hex"] == "#040506"
+        assert quadrants[0]["background"]["hex"] == "#010506"
 
     def test_an_unselectable_choice_leaves_its_quadrant_empty(self, window):
         from visualizers.palette_visualizer import preview_quadrants
@@ -816,7 +839,7 @@ class TestPartialManualDisplay:
         window._select_frame(0)
         shown = display_palette(window._entry())
         assert shown[store.ROLE_FIGURE]["hex"] == "#010203"
-        assert shown[store.ROLE_BACKGROUND]["hex"] == "#040506"
+        assert shown[store.ROLE_BACKGROUND]["hex"] == "#010506"
 
     def test_a_figure_only_manual_palette_still_shows_the_figure(self, window):
         from visualizers.palette_visualizer import display_palette
@@ -853,6 +876,435 @@ class TestPartialManualDisplay:
         assert SINGLE_FIGURE_RATIO == 0.20
 
 
+class TestGenerationControls:
+    class _FakeWorker:
+        def __init__(self):
+            self.cancelled = False
+
+        def cancel(self):
+            self.cancelled = True
+
+        def isRunning(self):  # noqa: N802
+            return False
+
+    def _running(self, window, button):
+        worker = self._FakeWorker()
+        window._worker = worker
+        window._active_btn = button
+        other = (window._create_all_btn if button is window._create_btn
+                 else window._create_btn)
+        button.setText("Cancel Proposals")
+        other.setEnabled(False)
+        return worker
+
+    def test_the_running_button_offers_cancel(self, window):
+        worker = self._running(window, window._create_btn)
+        assert window._create_btn.text() == "Cancel Proposals"
+        assert window._create_all_btn.isEnabled() is False
+        window.create_palette()
+        assert worker.cancelled is True
+
+    def test_the_batch_button_offers_cancel_too(self, window):
+        worker = self._running(window, window._create_all_btn)
+        window.create_all_palettes()
+        assert worker.cancelled is True
+        assert window._create_btn.isEnabled() is False
+
+    def test_the_idle_button_does_not_start_a_second_run(self, window):
+        worker = self._running(window, window._create_all_btn)
+        window.create_palette()
+        assert worker.cancelled is False
+        assert window._worker is worker
+
+    def test_stopping_restores_both_labels(self, window):
+        self._running(window, window._create_btn)
+        window._stop_worker()
+        assert window._create_btn.text() == "Generate Proposals"
+        assert window._create_all_btn.text() == "Generate All Remaining"
+        assert window._active_btn is None
+
+    def test_cancelling_keeps_finished_work(self, window):
+        _generated(window)
+        worker = self._running(window, window._create_all_btn)
+        window.cancel_generation()
+        window._stop_worker()
+        assert worker.cancelled is True
+        assert window._entry()["proposals"]
+
+    def test_completed_frames_become_reviewable_during_a_run(self, window):
+        """A frame that lands mid-batch is selectable without waiting."""
+        self._running(window, window._create_all_btn)
+        _generated(window)
+        shot = window.current_frame()["shot_id"]
+        window._on_progress(1, 4, shot, "generated")
+        assert store.selectable_choices(window._entry()) == ["1", "2"]
+        assert window._choice_btns["1"].isEnabled() is True
+        window._worker = None
+        window._active_btn = None
+
+    def test_progress_updates_one_cell_not_the_whole_grid(self, window, monkeypatch):
+        _generated(window)
+        rebuilds = []
+        monkeypatch.setattr(window._browser, "set_frames",
+                            lambda frames: rebuilds.append(frames))
+        window._refresh_frame(window.current_frame()["shot_id"])
+        assert rebuilds == []
+
+    def test_both_buttons_grey_out_when_nothing_remains(self, window):
+        for item in window._frames:
+            item["state"] = store.STATE_ACCEPTED
+        window._refresh_inspector()
+        assert window._create_btn.isEnabled() is False
+        assert window._create_all_btn.isEnabled() is False
+
+    def test_the_batch_button_stays_live_while_any_frame_remains(self, window):
+        for item in window._frames:
+            item["state"] = store.STATE_ACCEPTED
+        window._frames[-1]["state"] = store.STATE_NOT_GENERATED
+        window._refresh_inspector()
+        assert window._create_all_btn.isEnabled() is True
+
+    def test_a_manual_palette_counts_as_done(self, window):
+        from visualizers.palette_visualizer import needs_generation
+
+        assert needs_generation({"state": store.STATE_MANUAL}) is False
+        assert needs_generation({"state": store.STATE_MANUAL_INCOMPLETE}) is False
+        assert needs_generation({"state": store.STATE_NOT_GENERATED}) is True
+        assert needs_generation({"state": store.STATE_GENERATION_FAILED}) is True
+
+
+class TestPipettePreview:
+    def _canvas(self, window, tmp_path):
+        from PyQt5.QtGui import QImage
+
+        image = QImage(40, 20, QImage.Format_RGB32)
+        image.fill(QColor(200, 30, 40))
+        path = tmp_path / "solid.png"
+        image.save(str(path))
+        canvas = window._browser.canvas()
+        canvas.set_frame(str(path))
+        return canvas
+
+    def _move(self, canvas):
+        from PyQt5.QtGui import QMouseEvent
+
+        # The canvas enforces a 320x240 minimum, so aim at its real centre.
+        canvas.mouseMoveEvent(QMouseEvent(
+            QEvent.MouseMove, canvas.rect().center(), Qt.NoButton, Qt.NoButton,
+            Qt.NoModifier))
+
+    def test_moving_while_armed_previews_the_colour(self, window, tmp_path):
+        canvas = self._canvas(window, tmp_path)
+        canvas.set_pick_role(store.ROLE_FIGURE)
+        self._move(canvas)
+        assert canvas.pick_preview()["rgb"] == [200, 30, 40]
+        assert canvas.effective_palette()[store.ROLE_FIGURE]["rgb"] == [200, 30, 40]
+
+    def test_the_preview_only_touches_the_armed_role(self, window, tmp_path):
+        canvas = self._canvas(window, tmp_path)
+        canvas.set_palette({store.ROLE_BACKGROUND: {"rgb": [1, 1, 1]}})
+        canvas.set_pick_role(store.ROLE_FIGURE)
+        self._move(canvas)
+        shown = canvas.effective_palette()
+        assert shown[store.ROLE_FIGURE]["rgb"] == [200, 30, 40]
+        assert shown[store.ROLE_BACKGROUND]["rgb"] == [1, 1, 1]
+
+    def test_moving_unarmed_previews_nothing(self, window, tmp_path):
+        canvas = self._canvas(window, tmp_path)
+        canvas.set_pick_role(None)
+        self._move(canvas)
+        assert canvas.pick_preview() is None
+
+    def test_disarming_reverts_to_the_previous_state(self, window, tmp_path):
+        canvas = self._canvas(window, tmp_path)
+        canvas.set_palette({store.ROLE_FIGURE: {"rgb": [9, 9, 9]}})
+        canvas.set_pick_role(store.ROLE_FIGURE)
+        self._move(canvas)
+        assert canvas.effective_palette()[store.ROLE_FIGURE]["rgb"] == [200, 30, 40]
+        canvas.set_pick_role(None)
+        assert canvas.pick_preview() is None
+        assert canvas.effective_palette()[store.ROLE_FIGURE]["rgb"] == [9, 9, 9]
+
+    def test_disarming_an_undefined_role_leaves_it_undefined(self, window, tmp_path):
+        canvas = self._canvas(window, tmp_path)
+        canvas.set_palette({})
+        canvas.set_pick_role(store.ROLE_BACKGROUND)
+        self._move(canvas)
+        assert store.ROLE_BACKGROUND in canvas.effective_palette()
+        canvas.set_pick_role(None)
+        assert canvas.effective_palette() == {}
+
+    def test_pressing_the_role_key_again_cancels_the_preview(self, window, tmp_path):
+        canvas = self._canvas(window, tmp_path)
+        window.assign_role(store.ROLE_FIGURE)
+        self._move(canvas)
+        assert canvas.pick_preview() is not None
+        window.assign_role(store.ROLE_FIGURE)
+        assert canvas.pick_role() is None
+        assert canvas.pick_preview() is None
+
+    def test_leaving_the_canvas_clears_the_preview(self, window, tmp_path):
+        canvas = self._canvas(window, tmp_path)
+        canvas.set_pick_role(store.ROLE_FIGURE)
+        self._move(canvas)
+        canvas.leaveEvent(QEvent(QEvent.Leave))
+        assert canvas.pick_preview() is None
+
+
+class TestExperimentingOnOneFrame:
+    """Try proposals, pipette, and go back — all without leaving the frame."""
+
+    def _entry(self, window):
+        return store.load_review(window._project_path, window._filename,
+                                 window._media_type)["frames"]["first.mkv@0"]
+
+    def test_switching_between_proposals_replaces_the_palette(self, window):
+        _generated(window)
+        before = window._current
+        window.accept_choice("1")
+        window.accept_choice("2")
+        entry = self._entry(window)
+        assert entry["review"]["choice"] == "2"
+        assert store.frame_state(entry) == store.STATE_ACCEPTED
+        assert window._current == before
+
+    def test_pipetting_after_accepting_supersedes_the_proposal(self, window):
+        from visualizers.palette_visualizer import display_palette
+
+        _generated(window)
+        window.accept_choice("1")
+        window._on_pipette(220, 30, 25, store.ROLE_FIGURE)
+        entry = self._entry(window)
+        assert "review" not in entry
+        assert store.frame_state(entry) == store.STATE_MANUAL_INCOMPLETE
+        assert display_palette(entry)[store.ROLE_FIGURE]["rgb"] == [220, 30, 25]
+
+    def test_a_half_pipetted_frame_shows_the_pick_not_the_old_proposal(self, window):
+        from visualizers.palette_visualizer import display_palette
+
+        _generated(window)
+        window.accept_choice("1")
+        window._on_pipette(9, 9, 9, store.ROLE_BACKGROUND)
+        shown = display_palette(self._entry(window))
+        assert shown[store.ROLE_BACKGROUND]["rgb"] == [9, 9, 9]
+        assert store.ROLE_FIGURE not in shown
+
+    def test_going_back_to_a_proposal_after_pipetting(self, window):
+        from visualizers.palette_visualizer import display_palette
+
+        _generated(window)
+        window._on_pipette(220, 30, 25, store.ROLE_FIGURE)
+        window._on_pipette(1, 2, 3, store.ROLE_BACKGROUND)
+        assert store.frame_state(self._entry(window)) == store.STATE_MANUAL
+
+        assert window.accept_choice("2") is True
+        entry = self._entry(window)
+        assert "manual" not in entry
+        assert store.frame_state(entry) == store.STATE_ACCEPTED
+        assert display_palette(entry)[store.ROLE_FIGURE]["hex"] == "#020203"
+
+    def test_the_choices_stay_selectable_while_hand_authoring(self, window):
+        _generated(window)
+        window._on_pipette(220, 30, 25, store.ROLE_FIGURE)
+        window._select_frame(0)
+        assert store.selectable_choices(window._entry()) == ["1", "2"]
+        assert window._choice_btns["1"].isEnabled() is True
+
+    def test_the_round_trip_never_loses_the_proposals(self, window):
+        _generated(window)
+        window.accept_choice("1")
+        window._on_pipette(1, 2, 3, store.ROLE_FIGURE)
+        window.accept_choice("2")
+        window._on_pipette(4, 5, 6, store.ROLE_BACKGROUND)
+        entry = self._entry(window)
+        assert set(entry["proposals"]) == {"1", "2"}
+        assert entry["proposal_generation"]["generation_id"] == "gen-test"
+
+    def test_reset_still_returns_to_the_proposals(self, window):
+        _generated(window)
+        window._on_pipette(1, 2, 3, store.ROLE_FIGURE)
+        window._select_frame(0)
+        _press(window, Qt.Key_Delete)
+        entry = window._entry()
+        assert store.frame_state(entry) == store.STATE_UNREVIEWED
+        assert entry["proposals"]
+
+
+class TestSplitValidationInTheWindow:
+    """F then 1, B then 4 — take each half from a different proposal."""
+
+    def _entry(self, window):
+        return store.load_review(window._project_path, window._filename,
+                                 window._media_type)["frames"]["first.mkv@0"]
+
+    def test_arming_a_role_makes_a_number_take_only_that_half(self, window):
+        _generated(window)
+        _press(window, Qt.Key_F, "f")
+        _press(window, Qt.Key_1, "1")
+        _press(window, Qt.Key_B, "b")
+        _press(window, Qt.Key_2, "2")
+        final = self._entry(window)["final_palette"]
+        assert final["source"] == "split"
+        assert final[store.ROLE_FIGURE]["hex"] == "#010203"
+        assert final[store.ROLE_BACKGROUND]["hex"] == "#020506"
+
+    def test_the_number_disarms_the_role(self, window):
+        _generated(window)
+        window.assign_role(store.ROLE_FIGURE)
+        window.accept_choice("1")
+        assert window._pick_role is None
+
+    def test_an_unarmed_number_still_takes_the_whole_proposal(self, window):
+        _generated(window)
+        _press(window, Qt.Key_1, "1")
+        entry = self._entry(window)
+        assert entry["review"]["answer"] == store.ANSWER_ACCEPTED
+        assert store.frame_state(entry) == store.STATE_ACCEPTED
+
+    def test_the_split_names_the_strategy_behind_each_half(self, window):
+        _generated(window)
+        window.assign_role(store.ROLE_FIGURE)
+        window.accept_choice("1")
+        window.assign_role(store.ROLE_BACKGROUND)
+        window.accept_choice("2")
+        roles = self._entry(window)["review"]["roles"]
+        assert roles[store.ROLE_FIGURE]["strategy"] == "strategy-1"
+        assert roles[store.ROLE_BACKGROUND]["strategy"] == "strategy-2"
+
+    def test_a_greyed_choice_is_still_inert_while_a_role_is_armed(self, window):
+        _generated(window, choices=("1",))
+        window.assign_role(store.ROLE_FIGURE)
+        assert window.accept_choice("3") is False
+        assert "review" not in self._entry(window)
+        assert window._pick_role == store.ROLE_FIGURE
+
+    def test_half_a_split_is_drawn_on_the_canvas(self, window):
+        from visualizers.palette_visualizer import display_palette
+
+        _generated(window)
+        window.assign_role(store.ROLE_BACKGROUND)
+        window.accept_choice("2")
+        shown = display_palette(self._entry(window))
+        assert shown[store.ROLE_BACKGROUND]["hex"] == "#020506"
+        assert store.ROLE_FIGURE not in shown
+
+    def test_the_info_block_names_each_half_s_proposal(self, window):
+        _generated(window)
+        window.assign_role(store.ROLE_FIGURE)
+        window.accept_choice("1")
+        window.assign_role(store.ROLE_BACKGROUND)
+        window.accept_choice("2")
+        window._select_frame(0)
+        shown = {key: label.text().replace("\u200b", "")
+                 for key, label in window._info.labels().items()}
+        assert shown["figure"].endswith("1")
+        assert shown["background"].endswith("2")
+        assert shown["state"] == store.STATE_SPLIT
+
+    def test_a_split_frame_can_still_be_reset(self, window):
+        _generated(window)
+        window.assign_role(store.ROLE_FIGURE)
+        window.accept_choice("1")
+        window._select_frame(0)
+        _press(window, Qt.Key_Delete)
+        entry = window._entry()
+        assert store.frame_state(entry) == store.STATE_UNREVIEWED
+        assert entry["proposals"]
+
+    def test_a_split_never_advances_either(self, window):
+        _generated(window)
+        before = window._current
+        window.assign_role(store.ROLE_FIGURE)
+        window.accept_choice("1")
+        assert window._current == before
+
+
+class TestPreviewSections:
+    """Palette and Image previews of the current frame, in the Inspector."""
+
+    def _section(self, window, title):
+        from visualizers.components.collapsible_section import CollapsibleSection
+
+        for section in window._inspector.findChildren(CollapsibleSection):
+            if section._title == title:
+                return section
+        raise AssertionError(f"no {title!r} section")
+
+    def test_both_previews_exist(self, window):
+        assert set(window._previews) == {"palette", "image"}
+
+    def test_they_start_folded_closed(self, window):
+        for title in ("Palette", "Image"):
+            assert self._section(window, title).is_expanded() is False
+
+    def test_each_shows_one_of_the_two_thumbnail_renderings(self, window):
+        palette, image = window._previews["palette"], window._previews["image"]
+        assert (palette._show_palette, palette._show_image) == (True, False)
+        assert (image._show_palette, image._show_image) == (False, True)
+
+    def test_they_paint_with_the_browser_cell_painter(self, window):
+        from visualizers.palette_visualizer import _FrameCell, _PreviewCell
+
+        # Subclassing is what keeps a preview from drifting from the thumbnail.
+        assert issubclass(_PreviewCell, _FrameCell)
+        assert "paintEvent" not in vars(_PreviewCell)
+
+    def test_they_follow_the_selected_frame(self, window):
+        _generated(window)
+        window.accept_choice("1")
+        window._select_frame(0)
+        first = window._previews["palette"]._item["shot_id"]
+        window._select_frame(2)
+        assert window._previews["palette"]._item["shot_id"] != first
+        assert window._previews["image"]._item["shot_id"] == "first.mkv@2"
+
+    def test_changing_frame_drops_the_cached_frame_image(self, window, tmp_path):
+        from PyQt5.QtGui import QPixmap
+
+        preview = window._previews["image"]
+        preview._pixmap = QPixmap()
+        preview.set_item({"shot_id": "other", "image": "x.png"})
+        assert preview._pixmap is None
+
+    def test_a_preview_keeps_the_media_frame_ratio(self, window):
+        preview = window._previews["palette"]
+        preview.resize(300, preview.height())
+        preview.set_aspect(2.0)
+        assert preview.height() == 150
+
+    def test_a_preview_refits_when_the_inspector_widens(self, window):
+        from PyQt5.QtCore import QSize
+        from PyQt5.QtGui import QResizeEvent
+
+        preview = window._previews["image"]
+        preview.set_aspect(2.0)
+        preview.resize(400, preview.height())
+        # Qt does not deliver resizeEvent to a hidden widget.
+        preview.resizeEvent(QResizeEvent(preview.size(), QSize(1, 1)))
+        assert preview.height() == 200
+
+    def test_a_preview_is_inert(self, window):
+        from PyQt5.QtCore import QPoint
+        from PyQt5.QtGui import QMouseEvent
+        from PyQt5.QtWidgets import QApplication
+
+        preview = window._previews["image"]
+        seen = []
+        preview.clicked.connect(seen.append)
+        preview.double_clicked.connect(seen.append)
+        for kind in (QEvent.MouseButtonPress, QEvent.MouseButtonDblClick):
+            QApplication.sendEvent(preview, QMouseEvent(
+                kind, QPoint(2, 2), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
+        assert seen == []
+
+    def test_the_previews_are_independent_of_the_view_toggles(self, window):
+        window.toggle_image()
+        window.toggle_palette()
+        palette, image = window._previews["palette"], window._previews["image"]
+        assert (palette._show_palette, palette._show_image) == (True, False)
+        assert (image._show_palette, image._show_image) == (False, True)
+
+
 class TestInspectorLayout:
     def test_generate_contains_only_intentional_controls(self, window):
         from visualizers.components.shortcut_button import ShortcutButton
@@ -860,7 +1312,7 @@ class TestInspectorLayout:
         section = window._generate_section
         buttons = section.findChildren(ShortcutButton)
         assert [(b.text(), b.shortcut_text()) for b in buttons] == [
-            ("Create Proposals", "C"), ("Propose Remaining", "")]
+            ("Generate Proposals", "G"), ("Generate All Remaining", "")]
         assert all(button.text().strip() for button in buttons)
 
     def test_the_two_generate_controls_share_one_row(self, window):
@@ -908,7 +1360,7 @@ class TestInspectorLayout:
         assert container.toolTip() == MANUAL_HELP
         for button in window._role_btns.values():
             assert button.toolTip() == MANUAL_HELP
-        for phrase in ("arms a colour pick", "Alt+Click", "Ctrl+Click",
+        for phrase in ("arms that role", "press 1-4", "Alt+Click", "Ctrl+Click",
                        "Press the button again to cancel"):
             assert phrase.lower() in MANUAL_HELP.lower()
 
@@ -1094,4 +1546,68 @@ class TestBrowserGrid:
 
         source = inspect.getsource(palette_visualizer._FrameCell.paintEvent)
         assert "setOpacity" not in source
+
+    def test_a_thumbnail_is_never_backed_by_a_paler_colour(self):
+        """Letterbox slack must read as grid gap, not as an edge on the frame."""
+        import inspect
+
+        from visualizers import palette_visualizer
+
+        source = inspect.getsource(palette_visualizer._FrameCell.paintEvent)
+        branch = source.split("if pixmap is not None:")[1].split("elif")[0]
+        assert "CANVAS_BG" in branch
+        assert "CELL_BG" not in branch
+
+    def test_a_thumbnail_fills_its_cell_edge_to_edge(self):
+        """The grid truncates width and height apart, so a cell is never
+        exactly the media ratio and KeepAspectRatio leaves a bare pixel."""
+        import inspect
+
+        from visualizers import palette_visualizer
+
+        source = inspect.getsource(palette_visualizer._FrameCell.paintEvent)
+        branch = source.split("if pixmap is not None:")[1].split("elif")[0]
+        assert "KeepAspectRatioByExpanding" in branch
+
+    def test_the_grid_gap_and_margin_are_the_canonical_spacing(self):
+        from styles import theme
+        from visualizers.palette_visualizer import _GAP, _MARGIN
+
+        assert _GAP == _MARGIN == theme.SECTION_GAP
+
+    def test_the_grid_lays_cells_out_on_that_gap(self, window, tmp_path):
+        from PyQt5.QtGui import QImage
+        from visualizers.palette_visualizer import _GAP
+
+        path = tmp_path / "wide.png"
+        QImage(940, 400, QImage.Format_RGB32).save(str(path))
+        window._browser.set_frames([
+            {"index": i, "shot_id": f"s{i}", "image": str(path), "available": True}
+            for i in range(4)])
+        grid = window._browser._grid
+        grid.resize(800, 600)
+        cells = grid.cells()
+        if grid.columns() < 2:
+            pytest.skip("single column layout")
+        first, second = cells[0].geometry(), cells[1].geometry()
+        assert second.left() - first.right() - 1 == _GAP
+
+    def test_the_proposal_preview_outlines_nothing(self):
+        """A quadrant is a fill, never a bordered sub-element of the cell."""
+        import inspect
+
+        from visualizers import palette_visualizer
+
+        source = inspect.getsource(palette_visualizer.paint_preview)
+        assert "drawRect" not in source
+
+    def test_only_the_selected_cell_is_outlined(self):
+        import inspect
+
+        from visualizers import palette_visualizer
+
+        source = inspect.getsource(palette_visualizer._FrameCell.paintEvent)
+        outlines = [line for line in source.splitlines() if "drawRect" in line]
+        assert len(outlines) == 1
+        assert "if self._selected:" in source
 

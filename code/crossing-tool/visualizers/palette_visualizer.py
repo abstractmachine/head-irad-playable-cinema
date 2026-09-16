@@ -89,8 +89,9 @@ CHOICE_KEYS = ("1", "2", "3", "4")
 # Interaction help lives in tooltips, never as Inspector prose — see the
 # Inspector prose rule in agents.md.
 MANUAL_HELP = (
-    "Figure or Background arms a colour pick\n"
-    "While armed, click the frame to take the colour under the cursor\n"
+    "Figure or Background arms that role\n"
+    "While armed, click the frame to take the colour under the cursor,\n"
+    "or press 1-4 to take that role from a proposal\n"
     "Press the button again to cancel\n"
     "Alt+Click picks Figure   ·   Ctrl+Click picks Background\n"
     "Clicking the frame unarmed segments it, for orientation only"
@@ -103,8 +104,10 @@ CHOICE_HELP = (
     "      or a refusal when it recorded only one\n"
     "4  CONTROL — the deterministic bottom-up production palette\n"
     "\n"
-    "Accepting advances to the next frame. A choice without two measured\n"
-    "colours is greyed out and does nothing."
+    "Pressing a number takes the whole proposal. Arm Figure or Background\n"
+    "first to take only that half — F then 1, B then 4 — recorded as a split\n"
+    "validation. A choice without two measured colours is greyed out and does\n"
+    "nothing. Nothing here advances; use the arrow keys."
 )
 
 def frame_aspect(frames: list, default: float = _DEFAULT_ASPECT) -> float:
@@ -138,6 +141,20 @@ def _hex(rgb) -> str:
     return "#{:02x}{:02x}{:02x}".format(*values)
 
 
+def _role_text(colour: dict | None, choice=None) -> str:
+    """One role's hex and where it came from — the point of a split validation."""
+    colour = colour or {}
+    hex_value = colour.get("hex")
+    if not hex_value:
+        return "\u2014"
+    choice = colour.get("choice") or choice
+    if choice:
+        return f"{hex_value}  ·  {choice}"
+    if colour.get("pipette"):
+        return f"{hex_value}  ·  pipette"
+    return hex_value
+
+
 def _readable_on(colour: dict | None) -> QColor:
     """Pick a legible numeral colour for an arbitrary measured background."""
     rgb = (colour or {}).get("rgb") or [0, 0, 0]
@@ -148,17 +165,12 @@ def _readable_on(colour: dict | None) -> QColor:
 def display_palette(entry: dict | None) -> dict:
     """The palette to draw for a frame.
 
-    The accepted/complete palette when there is one, otherwise whichever manual
-    roles have been picked so far — a half-finished manual palette should still
-    show the half that exists.
+    The resolved palette when there is one, otherwise whichever roles have
+    been composed so far — a half-finished palette should still show its half,
+    whether that half was pipetted or taken from a proposal.
     """
     entry = entry or {}
-    final = entry.get("final_palette") or {}
-    if final:
-        return final
-    manual = entry.get("manual") or {}
-    return {role: manual[role] for role in store.ROLES
-            if isinstance(manual.get(role), dict)}
+    return (entry.get("final_palette") or {}) or store.resolved_roles(entry)
 
 
 def preview_quadrants(entry: dict | None) -> list:
@@ -218,6 +230,12 @@ def _paint_frame_palette(painter, rect, palette: dict) -> None:
                             rect.center().y() - diameter // 2, diameter, diameter)
 
 
+def needs_generation(item: dict | None) -> bool:
+    """True when a frame still has nothing — no proposals and no manual palette."""
+    return (item or {}).get("state") in (store.STATE_NOT_GENERATED,
+                                        store.STATE_GENERATION_FAILED)
+
+
 def reset_action(entry: dict | None) -> tuple[str, bool]:
     """Label and enabled state for the staged reset control.
 
@@ -227,7 +245,8 @@ def reset_action(entry: dict | None) -> tuple[str, bool]:
     """
     state = store.frame_state(entry)
     if state in (store.STATE_ACCEPTED, store.STATE_REJECTED,
-                 store.STATE_MANUAL, store.STATE_MANUAL_INCOMPLETE):
+                 store.STATE_MANUAL, store.STATE_MANUAL_INCOMPLETE,
+                 store.STATE_SPLIT, store.STATE_SPLIT_INCOMPLETE):
         return "Reset Palette", True
     if state in (store.STATE_UNREVIEWED, store.STATE_GENERATION_FAILED):
         return "Reset Proposals", True
@@ -291,9 +310,6 @@ def paint_preview(painter, rect, quadrants, *, numbers: bool = False,
             painter.drawText(cell.adjusted(6, 4, -6, -4),
                              Qt.AlignTop | Qt.AlignLeft, key)
     painter.setBrush(Qt.NoBrush)
-    painter.setPen(QPen(QColor(theme.CANVAS_BG), 1))
-    for cell in cells:
-        painter.drawRect(cell)
 
 
 # ---------------------------------------------------------------------------
@@ -416,6 +432,12 @@ class _FrameCell(QWidget):
             self._selected = selected
             self.update()
 
+    def set_item(self, item: dict) -> None:
+        """Refresh this cell's record in place, without rebuilding the grid."""
+        self._item = item
+        self.setToolTip(f"{item.get('shot_id', '')}\n{item.get('state', '')}")
+        self.update()
+
     def mousePressEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.LeftButton:
             self.clicked.emit(self._index)
@@ -446,9 +468,13 @@ class _FrameCell(QWidget):
         pixmap = self._load_pixmap() if self._show_image else None
 
         if pixmap is not None:
-            scaled = pixmap.scaled(self.size(), Qt.KeepAspectRatio,
+            # The grid truncates cell width and height independently, so a cell
+            # is never exactly the media's ratio and KeepAspectRatio would leave
+            # a pixel of backing showing. Expanding fills the cell outright; the
+            # sub-pixel overflow is clipped to the widget.
+            scaled = pixmap.scaled(self.size(), Qt.KeepAspectRatioByExpanding,
                                    Qt.SmoothTransformation)
-            painter.fillRect(rect, QColor(theme.CELL_BG))
+            painter.fillRect(rect, QColor(theme.CANVAS_BG))
             painter.drawPixmap((self.width() - scaled.width()) // 2,
                                (self.height() - scaled.height()) // 2, scaled)
         elif self._show_palette and background:
@@ -487,6 +513,53 @@ class _FrameCell(QWidget):
         painter.end()
 
 
+class _PreviewCell(_FrameCell):
+    """The current frame drawn by the browser's own painter, for the Inspector.
+
+    Subclassed rather than reimplemented so the Palette and Image sections can
+    never drift from what the thumbnails show. Inert: these report state, they
+    are not a second way to select a frame.
+    """
+
+    def __init__(self, palette: bool, image: bool, parent=None) -> None:
+        super().__init__(-1, {}, parent)
+        self.set_visibility(palette, image)
+        self._aspect = _DEFAULT_ASPECT
+        self.setCursor(Qt.ArrowCursor)
+
+    def set_aspect(self, aspect: float) -> None:
+        aspect = float(aspect)
+        if aspect > 0 and abs(aspect - self._aspect) > 1e-6:
+            self._aspect = aspect
+            self._fit()
+
+    def set_item(self, item: dict) -> None:
+        # A preview follows the selection, so the cached frame cannot survive it.
+        self._pixmap = None
+        super().set_item(item)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        event.ignore()
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+        event.ignore()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._fit()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        # A collapsed section is hidden, and Qt sends no resizeEvent to a hidden
+        # widget, so without this the first expand lays out at a stale height.
+        self._fit()
+
+    def _fit(self) -> None:
+        height = max(1, int(self.width() / self._aspect))
+        if self.height() != height:
+            self.setFixedHeight(height)
+
+
 # ---------------------------------------------------------------------------
 # Whole-frame canvas with mask selection and pipette
 # ---------------------------------------------------------------------------
@@ -515,6 +588,7 @@ class _FrameCanvas(QLabel):
         self._palette: dict = {}
         self._preview: list = []
         self._pick_role: str | None = None
+        self._pick_preview: dict | None = None
 
     def set_frame(self, path: str | None) -> None:
         image = QImage(path) if path else None
@@ -563,10 +637,22 @@ class _FrameCanvas(QLabel):
     def set_pick_role(self, role: str | None) -> None:
         """Arm the next click to take the pixel colour for *role*."""
         self._pick_role = role
+        self._pick_preview = None
         self.setCursor(Qt.CrossCursor if role else Qt.ArrowCursor)
+        self.update()
 
     def pick_role(self) -> str | None:
         return self._pick_role
+
+    def pick_preview(self) -> dict | None:
+        return self._pick_preview
+
+    def effective_palette(self) -> dict:
+        """The palette as drawn: the stored one, with any live pick on top."""
+        palette = dict(self._palette)
+        if self._pick_role and self._pick_preview:
+            palette[self._pick_role] = self._pick_preview
+        return palette
 
     def _layout(self) -> tuple[int, int, float]:
         if self._pixmap is None:
@@ -629,6 +715,26 @@ class _FrameCanvas(QLabel):
             self.double_clicked.emit()
         super().mouseDoubleClickEvent(event)
 
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        # While armed, the role shows the colour under the cursor as you move.
+        if self._pick_role:
+            position = self._source_pos(event.x(), event.y())
+            colour = None
+            if position is not None and self._image is not None:
+                pixel = self._image.pixelColor(*position)
+                rgb = [pixel.red(), pixel.green(), pixel.blue()]
+                colour = {"rgb": rgb, "hex": _hex(rgb)}
+            if colour != self._pick_preview:
+                self._pick_preview = colour
+                self.update()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        if self._pick_preview is not None:
+            self._pick_preview = None
+            self.update()
+        super().leaveEvent(event)
+
     def paintEvent(self, _event) -> None:  # noqa: N802
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -643,7 +749,8 @@ class _FrameCanvas(QLabel):
         width = int(self._pixmap.width() * scale)
         height = int(self._pixmap.height() * scale)
         frame = QRect(ox, oy, width, height)
-        previewing = (self._show_palette and not self._palette
+        palette = self.effective_palette()
+        previewing = (self._show_palette and not palette
                       and any(self._preview))
         if self._show_image:
             painter.drawPixmap(ox, oy, self._pixmap.scaled(
@@ -671,8 +778,8 @@ class _FrameCanvas(QLabel):
                                 else QColor(150, 150, 160), 3 if chosen else 1))
             painter.drawPolygon(points)
 
-        if self._show_palette and self._palette:
-            _paint_frame_palette(painter, frame, self._palette)
+        if self._show_palette and palette:
+            _paint_frame_palette(painter, frame, palette)
         elif previewing and self._show_image:
             # With the image visible the proposals go in a strip: just under
             # the frame when it fits there whole, otherwise inside its bottom.
@@ -792,6 +899,11 @@ class _PaletteBrowserPage(QWidget):
         self._scrub_bar.setValue(index)
         self._scrub_bar.blockSignals(False)
 
+    def update_frame(self, index: int, item: dict) -> None:
+        """Repaint one cell without rebuilding the whole grid."""
+        if 0 <= index < len(self._cells):
+            self._cells[index].set_item(item)
+
     def columns(self) -> int:
         """Grid columns, so the window can step a whole row with Up/Down."""
         return self._grid.columns()
@@ -827,8 +939,10 @@ class PaletteVisualizerWindow(WindowVisualizer):
         self._updating = False
         self._show_palette, self._show_image = True, True
         self._worker: Optional[_GenerationWorker] = None
+        self._active_btn: Optional[QPushButton] = None
         self._mask_worker: Optional[_MaskWorker] = None
         self._pick_role: str | None = None
+        self._previews: dict[str, _PreviewCell] = {}
 
         super().__init__(pref_key="window_palette")
         self.setWindowTitle("Palette")
@@ -898,21 +1012,36 @@ class PaletteVisualizerWindow(WindowVisualizer):
                                    self._toggle_btns["image"]))
         panel.add_section("View", view, pref_key="palette_section_view")
 
+        # Both previews read the current frame the way a thumbnail does, so a
+        # reviewer can see either rendering without toggling the whole browser.
+        for title, key, palette_on, image_on in (
+            ("Palette", "palette", True, False),
+            ("Image", "image", False, True),
+        ):
+            preview = _PreviewCell(palette_on, image_on)
+            self._previews[key] = preview
+            panel.add_section(title, preview, expanded=False,
+                              pref_key=f"palette_section_preview_{key}")
+
         generate = QWidget()
         generate_layout = QVBoxLayout(generate)
         generate_layout.setContentsMargins(0, 0, 0, 0)
         generate_layout.setSpacing(theme.SECTION_GAP)
         self._create_btn = _action(
-            "Create Proposals", "C",
+            "Generate Proposals", "G",
             "Generate palette proposals for the current frame")
         self._create_btn.clicked.connect(self.create_palette)
         # Deliberately no keyboard shortcut: batch generation is an explicit
         # button press (or CLI command), never a rapid-review keystroke.
         self._create_all_btn = _action(
-            "Propose Remaining", None,
+            "Generate All Remaining", None,
             "Generate proposals for every frame of the selected movie/gameplay "
             "that does not have them yet (no keyboard shortcut)")
         self._create_all_btn.clicked.connect(self.create_all_palettes)
+        self._generate_labels = {
+            self._create_btn: self._create_btn.text(),
+            self._create_all_btn: self._create_all_btn.text(),
+        }
         generate_layout.addWidget(_row(self._create_btn, self._create_all_btn))
 
         generate_section = panel.add_section("Generate", generate,
@@ -1076,6 +1205,8 @@ class PaletteVisualizerWindow(WindowVisualizer):
             item["preview"] = preview_quadrants(entry)
         self._frames = frames
         self._browser.set_frames(frames)
+        for preview in self._previews.values():
+            preview.set_aspect(frame_aspect(frames))
         self._current = min(self._current, max(0, len(frames) - 1))
         self._select_frame(self._current)
 
@@ -1127,55 +1258,88 @@ class PaletteVisualizerWindow(WindowVisualizer):
             elif proposal:
                 detail = f"{key} {proposal.get('label', '')}"
             else:
-                detail = "No proposals yet — press C to create them"
+                detail = "No proposals yet — press G to create them"
             button.setToolTip(f"{detail}\n\n{CHOICE_HELP}")
 
-        final = entry.get("final_palette") or {}
+        final = display_palette(entry)
+        for preview in self._previews.values():
+            preview.set_item(item or {})
         label, enabled = reset_action(entry)
         self._reset_btn.setText(label)
         self._reset_btn.setEnabled(enabled)
+        if self._worker is None:
+            # Nothing to generate once every frame has proposals or a manual
+            # palette; the service would skip them anyway.
+            self._create_btn.setEnabled(needs_generation(item))
+            self._create_all_btn.setEnabled(
+                any(needs_generation(frame) for frame in self._frames))
         for key, value in (
             ("frame", f"{self._current + 1} / {len(self._frames)}"
                       if self._frames else "\u2014"),
             ("shot", (item or {}).get("shot_id", "\u2014")),
             ("state", store.frame_state(entry)),
-            ("figure", (final.get(store.ROLE_FIGURE) or {}).get("hex", "\u2014")),
-            ("background", (final.get(store.ROLE_BACKGROUND) or {}).get("hex", "\u2014")),
+            ("figure", _role_text(final.get(store.ROLE_FIGURE), final.get("choice"))),
+            ("background", _role_text(final.get(store.ROLE_BACKGROUND), final.get("choice"))),
         ):
             self._info.set(key, value)
 
     # ------------------------------------------------------------ generation
     def create_palette(self) -> None:
-        """C — generate proposals for the current frame. Never changes display mode."""
+        """G — generate proposals for the current frame, or cancel this run."""
+        if self._worker is not None:
+            if self._active_btn is self._create_btn:
+                self.cancel_generation()
+            return
         item = self.current_frame()
-        if not item or self._worker is not None:
+        if not item or not self._create_btn.isEnabled():
             return
         self._start_worker(_GenerationWorker(
             self._project_path, self._filename, self._media_type,
-            shot_id=item["shot_id"], parent=self))
+            shot_id=item["shot_id"], parent=self), self._create_btn)
 
     def create_all_palettes(self) -> None:
-        """Inspector-only batch generation, scoped to the selected media item."""
-        if not self._filename or self._worker is not None:
+        """Inspector-only batch generation, or cancel this run."""
+        if self._worker is not None:
+            if self._active_btn is self._create_all_btn:
+                self.cancel_generation()
+            return
+        if not self._filename or not self._create_all_btn.isEnabled():
             return
         self._start_worker(_GenerationWorker(
-            self._project_path, self._filename, self._media_type, parent=self))
+            self._project_path, self._filename, self._media_type, parent=self),
+            self._create_all_btn)
 
-    def _start_worker(self, worker: _GenerationWorker) -> None:
+    def cancel_generation(self) -> None:
+        """Stop after the frame in flight; everything finished is kept."""
+        if self._worker is not None:
+            self._worker.cancel()
+            self._active_btn.setText("Cancelling")
+            self._active_btn.setEnabled(False)
+
+    def _start_worker(self, worker: _GenerationWorker,
+                      source: QPushButton) -> None:
         self._worker = worker
+        self._active_btn = source
+        other = (self._create_all_btn if source is self._create_btn
+                 else self._create_btn)
+        source.setText("Cancel Proposals")
+        source.setEnabled(True)
+        other.setEnabled(False)
         worker.progress.connect(self._on_progress)
         worker.done.connect(self._on_generation_done)
         worker.failed.connect(self._on_generation_failed)
-        self._create_btn.setEnabled(False)
-        self._create_all_btn.setEnabled(False)
         self._sweep.start()
         self._sweep_timer.start()
         worker.start()
 
-    def _on_progress(self, done: int, total: int, _shot_id: str, _status: str) -> None:
+    def _on_progress(self, done: int, total: int, shot_id: str, status: str) -> None:
         # The sweep animation and the section title carry the rest of the
         # message, so the count alone is enough.
         self._generate_section.set_subtitle(f"{done} / {total}")
+        # Refresh the frame that just landed so it is reviewable immediately,
+        # without rebuilding the grid under the reviewer.
+        if status == "generated" and shot_id:
+            self._refresh_frame(shot_id)
 
     def _set_manual_status(self, text: str) -> None:
         self._manual_lbl.setText(text)
@@ -1185,9 +1349,11 @@ class PaletteVisualizerWindow(WindowVisualizer):
         self._sweep_timer.stop()
         self._sweep.stop()
         self._generate_section.set_subtitle("")
-        self._create_btn.setEnabled(True)
-        self._create_all_btn.setEnabled(True)
+        for button, label in self._generate_labels.items():
+            button.setText(label)
         self._worker = None
+        self._active_btn = None
+        self._refresh_inspector()
 
     def _on_generation_done(self, summary: dict) -> None:
         self._stop_worker()
@@ -1203,20 +1369,30 @@ class PaletteVisualizerWindow(WindowVisualizer):
 
     # ---------------------------------------------------------------- review
     def accept_choice(self, choice: str) -> bool:
-        """Accept a proposal and advance. An invalid or greyed choice does nothing."""
+        """Accept a proposal, or just one of its halves when a role is armed.
+
+        Nothing here advances: try 1, then 2, pipette a role, then come back to
+        a proposal. Right Arrow moves on when you are satisfied.
+        """
         from services import palette_review
 
         item = self.current_frame()
         if not item or str(choice) not in store.selectable_choices(self._entry()):
             return False
-        palette_review.accept(self._project_path, self._filename,
-                              self._media_type, item["shot_id"], str(choice))
+        role = self._pick_role
+        if role:
+            palette_review.set_role_choice(self._project_path, self._filename,
+                                           self._media_type, item["shot_id"],
+                                           role, str(choice))
+            self.set_pick_role(None)
+        else:
+            palette_review.accept(self._project_path, self._filename,
+                                  self._media_type, item["shot_id"], str(choice))
         self._reload_entry(item["shot_id"])
-        self.next_frame()
         return True
 
     def reject_proposals(self) -> None:
-        """Rejection advances like acceptance — both are completed review answers."""
+        """Record that no proposal is satisfactory, without leaving the frame."""
         from services import palette_review
 
         item = self.current_frame()
@@ -1225,7 +1401,6 @@ class PaletteVisualizerWindow(WindowVisualizer):
         palette_review.reject(self._project_path, self._filename,
                               self._media_type, item["shot_id"])
         self._reload_entry(item["shot_id"])
-        self.next_frame()
 
     def reset_frame(self) -> None:
         """Delete/Backspace — step this frame back one stage.
@@ -1270,16 +1445,29 @@ class PaletteVisualizerWindow(WindowVisualizer):
     def _reload_entry(self, shot_id: str) -> None:
         self._record = store.load_review(
             self._project_path, self._filename, self._media_type)
+        self._refresh_frame(shot_id, reload_record=False)
+
+    def _refresh_frame(self, shot_id: str, *, reload_record: bool = True) -> None:
+        """Re-read one frame and repaint just its cell."""
+        if reload_record:
+            self._record = store.load_review(
+                self._project_path, self._filename, self._media_type)
         entry = (self._record.get("frames") or {}).get(shot_id) or {}
-        for item in self._frames:
-            if item["shot_id"] == shot_id:
-                item["state"] = store.frame_state(entry)
-                item["choices"] = store.selectable_choices(entry)
-                item["final"] = entry.get("final_palette") or {}
-                item["display"] = display_palette(entry)
-                item["preview"] = preview_quadrants(entry)
-        self._browser.set_frames(self._frames)
-        self._browser.set_current(self._current)
+        for index, item in enumerate(self._frames):
+            if item["shot_id"] != shot_id:
+                continue
+            item["state"] = store.frame_state(entry)
+            item["choices"] = store.selectable_choices(entry)
+            item["final"] = entry.get("final_palette") or {}
+            item["display"] = display_palette(entry)
+            item["preview"] = preview_quadrants(entry)
+            self._browser.update_frame(index, item)
+            if index == self._current:
+                canvas = self._browser.canvas()
+                canvas.set_palette(item["display"])
+                canvas.set_preview(item["preview"])
+            break
+        self._refresh_inspector()
 
     # ---------------------------------------------------------------- manual
     def _on_sam_requested(self, _x: int, _y: int) -> None:
@@ -1322,7 +1510,7 @@ class PaletteVisualizerWindow(WindowVisualizer):
             button.setChecked(name == role)
 
     def assign_role(self, role: str) -> None:
-        """F / B — arm a colour pick; pressing the same role again cancels it."""
+        """F / B — arm a role for the next click or number; the same key cancels."""
         self.set_pick_role(None if self._pick_role == role else role)
 
     def _assign(self, role: str, rgb: list, *, pipette: bool,
@@ -1421,7 +1609,7 @@ class PaletteVisualizerWindow(WindowVisualizer):
             return
         letter = event.text().upper()
         handlers = {
-            "C": self.create_palette,
+            "G": self.create_palette,
             "P": self.toggle_palette,
             "I": self.toggle_image,
             "S": lambda: self.set_mode(MODE_SINGLE),

@@ -6909,17 +6909,29 @@ def _index_palette_state(args):
 
 
 def _index_palette_accept(args):
+    from data import palette_review as store
     from services import palette_review
 
     project_path, filename, media_type = _palette_review_target(args)
     shot_id = _palette_review_shot(args, project_path, filename, media_type)
+    role = getattr(args, "role", None)
+    role = {"figure": store.ROLE_FIGURE,
+            "background": store.ROLE_BACKGROUND}.get(role)
     try:
-        palette_review.accept(project_path, filename, media_type, shot_id,
-                              str(args.choice), reviewer=getattr(args, "reviewer", None))
+        if role:
+            palette_review.set_role_choice(
+                project_path, filename, media_type, shot_id, role,
+                str(args.choice), reviewer=getattr(args, "reviewer", None))
+        else:
+            palette_review.accept(project_path, filename, media_type, shot_id,
+                                  str(args.choice), reviewer=getattr(args, "reviewer", None))
     except ValueError as exc:
         print(f"✗ {exc}", file=sys.stderr)
         sys.exit(1)
-    print(f"✓ accepted choice {args.choice}: {shot_id}")
+    if role:
+        print(f"✓ {args.role} from choice {args.choice}: {shot_id}")
+    else:
+        print(f"✓ accepted choice {args.choice}: {shot_id}")
 
 
 def _index_palette_reject(args):
@@ -10349,6 +10361,10 @@ def build_parser():
     ))
     p_palette_accept.add_argument("--choice", required=True, metavar="N",
                                   help="Proposal number to accept")
+    p_palette_accept.add_argument(
+        "--role", choices=["figure", "background"], default=None,
+        help="Accept only this half of the proposal, leaving the other "
+             "half as it is (a split validation)")
     p_palette_accept.add_argument("--reviewer", default=None, metavar="NAME")
 
     p_palette_reject = _add_palette_review_target(palette_sub.add_parser(
