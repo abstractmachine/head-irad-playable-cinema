@@ -481,6 +481,118 @@ class TestSplitValidation:
         # A stale endorsement would claim proposal 1 was validated when it was not.
         assert store.ROLE_FIGURE not in entry["review"]["roles"]
 
+    def test_a_pipette_decomposes_a_whole_acceptance(self):
+        """Pressing 2 then pipetting the figure must not discard background 2."""
+        entry = self._two()
+        store.accept_proposal(entry, "4")
+        store.set_manual_colour(entry, store.ROLE_FIGURE,
+                                {"rgb": [9, 9, 9], "hex": "#090909"})
+        assert store.frame_state(entry) == store.STATE_SPLIT
+        final = entry["final_palette"]
+        assert final[store.ROLE_FIGURE]["hex"] == "#090909"
+        assert final[store.ROLE_BACKGROUND]["hex"] == "#040404"
+        assert entry["review"]["roles"][store.ROLE_BACKGROUND]["choice"] == "4"
+        assert store.ROLE_FIGURE not in entry["review"]["roles"]
+
+    def test_a_pipette_decomposes_an_acceptance_the_other_way_round(self):
+        entry = self._two()
+        store.accept_proposal(entry, "1")
+        store.set_manual_colour(entry, store.ROLE_BACKGROUND,
+                                {"rgb": [8, 8, 8], "hex": "#080808"})
+        final = entry["final_palette"]
+        assert final[store.ROLE_FIGURE]["hex"] == "#010101"
+        assert final[store.ROLE_BACKGROUND]["hex"] == "#080808"
+
+    def test_pipetting_both_halves_of_an_acceptance_ends_wholly_manual(self):
+        entry = self._two()
+        store.accept_proposal(entry, "1")
+        store.set_manual_colour(entry, store.ROLE_FIGURE, {"rgb": [9, 9, 9]})
+        store.set_manual_colour(entry, store.ROLE_BACKGROUND, {"rgb": [8, 8, 8]})
+        assert store.frame_state(entry) == store.STATE_MANUAL
+        assert "review" not in entry
+
+    def test_a_pipette_keeps_no_half_of_a_rejection(self):
+        entry = self._two()
+        store.reject_proposals(entry)
+        store.set_manual_colour(entry, store.ROLE_FIGURE, {"rgb": [9, 9, 9]})
+        assert "review" not in entry
+        assert store.frame_state(entry) == store.STATE_MANUAL_INCOMPLETE
+
+    def test_a_decomposed_acceptance_keeps_its_reviewer(self):
+        entry = self._two()
+        store.accept_proposal(entry, "1", reviewer="ana")
+        store.set_manual_colour(entry, store.ROLE_FIGURE, {"rgb": [9, 9, 9]})
+        assert entry["review"]["reviewer"] == "ana"
+
+    def test_a_hand_pick_records_the_proposal_it_displaced(self):
+        """The override is the training signal: the robot said 1, the human said this."""
+        entry = self._two()
+        store.accept_proposal(entry, "1")
+        store.set_manual_colour(entry, store.ROLE_FIGURE, {"rgb": [9, 9, 9]})
+        assert entry["manual"][store.ROLE_FIGURE]["supersedes"] == {
+            "choice": "1", "strategy": "direct", "label": "DIRECT"}
+
+    def test_overriding_both_halves_still_names_the_proposal(self):
+        """Without this the most informative case would leave no trace at all."""
+        entry = self._two()
+        store.accept_proposal(entry, "1")
+        store.set_manual_colour(entry, store.ROLE_FIGURE, {"rgb": [9, 9, 9]})
+        store.set_manual_colour(entry, store.ROLE_BACKGROUND, {"rgb": [8, 8, 8]})
+        assert "review" not in entry
+        assert [entry["manual"][role]["supersedes"]["choice"]
+                for role in store.ROLES] == ["1", "1"]
+
+    def test_it_records_the_displaced_half_of_a_split(self):
+        entry = self._two()
+        store.set_role_from_proposal(entry, store.ROLE_FIGURE, "1")
+        store.set_role_from_proposal(entry, store.ROLE_BACKGROUND, "4")
+        store.set_manual_colour(entry, store.ROLE_BACKGROUND, {"rgb": [5, 5, 5]})
+        assert entry["manual"][store.ROLE_BACKGROUND]["supersedes"]["choice"] == "4"
+        assert entry["review"]["roles"][store.ROLE_FIGURE]["choice"] == "1"
+
+    def test_re_picking_keeps_the_link_to_the_original_proposal(self):
+        entry = self._two()
+        store.accept_proposal(entry, "4")
+        store.set_manual_colour(entry, store.ROLE_FIGURE, {"rgb": [9, 9, 9]})
+        store.set_manual_colour(entry, store.ROLE_FIGURE, {"rgb": [7, 7, 7]})
+        assert entry["manual"][store.ROLE_FIGURE]["supersedes"]["choice"] == "4"
+
+    def test_a_pick_that_displaced_nothing_claims_nothing(self):
+        entry = self._two()
+        store.set_manual_colour(entry, store.ROLE_FIGURE, {"rgb": [9, 9, 9]})
+        assert "supersedes" not in entry["manual"][store.ROLE_FIGURE]
+
+    def test_a_pick_after_a_rejection_displaces_no_proposal(self):
+        entry = self._two()
+        store.reject_proposals(entry)
+        store.set_manual_colour(entry, store.ROLE_FIGURE, {"rgb": [9, 9, 9]})
+        assert "supersedes" not in entry["manual"][store.ROLE_FIGURE]
+
+    def test_the_displaced_colour_stays_recoverable_from_the_proposals(self):
+        """The link stores the choice, never a copy, so proposals stay canonical."""
+        entry = self._two()
+        store.accept_proposal(entry, "1")
+        store.set_manual_colour(entry, store.ROLE_FIGURE, {"rgb": [9, 9, 9]})
+        link = entry["manual"][store.ROLE_FIGURE]["supersedes"]
+        assert "rgb" not in link and "hex" not in link
+        assert store.proposal_colour(entry, link["choice"], store.ROLE_FIGURE) == {
+            "rgb": [1, 1, 1], "hex": "#010101"}
+
+    def test_hand_picking_and_endorsing_agree_on_what_they_preserve(self):
+        """Both halve an acceptance the same way; only the source differs."""
+        pipetted = self._two()
+        store.accept_proposal(pipetted, "1")
+        store.set_manual_colour(pipetted, store.ROLE_FIGURE, {"rgb": [9, 9, 9]})
+
+        endorsed = self._two()
+        store.accept_proposal(endorsed, "1")
+        store.set_role_from_proposal(endorsed, store.ROLE_FIGURE, "4")
+
+        for entry in (pipetted, endorsed):
+            assert store.frame_state(entry) == store.STATE_SPLIT
+            assert entry["review"]["roles"][store.ROLE_BACKGROUND]["choice"] == "1"
+            assert entry["final_palette"][store.ROLE_BACKGROUND]["hex"] == "#020202"
+
     def test_pipetting_the_last_endorsed_half_leaves_no_review(self):
         entry = self._two()
         store.set_role_from_proposal(entry, store.ROLE_FIGURE, "1")

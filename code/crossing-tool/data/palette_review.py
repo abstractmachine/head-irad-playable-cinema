@@ -16,13 +16,19 @@ Five blocks are kept distinct per frame so no operation flattens another:
     proposals            the generated hypotheses themselves
     review               the human's answer (accepted / rejected / split), with
                          the generation id they were actually looking at
-    manual               hand-authored figure/background plus mask provenance
+    manual               hand-authored figure/background plus mask provenance,
+                         and the proposal each pick displaced
     final_palette        the resolved two colours, and which block produced them
 
 A *split* review is a partial validation: the reviewer took the figure from one
 proposal and the background from another. It stores the choice per role, never
 a copy of the colour, so the proposals stay the single source of the measured
 values and a later pass can ask which strategy got which half right.
+
+Overriding a proposal by hand is the other half of that evidence, so a manual
+pick keeps a ``supersedes`` link to the choice it replaced. Without it, a
+reviewer who hand-picked *both* roles would erase every trace of the proposal
+they rejected — the most informative case for retraining.
 
 Every mutation here is a pure function over a record dict. Loading, saving and
 orchestration belong to ``services.palette_review``.
@@ -352,6 +358,27 @@ def _endorsements(entry: dict) -> dict:
     return {}
 
 
+def _supersedes(endorsement: dict | None) -> dict | None:
+    """What a hand-picked colour displaced. The choice, never a copy of its colour."""
+    if not isinstance(endorsement, dict):
+        return None
+    return {key: endorsement[key] for key in ("choice", "strategy", "label")
+            if endorsement.get(key) is not None}
+
+
+def _write_split(entry: dict, roles: dict, reviewer: str | None) -> None:
+    generation = entry.get("proposal_generation") or {}
+    entry["review"] = {
+        "answer": ANSWER_SPLIT,
+        "choice": None,
+        "roles": roles,
+        "accepted_generation_id": generation.get("generation_id"),
+        "accepted_generation_version": generation.get("version"),
+        "reviewer": reviewer,
+        "timestamp": _now(),
+    }
+
+
 def set_role_from_proposal(entry: dict, role: str, choice: str,
                            reviewer: str | None = None) -> dict:
     """Take one role from one proposal — figure from 1, background from 4.
@@ -380,16 +407,7 @@ def set_role_from_proposal(entry: dict, role: str, choice: str,
     if not manual:
         entry.pop("manual", None)
 
-    generation = entry.get("proposal_generation") or {}
-    entry["review"] = {
-        "answer": ANSWER_SPLIT,
-        "choice": None,
-        "roles": roles,
-        "accepted_generation_id": generation.get("generation_id"),
-        "accepted_generation_version": generation.get("version"),
-        "reviewer": reviewer,
-        "timestamp": _now(),
-    }
+    _write_split(entry, roles, reviewer)
     _refresh_composed_final(entry)
     return entry
 
@@ -403,21 +421,30 @@ def set_manual_colour(entry: dict, role: str, colour: dict,
     """
     if role not in ROLES:
         raise ValueError(f"role must be one of {ROLES}, got {role!r}")
+    # Picking by hand replaces this role and this role only. A whole-frame
+    # acceptance therefore decomposes so the other half survives, exactly as
+    # taking one half of another proposal does. Superseded endorsements are
+    # dropped rather than merely outranked, so the record never claims a
+    # proposal was validated when it was not.
+    reviewer = (entry.get("review") or {}).get("reviewer")
+    roles = _endorsements(entry)
+    displaced = roles.pop(role, None)
+
     manual = entry.setdefault("manual", {})
     record = dict(colour)
     record.setdefault("source", SOURCE_MANUAL)
     if masks is not None:
         record["masks"] = masks
+    superseded = _supersedes(displaced) or (manual.get(role) or {}).get("supersedes")
+    if superseded:
+        # Re-picking an already-overridden role still displaces the original
+        # proposal, so the link is carried forward rather than lost.
+        record["supersedes"] = superseded
     record["timestamp"] = _now()
     manual[role] = record
-    # Picking by hand supersedes this role's endorsement, and supersedes a
-    # whole-frame answer outright. Stale endorsements are dropped rather than
-    # merely outranked, so the record never claims a proposal was validated.
-    review = entry.get("review") or {}
-    if review.get("answer") == ANSWER_SPLIT:
-        (review.get("roles") or {}).pop(role, None)
-        if not review.get("roles"):
-            entry.pop("review", None)
+
+    if roles:
+        _write_split(entry, roles, reviewer)
     else:
         entry.pop("review", None)
     _refresh_composed_final(entry)

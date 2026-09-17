@@ -1068,18 +1068,22 @@ class TestExperimentingOnOneFrame:
         assert store.frame_state(entry) == store.STATE_ACCEPTED
         assert window._current == before
 
-    def test_pipetting_after_accepting_supersedes_the_proposal(self, window):
+    def test_pipetting_after_accepting_replaces_only_that_half(self, window):
         from visualizers.palette_visualizer import display_palette
 
         _generated(window)
         window.accept_choice("1")
         window._on_pipette(220, 30, 25, store.ROLE_FIGURE)
         entry = self._entry(window)
-        assert "review" not in entry
-        assert store.frame_state(entry) == store.STATE_MANUAL_INCOMPLETE
-        assert display_palette(entry)[store.ROLE_FIGURE]["rgb"] == [220, 30, 25]
+        shown = display_palette(entry)
+        assert shown[store.ROLE_FIGURE]["rgb"] == [220, 30, 25]
+        # The half nobody touched keeps coming from the proposal.
+        assert shown[store.ROLE_BACKGROUND]["hex"] == "#010506"
+        assert store.frame_state(entry) == store.STATE_SPLIT
+        assert entry["review"]["roles"][store.ROLE_BACKGROUND]["choice"] == "1"
+        assert store.ROLE_FIGURE not in entry["review"]["roles"]
 
-    def test_a_half_pipetted_frame_shows_the_pick_not_the_old_proposal(self, window):
+    def test_a_half_pipetted_frame_shows_the_pick_beside_the_kept_half(self, window):
         from visualizers.palette_visualizer import display_palette
 
         _generated(window)
@@ -1087,7 +1091,16 @@ class TestExperimentingOnOneFrame:
         window._on_pipette(9, 9, 9, store.ROLE_BACKGROUND)
         shown = display_palette(self._entry(window))
         assert shown[store.ROLE_BACKGROUND]["rgb"] == [9, 9, 9]
-        assert store.ROLE_FIGURE not in shown
+        assert shown[store.ROLE_FIGURE]["hex"] == "#010203"
+
+    def test_pipetting_both_halves_leaves_a_wholly_manual_palette(self, window):
+        _generated(window)
+        window.accept_choice("1")
+        window._on_pipette(220, 30, 25, store.ROLE_FIGURE)
+        window._on_pipette(9, 9, 9, store.ROLE_BACKGROUND)
+        entry = self._entry(window)
+        assert store.frame_state(entry) == store.STATE_MANUAL
+        assert "review" not in entry
 
     def test_going_back_to_a_proposal_after_pipetting(self, window):
         from visualizers.palette_visualizer import display_palette
