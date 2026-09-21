@@ -47,12 +47,28 @@ silhouette = [
   "transformers>=5.0.0",
   "safetensors",
 ]
+engraving-local = [
+  "diffusers @ git+https://github.com/huggingface/diffusers",
+  "huggingface-hub>=1.31.0,<2.0",
+  "transformers>=5.0.0",
+  "accelerate>=0.31.0",
+  "safetensors",
+  "gguf",
+  "sentencepiece",
+  "protobuf",
+  "opencv-contrib-python-headless>=4.10",
+]
 all = [
   "crossing[annotate,visualizer,shot-detection,silhouette]",
 ]
 
 [project.scripts]
 crossing = "cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
 
 [tool.setuptools]
 py-modules = ["cli"]

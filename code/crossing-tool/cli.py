@@ -7005,6 +7005,43 @@ def _index_palette_clear_all(args):
     print("  Generated proposals were preserved.")
 
 
+def _index_palette_review_analysis(args):
+    """Read-only: what did the reviewer actually do across a whole film?"""
+    from services.palette_review_findings import write as write_findings
+    from services.palette_review_report import analyse
+
+    project_path, filename, media_type = _palette_review_target(args)
+    root = analyse(project_path, filename, media_type)
+    if not getattr(args, "no_findings", False):
+        write_findings(root)
+    print(f"✓ review analysis -> {root}")
+    print("  The review record was not modified.")
+
+
+def _index_palette_e9_propose_all(args):
+    """E9-A: figure -> field proposals across one whole media item."""
+    from services import palette_e9
+    from services import palette_review
+
+    project_path, filename, media_type = _palette_review_target(args)
+    models = palette_review.load_models(project_path)
+
+    def progress(position, total, shot_id, status):
+        print(f"  [{position}/{total}] {shot_id} {status}", flush=True)
+
+    try:
+        summary = palette_e9.create_all(
+            project_path, filename, media_type, models=models,
+            force=getattr(args, "force", False),
+            on_progress=progress)
+    finally:
+        palette_review._free_models(models)
+    print(f"✓ E9-A: {summary['generated']} generated, {summary['skipped']} skipped, "
+          f"{summary['failed']} failed of {summary['considered']}")
+    for shot_id, error in summary["errors"][:10]:
+        print(f"    {shot_id}: {error}", file=sys.stderr)
+
+
 _PALETTE_REVIEW_ACTIONS = {
     "propose": _index_palette_propose,
     "propose-all": _index_palette_propose_all,
@@ -7014,6 +7051,8 @@ _PALETTE_REVIEW_ACTIONS = {
     "reset": _index_palette_reset,
     "manual": _index_palette_manual,
     "clear-all": _index_palette_clear_all,
+    "review-analysis": _index_palette_review_analysis,
+    "e9-propose-all": _index_palette_e9_propose_all,
 }
 
 
@@ -7515,6 +7554,12 @@ def cmd_engraving(args):
         _engraving_generate(args)
     elif sub == "batch":
         _engraving_batch(args)
+    elif sub == "local-download":
+        _engraving_local_download(args)
+    elif sub == "local-generate":
+        _engraving_local_generate(args)
+    elif sub == "local-batch":
+        _engraving_local_batch(args)
     else:
         print("✗ engraving: specify a subcommand.", file=sys.stderr)
         sys.exit(1)
@@ -7690,6 +7735,205 @@ def _engraving_batch(args):
             f"✓ Engraving batch complete ({modes_info}):\n"
             f"generated={summary['generated']}  "
             f"skipped={summary['skipped']}  "
+            f"failed={summary['failed']}",
+            project_path,
+        )
+
+    if summary["failed"]:
+        sys.exit(1)
+
+
+def _local_engraving_config(args):
+    """Resolve the local converter config from --config plus CLI overrides."""
+    from services.engraving_local_config import EngravingConfigError, resolve_config
+
+    overrides: dict = {}
+    backend = getattr(args, "backend", None)
+    if backend:
+        overrides.setdefault("model", {})["transformer_backend"] = backend
+    steps = getattr(args, "steps", None)
+    if steps:
+        overrides.setdefault("repair", {})["num_inference_steps"] = steps
+        overrides.setdefault("engrave", {})["num_inference_steps"] = steps
+    if getattr(args, "no_repair", False):
+        overrides.setdefault("repair", {})["enabled"] = False
+    if getattr(args, "no_engrave", False):
+        overrides.setdefault("engrave", {})["enabled"] = False
+    seed = getattr(args, "seed", None)
+    if seed is not None:
+        overrides.setdefault("run", {})["seed"] = seed
+
+    try:
+        return resolve_config(getattr(args, "config", None), overrides)
+    except EngravingConfigError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _engraving_local_download(args):
+    """Fetch the local engraving model weights for fully offline inference."""
+    _require_path()
+    project_path = prefs.get("path")
+    config = _local_engraving_config(args)
+
+    from services.engraving_local_model import ModelNotAvailableError, download_model
+
+    try:
+        result = download_model(
+            project_path,
+            config,
+            force=getattr(args, "force", False),
+            progress=lambda message: print(f"  {message}"),
+        )
+    except ModelNotAvailableError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        print(f"✗ Download failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    print("✓ Local engraving model ready")
+    print(f"  Directory: {result['model_dir']}")
+    print(f"  Backend:   {result['transformer_backend']}")
+    print(f"  Size:      {result['total_bytes'] / (1 << 30):.1f} GB")
+    print(f"  Pipeline:  {result['pipeline_repo']}  ({result['pipeline_license']})")
+    if result["transformer_gguf_repo"]:
+        print(
+            f"  Weights:   {result['transformer_gguf_repo']}  "
+            f"({result['transformer_gguf_license']})"
+        )
+
+
+def _print_local_run(run, project_path):
+    """Print a one-run summary for the local converter."""
+    def _rel(value):
+        try:
+            return str(Path(value).relative_to(project_path))
+        except (ValueError, TypeError):
+            return str(value)
+
+    status = run.get("status")
+    marker = "✓" if status != "rejected" else "✗"
+    print(f"{marker} Local engraving: {status}" + ("  (cached)" if run.get("reused_cache") else ""))
+
+    outputs = run.get("outputs") or {}
+    if outputs.get("final_png"):
+        print(f"  Final:   {_rel(outputs['final_png'])}")
+    if outputs.get("repair_png"):
+        print(f"  Repair:  {_rel(outputs['repair_png'])}")
+    if run.get("run_json"):
+        print(f"  Record:  {_rel(run['run_json'])}")
+
+    if run.get("total_seconds"):
+        line = f"  Runtime: {run['total_seconds']:.1f}s"
+        if run.get("peak_vram_bytes"):
+            line += f"   Peak VRAM: {run['peak_vram_bytes'] / (1 << 30):.1f} GB"
+        print(line)
+
+    validation = run.get("validation") or {}
+    for failure in validation.get("automatic_failures", []):
+        print(f"  ✗ gate: {failure}")
+    for reason in validation.get("evidence_review_reasons", []):
+        print(f"  ! review: {reason}")
+
+
+def _engraving_local_generate(args):
+    """Convert one silhouette into an engraving with the local model."""
+    _require_path()
+    project_path = prefs.get("path")
+    config = _local_engraving_config(args)
+
+    from services.engraving_local_evidence import EvidenceError
+    from services.engraving_local_model import ModelNotAvailableError
+    from services.engraving_local_pipeline import EngravingRunError, convert_one
+
+    try:
+        run = convert_one(
+            project_path,
+            args.source,
+            config=config,
+            seed=getattr(args, "seed", None),
+            force=getattr(args, "force", False),
+            output_png=getattr(args, "output", None),
+        )
+    except (EvidenceError, ModelNotAvailableError) as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    except EngravingRunError as exc:
+        print(f"✗ Local engraving failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    _print_local_run(run, project_path)
+    if run.get("status") == "rejected":
+        sys.exit(1)
+
+
+def _engraving_local_batch(args):
+    """Convert many silhouettes with one shared local model instance."""
+    _require_path()
+    project_path = prefs.get("path")
+    config = _local_engraving_config(args)
+
+    from services.engraving_batch import scan_best_silhouettes
+    from services.engraving_local_model import ModelNotAvailableError
+    from services.engraving_local_pipeline import convert_batch
+
+    targets = [entry["path"] for entry in scan_best_silhouettes(
+        project_path,
+        media_type=getattr(args, "media", "movie"),
+        label=getattr(args, "label", None),
+    )]
+    limit = getattr(args, "limit", None)
+    if limit:
+        targets = targets[:limit]
+
+    if not targets:
+        print("✗ No human-best silhouettes matched.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Local engraving batch: {len(targets)} silhouette(s)  backend={config['model']['transformer_backend']}")
+
+    verbose = getattr(args, "verbose", False)
+
+    def _progress(index, total, source, run, error):
+        label = Path(source).parent.name
+        name = Path(source).stem
+        if error:
+            print(f"  [{index}/{total}] ✗ {name} [{label}] — {error}", file=sys.stderr)
+        elif verbose:
+            status = run.get("status")
+            cached = " (cached)" if run.get("reused_cache") else ""
+            print(f"  [{index}/{total}] {status}{cached}  {name} [{label}]")
+
+    try:
+        summary = convert_batch(
+            project_path,
+            targets,
+            config=config,
+            force=getattr(args, "force", False),
+            on_result=_progress,
+        )
+    except ModelNotAvailableError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    print(
+        f"✓ Local engraving batch complete: "
+        f"converted={summary['converted']}  "
+        f"reused={summary['reused']}  "
+        f"needs_review={summary['needs_review']}  "
+        f"rejected={summary['rejected']}  "
+        f"failed={summary['failed']}  "
+        f"total={summary['total']}"
+    )
+
+    if getattr(args, "notify", False):
+        from services.notify import discord_notify
+        discord_notify(
+            f"✓ Local engraving batch complete:\n"
+            f"converted={summary['converted']}  "
+            f"needs_review={summary['needs_review']}  "
+            f"rejected={summary['rejected']}  "
             f"failed={summary['failed']}",
             project_path,
         )
@@ -10374,6 +10618,22 @@ def build_parser():
     p_palette_reject.add_argument("--reviewer", default=None, metavar="NAME")
     p_palette_reject.add_argument("--note", default=None, metavar="TEXT")
 
+    p_palette_analysis = _add_palette_review_target(palette_sub.add_parser(
+        "review-analysis",
+        help="Read-only analysis of a completed human review of one film",
+    ), shot=False)
+    p_palette_analysis.add_argument(
+        "--no-findings", action="store_true",
+        help="Write only the measured JSON, not the written observations")
+
+    p_palette_e9 = _add_palette_review_target(palette_sub.add_parser(
+        "e9-propose-all",
+        help="E9-A figure-then-field proposals for every shot of one film",
+    ), shot=False)
+    p_palette_e9.add_argument(
+        "--force", action="store_true",
+        help="Regenerate frames that already carry E9-A proposals")
+
     _add_palette_review_target(palette_sub.add_parser(
         "reset",
         help="Clear one frame's accepted/manual palette, keeping its proposals",
@@ -11388,6 +11648,137 @@ def build_parser():
         help="Send a Discord notification after each engraving",
     )
     p_eng_batch.set_defaults(func=cmd_engraving)
+
+    # ── local (offline) engraving converter ──────────────────────────────
+    def _add_local_common(parser):
+        parser.add_argument(
+            "--backend",
+            dest="backend",
+            choices=["bf16", "q8", "q6", "q5", "q4"],
+            default=None,
+            help="Transformer precision (default: q8, which fits a 32 GB card)",
+        )
+        parser.add_argument(
+            "--config",
+            dest="config",
+            default=None,
+            metavar="JSON",
+            help="JSON config file overlaying the converter defaults",
+        )
+
+    p_eng_ldl = engraving_sub.add_parser(
+        "local-download",
+        help="Download the local engraving model weights for offline inference",
+    )
+    _add_local_common(p_eng_ldl)
+    p_eng_ldl.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="Re-download even if the weights are already present",
+    )
+    p_eng_ldl.set_defaults(func=cmd_engraving)
+
+    def _add_local_run_args(parser):
+        _add_local_common(parser)
+        parser.add_argument(
+            "--seed",
+            dest="seed",
+            type=int,
+            default=None,
+            metavar="N",
+            help="Deterministic seed (default: 42)",
+        )
+        parser.add_argument(
+            "--steps",
+            dest="steps",
+            type=int,
+            default=None,
+            metavar="N",
+            help="Inference steps for both stages (default: 40)",
+        )
+        parser.add_argument(
+            "--no-repair",
+            dest="no_repair",
+            action="store_true",
+            default=False,
+            help="Skip structural repair and engrave the raw silhouette",
+        )
+        parser.add_argument(
+            "--no-engrave",
+            dest="no_engrave",
+            action="store_true",
+            default=False,
+            help="Stop after structural repair (no stylization)",
+        )
+        parser.add_argument(
+            "--force",
+            action="store_true",
+            default=False,
+            help="Replace an existing completed run instead of reusing it",
+        )
+
+    p_eng_lgen = engraving_sub.add_parser(
+        "local-generate",
+        help="Convert one silhouette into an engraving with the local model",
+    )
+    p_eng_lgen.add_argument(
+        "--source",
+        dest="source",
+        required=True,
+        metavar="OBJECT_JSON",
+        help="Path to the silhouette object_NNNN.json to convert",
+    )
+    p_eng_lgen.add_argument(
+        "--output",
+        dest="output",
+        default=None,
+        metavar="PNG",
+        help="Additionally copy the final RGBA engraving to this path",
+    )
+    _add_local_run_args(p_eng_lgen)
+    p_eng_lgen.set_defaults(func=cmd_engraving)
+
+    p_eng_lbatch = engraving_sub.add_parser(
+        "local-batch",
+        help="Convert all human-best silhouettes with the local model",
+    )
+    p_eng_lbatch.add_argument(
+        "--media",
+        dest="media",
+        default="movie",
+        metavar="MEDIA_TYPE",
+        help="Media type to scan (default: movie)",
+    )
+    p_eng_lbatch.add_argument(
+        "--label",
+        dest="label",
+        default=None,
+        metavar="LABEL",
+        help="Restrict to a specific silhouette label (e.g. horse)",
+    )
+    p_eng_lbatch.add_argument(
+        "--limit",
+        dest="limit",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Convert at most N silhouettes",
+    )
+    p_eng_lbatch.add_argument(
+        "--verbose",
+        action="store_true",
+        default=False,
+        help="Print per-item progress",
+    )
+    p_eng_lbatch.add_argument(
+        "--notify",
+        action="store_true",
+        default=False,
+        help="Send a Discord notification on batch completion",
+    )
+    _add_local_run_args(p_eng_lbatch)
+    p_eng_lbatch.set_defaults(func=cmd_engraving)
 
     # ── book command ─────────────────────────────────────────────────────────
     p_book = sub.add_parser("book", help="Manage books (create, delete, list, import PDF)")

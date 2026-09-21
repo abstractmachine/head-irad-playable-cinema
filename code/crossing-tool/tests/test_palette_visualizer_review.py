@@ -1318,6 +1318,54 @@ class TestPreviewSections:
         assert (image._show_palette, image._show_image) == (False, True)
 
 
+class TestPaletteRing:
+    """The background ring must reach the frame's edge on all four sides."""
+
+    SIZES = ((1000, 426), (1001, 427), (999, 425), (357, 152), (250, 106),
+             (251, 107), (640, 272))
+
+    def _bands(self, width, height, ratio=0.10):
+        from PyQt5.QtCore import QRect
+        from visualizers.palette_visualizer import border_bands
+
+        rect = QRect(10, 10, width, height)
+        return rect, border_bands(rect, ratio)
+
+    def test_the_ring_reaches_every_edge(self):
+        for width, height in self.SIZES:
+            rect, bands = self._bands(width, height)
+            union = bands[0]
+            for band in bands[1:]:
+                union = union.united(band)
+            assert union == rect, (width, height)
+
+    def test_the_ring_never_spills_past_the_frame(self):
+        for width, height in self.SIZES:
+            rect, bands = self._bands(width, height)
+            assert all(rect.contains(band) for band in bands), (width, height)
+
+    def test_every_band_is_the_same_thickness(self):
+        rect, bands = self._bands(1000, 426)
+        thickness = int(min(rect.width(), rect.height()) * 0.10)
+        assert [b.height() for b in bands[:2]] == [thickness, thickness]
+        assert [b.width() for b in bands[2:]] == [thickness, thickness]
+
+    def test_a_tiny_frame_still_gets_a_visible_ring(self):
+        rect, bands = self._bands(4, 3)
+        assert all(min(b.width(), b.height()) >= 1 for b in bands)
+        assert rect.contains(bands[1])
+
+    def test_the_ring_is_filled_rather_than_stroked(self):
+        """A centred pen lands half its width outside the path it strokes."""
+        import inspect
+
+        from visualizers import palette_visualizer
+
+        source = inspect.getsource(palette_visualizer._paint_border)
+        assert "fillRect" in source
+        assert "drawRect" not in source and "QPen" not in source
+
+
 class TestInspectorLayout:
     def test_generate_contains_only_intentional_controls(self, window):
         from visualizers.components.shortcut_button import ShortcutButton

@@ -204,15 +204,26 @@ def _paint_pair(painter, rect, figure, background) -> None:
                         rect.center().y() - diameter // 2, diameter, diameter)
 
 
-def _paint_border(painter, rect, colour, ratio: float) -> None:
-    """An inset ring of *colour*, *ratio* of the shorter side thick."""
+def border_bands(rect, ratio: float) -> list:
+    """The four bands of an inset ring, *ratio* of the shorter side thick.
+
+    Filled, not stroked: a centred pen puts half its width outside the path, so
+    a stroked ring missed the bottom and right edges of the frame by a pixel.
+    """
     thickness = max(1, int(min(rect.width(), rect.height()) * ratio))
-    pen = QPen(_qcolor(colour), thickness)
-    pen.setJoinStyle(Qt.MiterJoin)
-    painter.setBrush(Qt.NoBrush)
-    painter.setPen(pen)
-    half = thickness // 2
-    painter.drawRect(rect.adjusted(half, half, -half - 1, -half - 1))
+    width, height = rect.width(), rect.height()
+    return [
+        QRect(rect.left(), rect.top(), width, thickness),
+        QRect(rect.left(), rect.bottom() - thickness + 1, width, thickness),
+        QRect(rect.left(), rect.top(), thickness, height),
+        QRect(rect.right() - thickness + 1, rect.top(), thickness, height),
+    ]
+
+
+def _paint_border(painter, rect, colour, ratio: float) -> None:
+    fill = _qcolor(colour)
+    for band in border_bands(rect, ratio):
+        painter.fillRect(band, fill)
 
 
 def _paint_frame_palette(painter, rect, palette: dict) -> None:

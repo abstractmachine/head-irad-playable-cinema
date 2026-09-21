@@ -11,6 +11,17 @@ assumption) as of 2026-08. Treat `documentation/source.md` with suspicion — it
 (references a flat `services/`/`data/` layout and root-level `crossing_mcp.py`/`prefs.py`
 files that no longer exist). This guide + direct repo inspection supersede it.
 
+- **Engraving has two independent backends.** The provider path
+  (`services/engraving_*.py`, OpenAI) and the fully local path
+  (`services/engraving_local_*.py`, Qwen-Image-Edit-2511) are deliberately separate
+  and must stay that way until a benchmark decides adoption. The local converter is
+  staged evidence → repair → engrave → postprocess → validate, writes only under the
+  object's own `data/engravings/catalog/.../local/` directory, and never writes to the
+  silhouette catalog. Its automatic gates may **reject** or return `needs_review` but
+  never `accept`: both negative benchmark cases were polished outputs that passed
+  casual inspection, so part count, attachment, depth ordering and axis consistency
+  stay human-judged. See §11.
+
 ---
 
 ## 1. Philosophy
@@ -64,7 +75,7 @@ MCP server    ──┘         (algorithms,              (canonical
 |---|---|
 | `cli.py` | Canonical CLI — argparse dispatch + orchestration only, ~10k lines, no business logic of its own (see §8). |
 | `data/` | Canonical project-state I/O: metadata, shotlists, annotations, motifs, film titles, palettes, books, media IDs, subtitle parsing (see §7). |
-| `services/` | Processing pipelines/algorithms operating on `data/` state: search, CLIP/SAM3 pipelines (frame matching, silhouette extraction/curation/scoring), engraving generation (FLUX + OpenAI backends), transcode/audio, vocabulary indexing, scene detection, notifications, model management. |
+| `services/` | Processing pipelines/algorithms operating on `data/` state: search, CLIP/SAM3 pipelines (frame matching, silhouette extraction/curation/scoring), engraving generation (FLUX + OpenAI backends, plus the fully local `engraving_local_*` Qwen-Image-Edit converter), transcode/audio, vocabulary indexing, scene detection, notifications, model management. |
 | `generators/` | Pure renderers producing PDFs/images from already-computed data: `cloud.py` (word clouds), `mosaic.py` (contact sheets), `flipbook.py` (per-shot motif/palette book), `composition.py` (single-frame tableau), `palette.py` (color swatch sheet), `_common.py` (shared font-loading helper). |
 | `visualizers/` | PyQt5 desktop apps — one `<name>_visualizer.py` per subcommand (book, cloud, flipbook, illustration, metadata, mosaic, palette, project, segmentation, shot, sync). All subclass `WindowVisualizer` (see §3). `launcher.py`/`_window_helpers.py` own cross-window launch/raise/singleton logic. |
 | `visualizers/components/` | The shared framework toolkit (Inspector, TabbedPanel, MetadataBlock, ZoomManager, etc. — full inventory in §6). |
@@ -600,6 +611,32 @@ there too instead of letting the gap grow further).
 - **Sync visualizer's Inspector-as-floating-overlay** — a deliberate, one-off exception
   to the splitter-pane Inspector pattern (see §3); the generic `WindowVisualizer` was
   kept unchanged, all the special-casing lives in `sync_visualizer.py`.
+- **Local offline engraving converter** (`services/engraving_local_*.py`, 2026-09) —
+  a from-scratch replacement for the paid OpenAI engraving path, built on
+  **Qwen-Image-Edit-2511** (20B, Apache 2.0) rather than FLUX. Chosen over FLUX.2
+  dev/klein-9B because those carry a non-commercial licence *and* oblige the deployer
+  to run content filters or manual review; Qwen also takes 1–3 reference images
+  natively, which maps directly onto the evidence hierarchy (silhouette → exact frame
+  → same-shot context view). Exposed as `crossing engraving local-download` /
+  `local-generate` / `local-batch`; the OpenAI path is untouched. Hard-won operational
+  facts, do not rediscover them:
+    * Weights live at `<project>/models/Qwen-Image-Edit-2511/` — pipeline components
+      plus a single `qwen-image-edit-2511-Q8_0.gguf` (36 GB total, vs 58 GB for bf16).
+    * `pipe.to("cuda")` **OOMs on a 32 GB card**: Q8 transformer (21.8 GB) plus the
+      bf16 Qwen2.5-VL text encoder (~15 GB) does not fit resident.
+      `enable_model_cpu_offload()` is mandatory; measured peak is then 21.8 GB.
+    * `model.edit()` must always pass explicit `height`/`width`. With multiple
+      reference images the pipeline otherwise takes its output shape from a
+      reference, and a 1920x816 source frame silently produced a wide result.
+    * The model **will not reconstruct** unless the prompt asserts the input is
+      incomplete, says "Redraw it as one complete `$label`", *and* names the parts
+      that must be visible (`$parts`, conditioned on the catalog `field`). Telling it
+      to "complete" the cut-out while "preserving the pose exactly" returns the input
+      unchanged — 2511's "mitigate image drift" training works against repair.
+    * Both stages' negative prompts must keep `perch, stand, base, mount, pedestal,
+      support, ground plane, cast shadow`. Without them the model reproduces the
+      documented `012-bird` failure and invents a log perch. There is a test asserting
+      this; do not trim those terms.
 
 ---
 
