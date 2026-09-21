@@ -521,6 +521,70 @@ that owns the feature you want to refresh:
 Project browser after editing an annotation field such as `type`. It does not
 re-serialize or re-embed semantic-search data.
 
+## Engravings
+
+An engraving becomes an Illustration by publishing two files into the canonical
+mode directory:
+
+```
+data/engravings/catalog/<media_type>/<filename_stem>/<label>/<object_id>/<mode>/
+    engraving.json                                    # the index contract
+    <title_stub>-<frame_id>-<object_id>-<mode>.png    # the canonical asset
+```
+
+`crossing index illustration` indexes every `engraving.json` whose `status` is
+`generated`. Everything else in the object directory — evidence, repair image,
+raw engraving, `run.json` — is a **generation artifact**: it has no
+`engraving.json` beside it, so it never becomes an Illustration of its own.
+Local runs keep those artifacts in a sibling `local/` directory.
+
+Illustration identity is `(media_type, filename_stem, label, object_id, mode)`.
+`mode` is `isolated` (silhouette only) or `frame` (silhouette plus the source
+frame). **The generation backend is provenance, not identity** — it is recorded
+in `generation.service` and mirrored to the scalar `generation_service` so the
+index can filter on it. `Book` therefore cannot tell an OpenAI engraving from a
+locally generated one, and does not need to.
+
+`review_state` records human judgement and is independent of `status`:
+
+| value | meaning |
+|---|---|
+| `needs_review` | automatic gates passed; structure not yet judged by a human |
+| `accepted` | a human approved it |
+| `rejected` | a human rejected it; `status` becomes `failed` so it leaves the browse index, but **no file is deleted** |
+
+Automatic gates can reject an output but never accept one, so a freshly
+generated engraving is always `needs_review`. It is still indexed, so it can be
+inspected in Illustration before approval.
+
+```sh
+# Inspect
+crossing engraving list --backend qwen-local --review-state needs_review
+crossing engraving inspect --source <path>/engraving.json
+
+# Record a human decision, then refresh the browse index
+crossing engraving review --source <path>/engraving.json --state accepted
+crossing index illustration --media movie
+
+# Audit integrity (indexes, provenance, orphans, Book references)
+crossing engraving doctor
+
+# Remove engravings — DRY RUN by default, nothing is deleted
+crossing engraving remove --backend openai
+crossing engraving remove --backend openai --apply
+crossing engraving remove --label bird --include-provenance --apply
+```
+
+`remove` is reference-aware. It reports the canonical assets, metadata files,
+matching Illustration index records, generation artifacts and any Book layer
+that resolves to the selected files, then stops. Only `--apply` deletes, and it
+refuses to run while blocking issues remain unless `--force` is also given.
+Generation artifacts are retained unless `--include-provenance` is passed.
+
+Removing assets and rebuilding the index are deliberately separate: `remove`
+only *invalidates* the index, and `crossing index illustration` is the single
+mechanism that rebuilds it. A rebuild never deletes media.
+
 `crossing index silhouette list`, `summary`, `rank`, and `cluster` are read-only
 operations over the canonical active Illustration index. They share the exact same
 candidate population with Illustration and MCP: `assignment_state=active`. They do not

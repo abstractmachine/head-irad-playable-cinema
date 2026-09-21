@@ -101,6 +101,13 @@ def convert_one(
     if is_complete(paths) and not force:
         existing = json.loads(paths["run_json"].read_text(encoding="utf-8"))
         existing["reused_cache"] = True
+        # A run completed before publication existed (or with publishing off)
+        # still owns a canonical asset; publish it without re-running the model.
+        if config["run"].get("publish", True) and not (existing.get("publication") or {}).get("published"):
+            from services.engraving_local_publish import publish_run
+
+            existing["publication"] = publish_run(project_path, existing, config)
+            _write_json(paths["run_json"], existing)
         return existing
 
     paths["dir"].mkdir(parents=True, exist_ok=True)
@@ -245,6 +252,14 @@ def convert_one(
             output_png.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(paths["final_png"], output_png)
             run["outputs"]["requested_png"] = str(output_png)
+
+        # -- publication: the one canonical asset becomes an Illustration ---
+        if config["run"].get("publish", True):
+            from services.engraving_local_publish import publish_run
+
+            run["publication"] = publish_run(project_path, run, config, force=force)
+        else:
+            run["publication"] = {"published": False, "reason": "publishing disabled"}
 
     except Exception as exc:
         run["status"] = "failed"

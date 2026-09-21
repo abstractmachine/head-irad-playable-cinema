@@ -14,13 +14,19 @@ files that no longer exist). This guide + direct repo inspection supersede it.
 - **Engraving has two independent backends.** The provider path
   (`services/engraving_*.py`, OpenAI) and the fully local path
   (`services/engraving_local_*.py`, Qwen-Image-Edit-2511) are deliberately separate
-  and must stay that way until a benchmark decides adoption. The local converter is
-  staged evidence → repair → engrave → postprocess → validate, writes only under the
-  object's own `data/engravings/catalog/.../local/` directory, and never writes to the
-  silhouette catalog. Its automatic gates may **reject** or return `needs_review` but
-  never `accept`: both negative benchmark cases were polished outputs that passed
-  casual inspection, so part count, attachment, depth ordering and axis consistency
-  stay human-judged. See §11.
+  and must stay that way until a benchmark decides adoption. Both publish through
+  **one** canonical Illustration contract: an `engraving.json` with
+  `status: "generated"` plus the named PNG, in
+  `data/engravings/catalog/<media>/<stem>/<label>/<object_id>/<mode>/`. Illustration
+  identity is `(media_type, filename_stem, label, object_id, mode)`; the backend is
+  provenance (`generation.service`, mirrored to the scalar `generation_service`),
+  **never** identity, and `mode` must never be a backend name. Generation artifacts
+  (evidence, repair, raw, `run.json`) live in a sibling `local/` directory with no
+  `engraving.json`, so they are structurally incapable of becoming Illustrations.
+  Automatic gates may **reject** or return `needs_review` but never `accept`: both
+  negative benchmark cases were polished outputs that passed casual inspection, so
+  part count, attachment, depth ordering and axis consistency stay human-judged.
+  `review_state` carries that decision without an index schema change. See §11.
 
 ---
 
@@ -637,6 +643,24 @@ there too instead of letting the gap grow further).
       support, ground plane, cast shadow`. Without them the model reproduces the
       documented `012-bird` failure and invents a log perch. There is a test asserting
       this; do not trim those terms.
+- **Engraving lifecycle tooling** (`services/engraving_lifecycle.py`,
+  `services/engraving_local_publish.py`, 2026-09) — `crossing engraving
+  list/inspect/review/remove/doctor`. Facts worth not rediscovering:
+    * The indexed `title` column is a **display title with the `{tmdb-…}` suffix
+      stripped**, so it never equals the catalog directory name. Match index rows by
+      `record_path` (the project-relative `engraving.json` path) instead. A test pins
+      this.
+    * `_scan_engravings` copies only **scalar** top-level keys into the index payload;
+      dicts like `generation` are dropped. That is why `generation_service` and
+      `review_state` are scalars — it makes them queryable with no schema bump.
+    * Books are **self-contained**: they copy every image into
+      `outputs/books/<slug>/illustrations/` and store a *relative* path in
+      `layers.json["source"]`. Both real books have zero absolute references, so
+      deleting catalog engravings cannot dangle them. The Book visualizer *can* write
+      an absolute `output_png`, which `plan_removal` treats as a blocking dependency.
+    * `remove` is dry-run by default and only invalidates the index;
+      `crossing index illustration` remains the sole rebuild mechanism. Never let
+      those two operations merge.
 
 ---
 

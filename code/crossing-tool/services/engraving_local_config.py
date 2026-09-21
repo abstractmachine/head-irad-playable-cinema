@@ -135,6 +135,9 @@ DEFAULT_CONFIG: dict = {
         "force": False,
         # Keep intermediate stage PNGs for inspection.
         "keep_intermediates": True,
+        # Publish the final engraving as a canonical Illustration.  A run whose
+        # automatic gates rejected it is never published regardless.
+        "publish": True,
     },
 }
 

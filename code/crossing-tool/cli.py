@@ -7560,6 +7560,16 @@ def cmd_engraving(args):
         _engraving_local_generate(args)
     elif sub == "local-batch":
         _engraving_local_batch(args)
+    elif sub == "list":
+        _engraving_list(args)
+    elif sub == "inspect":
+        _engraving_inspect(args)
+    elif sub == "review":
+        _engraving_review(args)
+    elif sub == "remove":
+        _engraving_remove(args)
+    elif sub == "doctor":
+        _engraving_doctor(args)
     else:
         print("✗ engraving: specify a subcommand.", file=sys.stderr)
         sys.exit(1)
@@ -7939,6 +7949,240 @@ def _engraving_local_batch(args):
         )
 
     if summary["failed"]:
+        sys.exit(1)
+
+
+def _engraving_selection(args):
+    """Resolve the engraving selection shared by list/remove/inspect."""
+    from services.engraving_lifecycle import scan_engravings
+
+    project_path = prefs.get("path")
+    media = getattr(args, "media", None)
+    return project_path, scan_engravings(
+        project_path,
+        media_type=normalize_media_type(media) if media else None,
+        backend=getattr(args, "backend_filter", None),
+        review_state=getattr(args, "review_state", None),
+        label=getattr(args, "label", None),
+        title=getattr(args, "title", None),
+        status=getattr(args, "status", None),
+    )
+
+
+def _engraving_list(args):
+    """List canonical engraving Illustrations."""
+    _require_path()
+    project_path, entries = _engraving_selection(args)
+
+    if not entries:
+        print("No engravings matched.")
+        return
+
+    for entry in entries:
+        if entry.get("unreadable"):
+            print(f"  ?  {entry['engraving_json']}  (unreadable)")
+            continue
+        asset = "png" if entry.get("output_png") else "NO-PNG"
+        print(
+            f"  {entry['status'] or '?':<10} {entry['backend'] or '-':<11} "
+            f"{entry['review_state'] or '-':<13} {entry['mode']:<9} "
+            f"{entry['label']:<22} {entry['object_id']:<12} {asset:<7} {entry['title']}"
+        )
+    print(f"\n{len(entries)} engraving(s).")
+
+
+def _engraving_inspect(args):
+    """Show the full canonical + provenance state of one engraving."""
+    _require_path()
+    project_path = prefs.get("path")
+
+    from services.engraving_lifecycle import book_dependencies_for, provenance_dirs_for
+
+    target = Path(args.source)
+    if target.is_dir():
+        target = target / "engraving.json"
+    if not target.is_file():
+        print(f"✗ Not an engraving.json: {target}", file=sys.stderr)
+        sys.exit(1)
+
+    metadata = json.loads(target.read_text(encoding="utf-8"))
+    print(f"Engraving: {target}")
+    print(f"  status       : {metadata.get('status')}")
+    print(f"  review_state : {metadata.get('review_state', '-')}")
+    print(f"  mode         : {metadata.get('mode')}")
+    print(f"  backend      : {(metadata.get('generation') or {}).get('service', '-')}")
+    print(f"  model        : {(metadata.get('generation') or {}).get('model', '-')}")
+    print(f"  output_png   : {metadata.get('output_png')}")
+
+    silhouette = metadata.get("silhouette") or {}
+    print(f"  source object: {silhouette.get('label')} / {silhouette.get('field')}")
+    print(f"  shot         : {silhouette.get('shot_id')}  frame={silhouette.get('frame')}")
+
+    provenance = metadata.get("provenance") or {}
+    if provenance:
+        print(f"  run_json     : {provenance.get('run_json')}")
+        print(f"  stages       : {', '.join(provenance.get('stages') or [])}")
+
+    entry = {"mode_dir": target.parent}
+    runs = provenance_dirs_for(entry)
+    if runs:
+        for run_dir in runs:
+            files = sorted(p for p in run_dir.rglob("*") if p.is_file())
+            print(f"  provenance   : {run_dir}  ({len(files)} files)")
+
+    hits = book_dependencies_for(project_path, [target.parent / p.name for p in target.parent.glob("*.png")])
+    print(f"  book refs    : {len(hits)}")
+    for hit in hits:
+        print(f"      {hit['book']} / {hit['layer_id']} / {hit['key']}")
+
+
+def _engraving_review(args):
+    """Record a human review decision on a published engraving."""
+    _require_path()
+    from services.engraving_local_publish import PublicationError, set_review_state
+    from services.illustration_index import invalidate_index
+
+    target = Path(args.source)
+    if target.is_dir():
+        target = target / "engraving.json"
+    try:
+        metadata = set_review_state(target, args.state)
+    except PublicationError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    media_type = (metadata.get("silhouette") or {}).get("media_type") or "movie"
+    invalidate_index(prefs.get("path"), "engravings", media_type)
+    print(f"✓ review_state = {metadata['review_state']}  (status={metadata['status']})")
+    print("  Run 'crossing index illustration' to refresh the browse index.")
+
+
+def _print_removal_plan(plan, project_path):
+    """Print a removal plan in the canonical dry-run format."""
+    def _rel(value):
+        try:
+            return str(Path(value).relative_to(project_path))
+        except (ValueError, TypeError):
+            return str(value)
+
+    print(f"Engravings selected: {plan['selected']}")
+    print()
+    print("Canonical assets:")
+    print(f"  {len(plan['canonical_assets'])} image files")
+    print("  metadata:")
+    print(f"    {len(plan['metadata_files'])} engraving.json/request.json files")
+    print()
+    print("Illustration index:")
+    matched = plan["index_records"]
+    print(f"  {matched['matched']} records")
+    for media_type, status in matched["index_status"].items():
+        print(f"    {media_type}: index {status}")
+    print()
+    print("Generation artifacts:")
+    if plan["include_provenance"]:
+        print(f"  {len(plan['provenance_roots'])} run directories")
+        print(f"  {len(plan['provenance_files'])} provenance files")
+    else:
+        print("  retained (use --include-provenance to remove run directories)")
+    print()
+    print("Book:")
+    print(f"  {len(plan['book_dependencies'])} book reference(s) resolve to these files")
+    for hit in plan["book_dependencies"]:
+        print(f"    {hit['book']} / {hit['layer_id']} / {hit['key']} = {hit['value']}")
+    print()
+    if plan["warnings"]:
+        print("Warnings:")
+        for warning in plan["warnings"]:
+            print(f"  ! {warning}")
+        print()
+    if plan["blocking"]:
+        print("Blocking issues:")
+        for issue in plan["blocking"]:
+            print(f"  ✗ {issue}")
+        print()
+    print(f"Orphans after operation: {0 if plan['safe'] else 'unknown'} expected")
+
+
+def _engraving_remove(args):
+    """Reference-aware engraving removal; dry-run unless --apply is given."""
+    _require_path()
+    project_path, entries = _engraving_selection(args)
+
+    from services.engraving_lifecycle import apply_removal, plan_removal
+
+    if not entries:
+        print("No engravings matched; nothing to do.")
+        return
+
+    plan = plan_removal(
+        project_path,
+        entries,
+        include_provenance=getattr(args, "include_provenance", False),
+    )
+    _print_removal_plan(plan, project_path)
+
+    if not getattr(args, "apply", False):
+        print()
+        print("Nothing removed.")
+        print("Re-run with --apply to perform this operation.")
+        return
+
+    if not plan["safe"] and not getattr(args, "force", False):
+        print()
+        print("✗ Refusing to apply: unresolved blocking issues above.", file=sys.stderr)
+        print("  Re-run with --force only if you accept the dangling references.", file=sys.stderr)
+        sys.exit(1)
+
+    result = apply_removal(project_path, plan, force=getattr(args, "force", False))
+    print()
+    print(
+        f"✓ Removed {result['removed_files']} file(s), "
+        f"{result['removed_dirs']} directory/ies"
+    )
+    for error in result["errors"]:
+        print(f"  ✗ {error}", file=sys.stderr)
+    print(f"  Invalidated index: {', '.join(result['invalidated']) or 'none'}")
+    print("  Run 'crossing index illustration' to rebuild the browse index.")
+    if result["errors"]:
+        sys.exit(1)
+
+
+def _engraving_doctor(args):
+    """Audit engraving/Illustration integrity."""
+    _require_path()
+    project_path = prefs.get("path")
+
+    from services.engraving_lifecycle import doctor
+
+    media = getattr(args, "media", None)
+    report = doctor(
+        project_path,
+        media_type=normalize_media_type(media) if media else None,
+    )
+
+    print(f"Engravings on disk : {report['engravings_on_disk']}")
+    print(f"  generated        : {report['generated_on_disk']}")
+    print(f"Books              : {len(report['books'])}")
+    print()
+
+    if not report["findings"]:
+        print("✓ No issues found.")
+        return
+
+    order = {"blocking": 0, "repairable": 1, "warning": 2, "ok": 3}
+    for finding in sorted(report["findings"], key=lambda f: order.get(f["severity"], 9)):
+        marker = {"blocking": "✗", "repairable": "~", "warning": "!"}.get(finding["severity"], "-")
+        print(f"  {marker} [{finding['severity']}] {finding['check']}: {finding['message']}")
+
+    counts = report["counts"]
+    print()
+    print(
+        f"blocking={counts['blocking']}  repairable={counts['repairable']}  "
+        f"warning={counts['warning']}"
+    )
+    if counts["repairable"]:
+        print("Repairable index issues: run 'crossing index illustration'")
+    if counts["blocking"]:
         sys.exit(1)
 
 
@@ -11779,6 +12023,132 @@ def build_parser():
     )
     _add_local_run_args(p_eng_lbatch)
     p_eng_lbatch.set_defaults(func=cmd_engraving)
+
+    # ── engraving lifecycle (backend-agnostic) ───────────────────────────
+    def _add_selection_args(parser):
+        parser.add_argument(
+            "--media",
+            dest="media",
+            default=None,
+            metavar="MEDIA_TYPE",
+            help="Restrict to one media type (default: all)",
+        )
+        parser.add_argument(
+            "--label",
+            dest="label",
+            default=None,
+            metavar="LABEL",
+            help="Restrict to one silhouette label",
+        )
+        parser.add_argument(
+            "--title",
+            dest="title",
+            default=None,
+            metavar="SUBSTRING",
+            help="Restrict to titles containing this substring",
+        )
+        parser.add_argument(
+            "--backend",
+            dest="backend_filter",
+            default=None,
+            metavar="SERVICE",
+            help="Restrict to a generation backend (e.g. openai, qwen-local)",
+        )
+        parser.add_argument(
+            "--review-state",
+            dest="review_state",
+            choices=["needs_review", "accepted", "rejected"],
+            default=None,
+            help="Restrict to one human review state",
+        )
+        parser.add_argument(
+            "--status",
+            dest="status",
+            choices=["pending", "generating", "generated", "failed"],
+            default=None,
+            help="Restrict to one engraving lifecycle status",
+        )
+
+    p_eng_list = engraving_sub.add_parser(
+        "list",
+        help="List canonical engraving Illustrations",
+    )
+    _add_selection_args(p_eng_list)
+    p_eng_list.set_defaults(func=cmd_engraving)
+
+    p_eng_inspect = engraving_sub.add_parser(
+        "inspect",
+        help="Show canonical + provenance state for one engraving",
+    )
+    p_eng_inspect.add_argument(
+        "--source",
+        dest="source",
+        required=True,
+        metavar="ENGRAVING_JSON",
+        help="Path to an engraving.json (or its directory)",
+    )
+    p_eng_inspect.set_defaults(func=cmd_engraving)
+
+    p_eng_review = engraving_sub.add_parser(
+        "review",
+        help="Record a human review decision on a published engraving",
+    )
+    p_eng_review.add_argument(
+        "--source",
+        dest="source",
+        required=True,
+        metavar="ENGRAVING_JSON",
+        help="Path to an engraving.json (or its directory)",
+    )
+    p_eng_review.add_argument(
+        "--state",
+        dest="state",
+        required=True,
+        choices=["needs_review", "accepted", "rejected"],
+        help="Review decision to record",
+    )
+    p_eng_review.set_defaults(func=cmd_engraving)
+
+    p_eng_remove = engraving_sub.add_parser(
+        "remove",
+        help="Remove engravings (dry-run unless --apply is given)",
+    )
+    _add_selection_args(p_eng_remove)
+    p_eng_remove.add_argument(
+        "--include-provenance",
+        dest="include_provenance",
+        action="store_true",
+        default=False,
+        help="Also remove local run directories (generation artifacts)",
+    )
+    p_eng_remove.add_argument(
+        "--apply",
+        dest="apply",
+        action="store_true",
+        default=False,
+        help="Perform the removal (default is a dry-run report)",
+    )
+    p_eng_remove.add_argument(
+        "--force",
+        dest="force",
+        action="store_true",
+        default=False,
+        help="Apply even when blocking issues were reported",
+    )
+    p_eng_remove.set_defaults(func=cmd_engraving)
+
+    p_eng_doctor = engraving_sub.add_parser(
+        "doctor",
+        help="Audit engraving / Illustration / Book integrity",
+    )
+    p_eng_doctor.add_argument(
+        "--media",
+        dest="media",
+        default=None,
+        metavar="MEDIA_TYPE",
+        help="Restrict to one media type (default: all)",
+    )
+    p_eng_doctor.set_defaults(func=cmd_engraving)
 
     # ── book command ─────────────────────────────────────────────────────────
     p_book = sub.add_parser("book", help="Manage books (create, delete, list, import PDF)")
