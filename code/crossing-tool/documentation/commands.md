@@ -536,7 +536,31 @@ data/engravings/catalog/<media_type>/<filename_stem>/<label>/<object_id>/<mode>/
 `generated`. Everything else in the object directory — evidence, repair image,
 raw engraving, `run.json` — is a **generation artifact**: it has no
 `engraving.json` beside it, so it never becomes an Illustration of its own.
-Local runs keep those artifacts in a sibling `local/` directory.
+
+Local runs keep those artifacts under `local/<mode>/`, mirroring the canonical
+mode axis so `isolated` and `frame` never share a provenance namespace:
+
+```
+…/<object_id>/
+    isolated/   engraving.json + canonical PNG      # published Illustration
+    frame/      engraving.json + canonical PNG      # published Illustration
+    local/
+        isolated/   run.json, 01-repair.png, …     # generation artifacts
+        frame/      run.json, 01-repair.png, …
+```
+
+Runs created before this layout live directly in `local/`. They stay readable
+— a legacy run is only ever adopted by the mode it actually belongs to — and
+`crossing engraving doctor` reports them as a warning until migrated:
+
+```sh
+crossing engraving migrate-provenance           # dry-run
+crossing engraving migrate-provenance --apply   # rename into <mode>/
+```
+
+Migration renames rather than copies, so bytes, timestamps and every
+`*_sha256` already recorded in `run.json` stay valid; only stored paths are
+rewritten, and an existing mode directory is never overwritten.
 
 Illustration identity is `(media_type, filename_stem, label, object_id, mode)`.
 `mode` is `isolated` (silhouette only) or `frame` (silhouette plus the source
@@ -580,6 +604,24 @@ matching Illustration index records, generation artifacts and any Book layer
 that resolves to the selected files, then stops. Only `--apply` deletes, and it
 refuses to run while blocking issues remain unless `--force` is also given.
 Generation artifacts are retained unless `--include-provenance` is passed.
+
+Provenance selection follows the mode being removed: `remove --mode isolated
+--include-provenance` takes `local/isolated/` and leaves `local/frame/` alone.
+Omit `--mode` to select every variant of the object.
+
+`doctor` grades findings so it stays useful in automation:
+
+| severity | meaning | examples |
+|---|---|---|
+| `blocking` | identity or metadata cannot be resolved | duplicate identity, unparseable `engraving.json`, malformed source path, dangling Book reference |
+| `repairable` | fixed by rebuilding the index | stale/missing index, unindexed asset, generated record with no canonical PNG |
+| `warning` | true but harmless or expected | stale absolute source path, legacy provenance layout, unpublished run |
+
+A `pending` record legitimately has no canonical output, so its absence is
+never reported. Its *stored inputs* are still checked, which is how engravings
+carrying absolute paths from another machine are surfaced. Doctor reports facts
+— the path, whether it is absolute, whether it resolves, the record status —
+and never guesses a replacement.
 
 Removing assets and rebuilding the index are deliberately separate: `remove`
 only *invalidates* the index, and `crossing index illustration` is the single

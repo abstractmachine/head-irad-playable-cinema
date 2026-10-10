@@ -127,6 +127,24 @@ def assignment_is_active(record: dict[str, Any]) -> bool:
     return assignment_state_for_record(record) == ASSIGNMENT_ACTIVE
 
 
+def require_active_record(record: dict[str, Any], *, source=None, project_path=None) -> dict:
+    """Authorize ordinary consumption without following historical provenance."""
+    if not isinstance(record, dict) or not assignment_is_active(record):
+        raise ValueError("Ordinary silhouette consumption requires an active record")
+    if source is not None and project_path is not None:
+        path = Path(source).resolve()
+        archive = Path(project_path).resolve() / "archive/silhouettes"
+        if path.is_relative_to(archive):
+            raise ValueError("Ordinary silhouette consumption cannot read archive")
+    return record
+
+
+def load_active_record(source, project_path) -> dict:
+    path = Path(source)
+    record = json.loads(path.read_text(encoding="utf-8"))
+    return require_active_record(record, source=path, project_path=project_path)
+
+
 def extraction_identity(record: dict[str, Any]) -> dict[str, str]:
     """Return the stable identity of the original extraction request.
 
@@ -266,12 +284,21 @@ def catalog_item_dir(
     return catalog_base_dir(project_path, media_type) / filename_stem / _safe_label(label)
 
 
-def _next_object_index(label_dir: Path) -> int:
+def _next_object_index(label_dir: Path, *, count: int = 1) -> int:
     """Return the next available 1-based object index for *label_dir*.
 
     Scans for existing ``object_NNNN.png`` files and returns max_index + 1,
     or 1 if the directory is empty.
     """
+    from services.silhouette_legacy_allocation import MARKER, require_reservations_after_archive, reserve_legacy_ordinals, reserve_from_registry
+
+    reserved = reserve_from_registry(label_dir, count=count)
+    if reserved is not None:
+        return reserved
+
+    if (label_dir / MARKER).exists() or (label_dir / MARKER).is_symlink():
+        return reserve_legacy_ordinals(label_dir, count=count)
+    require_reservations_after_archive(label_dir)
     if not label_dir.exists():
         return 1
     existing = sorted(label_dir.glob("object_????.png"))
@@ -681,7 +708,7 @@ def extract_objects_for_shot(
     # --- save accepted objects ---
     label_dir.mkdir(parents=True, exist_ok=True)
     saved_paths: list[str] = []
-    next_idx = _next_object_index(label_dir)
+    next_idx = _next_object_index(label_dir, count=len(deduped))
     timestamp = datetime.now(timezone.utc).isoformat()
 
     # Load semantic analysis prompts once for this shot (best-effort).
@@ -1075,6 +1102,8 @@ def iter_catalog(
     media_type: str = "movie",
     label: str | None = None,
     filename_stem: str | None = None,
+    *,
+    include_history: bool = False,
 ) -> "Iterator[dict]":
     """Yield catalog entries, one dict per object JSON.
 
@@ -1083,6 +1112,7 @@ def iter_catalog(
 
     Pass *label* to restrict to one label.
     Pass *filename_stem* to restrict to one media item.
+    Retired records and unreadable sidecars require explicit *include_history*.
     """
     base = catalog_base_dir(project_path, media_type)
 
@@ -1099,10 +1129,13 @@ def iter_catalog(
             for json_file in sorted(label_dir.glob("object_????.json")):
                 try:
                     meta = json.loads(json_file.read_text(encoding="utf-8"))
+                    if not isinstance(meta, dict) or (not include_history and not assignment_is_active(meta)):
+                        continue
                     meta["path"] = json_file
                     yield meta
                 except Exception:
-                    yield {"path": json_file, "error": "unreadable"}
+                    if include_history:
+                        yield {"path": json_file, "error": "unreadable"}
         return
 
     item_dirs = sorted(base.iterdir()) if base.exists() else []
@@ -1118,10 +1151,13 @@ def iter_catalog(
             for json_file in sorted(label_dir.glob("object_????.json")):
                 try:
                     meta = json.loads(json_file.read_text(encoding="utf-8"))
+                    if not isinstance(meta, dict) or (not include_history and not assignment_is_active(meta)):
+                        continue
                     meta["path"] = json_file
                     yield meta
                 except Exception:
-                    yield {"path": json_file, "error": "unreadable"}
+                    if include_history:
+                        yield {"path": json_file, "error": "unreadable"}
 
 
 def scan_catalog(
@@ -1129,8 +1165,10 @@ def scan_catalog(
     media_type: str = "movie",
     label: str | None = None,
     filename_stem: str | None = None,
+    *,
+    include_history: bool = False,
 ) -> list[dict]:
-    """Return a flat list of all catalog entries (one dict per object JSON).
+    """Return active entries, or all working-tree states on explicit request.
 
     Use ``iter_catalog`` when processing a large archive sequentially without
     retaining every decoded historical record in memory.
@@ -1141,6 +1179,7 @@ def scan_catalog(
             media_type=media_type,
             label=label,
             filename_stem=filename_stem,
+            include_history=include_history,
         )
     )
 
@@ -1222,7 +1261,7 @@ def audit_catalog(
       ``errors``           — number of unreadable JSON files
     """
     records = scan_catalog(
-        project_path, media_type=media_type, label=label, filename_stem=filename_stem
+        project_path, media_type=media_type, label=label, filename_stem=filename_stem, include_history=True
     )
 
     labels: dict[str, int] = {}

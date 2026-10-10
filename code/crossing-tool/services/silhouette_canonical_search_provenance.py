@@ -537,7 +537,7 @@ def migrate_canonical_search_provenance(
                 _add_error(result, "source audit report summary does not match its records CSV")
 
             for current_media_type in media_types:
-                for record in iter_catalog(str(project), media_type=current_media_type):
+                for record in iter_catalog(str(project), media_type=current_media_type, include_history=True):
                     result["selected_catalog_records"] += 1
                     record_path = Path(record.get("path") or "").resolve()
                     if record.get("error"):

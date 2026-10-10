@@ -22,6 +22,7 @@ Two shared entry points live here:
 """
 from __future__ import annotations
 
+import os
 import sys
 from typing import Callable, Optional
 from pathlib import Path
@@ -34,6 +35,45 @@ from tool.shortcuts import install_keyboard_manager
 
 # The window-raise helper is safe to import at module level.
 from visualizers._window_helpers import raise_existing_window
+
+
+def configure_qt_platform() -> None:
+    """Explicitly retain Qt 5's GNOME/XWayland default unless overridden."""
+    if "QT_QPA_PLATFORM" in os.environ or not sys.platform.startswith("linux"):
+        return
+    desktops = os.environ.get("XDG_CURRENT_DESKTOP", "").casefold().split(":")
+    if (
+        os.environ.get("XDG_SESSION_TYPE", "").casefold() == "wayland"
+        and "gnome" in desktops
+        and os.environ.get("DISPLAY")
+    ):
+        os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
+
+
+def create_qt_application(arguments: list[str]) -> QApplication:
+    """Select a backend before Qt initializes, bypassing redundant detection.
+
+    Qt 5's GNOME warning precedes its QT_QPA_PLATFORM lookup, even with an
+    explicit backend. Omit the session hint only during construction when
+    that backend is already selected, then restore the actual session.
+    No Qt messages are filtered and user platform overrides stay intact.
+    """
+    configure_qt_platform()
+    session = os.environ.get("XDG_SESSION_TYPE")
+    desktops = os.environ.get("XDG_CURRENT_DESKTOP", "").casefold().split(":")
+    bypass_detection = (
+        sys.platform.startswith("linux")
+        and (session or "").casefold() == "wayland"
+        and "gnome" in desktops
+        and bool(os.environ.get("QT_QPA_PLATFORM"))
+    )
+    if not bypass_detection:
+        return QApplication(arguments)
+    os.environ.pop("XDG_SESSION_TYPE")
+    try:
+        return QApplication(arguments)
+    finally:
+        os.environ["XDG_SESSION_TYPE"] = session
 
 
 def run_visualizer_window(
@@ -69,7 +109,7 @@ def run_visualizer_window(
     app = QApplication.instance()
     created_app = app is None
     if created_app:
-        app = QApplication(sys.argv)
+        app = create_qt_application(sys.argv)
         theme.apply_theme(app)
     # Guaranteed regardless of which visualizer class is built below, so
     # every window gets F1-F10/F12/Tab/Shift+Tab even when it happens to be
@@ -124,7 +164,7 @@ def launch_visualizer(
     app = QApplication.instance()
     if app is None:
         created_app = True
-        app = QApplication(sys.argv)
+        app = create_qt_application(sys.argv)
         theme.apply_theme(app)
 
         # Determine model_name using the same prefs fallback used previously.

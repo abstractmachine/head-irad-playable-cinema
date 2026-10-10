@@ -661,6 +661,17 @@ there too instead of letting the gap grow further).
     * `remove` is dry-run by default and only invalidates the index;
       `crossing index illustration` remains the sole rebuild mechanism. Never let
       those two operations merge.
+    * Local provenance is namespaced `local/<mode>/` to match the canonical mode
+      axis, so `isolated` and `frame` cannot overwrite each other's runs and a
+      cache hit is mode-specific. Pre-mode-aware runs (`local/run.json`) stay
+      readable — claimed only by the mode they belong to — and are converted by
+      `crossing engraving migrate-provenance --apply`, which renames so bytes,
+      timestamps and recorded `*_sha256` values survive.
+    * `doctor` audits stored source paths for **every** status, not just
+      `generated`. A `pending` record's missing output is expected and never
+      reported, but its unresolvable inputs are — that is how engravings carrying
+      another machine's absolute paths surface. Report facts, never guess a
+      replacement path, and never hardcode a developer home directory.
 
 ---
 

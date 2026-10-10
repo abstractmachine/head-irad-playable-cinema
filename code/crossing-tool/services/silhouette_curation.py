@@ -614,6 +614,7 @@ def deassign_catalog_object(
         media_type=request["media_type"],
         filename_stem=request["filename_stem"],
         label=request["label"],
+        include_history=True,
     ):
         if "error" in record:
             continue
@@ -665,7 +666,7 @@ def get_pending_rechecks(
     media_types = (media_type,) if media_type else ("movie", "gameplay")
     requests: list[dict[str, Any]] = []
     for current_media_type in media_types:
-        for record in scan_catalog(str(project_path), media_type=current_media_type):
+        for record in scan_catalog(str(project_path), media_type=current_media_type, include_history=True):
             if "error" in record:
                 continue
             identity = extraction_identity(record)

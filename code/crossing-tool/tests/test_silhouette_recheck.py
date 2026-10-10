@@ -750,7 +750,9 @@ def test_recheck_reuses_existing_active_replacement_without_duplicate_extraction
     active = query_page(tmp_path, "silhouettes", "movie", limit=20)["records"]
     historical = query_page(tmp_path, "silhouettes", "movie", assignment_state=ALL, limit=20)["records"]
     assert [record["label"] for record in active] == ["gun belt"]
-    assert {record["label"] for record in historical} == {"ammunition belt", "gun belt"}
+    assert {record["label"] for record in historical} == {"gun belt"}
+    from services.silhouette_catalog import scan_catalog
+    assert {record["label"] for record in scan_catalog(str(tmp_path), include_history=True)} == {"ammunition belt", "gun belt"}
 
 
 def test_shared_replacement_preserves_relationships_to_each_old_object(tmp_path, monkeypatch):

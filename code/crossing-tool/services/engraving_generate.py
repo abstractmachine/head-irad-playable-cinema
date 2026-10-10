@@ -402,6 +402,15 @@ def generate_openai_engraving(
     FileNotFoundError
         ``silhouette_png_path`` does not exist.
     """
+    from services.silhouette_catalog import load_active_record, require_active_record
+    source = Path(silhouette_png_path).resolve()
+    project = Path(project_path).resolve()
+    if source.is_relative_to(project / "archive/silhouettes"):
+        raise ValueError("Ordinary silhouette consumption cannot read archive")
+    if source.is_relative_to(project / "data/silhouettes"):
+        load_active_record(source.with_suffix(".json"), project)
+    if isinstance(silhouette_meta, dict):
+        require_active_record(silhouette_meta)
     try:
         import openai as _openai
     except ImportError:

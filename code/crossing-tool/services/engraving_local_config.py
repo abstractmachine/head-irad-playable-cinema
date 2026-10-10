@@ -223,3 +223,15 @@ def model_dir(project_path: str | Path, config: dict | None = None) -> Path:
 def gguf_filename(backend: str) -> str | None:
     """Return the GGUF filename for a quantised *backend*, or ``None`` for bf16."""
     return MODEL_SOURCES["gguf_filenames"].get(backend)
+
+
+def canonical_mode(config: dict | None) -> str:
+    """Return the canonical engraving mode a run's evidence corresponds to.
+
+    The provider pipeline's two modes describe *what evidence the model saw*:
+    ``isolated`` is the silhouette alone, ``frame`` adds the source frame as a
+    second reference.  ``use_source_frame`` means the same thing, so local runs
+    reuse that axis instead of inventing a backend-named pseudo-mode.
+    """
+    evidence = (config or {}).get("evidence") or {}
+    return "frame" if evidence.get("use_source_frame") else "isolated"

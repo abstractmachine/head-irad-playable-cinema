@@ -25,6 +25,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+annotation-qa = [
+  "torch",
+  "transformers>=4.57.0",
+  "qwen-vl-utils>=0.0.14",
+  "safetensors",
+]
 annotate = [
   "torch",
   "transformers>=5.0.0",

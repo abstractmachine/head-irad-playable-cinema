@@ -28,6 +28,9 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Re-exported: the canonical mode is a property of the run's evidence config.
+from services.engraving_local_config import canonical_mode  # noqa: F401
+
 GENERATION_SERVICE = "qwen-local"
 
 # Review states carried as a top-level scalar in engraving.json.  They land in
@@ -40,18 +43,6 @@ _UNPUBLISHABLE = "rejected"
 
 class PublicationError(RuntimeError):
     """Raised when a run cannot be published as a canonical Illustration."""
-
-
-def canonical_mode(config: dict) -> str:
-    """Return the canonical engraving mode this run's evidence corresponds to.
-
-    The provider pipeline's two modes describe *what evidence the model saw*:
-    ``isolated`` is the silhouette alone, ``frame`` adds the source frame as a
-    second reference.  The local converter's ``use_source_frame`` switch means
-    the same thing, so local runs reuse the existing axis rather than
-    inventing a backend-named pseudo-mode.
-    """
-    return "frame" if config.get("evidence", {}).get("use_source_frame") else "isolated"
 
 
 def _now() -> str:

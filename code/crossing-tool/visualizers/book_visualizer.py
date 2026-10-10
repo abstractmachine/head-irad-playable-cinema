@@ -4400,6 +4400,12 @@ class BookVisualizerWindow(WindowVisualizer):
         if self._doc is None or not self._slug:
             return
 
+        from services.silhouette_catalog import load_active_record
+        source = Path(png_path).resolve()
+        engraving_root = Path(self._project_path).resolve() / "data/engravings"
+        if not source.is_relative_to(engraving_root):
+            load_active_record(source.with_suffix(".json"), self._project_path)
+
         # Copy PNG into book's illustrations/silhouettes/ directory
         from data.book import book_dir as _book_dir_fn
         bdir     = _book_dir_fn(self._project_path, self._slug)

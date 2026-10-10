@@ -3228,7 +3228,8 @@ def main():
         faulthandler.enable()
 
     # Launch Qt application
-    app = QApplication(sys.argv)
+    from visualizers.launcher import create_qt_application
+    app = create_qt_application(sys.argv)
     theme.apply_theme(app)
     # ShotlistVisualizer now subclasses WindowVisualizer (-> VisualizerWindow),
     # which installs the shared KeyboardManager automatically on construction

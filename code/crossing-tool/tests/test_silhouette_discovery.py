@@ -90,6 +90,50 @@ def _filters():
     return {"word": "gun", "field": "objects", "media_type": "movie"}
 
 
+def test_post_archive_active_query_and_allocator_rebuild_are_independent(lifecycle_catalog):
+    import hashlib
+    import sqlite3
+    from services.silhouette_archive_reference import inspect_historical_lineage
+    from services.silhouette_catalog import _next_object_index
+    from services.silhouette_legacy_allocation import MARKER, initialize_namespace
+    from services.engraving_batch import scan_best_silhouettes
+
+    project = lifecycle_catalog["project"]
+    active = lifecycle_catalog["active"]
+    predecessor = lifecycle_catalog["superseded"]
+    record = json.loads(active.read_text())
+    record["assignment"]["supersedes"] = {"media_type": "movie", "filename_stem": "film", "label": "gun", "object_id": predecessor.stem}
+    record["human_best"] = True
+    active.write_text(json.dumps(record))
+    active_bytes = active.read_bytes()
+    initialize_namespace(active.parent, 50)
+    marker_bytes = (active.parent / MARKER).read_bytes()
+    lookup = project / "lookup.sqlite3"
+    connection = sqlite3.connect(lookup)
+    connection.execute("CREATE TABLE assets(path TEXT,destination TEXT,sha256 TEXT)")
+    for source in (predecessor, predecessor.with_suffix(".png")):
+        original = source.relative_to(project).as_posix()
+        destination = original.replace("data/", "archive/", 1)
+        archived = project / destination
+        archived.parent.mkdir(parents=True, exist_ok=True)
+        archived.write_bytes(source.read_bytes())
+        connection.execute("INSERT INTO assets VALUES(?,?,?)", (original, destination, hashlib.sha256(source.read_bytes()).hexdigest()))
+        source.unlink()
+    connection.commit()
+    connection.close()
+    assert active_candidate_page(project, **_filters())["total"] == 1
+    lineage = inspect_historical_lineage(project, active, lookup=lookup)
+    assert lineage["predecessors"][0]["status"] == "archived"
+    rebuild_index(project, "silhouettes", "movie")
+    assert active_candidate_page(project, **_filters())["total"] == 1
+    assert load_index(project, "silhouettes", "movie")["count"] == 1
+    assert [item["path"] for item in scan_best_silhouettes(str(project))] == [active]
+    assert active.with_suffix(".png").is_file()
+    assert (active.parent / MARKER).read_bytes() == marker_bytes
+    assert _next_object_index(active.parent) == 51
+    assert active.read_bytes() == active_bytes
+
+
 def test_active_page_uses_index_not_raw_catalog_and_excludes_history(lifecycle_catalog, monkeypatch):
     project = lifecycle_catalog["project"]
     monkeypatch.setattr(
@@ -105,8 +149,8 @@ def test_active_page_uses_index_not_raw_catalog_and_excludes_history(lifecycle_c
 
     assert page["total"] == 1
     assert [record["path"].name for record in page["records"]] == ["object_0001.json"]
-    assert load_index(project, "silhouettes", "movie")["count"] == 3
-    assert physical["total"] == 3
+    assert load_index(project, "silhouettes", "movie")["count"] == 1
+    assert physical["total"] == 1
 
 
 def test_active_summary_ranking_and_clustering_exclude_same_shot_history(lifecycle_catalog):

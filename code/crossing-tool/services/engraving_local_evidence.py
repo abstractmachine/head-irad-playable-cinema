@@ -33,7 +33,7 @@ class EvidenceError(RuntimeError):
     """Raised when required evidence cannot be assembled."""
 
 
-def load_silhouette_record(source_json: str | Path) -> dict:
+def load_silhouette_record(source_json: str | Path, *, include_history=False) -> dict:
     """Read and lightly validate a silhouette catalog object JSON."""
     source_json = Path(source_json)
     if not source_json.is_file():
@@ -44,6 +44,9 @@ def load_silhouette_record(source_json: str | Path) -> dict:
         raise EvidenceError(f"Silhouette record is not valid JSON: {source_json}\n  {exc}") from exc
     if not isinstance(record, dict):
         raise EvidenceError(f"Silhouette record must be a JSON object: {source_json}")
+    if not include_history:
+        from services.silhouette_catalog import require_active_record
+        require_active_record(record)
     return record
 
 

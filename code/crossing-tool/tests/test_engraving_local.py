@@ -196,16 +196,25 @@ class TestPaths(unittest.TestCase):
         self.assertIn("f000000", name)
 
     def test_directory_layout_includes_local_mode(self):
-        directory = engraving_dir("/proj", "/cat/bird/object_0002.json", _make_record())
+        directory = engraving_dir("/proj", "/cat/bird/object_0002.json", _make_record(), "frame")
         parts = directory.parts
-        self.assertEqual(parts[-1], "local")
-        self.assertEqual(parts[-2], "object_0002")
-        self.assertEqual(parts[-3], "bird")
+        # Provenance is namespaced by mode beneath the backend directory.
+        self.assertEqual(parts[-1], "frame")
+        self.assertEqual(parts[-2], "local")
+        self.assertEqual(parts[-3], "object_0002")
+        self.assertEqual(parts[-4], "bird")
         self.assertIn("engravings", parts)
+
+    def test_isolated_and_frame_get_separate_directories(self):
+        record = _make_record()
+        isolated = engraving_dir("/proj", "/cat/bird/object_0002.json", record, "isolated")
+        frame = engraving_dir("/proj", "/cat/bird/object_0002.json", record, "frame")
+        self.assertNotEqual(isolated, frame)
+        self.assertEqual(isolated.parent, frame.parent)
 
     def test_is_complete_requires_both_artifacts(self):
         with tempfile.TemporaryDirectory() as tmp:
-            paths = engraving_paths(tmp, "/cat/bird/object_0002.json", _make_record())
+            paths = engraving_paths(tmp, "/cat/bird/object_0002.json", _make_record(), "frame")
             paths["dir"].mkdir(parents=True, exist_ok=True)
             self.assertFalse(is_complete(paths))
             paths["run_json"].write_text("{}", encoding="utf-8")

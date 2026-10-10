@@ -215,7 +215,7 @@ def _load_catalog_index(project_path: Path) -> dict[str, dict[tuple[str, str, st
         "by_label": defaultdict(list),
     }
     for media_type in ("movie", "gameplay"):
-        for record in scan_catalog(str(project_path), media_type=media_type):
+        for record in scan_catalog(str(project_path), media_type=media_type, include_history=True):
             if "error" in record:
                 continue
             media_id = str(record.get("media_id") or "")

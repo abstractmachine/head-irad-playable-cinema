@@ -22,11 +22,11 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from services.engraving_local_config import CONFIG_SCHEMA_VERSION, resolve_config
+from services.engraving_local_config import CONFIG_SCHEMA_VERSION, canonical_mode, resolve_config
 from services.engraving_local_paths import (
     LOCAL_ENGRAVING_SCHEMA_VERSION,
-    engraving_paths,
     is_complete,
+    resolve_run_paths,
 )
 
 _HASH_CHUNK = 1 << 20
@@ -91,12 +91,17 @@ def convert_one(
 
     project_path = Path(project_path)
     source_json = Path(source_json)
+    from services.silhouette_catalog import load_active_record
+    load_active_record(source_json, project_path)
     config = config or resolve_config()
     seed = int(config["run"]["seed"] if seed is None else seed)
 
     evidence = assemble_evidence(source_json, config)
     record = evidence["record"]
-    paths = engraving_paths(project_path, source_json, record)
+    mode = canonical_mode(config)
+    # Each (object, mode) owns an independent provenance namespace, so an
+    # isolated run can never be served from a frame cache or vice versa.
+    paths, legacy_layout = resolve_run_paths(project_path, source_json, record, mode)
 
     if is_complete(paths) and not force:
         existing = json.loads(paths["run_json"].read_text(encoding="utf-8"))
@@ -123,6 +128,8 @@ def convert_one(
         "status": "running",
         "created_at": _now(),
         "seed": seed,
+        "mode": mode,
+        "provenance_layout": "legacy" if legacy_layout else "mode-aware",
         "provenance": evidence["provenance"],
         "source_json": str(source_json),
         "run_json": str(paths["run_json"]),

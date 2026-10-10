@@ -7570,6 +7570,27 @@ def cmd_engraving(args):
         _engraving_remove(args)
     elif sub == "doctor":
         _engraving_doctor(args)
+    elif sub == "migrate-provenance":
+        _engraving_migrate_provenance(args)
+    elif sub == "benchmark":
+        benchmark_sub = getattr(args, "benchmark_subcommand", None)
+        if benchmark_sub == "propose":
+            _engraving_benchmark_propose(args)
+        elif benchmark_sub == "list":
+            _engraving_benchmark_list(args)
+        elif benchmark_sub == "render":
+            _engraving_benchmark_render(args)
+        elif benchmark_sub == "evidence":
+            _engraving_benchmark_evidence(args)
+        elif benchmark_sub == "review":
+            _engraving_benchmark_review(args)
+        elif benchmark_sub == "viability":
+            _engraving_benchmark_viability(args)
+        elif benchmark_sub == "analyze-viability":
+            _engraving_benchmark_analyze(args)
+        else:
+            print("✗ engraving benchmark: specify a subcommand.", file=sys.stderr)
+            sys.exit(1)
     else:
         print("✗ engraving: specify a subcommand.", file=sys.stderr)
         sys.exit(1)
@@ -7966,6 +7987,7 @@ def _engraving_selection(args):
         label=getattr(args, "label", None),
         title=getattr(args, "title", None),
         status=getattr(args, "status", None),
+        mode=getattr(args, "mode", None),
     )
 
 
@@ -8081,6 +8103,8 @@ def _print_removal_plan(plan, project_path):
     print("Generation artifacts:")
     if plan["include_provenance"]:
         print(f"  {len(plan['provenance_roots'])} run directories")
+        for run_dir in plan["provenance_roots"]:
+            print(f"    {_rel(run_dir)}")
         print(f"  {len(plan['provenance_files'])} provenance files")
     else:
         print("  retained (use --include-provenance to remove run directories)")
@@ -8184,6 +8208,396 @@ def _engraving_doctor(args):
         print("Repairable index issues: run 'crossing index illustration'")
     if counts["blocking"]:
         sys.exit(1)
+
+
+def _engraving_migrate_provenance(args):
+    """Move pre-mode-aware local runs into their mode-aware subdirectory."""
+    _require_path()
+    project_path = prefs.get("path")
+
+    from services.engraving_local_paths import find_legacy_runs, migrate_legacy_run
+
+    media = getattr(args, "media", None)
+    legacy = find_legacy_runs(
+        project_path, normalize_media_type(media) if media else None
+    )
+    if not legacy:
+        print("No legacy local provenance directories found.")
+        return
+
+    apply = getattr(args, "apply", False)
+    migrated = 0
+    for run_json in legacy:
+        result = migrate_legacy_run(run_json, apply=apply)
+        try:
+            shown = str(Path(result["legacy_dir"]).relative_to(project_path))
+        except (ValueError, TypeError):
+            shown = result["legacy_dir"]
+        if result["migrated"]:
+            migrated += 1
+            print(f"  ✓ {shown} → {result['mode']}/")
+        elif result.get("reason") == "dry-run":
+            print(f"  · {shown} → {result['mode']}/  (would migrate)")
+        else:
+            print(f"  ✗ {shown}: {result.get('reason')}", file=sys.stderr)
+
+    if not apply:
+        print()
+        print(f"{len(legacy)} legacy run(s). Nothing moved.")
+        print("Re-run with --apply to migrate.")
+        return
+    print()
+    print(f"✓ Migrated {migrated}/{len(legacy)} run(s)")
+
+
+def _benchmark_root(project_path):
+    return Path(project_path) / "outputs" / "tests" / "engraving-benchmark"
+
+
+def _benchmark_manifest_path(project_path, proposal: int = 1):
+    root = _benchmark_root(project_path)
+    return root / ("candidates.json" if proposal == 1 else f"candidates-proposal-{proposal}.json")
+
+
+def _engraving_benchmark_review(args):
+    """Record or show human accept/reject decisions for a proposal."""
+    _require_path()
+    project_path = prefs.get("path")
+    proposal = int(getattr(args, "proposal", 1) or 1)
+
+    from services.engraving_benchmark_review import (
+        ReviewError, build_review, load_review, review_path, save_review,
+    )
+
+    manifest_path = _benchmark_manifest_path(project_path, proposal)
+    if not manifest_path.is_file():
+        print(f"✗ No manifest at {manifest_path}", file=sys.stderr)
+        sys.exit(1)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    destination = review_path(_benchmark_root(project_path), proposal)
+
+    accepted = getattr(args, "accept", None)
+    if accepted:
+        ids = [value.strip() for value in accepted.split(",") if value.strip()]
+        try:
+            review = build_review(manifest, ids, proposal=proposal,
+                                  manifest_path=manifest_path.name)
+        except ReviewError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            sys.exit(1)
+        save_review(destination, review)
+        print(f"✓ Recorded review for proposal {proposal}: {review['counts']}")
+        print(f"  {_rel_to(destination, project_path)}")
+        print("  Proposal manifest was not modified.")
+        return
+
+    try:
+        review = load_review(destination)
+    except ReviewError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    print(f"Proposal {proposal} review: {review['counts']}")
+    for benchmark_id, entry in review["decisions"].items():
+        marker = "✓" if entry["decision"] == "accepted" else "·"
+        print(f"  {marker} {benchmark_id}  {entry['decision']}")
+
+
+def _engraving_benchmark_viability(args):
+    """Show measured viability metrics and the gate decision."""
+    _require_path()
+    project_path = prefs.get("path")
+    proposal = int(getattr(args, "proposal", 1) or 1)
+
+    from services.engraving_viability import DEFAULT_GATE, evaluate_gate, measure_records
+
+    manifest = json.loads(
+        _benchmark_manifest_path(project_path, proposal).read_text(encoding="utf-8")
+    )
+    wanted = getattr(args, "benchmark_id", None)
+    candidates = [c for c in manifest["candidates"] if not wanted or c["benchmark_id"] == wanted]
+    if not candidates:
+        print(f"✗ No candidate {wanted!r}", file=sys.stderr)
+        sys.exit(1)
+
+    records = [
+        dict(c["source"], mask_area_fraction=c["evidence"]["mask_area_fraction"])
+        for c in candidates
+    ]
+    metrics = measure_records(project_path, records)
+
+    print(f"gate v{DEFAULT_GATE['gate_version']} (metrics v{DEFAULT_GATE['metrics_version']})")
+    for candidate, record in zip(candidates, records):
+        found = metrics.get(record["record_path"])
+        verdict = evaluate_gate(found, record)
+        marker = "PASS" if verdict["viable"] else "FAIL"
+        print(f"\n  {candidate['benchmark_id']}  {candidate['source']['label']}  [{marker}]")
+        if found:
+            print(
+                f"    short={found['short_dimension_px']}px long={found['long_dimension_px']}px "
+                f"mask={found['mask_area_px']}px fill={found['mask_fill_fraction']:.2f}"
+            )
+            print(
+                f"    lap_var={found['laplacian_variance']:.1f} edge={found['edge_energy']:.1f} "
+                f"contrast={found['local_contrast']:.1f} comps={found['connected_components']} "
+                f"largest={found['largest_component_fraction']:.2f}"
+            )
+        for reason in verdict["reasons"]:
+            print(f"    ✗ {reason}")
+
+
+def _engraving_benchmark_analyze(args):
+    """Compare measured metrics against human review for a proposal."""
+    _require_path()
+    project_path = prefs.get("path")
+    proposal = int(getattr(args, "proposal", 1) or 1)
+
+    from data.annotate import atomic_write_text
+    from services.engraving_benchmark_render import render_diagnostic_pages, render_metric_distributions
+    from services.engraving_benchmark_review import analyze_viability, load_review, review_path
+    from services.engraving_viability import measure_records
+
+    root = _benchmark_root(project_path)
+    manifest = json.loads(
+        _benchmark_manifest_path(project_path, proposal).read_text(encoding="utf-8")
+    )
+    review = load_review(review_path(root, proposal))
+
+    records = [
+        dict(c["source"], mask_area_fraction=c["evidence"]["mask_area_fraction"])
+        for c in manifest["candidates"]
+    ]
+    metrics = measure_records(project_path, records)
+
+    analysis = analyze_viability(manifest, review, metrics)
+    counts = analysis["confusion"]
+    print("              HUMAN accept  HUMAN reject")
+    print(f"gate pass  {counts['TP']:>12}  {counts['FP']:>12}")
+    print(f"gate fail  {counts['FN']:>12}  {counts['TN']:>12}")
+    print(f"\nprecision={analysis['precision']:.2f}  recall={analysis['recall']:.2f}")
+    print(f"accepted anchors lost: {len(analysis['accepted_anchors_lost'])}")
+    print("rejected candidates passing: " + ", ".join(analysis["rejected_passing"]))
+    for case in analysis["cases"]:
+        print(f"  {case['benchmark_id']} {case['label']}: {case['decision']} / "
+              f"{'PASS (all floors)' if case['viability']['viable'] else '; '.join(case['viability']['reasons'])}")
+    for name, distributions in analysis["distributions"].items():
+        print(f"  {name}: " + " | ".join(
+            f"{decision}: " + ", ".join(f"{key}={value:.4g}" for key, value in values.items())
+            for decision, values in distributions.items()
+        ))
+    destination = root / f"viability-analysis-proposal-{proposal}.json"
+    atomic_write_text(destination, json.dumps(analysis, indent=2) + "\n")
+    print(f"\nAnalysis: {_rel_to(destination, project_path)}")
+    for sheet in render_diagnostic_pages(project_path, manifest, review, metrics,
+                                        root / f"review-diagnostic-proposal-{proposal}.png"):
+        print(f"Diagnostic page: {_rel_to(sheet, project_path)}")
+    plot = render_metric_distributions(analysis, root / f"metric-distributions-proposal-{proposal}.png")
+    print(f"Distributions: {_rel_to(plot, project_path)}")
+
+
+def _engraving_benchmark_propose(args):
+    """Propose a deterministic, stratified benchmark candidate pool."""
+    _require_path()
+    project_path = prefs.get("path")
+
+    from data.annotate import atomic_write_text
+    from services.engraving_benchmark import (
+        propose_candidates, proposal_two_config, resolve_benchmark_config,
+    )
+
+    proposal = int(getattr(args, "proposal", 1) or 1)
+    overrides = {
+        "target_candidates": getattr(args, "count", None),
+        "max_per_label": getattr(args, "max_per_label", None),
+        "max_per_film": getattr(args, "max_per_film", None),
+        "media_type": normalize_media_type(args.media) if getattr(args, "media", None) else None,
+    }
+    if proposal >= 2:
+        config = proposal_two_config(overrides)
+        if getattr(args, "config", None):
+            config.update(json.loads(Path(args.config).read_text(encoding="utf-8")))
+            config.update({key: value for key, value in overrides.items() if value is not None})
+        config["proposal"] = proposal
+        config["id_prefix"] = f"bench{proposal}-"
+        from services.engraving_benchmark_review import ACCEPTED, decision_for, load_review, review_path
+        previous = _load_benchmark_manifest(project_path, 1)
+        review = load_review(review_path(_benchmark_root(project_path), 1))
+        config["reference_only_paths"] = [
+            candidate["source"]["record_path"] for candidate in previous["candidates"]
+            if decision_for(review, candidate["benchmark_id"]) == ACCEPTED
+        ]
+    else:
+        config = resolve_benchmark_config(getattr(args, "config", None), overrides)
+
+    destination = _benchmark_manifest_path(project_path, proposal)
+    if proposal == 1 and (_benchmark_root(project_path) / "review.json").is_file():
+        print("✗ Reviewed Proposal 1 is immutable; use --proposal 2.", file=sys.stderr)
+        sys.exit(1)
+    if destination.is_file() and not getattr(args, "force", False):
+        print(f"✗ Proposal {proposal} already exists: {destination}", file=sys.stderr)
+        print("  Proposals are never overwritten; pass --force to replace.", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        manifest = propose_candidates(project_path, config)
+    except FileNotFoundError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(destination, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+
+    from collections import Counter
+    groups = Counter(c["classification"]["structural_group"] for c in manifest["candidates"])
+    strata = Counter(c["classification"]["difficulty_stratum"] for c in manifest["candidates"])
+    scales = Counter(c["classification"]["scale_stratum"] for c in manifest["candidates"])
+    films = Counter(c["source"]["filename_stem"] for c in manifest["candidates"])
+
+    print(f"✓ Proposed {manifest['candidate_count']} candidate(s) from a pool of {manifest['pool_size']}")
+    print(f"  Proposal: {manifest.get('proposal', 1)}")
+    print(f"  Manifest: {_rel_to(destination, project_path)}")
+    viability = manifest.get("viability") or {}
+    if viability.get("applied"):
+        print(
+            "  Viability: evaluated={evaluated} measured={measured} cache_reused={cache_reused} "
+            "pass={gate_pass} fail={gate_fail} policy_eligible={policy_eligible}".format(**viability)
+        )
+        print(f"  Filtering funnel: {manifest['filtering_funnel']}")
+    print(f"  Films   : {len(films)}")
+    print("  Groups  : " + ", ".join(f"{k}={v}" for k, v in sorted(groups.items())))
+    print("  Strata  : " + ", ".join(f"{k}={v}" for k, v in sorted(strata.items())))
+    print("  Scale   : " + ", ".join(f"{k}={v}" for k, v in sorted(scales.items(), key=lambda kv: str(kv[0]))))
+    print("\n  All candidates are review_state=proposed. Nothing was generated.")
+
+
+def _rel_to(value, project_path):
+    try:
+        return str(Path(value).relative_to(project_path))
+    except (ValueError, TypeError):
+        return str(value)
+
+
+def _load_benchmark_manifest(project_path, proposal: int = 1):
+    path = _benchmark_manifest_path(project_path, proposal)
+    if not path.is_file():
+        print(f"✗ No benchmark manifest at {path}", file=sys.stderr)
+        print("  Run: crossing engraving benchmark propose", file=sys.stderr)
+        sys.exit(1)
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _engraving_benchmark_list(args):
+    """List proposed benchmark candidates."""
+    _require_path()
+    project_path = prefs.get("path")
+    manifest = _load_benchmark_manifest(project_path, int(getattr(args, "proposal", 1) or 1))
+
+    group = getattr(args, "group", None)
+    stratum = getattr(args, "stratum", None)
+    shown = 0
+    for candidate in manifest["candidates"]:
+        classification = candidate["classification"]
+        if group and classification["structural_group"] != group:
+            continue
+        if stratum and classification["difficulty_stratum"] != stratum:
+            continue
+        source = candidate["source"]
+        print(
+            f"  {candidate['benchmark_id']}  "
+            f"{classification['structural_group']:<20} "
+            f"{classification['difficulty_stratum']:<14} "
+            f"{str(classification['scale_stratum'] or '-'):<7} "
+            f"{str(source['label'])[:22]:<24} "
+            f"{str(source['filename_stem'])[:38]}"
+        )
+        shown += 1
+    print(f"\n{shown} candidate(s), review_state=proposed")
+
+
+def _engraving_benchmark_render(args):
+    """Render candidate review sheets, paginated for legibility."""
+    _require_path()
+    project_path = prefs.get("path")
+    proposal = int(getattr(args, "proposal", 1) or 1)
+    manifest = _load_benchmark_manifest(project_path, proposal)
+
+    from services.engraving_benchmark_render import render_candidate_overview
+
+    root = _benchmark_root(project_path)
+    stem = "candidate-overview" if proposal == 1 else f"candidate-overview-proposal-{proposal}"
+    results = render_candidate_overview(
+        project_path,
+        manifest,
+        root / f"{stem}.png",
+        tile_max_dim=int(getattr(args, "tile", None) or 560),
+        per_sheet=int(getattr(args, "per_sheet", None) or 6),
+    )
+    for result in results:
+        print(f"✓ {_rel_to(result, project_path)}")
+
+
+def _engraving_benchmark_evidence(args):
+    """Render shot-evidence sheets (first/best/last + adaptive N)."""
+    _require_path()
+    project_path = prefs.get("path")
+    proposal = int(getattr(args, "proposal", 1) or 1)
+    manifest = _load_benchmark_manifest(project_path, proposal)
+
+    from data.annotate import atomic_write_text
+    from services.engraving_benchmark_evidence import (
+        ShotEvidenceError,
+        shot_evidence_for_record,
+    )
+    from services.engraving_benchmark_render import render_shot_evidence_sheet
+
+    wanted = getattr(args, "benchmark_id", None)
+    limit = getattr(args, "limit", None)
+    render = not getattr(args, "no_render", False)
+
+    targets = [c for c in manifest["candidates"] if not wanted or c["benchmark_id"] == wanted]
+    if wanted and not targets:
+        print(f"✗ No candidate {wanted!r} in the manifest", file=sys.stderr)
+        sys.exit(1)
+    if limit:
+        targets = targets[:limit]
+
+    sheets_dir = _benchmark_root(project_path) / "shot-evidence"
+    frames_per_shot = (manifest.get("config", {}).get("shot_evidence") or {}).get("frames_per_shot")
+    updated = 0
+    for candidate in targets:
+        record = dict(candidate["source"])
+        try:
+            evidence = shot_evidence_for_record(
+                project_path, record, frames_per_shot=frames_per_shot
+            )
+        except (ShotEvidenceError, ValueError, OSError) as exc:
+            print(f"  ✗ {candidate['benchmark_id']}: {exc}", file=sys.stderr)
+            continue
+
+        candidate["shot_evidence"] = evidence
+        updated += 1
+        roles = ", ".join(
+            f"f{e['frame']:06d}[{'+'.join(e['roles'])}]" for e in evidence["selected_unique"]
+        )
+        print(
+            f"  {candidate['benchmark_id']}  {evidence['shot_id']}  "
+            f"len={evidence['shot_length_frames']}f  frames={len(evidence['selected_unique'])}"
+        )
+        print(f"      {roles}")
+
+        if render:
+            sheet = sheets_dir / f"{candidate['benchmark_id']}-shot-evidence.png"
+            try:
+                render_shot_evidence_sheet(project_path, record, evidence, sheet)
+                print(f"      sheet: {_rel_to(sheet, project_path)}")
+            except Exception as exc:
+                print(f"      ✗ render failed: {exc}", file=sys.stderr)
+
+    if updated:
+        atomic_write_text(
+            _benchmark_manifest_path(project_path, proposal),
+            json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+        )
+    print(f"\n✓ Shot evidence recorded for {updated} candidate(s). No engraving was generated.")
 
 
 def _engraving_smoke_test(args):
@@ -9234,12 +9648,67 @@ def _subtitles_align(args):
                 print(f"  {sid}  {st}→{et}  [silent]")
 
 
+def cmd_silhouette_archive(args):
+    from services.silhouette_archive import plan_archive
+
+    project_path = args.project or prefs.get("path")
+    if not project_path:
+        raise SystemExit("A project is required: --project PATH")
+    try:
+        options = {}
+        if getattr(args, "version", None) is not None:
+            options["version"] = args.version
+        if getattr(args, "revalidate", False):
+            options["revalidate"] = True
+        if getattr(args, "preparation", False):
+            options["preparation"] = True
+        output = plan_archive(project_path, **options)
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise SystemExit(str(exc)) from exc
+    print(f"Dry-run archive plan: {output}")
+
+
+def cmd_silhouette_reference(args):
+    from services.silhouette_archive_reference import ArchiveReferenceError, inspect_historical_lineage, resolve_silhouette_reference
+
+    project_path = args.project or prefs.get("path")
+    if not project_path:
+        raise SystemExit("A project is required: --project PATH")
+    if args.lineage and not args.include_archive:
+        raise SystemExit("Lineage inspection requires explicit --include-archive")
+    try:
+        if args.lineage:
+            result = inspect_historical_lineage(project_path, args.reference, lookup=args.lookup)
+        else:
+            result = resolve_silhouette_reference(project_path, args.reference, include_archive=args.include_archive, lookup=args.lookup)
+    except (ArchiveReferenceError, OSError, ValueError) as exc:
+        raise SystemExit(f"{getattr(exc, 'code', 'INVALID_REFERENCE')}: {exc}") from exc
+    print(json.dumps(result, default=str, indent=2))
+
+
 def build_parser():
     parser = _HelpfulParser(
         prog="crossing",
         description="Relate moving images across media.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
+
+    p_silhouette = sub.add_parser("silhouette", help="Read-only silhouette archival planning")
+    silhouette_sub = p_silhouette.add_subparsers(dest="silhouette_subcommand", required=True)
+    p_archive = silhouette_sub.add_parser("archive", help="Plan superseded archival only; no files are moved")
+    p_archive.add_argument("--project", default=None, metavar="PATH", help="Project path (default: current project)")
+    p_archive.add_argument("--version", default=None, metavar="vNUMBER", help="New report version inside outputs/tests/silhouette-archive")
+    p_archive.add_argument("--revalidate", action="store_true", help="Reuse retained authoritative evidence with fresh safety and dependency checks")
+    p_archive.add_argument("--preparation", action="store_true", help="Report Stage 1 consumer policy, installed reservations and tested index transition")
+    p_archive.set_defaults(func=cmd_silhouette_archive)
+
+    p_reference = silhouette_sub.add_parser("inspect-reference", help="Resolve an exact silhouette reference; historical access is explicit")
+    p_reference.add_argument("reference", help="Original project-relative JSON/PNG path")
+    p_reference.add_argument("--project", default=None, metavar="PATH")
+    p_reference.add_argument("--include-archive", action="store_true")
+    p_reference.add_argument("--lookup", default=None, metavar="DATABASE", help="Preserved archive plan database")
+    p_reference.add_argument("--lineage", action="store_true", help="Inspect immediate predecessors and replacements without mutation")
+    p_reference.set_defaults(func=cmd_silhouette_reference)
 
     # annotate command: annotate shots or scenes (LLM)
     p_annotate = sub.add_parser("annotate", help="Annotate shots or scenes (LLM)")
@@ -12068,6 +12537,13 @@ def build_parser():
             default=None,
             help="Restrict to one engraving lifecycle status",
         )
+        parser.add_argument(
+            "--mode",
+            dest="mode",
+            choices=["isolated", "frame"],
+            default=None,
+            help="Restrict to one engraving mode variant",
+        )
 
     p_eng_list = engraving_sub.add_parser(
         "list",
@@ -12149,6 +12625,110 @@ def build_parser():
         help="Restrict to one media type (default: all)",
     )
     p_eng_doctor.set_defaults(func=cmd_engraving)
+
+    p_eng_migrate = engraving_sub.add_parser(
+        "migrate-provenance",
+        help="Move pre-mode-aware local runs into their mode subdirectory",
+    )
+    p_eng_migrate.add_argument(
+        "--media",
+        dest="media",
+        default=None,
+        metavar="MEDIA_TYPE",
+        help="Restrict to one media type (default: all)",
+    )
+    p_eng_migrate.add_argument(
+        "--apply",
+        dest="apply",
+        action="store_true",
+        default=False,
+        help="Perform the migration (default is a dry-run report)",
+    )
+    p_eng_migrate.set_defaults(func=cmd_engraving)
+
+    # ── engraving benchmark (candidate selection, no generation) ────────
+    p_eng_bench = engraving_sub.add_parser(
+        "benchmark",
+        help="Propose and review engraving benchmark candidates (never generates)",
+    )
+    p_eng_bench.set_defaults(func=cmd_engraving, benchmark_subcommand=None)
+    bench_sub = p_eng_bench.add_subparsers(dest="benchmark_subcommand", required=True)
+
+    def _add_proposal(parser):
+        parser.add_argument("--proposal", dest="proposal", type=int, default=1,
+                            metavar="N", help="Proposal number (default: 1)")
+
+    p_bench_propose = bench_sub.add_parser(
+        "propose", help="Select a deterministic, stratified candidate pool"
+    )
+    p_bench_propose.add_argument("--count", dest="count", type=int, default=None,
+                                 metavar="N", help="Target candidate count (default: 40)")
+    p_bench_propose.add_argument("--max-per-label", dest="max_per_label", type=int,
+                                 default=None, metavar="N", help="Cap candidates per exact label")
+    p_bench_propose.add_argument("--max-per-film", dest="max_per_film", type=int,
+                                 default=None, metavar="N", help="Cap candidates per film")
+    p_bench_propose.add_argument("--media", dest="media", default=None,
+                                 metavar="MEDIA_TYPE", help="Media type (default: movie)")
+    p_bench_propose.add_argument("--config", dest="config", default=None,
+                                 metavar="JSON", help="Benchmark config overlay")
+    p_bench_propose.add_argument("--force", dest="force", action="store_true", default=False,
+                                 help="Replace an existing proposal manifest")
+    _add_proposal(p_bench_propose)
+    p_bench_propose.set_defaults(func=cmd_engraving)
+
+    p_bench_list = bench_sub.add_parser("list", help="List proposed benchmark candidates")
+    p_bench_list.add_argument("--group", dest="group", default=None,
+                              metavar="GROUP", help="Filter by structural group")
+    p_bench_list.add_argument("--stratum", dest="stratum", default=None,
+                              choices=["clean_control", "moderate", "difficult"],
+                              help="Filter by difficulty stratum")
+    _add_proposal(p_bench_list)
+    p_bench_list.set_defaults(func=cmd_engraving)
+
+    p_bench_review = bench_sub.add_parser(
+        "review", help="Record or show human accept/reject decisions"
+    )
+    p_bench_review.add_argument("--accept", dest="accept", default=None, metavar="IDS",
+                                help="Comma-separated accepted benchmark ids")
+    _add_proposal(p_bench_review)
+    p_bench_review.set_defaults(func=cmd_engraving)
+
+    p_bench_viab = bench_sub.add_parser(
+        "viability", help="Show measured viability metrics and the gate decision"
+    )
+    p_bench_viab.add_argument("--id", dest="benchmark_id", default=None,
+                              metavar="BENCHMARK_ID", help="Restrict to one candidate")
+    _add_proposal(p_bench_viab)
+    p_bench_viab.set_defaults(func=cmd_engraving)
+
+    p_bench_analyze = bench_sub.add_parser(
+        "analyze-viability", help="Compare measured metrics against human review"
+    )
+    _add_proposal(p_bench_analyze)
+    p_bench_analyze.set_defaults(func=cmd_engraving)
+
+    p_bench_render = bench_sub.add_parser(
+        "render", help="Render the candidate overview contact sheet"
+    )
+    p_bench_render.add_argument("--tile", dest="tile", type=int, default=None,
+                                metavar="PX", help="Tile size (default: 560)")
+    p_bench_render.add_argument("--per-sheet", dest="per_sheet", type=int, default=None,
+                                metavar="N", help="Candidates per sheet (default: 6)")
+    _add_proposal(p_bench_render)
+    p_bench_render.set_defaults(func=cmd_engraving)
+
+    p_bench_evidence = bench_sub.add_parser(
+        "evidence",
+        help="Collect first/best/last + adaptive shot frames and render sheets",
+    )
+    p_bench_evidence.add_argument("--id", dest="benchmark_id", default=None,
+                                  metavar="BENCHMARK_ID", help="Restrict to one candidate")
+    p_bench_evidence.add_argument("--limit", dest="limit", type=int, default=None,
+                                  metavar="N", help="Process at most N candidates")
+    p_bench_evidence.add_argument("--no-render", dest="no_render", action="store_true",
+                                  default=False, help="Record evidence without rendering sheets")
+    _add_proposal(p_bench_evidence)
+    p_bench_evidence.set_defaults(func=cmd_engraving)
 
     # ── book command ─────────────────────────────────────────────────────────
     p_book = sub.add_parser("book", help="Manage books (create, delete, list, import PDF)")

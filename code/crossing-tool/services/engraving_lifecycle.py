@@ -77,6 +77,7 @@ def scan_engravings(
     label: str | None = None,
     title: str | None = None,
     status: str | None = None,
+    mode: str | None = None,
 ) -> list[dict]:
     """Enumerate canonical engravings from the filesystem, newest path order.
 
@@ -124,6 +125,8 @@ def scan_engravings(
             }
             if backend and entry["backend"] != backend:
                 continue
+            if mode and entry["mode"] != mode:
+                continue
             if review_state and entry["review_state"] != review_state:
                 continue
             if label and entry["label"] != label:
@@ -137,13 +140,30 @@ def scan_engravings(
 
 
 def provenance_dirs_for(entry: dict) -> list[Path]:
-    """Return local run directories that sit beside a canonical mode dir."""
+    """Return the local run directories belonging to this ``(object, mode)``.
+
+    Scoped to the entry's own mode, so removing the isolated variant can never
+    take the frame variant's provenance with it.  A legacy unmigrated run is
+    only claimed when it actually belongs to this mode.
+    """
+    from services.engraving_local_paths import legacy_run_mode
+
     object_dir = entry["mode_dir"].parent
-    return [
-        object_dir / name
-        for name in PROVENANCE_DIR_NAMES
-        if (object_dir / name).is_dir()
-    ]
+    mode = entry.get("mode") or entry["mode_dir"].name
+
+    dirs: list[Path] = []
+    for name in PROVENANCE_DIR_NAMES:
+        root = object_dir / name
+        if not root.is_dir():
+            continue
+        scoped = root / mode
+        if scoped.is_dir():
+            dirs.append(scoped)
+            continue
+        legacy_run = root / "run.json"
+        if legacy_run.is_file() and legacy_run_mode(legacy_run) == mode:
+            dirs.append(root)
+    return dirs
 
 
 def orphan_provenance_dirs(project_path: str | Path, media_type: str | None = None) -> list[Path]:
@@ -157,17 +177,23 @@ def orphan_provenance_dirs(project_path: str | Path, media_type: str | None = No
         if not base.is_dir():
             continue
         for name in PROVENANCE_DIR_NAMES:
-            for run_dir in sorted(base.glob(f"*/*/*/{name}")):
-                if not run_dir.is_dir():
+            for root in sorted(base.glob(f"*/*/*/{name}")):
+                if not root.is_dir():
                     continue
-                object_dir = run_dir.parent
+                object_dir = root.parent
                 published = [
                     sibling / "engraving.json"
                     for sibling in object_dir.iterdir()
                     if sibling.is_dir() and sibling.name not in PROVENANCE_DIR_NAMES
                 ]
-                if not any(path.is_file() for path in published):
-                    orphans.append(run_dir)
+                if any(path.is_file() for path in published):
+                    continue
+                if (root / "run.json").is_file():
+                    orphans.append(root)
+                orphans.extend(
+                    scoped for scoped in sorted(root.iterdir())
+                    if scoped.is_dir() and (scoped / "run.json").is_file()
+                )
     return orphans
 
 
@@ -441,6 +467,67 @@ def _finding(severity: str, check: str, message: str, **extra) -> dict:
     return {"severity": severity, "check": check, "message": message, **extra}
 
 
+def _classify_source_path(project: Path, raw) -> dict:
+    """Return portability facts about one stored source path.
+
+    Reports facts only — absoluteness, resolution, existence — and never
+    guesses what a broken path should have been.
+    """
+    if raw is None:
+        return {"present": False}
+    if not isinstance(raw, str) or not raw.strip():
+        return {"present": True, "malformed": True, "value": raw}
+
+    candidate = Path(raw)
+    absolute = candidate.is_absolute()
+    resolved = candidate if absolute else project / candidate
+    return {
+        "present": True,
+        "malformed": False,
+        "value": raw,
+        "absolute": absolute,
+        "resolved": str(resolved),
+        "exists": resolved.exists(),
+    }
+
+
+def _check_source_paths(project: Path, entry: dict, findings: list[dict]) -> None:
+    """Audit every stored source path on one engraving record.
+
+    Applies to every status.  A ``pending`` record has no generated output yet —
+    that absence is expected and never reported — but its stored inputs must
+    still resolve, otherwise the record is silently unusable.
+    """
+    source = entry["metadata"].get("source") or {}
+    identity = f"{entry['title']} / {entry['label']} / {entry['object_id']} / {entry['mode']}"
+
+    for key in ("silhouette_json", "silhouette_png", "source_frame"):
+        facts = _classify_source_path(project, source.get(key))
+        if not facts.get("present"):
+            continue
+        if facts.get("malformed"):
+            findings.append(_finding(
+                BLOCKING, "malformed_source_path",
+                f"[{entry['status']}] {identity}: {key} is not a usable path "
+                f"({facts.get('value')!r})",
+            ))
+            continue
+        if facts["exists"]:
+            continue
+
+        check = "stale_absolute_source_path" if facts["absolute"] else "missing_source_path"
+        findings.append(_finding(
+            WARNING, check,
+            f"[{entry['status']}] {identity}: {key} "
+            f"({'absolute' if facts['absolute'] else 'relative'}) does not exist: "
+            f"{facts['value']}",
+            status=entry["status"],
+            key=key,
+            absolute=facts["absolute"],
+            path=facts["value"],
+        ))
+
+
 def doctor(project_path: str | Path, *, media_type: str | None = None) -> dict:
     """Audit engraving/Illustration integrity and return structured findings."""
     from services.illustration_index import load_index, query_records
@@ -475,6 +562,11 @@ def doctor(project_path: str | Path, *, media_type: str | None = None) -> dict:
 
     # Canonical asset present?  Provenance coherent?
     for entry in readable:
+        # Stored inputs are audited for every status; a pending record with an
+        # unresolvable source frame is a real portability problem even though
+        # its missing output is entirely expected.
+        _check_source_paths(project, entry, findings)
+
         if entry["status"] != "generated":
             continue
         output = entry.get("output_png")
@@ -483,18 +575,6 @@ def doctor(project_path: str | Path, *, media_type: str | None = None) -> dict:
                 REPAIRABLE, "missing_canonical_asset",
                 f"indexed engraving has no canonical PNG: {entry['engraving_json']}",
             ))
-
-        silhouette_json = entry.get("silhouette_json")
-        if silhouette_json:
-            candidate = Path(silhouette_json)
-            if not candidate.is_absolute():
-                candidate = project / candidate
-            if not candidate.is_file():
-                findings.append(_finding(
-                    WARNING, "provenance_missing_source",
-                    f"source silhouette missing for {entry['label']}/{entry['object_id']}: "
-                    f"{silhouette_json}",
-                ))
 
         provenance = entry["metadata"].get("provenance") or {}
         run_json = provenance.get("run_json")
@@ -567,6 +647,16 @@ def doctor(project_path: str | Path, *, media_type: str | None = None) -> dict:
         findings.append(_finding(
             WARNING, "unpublished_run",
             f"local run exists but was never published as an Illustration: {run_dir}",
+        ))
+
+    # Provenance still using the pre-mode-aware layout.
+    from services.engraving_local_paths import find_legacy_runs
+
+    for run_json in find_legacy_runs(project, media_type):
+        findings.append(_finding(
+            WARNING, "legacy_provenance_layout",
+            f"local run still uses the pre-mode-aware layout and should be migrated: "
+            f"{run_json.parent}",
         ))
 
     # Book integrity.

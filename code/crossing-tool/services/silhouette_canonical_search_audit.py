@@ -826,13 +826,13 @@ def _iter_audit_records(
     """Yield audit records, traversing only known label directories for a probe."""
     for media_type in media_types:
         if probe_labels is None:
-            for record in iter_catalog(str(project), media_type=media_type):
+            for record in iter_catalog(str(project), media_type=media_type, include_history=True):
                 yield media_type, record
             continue
         for label in PROBE_LABELS:
             if label.casefold() not in probe_labels:
                 continue
-            for record in iter_catalog(str(project), media_type=media_type, label=label):
+            for record in iter_catalog(str(project), media_type=media_type, label=label, include_history=True):
                 yield media_type, record
 
 

@@ -132,7 +132,7 @@ def test_mcp_archive_stats_reports_active_population_not_physical_rows(active_ca
     assert stats["silhouette_population"] == "active_illustration_index"
     assert stats["silhouette_index_status"] == "ready"
     assert stats["silhouette_entries"] == 1
-    assert stats["silhouette_physical_index_records"] == 3
+    assert stats["silhouette_physical_index_records"] == 1
 
 
 def test_mcp_candidate_pagination_remains_deterministic_after_active_filtering(

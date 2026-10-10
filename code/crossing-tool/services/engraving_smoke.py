@@ -81,7 +81,8 @@ def prepare_engraving_from_source(
     source_json = Path(source_json).resolve()
     project = Path(project_path).resolve()
 
-    meta = json.loads(source_json.read_text(encoding="utf-8"))
+    from services.silhouette_catalog import load_active_record
+    meta = load_active_record(source_json, project)
     sil_png = resolve_silhouette_png(source_json, meta)
 
     paths = engraving_paths(str(project), source_json, meta, mode)

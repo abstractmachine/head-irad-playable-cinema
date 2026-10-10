@@ -312,7 +312,7 @@ def iter_recheck_candidates(
     # historical records, while retaining deterministic catalog traversal.
     for pending_only in (True, False):
         for current_media_type in media_types:
-            for record in iter_catalog(str(project_path), media_type=current_media_type):
+            for record in iter_catalog(str(project_path), media_type=current_media_type, include_history=True):
                 if record.get("error") or (field is not None and record.get("field") != field):
                     continue
                 kind = _candidate_kind(record, retry_errors=retry_errors)
@@ -464,7 +464,7 @@ def _completed_sources_for_media_item(
     """Read completed job evidence once for one media item, not the archive."""
     completed: dict[RecheckSourceKey, list[tuple[tuple[str, ...], list[dict[str, str]]]]] = {}
     for record in iter_catalog(
-        str(project_path), media_type=media_type, filename_stem=filename_stem,
+        str(project_path), media_type=media_type, filename_stem=filename_stem, include_history=True,
     ):
         if record.get("error") or assignment_state_for_record(record) != ASSIGNMENT_SUPERSEDED:
             continue
@@ -563,6 +563,7 @@ def _matching_active_replacements(
         media_type=str(record["media_type"]),
         filename_stem=str(record["filename_stem"]),
         label=annotation_value,
+        include_history=True,
     ):
         if (
             candidate.get("error")

@@ -31,6 +31,7 @@ from typing import Callable
 
 from services.engraving_paths import engraving_status
 from services.silhouette_catalog import catalog_base_dir
+from services.silhouette_catalog import assignment_state_for_record
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +76,7 @@ def scan_best_silhouettes(
         except (json.JSONDecodeError, OSError):
             continue
 
-        if not meta.get("human_best"):
+        if not isinstance(meta, dict) or assignment_state_for_record(meta) != "active" or not meta.get("human_best"):
             continue
 
         obj_label = meta.get("label", "")
@@ -146,7 +147,8 @@ def batch_generate_engravings(
 
     for target in targets:
         source_json = target["path"]
-        meta = target["meta"]
+        from services.silhouette_catalog import load_active_record
+        meta = load_active_record(source_json, project_path)
         label = target.get("label", meta.get("label", "?"))
 
         # Skip if all required modes are already successfully generated.

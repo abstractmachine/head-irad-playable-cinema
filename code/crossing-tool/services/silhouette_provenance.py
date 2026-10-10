@@ -161,7 +161,7 @@ def migrate_search_provenance(
     audit_root = Path(audit_dir) if audit_dir is not None else default_audit_dir(project)
     rows, report = _load_audit_rows(audit_root)
 
-    catalog_records = [record for record in scan_catalog(str(project), media_type=media_type) if "error" not in record]
+    catalog_records = [record for record in scan_catalog(str(project), media_type=media_type, include_history=True) if "error" not in record]
     catalog_by_path: dict[Path, dict[str, Any]] = {}
     catalog_errors = 0
     for record in catalog_records:
