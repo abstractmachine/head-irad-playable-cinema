@@ -630,6 +630,90 @@ def _sort_merged_records(
     return records
 
 
+def resolve_record_destination(
+    project_path: str | Path, source: str, identity: dict,
+    *, page_size: int = 50, sort_keys: list[str] | None = None,
+) -> dict:
+    """Resolve a catalog identity and its sorted page without browse cascades.
+
+    Returns choices on ambiguity, never an approximate selection. All reads use
+    one read-only snapshot; ordering is identical to ordinary indexed pages.
+    """
+    media = identity.get("media_type")
+    if media not in MEDIA_TYPES or not all(identity.get(key) for key in (
+        "filename_stem", "label", "object_id",
+    )):
+        raise ValueError("Incomplete destination identity")
+    status = load_index(project_path, source, media)
+    if not status.get("usable"):
+        raise ValueError("Illustration index unavailable: " + str(status.get("status")))
+    where, params = _where(
+        title=_clean_stem(identity["filename_stem"]),
+        object_id=identity["object_id"], mode=identity.get("mode"),
+        field=identity.get("field"),
+        assignment_state=_default_assignment_state(source, None),
+    )
+    project = Path(project_path)
+    with sqlite3.connect(index_path(project, source, media).as_uri() + "?mode=ro", uri=True) as connection:
+        connection.execute("BEGIN")
+        rows = connection.execute(f"SELECT id, payload FROM records {where}", params)
+        candidates = []
+        for index, payload in rows:
+            record = _deserialize_record(project, payload)
+            label_directory = (
+                Path(record["path"]).parent.name if source == "silhouettes"
+                else record.get("label")
+            )
+            if (record.get("filename_stem") == identity["filename_stem"]
+                    and identity["label"] in (record.get("label"), label_directory)):
+                candidates.append((index, record))
+        if not candidates:
+            raise ValueError("Destination record not found in the active index")
+        if len(candidates) != 1:
+            if source == "silhouettes":
+                raise ValueError("Ambiguous source identity in the Illustration index")
+            return {"choices": [record for _, record in candidates]}
+        record_id, record = candidates[0]
+        filters = {
+            "title": _clean_stem(record["filename_stem"]),
+            "field": record.get("field") or ALL,
+            "letter": record["label"][:1].upper() if record["label"][:1].isalpha() else "#",
+            "label": record["label"],
+        }
+        where, params = _where(**filters, assignment_state=_default_assignment_state(source, None))
+        ordering = _order_by(sort_keys or [])
+        position = connection.execute(
+            "SELECT position, total FROM (SELECT id, "
+            f"ROW_NUMBER() OVER ({ordering}) - 1 AS position, "
+            f"COUNT(*) OVER () AS total FROM records {where}) WHERE id = ?",
+            [*params, record_id],
+        ).fetchone()
+        if position is None:
+            raise ValueError("Destination removed during navigation")
+        size = max(1, int(page_size))
+        page = position[0] // size
+        records = [_deserialize_record(project, row[0]) for row in connection.execute(
+            f"SELECT payload FROM records {where} {ordering} LIMIT ? OFFSET ?",
+            [*params, size, page * size],
+        )]
+        facets = {}
+        for name, column, scope in (
+            ("titles", "title", {}),
+            ("fields", "field", {"title": filters["title"]}),
+            ("letters", "initial", {key: filters[key] for key in ("title", "field")}),
+            ("labels", "label", {key: filters[key] for key in ("title", "field", "letter")}),
+        ):
+            facet_where, facet_params = _where(
+                **scope, assignment_state=_default_assignment_state(source, None),
+            )
+            facets[name] = [row[0] for row in connection.execute(
+                f"SELECT DISTINCT {column} FROM records {facet_where} ORDER BY {column} COLLATE NOCASE",
+                facet_params,
+            )]
+    return {**status, "record": record, "filters": filters, "facets": facets,
+            "position": position[0], "page": page, "total": position[1], "records": records}
+
+
 def query_records(
     project_path: str | Path,
     source: str,

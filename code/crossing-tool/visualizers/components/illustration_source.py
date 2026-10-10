@@ -28,6 +28,21 @@ from pathlib import Path
 from typing import Optional
 
 
+def record_identity(record: dict, kind: str) -> dict:
+    """Existing catalog identity, independent from display titles and filters."""
+    path = Path(str(record.get("path", "")))
+    identity = {
+        "media_type": record.get("media_type"),
+        "filename_stem": record.get("filename_stem"),
+        "label": record.get("label"),
+        "object_id": record.get("object_id") or path.stem,
+        "field": record.get("field"),
+    }
+    if kind == "engravings":
+        identity["mode"] = record.get("mode")
+    return identity
+
+
 class IllustrationSource(ABC):
     """Abstract base class for visualizer record providers.
 
@@ -79,6 +94,65 @@ class IllustrationSource(ABC):
     def load_status(self) -> dict:
         """Return status from the most recent index load."""
         return dict(self._load_status)
+
+    def resolve_destination(self, identity: dict, page_size: int) -> dict:
+        """Resolve exact identity and presentation using the canonical index."""
+        from services.illustration_index import resolve_record_destination
+        kind = "engravings" if isinstance(self, EngravingSource) else "silhouettes"
+        origin = identity.get("origin")
+        if origin is not None:
+            if kind == "silhouettes":
+                import json
+                from services.silhouette_archive_reference import (
+                    ArchiveReferenceError, original_reference_path, resolve_silhouette_reference,
+                )
+                from services.silhouette_archive import archive_path
+                metadata = json.loads(Path(origin["path"]).read_text())
+                reference = (metadata.get("source") or {}).get("silhouette_json") or metadata.get("silhouette_json")
+                identity = record_identity(origin, "silhouettes")
+                if reference:
+                    try:
+                        resolved = resolve_silhouette_reference(self._project_path, reference)
+                    except ArchiveReferenceError as error:
+                        original = original_reference_path(self._project_path, reference)
+                        if (Path(self._project_path) / archive_path(original)).is_file():
+                            raise ValueError("Source silhouette is archived; active browsing cannot display it") from error
+                        raise ValueError(str(error)) from error
+                    source_record = json.loads(resolved["path"].read_text())
+                    source_record["path"] = resolved["path"]
+                    identity = record_identity(source_record, "silhouettes")
+                    if any(origin.get(key) != identity.get(key) for key in (
+                        "media_type", "filename_stem", "object_id",
+                    ) if origin.get(key)):
+                        raise ValueError("Source reference disagrees with engraving identity")
+                identity.pop("mode", None)
+            else:
+                from services.engraving_paths import label_folder_for_source
+                identity = record_identity(origin, "silhouettes")
+                identity["label"] = label_folder_for_source(origin["path"], origin)
+        if identity.get("relationship_only"):
+            from services.illustration_index import query_records, _clean_stem
+            if not all(identity.get(key) for key in ("media_type", "filename_stem", "label", "object_id")):
+                raise ValueError("Incomplete relationship identity")
+            records = query_records(
+                self._project_path, kind, identity["media_type"],
+                title=_clean_stem(identity["filename_stem"]), label=identity["label"],
+                object_id=identity["object_id"],
+            )
+            return {"choices": [record for record in records
+                                if record.get("filename_stem") == identity["filename_stem"]]}
+        destination = resolve_record_destination(
+            self._project_path, kind, identity, page_size=page_size,
+            sort_keys=getattr(self, "_sort_keys", []),
+        )
+        if "record" in destination and not Path(destination["record"]["path"]).is_file():
+            raise ValueError("Destination removed during navigation")
+        if kind == "engravings" and "record" in destination:
+            import json
+            metadata = json.loads(Path(destination["record"]["path"]).read_text())
+            if metadata.get("status") != "generated":
+                raise ValueError("Destination engraving is not published")
+        return destination
 
     def facets(self, **filters) -> dict:
         """Return indexed browse facets for the current media type."""

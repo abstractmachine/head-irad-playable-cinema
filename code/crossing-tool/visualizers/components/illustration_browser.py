@@ -146,13 +146,18 @@ class _CatalogLoader(QThread):
         parent=None,
     ) -> None:
         super().__init__(parent)
-        self._source      = source
+        import copy
+        self._source      = copy.copy(source)
         self._media_type  = media_type
         self._timing_start = timing_start
         self._cancelled   = False
         self.result_items: list = []
         self.result_cache: dict = {}
         self.result_status: dict = {"status": "missing"}
+        self.destination_identity = None
+        self.destination_page_size = 50
+        self.result_destination = None
+        self.result_error = ""
 
     def cancel(self) -> None:
         """Signal that the result should be discarded even if the scan
@@ -197,6 +202,16 @@ class _CatalogLoader(QThread):
         }
 
     def run(self) -> None:
+        if self.destination_identity is not None:
+            try:
+                self.result_destination = self._source.resolve_destination(
+                    self.destination_identity, self.destination_page_size,
+                )
+            except Exception as error:
+                self.result_error = str(error)
+            if not self._cancelled:
+                self.loaded.emit()
+            return
         phase_start = time.perf_counter()
         _timing_print(self._timing_start, "WORKER", "catalog worker entered")
         self._source.reload(self._media_type)
@@ -394,6 +409,10 @@ class IllustrationBrowser(QWidget):
 
     # ------------------------------------------------------------------
     selectionChanged = pyqtSignal(dict)
+    navigationStarted = pyqtSignal()
+    navigationFinished = pyqtSignal(str)
+    navigationChoices = pyqtSignal(list)
+    pageReady = pyqtSignal()
     """Emitted whenever the selected item changes.
 
     ``item`` is the selected record dict from the current source.
@@ -578,11 +597,16 @@ class IllustrationBrowser(QWidget):
 
     def _on_catalog_loaded(self) -> None:
         """Slot called on the main thread when the background scan finishes."""
+        if self.sender() is not None and self.sender() is not self._catalog_loader:
+            return
         phase_start = time.perf_counter()
         loader = self._catalog_loader
         items  = loader.result_items
         cache  = loader.result_cache
         self._index_status = loader.result_status
+        self._source._media_type = loader._media_type
+        self._source._load_status = dict(loader.result_status)
+        self._source._records = list(loader.result_items)
         self._has_completed_catalog_load = True
         self._loading_timer.stop()
         self._loading_bar.stop()
@@ -615,7 +639,7 @@ class IllustrationBrowser(QWidget):
                 f"heartbeat gap={gap:.3f}s",
             )
 
-    def _stop_catalog_loader(self) -> None:
+    def _stop_catalog_loader(self, wait_ms: int = 500) -> None:
         """Disconnect and cancel any in-flight catalog load."""
         if self._catalog_loader is not None:
             try:
@@ -624,7 +648,9 @@ class IllustrationBrowser(QWidget):
                 pass
             if self._catalog_loader.isRunning():
                 self._catalog_loader.cancel()
-                self._catalog_loader.wait(500)
+                if wait_ms:
+                    self._catalog_loader.wait(wait_ms)
+                self._catalog_loader.finished.connect(self._catalog_loader.deleteLater)
             self._catalog_loader = None
         # _rebuild_item_combo cascades through the full filter hierarchy and
         # calls _apply_filters() at the end — no explicit call needed here.
@@ -657,6 +683,139 @@ class IllustrationBrowser(QWidget):
         if 0 <= page_index < len(self._filtered_items):
             return self._filtered_items[page_index]
         return None
+
+    def interrupt_navigation(self) -> None:
+        """Invalidate pending exact navigation without waiting for its I/O."""
+        self._cascade_id += 1
+        self._exact_destination_identity = None
+        loader = self._catalog_loader
+        if loader is not None and loader.destination_identity is not None:
+            loader.cancel()
+            loader.finished.connect(loader.deleteLater)
+            self._catalog_loader = None
+            self._loading_timer.stop()
+            self._loading_bar.stop()
+            self.navigationFinished.emit("")
+        if getattr(self, "_navigation_selection", None) is not None:
+            self._navigation_selection = None
+            self._clear_grid_presentation()
+            self._loading_timer.stop()
+            self._loading_bar.stop()
+            self.navigationFinished.emit("")
+
+    def navigate_to_record(self, identity: dict) -> None:
+        """Load an exact indexed destination through the existing catalog worker."""
+        import copy
+        self.interrupt_navigation()
+        self._stop_catalog_loader(wait_ms=0)
+        self._stop_keyword_loader()
+        self._filtered_items = []
+        self._selected_index = -1
+        self._total_items = 0
+        self._page_index = 0
+        self._clear_grid_presentation()
+        self.navigationStarted.emit()
+        self._index_status = {"status": "loading"}
+        self._update_pagination()
+        self._loading_bar.start()
+        self._loading_timer.start()
+        self._load_requested = True
+        self._pending_initial_filters = None
+        self._exact_destination_identity = dict(identity)
+        media = identity.get("media_type")
+        if media:
+            self._media_type = media
+            self._source._media_type = media
+            self._media_combo.blockSignals(True)
+            self._media_combo.setCurrentIndex(self._media_combo.findData(media))
+            self._media_combo.blockSignals(False)
+            self._media_combo._refresh_color()
+        if identity.get("field") and identity.get("filename_stem") and identity.get("label"):
+            label = identity["label"]
+            self._present_destination_filters(identity["media_type"], {
+                "title": _clean_stem(identity["filename_stem"]),
+                "field": identity["field"], "label": label,
+                "letter": label[:1].upper() if label[:1].isalpha() else "#",
+            })
+        loader = _CatalogLoader(copy.copy(self._source), identity.get("media_type"), parent=self)
+        loader.destination_identity = dict(identity)
+        loader.destination_page_size = self._page_size
+        loader.request_generation = self._cascade_id
+        loader.loaded.connect(self._on_destination_loaded)
+        self._catalog_loader = loader
+        loader.start()
+
+    def _on_destination_loaded(self) -> None:
+        loader = self.sender()
+        if (loader is not self._catalog_loader or loader._cancelled
+                or loader.request_generation != self._cascade_id):
+            return
+        self._catalog_loader = None
+        loader.finished.connect(loader.deleteLater)
+        destination = loader.result_destination or {}
+        error = loader.result_error
+        if error or "choices" in destination:
+            self._loading_timer.stop()
+            self._loading_bar.stop()
+            self._index_status = {"status": "error"}
+            self._page_lbl.setText(error or "Choose an engraving" )
+            self.navigationFinished.emit(error)
+            if destination.get("choices"):
+                self.navigationChoices.emit(destination["choices"])
+            return
+        record = destination["record"]
+        filters = destination["filters"]
+        facets = destination["facets"]
+        if loader.destination_page_size != self._page_size:
+            self.navigate_to_record(loader.destination_identity)
+            return
+        self._media_type = record["media_type"]
+        self._source._media_type = self._media_type
+        self._source.set_provenance_state(None)
+        if hasattr(self._source, "set_mode_filter"):
+            self._source.set_mode_filter(None)
+        self._index_status = {key: destination[key] for key in ("status", "usable") if key in destination}
+        self._has_completed_catalog_load = True
+        self._filter_cache = {"films": facets["titles"]}
+        self._present_destination_filters(self._media_type, filters, facets)
+        self._page_index = destination["page"]
+        self._total_items = destination["total"]
+        self._filtered_items = destination["records"]
+        self._navigation_selection = str(record["path"])
+        self.keywordChanged.emit(filters["label"])
+        self._rebuild_grid(query=False)
+
+    def _present_destination_filters(self, media: str, filters: dict, facets: dict | None = None) -> None:
+        facets = facets or {
+            "titles": list(dict.fromkeys([
+                *self._filter_cache.get("films", []),
+                *(self._item_combo.itemData(index) for index in range(self._item_combo.count())
+                  if self._item_combo.itemData(index) is not None),
+            ])),
+            "fields": [filters["field"]], "letters": [filters["letter"]],
+            "labels": [filters["label"]],
+        }
+        self._media_combo.blockSignals(True)
+        self._media_combo.setCurrentIndex(self._media_combo.findData(media))
+        self._media_combo.blockSignals(False)
+        self._media_combo._refresh_color()
+        for combo, placeholder, generic, values, selected in (
+            (self._item_combo, "<All Titles>", None, facets["titles"], filters["title"]),
+            (self._field_combo, "<All Fields>", ALL, facets["fields"], filters["field"]),
+            (self._letter_combo, "<A-Z>", ALL, facets["letters"], filters["letter"]),
+            (self._keyword_combo, "<All Keywords>", ALL, facets["labels"], filters["label"]),
+        ):
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem(placeholder, generic)
+            for value in values:
+                combo.addItem(value, value)
+            if combo.findData(selected) < 0:
+                combo.addItem(selected, selected)
+            combo.setCurrentIndex(combo.findData(selected))
+            combo.setEnabled(True)
+            combo.blockSignals(False)
+            combo._refresh_color()
 
     def clear_view(self) -> None:
         """Clear current-page presentation while an indexed navigation reloads."""
@@ -702,6 +861,7 @@ class IllustrationBrowser(QWidget):
         This method refreshes browser presentation state only. It does not
         perform project operations or mutate source-of-truth metadata.
         """
+        self.interrupt_navigation()
         self._selected_index = -1
         self._page_index     = 0
         self._rebuild_item_combo()
@@ -1121,6 +1281,7 @@ class IllustrationBrowser(QWidget):
                     f"QComboBox::drop-down {{ border: none; }}"
                 )
             combo.currentIndexChanged.connect(_refresh_color)
+            combo._refresh_color = _refresh_color
             _refresh_color()
             combo.setFocusPolicy(Qt.NoFocus)
             combo.setMaxVisibleItems(6)
@@ -1270,6 +1431,7 @@ class IllustrationBrowser(QWidget):
     def _on_media_changed(self, _idx: int) -> None:
         if self._updating:
             return
+        self.interrupt_navigation()
         new_type = self._media_combo.currentData()  # ALL_MEDIA, "movie", or "gameplay"
         if new_type != self._media_type:
             self._media_type = new_type
@@ -1278,24 +1440,28 @@ class IllustrationBrowser(QWidget):
     def _on_item_changed(self, _idx: int) -> None:
         if self._updating:
             return
+        self.interrupt_navigation()
         self._reset_filter_descendants("item")
         self._rebuild_field_combo()
 
     def _on_field_changed(self, _idx: int) -> None:
         if self._updating:
             return
+        self.interrupt_navigation()
         self._reset_filter_descendants("field")
         self._rebuild_letter_combo()
 
     def _on_letter_changed(self, _idx: int) -> None:
         if self._updating:
             return
+        self.interrupt_navigation()
         self._reset_filter_descendants("letter")
         self._rebuild_keyword_combo()
 
     def _on_keyword_changed(self, _idx: int) -> None:
         if self._updating:
             return
+        self.interrupt_navigation()
         self._filtered_items = []
         self._total_items = 0
         self._selected_index = -1
@@ -1712,9 +1878,10 @@ class IllustrationBrowser(QWidget):
         )
         self._filtered_items = list(result.get("records", []))
         self._total_items = int(result.get("total", 0))
+        self._index_status.update({key: result[key] for key in ("status", "usable") if key in result})
         return result
 
-    def _rebuild_grid(self) -> None:
+    def _rebuild_grid(self, query: bool = True) -> None:
         """Clear the grid and populate it with ThumbnailCell widgets for the
         current page of filtered items in bounded event-loop batches."""
         phase_start = time.perf_counter()
@@ -1725,7 +1892,7 @@ class IllustrationBrowser(QWidget):
         self._grid_layout.setEnabled(True)
         self._grid_widget.setUpdatesEnabled(True)
         self._grid_widget.setVisible(True)
-        if self._index_status.get("status") == "ready" or self._index_status.get("usable"):
+        if query and (self._index_status.get("status") == "ready" or self._index_status.get("usable")):
             self._query_current_page()
 
         # Remove all existing cells from the layout and destroy them.
@@ -1746,6 +1913,7 @@ class IllustrationBrowser(QWidget):
 
         page_start = time.perf_counter()
         self._pending_page_records = self._current_page_records()
+        self._grid_page_size = self._page_size
         self._grid_cols = self._cols()
         self._pending_abs_start = self._page_index * self._page_size
         self._update_status()
@@ -1765,6 +1933,7 @@ class IllustrationBrowser(QWidget):
                 self._loading_bar.stop()
                 if self._index_status.get("status") != "loading":
                     self._timing_mark_ready("no visible thumbnails")
+            self.pageReady.emit()
             return
 
         self._loading_bar.start()
@@ -1818,7 +1987,15 @@ class IllustrationBrowser(QWidget):
         QTimer.singleShot(0, self._timing_layout_repaint_complete)
         self._loading_timer.stop()
         self._loading_bar.stop()
+        target = getattr(self, "_navigation_selection", None)
+        if target is not None:
+            self._navigation_selection = None
+            if not self.select_current_page_record("path", target):
+                self.navigationFinished.emit("Destination removed during navigation")
+            else:
+                self.navigationFinished.emit("")
         self._start_loader()
+        self.pageReady.emit()
 
     def _timing_layout_repaint_complete(self) -> None:
         _timing_print(self._timing_start, "GUI", "post-cell layout/repaint tick")
@@ -1894,7 +2071,7 @@ class IllustrationBrowser(QWidget):
             f"thumbnail decode worker started requested={len(page_records)}",
         )
 
-    def _stop_loader(self) -> None:
+    def _stop_loader(self, wait_ms: int = 0) -> None:
         """Cancel any running loader and wait for it to stop."""
         if self._loader:
             # Disconnect before cancelling so stale thumbReady signals
@@ -1909,10 +2086,15 @@ class IllustrationBrowser(QWidget):
                 pass
             if self._loader.isRunning():
                 self._loader.cancel()
-                self._loader.wait(300)
+                if wait_ms:
+                    self._loader.wait(wait_ms)
+                self._loader.finished.connect(self._loader.deleteLater)
+                self._loader.setParent(self)
         self._loader = None
 
     def _on_thumb_ready(self, idx: int, qimg: QImage) -> None:
+        if self.sender() is not None and self.sender() is not self._loader:
+            return
         if 0 <= idx < len(self._cells):
             phase_start = time.perf_counter()
             self._cells[idx].set_image(qimg)
@@ -1926,6 +2108,8 @@ class IllustrationBrowser(QWidget):
                 )
 
     def _on_thumb_load_finished(self, loaded: int) -> None:
+        if self.sender() is not None and self.sender() is not self._loader:
+            return
         _timing_print(
             self._timing_start,
             "GUI",
@@ -1963,6 +2147,8 @@ class IllustrationBrowser(QWidget):
     # ------------------------------------------------------------------ selection
 
     def _on_cell_clicked(self, idx: int) -> None:
+        if getattr(self, "_navigation_selection", None) is not None:
+            self.interrupt_navigation()
         abs_idx = self._page_index * self._page_size + idx
 
         # Deselect the previously selected cell (if it is on this page)
@@ -1988,12 +2174,14 @@ class IllustrationBrowser(QWidget):
     # ------------------------------------------------------------------ pagination
 
     def _on_prev_page(self) -> None:
+        self.interrupt_navigation()
         if self._page_index > 0:
             self._page_index -= 1
             self._selected_index = self._page_index * self._page_size  # jump to first cell
             self._rebuild_grid()
 
     def _on_next_page(self) -> None:
+        self.interrupt_navigation()
         page_count = max(
             1, math.ceil(self._total_items / self._page_size)
         )
@@ -2084,8 +2272,16 @@ class IllustrationBrowser(QWidget):
         """
         if not self._total_items:
             return
+        if getattr(self, "_navigation_selection", None) is not None:
+            self.navigate_to_record(self._exact_destination_identity)
+            return
         new_size = self._page_size
-        if new_size != len(self._cells):
+        if new_size != getattr(self, "_grid_page_size", new_size):
+            if self.currentItem() is not None and getattr(self, "_exact_destination_identity", None):
+                from visualizers.components.illustration_source import record_identity, EngravingSource
+                kind = "engravings" if isinstance(self._source, EngravingSource) else "silhouettes"
+                self.navigate_to_record(record_identity(self.currentItem(), kind))
+                return
             self._page_index = 0
             self._rebuild_grid()
 

@@ -75,6 +75,44 @@ When a thumbnail is selected, shows its metadata:
 | `PgUp` / `PgDn` | Previous / next annotation field |
 | `Escape` / `Ctrl+Q` / `Ctrl+W` | Close |
 
+### Exact Record Navigation
+
+**Silhouette** on an engraving selects its exact active source. **Engraving** on
+a silhouette selects an existing published engraving; it stays disabled while
+the indexed relationship is being checked or when none exists. Multiple matches
+open a small mode/provenance menu rather than choosing an arbitrary engraving.
+Neither action generates assets or rebuilds indexes.
+
+Internally, callers use `IllustrationPane.navigate_to_record(kind, identity)`,
+where kind is `silhouettes` or `engravings`. `record_identity(record, kind)`
+constructs the current catalog identity: media type, full filename stem, label,
+object ID, optional field, and engraving mode. Display titles and labels alone
+are not identities. The forward button supplies an `origin` engraving record;
+the source reads its authoritative JSON reference, verifies lifecycle access,
+then resolves the indexed catalog identity. Archived sources are reported, never
+added to normal browsing. No future identity convention is introduced.
+
+The destination tab activates and the old Inspector clears immediately. Known
+filters are presented immediately without emitting dropdown-change signals.
+The existing catalog QThread resolves the destination and its sorted page using
+`services.illustration_index.resolve_record_destination`; database work stays off
+the GUI thread. A read-only snapshot uses the same ordering as ordinary pages:
+one record-resolution SELECT, one rank/total SELECT, one destination-page SELECT,
+and four facet SELECTs (seven total, plus the index-status metadata SELECT).
+No preceding pages or intermediate filter queries are loaded. The separate
+published-relationship check uses the existing bounded index query.
+
+On completion, Media/Film/Field/A-Z/Keyword are applied together with signals
+blocked, and existing bounded cell population selects the exact record and
+updates the Inspector. Catalog-worker identity and the browser cascade generation
+discard superseded results. Another navigation, a manual filter/page/selection
+change, or a tab switch interrupts the request without waiting for its I/O.
+Retired workers cannot change the current filters, selection or loading state.
+The existing Filter CollapsibleSection SweepBar remains active through resolution
+and cell population and stops on completion, failure or interruption; no new
+progress UI is used. Resize-driven page-capacity changes re-resolve the current
+exact destination rather than resetting it to page one.
+
 ## SAM-3 Explorer
 
 The **SAM-3 Explorer →** button at the bottom-right opens an interactive shot inspection panel. Browse movies → scenes → shots, enter a concept word, and click **Run SAM-3** to see segmentation masks overlaid on the best frame for that shot.

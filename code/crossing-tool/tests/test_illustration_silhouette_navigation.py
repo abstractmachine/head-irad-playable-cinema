@@ -65,9 +65,382 @@ from PyQt5.QtWidgets import QApplication
 from services.illustration_index import rebuild_index
 from visualizers.components.illustration_browser import IllustrationBrowser
 from visualizers.components.illustration_source import EngravingSource, SilhouetteSource
+from visualizers.components.illustration_source import record_identity
+from PyQt5.QtCore import QThread
+from PyQt5.QtTest import QSignalSpy
+from visualizers.illustration_visualizer import IllustrationPane
 
 _REAL_LABEL = "A.T.&S.F. sign"
 _NORMALISED_DIR = "a_t__s_f__sign"   # docstring-documented normalised form
+
+
+@pytest.fixture
+def exact_pane(app, tmp_path, monkeypatch):
+    import json
+    from tool import prefs
+    store = {}
+    monkeypatch.setattr(prefs, "get", lambda key, default=None: store.get(key, default))
+    monkeypatch.setattr(prefs, "set", lambda key, value: store.__setitem__(key, value))
+    original_init = IllustrationBrowser.__init__
+
+    def unloaded(self, *args, **kwargs):
+        kwargs["auto_load"] = False
+        original_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(IllustrationBrowser, "__init__", unloaded)
+    monkeypatch.setattr(IllustrationBrowser, "_page_size", property(lambda self: 2))
+    monkeypatch.setattr(IllustrationPane, "_count_pending_engravings", lambda self: 0)
+    stem = "Companeros (1970) {tmdb-61044}"
+    silhouettes = []
+    for object_number in (1, 3, 4, 5, 2):
+        path = tmp_path / "data/silhouettes/catalog/movie" / stem / "bird" / f"object_{object_number:04d}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        record = {"media_type": "movie", "filename_stem": stem, "label": "bird",
+                  "field": "animals", "object_id": path.stem, "path": path,
+                  "media_id": "tmdb_61044", "shot_id": "tmdb_61044@f078383-f078476",
+                  "frame": 78453, "confidence": 0.5}
+        path.write_text(json.dumps({**record, "path": str(path)}))
+        silhouettes.append(record)
+    other = {**silhouettes[0], "filename_stem": "Other (2000) {tmdb-42}",
+             "path": tmp_path / "data/silhouettes/catalog/movie/Other (2000) {tmdb-42}/bird/object_0002.json",
+             "object_id": "object_0002"}
+    silhouettes.append(other)
+    target = silhouettes[4]
+    engravings = []
+    for mode in ("frame", "isolated"):
+        path = tmp_path / "data/engravings/catalog/movie" / stem / "bird/object_0002" / mode / "engraving.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"status": "generated", "source": {
+            "silhouette_json": str(target["path"].relative_to(tmp_path))},
+            "silhouette": {key: value for key, value in target.items() if key != "path"}}))
+        engravings.append({**target, "path": path, "mode": mode, "status": "generated",
+                           "generation_service": "qwen-local", "object_id": "object_0002"})
+    with patch("services.illustration_index._scan_silhouettes", return_value=silhouettes):
+        rebuild_index(tmp_path, "silhouettes", "movie")
+    with patch("services.illustration_index._scan_engravings", return_value=engravings[:1]):
+        rebuild_index(tmp_path, "engravings", "movie")
+    pane = IllustrationPane(str(tmp_path), media_type="movie")
+    yield pane, target, engravings, silhouettes
+    for worker in pane.findChildren(QThread):
+        if hasattr(worker, "cancel"):
+            worker.cancel()
+        worker.wait(5000)
+    for browser in (pane._browser_sil, pane._browser_eng):
+        browser._stop_catalog_loader()
+        browser._stop_keyword_loader(wait_ms=5000)
+        browser._stop_loader()
+        browser._grid_population_timer.stop()
+    pane._cancel_relationship_lookup()
+    pane._browser_stack.deleteLater()
+    pane._side_scroll.deleteLater()
+    pane.deleteLater()
+
+
+def _finish_navigation(browser, action):
+    finished = QSignalSpy(browser.navigationFinished)
+    action()
+    assert finished or finished.wait(5000), "Navigation did not complete"
+    assert list(finished[-1]) == [""]
+
+
+def _finish_relationship(pane):
+    loader = pane._relationship_loader
+    if loader is not None:
+        finished = QSignalSpy(loader.loaded)
+        assert finished.wait(5000)
+
+
+def test_exact_companeros_forward_immediate_and_later_page(exact_pane):
+    pane, target, engravings, _ = exact_pane
+    pane.select_source_tab("engravings")
+    pane._browser_eng._filtered_items = [engravings[0]]
+    pane._browser_eng._selected_index = 0
+    pane._on_selection_changed(engravings[0])
+    browser = pane._browser_sil
+    finished = QSignalSpy(browser.navigationFinished)
+    pane._eng_sil_btn.click()
+    assert pane._browser is browser
+    assert pane._current_rec is None
+    assert browser._loading_timer.isActive()
+    assert finished.wait(5000)
+    assert list(finished[-1]) == [""]
+    assert browser._media_combo.currentData() == "movie"
+    assert browser._item_combo.currentData() == "Companeros (1970)"
+    assert browser._field_combo.currentData() == "animals"
+    assert browser._letter_combo.currentData() == "B"
+    assert browser._keyword_combo.currentData() == "bird"
+    assert browser._page_index == 2
+    assert browser.currentItem()["path"] == target["path"]
+    assert browser._cells[0]._selected
+    assert pane._current_rec["object_id"] == "object_0002"
+    assert pane._meta_rows["frame"].text().replace("\u200b", "") == "78453"
+    assert not browser._loading_timer.isActive()
+
+
+def test_exact_reverse_and_round_trip(exact_pane):
+    pane, target, engravings, _ = exact_pane
+    _finish_navigation(pane._browser_sil, lambda: pane.navigate_to_record("silhouettes", record_identity(target, "silhouettes")))
+    _finish_relationship(pane)
+    assert pane._eng_viz_btn.isEnabled()
+    for kind in ("engravings", "silhouettes", "engravings"):
+        browser = pane._browser_eng if kind == "engravings" else pane._browser_sil
+        action = pane._eng_viz_btn.click if kind == "engravings" else pane._eng_sil_btn.click
+        finished = QSignalSpy(browser.navigationFinished)
+        action()
+        assert pane._browser is browser
+        assert pane._current_rec is None
+        assert browser._loading_timer.isActive()
+        assert finished.wait(5000)
+        assert list(finished[-1]) == [""]
+        assert pane._browser is browser
+        assert browser.currentItem()["path"] == (engravings[0]["path"] if kind == "engravings" else target["path"])
+        assert browser._item_combo.currentData() == "Companeros (1970)"
+        assert browser._letter_combo.currentData() == "B"
+        _finish_relationship(pane)
+
+
+def test_exact_navigation_atomic_query_budget(exact_pane, monkeypatch):
+    import sqlite3
+    import threading
+    pane, target, _, _ = exact_pane
+    statements = []
+    original_connect = sqlite3.connect
+
+    def connect(*args, **kwargs):
+        connection = original_connect(*args, **kwargs)
+        connection.set_trace_callback(lambda sql: statements.append((threading.current_thread(), sql)))
+        return connection
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    monkeypatch.setattr(pane, "_lookup_engravings", lambda rec: None)
+    filter_signals = [QSignalSpy(combo.currentIndexChanged) for combo in (
+        pane._browser_sil._media_combo, pane._browser_sil._item_combo,
+        pane._browser_sil._field_combo, pane._browser_sil._letter_combo,
+        pane._browser_sil._keyword_combo,
+    )]
+    page_calls = []
+    monkeypatch.setattr(pane._sil_source, "page", lambda **kwargs: page_calls.append(kwargs))
+    _finish_navigation(pane._browser_sil, lambda: pane.navigate_to_record("silhouettes", record_identity(target, "silhouettes")))
+    assert not page_calls
+    assert all(len(signals) == 0 for signals in filter_signals)
+    selects = [sql for _, sql in statements if "FROM records" in sql and "human_best" not in sql]
+    assert len(selects) == 7
+    assert sum("LIMIT" in sql for sql in selects) == 1
+    assert all(thread is not threading.main_thread() for thread, sql in statements if "FROM records" in sql)
+
+
+def test_exact_new_request_ignores_late_result(exact_pane, monkeypatch, app):
+    from visualizers.components.illustration_browser import _CatalogLoader
+    pane, target, _, records = exact_pane
+    monkeypatch.setattr(_CatalogLoader, "start", lambda self: None)
+    browser = pane._browser_sil
+    pane.navigate_to_record("silhouettes", record_identity(records[0], "silhouettes"))
+    old = browser._catalog_loader
+    pane.navigate_to_record("silhouettes", record_identity(target, "silhouettes"))
+    current = browser._catalog_loader
+    old.result_error = "Old failure"
+    old.loaded.emit()
+    assert browser._loading_timer.isActive()
+    assert browser._catalog_loader is current
+    _finish_navigation(browser, current.run)
+    old.loaded.emit()
+    assert browser.currentItem()["path"] == target["path"]
+    assert not browser._loading_timer.isActive()
+
+
+def test_exact_manual_film_interruption(exact_pane, monkeypatch):
+    from visualizers.components.illustration_browser import _CatalogLoader
+    pane, target, _, _ = exact_pane
+    monkeypatch.setattr(_CatalogLoader, "start", lambda self: None)
+    browser = pane._browser_sil
+    browser._item_combo.addItem("Other", "Other")
+    pane.navigate_to_record("silhouettes", record_identity(target, "silhouettes"))
+    old = browser._catalog_loader
+    browser._item_combo.setCurrentIndex(browser._item_combo.findData("Other"))
+    old.result_error = "Late failure"
+    old.loaded.emit()
+    assert browser._item_combo.currentData() == "Other"
+    assert browser.currentItem() is None
+    assert browser._catalog_loader is None
+
+
+@pytest.mark.parametrize("identity_change, message", [
+    ({"object_id": "object_9999"}, "not found"),
+    ({"filename_stem": ""}, "Incomplete"),
+])
+def test_exact_failure_stops_loading(exact_pane, identity_change, message):
+    pane, target, _, _ = exact_pane
+    browser = pane._browser_sil
+    identity = {**record_identity(target, "silhouettes"), **identity_change}
+    finished = QSignalSpy(browser.navigationFinished)
+    pane.navigate_to_record("silhouettes", identity)
+    assert finished.wait(5000)
+    assert message in finished[-1][0]
+    assert not browser._loading_timer.isActive()
+    assert browser.currentItem() is None
+
+
+def test_multiple_engraving_relationships_need_choice(exact_pane):
+    pane, target, engravings, _ = exact_pane
+    with patch("services.illustration_index._scan_engravings", return_value=engravings):
+        rebuild_index(pane._project_path, "engravings", "movie")
+    _finish_navigation(pane._browser_sil, lambda: pane.navigate_to_record("silhouettes", record_identity(target, "silhouettes")))
+    _finish_relationship(pane)
+    assert len(pane._engraving_choices) == 2
+    pane._eng_viz_btn.click()
+    assert pane._browser is pane._browser_sil
+    assert len(pane._engraving_menu.actions()) == 2
+    _finish_navigation(pane._browser_eng, pane._engraving_menu.actions()[1].trigger)
+    assert pane._browser_eng.currentItem()["mode"] == "isolated"
+    pane._engraving_menu.close()
+
+
+@pytest.mark.parametrize("failure", ["missing", "archived", "mismatched"])
+def test_exact_source_reference_errors(exact_pane, failure):
+    import json
+    pane, target, engravings, _ = exact_pane
+    if failure in ("missing", "archived"):
+        if failure == "archived":
+            archived = Path(pane._project_path) / "archive/silhouettes/catalog/movie" / target["filename_stem"] / "bird/object_0002.json"
+            archived.parent.mkdir(parents=True)
+            target["path"].rename(archived)
+        else:
+            target["path"].unlink()
+    else:
+        metadata = json.loads(engravings[0]["path"].read_text())
+        metadata["source"]["silhouette_json"] = str(target["path"].with_name("object_0001.json"))
+        engravings[0]["path"].write_text(json.dumps(metadata))
+    browser = pane._browser_sil
+    finished = QSignalSpy(browser.navigationFinished)
+    pane.navigate_to_record("silhouettes", {"origin": engravings[0], "media_type": "movie"})
+    assert finished.wait(5000)
+    message = finished[-1][0]
+    assert message
+    if failure == "archived":
+        assert "archived" in message
+    assert browser.currentItem() is None
+    assert not browser._loading_timer.isActive()
+    assert message == pane._meta_rows["label"].text().replace("\u200b", "")
+
+
+def test_no_published_engraving_disables_button(exact_pane):
+    pane, _, _, records = exact_pane
+    _finish_navigation(pane._browser_sil, lambda: pane.navigate_to_record("silhouettes", record_identity(records[0], "silhouettes")))
+    _finish_relationship(pane)
+    assert not pane._eng_viz_btn.isEnabled()
+    assert pane._engraving_choices == []
+
+
+def test_ambiguous_source_never_selects_first(exact_pane):
+    pane, target, _, records = exact_pane
+    with patch("services.illustration_index._scan_silhouettes", return_value=[*records, target]):
+        rebuild_index(pane._project_path, "silhouettes", "movie")
+    finished = QSignalSpy(pane._browser_sil.navigationFinished)
+    pane.navigate_to_record("silhouettes", record_identity(target, "silhouettes"))
+    assert finished.wait(5000)
+    assert "Ambiguous" in finished[-1][0]
+    assert pane._browser_sil.currentItem() is None
+
+
+def test_unavailable_index_and_async_exception(exact_pane, monkeypatch):
+    pane, target, _, _ = exact_pane
+    finished = QSignalSpy(pane._browser_eng.navigationFinished)
+    identity = {**record_identity(target, "silhouettes"), "media_type": "gameplay", "mode": "frame"}
+    pane.navigate_to_record("engravings", identity)
+    assert finished.wait(5000)
+    assert "index unavailable" in finished[-1][0]
+    assert not pane._browser_eng._loading_timer.isActive()
+
+    def fail(*args):
+        raise RuntimeError("Controlled asynchronous failure")
+
+    monkeypatch.setattr(SilhouetteSource, "resolve_destination", fail)
+    finished = QSignalSpy(pane._browser_sil.navigationFinished)
+    pane.navigate_to_record("silhouettes", record_identity(target, "silhouettes"))
+    assert finished.wait(5000)
+    assert "Controlled asynchronous failure" in finished[-1][0]
+    assert not pane._browser_sil._loading_timer.isActive()
+
+
+def test_manual_tab_switch_discards_navigation(exact_pane, monkeypatch):
+    from visualizers.components.illustration_browser import _CatalogLoader
+    pane, target, _, _ = exact_pane
+    monkeypatch.setattr(_CatalogLoader, "start", lambda self: None)
+    pane.navigate_to_record("silhouettes", record_identity(target, "silhouettes"))
+    old = pane._browser_sil._catalog_loader
+    pane.select_source_tab("engravings")
+    old.result_error = "Late failure"
+    old.loaded.emit()
+    assert pane._browser is pane._browser_eng
+    assert pane._current_rec is None
+    assert not pane._browser_sil._loading_timer.isActive()
+
+
+def test_exact_engraving_later_page_with_current_sort(exact_pane):
+    pane, target, engravings, records = exact_pane
+    others = [{**engravings[0], "object_id": record["object_id"]} for record in records[:4]]
+    with patch("services.illustration_index._scan_engravings", return_value=[*others, engravings[0]]):
+        rebuild_index(pane._project_path, "engravings", "movie")
+    pane._eng_source.set_sort_keys(["confidence"])
+    _finish_navigation(pane._browser_eng, lambda: pane.navigate_to_record("engravings", record_identity(engravings[0], "engravings")))
+    assert pane._browser_eng._page_index == 2
+    assert pane._browser_eng.currentItem()["object_id"] == "object_0002"
+    assert pane._meta_rows["mode"].text().replace("\u200b", "") == "frame"
+
+
+def test_manual_browsing_after_exact_navigation(exact_pane):
+    pane, target, _, _ = exact_pane
+    browser = pane._browser_sil
+    _finish_navigation(browser, lambda: pane.navigate_to_record("silhouettes", record_identity(target, "silhouettes")))
+    for combo, value in ((browser._field_combo, "--all"),
+                         (browser._letter_combo, "--all"),
+                         (browser._keyword_combo, "bird")):
+        presented = QSignalSpy(browser.pageReady)
+        index = combo.findData(value)
+        assert index >= 0
+        if combo.currentIndex() == index:
+            combo.currentIndexChanged.emit(index)
+        else:
+            combo.setCurrentIndex(index)
+        assert presented or presented.wait(5000)
+    presented = QSignalSpy(browser.pageReady)
+    browser._next_btn.click()
+    assert presented or presented.wait(5000)
+    assert browser._page_index == 1
+    browser._on_cell_clicked(0)
+    assert pane._current_rec is not None
+
+
+def test_gameplay_partition_and_manual_movie_switch(exact_pane):
+    pane, target, _, _ = exact_pane
+    gameplay = {**target, "media_type": "gameplay", "filename_stem": "game_rdr2_demo",
+                "media_id": "game_rdr2_demo", "shot_id": "game_rdr2_demo@f000010-f000020"}
+    with patch("services.illustration_index._scan_silhouettes", return_value=[gameplay]):
+        rebuild_index(pane._project_path, "silhouettes", "gameplay")
+    browser = pane._browser_sil
+    _finish_navigation(browser, lambda: pane.navigate_to_record("silhouettes", record_identity(gameplay, "silhouettes")))
+    assert browser._media_combo.currentData() == "gameplay"
+    assert browser.currentItem()["media_id"] == "game_rdr2_demo"
+    presented = QSignalSpy(browser.pageReady)
+    browser._media_combo.setCurrentIndex(browser._media_combo.findData("movie"))
+    assert presented or presented.wait(5000)
+    assert browser._media_type == "movie"
+    assert all(record["media_type"] == "movie" for record in browser._filtered_items)
+
+
+def test_navigation_shutdown_cancels_pending_results(exact_pane, monkeypatch):
+    from visualizers.components.illustration_browser import _CatalogLoader
+    pane, target, _, _ = exact_pane
+    monkeypatch.setattr(_CatalogLoader, "start", lambda self: None)
+    pane.navigate_to_record("silhouettes", record_identity(target, "silhouettes"))
+    worker = pane._browser_sil._catalog_loader
+    pane.shutdown_navigation()
+    worker.result_error = "After close"
+    worker.loaded.emit()
+    assert worker._cancelled
+    assert pane._browser_sil._catalog_loader is None
+    assert pane._current_rec is None
+    assert not pane._browser_sil._loading_timer.isActive()
 
 
 @pytest.fixture(scope="module")

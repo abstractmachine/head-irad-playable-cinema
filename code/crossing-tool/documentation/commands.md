@@ -877,3 +877,34 @@ crossing shotlist shot detect --all --notify --notify-each
 `mcp_server/mcp_server.py` exposes crossing data to LLMs via the [Model Context Protocol](https://modelcontextprotocol.io). This lets you query your film library directly from Claude Desktop (or any MCP-compatible client) without leaving the chat.
 
 See [mcp.md](mcp.md) for tool reference, server setup, and client configuration.
+
+## Journaled Silhouette Archival
+
+`crossing silhouette archive --project PATH` remains a read-only planner.
+Execution requires an approved retained `--version`, never regenerates its plan,
+and preserves JSON/PNG bytes, hierarchy, labels and legacy object IDs.
+
+Explicit operations, in order: `initialize`, `protected-baseline`, `preflight`,
+`pilot-select`, `pilot-run`, `--apply`, `verify`, `population-verify`, and
+`protected-verify`. Supply `--project PATH --version VERSION` to each. Full apply
+requires a journaled successful pilot move/verify/rollback/hash-restore/reapply.
+
+The Linux executor uses the exclusive catalog lock and same-device
+`renameat2(RENAME_NOREPLACE)`, never copy/delete, overwrite or symlink traversal.
+Prepared batches are committed with SQLite FULL synchronous durability; file and
+directory changes are fsynced, and SHA256 is freshly checked before and after
+renaming. `resume` reconciles filesystem presence/content against the same journal.
+`status` is read-only. `rollback` renames back without overwriting and stops on
+collisions or changed content. Add `--pilot` to scope these operations to the pilot.
+Never bypass a failed pilot or discard/lower the legacy reservation registry.
+
+`prune` journals removal of empty selected source label/film directories only;
+it preserves `catalog/`, nonempty directories and unrelated sidecars. Rollback
+recreates missing ancestors. Evidence and journals live in
+`outputs/tests/silhouette-identity-migration/archival-execution/<version>/`.
+
+Index rebuilding is separate and follows physical population acceptance: first
+back up/hash the old movie/gameplay Illustration silhouette SQLite indexes, then
+call only their canonical rebuild service. Engraving and unrelated indexes must
+remain untouched. Historical reference inspection requires explicit
+`silhouette inspect-reference ... --include-archive --lookup PLAN.sqlite3`.

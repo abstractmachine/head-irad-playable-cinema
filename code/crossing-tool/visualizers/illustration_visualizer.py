@@ -465,6 +465,13 @@ class IllustrationPane(QWidget):
         self._browser_sil.selectionChanged.connect(self._on_selection_changed)
         self._browser_sil.catalogReloaded.connect(self._update_eng_buttons)
         self._browser_eng.selectionChanged.connect(self._on_selection_changed)
+        self._navigation_switching = False
+        self._engraving_choices = []
+        self._relationship_loader = None
+        for browser in (self._browser_sil, self._browser_eng):
+            browser.navigationStarted.connect(self._clear_meta)
+            browser.navigationFinished.connect(self._on_navigation_finished)
+            browser.navigationChoices.connect(self._choose_engraving)
 
         # Persist media-type selection across restarts (shared for both modes).
         self._browser_sil._media_combo.currentIndexChanged.connect(
@@ -913,6 +920,8 @@ class IllustrationPane(QWidget):
 
     def _on_source_tab_changed(self, idx: int) -> None:
         """Switch the active browser and inspector state when the tab changes."""
+        if not self._navigation_switching:
+            self._browser.interrupt_navigation()
         if idx == 0:
             self._browser    = self._browser_sil
             self._meta_rows  = self._sil_meta_rows
@@ -921,9 +930,12 @@ class IllustrationPane(QWidget):
             self._browser    = self._browser_eng
             self._meta_rows  = self._eng_meta_rows
             self._sort_combo = self._eng_sort_combo
-            if not self._browser_eng._load_requested:
+            if not self._navigation_switching and not self._browser_eng._load_requested:
                 self._browser_eng.reload()
         self._browser_stack.setCurrentIndex(idx)
+        if self._navigation_switching:
+            self._clear_meta()
+            return
         rec = self._browser.currentItem()
         if rec:
             self._on_selection_changed(rec)
@@ -988,6 +1000,7 @@ class IllustrationPane(QWidget):
             browser.refresh()
 
         combo.currentIndexChanged.connect(_on_mode_changed)
+        self._eng_mode_combo = combo
         mode_sec.add_widget(combo)
         panel.add_widget(mode_sec)
 
@@ -1357,6 +1370,9 @@ class IllustrationPane(QWidget):
     # Object inspector
 
     def _clear_meta(self) -> None:
+        self._cancel_relationship_lookup()
+        self._relationship_identity = None
+        self._engraving_choices = []
         for lbl in self._meta_rows.values():
             lbl.setText("—")
         self._clear_provenance_meta()
@@ -1576,7 +1592,9 @@ class IllustrationPane(QWidget):
             self._eng_gen_btn.setEnabled(not done)
             self._eng_gen_btn.setChecked(False)
             self._eng_gen_btn.setText("Engrave")
-            self._eng_viz_btn.setEnabled(status == "generated")
+            self._eng_viz_btn.setEnabled(bool(self._engraving_choices))
+            if self._browser is self._browser_sil:
+                self._lookup_engravings(rec)
         else:
             self._eng_gen_btn.setEnabled(False)
             self._eng_gen_btn.setChecked(False)
@@ -1776,101 +1794,103 @@ class IllustrationPane(QWidget):
         rec = self._current_rec
         if not rec:
             return
-        from visualizers.components.illustration_browser import _clean_stem
-        filename_stem = _clean_stem(rec.get("filename_stem") or "")
-        label         = rec.get("label") or ""
-
-        self._side_scroll.setCurrentIndex(0)
-
-        # Clear the grid immediately so the user sees empty state
-        # rather than stale previous content during the navigation delay.
-        self._browser_sil.clear_view()
-        self._browser_sil._loading_bar.start()
-        self._browser_sil._loading_timer.start()
-
-        self._set_silhouette_provenance_state(None, refresh=False)
-
-        object_id = rec.get("object_id") or ""
-
-        def _navigate() -> None:
-            self._browser_sil._loading_timer.stop()
-            self._browser_sil._loading_bar.stop()
-            self._browser_sil.navigate_direct(
-                item      = filename_stem or None,
-                keyword   = label or None,
-                object_id = object_id or None,
-            )
-
-        already_loaded = self._browser_sil._index_status.get("status") == "ready"
-
-        if already_loaded:
-            QTimer.singleShot(150, _navigate)
-        else:
-            def _after_reload() -> None:
-                try:
-                    self._browser_sil.catalogReloaded.disconnect(_after_reload)
-                except Exception:
-                    pass
-                QTimer.singleShot(150, _navigate)
-
-            self._browser_sil.catalogReloaded.connect(_after_reload)
-            self._browser_sil.reload()
+        self.navigate_to_record("silhouettes", {"origin": dict(rec), "media_type": rec.get("media_type")})
 
     def _visualize_engraving(self) -> None:
-        """Switch to the Engravings tab and navigate to the current silhouette's engraving.
+        """Navigate to a published relationship, asking when more than one exists."""
+        if len(self._engraving_choices) == 1:
+            from visualizers.components.illustration_source import record_identity
+            self.navigate_to_record("engravings", record_identity(self._engraving_choices[0], "engravings"))
+        elif self._engraving_choices:
+            self._choose_engraving(self._engraving_choices)
 
-        If the engraving hasn't been loaded into the browser cache yet (e.g. just
-        generated), reloads the source first and navigates once loading completes.
-        """
-        rec = self._current_rec
-        if not rec:
-            return
-
-        from visualizers.components.illustration_browser import _clean_stem
-        filename_stem = _clean_stem(rec.get("filename_stem") or "")
-        # Use the silhouette's label directory name as the engraving keyword.
-        # Engraving records store the normalised directory name ("a_t__s_f__sign")
-        # not the real label ("A.T.&S.F. sign"), so path.parent.name is the match.
-        sil_path  = Path(str(rec.get("path", "")))
-        eng_label = sil_path.parent.name  # label directory = engraving record label
-        # Silhouette records carry no explicit object_id key (see
-        # illustration_browser._record_object_id) — their JSON sidecar's own
-        # filename stem IS the canonical object_id shared with any engraving
-        # generated from this exact silhouette.
-        object_id = sil_path.stem
-
-        # Clear grid + start loading animation immediately on tab switch.
-        self._browser_eng.clear_view()
-        self._browser_eng._loading_bar.start()
-        self._browser_eng._loading_timer.start()
-
-        def _navigate() -> None:
-            self._browser_eng._loading_timer.stop()
-            self._browser_eng._loading_bar.stop()
-            self._browser_eng.navigate_direct(
-                item      = filename_stem or None,
-                keyword   = eng_label or None,
-                object_id = object_id or None,
-            )
-
-        # Switch to Engravings tab (triggers _on_source_tab_changed).
-        self._side_scroll.setCurrentIndex(1)
-
-        already_loaded = self._browser_eng._index_status.get("status") == "ready"
-
-        if already_loaded:
-            QTimer.singleShot(150, _navigate)
+    def navigate_to_record(self, kind: str, identity: dict) -> None:
+        """Shared immediate transition for both exact-record directions."""
+        self._browser.interrupt_navigation()
+        self._navigation_switching = True
+        self.select_source_tab(kind)
+        self._navigation_switching = False
+        self._clear_meta()
+        if kind == "silhouettes":
+            self._set_silhouette_provenance_state(None, refresh=False)
         else:
-            # Target not cached yet — reload and navigate once the scan finishes.
-            def _after_reload() -> None:
-                try:
-                    self._browser_eng.catalogReloaded.disconnect(_after_reload)
-                except Exception:
-                    pass
-                QTimer.singleShot(150, _navigate)
+            self._eng_mode_combo.blockSignals(True)
+            self._eng_mode_combo.setCurrentIndex(0)
+            self._eng_mode_combo.blockSignals(False)
+            self._eng_source.set_mode_filter(None)
+        self._browser.navigate_to_record(identity)
 
-            self._browser_eng.catalogReloaded.connect(_after_reload)
-            self._browser_eng.reload()
+    def _cancel_relationship_lookup(self) -> None:
+        loader = self._relationship_loader
+        if loader is not None:
+            loader.cancel()
+            loader.finished.connect(loader.deleteLater)
+            self._relationship_loader = None
+
+    def shutdown_navigation(self) -> None:
+        """Retire browse workers before their owning window is destroyed."""
+        from visualizers.components.illustration_browser import _CatalogLoader, _KeywordLoader
+        from visualizers.components.thumbnail_loader import ThumbnailLoader
+        self._cancel_relationship_lookup()
+        owners = (self, self._browser_sil, self._browser_eng)
+        for browser in owners[1:]:
+            browser.interrupt_navigation()
+            browser._stop_catalog_loader(wait_ms=0)
+            browser._stop_keyword_loader()
+            browser._stop_loader()
+            browser._grid_population_timer.stop()
+            browser._resize_timer.stop()
+        for owner in owners:
+            for worker_type in (_CatalogLoader, _KeywordLoader, ThumbnailLoader):
+                for worker in owner.findChildren(worker_type):
+                    worker.cancel()
+                    worker.wait()
+
+    def _on_navigation_finished(self, error: str) -> None:
+        if error:
+            self._clear_meta()
+            self._meta_rows["label"].setText(error)
+
+    def _lookup_engravings(self, rec: dict) -> None:
+        from visualizers.components.illustration_browser import _CatalogLoader
+        from visualizers.components.illustration_source import record_identity
+        from services.engraving_paths import label_folder_for_source
+        identity = record_identity(rec, "silhouettes")
+        identity["label"] = label_folder_for_source(rec["path"], rec)
+        identity["relationship_only"] = True
+        if getattr(self, "_relationship_identity", None) == identity:
+            return
+        self._cancel_relationship_lookup()
+        self._relationship_identity = identity
+        self._engraving_choices = []
+        self._eng_viz_btn.setEnabled(False)
+        loader = _CatalogLoader(self._eng_source, identity["media_type"], parent=self)
+        loader.destination_identity = identity
+        loader.loaded.connect(self._on_relationships_loaded)
+        self._relationship_loader = loader
+        loader.start()
+
+    def _on_relationships_loaded(self) -> None:
+        loader = self.sender()
+        if loader is not self._relationship_loader or loader._cancelled:
+            return
+        self._relationship_loader = None
+        loader.finished.connect(loader.deleteLater)
+        self._engraving_choices = (loader.result_destination or {}).get("choices", [])
+        self._eng_viz_btn.setEnabled(bool(self._engraving_choices))
+        self._eng_viz_btn.setToolTip(loader.result_error)
+
+    def _choose_engraving(self, records: list) -> None:
+        from PyQt5.QtWidgets import QMenu
+        from visualizers.components.illustration_source import record_identity
+        menu = QMenu(self)
+        for record in records:
+            text = f"{record.get('mode', '')} / {record.get('generation_service', '')} / {record.get('object_id', '')}"
+            action = menu.addAction(text)
+            identity = record_identity(record, "engravings")
+            action.triggered.connect(lambda checked=False, target=identity: self.navigate_to_record("engravings", target))
+        self._engraving_menu = menu
+        menu.popup(self._eng_viz_btn.mapToGlobal(self._eng_viz_btn.rect().bottomLeft()))
 
     def _delete_engraving(self) -> None:
         """Delete the selected engraving's mode directory, then refresh the browser.
@@ -2273,6 +2293,7 @@ class IllustrationWindow(WindowVisualizer):
         else:
             panel_sizes = list(self._splitter.sizes())
         _prefs.set("window_illustration_panel_sizes", panel_sizes)
+        self._catalog.shutdown_navigation()
         self._ipc_server.stop()
         self._ipc_server.wait(1000)
         super().closeEvent(event)

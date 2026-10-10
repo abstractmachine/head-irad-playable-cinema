@@ -9655,6 +9655,34 @@ def cmd_silhouette_archive(args):
     if not project_path:
         raise SystemExit("A project is required: --project PATH")
     try:
+        action = getattr(args, 'archive_operation', 'plan')
+        if getattr(args, 'apply', False):
+            action = 'apply'
+        if action != 'plan':
+            from services import silhouette_archive_execute as executor
+            version = args.version
+            if action == 'initialize':
+                result = executor.initialize(project_path, version)
+            elif action == 'preflight':
+                result = executor.preflight(project_path, version)
+            elif action == 'pilot-select':
+                result = executor.select_pilot(project_path, version)
+            elif action == 'pilot-run':
+                result = executor.run_pilot(project_path, version)
+            elif action == 'protected-baseline':
+                result = executor.protected_baseline(project_path, version)
+            elif action == 'protected-verify':
+                result = executor.verify_protected(project_path, version)
+            elif action == 'population-verify':
+                result = executor.verify_population(project_path, version)
+            elif action == 'status':
+                result = executor.status(project_path, version)
+            elif action == 'prune':
+                result = executor.prune_empty(project_path, version)
+            else:
+                result = executor.execute(project_path, version, pilot=getattr(args, 'pilot', False), rollback=action == 'rollback', verify_only=action == 'verify')
+            print(json.dumps(result, default=str, indent=2))
+            return
         options = {}
         if getattr(args, "version", None) is not None:
             options["version"] = args.version
@@ -9695,7 +9723,10 @@ def build_parser():
 
     p_silhouette = sub.add_parser("silhouette", help="Read-only silhouette archival planning")
     silhouette_sub = p_silhouette.add_subparsers(dest="silhouette_subcommand", required=True)
-    p_archive = silhouette_sub.add_parser("archive", help="Plan superseded archival only; no files are moved")
+    p_archive = silhouette_sub.add_parser("archive", help="Plan or explicitly execute journaled superseded archival")
+    p_archive.add_argument('archive_operation', nargs='?', default='plan', choices=['plan','initialize','preflight','protected-baseline','protected-verify','population-verify','pilot-select','pilot-run','apply','resume','status','verify','rollback','prune'])
+    p_archive.add_argument('--apply', action='store_true', help='Execute an existing preflighted immutable plan; never create a plan')
+    p_archive.add_argument('--pilot', action='store_true', help='Restrict movement/verification/rollback to journal-selected pilot records')
     p_archive.add_argument("--project", default=None, metavar="PATH", help="Project path (default: current project)")
     p_archive.add_argument("--version", default=None, metavar="vNUMBER", help="New report version inside outputs/tests/silhouette-archive")
     p_archive.add_argument("--revalidate", action="store_true", help="Reuse retained authoritative evidence with fresh safety and dependency checks")

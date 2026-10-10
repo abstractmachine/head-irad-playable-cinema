@@ -27,13 +27,13 @@ def test_dependency_classes():
     assert eligibility(["shared_with_active", "active_dependency:engraving"]) == "C_shared_active_blocking"
 
 
-def _project(tmp_path, *, missing=None, shared=False, referenced=False, collision=False, count=1):
+def _project(tmp_path, *, missing=None, shared=False, referenced=False, collision=False, count=1, media_type='movie'):
     from services.silhouette_identity_census import create_tables, fingerprint, interpret_record
 
     project = tmp_path / "project"
     evidence = project / "outputs/tests/silhouette-identity-migration"
     evidence.mkdir(parents=True)
-    catalog = project / "data/silhouettes/catalog/movie/Film/coat"
+    catalog = project / f"data/silhouettes/catalog/{media_type}/Film/coat"
     catalog.mkdir(parents=True)
     database = sqlite3.connect(evidence / "census.sqlite3")
     create_tables(database)
@@ -41,7 +41,7 @@ def _project(tmp_path, *, missing=None, shared=False, referenced=False, collisio
         png = catalog / f"object_{number:04d}.png"
         metadata_path = png.with_suffix(".json")
         png.write_bytes(b"mask")
-        metadata = {"media_type": "movie", "filename_stem": "Film", "media_id": "tmdb_1", "shot_id": "tmdb_1@f000001-f000002", "frame": 1, "field": "wearing", "label": "coat", "png": "object_0001.png" if shared and state == "active" else png.name, "assignment": {"state": state}}
+        metadata = {"media_type": media_type, "filename_stem": "Film", "media_id": "tmdb_1", "shot_id": "tmdb_1@f000001-f000002", "frame": 1, "field": "wearing", "label": "coat", "png": "object_0001.png" if shared and state == "active" else png.name, "assignment": {"state": state}}
         metadata_path.write_text(json.dumps(metadata))
         relative = metadata_path.relative_to(project).as_posix()
         record = interpret_record(relative, metadata)
@@ -126,8 +126,12 @@ def test_cli_dry_run_only_uses_service(monkeypatch, tmp_path):
     args = parser.parse_args(["silhouette", "archive", "--project", str(tmp_path)])
     args.func(args)
     assert calls == [str(tmp_path)]
-    with pytest.raises(SystemExit):
-        parser.parse_args(["silhouette", "archive", "--apply"])
+    lock = tmp_path / "data/silhouettes/.catalog-extraction.lock"
+    lock.parent.mkdir(parents=True)
+    lock.touch()
+    execution = parser.parse_args(["silhouette", "archive", "--apply", "--project", str(tmp_path), "--version", "v3-missing"])
+    with pytest.raises(SystemExit, match="journal"):
+        execution.func(execution)
 
 
 def test_resolvable_lineage_and_historical_index_self_reference_do_not_block(tmp_path):
