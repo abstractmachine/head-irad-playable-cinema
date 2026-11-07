@@ -9146,13 +9146,50 @@ def _backup_update(project_path: str, backup_path: str, dry_run: bool = False) -
 
 
 def cmd_backup(args):
-    sub = args.backup_subcommand
-    if sub == "update":
-        project_path, backup_path = _validate_backup_paths()
-        dry_run = getattr(args, "dry_run", False)
-        print(f"Backing up project to: {backup_path}")
-        _backup_update(project_path, backup_path, dry_run=dry_run)
-    elif sub == "status":
+    sub = args.backup_subcommand or "update"
+    if sub in ("update", "mirror", "adopt", "verify"):
+        import sqlite3
+        from services import backup_mirror
+        if sub == "verify" and getattr(args, "offline", False):
+            try:
+                if not args.destination:
+                    raise backup_mirror.MirrorError("Offline verification requires the existing --destination")
+                print(json.dumps(backup_mirror.verify_stored_mirror(args.destination), indent=2))
+            except (backup_mirror.MirrorError, OSError, ValueError, sqlite3.Error) as error:
+                print(f"Backup mirror verification stopped: {error}", file=sys.stderr)
+                sys.exit(1)
+            return
+        project = getattr(args, "project", None) or prefs.get("path")
+        if not project:
+            print("No project configured", file=sys.stderr)
+            sys.exit(1)
+        try:
+            project = str(Path(project).resolve(strict=True))
+            configuration = json.loads((Path(project) / "preferences/preferences.json").read_text())
+            configured = configuration.get("backup_path")
+            if sub == "adopt":
+                if not args.apply:
+                    print("Adoption requires --apply, --plan and --approve-plan after human review")
+                    return
+                if not args.plan or not args.approve_plan:
+                    raise backup_mirror.MirrorError("Adoption requires a reviewed --plan and --approve-plan digest")
+                limits = {"max_files": args.max_delete_files, "max_bytes": args.max_delete_bytes,
+                          "max_percentage": args.max_delete_percentage}
+                result = backup_mirror.adopt_mirror(project, configured, args.plan, args.approve_plan, limits=limits)
+            elif sub == "verify":
+                result = backup_mirror.restore_verification(project, configured, args.plan, full=args.full)
+            elif getattr(args, "apply", False) and not getattr(args, "dry_run", False):
+                if not args.plan:
+                    raise backup_mirror.MirrorError("Apply requires a reviewed --plan")
+                result = backup_mirror.apply_mirror(project, configured, args.plan, approval=args.approve_plan)
+            else:
+                result = backup_mirror.publish_preview(project, configured, checksums=getattr(args, "checksum", False))
+            print(json.dumps(result, indent=2))
+        except (backup_mirror.MirrorError, OSError, ValueError, sqlite3.Error) as error:
+            print(f"Backup mirror stopped: {error}", file=sys.stderr)
+            sys.exit(1)
+        return
+    if sub == "status":
         cmd_backup_status(args)
     elif sub == "path":
         if args.folder is None:
@@ -12112,18 +12149,31 @@ def build_parser():
     # backup command group
     p_backup = sub.add_parser("backup", help="Synchronize project folder to an external backup drive")
     p_backup.set_defaults(func=cmd_backup)
-    backup_sub = p_backup.add_subparsers(dest="backup_subcommand", required=True)
+    _add_dry_run_arg(p_backup, help="Preview guarded mirror synchronization; never apply changes")
+    backup_sub = p_backup.add_subparsers(dest="backup_subcommand", required=False)
 
-    p_backup_update = backup_sub.add_parser(
-        "update",
-        help="Sync project folder contents into backup folder (uses rsync when available)",
-    )
-    p_backup_update.set_defaults(func=cmd_backup)
-    _add_dry_run_arg(p_backup_update, help="Show what would be transferred without copying any files")
-    p_backup_update.add_argument(
-        "--mirror", dest="mirror", action="store_true",
-        help="(reserved — not yet implemented)",
-    )
+    for name in ("update", "mirror", "adopt", "verify"):
+        p_backup_mode = backup_sub.add_parser(name, help=f"Verified mirror {name} (preview by default)")
+        p_backup_mode.set_defaults(func=cmd_backup)
+        p_backup_mode.add_argument("--project", help="Explicit existing source project; does not change preferences")
+        p_backup_mode.add_argument("--plan", help="Immutable reconciliation SQLite plan")
+        if name == "verify":
+            p_backup_mode.add_argument("--full", action="store_true", help="Verify all content against retained plan")
+            p_backup_mode.add_argument("--offline", action="store_true", help="Verify retained mirror without the primary project")
+            p_backup_mode.add_argument("--destination", help="Existing mounted mirror for offline verification")
+        else:
+            p_backup_mode.add_argument("--apply", action="store_true", help="Explicitly execute reviewed adoption/synchronization")
+            p_backup_mode.add_argument("--approve-plan", help="Exact reviewed plan SHA256; required for adoption/first deletion")
+        if name in ("update", "mirror"):
+            p_backup_mode.add_argument("--dry-run", action="store_true", default=argparse.SUPPRESS,
+                                       help="Preview only, even when --apply is also supplied")
+            p_backup_mode.add_argument("--checksum", action="store_true", help="Hash all files in preview (may take hours)")
+        if name == "update":
+            p_backup_mode.add_argument("--mirror", action="store_true", help="Compatibility flag; guarded mirror is already the default")
+        if name == "adopt":
+            p_backup_mode.add_argument("--max-delete-files", type=int, default=0)
+            p_backup_mode.add_argument("--max-delete-bytes", type=int, default=0)
+            p_backup_mode.add_argument("--max-delete-percentage", type=float, default=0.0)
 
     p_backup_status = backup_sub.add_parser(
         "status",

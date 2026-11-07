@@ -1,5 +1,107 @@
 # Commands
 
+## Backup
+
+`crossing backup update` uses the guarded mirror service by default, not additive
+copying. Bare `crossing backup` is a mirror preview alias. Execution remains
+explicit with `--apply` and a reviewed plan; `--dry-run` always prevents apply.
+`crossing backup path [folder]` and `backup status` retain their existing behavior.
+
+```bash
+crossing backup                           # guarded mirror preview, no implicit apply
+crossing backup update --dry-run          # normal backup command now uses mirror planning
+crossing backup update --project /path/to/project --dry-run
+crossing backup mirror                    # read-only external-disk reconciliation preview
+crossing backup mirror --project /path/to/project
+crossing backup mirror --checksum         # optional full content comparison; potentially hours
+crossing backup verify                   # non-destructive identity/census/restore readiness
+```
+
+Preview resolves the mounted PLAYABLE disk via `findmnt`, verifies its UUID/label,
+and uses the existing `backups/<project>/` directory. It never creates an internal
+fallback, changes preferences, writes a marker or applies deletions. Reports and
+queryable SQLite plans live in `outputs/maintenance/backup-mirror/`.
+
+For an existing destination, approve the exact plan SHA256 before destructive
+reconciliation. Alternatively, explicitly approve clearing a precisely identified
+old backup directory and initializing a fresh mirror from the authoritative source.
+Accepting loss of backup-only files is not permission to erase sibling directories
+or format their filesystem. Clearing a destination is not performed by the normal
+backup command or by preview. The following are **separate explicit operations**:
+
+```bash
+crossing backup adopt --plan <plan.sqlite3> --approve-plan <sha256> --apply
+crossing backup update --plan <plan.sqlite3> --approve-plan <sha256> --apply
+crossing backup verify --plan <plan.sqlite3> --full
+crossing backup verify --offline --destination <mounted-backups/project>
+```
+
+Offline verification uses the mirror marker's last-verified metadata-plan digest
+and sealed checksum journal without requiring the primary project to survive.
+It verifies every stored payload, SQLite integrity and comparable path population.
+It verifies the historical completed snapshot, not equality with today's mutable
+source files. Destination inotify monitoring stays active through the checksum,
+SQLite and directory/population checks; insufficient watch capacity blocks this
+verification rather than weakening it. Original sealed evidence is never refreshed
+to accept source drift. Normal apply/replanning requirements remain unchanged.
+
+Adoption pins source/project/device/policy in `.crossing-mirror.json`. Default
+deletion limits are zero because no verified legacy baseline exists; configure
+`--max-delete-files`, `--max-delete-bytes`, `--max-delete-percentage` explicitly
+during reviewed adoption. Threshold excess, source-population loss and first
+reconciliation require a fresh exact-plan approval; no automatic override exists.
+Missing expected source roots and wrong device/marker identities always block apply.
+
+The inherited scope includes the entire project root, including `archive/`,
+`models/`, media and outputs, but skips symlink traversal as legacy `--no-links`
+does. The live maintenance reports and mirror-only control names are documented
+control exceptions; adoption approves these exceptions. Excluded destination
+subtrees are preserved, never implicitly deleted. External code/documentation
+outside the project root require a separate repository backup.
+
+Copy-first synchronization verifies SHA256 and SQLite integrity before deleting
+obsolete files. Source must be quiescent; live WAL/nonempty sidecars are rejected,
+not silently omitted. Interrupted transfers resume the same plan with fresh
+verification and durable intent/completion journal states. Do not delete staging
+or journal evidence to force a resume. Source changes require replanning/review.
+Full content verification may take hours. Metadata-only previews label matching
+files UNKNOWN rather than claiming they are verified copies.
+
+Source change monitoring requires one Linux inotify watch per included source
+directory plus the root. If available watch capacity is insufficient, apply stops;
+never disable monitoring to force a large backup. Resolve resource limits and
+copy-first space requirements before clearing an existing backup. Space estimates
+must account for exFAT allocation-unit rounding and directory/control overhead,
+not just source apparent bytes.
+
+Post-clear sibling verification has one narrow exFAT exception: inode-number
+differences alone are allowed for the mount-root `.Spotlight-V100` and `.fseventsd`
+directories. Both must remain directories with matching device, mode, size and
+recorded timestamps, and every journaled deletion must remain under the exact
+approved backup target. Other filesystems and user-data siblings such as `work/`
+retain all recorded identity checks. Available baseline content hashes are checked;
+directory metadata and deletion-journal confinement do not prove recursive content
+preservation. Missing pre-clear content evidence must be reported, not invented.
+A completed clear is resumed through verification only, never by repeating deletion.
+Device, partition, mountpoint, target-root and descriptor-relative deletion checks
+are not relaxed by this exception.
+
+Stage 6 can explicitly opt into remount-safe, full read-only restoration validation.
+It pins disk serial/model/size, partition UUID/size, filesystem UUID, mountpoint and
+exact backup path; verifies the completed marker, metadata plan and sealed checksum
+journal; and anchors a no-follow directory descriptor through verification. Only a
+historical exFAT backup-root inode difference is permitted. The current target must
+remain stable during the run, and hardware, marker and seals are rechecked before
+success. This option is not available to adoption, synchronization or deletion;
+their reviewed inode and descriptor-relative safeguards remain strict. Passing the
+identity/seal preflight alone is not a full payload or offline restoration pass.
+
+exFAT cannot preserve Linux ownership, modes, executable bits, hardlinks or
+symlinks. Retained metadata plans record these for a separately verified Linux
+restore; ACLs/xattrs need another approved preservation mechanism. See generated
+`restore-verification.md` before claiming a complete filesystem backup. No restore
+into production, disk reformatting, media-first migration or cleanup is implied.
+
 ## Tool Setup
 
 ```bash

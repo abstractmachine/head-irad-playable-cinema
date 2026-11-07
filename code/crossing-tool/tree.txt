@@ -1,0 +1,2214 @@
+.
+├── scenes
+├── shots
+│   ├── gameplay
+│   │   ├── game_rdr2_ce5e0bba - rdr2 full no hud no commentary.annotations.json
+│   │   ├── game_rdr2_ce5e0bba - rdr2 full no hud no commentary.annotations.manifest.json
+│   │   ├── game_rdr2_ce5e0bba - rdr2 full no hud no commentary.annotations.npy
+│   │   ├── game_rdr2_ce5e0bba - rdr2 full no hud no commentary.annotations.txt
+│   │   ├── game_rdr2_ce5e0bba - rdr2 full no hud no commentary.frames.manifest.json
+│   │   ├── game_rdr2_ce5e0bba - rdr2 full no hud no commentary.frames.npy
+│   │   ├── game_rdr2_ce5e0bba - rdr2 full no hud no commentary.frames.valid.npy
+│   │   └── game_rdr2_ce5e0bba - rdr2 full no hud no commentary.log
+│   └── movie
+│       ├── 10 000 Dollari Per Un Massacro (1967) {tmdb-95864}.annotations.json
+│       ├── 10 000 Dollari Per Un Massacro (1967) {tmdb-95864}.annotations.manifest.json
+│       ├── 10 000 Dollari Per Un Massacro (1967) {tmdb-95864}.annotations.npy
+│       ├── 10 000 Dollari Per Un Massacro (1967) {tmdb-95864}.annotations.txt
+│       ├── 10 000 Dollari Per Un Massacro (1967) {tmdb-95864}.frames.manifest.json
+│       ├── 10 000 Dollari Per Un Massacro (1967) {tmdb-95864}.frames.npy
+│       ├── 10 000 Dollari Per Un Massacro (1967) {tmdb-95864}.frames.valid.npy
+│       ├── 3 10 To Yuma (1957) {tmdb-14168}.annotations.json
+│       ├── 3 10 To Yuma (1957) {tmdb-14168}.annotations.manifest.json
+│       ├── 3 10 To Yuma (1957) {tmdb-14168}.annotations.npy
+│       ├── 3 10 To Yuma (1957) {tmdb-14168}.annotations.txt
+│       ├── 3 10 To Yuma (1957) {tmdb-14168}.frames.manifest.json
+│       ├── 3 10 To Yuma (1957) {tmdb-14168}.frames.npy
+│       ├── 3 10 To Yuma (1957) {tmdb-14168}.frames.valid.npy
+│       ├── 3 Bad Men (1926) {tmdb-32716}.annotations.json
+│       ├── 3 Bad Men (1926) {tmdb-32716}.annotations.manifest.json
+│       ├── 3 Bad Men (1926) {tmdb-32716}.annotations.npy
+│       ├── 3 Bad Men (1926) {tmdb-32716}.annotations.txt
+│       ├── 3 Bad Men (1926) {tmdb-32716}.frames.manifest.json
+│       ├── 3 Bad Men (1926) {tmdb-32716}.frames.npy
+│       ├── 3 Bad Men (1926) {tmdb-32716}.frames.valid.npy
+│       ├── 3 Godfathers (1948) {tmdb-29244}.annotations.json
+│       ├── 3 Godfathers (1948) {tmdb-29244}.annotations.manifest.json
+│       ├── 3 Godfathers (1948) {tmdb-29244}.annotations.npy
+│       ├── 3 Godfathers (1948) {tmdb-29244}.annotations.txt
+│       ├── 3 Godfathers (1948) {tmdb-29244}.frames.manifest.json
+│       ├── 3 Godfathers (1948) {tmdb-29244}.frames.npy
+│       ├── 3 Godfathers (1948) {tmdb-29244}.frames.valid.npy
+│       ├── 7 Men From Now (1956) {tmdb-26502}.annotations.json
+│       ├── 7 Men From Now (1956) {tmdb-26502}.annotations.manifest.json
+│       ├── 7 Men From Now (1956) {tmdb-26502}.annotations.npy
+│       ├── 7 Men From Now (1956) {tmdb-26502}.annotations.txt
+│       ├── 7 Men From Now (1956) {tmdb-26502}.frames.manifest.json
+│       ├── 7 Men From Now (1956) {tmdb-26502}.frames.npy
+│       ├── 7 Men From Now (1956) {tmdb-26502}.frames.valid.npy
+│       ├── 7Th Cavalry (1956) {tmdb-043254}.annotations.json
+│       ├── 7Th Cavalry (1956) {tmdb-043254}.annotations.manifest.json
+│       ├── 7Th Cavalry (1956) {tmdb-043254}.annotations.npy
+│       ├── 7Th Cavalry (1956) {tmdb-043254}.annotations.txt
+│       ├── 7Th Cavalry (1956) {tmdb-043254}.frames.manifest.json
+│       ├── 7Th Cavalry (1956) {tmdb-043254}.frames.npy
+│       ├── 7Th Cavalry (1956) {tmdb-043254}.frames.valid.npy
+│       ├── A Bullet Is Waiting (1954) {tmdb-44867}.annotations.json
+│       ├── A Bullet Is Waiting (1954) {tmdb-44867}.annotations.manifest.json
+│       ├── A Bullet Is Waiting (1954) {tmdb-44867}.annotations.npy
+│       ├── A Bullet Is Waiting (1954) {tmdb-44867}.annotations.txt
+│       ├── A Bullet Is Waiting (1954) {tmdb-44867}.frames.manifest.json
+│       ├── A Bullet Is Waiting (1954) {tmdb-44867}.frames.npy
+│       ├── A Bullet Is Waiting (1954) {tmdb-44867}.frames.valid.npy
+│       ├── Adios Companeros (1971) {tmdb-150226}.annotations.json
+│       ├── Adios Companeros (1971) {tmdb-150226}.annotations.manifest.json
+│       ├── Adios Companeros (1971) {tmdb-150226}.annotations.npy
+│       ├── Adios Companeros (1971) {tmdb-150226}.annotations.txt
+│       ├── Adios Companeros (1971) {tmdb-150226}.frames.manifest.json
+│       ├── Adios Companeros (1971) {tmdb-150226}.frames.npy
+│       ├── Adios Companeros (1971) {tmdb-150226}.frames.valid.npy
+│       ├── A Fistful Of Dollars (1964) {tmdb-391}.annotations.json
+│       ├── A Fistful Of Dollars (1964) {tmdb-391}.annotations.manifest.json
+│       ├── A Fistful Of Dollars (1964) {tmdb-391}.annotations.npy
+│       ├── A Fistful Of Dollars (1964) {tmdb-391}.annotations.txt
+│       ├── A Fistful Of Dollars (1964) {tmdb-391}.frames.manifest.json
+│       ├── A Fistful Of Dollars (1964) {tmdb-391}.frames.npy
+│       ├── A Fistful Of Dollars (1964) {tmdb-391}.frames.valid.npy
+│       ├── A Man Called Gannon (1968) {tmdb-219302}.annotations.json
+│       ├── A Man Called Gannon (1968) {tmdb-219302}.annotations.manifest.json
+│       ├── A Man Called Gannon (1968) {tmdb-219302}.annotations.npy
+│       ├── A Man Called Gannon (1968) {tmdb-219302}.annotations.txt
+│       ├── A Man Called Gannon (1968) {tmdb-219302}.frames.manifest.json
+│       ├── A Man Called Gannon (1968) {tmdb-219302}.frames.npy
+│       ├── A Man Called Gannon (1968) {tmdb-219302}.frames.valid.npy
+│       ├── A Million Ways To Die In The West (2014) {tmdb-188161}.annotations.json
+│       ├── A Million Ways To Die In The West (2014) {tmdb-188161}.annotations.manifest.json
+│       ├── A Million Ways To Die In The West (2014) {tmdb-188161}.annotations.npy
+│       ├── A Million Ways To Die In The West (2014) {tmdb-188161}.annotations.txt
+│       ├── A Million Ways To Die In The West (2014) {tmdb-188161}.frames.manifest.json
+│       ├── A Million Ways To Die In The West (2014) {tmdb-188161}.frames.npy
+│       ├── A Million Ways To Die In The West (2014) {tmdb-188161}.frames.valid.npy
+│       ├── An Eastern Westerner (1920) {tmdb-40575}.annotations.json
+│       ├── An Eastern Westerner (1920) {tmdb-40575}.annotations.manifest.json
+│       ├── An Eastern Westerner (1920) {tmdb-40575}.annotations.npy
+│       ├── An Eastern Westerner (1920) {tmdb-40575}.annotations.txt
+│       ├── An Eastern Westerner (1920) {tmdb-40575}.frames.manifest.json
+│       ├── An Eastern Westerner (1920) {tmdb-40575}.frames.npy
+│       ├── An Eastern Westerner (1920) {tmdb-40575}.frames.valid.npy
+│       ├── Annie Get Your Gun (1950) {tmdb-25209}.annotations.json
+│       ├── Annie Get Your Gun (1950) {tmdb-25209}.annotations.manifest.json
+│       ├── Annie Get Your Gun (1950) {tmdb-25209}.annotations.npy
+│       ├── Annie Get Your Gun (1950) {tmdb-25209}.annotations.txt
+│       ├── Annie Get Your Gun (1950) {tmdb-25209}.frames.manifest.json
+│       ├── Annie Get Your Gun (1950) {tmdb-25209}.frames.npy
+│       ├── Annie Get Your Gun (1950) {tmdb-25209}.frames.valid.npy
+│       ├── Annie Oakley (1935) {tmdb-43887}.annotations.json
+│       ├── Annie Oakley (1935) {tmdb-43887}.annotations.manifest.json
+│       ├── Annie Oakley (1935) {tmdb-43887}.annotations.npy
+│       ├── Annie Oakley (1935) {tmdb-43887}.annotations.txt
+│       ├── Annie Oakley (1935) {tmdb-43887}.frames.manifest.json
+│       ├── Annie Oakley (1935) {tmdb-43887}.frames.npy
+│       ├── Annie Oakley (1935) {tmdb-43887}.frames.valid.npy
+│       ├── Appaloosa (2008) {tmdb-12690}.annotations.json
+│       ├── Appaloosa (2008) {tmdb-12690}.annotations.manifest.json
+│       ├── Appaloosa (2008) {tmdb-12690}.annotations.npy
+│       ├── Appaloosa (2008) {tmdb-12690}.annotations.txt
+│       ├── Appaloosa (2008) {tmdb-12690}.frames.manifest.json
+│       ├── Appaloosa (2008) {tmdb-12690}.frames.npy
+│       ├── Appaloosa (2008) {tmdb-12690}.frames.valid.npy
+│       ├── A Reason To Live A Reason To Die (1972) {tmdb-061237}.annotations.json
+│       ├── A Reason To Live A Reason To Die (1972) {tmdb-061237}.annotations.manifest.json
+│       ├── A Reason To Live A Reason To Die (1972) {tmdb-061237}.annotations.npy
+│       ├── A Reason To Live A Reason To Die (1972) {tmdb-061237}.annotations.txt
+│       ├── A Reason To Live A Reason To Die (1972) {tmdb-061237}.frames.manifest.json
+│       ├── A Reason To Live A Reason To Die (1972) {tmdb-061237}.frames.npy
+│       ├── A Reason To Live A Reason To Die (1972) {tmdb-061237}.frames.valid.npy
+│       ├── Bad Company (1972) {tmdb-031591}.annotations.json
+│       ├── Bad Company (1972) {tmdb-031591}.annotations.manifest.json
+│       ├── Bad Company (1972) {tmdb-031591}.annotations.npy
+│       ├── Bad Company (1972) {tmdb-031591}.annotations.txt
+│       ├── Bad Company (1972) {tmdb-031591}.frames.manifest.json
+│       ├── Bad Company (1972) {tmdb-031591}.frames.npy
+│       ├── Bad Company (1972) {tmdb-031591}.frames.valid.npy
+│       ├── Bad Day At Black Rock (1955) {tmdb-14554}.annotations.json
+│       ├── Bad Day At Black Rock (1955) {tmdb-14554}.annotations.manifest.json
+│       ├── Bad Day At Black Rock (1955) {tmdb-14554}.annotations.npy
+│       ├── Bad Day At Black Rock (1955) {tmdb-14554}.annotations.txt
+│       ├── Bad Day At Black Rock (1955) {tmdb-14554}.frames.manifest.json
+│       ├── Bad Day At Black Rock (1955) {tmdb-14554}.frames.npy
+│       ├── Bad Day At Black Rock (1955) {tmdb-14554}.frames.valid.npy
+│       ├── Bad Mans River (1970) {tmdb-79683}.annotations.json
+│       ├── Bad Mans River (1970) {tmdb-79683}.annotations.manifest.json
+│       ├── Bad Mans River (1970) {tmdb-79683}.annotations.npy
+│       ├── Bad Mans River (1970) {tmdb-79683}.annotations.txt
+│       ├── Bad Mans River (1970) {tmdb-79683}.frames.manifest.json
+│       ├── Bad Mans River (1970) {tmdb-79683}.frames.npy
+│       ├── Bad Mans River (1970) {tmdb-79683}.frames.valid.npy
+│       ├── Bad Men Of The West (1974) {tmdb-137458}.annotations.json
+│       ├── Bad Men Of The West (1974) {tmdb-137458}.annotations.manifest.json
+│       ├── Bad Men Of The West (1974) {tmdb-137458}.annotations.npy
+│       ├── Bad Men Of The West (1974) {tmdb-137458}.annotations.txt
+│       ├── Bad Men Of The West (1974) {tmdb-137458}.frames.manifest.json
+│       ├── Bad Men Of The West (1974) {tmdb-137458}.frames.npy
+│       ├── Bad Men Of The West (1974) {tmdb-137458}.frames.valid.npy
+│       ├── Bandolero! (1968) {tmdb-41857}.annotations.json
+│       ├── Bandolero! (1968) {tmdb-41857}.annotations.manifest.json
+│       ├── Bandolero! (1968) {tmdb-41857}.annotations.npy
+│       ├── Bandolero! (1968) {tmdb-41857}.annotations.txt
+│       ├── Bandolero! (1968) {tmdb-41857}.frames.manifest.json
+│       ├── Bandolero! (1968) {tmdb-41857}.frames.npy
+│       ├── Bandolero! (1968) {tmdb-41857}.frames.valid.npy
+│       ├── Belle Starr (1941) {tmdb-072473}.annotations.json
+│       ├── Belle Starr (1941) {tmdb-072473}.annotations.manifest.json
+│       ├── Belle Starr (1941) {tmdb-072473}.annotations.npy
+│       ├── Belle Starr (1941) {tmdb-072473}.annotations.txt
+│       ├── Belle Starr (1941) {tmdb-072473}.frames.manifest.json
+│       ├── Belle Starr (1941) {tmdb-072473}.frames.npy
+│       ├── Belle Starr (1941) {tmdb-072473}.frames.valid.npy
+│       ├── Ben And Charlie (1972) {tmdb-003698}.annotations.json
+│       ├── Ben And Charlie (1972) {tmdb-003698}.annotations.manifest.json
+│       ├── Ben And Charlie (1972) {tmdb-003698}.annotations.npy
+│       ├── Ben And Charlie (1972) {tmdb-003698}.annotations.txt
+│       ├── Ben And Charlie (1972) {tmdb-003698}.frames.manifest.json
+│       ├── Ben And Charlie (1972) {tmdb-003698}.frames.npy
+│       ├── Ben And Charlie (1972) {tmdb-003698}.frames.valid.npy
+│       ├── Beyond The Law (1969) {tmdb-12758}.annotations.json
+│       ├── Beyond The Law (1969) {tmdb-12758}.annotations.manifest.json
+│       ├── Beyond The Law (1969) {tmdb-12758}.annotations.npy
+│       ├── Beyond The Law (1969) {tmdb-12758}.annotations.txt
+│       ├── Beyond The Law (1969) {tmdb-12758}.frames.manifest.json
+│       ├── Beyond The Law (1969) {tmdb-12758}.frames.npy
+│       ├── Beyond The Law (1969) {tmdb-12758}.frames.valid.npy
+│       ├── Big Jake (1971) {tmdb-21717}.annotations.json
+│       ├── Big Jake (1971) {tmdb-21717}.annotations.manifest.json
+│       ├── Big Jake (1971) {tmdb-21717}.annotations.npy
+│       ├── Big Jake (1971) {tmdb-21717}.annotations.txt
+│       ├── Big Jake (1971) {tmdb-21717}.frames.manifest.json
+│       ├── Big Jake (1971) {tmdb-21717}.frames.npy
+│       ├── Big Jake (1971) {tmdb-21717}.frames.valid.npy
+│       ├── Billy The Kid Versus Dracula (1966) {tmdb-056165}.annotations.json
+│       ├── Billy The Kid Versus Dracula (1966) {tmdb-056165}.annotations.manifest.json
+│       ├── Billy The Kid Versus Dracula (1966) {tmdb-056165}.annotations.npy
+│       ├── Billy The Kid Versus Dracula (1966) {tmdb-056165}.annotations.txt
+│       ├── Billy The Kid Versus Dracula (1966) {tmdb-056165}.frames.manifest.json
+│       ├── Billy The Kid Versus Dracula (1966) {tmdb-056165}.frames.npy
+│       ├── Billy The Kid Versus Dracula (1966) {tmdb-056165}.frames.valid.npy
+│       ├── Blazing Saddles (1974) {tmdb-11072}.annotations.json
+│       ├── Blazing Saddles (1974) {tmdb-11072}.annotations.manifest.json
+│       ├── Blazing Saddles (1974) {tmdb-11072}.annotations.npy
+│       ├── Blazing Saddles (1974) {tmdb-11072}.annotations.txt
+│       ├── Blazing Saddles (1974) {tmdb-11072}.frames.manifest.json
+│       ├── Blazing Saddles (1974) {tmdb-11072}.frames.npy
+│       ├── Blazing Saddles (1974) {tmdb-11072}.frames.valid.npy
+│       ├── Blood On The Moon (1948) {tmdb-29966}.annotations.json
+│       ├── Blood On The Moon (1948) {tmdb-29966}.annotations.manifest.json
+│       ├── Blood On The Moon (1948) {tmdb-29966}.annotations.npy
+│       ├── Blood On The Moon (1948) {tmdb-29966}.annotations.txt
+│       ├── Blood On The Moon (1948) {tmdb-29966}.frames.manifest.json
+│       ├── Blood On The Moon (1948) {tmdb-29966}.frames.npy
+│       ├── Blood On The Moon (1948) {tmdb-29966}.frames.valid.npy
+│       ├── Blood Red (1989) {tmdb-135643}.annotations.json
+│       ├── Blood Red (1989) {tmdb-135643}.annotations.manifest.json
+│       ├── Blood Red (1989) {tmdb-135643}.annotations.npy
+│       ├── Blood Red (1989) {tmdb-135643}.annotations.txt
+│       ├── Blood Red (1989) {tmdb-135643}.frames.manifest.json
+│       ├── Blood Red (1989) {tmdb-135643}.frames.npy
+│       ├── Blood Red (1989) {tmdb-135643}.frames.valid.npy
+│       ├── Blue Steel (1934) {tmdb-053828}.annotations.json
+│       ├── Blue Steel (1934) {tmdb-053828}.annotations.manifest.json
+│       ├── Blue Steel (1934) {tmdb-053828}.annotations.npy
+│       ├── Blue Steel (1934) {tmdb-053828}.annotations.txt
+│       ├── Blue Steel (1934) {tmdb-053828}.frames.manifest.json
+│       ├── Blue Steel (1934) {tmdb-053828}.frames.npy
+│       ├── Blue Steel (1934) {tmdb-053828}.frames.valid.npy
+│       ├── Boot Hill (1969) {tmdb-12529}.annotations.json
+│       ├── Boot Hill (1969) {tmdb-12529}.annotations.manifest.json
+│       ├── Boot Hill (1969) {tmdb-12529}.annotations.npy
+│       ├── Boot Hill (1969) {tmdb-12529}.annotations.txt
+│       ├── Boot Hill (1969) {tmdb-12529}.frames.manifest.json
+│       ├── Boot Hill (1969) {tmdb-12529}.frames.npy
+│       ├── Boot Hill (1969) {tmdb-12529}.frames.valid.npy
+│       ├── Boss (1975) {tmdb-26905}.annotations.json
+│       ├── Boss (1975) {tmdb-26905}.annotations.manifest.json
+│       ├── Boss (1975) {tmdb-26905}.annotations.npy
+│       ├── Boss (1975) {tmdb-26905}.annotations.txt
+│       ├── Boss (1975) {tmdb-26905}.frames.manifest.json
+│       ├── Boss (1975) {tmdb-26905}.frames.npy
+│       ├── Boss (1975) {tmdb-26905}.frames.valid.npy
+│       ├── Breakheart Pass (1975) {tmdb-8043}.annotations.json
+│       ├── Breakheart Pass (1975) {tmdb-8043}.annotations.manifest.json
+│       ├── Breakheart Pass (1975) {tmdb-8043}.annotations.npy
+│       ├── Breakheart Pass (1975) {tmdb-8043}.annotations.txt
+│       ├── Breakheart Pass (1975) {tmdb-8043}.frames.manifest.json
+│       ├── Breakheart Pass (1975) {tmdb-8043}.frames.npy
+│       ├── Breakheart Pass (1975) {tmdb-8043}.frames.valid.npy
+│       ├── Bring Me The Head Of Alfredo Garcia (1974) {tmdb-11942}.annotations.json
+│       ├── Bring Me The Head Of Alfredo Garcia (1974) {tmdb-11942}.annotations.manifest.json
+│       ├── Bring Me The Head Of Alfredo Garcia (1974) {tmdb-11942}.annotations.npy
+│       ├── Bring Me The Head Of Alfredo Garcia (1974) {tmdb-11942}.annotations.txt
+│       ├── Bring Me The Head Of Alfredo Garcia (1974) {tmdb-11942}.frames.manifest.json
+│       ├── Bring Me The Head Of Alfredo Garcia (1974) {tmdb-11942}.frames.npy
+│       ├── Bring Me The Head Of Alfredo Garcia (1974) {tmdb-11942}.frames.valid.npy
+│       ├── Brokeback Mountain (2005) {tmdb-142}.annotations.json
+│       ├── Brokeback Mountain (2005) {tmdb-142}.annotations.manifest.json
+│       ├── Brokeback Mountain (2005) {tmdb-142}.annotations.npy
+│       ├── Brokeback Mountain (2005) {tmdb-142}.annotations.txt
+│       ├── Brokeback Mountain (2005) {tmdb-142}.frames.manifest.json
+│       ├── Brokeback Mountain (2005) {tmdb-142}.frames.npy
+│       ├── Brokeback Mountain (2005) {tmdb-142}.frames.valid.npy
+│       ├── Broken Arrow (1950) {tmdb-37292}.annotations.json
+│       ├── Broken Arrow (1950) {tmdb-37292}.annotations.manifest.json
+│       ├── Broken Arrow (1950) {tmdb-37292}.annotations.npy
+│       ├── Broken Arrow (1950) {tmdb-37292}.annotations.txt
+│       ├── Broken Arrow (1950) {tmdb-37292}.frames.manifest.json
+│       ├── Broken Arrow (1950) {tmdb-37292}.frames.npy
+│       ├── Broken Arrow (1950) {tmdb-37292}.frames.valid.npy
+│       ├── Broken Lance (1954) {tmdb-42328}.annotations.json
+│       ├── Broken Lance (1954) {tmdb-42328}.annotations.manifest.json
+│       ├── Broken Lance (1954) {tmdb-42328}.annotations.npy
+│       ├── Broken Lance (1954) {tmdb-42328}.annotations.txt
+│       ├── Broken Lance (1954) {tmdb-42328}.frames.manifest.json
+│       ├── Broken Lance (1954) {tmdb-42328}.frames.npy
+│       ├── Broken Lance (1954) {tmdb-42328}.frames.valid.npy
+│       ├── Buck And The Preacher (1972) {tmdb-26928}.annotations.json
+│       ├── Buck And The Preacher (1972) {tmdb-26928}.annotations.manifest.json
+│       ├── Buck And The Preacher (1972) {tmdb-26928}.annotations.npy
+│       ├── Buck And The Preacher (1972) {tmdb-26928}.annotations.txt
+│       ├── Buck And The Preacher (1972) {tmdb-26928}.frames.manifest.json
+│       ├── Buck And The Preacher (1972) {tmdb-26928}.frames.npy
+│       ├── Buck And The Preacher (1972) {tmdb-26928}.frames.valid.npy
+│       ├── Buffalo Bill And The Indians Or Sitting Bulls History Lesson (1976) {tmdb-42233}.annotations.json
+│       ├── Buffalo Bill And The Indians Or Sitting Bulls History Lesson (1976) {tmdb-42233}.annotations.manifest.json
+│       ├── Buffalo Bill And The Indians Or Sitting Bulls History Lesson (1976) {tmdb-42233}.annotations.npy
+│       ├── Buffalo Bill And The Indians Or Sitting Bulls History Lesson (1976) {tmdb-42233}.annotations.txt
+│       ├── Buffalo Bill And The Indians Or Sitting Bulls History Lesson (1976) {tmdb-42233}.frames.manifest.json
+│       ├── Buffalo Bill And The Indians Or Sitting Bulls History Lesson (1976) {tmdb-42233}.frames.npy
+│       ├── Buffalo Bill And The Indians Or Sitting Bulls History Lesson (1976) {tmdb-42233}.frames.valid.npy
+│       ├── Bugles In The Afternoon (1952) {tmdb-059041}.annotations.json
+│       ├── Bugles In The Afternoon (1952) {tmdb-059041}.annotations.manifest.json
+│       ├── Bugles In The Afternoon (1952) {tmdb-059041}.annotations.npy
+│       ├── Bugles In The Afternoon (1952) {tmdb-059041}.annotations.txt
+│       ├── Bugles In The Afternoon (1952) {tmdb-059041}.frames.manifest.json
+│       ├── Bugles In The Afternoon (1952) {tmdb-059041}.frames.npy
+│       ├── Bugles In The Afternoon (1952) {tmdb-059041}.frames.valid.npy
+│       ├── Buon Funerale Amigos Paga Sartana (1970) {tmdb-83136}.annotations.json
+│       ├── Buon Funerale Amigos Paga Sartana (1970) {tmdb-83136}.annotations.manifest.json
+│       ├── Buon Funerale Amigos Paga Sartana (1970) {tmdb-83136}.annotations.npy
+│       ├── Buon Funerale Amigos Paga Sartana (1970) {tmdb-83136}.annotations.txt
+│       ├── Buon Funerale Amigos Paga Sartana (1970) {tmdb-83136}.frames.manifest.json
+│       ├── Buon Funerale Amigos Paga Sartana (1970) {tmdb-83136}.frames.npy
+│       ├── Buon Funerale Amigos Paga Sartana (1970) {tmdb-83136}.frames.valid.npy
+│       ├── Butch Cassidy And The Sundance Kid (1969) {tmdb-642}.annotations.json
+│       ├── Butch Cassidy And The Sundance Kid (1969) {tmdb-642}.annotations.manifest.json
+│       ├── Butch Cassidy And The Sundance Kid (1969) {tmdb-642}.annotations.npy
+│       ├── Butch Cassidy And The Sundance Kid (1969) {tmdb-642}.annotations.txt
+│       ├── Butch Cassidy And The Sundance Kid (1969) {tmdb-642}.frames.manifest.json
+│       ├── Butch Cassidy And The Sundance Kid (1969) {tmdb-642}.frames.npy
+│       ├── Butch Cassidy And The Sundance Kid (1969) {tmdb-642}.frames.valid.npy
+│       ├── California (1947) {tmdb-111459}.annotations.json
+│       ├── California (1947) {tmdb-111459}.annotations.manifest.json
+│       ├── California (1947) {tmdb-111459}.annotations.npy
+│       ├── California (1947) {tmdb-111459}.annotations.txt
+│       ├── California (1947) {tmdb-111459}.frames.manifest.json
+│       ├── California (1947) {tmdb-111459}.frames.npy
+│       ├── California (1947) {tmdb-111459}.frames.valid.npy
+│       ├── Canyon Passage (1946) {tmdb-37309}.annotations.json
+│       ├── Canyon Passage (1946) {tmdb-37309}.annotations.manifest.json
+│       ├── Canyon Passage (1946) {tmdb-37309}.annotations.npy
+│       ├── Canyon Passage (1946) {tmdb-37309}.annotations.txt
+│       ├── Canyon Passage (1946) {tmdb-37309}.frames.manifest.json
+│       ├── Canyon Passage (1946) {tmdb-37309}.frames.npy
+│       ├── Canyon Passage (1946) {tmdb-37309}.frames.valid.npy
+│       ├── Charley One Eye (1973) {tmdb-083831}.annotations.json
+│       ├── Charley One Eye (1973) {tmdb-083831}.annotations.manifest.json
+│       ├── Charley One Eye (1973) {tmdb-083831}.annotations.npy
+│       ├── Charley One Eye (1973) {tmdb-083831}.annotations.txt
+│       ├── Charley One Eye (1973) {tmdb-083831}.frames.manifest.json
+│       ├── Charley One Eye (1973) {tmdb-083831}.frames.npy
+│       ├── Charley One Eye (1973) {tmdb-083831}.frames.valid.npy
+│       ├── Cheyenne Autumn (1964) {tmdb-40630}.annotations.json
+│       ├── Cheyenne Autumn (1964) {tmdb-40630}.annotations.manifest.json
+│       ├── Cheyenne Autumn (1964) {tmdb-40630}.annotations.npy
+│       ├── Cheyenne Autumn (1964) {tmdb-40630}.annotations.txt
+│       ├── Cheyenne Autumn (1964) {tmdb-40630}.frames.manifest.json
+│       ├── Cheyenne Autumn (1964) {tmdb-40630}.frames.npy
+│       ├── Cheyenne Autumn (1964) {tmdb-40630}.frames.valid.npy
+│       ├── China 9 Liberty 37 (1978) {tmdb-022396}.annotations.json
+│       ├── China 9 Liberty 37 (1978) {tmdb-022396}.annotations.manifest.json
+│       ├── China 9 Liberty 37 (1978) {tmdb-022396}.annotations.npy
+│       ├── China 9 Liberty 37 (1978) {tmdb-022396}.annotations.txt
+│       ├── China 9 Liberty 37 (1978) {tmdb-022396}.frames.manifest.json
+│       ├── China 9 Liberty 37 (1978) {tmdb-022396}.frames.npy
+│       ├── China 9 Liberty 37 (1978) {tmdb-022396}.frames.valid.npy
+│       ├── Chisum (1970) {tmdb-38765}.annotations.json
+│       ├── Chisum (1970) {tmdb-38765}.annotations.manifest.json
+│       ├── Chisum (1970) {tmdb-38765}.annotations.npy
+│       ├── Chisum (1970) {tmdb-38765}.annotations.txt
+│       ├── Chisum (1970) {tmdb-38765}.frames.manifest.json
+│       ├── Chisum (1970) {tmdb-38765}.frames.npy
+│       ├── Chisum (1970) {tmdb-38765}.frames.valid.npy
+│       ├── Cimarron (1931) {tmdb-042861}.annotations.json
+│       ├── Cimarron (1931) {tmdb-042861}.annotations.manifest.json
+│       ├── Cimarron (1931) {tmdb-042861}.annotations.npy
+│       ├── Cimarron (1931) {tmdb-042861}.annotations.txt
+│       ├── Cimarron (1931) {tmdb-042861}.frames.manifest.json
+│       ├── Cimarron (1931) {tmdb-042861}.frames.npy
+│       ├── Cimarron (1931) {tmdb-042861}.frames.valid.npy
+│       ├── Colorado Territory (1949) {tmdb-28484}.annotations.json
+│       ├── Colorado Territory (1949) {tmdb-28484}.annotations.manifest.json
+│       ├── Colorado Territory (1949) {tmdb-28484}.annotations.npy
+│       ├── Colorado Territory (1949) {tmdb-28484}.annotations.txt
+│       ├── Colorado Territory (1949) {tmdb-28484}.frames.manifest.json
+│       ├── Colorado Territory (1949) {tmdb-28484}.frames.npy
+│       ├── Colorado Territory (1949) {tmdb-28484}.frames.valid.npy
+│       ├── Companeros (1970) {tmdb-61044}.annotations.json
+│       ├── Companeros (1970) {tmdb-61044}.annotations.manifest.json
+│       ├── Companeros (1970) {tmdb-61044}.annotations.npy
+│       ├── Companeros (1970) {tmdb-61044}.annotations.txt
+│       ├── Companeros (1970) {tmdb-61044}.frames.manifest.json
+│       ├── Companeros (1970) {tmdb-61044}.frames.npy
+│       ├── Companeros (1970) {tmdb-61044}.frames.valid.npy
+│       ├── Conagher (1991) {tmdb-37307}.annotations.json
+│       ├── Conagher (1991) {tmdb-37307}.annotations.manifest.json
+│       ├── Conagher (1991) {tmdb-37307}.annotations.npy
+│       ├── Conagher (1991) {tmdb-37307}.annotations.txt
+│       ├── Conagher (1991) {tmdb-37307}.frames.manifest.json
+│       ├── Conagher (1991) {tmdb-37307}.frames.npy
+│       ├── Conagher (1991) {tmdb-37307}.frames.valid.npy
+│       ├── Coogan'S Bluff (1968) {tmdb-26170}.annotations.json
+│       ├── Coogan'S Bluff (1968) {tmdb-26170}.annotations.manifest.json
+│       ├── Coogan'S Bluff (1968) {tmdb-26170}.annotations.npy
+│       ├── Coogan'S Bluff (1968) {tmdb-26170}.annotations.txt
+│       ├── Coogan'S Bluff (1968) {tmdb-26170}.frames.manifest.json
+│       ├── Coogan'S Bluff (1968) {tmdb-26170}.frames.npy
+│       ├── Coogan'S Bluff (1968) {tmdb-26170}.frames.valid.npy
+│       ├── Cowboy (1958) {tmdb-39435}.annotations.json
+│       ├── Cowboy (1958) {tmdb-39435}.annotations.manifest.json
+│       ├── Cowboy (1958) {tmdb-39435}.annotations.npy
+│       ├── Cowboy (1958) {tmdb-39435}.annotations.txt
+│       ├── Cowboy (1958) {tmdb-39435}.frames.manifest.json
+│       ├── Cowboy (1958) {tmdb-39435}.frames.npy
+│       ├── Cowboy (1958) {tmdb-39435}.frames.valid.npy
+│       ├── Cowboys And Aliens (2011) {tmdb-49849}.annotations.json
+│       ├── Cowboys And Aliens (2011) {tmdb-49849}.annotations.manifest.json
+│       ├── Cowboys And Aliens (2011) {tmdb-49849}.annotations.npy
+│       ├── Cowboys And Aliens (2011) {tmdb-49849}.annotations.txt
+│       ├── Cowboys And Aliens (2011) {tmdb-49849}.frames.manifest.json
+│       ├── Cowboys And Aliens (2011) {tmdb-49849}.frames.npy
+│       ├── Cowboys And Aliens (2011) {tmdb-49849}.frames.valid.npy
+│       ├── Dances With Wolves (1990) {tmdb-581}.annotations.json
+│       ├── Dances With Wolves (1990) {tmdb-581}.annotations.manifest.json
+│       ├── Dances With Wolves (1990) {tmdb-581}.annotations.npy
+│       ├── Dances With Wolves (1990) {tmdb-581}.annotations.txt
+│       ├── Dances With Wolves (1990) {tmdb-581}.frames.manifest.json
+│       ├── Dances With Wolves (1990) {tmdb-581}.frames.npy
+│       ├── Dances With Wolves (1990) {tmdb-581}.frames.valid.npy
+│       ├── Days Of Heaven (1978) {tmdb-16642}.annotations.json
+│       ├── Days Of Heaven (1978) {tmdb-16642}.annotations.manifest.json
+│       ├── Days Of Heaven (1978) {tmdb-16642}.annotations.npy
+│       ├── Days Of Heaven (1978) {tmdb-16642}.annotations.txt
+│       ├── Days Of Heaven (1978) {tmdb-16642}.frames.manifest.json
+│       ├── Days Of Heaven (1978) {tmdb-16642}.frames.npy
+│       ├── Days Of Heaven (1978) {tmdb-16642}.frames.valid.npy
+│       ├── Deadlock (1970) {tmdb-79830}.annotations.json
+│       ├── Deadlock (1970) {tmdb-79830}.annotations.manifest.json
+│       ├── Deadlock (1970) {tmdb-79830}.annotations.npy
+│       ├── Deadlock (1970) {tmdb-79830}.annotations.txt
+│       ├── Deadlock (1970) {tmdb-79830}.frames.manifest.json
+│       ├── Deadlock (1970) {tmdb-79830}.frames.npy
+│       ├── Deadlock (1970) {tmdb-79830}.frames.valid.npy
+│       ├── Dead Man (1995) {tmdb-922}.annotations.json
+│       ├── Dead Man (1995) {tmdb-922}.annotations.manifest.json
+│       ├── Dead Man (1995) {tmdb-922}.annotations.npy
+│       ├── Dead Man (1995) {tmdb-922}.annotations.txt
+│       ├── Dead Man (1995) {tmdb-922}.frames.manifest.json
+│       ├── Dead Man (1995) {tmdb-922}.frames.npy
+│       ├── Dead Man (1995) {tmdb-922}.frames.valid.npy
+│       ├── Death Rides A Horse (1967) {tmdb-49397}.annotations.json
+│       ├── Death Rides A Horse (1967) {tmdb-49397}.annotations.manifest.json
+│       ├── Death Rides A Horse (1967) {tmdb-49397}.annotations.npy
+│       ├── Death Rides A Horse (1967) {tmdb-49397}.annotations.txt
+│       ├── Death Rides A Horse (1967) {tmdb-49397}.frames.manifest.json
+│       ├── Death Rides A Horse (1967) {tmdb-49397}.frames.npy
+│       ├── Death Rides A Horse (1967) {tmdb-49397}.frames.valid.npy
+│       ├── Decision At Sundown (1957) {tmdb-39557}.annotations.json
+│       ├── Decision At Sundown (1957) {tmdb-39557}.annotations.manifest.json
+│       ├── Decision At Sundown (1957) {tmdb-39557}.annotations.npy
+│       ├── Decision At Sundown (1957) {tmdb-39557}.annotations.txt
+│       ├── Decision At Sundown (1957) {tmdb-39557}.frames.manifest.json
+│       ├── Decision At Sundown (1957) {tmdb-39557}.frames.npy
+│       ├── Decision At Sundown (1957) {tmdb-39557}.frames.valid.npy
+│       ├── Der Kaiser Von Kalifornien (1936) {tmdb-263915}.annotations.json
+│       ├── Der Kaiser Von Kalifornien (1936) {tmdb-263915}.annotations.manifest.json
+│       ├── Der Kaiser Von Kalifornien (1936) {tmdb-263915}.annotations.npy
+│       ├── Der Kaiser Von Kalifornien (1936) {tmdb-263915}.annotations.txt
+│       ├── Der Kaiser Von Kalifornien (1936) {tmdb-263915}.frames.manifest.json
+│       ├── Der Kaiser Von Kalifornien (1936) {tmdb-263915}.frames.npy
+│       ├── Der Kaiser Von Kalifornien (1936) {tmdb-263915}.frames.valid.npy
+│       ├── Desperado (1995) {tmdb-008068}.annotations.json
+│       ├── Desperado (1995) {tmdb-008068}.annotations.manifest.json
+│       ├── Desperado (1995) {tmdb-008068}.annotations.npy
+│       ├── Desperado (1995) {tmdb-008068}.annotations.txt
+│       ├── Desperado (1995) {tmdb-008068}.frames.manifest.json
+│       ├── Desperado (1995) {tmdb-008068}.frames.npy
+│       ├── Desperado (1995) {tmdb-008068}.frames.valid.npy
+│       ├── Destry Rides Again (1939) {tmdb-43828}.annotations.json
+│       ├── Destry Rides Again (1939) {tmdb-43828}.annotations.manifest.json
+│       ├── Destry Rides Again (1939) {tmdb-43828}.annotations.npy
+│       ├── Destry Rides Again (1939) {tmdb-43828}.annotations.txt
+│       ├── Destry Rides Again (1939) {tmdb-43828}.frames.manifest.json
+│       ├── Destry Rides Again (1939) {tmdb-43828}.frames.npy
+│       ├── Destry Rides Again (1939) {tmdb-43828}.frames.valid.npy
+│       ├── Devils Doorway (1950) {tmdb-034651}.annotations.json
+│       ├── Devils Doorway (1950) {tmdb-034651}.annotations.manifest.json
+│       ├── Devils Doorway (1950) {tmdb-034651}.annotations.npy
+│       ├── Devils Doorway (1950) {tmdb-034651}.annotations.txt
+│       ├── Devils Doorway (1950) {tmdb-034651}.frames.manifest.json
+│       ├── Devils Doorway (1950) {tmdb-034651}.frames.npy
+│       ├── Devils Doorway (1950) {tmdb-034651}.frames.valid.npy
+│       ├── Diamante Lobo (1976) {tmdb-79194}.annotations.json
+│       ├── Diamante Lobo (1976) {tmdb-79194}.annotations.manifest.json
+│       ├── Diamante Lobo (1976) {tmdb-79194}.annotations.npy
+│       ├── Diamante Lobo (1976) {tmdb-79194}.annotations.txt
+│       ├── Diamante Lobo (1976) {tmdb-79194}.frames.manifest.json
+│       ├── Diamante Lobo (1976) {tmdb-79194}.frames.npy
+│       ├── Diamante Lobo (1976) {tmdb-79194}.frames.valid.npy
+│       ├── Die Sohne Der Grosen Barin (1966) {tmdb-130957}.annotations.json
+│       ├── Die Sohne Der Grosen Barin (1966) {tmdb-130957}.annotations.manifest.json
+│       ├── Die Sohne Der Grosen Barin (1966) {tmdb-130957}.annotations.npy
+│       ├── Die Sohne Der Grosen Barin (1966) {tmdb-130957}.annotations.txt
+│       ├── Die Sohne Der Grosen Barin (1966) {tmdb-130957}.frames.manifest.json
+│       ├── Die Sohne Der Grosen Barin (1966) {tmdb-130957}.frames.npy
+│       ├── Die Sohne Der Grosen Barin (1966) {tmdb-130957}.frames.valid.npy
+│       ├── Dirty Little Billy (1972) {tmdb-56966}.annotations.json
+│       ├── Dirty Little Billy (1972) {tmdb-56966}.annotations.manifest.json
+│       ├── Dirty Little Billy (1972) {tmdb-56966}.annotations.npy
+│       ├── Dirty Little Billy (1972) {tmdb-56966}.annotations.txt
+│       ├── Dirty Little Billy (1972) {tmdb-56966}.frames.manifest.json
+│       ├── Dirty Little Billy (1972) {tmdb-56966}.frames.npy
+│       ├── Dirty Little Billy (1972) {tmdb-56966}.frames.valid.npy
+│       ├── Django (1966) {tmdb-10772}.annotations.json
+│       ├── Django (1966) {tmdb-10772}.annotations.manifest.json
+│       ├── Django (1966) {tmdb-10772}.annotations.npy
+│       ├── Django (1966) {tmdb-10772}.annotations.txt
+│       ├── Django (1966) {tmdb-10772}.frames.manifest.json
+│       ├── Django (1966) {tmdb-10772}.frames.npy
+│       ├── Django (1966) {tmdb-10772}.frames.valid.npy
+│       ├── Django Unchained (2012) {tmdb-68718}.annotations.json
+│       ├── Django Unchained (2012) {tmdb-68718}.annotations.manifest.json
+│       ├── Django Unchained (2012) {tmdb-68718}.annotations.npy
+│       ├── Django Unchained (2012) {tmdb-68718}.annotations.txt
+│       ├── Django Unchained (2012) {tmdb-68718}.frames.manifest.json
+│       ├── Django Unchained (2012) {tmdb-68718}.frames.npy
+│       ├── Django Unchained (2012) {tmdb-68718}.frames.valid.npy
+│       ├── Dodge City (1939) {tmdb-017660}.annotations.json
+│       ├── Dodge City (1939) {tmdb-017660}.annotations.manifest.json
+│       ├── Dodge City (1939) {tmdb-017660}.annotations.npy
+│       ├── Dodge City (1939) {tmdb-017660}.annotations.txt
+│       ├── Dodge City (1939) {tmdb-017660}.frames.manifest.json
+│       ├── Dodge City (1939) {tmdb-017660}.frames.npy
+│       ├── Dodge City (1939) {tmdb-017660}.frames.valid.npy
+│       ├── Drums Along The Mohawk (1939) {tmdb-73194}.annotations.json
+│       ├── Drums Along The Mohawk (1939) {tmdb-73194}.annotations.manifest.json
+│       ├── Drums Along The Mohawk (1939) {tmdb-73194}.annotations.npy
+│       ├── Drums Along The Mohawk (1939) {tmdb-73194}.annotations.txt
+│       ├── Drums Along The Mohawk (1939) {tmdb-73194}.frames.manifest.json
+│       ├── Drums Along The Mohawk (1939) {tmdb-73194}.frames.npy
+│       ├── Drums Along The Mohawk (1939) {tmdb-73194}.frames.valid.npy
+│       ├── Duck You Sucker (1971) {tmdb-336}.annotations.json
+│       ├── Duck You Sucker (1971) {tmdb-336}.annotations.manifest.json
+│       ├── Duck You Sucker (1971) {tmdb-336}.annotations.npy
+│       ├── Duck You Sucker (1971) {tmdb-336}.annotations.txt
+│       ├── Duck You Sucker (1971) {tmdb-336}.frames.manifest.json
+│       ├── Duck You Sucker (1971) {tmdb-336}.frames.npy
+│       ├── Duck You Sucker (1971) {tmdb-336}.frames.valid.npy
+│       ├── Duel At Diablo (1966) {tmdb-1403}.annotations.json
+│       ├── Duel At Diablo (1966) {tmdb-1403}.annotations.manifest.json
+│       ├── Duel At Diablo (1966) {tmdb-1403}.annotations.npy
+│       ├── Duel At Diablo (1966) {tmdb-1403}.annotations.txt
+│       ├── Duel At Diablo (1966) {tmdb-1403}.frames.manifest.json
+│       ├── Duel At Diablo (1966) {tmdb-1403}.frames.npy
+│       ├── Duel At Diablo (1966) {tmdb-1403}.frames.valid.npy
+│       ├── Duel In The Sun (1946) {tmdb-32275}.annotations.json
+│       ├── Duel In The Sun (1946) {tmdb-32275}.annotations.manifest.json
+│       ├── Duel In The Sun (1946) {tmdb-32275}.annotations.npy
+│       ├── Duel In The Sun (1946) {tmdb-32275}.annotations.txt
+│       ├── Duel In The Sun (1946) {tmdb-32275}.frames.manifest.json
+│       ├── Duel In The Sun (1946) {tmdb-32275}.frames.npy
+│       ├── Duel In The Sun (1946) {tmdb-32275}.frames.valid.npy
+│       ├── El Dorado (1966) {tmdb-6644}.annotations.json
+│       ├── El Dorado (1966) {tmdb-6644}.annotations.manifest.json
+│       ├── El Dorado (1966) {tmdb-6644}.annotations.npy
+│       ├── El Dorado (1966) {tmdb-6644}.annotations.txt
+│       ├── El Dorado (1966) {tmdb-6644}.frames.manifest.json
+│       ├── El Dorado (1966) {tmdb-6644}.frames.npy
+│       ├── El Dorado (1966) {tmdb-6644}.frames.valid.npy
+│       ├── El Topo (1970) {tmdb-13041}.annotations.json
+│       ├── El Topo (1970) {tmdb-13041}.annotations.manifest.json
+│       ├── El Topo (1970) {tmdb-13041}.annotations.npy
+│       ├── El Topo (1970) {tmdb-13041}.annotations.txt
+│       ├── El Topo (1970) {tmdb-13041}.frames.manifest.json
+│       ├── El Topo (1970) {tmdb-13041}.frames.npy
+│       ├── El Topo (1970) {tmdb-13041}.frames.valid.npy
+│       ├── Far And Away (1992) {tmdb-011259}.annotations.json
+│       ├── Far And Away (1992) {tmdb-011259}.annotations.manifest.json
+│       ├── Far And Away (1992) {tmdb-011259}.annotations.npy
+│       ├── Far And Away (1992) {tmdb-011259}.annotations.txt
+│       ├── Far And Away (1992) {tmdb-011259}.frames.manifest.json
+│       ├── Far And Away (1992) {tmdb-011259}.frames.npy
+│       ├── Far And Away (1992) {tmdb-011259}.frames.valid.npy
+│       ├── First Cow (2019) {tmdb-558582}.annotations.json
+│       ├── First Cow (2019) {tmdb-558582}.annotations.manifest.json
+│       ├── First Cow (2019) {tmdb-558582}.annotations.npy
+│       ├── First Cow (2019) {tmdb-558582}.annotations.txt
+│       ├── First Cow (2019) {tmdb-558582}.frames.manifest.json
+│       ├── First Cow (2019) {tmdb-558582}.frames.npy
+│       ├── First Cow (2019) {tmdb-558582}.frames.valid.npy
+│       ├── For A Few Dollars More (1965) {tmdb-938}.annotations.json
+│       ├── For A Few Dollars More (1965) {tmdb-938}.annotations.manifest.json
+│       ├── For A Few Dollars More (1965) {tmdb-938}.annotations.npy
+│       ├── For A Few Dollars More (1965) {tmdb-938}.annotations.txt
+│       ├── For A Few Dollars More (1965) {tmdb-938}.frames.manifest.json
+│       ├── For A Few Dollars More (1965) {tmdb-938}.frames.npy
+│       ├── For A Few Dollars More (1965) {tmdb-938}.frames.valid.npy
+│       ├── Fort Apache (1948) {tmdb-37347}.annotations.json
+│       ├── Fort Apache (1948) {tmdb-37347}.annotations.manifest.json
+│       ├── Fort Apache (1948) {tmdb-37347}.annotations.npy
+│       ├── Fort Apache (1948) {tmdb-37347}.annotations.txt
+│       ├── Fort Apache (1948) {tmdb-37347}.frames.manifest.json
+│       ├── Fort Apache (1948) {tmdb-37347}.frames.npy
+│       ├── Fort Apache (1948) {tmdb-37347}.frames.valid.npy
+│       ├── Fort Massacre (1958) {tmdb-095060}.annotations.json
+│       ├── Fort Massacre (1958) {tmdb-095060}.annotations.manifest.json
+│       ├── Fort Massacre (1958) {tmdb-095060}.annotations.npy
+│       ├── Fort Massacre (1958) {tmdb-095060}.annotations.txt
+│       ├── Fort Massacre (1958) {tmdb-095060}.frames.manifest.json
+│       ├── Fort Massacre (1958) {tmdb-095060}.frames.npy
+│       ├── Fort Massacre (1958) {tmdb-095060}.frames.valid.npy
+│       ├── Forty Guns (1957) {tmdb-14837}.annotations.json
+│       ├── Forty Guns (1957) {tmdb-14837}.annotations.manifest.json
+│       ├── Forty Guns (1957) {tmdb-14837}.annotations.npy
+│       ├── Forty Guns (1957) {tmdb-14837}.annotations.txt
+│       ├── Forty Guns (1957) {tmdb-14837}.frames.manifest.json
+│       ├── Forty Guns (1957) {tmdb-14837}.frames.npy
+│       ├── Forty Guns (1957) {tmdb-14837}.frames.valid.npy
+│       ├── Four Faces West (1948) {tmdb-64139}.annotations.json
+│       ├── Four Faces West (1948) {tmdb-64139}.annotations.manifest.json
+│       ├── Four Faces West (1948) {tmdb-64139}.annotations.npy
+│       ├── Four Faces West (1948) {tmdb-64139}.annotations.txt
+│       ├── Four Faces West (1948) {tmdb-64139}.frames.manifest.json
+│       ├── Four Faces West (1948) {tmdb-64139}.frames.npy
+│       ├── Four Faces West (1948) {tmdb-64139}.frames.valid.npy
+│       ├── Garden Of Evil (1954) {tmdb-36191}.annotations.json
+│       ├── Garden Of Evil (1954) {tmdb-36191}.annotations.manifest.json
+│       ├── Garden Of Evil (1954) {tmdb-36191}.annotations.npy
+│       ├── Garden Of Evil (1954) {tmdb-36191}.annotations.txt
+│       ├── Garden Of Evil (1954) {tmdb-36191}.frames.manifest.json
+│       ├── Garden Of Evil (1954) {tmdb-36191}.frames.npy
+│       ├── Garden Of Evil (1954) {tmdb-36191}.frames.valid.npy
+│       ├── Goin South (1978) {tmdb-34130}.annotations.json
+│       ├── Goin South (1978) {tmdb-34130}.annotations.manifest.json
+│       ├── Goin South (1978) {tmdb-34130}.annotations.npy
+│       ├── Goin South (1978) {tmdb-34130}.annotations.txt
+│       ├── Goin South (1978) {tmdb-34130}.frames.manifest.json
+│       ├── Goin South (1978) {tmdb-34130}.frames.npy
+│       ├── Goin South (1978) {tmdb-34130}.frames.valid.npy
+│       ├── Go West (1925) {tmdb-33015}.annotations.json
+│       ├── Go West (1925) {tmdb-33015}.annotations.manifest.json
+│       ├── Go West (1925) {tmdb-33015}.annotations.npy
+│       ├── Go West (1925) {tmdb-33015}.annotations.txt
+│       ├── Go West (1925) {tmdb-33015}.frames.manifest.json
+│       ├── Go West (1925) {tmdb-33015}.frames.npy
+│       ├── Go West (1925) {tmdb-33015}.frames.valid.npy
+│       ├── Greaser'S Palace (1972) {tmdb-90715}.annotations.json
+│       ├── Greaser'S Palace (1972) {tmdb-90715}.annotations.manifest.json
+│       ├── Greaser'S Palace (1972) {tmdb-90715}.annotations.npy
+│       ├── Greaser'S Palace (1972) {tmdb-90715}.annotations.txt
+│       ├── Greaser'S Palace (1972) {tmdb-90715}.frames.manifest.json
+│       ├── Greaser'S Palace (1972) {tmdb-90715}.frames.npy
+│       ├── Greaser'S Palace (1972) {tmdb-90715}.frames.valid.npy
+│       ├── Gunman Of Ave Maria (1969) {tmdb-61738}.annotations.json
+│       ├── Gunman Of Ave Maria (1969) {tmdb-61738}.annotations.manifest.json
+│       ├── Gunman Of Ave Maria (1969) {tmdb-61738}.annotations.npy
+│       ├── Gunman Of Ave Maria (1969) {tmdb-61738}.annotations.txt
+│       ├── Gunman Of Ave Maria (1969) {tmdb-61738}.frames.manifest.json
+│       ├── Gunman Of Ave Maria (1969) {tmdb-61738}.frames.npy
+│       ├── Gunman Of Ave Maria (1969) {tmdb-61738}.frames.valid.npy
+│       ├── Guns And Guts (1974) {tmdb-124441}.annotations.json
+│       ├── Guns And Guts (1974) {tmdb-124441}.annotations.manifest.json
+│       ├── Guns And Guts (1974) {tmdb-124441}.annotations.npy
+│       ├── Guns And Guts (1974) {tmdb-124441}.annotations.txt
+│       ├── Guns And Guts (1974) {tmdb-124441}.frames.manifest.json
+│       ├── Guns And Guts (1974) {tmdb-124441}.frames.npy
+│       ├── Guns And Guts (1974) {tmdb-124441}.frames.valid.npy
+│       ├── Half Way To Hell (1960) {tmdb-029422}.annotations.json
+│       ├── Half Way To Hell (1960) {tmdb-029422}.annotations.manifest.json
+│       ├── Half Way To Hell (1960) {tmdb-029422}.annotations.npy
+│       ├── Half Way To Hell (1960) {tmdb-029422}.annotations.txt
+│       ├── Half Way To Hell (1960) {tmdb-029422}.frames.manifest.json
+│       ├── Half Way To Hell (1960) {tmdb-029422}.frames.npy
+│       ├── Half Way To Hell (1960) {tmdb-029422}.frames.valid.npy
+│       ├── Hang Em High (1968) {tmdb-4929}.annotations.json
+│       ├── Hang Em High (1968) {tmdb-4929}.annotations.manifest.json
+│       ├── Hang Em High (1968) {tmdb-4929}.annotations.npy
+│       ├── Hang Em High (1968) {tmdb-4929}.annotations.txt
+│       ├── Hang Em High (1968) {tmdb-4929}.frames.manifest.json
+│       ├── Hang Em High (1968) {tmdb-4929}.frames.npy
+│       ├── Hang Em High (1968) {tmdb-4929}.frames.valid.npy
+│       ├── Hannie Caulder (1971) {tmdb-031283}.annotations.json
+│       ├── Hannie Caulder (1971) {tmdb-031283}.annotations.manifest.json
+│       ├── Hannie Caulder (1971) {tmdb-031283}.annotations.npy
+│       ├── Hannie Caulder (1971) {tmdb-031283}.annotations.txt
+│       ├── Hannie Caulder (1971) {tmdb-031283}.frames.manifest.json
+│       ├── Hannie Caulder (1971) {tmdb-031283}.frames.npy
+│       ├── Hannie Caulder (1971) {tmdb-031283}.frames.valid.npy
+│       ├── Heartland (1979) {tmdb-049427}.annotations.json
+│       ├── Heartland (1979) {tmdb-049427}.annotations.manifest.json
+│       ├── Heartland (1979) {tmdb-049427}.annotations.npy
+│       ├── Heartland (1979) {tmdb-049427}.annotations.txt
+│       ├── Heartland (1979) {tmdb-049427}.frames.manifest.json
+│       ├── Heartland (1979) {tmdb-049427}.frames.npy
+│       ├── Heartland (1979) {tmdb-049427}.frames.valid.npy
+│       ├── Heavens Gate (1980) {tmdb-10935}.annotations.json
+│       ├── Heavens Gate (1980) {tmdb-10935}.annotations.manifest.json
+│       ├── Heavens Gate (1980) {tmdb-10935}.annotations.npy
+│       ├── Heavens Gate (1980) {tmdb-10935}.annotations.txt
+│       ├── Heavens Gate (1980) {tmdb-10935}.frames.manifest.json
+│       ├── Heavens Gate (1980) {tmdb-10935}.frames.npy
+│       ├── Heavens Gate (1980) {tmdb-10935}.frames.valid.npy
+│       ├── Hell Bent (1918) {tmdb-302894}.annotations.json
+│       ├── Hell Bent (1918) {tmdb-302894}.annotations.manifest.json
+│       ├── Hell Bent (1918) {tmdb-302894}.annotations.npy
+│       ├── Hell Bent (1918) {tmdb-302894}.annotations.txt
+│       ├── Hell Bent (1918) {tmdb-302894}.frames.manifest.json
+│       ├── Hell Bent (1918) {tmdb-302894}.frames.npy
+│       ├── Hell Bent (1918) {tmdb-302894}.frames.valid.npy
+│       ├── High Noon (1952) {tmdb-288}.annotations.json
+│       ├── High Noon (1952) {tmdb-288}.annotations.manifest.json
+│       ├── High Noon (1952) {tmdb-288}.annotations.npy
+│       ├── High Noon (1952) {tmdb-288}.annotations.txt
+│       ├── High Noon (1952) {tmdb-288}.frames.manifest.json
+│       ├── High Noon (1952) {tmdb-288}.frames.npy
+│       ├── High Noon (1952) {tmdb-288}.frames.valid.npy
+│       ├── High Plains Drifter (1973) {tmdb-11901}.annotations.json
+│       ├── High Plains Drifter (1973) {tmdb-11901}.annotations.manifest.json
+│       ├── High Plains Drifter (1973) {tmdb-11901}.annotations.npy
+│       ├── High Plains Drifter (1973) {tmdb-11901}.annotations.txt
+│       ├── High Plains Drifter (1973) {tmdb-11901}.frames.manifest.json
+│       ├── High Plains Drifter (1973) {tmdb-11901}.frames.npy
+│       ├── High Plains Drifter (1973) {tmdb-11901}.frames.valid.npy
+│       ├── Hombre (1967) {tmdb-27945}.annotations.json
+│       ├── Hombre (1967) {tmdb-27945}.annotations.manifest.json
+│       ├── Hombre (1967) {tmdb-27945}.annotations.npy
+│       ├── Hombre (1967) {tmdb-27945}.annotations.txt
+│       ├── Hombre (1967) {tmdb-27945}.frames.manifest.json
+│       ├── Hombre (1967) {tmdb-27945}.frames.npy
+│       ├── Hombre (1967) {tmdb-27945}.frames.valid.npy
+│       ├── Hondo (1953) {tmdb-6529}.annotations.json
+│       ├── Hondo (1953) {tmdb-6529}.annotations.manifest.json
+│       ├── Hondo (1953) {tmdb-6529}.annotations.npy
+│       ├── Hondo (1953) {tmdb-6529}.annotations.txt
+│       ├── Hondo (1953) {tmdb-6529}.frames.manifest.json
+│       ├── Hondo (1953) {tmdb-6529}.frames.npy
+│       ├── Hondo (1953) {tmdb-6529}.frames.valid.npy
+│       ├── How The West Was Won (1962) {tmdb-11897}.annotations.json
+│       ├── How The West Was Won (1962) {tmdb-11897}.annotations.manifest.json
+│       ├── How The West Was Won (1962) {tmdb-11897}.annotations.npy
+│       ├── How The West Was Won (1962) {tmdb-11897}.annotations.txt
+│       ├── How The West Was Won (1962) {tmdb-11897}.frames.manifest.json
+│       ├── How The West Was Won (1962) {tmdb-11897}.frames.npy
+│       ├── How The West Was Won (1962) {tmdb-11897}.frames.valid.npy
+│       ├── Invitation To A Gunfighter (1964) {tmdb-55150}.annotations.json
+│       ├── Invitation To A Gunfighter (1964) {tmdb-55150}.annotations.manifest.json
+│       ├── Invitation To A Gunfighter (1964) {tmdb-55150}.annotations.npy
+│       ├── Invitation To A Gunfighter (1964) {tmdb-55150}.annotations.txt
+│       ├── Invitation To A Gunfighter (1964) {tmdb-55150}.frames.manifest.json
+│       ├── Invitation To A Gunfighter (1964) {tmdb-55150}.frames.npy
+│       ├── Invitation To A Gunfighter (1964) {tmdb-55150}.frames.valid.npy
+│       ├── It Can Be Done Amigo (1972) {tmdb-46567}.annotations.json
+│       ├── It Can Be Done Amigo (1972) {tmdb-46567}.annotations.manifest.json
+│       ├── It Can Be Done Amigo (1972) {tmdb-46567}.annotations.npy
+│       ├── It Can Be Done Amigo (1972) {tmdb-46567}.annotations.txt
+│       ├── It Can Be Done Amigo (1972) {tmdb-46567}.frames.manifest.json
+│       ├── It Can Be Done Amigo (1972) {tmdb-46567}.frames.npy
+│       ├── It Can Be Done Amigo (1972) {tmdb-46567}.frames.valid.npy
+│       ├── Joe Dakota (1957) {tmdb-208162}.annotations.json
+│       ├── Joe Dakota (1957) {tmdb-208162}.annotations.manifest.json
+│       ├── Joe Dakota (1957) {tmdb-208162}.annotations.npy
+│       ├── Joe Dakota (1957) {tmdb-208162}.annotations.txt
+│       ├── Joe Dakota (1957) {tmdb-208162}.frames.manifest.json
+│       ├── Joe Dakota (1957) {tmdb-208162}.frames.npy
+│       ├── Joe Dakota (1957) {tmdb-208162}.frames.valid.npy
+│       ├── Joe Kidd (1972) {tmdb-14881}.annotations.json
+│       ├── Joe Kidd (1972) {tmdb-14881}.annotations.manifest.json
+│       ├── Joe Kidd (1972) {tmdb-14881}.annotations.npy
+│       ├── Joe Kidd (1972) {tmdb-14881}.annotations.txt
+│       ├── Joe Kidd (1972) {tmdb-14881}.frames.manifest.json
+│       ├── Joe Kidd (1972) {tmdb-14881}.frames.npy
+│       ├── Joe Kidd (1972) {tmdb-14881}.frames.valid.npy
+│       ├── Johnny Guitar (1954) {tmdb-26596}.annotations.json
+│       ├── Johnny Guitar (1954) {tmdb-26596}.annotations.manifest.json
+│       ├── Johnny Guitar (1954) {tmdb-26596}.annotations.npy
+│       ├── Johnny Guitar (1954) {tmdb-26596}.annotations.txt
+│       ├── Johnny Guitar (1954) {tmdb-26596}.frames.manifest.json
+│       ├── Johnny Guitar (1954) {tmdb-26596}.frames.npy
+│       ├── Johnny Guitar (1954) {tmdb-26596}.frames.valid.npy
+│       ├── Joshua (1976) {tmdb-079688}.annotations.json
+│       ├── Joshua (1976) {tmdb-079688}.annotations.manifest.json
+│       ├── Joshua (1976) {tmdb-079688}.annotations.npy
+│       ├── Joshua (1976) {tmdb-079688}.annotations.txt
+│       ├── Joshua (1976) {tmdb-079688}.frames.manifest.json
+│       ├── Joshua (1976) {tmdb-079688}.frames.npy
+│       ├── Joshua (1976) {tmdb-079688}.frames.valid.npy
+│       ├── Jubal (1956) {tmdb-43260}.annotations.json
+│       ├── Jubal (1956) {tmdb-43260}.annotations.manifest.json
+│       ├── Jubal (1956) {tmdb-43260}.annotations.npy
+│       ├── Jubal (1956) {tmdb-43260}.annotations.txt
+│       ├── Jubal (1956) {tmdb-43260}.frames.manifest.json
+│       ├── Jubal (1956) {tmdb-43260}.frames.npy
+│       ├── Jubal (1956) {tmdb-43260}.frames.valid.npy
+│       ├── Kid Blue (1973) {tmdb-154073}.annotations.json
+│       ├── Kid Blue (1973) {tmdb-154073}.annotations.manifest.json
+│       ├── Kid Blue (1973) {tmdb-154073}.annotations.npy
+│       ├── Kid Blue (1973) {tmdb-154073}.annotations.txt
+│       ├── Kid Blue (1973) {tmdb-154073}.frames.manifest.json
+│       ├── Kid Blue (1973) {tmdb-154073}.frames.npy
+│       ├── Kid Blue (1973) {tmdb-154073}.frames.valid.npy
+│       ├── Last Stand At Saber River (1997) {tmdb-055576}.annotations.json
+│       ├── Last Stand At Saber River (1997) {tmdb-055576}.annotations.manifest.json
+│       ├── Last Stand At Saber River (1997) {tmdb-055576}.annotations.npy
+│       ├── Last Stand At Saber River (1997) {tmdb-055576}.annotations.txt
+│       ├── Last Stand At Saber River (1997) {tmdb-055576}.frames.manifest.json
+│       ├── Last Stand At Saber River (1997) {tmdb-055576}.frames.npy
+│       ├── Last Stand At Saber River (1997) {tmdb-055576}.frames.valid.npy
+│       ├── Legend Of The Lost (1957) {tmdb-25848}.annotations.json
+│       ├── Legend Of The Lost (1957) {tmdb-25848}.annotations.manifest.json
+│       ├── Legend Of The Lost (1957) {tmdb-25848}.annotations.npy
+│       ├── Legend Of The Lost (1957) {tmdb-25848}.annotations.txt
+│       ├── Legend Of The Lost (1957) {tmdb-25848}.frames.manifest.json
+│       ├── Legend Of The Lost (1957) {tmdb-25848}.frames.npy
+│       ├── Legend Of The Lost (1957) {tmdb-25848}.frames.valid.npy
+│       ├── Legends Of The Fall (1994) {tmdb-004476}.annotations.json
+│       ├── Legends Of The Fall (1994) {tmdb-004476}.annotations.manifest.json
+│       ├── Legends Of The Fall (1994) {tmdb-004476}.annotations.npy
+│       ├── Legends Of The Fall (1994) {tmdb-004476}.annotations.txt
+│       ├── Legends Of The Fall (1994) {tmdb-004476}.frames.manifest.json
+│       ├── Legends Of The Fall (1994) {tmdb-004476}.frames.npy
+│       ├── Legends Of The Fall (1994) {tmdb-004476}.frames.valid.npy
+│       ├── Lemonade Joe (1964) {tmdb-20629}.annotations.json
+│       ├── Lemonade Joe (1964) {tmdb-20629}.annotations.manifest.json
+│       ├── Lemonade Joe (1964) {tmdb-20629}.annotations.npy
+│       ├── Lemonade Joe (1964) {tmdb-20629}.annotations.txt
+│       ├── Lemonade Joe (1964) {tmdb-20629}.frames.manifest.json
+│       ├── Lemonade Joe (1964) {tmdb-20629}.frames.npy
+│       ├── Lemonade Joe (1964) {tmdb-20629}.frames.valid.npy
+│       ├── Let Them Rest (1967) {tmdb-122787}.annotations.json
+│       ├── Let Them Rest (1967) {tmdb-122787}.annotations.manifest.json
+│       ├── Let Them Rest (1967) {tmdb-122787}.annotations.npy
+│       ├── Let Them Rest (1967) {tmdb-122787}.annotations.txt
+│       ├── Let Them Rest (1967) {tmdb-122787}.frames.manifest.json
+│       ├── Let Them Rest (1967) {tmdb-122787}.frames.npy
+│       ├── Let Them Rest (1967) {tmdb-122787}.frames.valid.npy
+│       ├── Little Big Man (1970) {tmdb-11040}.annotations.json
+│       ├── Little Big Man (1970) {tmdb-11040}.annotations.manifest.json
+│       ├── Little Big Man (1970) {tmdb-11040}.annotations.npy
+│       ├── Little Big Man (1970) {tmdb-11040}.annotations.txt
+│       ├── Little Big Man (1970) {tmdb-11040}.frames.manifest.json
+│       ├── Little Big Man (1970) {tmdb-11040}.frames.npy
+│       ├── Little Big Man (1970) {tmdb-11040}.frames.valid.npy
+│       ├── Lonely Are The Brave (1962) {tmdb-43002}.annotations.json
+│       ├── Lonely Are The Brave (1962) {tmdb-43002}.annotations.manifest.json
+│       ├── Lonely Are The Brave (1962) {tmdb-43002}.annotations.npy
+│       ├── Lonely Are The Brave (1962) {tmdb-43002}.annotations.txt
+│       ├── Lonely Are The Brave (1962) {tmdb-43002}.frames.manifest.json
+│       ├── Lonely Are The Brave (1962) {tmdb-43002}.frames.npy
+│       ├── Lonely Are The Brave (1962) {tmdb-43002}.frames.valid.npy
+│       ├── Lust For Gold (1949) {tmdb-94139}.annotations.json
+│       ├── Lust For Gold (1949) {tmdb-94139}.annotations.manifest.json
+│       ├── Lust For Gold (1949) {tmdb-94139}.annotations.npy
+│       ├── Lust For Gold (1949) {tmdb-94139}.annotations.txt
+│       ├── Lust For Gold (1949) {tmdb-94139}.frames.manifest.json
+│       ├── Lust For Gold (1949) {tmdb-94139}.frames.npy
+│       ├── Lust For Gold (1949) {tmdb-94139}.frames.valid.npy
+│       ├── Macho Callahan (1970) {tmdb-111375}.annotations.json
+│       ├── Macho Callahan (1970) {tmdb-111375}.annotations.manifest.json
+│       ├── Macho Callahan (1970) {tmdb-111375}.annotations.npy
+│       ├── Macho Callahan (1970) {tmdb-111375}.annotations.txt
+│       ├── Macho Callahan (1970) {tmdb-111375}.frames.manifest.json
+│       ├── Macho Callahan (1970) {tmdb-111375}.frames.npy
+│       ├── Macho Callahan (1970) {tmdb-111375}.frames.valid.npy
+│       ├── Major Dundee (1965) {tmdb-29715}.annotations.json
+│       ├── Major Dundee (1965) {tmdb-29715}.annotations.manifest.json
+│       ├── Major Dundee (1965) {tmdb-29715}.annotations.npy
+│       ├── Major Dundee (1965) {tmdb-29715}.annotations.txt
+│       ├── Major Dundee (1965) {tmdb-29715}.frames.manifest.json
+│       ├── Major Dundee (1965) {tmdb-29715}.frames.npy
+│       ├── Major Dundee (1965) {tmdb-29715}.frames.valid.npy
+│       ├── Man In The Shadow (1957) {tmdb-36459}.annotations.json
+│       ├── Man In The Shadow (1957) {tmdb-36459}.annotations.manifest.json
+│       ├── Man In The Shadow (1957) {tmdb-36459}.annotations.npy
+│       ├── Man In The Shadow (1957) {tmdb-36459}.annotations.txt
+│       ├── Man In The Shadow (1957) {tmdb-36459}.frames.manifest.json
+│       ├── Man In The Shadow (1957) {tmdb-36459}.frames.npy
+│       ├── Man In The Shadow (1957) {tmdb-36459}.frames.valid.npy
+│       ├── Man Without A Star (1955) {tmdb-43319}.annotations.json
+│       ├── Man Without A Star (1955) {tmdb-43319}.annotations.manifest.json
+│       ├── Man Without A Star (1955) {tmdb-43319}.annotations.npy
+│       ├── Man Without A Star (1955) {tmdb-43319}.annotations.txt
+│       ├── Man Without A Star (1955) {tmdb-43319}.frames.manifest.json
+│       ├── Man Without A Star (1955) {tmdb-43319}.frames.npy
+│       ├── Man Without A Star (1955) {tmdb-43319}.frames.valid.npy
+│       ├── Man With The Gun (1955) {tmdb-26758}.annotations.json
+│       ├── Man With The Gun (1955) {tmdb-26758}.annotations.manifest.json
+│       ├── Man With The Gun (1955) {tmdb-26758}.annotations.npy
+│       ├── Man With The Gun (1955) {tmdb-26758}.annotations.txt
+│       ├── Man With The Gun (1955) {tmdb-26758}.frames.manifest.json
+│       ├── Man With The Gun (1955) {tmdb-26758}.frames.npy
+│       ├── Man With The Gun (1955) {tmdb-26758}.frames.valid.npy
+│       ├── Mccabe And Mrs Miller (1971) {tmdb-29005}.annotations.json
+│       ├── Mccabe And Mrs Miller (1971) {tmdb-29005}.annotations.manifest.json
+│       ├── Mccabe And Mrs Miller (1971) {tmdb-29005}.annotations.npy
+│       ├── Mccabe And Mrs Miller (1971) {tmdb-29005}.annotations.txt
+│       ├── Mccabe And Mrs Miller (1971) {tmdb-29005}.frames.manifest.json
+│       ├── Mccabe And Mrs Miller (1971) {tmdb-29005}.frames.npy
+│       ├── Mccabe And Mrs Miller (1971) {tmdb-29005}.frames.valid.npy
+│       ├── Meeks Cutoff (2010) {tmdb-57120}.annotations.json
+│       ├── Meeks Cutoff (2010) {tmdb-57120}.annotations.manifest.json
+│       ├── Meeks Cutoff (2010) {tmdb-57120}.annotations.npy
+│       ├── Meeks Cutoff (2010) {tmdb-57120}.annotations.txt
+│       ├── Meeks Cutoff (2010) {tmdb-57120}.frames.manifest.json
+│       ├── Meeks Cutoff (2010) {tmdb-57120}.frames.npy
+│       ├── Meeks Cutoff (2010) {tmdb-57120}.frames.valid.npy
+│       ├── Mississippi Rhythm (1949) {tmdb-346928}.annotations.json
+│       ├── Mississippi Rhythm (1949) {tmdb-346928}.annotations.manifest.json
+│       ├── Mississippi Rhythm (1949) {tmdb-346928}.annotations.npy
+│       ├── Mississippi Rhythm (1949) {tmdb-346928}.annotations.txt
+│       ├── Mississippi Rhythm (1949) {tmdb-346928}.frames.manifest.json
+│       ├── Mississippi Rhythm (1949) {tmdb-346928}.frames.npy
+│       ├── Mississippi Rhythm (1949) {tmdb-346928}.frames.valid.npy
+│       ├── Monte Walsh (1970) {tmdb-71244}.annotations.json
+│       ├── Monte Walsh (1970) {tmdb-71244}.annotations.manifest.json
+│       ├── Monte Walsh (1970) {tmdb-71244}.annotations.npy
+│       ├── Monte Walsh (1970) {tmdb-71244}.annotations.txt
+│       ├── Monte Walsh (1970) {tmdb-71244}.frames.manifest.json
+│       ├── Monte Walsh (1970) {tmdb-71244}.frames.npy
+│       ├── Monte Walsh (1970) {tmdb-71244}.frames.valid.npy
+│       ├── My Darling Clementine (1946) {tmdb-3088}.annotations.json
+│       ├── My Darling Clementine (1946) {tmdb-3088}.annotations.manifest.json
+│       ├── My Darling Clementine (1946) {tmdb-3088}.annotations.npy
+│       ├── My Darling Clementine (1946) {tmdb-3088}.annotations.txt
+│       ├── My Darling Clementine (1946) {tmdb-3088}.frames.manifest.json
+│       ├── My Darling Clementine (1946) {tmdb-3088}.frames.npy
+│       ├── My Darling Clementine (1946) {tmdb-3088}.frames.valid.npy
+│       ├── My Name Is Nobody (1973) {tmdb-9474}.annotations.json
+│       ├── My Name Is Nobody (1973) {tmdb-9474}.annotations.manifest.json
+│       ├── My Name Is Nobody (1973) {tmdb-9474}.annotations.npy
+│       ├── My Name Is Nobody (1973) {tmdb-9474}.annotations.txt
+│       ├── My Name Is Nobody (1973) {tmdb-9474}.frames.manifest.json
+│       ├── My Name Is Nobody (1973) {tmdb-9474}.frames.npy
+│       ├── My Name Is Nobody (1973) {tmdb-9474}.frames.valid.npy
+│       ├── Neath The Arizona Skies (1934) {tmdb-53830}.annotations.json
+│       ├── Neath The Arizona Skies (1934) {tmdb-53830}.annotations.manifest.json
+│       ├── Neath The Arizona Skies (1934) {tmdb-53830}.annotations.npy
+│       ├── Neath The Arizona Skies (1934) {tmdb-53830}.annotations.txt
+│       ├── Neath The Arizona Skies (1934) {tmdb-53830}.frames.manifest.json
+│       ├── Neath The Arizona Skies (1934) {tmdb-53830}.frames.npy
+│       ├── Neath The Arizona Skies (1934) {tmdb-53830}.frames.valid.npy
+│       ├── Ned Kelly (1970) {tmdb-038978}.annotations.json
+│       ├── Ned Kelly (1970) {tmdb-038978}.annotations.manifest.json
+│       ├── Ned Kelly (1970) {tmdb-038978}.annotations.npy
+│       ├── Ned Kelly (1970) {tmdb-038978}.annotations.txt
+│       ├── Ned Kelly (1970) {tmdb-038978}.frames.manifest.json
+│       ├── Ned Kelly (1970) {tmdb-038978}.frames.npy
+│       ├── Ned Kelly (1970) {tmdb-038978}.frames.valid.npy
+│       ├── Northwest Passage (1940) {tmdb-043805}.annotations.json
+│       ├── Northwest Passage (1940) {tmdb-043805}.annotations.manifest.json
+│       ├── Northwest Passage (1940) {tmdb-043805}.annotations.npy
+│       ├── Northwest Passage (1940) {tmdb-043805}.annotations.txt
+│       ├── Northwest Passage (1940) {tmdb-043805}.frames.manifest.json
+│       ├── Northwest Passage (1940) {tmdb-043805}.frames.npy
+│       ├── Northwest Passage (1940) {tmdb-043805}.frames.valid.npy
+│       ├── Once Upon A Time In The West (1968) {tmdb-335}.annotations.json
+│       ├── Once Upon A Time In The West (1968) {tmdb-335}.annotations.manifest.json
+│       ├── Once Upon A Time In The West (1968) {tmdb-335}.annotations.npy
+│       ├── Once Upon A Time In The West (1968) {tmdb-335}.annotations.txt
+│       ├── Once Upon A Time In The West (1968) {tmdb-335}.frames.manifest.json
+│       ├── Once Upon A Time In The West (1968) {tmdb-335}.frames.npy
+│       ├── Once Upon A Time In The West (1968) {tmdb-335}.frames.valid.npy
+│       ├── One Eyed Jacks (1961) {tmdb-18647}.annotations.json
+│       ├── One Eyed Jacks (1961) {tmdb-18647}.annotations.manifest.json
+│       ├── One Eyed Jacks (1961) {tmdb-18647}.annotations.npy
+│       ├── One Eyed Jacks (1961) {tmdb-18647}.annotations.txt
+│       ├── One Eyed Jacks (1961) {tmdb-18647}.frames.manifest.json
+│       ├── One Eyed Jacks (1961) {tmdb-18647}.frames.npy
+│       ├── One Eyed Jacks (1961) {tmdb-18647}.frames.valid.npy
+│       ├── One More Train To Rob (1971) {tmdb-142148}.annotations.json
+│       ├── One More Train To Rob (1971) {tmdb-142148}.annotations.manifest.json
+│       ├── One More Train To Rob (1971) {tmdb-142148}.annotations.npy
+│       ├── One More Train To Rob (1971) {tmdb-142148}.annotations.txt
+│       ├── One More Train To Rob (1971) {tmdb-142148}.frames.manifest.json
+│       ├── One More Train To Rob (1971) {tmdb-142148}.frames.npy
+│       ├── One More Train To Rob (1971) {tmdb-142148}.frames.valid.npy
+│       ├── Out West (1918) {tmdb-051301}.annotations.json
+│       ├── Out West (1918) {tmdb-051301}.annotations.manifest.json
+│       ├── Out West (1918) {tmdb-051301}.annotations.npy
+│       ├── Out West (1918) {tmdb-051301}.annotations.txt
+│       ├── Out West (1918) {tmdb-051301}.frames.manifest.json
+│       ├── Out West (1918) {tmdb-051301}.frames.npy
+│       ├── Out West (1918) {tmdb-051301}.frames.valid.npy
+│       ├── Paint Your Wagon (1969) {tmdb-20391}.annotations.json
+│       ├── Paint Your Wagon (1969) {tmdb-20391}.annotations.manifest.json
+│       ├── Paint Your Wagon (1969) {tmdb-20391}.annotations.npy
+│       ├── Paint Your Wagon (1969) {tmdb-20391}.annotations.txt
+│       ├── Paint Your Wagon (1969) {tmdb-20391}.frames.manifest.json
+│       ├── Paint Your Wagon (1969) {tmdb-20391}.frames.npy
+│       ├── Paint Your Wagon (1969) {tmdb-20391}.frames.valid.npy
+│       ├── Pale Rider (1985) {tmdb-8879}.annotations.json
+│       ├── Pale Rider (1985) {tmdb-8879}.annotations.manifest.json
+│       ├── Pale Rider (1985) {tmdb-8879}.annotations.npy
+│       ├── Pale Rider (1985) {tmdb-8879}.annotations.txt
+│       ├── Pale Rider (1985) {tmdb-8879}.frames.manifest.json
+│       ├── Pale Rider (1985) {tmdb-8879}.frames.npy
+│       ├── Pale Rider (1985) {tmdb-8879}.frames.valid.npy
+│       ├── Paradise Canyon (1935) {tmdb-023286}.annotations.json
+│       ├── Paradise Canyon (1935) {tmdb-023286}.annotations.manifest.json
+│       ├── Paradise Canyon (1935) {tmdb-023286}.annotations.npy
+│       ├── Paradise Canyon (1935) {tmdb-023286}.annotations.txt
+│       ├── Paradise Canyon (1935) {tmdb-023286}.frames.manifest.json
+│       ├── Paradise Canyon (1935) {tmdb-023286}.frames.npy
+│       ├── Paradise Canyon (1935) {tmdb-023286}.frames.valid.npy
+│       ├── Pat Garrett And Billy The Kid (1973) {tmdb-11577}.annotations.json
+│       ├── Pat Garrett And Billy The Kid (1973) {tmdb-11577}.annotations.manifest.json
+│       ├── Pat Garrett And Billy The Kid (1973) {tmdb-11577}.annotations.npy
+│       ├── Pat Garrett And Billy The Kid (1973) {tmdb-11577}.annotations.txt
+│       ├── Pat Garrett And Billy The Kid (1973) {tmdb-11577}.frames.manifest.json
+│       ├── Pat Garrett And Billy The Kid (1973) {tmdb-11577}.frames.npy
+│       ├── Pat Garrett And Billy The Kid (1973) {tmdb-11577}.frames.valid.npy
+│       ├── Pecos Pest (1955) {tmdb-075097}.annotations.json
+│       ├── Pecos Pest (1955) {tmdb-075097}.annotations.manifest.json
+│       ├── Pecos Pest (1955) {tmdb-075097}.annotations.npy
+│       ├── Pecos Pest (1955) {tmdb-075097}.annotations.txt
+│       ├── Pecos Pest (1955) {tmdb-075097}.frames.manifest.json
+│       ├── Pecos Pest (1955) {tmdb-075097}.frames.npy
+│       ├── Pecos Pest (1955) {tmdb-075097}.frames.valid.npy
+│       ├── Pony Express (1953) {tmdb-43351}.annotations.json
+│       ├── Pony Express (1953) {tmdb-43351}.annotations.manifest.json
+│       ├── Pony Express (1953) {tmdb-43351}.annotations.npy
+│       ├── Pony Express (1953) {tmdb-43351}.annotations.txt
+│       ├── Pony Express (1953) {tmdb-43351}.frames.manifest.json
+│       ├── Pony Express (1953) {tmdb-43351}.frames.npy
+│       ├── Pony Express (1953) {tmdb-43351}.frames.valid.npy
+│       ├── Pursued (1947) {tmdb-26761}.annotations.json
+│       ├── Pursued (1947) {tmdb-26761}.annotations.manifest.json
+│       ├── Pursued (1947) {tmdb-26761}.annotations.npy
+│       ├── Pursued (1947) {tmdb-26761}.annotations.txt
+│       ├── Pursued (1947) {tmdb-26761}.frames.manifest.json
+│       ├── Pursued (1947) {tmdb-26761}.frames.npy
+│       ├── Pursued (1947) {tmdb-26761}.frames.valid.npy
+│       ├── Quantez (1957) {tmdb-138373}.annotations.json
+│       ├── Quantez (1957) {tmdb-138373}.annotations.manifest.json
+│       ├── Quantez (1957) {tmdb-138373}.annotations.npy
+│       ├── Quantez (1957) {tmdb-138373}.annotations.txt
+│       ├── Quantez (1957) {tmdb-138373}.frames.manifest.json
+│       ├── Quantez (1957) {tmdb-138373}.frames.npy
+│       ├── Quantez (1957) {tmdb-138373}.frames.valid.npy
+│       ├── Rainbow Valley (1935) {tmdb-053781}.annotations.json
+│       ├── Rainbow Valley (1935) {tmdb-053781}.annotations.manifest.json
+│       ├── Rainbow Valley (1935) {tmdb-053781}.annotations.npy
+│       ├── Rainbow Valley (1935) {tmdb-053781}.annotations.txt
+│       ├── Rainbow Valley (1935) {tmdb-053781}.frames.manifest.json
+│       ├── Rainbow Valley (1935) {tmdb-053781}.frames.npy
+│       ├── Rainbow Valley (1935) {tmdb-053781}.frames.valid.npy
+│       ├── Raise Your Hands Dead Man Youre Under Arrest (1971) {tmdb-129856}.annotations.json
+│       ├── Raise Your Hands Dead Man Youre Under Arrest (1971) {tmdb-129856}.annotations.manifest.json
+│       ├── Raise Your Hands Dead Man Youre Under Arrest (1971) {tmdb-129856}.annotations.npy
+│       ├── Raise Your Hands Dead Man Youre Under Arrest (1971) {tmdb-129856}.annotations.txt
+│       ├── Raise Your Hands Dead Man Youre Under Arrest (1971) {tmdb-129856}.frames.manifest.json
+│       ├── Raise Your Hands Dead Man Youre Under Arrest (1971) {tmdb-129856}.frames.npy
+│       ├── Raise Your Hands Dead Man Youre Under Arrest (1971) {tmdb-129856}.frames.valid.npy
+│       ├── Rancho Deluxe (1975) {tmdb-42261}.annotations.json
+│       ├── Rancho Deluxe (1975) {tmdb-42261}.annotations.manifest.json
+│       ├── Rancho Deluxe (1975) {tmdb-42261}.annotations.npy
+│       ├── Rancho Deluxe (1975) {tmdb-42261}.annotations.txt
+│       ├── Rancho Deluxe (1975) {tmdb-42261}.frames.manifest.json
+│       ├── Rancho Deluxe (1975) {tmdb-42261}.frames.npy
+│       ├── Rancho Deluxe (1975) {tmdb-42261}.frames.valid.npy
+│       ├── Randy Rides Alone (1934) {tmdb-022602}.annotations.json
+│       ├── Randy Rides Alone (1934) {tmdb-022602}.annotations.manifest.json
+│       ├── Randy Rides Alone (1934) {tmdb-022602}.annotations.npy
+│       ├── Randy Rides Alone (1934) {tmdb-022602}.annotations.txt
+│       ├── Randy Rides Alone (1934) {tmdb-022602}.frames.manifest.json
+│       ├── Randy Rides Alone (1934) {tmdb-022602}.frames.npy
+│       ├── Randy Rides Alone (1934) {tmdb-022602}.frames.valid.npy
+│       ├── Rawhide (1951) {tmdb-043380}.annotations.json
+│       ├── Rawhide (1951) {tmdb-043380}.annotations.manifest.json
+│       ├── Rawhide (1951) {tmdb-043380}.annotations.npy
+│       ├── Rawhide (1951) {tmdb-043380}.annotations.txt
+│       ├── Rawhide (1951) {tmdb-043380}.frames.manifest.json
+│       ├── Rawhide (1951) {tmdb-043380}.frames.npy
+│       ├── Rawhide (1951) {tmdb-043380}.frames.valid.npy
+│       ├── Red River (1948) {tmdb-3089}.annotations.json
+│       ├── Red River (1948) {tmdb-3089}.annotations.manifest.json
+│       ├── Red River (1948) {tmdb-3089}.annotations.npy
+│       ├── Red River (1948) {tmdb-3089}.annotations.txt
+│       ├── Red River (1948) {tmdb-3089}.frames.manifest.json
+│       ├── Red River (1948) {tmdb-3089}.frames.npy
+│       ├── Red River (1948) {tmdb-3089}.frames.valid.npy
+│       ├── Ride Him Cowboy (1932) {tmdb-082970}.annotations.json
+│       ├── Ride Him Cowboy (1932) {tmdb-082970}.annotations.manifest.json
+│       ├── Ride Him Cowboy (1932) {tmdb-082970}.annotations.npy
+│       ├── Ride Him Cowboy (1932) {tmdb-082970}.annotations.txt
+│       ├── Ride Him Cowboy (1932) {tmdb-082970}.frames.manifest.json
+│       ├── Ride Him Cowboy (1932) {tmdb-082970}.frames.npy
+│       ├── Ride Him Cowboy (1932) {tmdb-082970}.frames.valid.npy
+│       ├── Ride In The Whirlwind (1966) {tmdb-60555}.annotations.json
+│       ├── Ride In The Whirlwind (1966) {tmdb-60555}.annotations.manifest.json
+│       ├── Ride In The Whirlwind (1966) {tmdb-60555}.annotations.npy
+│       ├── Ride In The Whirlwind (1966) {tmdb-60555}.annotations.txt
+│       ├── Ride In The Whirlwind (1966) {tmdb-60555}.frames.manifest.json
+│       ├── Ride In The Whirlwind (1966) {tmdb-60555}.frames.npy
+│       ├── Ride In The Whirlwind (1966) {tmdb-60555}.frames.valid.npy
+│       ├── Riders Of Destiny (1933) {tmdb-023391}.annotations.json
+│       ├── Riders Of Destiny (1933) {tmdb-023391}.annotations.manifest.json
+│       ├── Riders Of Destiny (1933) {tmdb-023391}.annotations.npy
+│       ├── Riders Of Destiny (1933) {tmdb-023391}.annotations.txt
+│       ├── Riders Of Destiny (1933) {tmdb-023391}.frames.manifest.json
+│       ├── Riders Of Destiny (1933) {tmdb-023391}.frames.npy
+│       ├── Riders Of Destiny (1933) {tmdb-023391}.frames.valid.npy
+│       ├── Ride The High Country (1962) {tmdb-36206}.annotations.json
+│       ├── Ride The High Country (1962) {tmdb-36206}.annotations.manifest.json
+│       ├── Ride The High Country (1962) {tmdb-36206}.annotations.npy
+│       ├── Ride The High Country (1962) {tmdb-36206}.annotations.txt
+│       ├── Ride The High Country (1962) {tmdb-36206}.frames.manifest.json
+│       ├── Ride The High Country (1962) {tmdb-36206}.frames.npy
+│       ├── Ride The High Country (1962) {tmdb-36206}.frames.valid.npy
+│       ├── Ride With The Devil (1999) {tmdb-22267}.annotations.json
+│       ├── Ride With The Devil (1999) {tmdb-22267}.annotations.manifest.json
+│       ├── Ride With The Devil (1999) {tmdb-22267}.annotations.npy
+│       ├── Ride With The Devil (1999) {tmdb-22267}.annotations.txt
+│       ├── Ride With The Devil (1999) {tmdb-22267}.frames.manifest.json
+│       ├── Ride With The Devil (1999) {tmdb-22267}.frames.npy
+│       ├── Ride With The Devil (1999) {tmdb-22267}.frames.valid.npy
+│       ├── Rio Bravo (1959) {tmdb-301}.annotations.json
+│       ├── Rio Bravo (1959) {tmdb-301}.annotations.manifest.json
+│       ├── Rio Bravo (1959) {tmdb-301}.annotations.npy
+│       ├── Rio Bravo (1959) {tmdb-301}.annotations.txt
+│       ├── Rio Bravo (1959) {tmdb-301}.frames.manifest.json
+│       ├── Rio Bravo (1959) {tmdb-301}.frames.npy
+│       ├── Rio Bravo (1959) {tmdb-301}.frames.valid.npy
+│       ├── Rio Conchos (1964) {tmdb-32560}.annotations.json
+│       ├── Rio Conchos (1964) {tmdb-32560}.annotations.manifest.json
+│       ├── Rio Conchos (1964) {tmdb-32560}.annotations.npy
+│       ├── Rio Conchos (1964) {tmdb-32560}.annotations.txt
+│       ├── Rio Conchos (1964) {tmdb-32560}.frames.manifest.json
+│       ├── Rio Conchos (1964) {tmdb-32560}.frames.npy
+│       ├── Rio Conchos (1964) {tmdb-32560}.frames.valid.npy
+│       ├── Rio Lobo (1970) {tmdb-26593}.annotations.json
+│       ├── Rio Lobo (1970) {tmdb-26593}.annotations.manifest.json
+│       ├── Rio Lobo (1970) {tmdb-26593}.annotations.npy
+│       ├── Rio Lobo (1970) {tmdb-26593}.annotations.txt
+│       ├── Rio Lobo (1970) {tmdb-26593}.frames.manifest.json
+│       ├── Rio Lobo (1970) {tmdb-26593}.frames.npy
+│       ├── Rio Lobo (1970) {tmdb-26593}.frames.valid.npy
+│       ├── River Of No Return (1954) {tmdb-1936}.annotations.json
+│       ├── River Of No Return (1954) {tmdb-1936}.annotations.manifest.json
+│       ├── River Of No Return (1954) {tmdb-1936}.annotations.npy
+│       ├── River Of No Return (1954) {tmdb-1936}.annotations.txt
+│       ├── River Of No Return (1954) {tmdb-1936}.frames.manifest.json
+│       ├── River Of No Return (1954) {tmdb-1936}.frames.npy
+│       ├── River Of No Return (1954) {tmdb-1936}.frames.valid.npy
+│       ├── Robbers Roost (1955) {tmdb-241819}.annotations.json
+│       ├── Robbers Roost (1955) {tmdb-241819}.annotations.manifest.json
+│       ├── Robbers Roost (1955) {tmdb-241819}.annotations.npy
+│       ├── Robbers Roost (1955) {tmdb-241819}.annotations.txt
+│       ├── Robbers Roost (1955) {tmdb-241819}.frames.manifest.json
+│       ├── Robbers Roost (1955) {tmdb-241819}.frames.npy
+│       ├── Robbers Roost (1955) {tmdb-241819}.frames.valid.npy
+│       ├── Rockin In The Rockies (1945) {tmdb-173634}.annotations.json
+│       ├── Rockin In The Rockies (1945) {tmdb-173634}.annotations.manifest.json
+│       ├── Rockin In The Rockies (1945) {tmdb-173634}.annotations.npy
+│       ├── Rockin In The Rockies (1945) {tmdb-173634}.annotations.txt
+│       ├── Rockin In The Rockies (1945) {tmdb-173634}.frames.manifest.json
+│       ├── Rockin In The Rockies (1945) {tmdb-173634}.frames.npy
+│       ├── Rockin In The Rockies (1945) {tmdb-173634}.frames.valid.npy
+│       ├── Roy Colt Winchester Jack (1970) {tmdb-92788}.annotations.json
+│       ├── Roy Colt Winchester Jack (1970) {tmdb-92788}.annotations.manifest.json
+│       ├── Roy Colt Winchester Jack (1970) {tmdb-92788}.annotations.npy
+│       ├── Roy Colt Winchester Jack (1970) {tmdb-92788}.annotations.txt
+│       ├── Roy Colt Winchester Jack (1970) {tmdb-92788}.frames.manifest.json
+│       ├── Roy Colt Winchester Jack (1970) {tmdb-92788}.frames.npy
+│       ├── Roy Colt Winchester Jack (1970) {tmdb-92788}.frames.valid.npy
+│       ├── Run For Cover (1955) {tmdb-85639}.annotations.json
+│       ├── Run For Cover (1955) {tmdb-85639}.annotations.manifest.json
+│       ├── Run For Cover (1955) {tmdb-85639}.annotations.npy
+│       ├── Run For Cover (1955) {tmdb-85639}.annotations.txt
+│       ├── Run For Cover (1955) {tmdb-85639}.frames.manifest.json
+│       ├── Run For Cover (1955) {tmdb-85639}.frames.npy
+│       ├── Run For Cover (1955) {tmdb-85639}.frames.valid.npy
+│       ├── Sagebrush Trail (1933) {tmdb-023590}.annotations.json
+│       ├── Sagebrush Trail (1933) {tmdb-023590}.annotations.manifest.json
+│       ├── Sagebrush Trail (1933) {tmdb-023590}.annotations.npy
+│       ├── Sagebrush Trail (1933) {tmdb-023590}.annotations.txt
+│       ├── Sagebrush Trail (1933) {tmdb-023590}.frames.manifest.json
+│       ├── Sagebrush Trail (1933) {tmdb-023590}.frames.npy
+│       ├── Sagebrush Trail (1933) {tmdb-023590}.frames.valid.npy
+│       ├── Sergeant Rutledge (1960) {tmdb-43040}.annotations.json
+│       ├── Sergeant Rutledge (1960) {tmdb-43040}.annotations.manifest.json
+│       ├── Sergeant Rutledge (1960) {tmdb-43040}.annotations.npy
+│       ├── Sergeant Rutledge (1960) {tmdb-43040}.annotations.txt
+│       ├── Sergeant Rutledge (1960) {tmdb-43040}.frames.manifest.json
+│       ├── Sergeant Rutledge (1960) {tmdb-43040}.frames.npy
+│       ├── Sergeant Rutledge (1960) {tmdb-43040}.frames.valid.npy
+│       ├── Shane (1953) {tmdb-3110}.annotations.json
+│       ├── Shane (1953) {tmdb-3110}.annotations.manifest.json
+│       ├── Shane (1953) {tmdb-3110}.annotations.npy
+│       ├── Shane (1953) {tmdb-3110}.annotations.txt
+│       ├── Shane (1953) {tmdb-3110}.frames.manifest.json
+│       ├── Shane (1953) {tmdb-3110}.frames.npy
+│       ├── Shane (1953) {tmdb-3110}.frames.valid.npy
+│       ├── She Wore A Yellow Ribbon (1949) {tmdb-13909}.annotations.json
+│       ├── She Wore A Yellow Ribbon (1949) {tmdb-13909}.annotations.manifest.json
+│       ├── She Wore A Yellow Ribbon (1949) {tmdb-13909}.annotations.npy
+│       ├── She Wore A Yellow Ribbon (1949) {tmdb-13909}.annotations.txt
+│       ├── She Wore A Yellow Ribbon (1949) {tmdb-13909}.frames.manifest.json
+│       ├── She Wore A Yellow Ribbon (1949) {tmdb-13909}.frames.npy
+│       ├── She Wore A Yellow Ribbon (1949) {tmdb-13909}.frames.valid.npy
+│       ├── Shoot The Sun Down (1978) {tmdb-168563}.annotations.json
+│       ├── Shoot The Sun Down (1978) {tmdb-168563}.annotations.manifest.json
+│       ├── Shoot The Sun Down (1978) {tmdb-168563}.annotations.npy
+│       ├── Shoot The Sun Down (1978) {tmdb-168563}.annotations.txt
+│       ├── Shoot The Sun Down (1978) {tmdb-168563}.frames.manifest.json
+│       ├── Shoot The Sun Down (1978) {tmdb-168563}.frames.npy
+│       ├── Shoot The Sun Down (1978) {tmdb-168563}.frames.valid.npy
+│       ├── Silverado (1985) {tmdb-11509}.annotations.json
+│       ├── Silverado (1985) {tmdb-11509}.annotations.manifest.json
+│       ├── Silverado (1985) {tmdb-11509}.annotations.npy
+│       ├── Silverado (1985) {tmdb-11509}.annotations.txt
+│       ├── Silverado (1985) {tmdb-11509}.frames.manifest.json
+│       ├── Silverado (1985) {tmdb-11509}.frames.npy
+│       ├── Silverado (1985) {tmdb-11509}.frames.valid.npy
+│       ├── Silver Saddle (1978) {tmdb-42326}.annotations.json
+│       ├── Silver Saddle (1978) {tmdb-42326}.annotations.manifest.json
+│       ├── Silver Saddle (1978) {tmdb-42326}.annotations.npy
+│       ├── Silver Saddle (1978) {tmdb-42326}.annotations.txt
+│       ├── Silver Saddle (1978) {tmdb-42326}.frames.manifest.json
+│       ├── Silver Saddle (1978) {tmdb-42326}.frames.npy
+│       ├── Silver Saddle (1978) {tmdb-42326}.frames.valid.npy
+│       ├── Skin Game (1971) {tmdb-20628}.annotations.json
+│       ├── Skin Game (1971) {tmdb-20628}.annotations.manifest.json
+│       ├── Skin Game (1971) {tmdb-20628}.annotations.npy
+│       ├── Skin Game (1971) {tmdb-20628}.annotations.txt
+│       ├── Skin Game (1971) {tmdb-20628}.frames.manifest.json
+│       ├── Skin Game (1971) {tmdb-20628}.frames.npy
+│       ├── Skin Game (1971) {tmdb-20628}.frames.valid.npy
+│       ├── Sky High (1922) {tmdb-127277}.annotations.json
+│       ├── Sky High (1922) {tmdb-127277}.annotations.manifest.json
+│       ├── Sky High (1922) {tmdb-127277}.annotations.npy
+│       ├── Sky High (1922) {tmdb-127277}.annotations.txt
+│       ├── Sky High (1922) {tmdb-127277}.frames.manifest.json
+│       ├── Sky High (1922) {tmdb-127277}.frames.npy
+│       ├── Sky High (1922) {tmdb-127277}.frames.valid.npy
+│       ├── Soldier Blue (1970) {tmdb-14384}.annotations.json
+│       ├── Soldier Blue (1970) {tmdb-14384}.annotations.manifest.json
+│       ├── Soldier Blue (1970) {tmdb-14384}.annotations.npy
+│       ├── Soldier Blue (1970) {tmdb-14384}.annotations.txt
+│       ├── Soldier Blue (1970) {tmdb-14384}.frames.manifest.json
+│       ├── Soldier Blue (1970) {tmdb-14384}.frames.npy
+│       ├── Soldier Blue (1970) {tmdb-14384}.frames.valid.npy
+│       ├── Something Big (1971) {tmdb-196784}.annotations.json
+│       ├── Something Big (1971) {tmdb-196784}.annotations.manifest.json
+│       ├── Something Big (1971) {tmdb-196784}.annotations.npy
+│       ├── Something Big (1971) {tmdb-196784}.annotations.txt
+│       ├── Something Big (1971) {tmdb-196784}.frames.manifest.json
+│       ├── Something Big (1971) {tmdb-196784}.frames.npy
+│       ├── Something Big (1971) {tmdb-196784}.frames.valid.npy
+│       ├── South Of St. Louis (1949) {tmdb-201885}.annotations.json
+│       ├── South Of St. Louis (1949) {tmdb-201885}.annotations.manifest.json
+│       ├── South Of St. Louis (1949) {tmdb-201885}.annotations.npy
+│       ├── South Of St. Louis (1949) {tmdb-201885}.annotations.txt
+│       ├── South Of St. Louis (1949) {tmdb-201885}.frames.manifest.json
+│       ├── South Of St. Louis (1949) {tmdb-201885}.frames.npy
+│       ├── South Of St. Louis (1949) {tmdb-201885}.frames.valid.npy
+│       ├── Springfield Rifle (1952) {tmdb-111043}.annotations.json
+│       ├── Springfield Rifle (1952) {tmdb-111043}.annotations.manifest.json
+│       ├── Springfield Rifle (1952) {tmdb-111043}.annotations.npy
+│       ├── Springfield Rifle (1952) {tmdb-111043}.annotations.txt
+│       ├── Springfield Rifle (1952) {tmdb-111043}.frames.manifest.json
+│       ├── Springfield Rifle (1952) {tmdb-111043}.frames.npy
+│       ├── Springfield Rifle (1952) {tmdb-111043}.frames.valid.npy
+│       ├── Stagecoach (1939) {tmdb-995}.annotations.json
+│       ├── Stagecoach (1939) {tmdb-995}.annotations.manifest.json
+│       ├── Stagecoach (1939) {tmdb-995}.annotations.npy
+│       ├── Stagecoach (1939) {tmdb-995}.annotations.txt
+│       ├── Stagecoach (1939) {tmdb-995}.frames.manifest.json
+│       ├── Stagecoach (1939) {tmdb-995}.frames.npy
+│       ├── Stagecoach (1939) {tmdb-995}.frames.valid.npy
+│       ├── Straight Shooting (1917) {tmdb-157903}.annotations.json
+│       ├── Straight Shooting (1917) {tmdb-157903}.annotations.manifest.json
+│       ├── Straight Shooting (1917) {tmdb-157903}.annotations.npy
+│       ├── Straight Shooting (1917) {tmdb-157903}.annotations.txt
+│       ├── Straight Shooting (1917) {tmdb-157903}.frames.manifest.json
+│       ├── Straight Shooting (1917) {tmdb-157903}.frames.npy
+│       ├── Straight Shooting (1917) {tmdb-157903}.frames.valid.npy
+│       ├── Straight To Hell (1987) {tmdb-9698}.annotations.json
+│       ├── Straight To Hell (1987) {tmdb-9698}.annotations.manifest.json
+│       ├── Straight To Hell (1987) {tmdb-9698}.annotations.npy
+│       ├── Straight To Hell (1987) {tmdb-9698}.annotations.txt
+│       ├── Straight To Hell (1987) {tmdb-9698}.frames.manifest.json
+│       ├── Straight To Hell (1987) {tmdb-9698}.frames.npy
+│       ├── Straight To Hell (1987) {tmdb-9698}.frames.valid.npy
+│       ├── Surrounded (2023) {tmdb-759584}.annotations.json
+│       ├── Surrounded (2023) {tmdb-759584}.annotations.manifest.json
+│       ├── Surrounded (2023) {tmdb-759584}.annotations.npy
+│       ├── Surrounded (2023) {tmdb-759584}.annotations.txt
+│       ├── Surrounded (2023) {tmdb-759584}.frames.manifest.json
+│       ├── Surrounded (2023) {tmdb-759584}.frames.npy
+│       ├── Surrounded (2023) {tmdb-759584}.frames.valid.npy
+│       ├── Take A Hard Ride (1975) {tmdb-44697}.annotations.json
+│       ├── Take A Hard Ride (1975) {tmdb-44697}.annotations.manifest.json
+│       ├── Take A Hard Ride (1975) {tmdb-44697}.annotations.npy
+│       ├── Take A Hard Ride (1975) {tmdb-44697}.annotations.txt
+│       ├── Take A Hard Ride (1975) {tmdb-44697}.frames.manifest.json
+│       ├── Take A Hard Ride (1975) {tmdb-44697}.frames.npy
+│       ├── Take A Hard Ride (1975) {tmdb-44697}.frames.valid.npy
+│       ├── Tall In The Saddle (1944) {tmdb-015264}.annotations.json
+│       ├── Tall In The Saddle (1944) {tmdb-015264}.annotations.manifest.json
+│       ├── Tall In The Saddle (1944) {tmdb-015264}.annotations.npy
+│       ├── Tall In The Saddle (1944) {tmdb-015264}.annotations.txt
+│       ├── Tall In The Saddle (1944) {tmdb-015264}.frames.manifest.json
+│       ├── Tall In The Saddle (1944) {tmdb-015264}.frames.npy
+│       ├── Tall In The Saddle (1944) {tmdb-015264}.frames.valid.npy
+│       ├── Tall Man Riding (1955) {tmdb-085601}.annotations.json
+│       ├── Tall Man Riding (1955) {tmdb-085601}.annotations.manifest.json
+│       ├── Tall Man Riding (1955) {tmdb-085601}.annotations.npy
+│       ├── Tall Man Riding (1955) {tmdb-085601}.annotations.txt
+│       ├── Tall Man Riding (1955) {tmdb-085601}.frames.manifest.json
+│       ├── Tall Man Riding (1955) {tmdb-085601}.frames.npy
+│       ├── Tall Man Riding (1955) {tmdb-085601}.frames.valid.npy
+│       ├── Terror In A Texas Town (1958) {tmdb-46681}.annotations.json
+│       ├── Terror In A Texas Town (1958) {tmdb-46681}.annotations.manifest.json
+│       ├── Terror In A Texas Town (1958) {tmdb-46681}.annotations.npy
+│       ├── Terror In A Texas Town (1958) {tmdb-46681}.annotations.txt
+│       ├── Terror In A Texas Town (1958) {tmdb-46681}.frames.manifest.json
+│       ├── Terror In A Texas Town (1958) {tmdb-46681}.frames.npy
+│       ├── Terror In A Texas Town (1958) {tmdb-46681}.frames.valid.npy
+│       ├── Texas Terror (1935) {tmdb-022606}.annotations.json
+│       ├── Texas Terror (1935) {tmdb-022606}.annotations.manifest.json
+│       ├── Texas Terror (1935) {tmdb-022606}.annotations.npy
+│       ├── Texas Terror (1935) {tmdb-022606}.annotations.txt
+│       ├── Texas Terror (1935) {tmdb-022606}.frames.manifest.json
+│       ├── Texas Terror (1935) {tmdb-022606}.frames.npy
+│       ├── Texas Terror (1935) {tmdb-022606}.frames.valid.npy
+│       ├── The Alamo (1960) {tmdb-11209}.annotations.json
+│       ├── The Alamo (1960) {tmdb-11209}.annotations.manifest.json
+│       ├── The Alamo (1960) {tmdb-11209}.annotations.npy
+│       ├── The Alamo (1960) {tmdb-11209}.annotations.txt
+│       ├── The Alamo (1960) {tmdb-11209}.frames.manifest.json
+│       ├── The Alamo (1960) {tmdb-11209}.frames.npy
+│       ├── The Alamo (1960) {tmdb-11209}.frames.valid.npy
+│       ├── The Apple Dumpling Gang (1975) {tmdb-18660}.annotations.json
+│       ├── The Apple Dumpling Gang (1975) {tmdb-18660}.annotations.manifest.json
+│       ├── The Apple Dumpling Gang (1975) {tmdb-18660}.annotations.npy
+│       ├── The Apple Dumpling Gang (1975) {tmdb-18660}.annotations.txt
+│       ├── The Apple Dumpling Gang (1975) {tmdb-18660}.frames.manifest.json
+│       ├── The Apple Dumpling Gang (1975) {tmdb-18660}.frames.npy
+│       ├── The Apple Dumpling Gang (1975) {tmdb-18660}.frames.valid.npy
+│       ├── The Assassination Of Jesse James By The Coward Robert Ford (2007) {tmdb-4512}.annotations.json
+│       ├── The Assassination Of Jesse James By The Coward Robert Ford (2007) {tmdb-4512}.annotations.manifest.json
+│       ├── The Assassination Of Jesse James By The Coward Robert Ford (2007) {tmdb-4512}.annotations.npy
+│       ├── The Assassination Of Jesse James By The Coward Robert Ford (2007) {tmdb-4512}.annotations.txt
+│       ├── The Assassination Of Jesse James By The Coward Robert Ford (2007) {tmdb-4512}.frames.manifest.json
+│       ├── The Assassination Of Jesse James By The Coward Robert Ford (2007) {tmdb-4512}.frames.npy
+│       ├── The Assassination Of Jesse James By The Coward Robert Ford (2007) {tmdb-4512}.frames.valid.npy
+│       ├── The Ballad Of Buster Scruggs (2018) {tmdb-537996}.annotations.json
+│       ├── The Ballad Of Buster Scruggs (2018) {tmdb-537996}.annotations.manifest.json
+│       ├── The Ballad Of Buster Scruggs (2018) {tmdb-537996}.annotations.npy
+│       ├── The Ballad Of Buster Scruggs (2018) {tmdb-537996}.annotations.txt
+│       ├── The Ballad Of Buster Scruggs (2018) {tmdb-537996}.frames.manifest.json
+│       ├── The Ballad Of Buster Scruggs (2018) {tmdb-537996}.frames.npy
+│       ├── The Ballad Of Buster Scruggs (2018) {tmdb-537996}.frames.valid.npy
+│       ├── The Ballad Of Cable Hogue (1970) {tmdb-23330}.annotations.json
+│       ├── The Ballad Of Cable Hogue (1970) {tmdb-23330}.annotations.manifest.json
+│       ├── The Ballad Of Cable Hogue (1970) {tmdb-23330}.annotations.npy
+│       ├── The Ballad Of Cable Hogue (1970) {tmdb-23330}.annotations.txt
+│       ├── The Ballad Of Cable Hogue (1970) {tmdb-23330}.frames.manifest.json
+│       ├── The Ballad Of Cable Hogue (1970) {tmdb-23330}.frames.npy
+│       ├── The Ballad Of Cable Hogue (1970) {tmdb-23330}.frames.valid.npy
+│       ├── The Baron Of Arizona (1950) {tmdb-37329}.annotations.json
+│       ├── The Baron Of Arizona (1950) {tmdb-37329}.annotations.manifest.json
+│       ├── The Baron Of Arizona (1950) {tmdb-37329}.annotations.npy
+│       ├── The Baron Of Arizona (1950) {tmdb-37329}.annotations.txt
+│       ├── The Baron Of Arizona (1950) {tmdb-37329}.frames.manifest.json
+│       ├── The Baron Of Arizona (1950) {tmdb-37329}.frames.npy
+│       ├── The Baron Of Arizona (1950) {tmdb-37329}.frames.valid.npy
+│       ├── The Beguiled (1971) {tmdb-31906}.annotations.json
+│       ├── The Beguiled (1971) {tmdb-31906}.annotations.manifest.json
+│       ├── The Beguiled (1971) {tmdb-31906}.annotations.npy
+│       ├── The Beguiled (1971) {tmdb-31906}.annotations.txt
+│       ├── The Beguiled (1971) {tmdb-31906}.frames.manifest.json
+│       ├── The Beguiled (1971) {tmdb-31906}.frames.npy
+│       ├── The Beguiled (1971) {tmdb-31906}.frames.valid.npy
+│       ├── The Beguiled (2017) {tmdb-399019}.annotations.json
+│       ├── The Beguiled (2017) {tmdb-399019}.annotations.manifest.json
+│       ├── The Beguiled (2017) {tmdb-399019}.annotations.npy
+│       ├── The Beguiled (2017) {tmdb-399019}.annotations.txt
+│       ├── The Beguiled (2017) {tmdb-399019}.frames.manifest.json
+│       ├── The Beguiled (2017) {tmdb-399019}.frames.npy
+│       ├── The Beguiled (2017) {tmdb-399019}.frames.valid.npy
+│       ├── The Big Country (1958) {tmdb-12501}.annotations.json
+│       ├── The Big Country (1958) {tmdb-12501}.annotations.manifest.json
+│       ├── The Big Country (1958) {tmdb-12501}.annotations.npy
+│       ├── The Big Country (1958) {tmdb-12501}.annotations.txt
+│       ├── The Big Country (1958) {tmdb-12501}.frames.manifest.json
+│       ├── The Big Country (1958) {tmdb-12501}.frames.npy
+│       ├── The Big Country (1958) {tmdb-12501}.frames.valid.npy
+│       ├── The Big Trail (1930) {tmdb-42640}.annotations.json
+│       ├── The Big Trail (1930) {tmdb-42640}.annotations.manifest.json
+│       ├── The Big Trail (1930) {tmdb-42640}.annotations.npy
+│       ├── The Big Trail (1930) {tmdb-42640}.annotations.txt
+│       ├── The Big Trail (1930) {tmdb-42640}.frames.manifest.json
+│       ├── The Big Trail (1930) {tmdb-42640}.frames.npy
+│       ├── The Big Trail (1930) {tmdb-42640}.frames.valid.npy
+│       ├── The Castaway Cowboy (1974) {tmdb-080351}.annotations.json
+│       ├── The Castaway Cowboy (1974) {tmdb-080351}.annotations.manifest.json
+│       ├── The Castaway Cowboy (1974) {tmdb-080351}.annotations.npy
+│       ├── The Castaway Cowboy (1974) {tmdb-080351}.annotations.txt
+│       ├── The Castaway Cowboy (1974) {tmdb-080351}.frames.manifest.json
+│       ├── The Castaway Cowboy (1974) {tmdb-080351}.frames.npy
+│       ├── The Castaway Cowboy (1974) {tmdb-080351}.frames.valid.npy
+│       ├── The Cowboys (1972) {tmdb-15573}.annotations.json
+│       ├── The Cowboys (1972) {tmdb-15573}.annotations.manifest.json
+│       ├── The Cowboys (1972) {tmdb-15573}.annotations.npy
+│       ├── The Cowboys (1972) {tmdb-15573}.annotations.txt
+│       ├── The Cowboys (1972) {tmdb-15573}.frames.manifest.json
+│       ├── The Cowboys (1972) {tmdb-15573}.frames.npy
+│       ├── The Cowboys (1972) {tmdb-15573}.frames.valid.npy
+│       ├── The Dawn Rider (1935) {tmdb-53827}.annotations.json
+│       ├── The Dawn Rider (1935) {tmdb-53827}.annotations.manifest.json
+│       ├── The Dawn Rider (1935) {tmdb-53827}.annotations.npy
+│       ├── The Dawn Rider (1935) {tmdb-53827}.annotations.txt
+│       ├── The Dawn Rider (1935) {tmdb-53827}.frames.manifest.json
+│       ├── The Dawn Rider (1935) {tmdb-53827}.frames.npy
+│       ├── The Dawn Rider (1935) {tmdb-53827}.frames.valid.npy
+│       ├── The Deadly Companions (1961) {tmdb-018449}.annotations.json
+│       ├── The Deadly Companions (1961) {tmdb-018449}.annotations.manifest.json
+│       ├── The Deadly Companions (1961) {tmdb-018449}.annotations.npy
+│       ├── The Deadly Companions (1961) {tmdb-018449}.annotations.txt
+│       ├── The Deadly Companions (1961) {tmdb-018449}.frames.manifest.json
+│       ├── The Deadly Companions (1961) {tmdb-018449}.frames.npy
+│       ├── The Deadly Companions (1961) {tmdb-018449}.frames.valid.npy
+│       ├── The Desert Trail (1935) {tmdb-53624}.annotations.json
+│       ├── The Desert Trail (1935) {tmdb-53624}.annotations.manifest.json
+│       ├── The Desert Trail (1935) {tmdb-53624}.annotations.npy
+│       ├── The Desert Trail (1935) {tmdb-53624}.annotations.txt
+│       ├── The Desert Trail (1935) {tmdb-53624}.frames.manifest.json
+│       ├── The Desert Trail (1935) {tmdb-53624}.frames.npy
+│       ├── The Desert Trail (1935) {tmdb-53624}.frames.valid.npy
+│       ├── The Dragon Strikes Back (1973) {tmdb-030489}.annotations.json
+│       ├── The Dragon Strikes Back (1973) {tmdb-030489}.annotations.manifest.json
+│       ├── The Dragon Strikes Back (1973) {tmdb-030489}.annotations.npy
+│       ├── The Dragon Strikes Back (1973) {tmdb-030489}.annotations.txt
+│       ├── The Dragon Strikes Back (1973) {tmdb-030489}.frames.manifest.json
+│       ├── The Dragon Strikes Back (1973) {tmdb-030489}.frames.npy
+│       ├── The Dragon Strikes Back (1973) {tmdb-030489}.frames.valid.npy
+│       ├── The Fighting Kentuckian (1949) {tmdb-15266}.annotations.json
+│       ├── The Fighting Kentuckian (1949) {tmdb-15266}.annotations.manifest.json
+│       ├── The Fighting Kentuckian (1949) {tmdb-15266}.annotations.npy
+│       ├── The Fighting Kentuckian (1949) {tmdb-15266}.annotations.txt
+│       ├── The Fighting Kentuckian (1949) {tmdb-15266}.frames.manifest.json
+│       ├── The Fighting Kentuckian (1949) {tmdb-15266}.frames.npy
+│       ├── The Fighting Kentuckian (1949) {tmdb-15266}.frames.valid.npy
+│       ├── The Frisco Kid (1979) {tmdb-016972}.annotations.json
+│       ├── The Frisco Kid (1979) {tmdb-016972}.annotations.manifest.json
+│       ├── The Frisco Kid (1979) {tmdb-016972}.annotations.npy
+│       ├── The Frisco Kid (1979) {tmdb-016972}.annotations.txt
+│       ├── The Frisco Kid (1979) {tmdb-016972}.frames.manifest.json
+│       ├── The Frisco Kid (1979) {tmdb-016972}.frames.npy
+│       ├── The Frisco Kid (1979) {tmdb-016972}.frames.valid.npy
+│       ├── The Frozen North (1922) {tmdb-051364}.annotations.json
+│       ├── The Frozen North (1922) {tmdb-051364}.annotations.manifest.json
+│       ├── The Frozen North (1922) {tmdb-051364}.annotations.npy
+│       ├── The Frozen North (1922) {tmdb-051364}.annotations.txt
+│       ├── The Frozen North (1922) {tmdb-051364}.frames.manifest.json
+│       ├── The Frozen North (1922) {tmdb-051364}.frames.npy
+│       ├── The Frozen North (1922) {tmdb-051364}.frames.valid.npy
+│       ├── The Furies (1950) {tmdb-28304}.annotations.json
+│       ├── The Furies (1950) {tmdb-28304}.annotations.manifest.json
+│       ├── The Furies (1950) {tmdb-28304}.annotations.npy
+│       ├── The Furies (1950) {tmdb-28304}.annotations.txt
+│       ├── The Furies (1950) {tmdb-28304}.frames.manifest.json
+│       ├── The Furies (1950) {tmdb-28304}.frames.npy
+│       ├── The Furies (1950) {tmdb-28304}.frames.valid.npy
+│       ├── The Gatling Gun (1971) {tmdb-61356}.annotations.json
+│       ├── The Gatling Gun (1971) {tmdb-61356}.annotations.manifest.json
+│       ├── The Gatling Gun (1971) {tmdb-61356}.annotations.npy
+│       ├── The Gatling Gun (1971) {tmdb-61356}.annotations.txt
+│       ├── The Gatling Gun (1971) {tmdb-61356}.frames.manifest.json
+│       ├── The Gatling Gun (1971) {tmdb-61356}.frames.npy
+│       ├── The Gatling Gun (1971) {tmdb-61356}.frames.valid.npy
+│       ├── The Gold Rush (1925) {tmdb-962}.annotations.json
+│       ├── The Gold Rush (1925) {tmdb-962}.annotations.manifest.json
+│       ├── The Gold Rush (1925) {tmdb-962}.annotations.npy
+│       ├── The Gold Rush (1925) {tmdb-962}.annotations.txt
+│       ├── The Gold Rush (1925) {tmdb-962}.frames.manifest.json
+│       ├── The Gold Rush (1925) {tmdb-962}.frames.npy
+│       ├── The Gold Rush (1925) {tmdb-962}.frames.valid.npy
+│       ├── The Good The Bad And The Ugly (1966) {tmdb-429}.annotations.json
+│       ├── The Good The Bad And The Ugly (1966) {tmdb-429}.annotations.manifest.json
+│       ├── The Good The Bad And The Ugly (1966) {tmdb-429}.annotations.npy
+│       ├── The Good The Bad And The Ugly (1966) {tmdb-429}.annotations.txt
+│       ├── The Good The Bad And The Ugly (1966) {tmdb-429}.frames.manifest.json
+│       ├── The Good The Bad And The Ugly (1966) {tmdb-429}.frames.npy
+│       ├── The Good The Bad And The Ugly (1966) {tmdb-429}.frames.valid.npy
+│       ├── The Great Northfield Minnesota Raid (1972) {tmdb-27349}.annotations.json
+│       ├── The Great Northfield Minnesota Raid (1972) {tmdb-27349}.annotations.manifest.json
+│       ├── The Great Northfield Minnesota Raid (1972) {tmdb-27349}.annotations.npy
+│       ├── The Great Northfield Minnesota Raid (1972) {tmdb-27349}.annotations.txt
+│       ├── The Great Northfield Minnesota Raid (1972) {tmdb-27349}.frames.manifest.json
+│       ├── The Great Northfield Minnesota Raid (1972) {tmdb-27349}.frames.npy
+│       ├── The Great Northfield Minnesota Raid (1972) {tmdb-27349}.frames.valid.npy
+│       ├── The Great Silence (1968) {tmdb-9028}.annotations.json
+│       ├── The Great Silence (1968) {tmdb-9028}.annotations.manifest.json
+│       ├── The Great Silence (1968) {tmdb-9028}.annotations.npy
+│       ├── The Great Silence (1968) {tmdb-9028}.annotations.txt
+│       ├── The Great Silence (1968) {tmdb-9028}.frames.manifest.json
+│       ├── The Great Silence (1968) {tmdb-9028}.frames.npy
+│       ├── The Great Silence (1968) {tmdb-9028}.frames.valid.npy
+│       ├── The Gunfighter (1950) {tmdb-17409}.annotations.json
+│       ├── The Gunfighter (1950) {tmdb-17409}.annotations.manifest.json
+│       ├── The Gunfighter (1950) {tmdb-17409}.annotations.npy
+│       ├── The Gunfighter (1950) {tmdb-17409}.annotations.txt
+│       ├── The Gunfighter (1950) {tmdb-17409}.frames.manifest.json
+│       ├── The Gunfighter (1950) {tmdb-17409}.frames.npy
+│       ├── The Gunfighter (1950) {tmdb-17409}.frames.valid.npy
+│       ├── The Half Breed (1916) {tmdb-200324}.annotations.json
+│       ├── The Half Breed (1916) {tmdb-200324}.annotations.manifest.json
+│       ├── The Half Breed (1916) {tmdb-200324}.annotations.npy
+│       ├── The Half Breed (1916) {tmdb-200324}.annotations.txt
+│       ├── The Half Breed (1916) {tmdb-200324}.frames.manifest.json
+│       ├── The Half Breed (1916) {tmdb-200324}.frames.npy
+│       ├── The Half Breed (1916) {tmdb-200324}.frames.valid.npy
+│       ├── The Hangman (1959) {tmdb-048409}.annotations.json
+│       ├── The Hangman (1959) {tmdb-048409}.annotations.manifest.json
+│       ├── The Hangman (1959) {tmdb-048409}.annotations.npy
+│       ├── The Hangman (1959) {tmdb-048409}.annotations.txt
+│       ├── The Hangman (1959) {tmdb-048409}.frames.manifest.json
+│       ├── The Hangman (1959) {tmdb-048409}.frames.npy
+│       ├── The Hangman (1959) {tmdb-048409}.frames.valid.npy
+│       ├── The Hateful Eight (2015) {tmdb-273248}.annotations.json
+│       ├── The Hateful Eight (2015) {tmdb-273248}.annotations.manifest.json
+│       ├── The Hateful Eight (2015) {tmdb-273248}.annotations.npy
+│       ├── The Hateful Eight (2015) {tmdb-273248}.annotations.txt
+│       ├── The Hateful Eight (2015) {tmdb-273248}.frames.manifest.json
+│       ├── The Hateful Eight (2015) {tmdb-273248}.frames.npy
+│       ├── The Hateful Eight (2015) {tmdb-273248}.frames.valid.npy
+│       ├── The Horse Soldiers (1959) {tmdb-17664}.annotations.json
+│       ├── The Horse Soldiers (1959) {tmdb-17664}.annotations.manifest.json
+│       ├── The Horse Soldiers (1959) {tmdb-17664}.annotations.npy
+│       ├── The Horse Soldiers (1959) {tmdb-17664}.annotations.txt
+│       ├── The Horse Soldiers (1959) {tmdb-17664}.frames.manifest.json
+│       ├── The Horse Soldiers (1959) {tmdb-17664}.frames.npy
+│       ├── The Horse Soldiers (1959) {tmdb-17664}.frames.valid.npy
+│       ├── The Iron Horse (1924) {tmdb-71068}.annotations.json
+│       ├── The Iron Horse (1924) {tmdb-71068}.annotations.manifest.json
+│       ├── The Iron Horse (1924) {tmdb-71068}.annotations.npy
+│       ├── The Iron Horse (1924) {tmdb-71068}.annotations.txt
+│       ├── The Iron Horse (1924) {tmdb-71068}.frames.manifest.json
+│       ├── The Iron Horse (1924) {tmdb-71068}.frames.npy
+│       ├── The Iron Horse (1924) {tmdb-71068}.frames.valid.npy
+│       ├── The Jayhawkers (1959) {tmdb-6587}.annotations.json
+│       ├── The Jayhawkers (1959) {tmdb-6587}.annotations.manifest.json
+│       ├── The Jayhawkers (1959) {tmdb-6587}.annotations.npy
+│       ├── The Jayhawkers (1959) {tmdb-6587}.annotations.txt
+│       ├── The Jayhawkers (1959) {tmdb-6587}.frames.manifest.json
+│       ├── The Jayhawkers (1959) {tmdb-6587}.frames.npy
+│       ├── The Jayhawkers (1959) {tmdb-6587}.frames.valid.npy
+│       ├── The Kid Brother (1927) {tmdb-16661}.annotations.json
+│       ├── The Kid Brother (1927) {tmdb-16661}.annotations.manifest.json
+│       ├── The Kid Brother (1927) {tmdb-16661}.annotations.npy
+│       ├── The Kid Brother (1927) {tmdb-16661}.annotations.txt
+│       ├── The Kid Brother (1927) {tmdb-16661}.frames.manifest.json
+│       ├── The Kid Brother (1927) {tmdb-16661}.frames.npy
+│       ├── The Kid Brother (1927) {tmdb-16661}.frames.valid.npy
+│       ├── The Last Hard Men (1976) {tmdb-38450}.annotations.json
+│       ├── The Last Hard Men (1976) {tmdb-38450}.annotations.manifest.json
+│       ├── The Last Hard Men (1976) {tmdb-38450}.annotations.npy
+│       ├── The Last Hard Men (1976) {tmdb-38450}.annotations.txt
+│       ├── The Last Hard Men (1976) {tmdb-38450}.frames.manifest.json
+│       ├── The Last Hard Men (1976) {tmdb-38450}.frames.npy
+│       ├── The Last Hard Men (1976) {tmdb-38450}.frames.valid.npy
+│       ├── The Last Movie (1971) {tmdb-49600}.annotations.json
+│       ├── The Last Movie (1971) {tmdb-49600}.annotations.manifest.json
+│       ├── The Last Movie (1971) {tmdb-49600}.annotations.npy
+│       ├── The Last Movie (1971) {tmdb-49600}.annotations.txt
+│       ├── The Last Movie (1971) {tmdb-49600}.frames.manifest.json
+│       ├── The Last Movie (1971) {tmdb-49600}.frames.npy
+│       ├── The Last Movie (1971) {tmdb-49600}.frames.valid.npy
+│       ├── The Last Of The Mohicans (1936) {tmdb-023108}.annotations.json
+│       ├── The Last Of The Mohicans (1936) {tmdb-023108}.annotations.manifest.json
+│       ├── The Last Of The Mohicans (1936) {tmdb-023108}.annotations.npy
+│       ├── The Last Of The Mohicans (1936) {tmdb-023108}.annotations.txt
+│       ├── The Last Of The Mohicans (1936) {tmdb-023108}.frames.manifest.json
+│       ├── The Last Of The Mohicans (1936) {tmdb-023108}.frames.npy
+│       ├── The Last Of The Mohicans (1936) {tmdb-023108}.frames.valid.npy
+│       ├── The Lawless Frontier (1934) {tmdb-049640}.annotations.json
+│       ├── The Lawless Frontier (1934) {tmdb-049640}.annotations.manifest.json
+│       ├── The Lawless Frontier (1934) {tmdb-049640}.annotations.npy
+│       ├── The Lawless Frontier (1934) {tmdb-049640}.annotations.txt
+│       ├── The Lawless Frontier (1934) {tmdb-049640}.frames.manifest.json
+│       ├── The Lawless Frontier (1934) {tmdb-049640}.frames.npy
+│       ├── The Lawless Frontier (1934) {tmdb-049640}.frames.valid.npy
+│       ├── The Left Handed Gun (1958) {tmdb-42402}.annotations.json
+│       ├── The Left Handed Gun (1958) {tmdb-42402}.annotations.manifest.json
+│       ├── The Left Handed Gun (1958) {tmdb-42402}.annotations.npy
+│       ├── The Left Handed Gun (1958) {tmdb-42402}.annotations.txt
+│       ├── The Left Handed Gun (1958) {tmdb-42402}.frames.manifest.json
+│       ├── The Left Handed Gun (1958) {tmdb-42402}.frames.npy
+│       ├── The Left Handed Gun (1958) {tmdb-42402}.frames.valid.npy
+│       ├── The Lonely Man (1957) {tmdb-043250}.annotations.json
+│       ├── The Lonely Man (1957) {tmdb-043250}.annotations.manifest.json
+│       ├── The Lonely Man (1957) {tmdb-043250}.annotations.npy
+│       ├── The Lonely Man (1957) {tmdb-043250}.annotations.txt
+│       ├── The Lonely Man (1957) {tmdb-043250}.frames.manifest.json
+│       ├── The Lonely Man (1957) {tmdb-043250}.frames.npy
+│       ├── The Lonely Man (1957) {tmdb-043250}.frames.valid.npy
+│       ├── The Lucky Texan (1934) {tmdb-22612}.annotations.json
+│       ├── The Lucky Texan (1934) {tmdb-22612}.annotations.manifest.json
+│       ├── The Lucky Texan (1934) {tmdb-22612}.annotations.npy
+│       ├── The Lucky Texan (1934) {tmdb-22612}.annotations.txt
+│       ├── The Lucky Texan (1934) {tmdb-22612}.frames.manifest.json
+│       ├── The Lucky Texan (1934) {tmdb-22612}.frames.npy
+│       ├── The Lucky Texan (1934) {tmdb-22612}.frames.valid.npy
+│       ├── The Lusty Men (1952) {tmdb-43370}.annotations.json
+│       ├── The Lusty Men (1952) {tmdb-43370}.annotations.manifest.json
+│       ├── The Lusty Men (1952) {tmdb-43370}.annotations.npy
+│       ├── The Lusty Men (1952) {tmdb-43370}.annotations.txt
+│       ├── The Lusty Men (1952) {tmdb-43370}.frames.manifest.json
+│       ├── The Lusty Men (1952) {tmdb-43370}.frames.npy
+│       ├── The Lusty Men (1952) {tmdb-43370}.frames.valid.npy
+│       ├── The Magnificent Seven (1960) {tmdb-966}.annotations.json
+│       ├── The Magnificent Seven (1960) {tmdb-966}.annotations.manifest.json
+│       ├── The Magnificent Seven (1960) {tmdb-966}.annotations.npy
+│       ├── The Magnificent Seven (1960) {tmdb-966}.annotations.txt
+│       ├── The Magnificent Seven (1960) {tmdb-966}.frames.manifest.json
+│       ├── The Magnificent Seven (1960) {tmdb-966}.frames.npy
+│       ├── The Magnificent Seven (1960) {tmdb-966}.frames.valid.npy
+│       ├── The Magnificent Seven (2016) {tmdb-333484}.annotations.json
+│       ├── The Magnificent Seven (2016) {tmdb-333484}.annotations.manifest.json
+│       ├── The Magnificent Seven (2016) {tmdb-333484}.annotations.npy
+│       ├── The Magnificent Seven (2016) {tmdb-333484}.annotations.txt
+│       ├── The Magnificent Seven (2016) {tmdb-333484}.frames.manifest.json
+│       ├── The Magnificent Seven (2016) {tmdb-333484}.frames.npy
+│       ├── The Magnificent Seven (2016) {tmdb-333484}.frames.valid.npy
+│       ├── The Man From Bitter Ridge (1955) {tmdb-210673}.annotations.json
+│       ├── The Man From Bitter Ridge (1955) {tmdb-210673}.annotations.manifest.json
+│       ├── The Man From Bitter Ridge (1955) {tmdb-210673}.annotations.npy
+│       ├── The Man From Bitter Ridge (1955) {tmdb-210673}.annotations.txt
+│       ├── The Man From Bitter Ridge (1955) {tmdb-210673}.frames.manifest.json
+│       ├── The Man From Bitter Ridge (1955) {tmdb-210673}.frames.npy
+│       ├── The Man From Bitter Ridge (1955) {tmdb-210673}.frames.valid.npy
+│       ├── The Man From Laramie (1955) {tmdb-18264}.annotations.json
+│       ├── The Man From Laramie (1955) {tmdb-18264}.annotations.manifest.json
+│       ├── The Man From Laramie (1955) {tmdb-18264}.annotations.npy
+│       ├── The Man From Laramie (1955) {tmdb-18264}.annotations.txt
+│       ├── The Man From Laramie (1955) {tmdb-18264}.frames.manifest.json
+│       ├── The Man From Laramie (1955) {tmdb-18264}.frames.npy
+│       ├── The Man From Laramie (1955) {tmdb-18264}.frames.valid.npy
+│       ├── The Man From Utah (1934) {tmdb-053622}.annotations.json
+│       ├── The Man From Utah (1934) {tmdb-053622}.annotations.manifest.json
+│       ├── The Man From Utah (1934) {tmdb-053622}.annotations.npy
+│       ├── The Man From Utah (1934) {tmdb-053622}.annotations.txt
+│       ├── The Man From Utah (1934) {tmdb-053622}.frames.manifest.json
+│       ├── The Man From Utah (1934) {tmdb-053622}.frames.npy
+│       ├── The Man From Utah (1934) {tmdb-053622}.frames.valid.npy
+│       ├── The Man Who Shot Liberty Valance (1962) {tmdb-11697}.annotations.json
+│       ├── The Man Who Shot Liberty Valance (1962) {tmdb-11697}.annotations.manifest.json
+│       ├── The Man Who Shot Liberty Valance (1962) {tmdb-11697}.annotations.npy
+│       ├── The Man Who Shot Liberty Valance (1962) {tmdb-11697}.annotations.txt
+│       ├── The Man Who Shot Liberty Valance (1962) {tmdb-11697}.frames.manifest.json
+│       ├── The Man Who Shot Liberty Valance (1962) {tmdb-11697}.frames.npy
+│       ├── The Man Who Shot Liberty Valance (1962) {tmdb-11697}.frames.valid.npy
+│       ├── The Misfits (1961) {tmdb-11536}.annotations.json
+│       ├── The Misfits (1961) {tmdb-11536}.annotations.manifest.json
+│       ├── The Misfits (1961) {tmdb-11536}.annotations.npy
+│       ├── The Misfits (1961) {tmdb-11536}.annotations.txt
+│       ├── The Misfits (1961) {tmdb-11536}.frames.manifest.json
+│       ├── The Misfits (1961) {tmdb-11536}.frames.npy
+│       ├── The Misfits (1961) {tmdb-11536}.frames.valid.npy
+│       ├── The Missouri Breaks (1976) {tmdb-42252}.annotations.json
+│       ├── The Missouri Breaks (1976) {tmdb-42252}.annotations.manifest.json
+│       ├── The Missouri Breaks (1976) {tmdb-42252}.annotations.npy
+│       ├── The Missouri Breaks (1976) {tmdb-42252}.annotations.txt
+│       ├── The Missouri Breaks (1976) {tmdb-42252}.frames.manifest.json
+│       ├── The Missouri Breaks (1976) {tmdb-42252}.frames.npy
+│       ├── The Missouri Breaks (1976) {tmdb-42252}.frames.valid.npy
+│       ├── The Naked Spur (1953) {tmdb-20442}.annotations.json
+│       ├── The Naked Spur (1953) {tmdb-20442}.annotations.manifest.json
+│       ├── The Naked Spur (1953) {tmdb-20442}.annotations.npy
+│       ├── The Naked Spur (1953) {tmdb-20442}.annotations.txt
+│       ├── The Naked Spur (1953) {tmdb-20442}.frames.manifest.json
+│       ├── The Naked Spur (1953) {tmdb-20442}.frames.npy
+│       ├── The Naked Spur (1953) {tmdb-20442}.frames.valid.npy
+│       ├── The New Frontier (1935) {tmdb-229401}.annotations.json
+│       ├── The New Frontier (1935) {tmdb-229401}.annotations.manifest.json
+│       ├── The New Frontier (1935) {tmdb-229401}.annotations.npy
+│       ├── The New Frontier (1935) {tmdb-229401}.annotations.txt
+│       ├── The New Frontier (1935) {tmdb-229401}.frames.manifest.json
+│       ├── The New Frontier (1935) {tmdb-229401}.frames.npy
+│       ├── The New Frontier (1935) {tmdb-229401}.frames.valid.npy
+│       ├── The New Land (1972) {tmdb-42488}.annotations.json
+│       ├── The New Land (1972) {tmdb-42488}.annotations.manifest.json
+│       ├── The New Land (1972) {tmdb-42488}.annotations.npy
+│       ├── The New Land (1972) {tmdb-42488}.annotations.txt
+│       ├── The New Land (1972) {tmdb-42488}.frames.manifest.json
+│       ├── The New Land (1972) {tmdb-42488}.frames.npy
+│       ├── The New Land (1972) {tmdb-42488}.frames.valid.npy
+│       ├── The Night Riders (1939) {tmdb-138291}.annotations.json
+│       ├── The Night Riders (1939) {tmdb-138291}.annotations.manifest.json
+│       ├── The Night Riders (1939) {tmdb-138291}.annotations.npy
+│       ├── The Night Riders (1939) {tmdb-138291}.annotations.txt
+│       ├── The Night Riders (1939) {tmdb-138291}.frames.manifest.json
+│       ├── The Night Riders (1939) {tmdb-138291}.frames.npy
+│       ├── The Night Riders (1939) {tmdb-138291}.frames.valid.npy
+│       ├── The Outlaw (1943) {tmdb-22613}.annotations.json
+│       ├── The Outlaw (1943) {tmdb-22613}.annotations.manifest.json
+│       ├── The Outlaw (1943) {tmdb-22613}.annotations.npy
+│       ├── The Outlaw (1943) {tmdb-22613}.annotations.txt
+│       ├── The Outlaw (1943) {tmdb-22613}.frames.manifest.json
+│       ├── The Outlaw (1943) {tmdb-22613}.frames.npy
+│       ├── The Outlaw (1943) {tmdb-22613}.frames.valid.npy
+│       ├── The Outlaw Josey Wales (1976) {tmdb-10747}.annotations.json
+│       ├── The Outlaw Josey Wales (1976) {tmdb-10747}.annotations.manifest.json
+│       ├── The Outlaw Josey Wales (1976) {tmdb-10747}.annotations.npy
+│       ├── The Outlaw Josey Wales (1976) {tmdb-10747}.annotations.txt
+│       ├── The Outlaw Josey Wales (1976) {tmdb-10747}.frames.manifest.json
+│       ├── The Outlaw Josey Wales (1976) {tmdb-10747}.frames.npy
+│       ├── The Outlaw Josey Wales (1976) {tmdb-10747}.frames.valid.npy
+│       ├── The Outlaws Is Coming (1964) {tmdb-30798}.annotations.json
+│       ├── The Outlaws Is Coming (1964) {tmdb-30798}.annotations.manifest.json
+│       ├── The Outlaws Is Coming (1964) {tmdb-30798}.annotations.npy
+│       ├── The Outlaws Is Coming (1964) {tmdb-30798}.annotations.txt
+│       ├── The Outlaws Is Coming (1964) {tmdb-30798}.frames.manifest.json
+│       ├── The Outlaws Is Coming (1964) {tmdb-30798}.frames.npy
+│       ├── The Outlaws Is Coming (1964) {tmdb-30798}.frames.valid.npy
+│       ├── The Ox Bow Incident (1942) {tmdb-980}.annotations.json
+│       ├── The Ox Bow Incident (1942) {tmdb-980}.annotations.manifest.json
+│       ├── The Ox Bow Incident (1942) {tmdb-980}.annotations.npy
+│       ├── The Ox Bow Incident (1942) {tmdb-980}.annotations.txt
+│       ├── The Ox Bow Incident (1942) {tmdb-980}.frames.manifest.json
+│       ├── The Ox Bow Incident (1942) {tmdb-980}.frames.npy
+│       ├── The Ox Bow Incident (1942) {tmdb-980}.frames.valid.npy
+│       ├── The Plainsman (1936) {tmdb-43885}.annotations.json
+│       ├── The Plainsman (1936) {tmdb-43885}.annotations.manifest.json
+│       ├── The Plainsman (1936) {tmdb-43885}.annotations.npy
+│       ├── The Plainsman (1936) {tmdb-43885}.annotations.txt
+│       ├── The Plainsman (1936) {tmdb-43885}.frames.manifest.json
+│       ├── The Plainsman (1936) {tmdb-43885}.frames.npy
+│       ├── The Plainsman (1936) {tmdb-43885}.frames.valid.npy
+│       ├── The Power Of The Dog (2021) {tmdb-600583}.annotations.json
+│       ├── The Power Of The Dog (2021) {tmdb-600583}.annotations.manifest.json
+│       ├── The Power Of The Dog (2021) {tmdb-600583}.annotations.npy
+│       ├── The Power Of The Dog (2021) {tmdb-600583}.annotations.txt
+│       ├── The Power Of The Dog (2021) {tmdb-600583}.frames.manifest.json
+│       ├── The Power Of The Dog (2021) {tmdb-600583}.frames.npy
+│       ├── The Power Of The Dog (2021) {tmdb-600583}.frames.valid.npy
+│       ├── The Professionals (1966) {tmdb-22383}.annotations.json
+│       ├── The Professionals (1966) {tmdb-22383}.annotations.manifest.json
+│       ├── The Professionals (1966) {tmdb-22383}.annotations.npy
+│       ├── The Professionals (1966) {tmdb-22383}.annotations.txt
+│       ├── The Professionals (1966) {tmdb-22383}.frames.manifest.json
+│       ├── The Professionals (1966) {tmdb-22383}.frames.npy
+│       ├── The Professionals (1966) {tmdb-22383}.frames.valid.npy
+│       ├── The Proposition (2005) {tmdb-16608}.annotations.json
+│       ├── The Proposition (2005) {tmdb-16608}.annotations.manifest.json
+│       ├── The Proposition (2005) {tmdb-16608}.annotations.npy
+│       ├── The Proposition (2005) {tmdb-16608}.annotations.txt
+│       ├── The Proposition (2005) {tmdb-16608}.frames.manifest.json
+│       ├── The Proposition (2005) {tmdb-16608}.frames.npy
+│       ├── The Proposition (2005) {tmdb-16608}.frames.valid.npy
+│       ├── The Quick And The Dead (1995) {tmdb-12106}.annotations.json
+│       ├── The Quick And The Dead (1995) {tmdb-12106}.annotations.manifest.json
+│       ├── The Quick And The Dead (1995) {tmdb-12106}.annotations.npy
+│       ├── The Quick And The Dead (1995) {tmdb-12106}.annotations.txt
+│       ├── The Quick And The Dead (1995) {tmdb-12106}.frames.manifest.json
+│       ├── The Quick And The Dead (1995) {tmdb-12106}.frames.npy
+│       ├── The Quick And The Dead (1995) {tmdb-12106}.frames.valid.npy
+│       ├── The Rawhide Years (1956) {tmdb-140849}.annotations.json
+│       ├── The Rawhide Years (1956) {tmdb-140849}.annotations.manifest.json
+│       ├── The Rawhide Years (1956) {tmdb-140849}.annotations.npy
+│       ├── The Rawhide Years (1956) {tmdb-140849}.annotations.txt
+│       ├── The Rawhide Years (1956) {tmdb-140849}.frames.manifest.json
+│       ├── The Rawhide Years (1956) {tmdb-140849}.frames.npy
+│       ├── The Rawhide Years (1956) {tmdb-140849}.frames.valid.npy
+│       ├── The Red Pony (1949) {tmdb-23395}.annotations.json
+│       ├── The Red Pony (1949) {tmdb-23395}.annotations.manifest.json
+│       ├── The Red Pony (1949) {tmdb-23395}.annotations.npy
+│       ├── The Red Pony (1949) {tmdb-23395}.annotations.txt
+│       ├── The Red Pony (1949) {tmdb-23395}.frames.manifest.json
+│       ├── The Red Pony (1949) {tmdb-23395}.frames.npy
+│       ├── The Red Pony (1949) {tmdb-23395}.frames.valid.npy
+│       ├── The Return Of Frank James (1940) {tmdb-43821}.annotations.json
+│       ├── The Return Of Frank James (1940) {tmdb-43821}.annotations.manifest.json
+│       ├── The Return Of Frank James (1940) {tmdb-43821}.annotations.npy
+│       ├── The Return Of Frank James (1940) {tmdb-43821}.annotations.txt
+│       ├── The Return Of Frank James (1940) {tmdb-43821}.frames.manifest.json
+│       ├── The Return Of Frank James (1940) {tmdb-43821}.frames.npy
+│       ├── The Return Of Frank James (1940) {tmdb-43821}.frames.valid.npy
+│       ├── The Revenant (2015) {tmdb-281957}.annotations.json
+│       ├── The Revenant (2015) {tmdb-281957}.annotations.manifest.json
+│       ├── The Revenant (2015) {tmdb-281957}.annotations.npy
+│       ├── The Revenant (2015) {tmdb-281957}.annotations.txt
+│       ├── The Revenant (2015) {tmdb-281957}.frames.manifest.json
+│       ├── The Revenant (2015) {tmdb-281957}.frames.npy
+│       ├── The Revenant (2015) {tmdb-281957}.frames.valid.npy
+│       ├── The Saga Of Hemp Brown (1958) {tmdb-220566}.annotations.json
+│       ├── The Saga Of Hemp Brown (1958) {tmdb-220566}.annotations.manifest.json
+│       ├── The Saga Of Hemp Brown (1958) {tmdb-220566}.annotations.npy
+│       ├── The Saga Of Hemp Brown (1958) {tmdb-220566}.annotations.txt
+│       ├── The Saga Of Hemp Brown (1958) {tmdb-220566}.frames.manifest.json
+│       ├── The Saga Of Hemp Brown (1958) {tmdb-220566}.frames.npy
+│       ├── The Saga Of Hemp Brown (1958) {tmdb-220566}.frames.valid.npy
+│       ├── The Savage (1952) {tmdb-112067}.annotations.json
+│       ├── The Savage (1952) {tmdb-112067}.annotations.manifest.json
+│       ├── The Savage (1952) {tmdb-112067}.annotations.npy
+│       ├── The Savage (1952) {tmdb-112067}.annotations.txt
+│       ├── The Savage (1952) {tmdb-112067}.frames.manifest.json
+│       ├── The Savage (1952) {tmdb-112067}.frames.npy
+│       ├── The Savage (1952) {tmdb-112067}.frames.valid.npy
+│       ├── The Searchers (1956) {tmdb-3114}.annotations.json
+│       ├── The Searchers (1956) {tmdb-3114}.annotations.manifest.json
+│       ├── The Searchers (1956) {tmdb-3114}.annotations.npy
+│       ├── The Searchers (1956) {tmdb-3114}.annotations.txt
+│       ├── The Searchers (1956) {tmdb-3114}.frames.manifest.json
+│       ├── The Searchers (1956) {tmdb-3114}.frames.npy
+│       ├── The Searchers (1956) {tmdb-3114}.frames.valid.npy
+│       ├── The Shooting (1966) {tmdb-42701}.annotations.json
+│       ├── The Shooting (1966) {tmdb-42701}.annotations.manifest.json
+│       ├── The Shooting (1966) {tmdb-42701}.annotations.npy
+│       ├── The Shooting (1966) {tmdb-42701}.annotations.txt
+│       ├── The Shooting (1966) {tmdb-42701}.frames.manifest.json
+│       ├── The Shooting (1966) {tmdb-42701}.frames.npy
+│       ├── The Shooting (1966) {tmdb-42701}.frames.valid.npy
+│       ├── The Shootist (1976) {tmdb-12584}.annotations.json
+│       ├── The Shootist (1976) {tmdb-12584}.annotations.manifest.json
+│       ├── The Shootist (1976) {tmdb-12584}.annotations.npy
+│       ├── The Shootist (1976) {tmdb-12584}.annotations.txt
+│       ├── The Shootist (1976) {tmdb-12584}.frames.manifest.json
+│       ├── The Shootist (1976) {tmdb-12584}.frames.npy
+│       ├── The Shootist (1976) {tmdb-12584}.frames.valid.npy
+│       ├── The Sons Of Katie Elder (1965) {tmdb-16211}.annotations.json
+│       ├── The Sons Of Katie Elder (1965) {tmdb-16211}.annotations.manifest.json
+│       ├── The Sons Of Katie Elder (1965) {tmdb-16211}.annotations.npy
+│       ├── The Sons Of Katie Elder (1965) {tmdb-16211}.annotations.txt
+│       ├── The Sons Of Katie Elder (1965) {tmdb-16211}.frames.manifest.json
+│       ├── The Sons Of Katie Elder (1965) {tmdb-16211}.frames.npy
+│       ├── The Sons Of Katie Elder (1965) {tmdb-16211}.frames.valid.npy
+│       ├── The Specialists (1969) {tmdb-7507}.annotations.json
+│       ├── The Specialists (1969) {tmdb-7507}.annotations.manifest.json
+│       ├── The Specialists (1969) {tmdb-7507}.annotations.npy
+│       ├── The Specialists (1969) {tmdb-7507}.annotations.txt
+│       ├── The Specialists (1969) {tmdb-7507}.frames.manifest.json
+│       ├── The Specialists (1969) {tmdb-7507}.frames.npy
+│       ├── The Specialists (1969) {tmdb-7507}.frames.valid.npy
+│       ├── The Star Packer (1934) {tmdb-038107}.annotations.json
+│       ├── The Star Packer (1934) {tmdb-038107}.annotations.manifest.json
+│       ├── The Star Packer (1934) {tmdb-038107}.annotations.npy
+│       ├── The Star Packer (1934) {tmdb-038107}.annotations.txt
+│       ├── The Star Packer (1934) {tmdb-038107}.frames.manifest.json
+│       ├── The Star Packer (1934) {tmdb-038107}.frames.npy
+│       ├── The Star Packer (1934) {tmdb-038107}.frames.valid.npy
+│       ├── The Sun Shines Bright (1953) {tmdb-109539}.annotations.json
+│       ├── The Sun Shines Bright (1953) {tmdb-109539}.annotations.manifest.json
+│       ├── The Sun Shines Bright (1953) {tmdb-109539}.annotations.npy
+│       ├── The Sun Shines Bright (1953) {tmdb-109539}.annotations.txt
+│       ├── The Sun Shines Bright (1953) {tmdb-109539}.frames.manifest.json
+│       ├── The Sun Shines Bright (1953) {tmdb-109539}.frames.npy
+│       ├── The Sun Shines Bright (1953) {tmdb-109539}.frames.valid.npy
+│       ├── The Tall T (1957) {tmdb-43253}.annotations.json
+│       ├── The Tall T (1957) {tmdb-43253}.annotations.manifest.json
+│       ├── The Tall T (1957) {tmdb-43253}.annotations.npy
+│       ├── The Tall T (1957) {tmdb-43253}.annotations.txt
+│       ├── The Tall T (1957) {tmdb-43253}.frames.manifest.json
+│       ├── The Tall T (1957) {tmdb-43253}.frames.npy
+│       ├── The Tall T (1957) {tmdb-43253}.frames.valid.npy
+│       ├── The Tall Target (1951) {tmdb-027263}.annotations.json
+│       ├── The Tall Target (1951) {tmdb-027263}.annotations.manifest.json
+│       ├── The Tall Target (1951) {tmdb-027263}.annotations.npy
+│       ├── The Tall Target (1951) {tmdb-027263}.annotations.txt
+│       ├── The Tall Target (1951) {tmdb-027263}.frames.manifest.json
+│       ├── The Tall Target (1951) {tmdb-027263}.frames.npy
+│       ├── The Tall Target (1951) {tmdb-027263}.frames.valid.npy
+│       ├── The Tall Women (1966) {tmdb-095403}.annotations.json
+│       ├── The Tall Women (1966) {tmdb-095403}.annotations.manifest.json
+│       ├── The Tall Women (1966) {tmdb-095403}.annotations.npy
+│       ├── The Tall Women (1966) {tmdb-095403}.annotations.txt
+│       ├── The Tall Women (1966) {tmdb-095403}.frames.manifest.json
+│       ├── The Tall Women (1966) {tmdb-095403}.frames.npy
+│       ├── The Tall Women (1966) {tmdb-095403}.frames.valid.npy
+│       ├── The Telegraph Trail (1933) {tmdb-084906}.annotations.json
+│       ├── The Telegraph Trail (1933) {tmdb-084906}.annotations.manifest.json
+│       ├── The Telegraph Trail (1933) {tmdb-084906}.annotations.npy
+│       ├── The Telegraph Trail (1933) {tmdb-084906}.annotations.txt
+│       ├── The Telegraph Trail (1933) {tmdb-084906}.frames.manifest.json
+│       ├── The Telegraph Trail (1933) {tmdb-084906}.frames.npy
+│       ├── The Telegraph Trail (1933) {tmdb-084906}.frames.valid.npy
+│       ├── The Trail Beyond (1934) {tmdb-040797}.annotations.json
+│       ├── The Trail Beyond (1934) {tmdb-040797}.annotations.manifest.json
+│       ├── The Trail Beyond (1934) {tmdb-040797}.annotations.npy
+│       ├── The Trail Beyond (1934) {tmdb-040797}.annotations.txt
+│       ├── The Trail Beyond (1934) {tmdb-040797}.frames.manifest.json
+│       ├── The Trail Beyond (1934) {tmdb-040797}.frames.npy
+│       ├── The Trail Beyond (1934) {tmdb-040797}.frames.valid.npy
+│       ├── The Train Robbers (1973) {tmdb-40682}.annotations.json
+│       ├── The Train Robbers (1973) {tmdb-40682}.annotations.manifest.json
+│       ├── The Train Robbers (1973) {tmdb-40682}.annotations.npy
+│       ├── The Train Robbers (1973) {tmdb-40682}.annotations.txt
+│       ├── The Train Robbers (1973) {tmdb-40682}.frames.manifest.json
+│       ├── The Train Robbers (1973) {tmdb-40682}.frames.npy
+│       ├── The Train Robbers (1973) {tmdb-40682}.frames.valid.npy
+│       ├── The Treasure Of The Sierra Madre (1948) {tmdb-3090}.annotations.json
+│       ├── The Treasure Of The Sierra Madre (1948) {tmdb-3090}.annotations.manifest.json
+│       ├── The Treasure Of The Sierra Madre (1948) {tmdb-3090}.annotations.npy
+│       ├── The Treasure Of The Sierra Madre (1948) {tmdb-3090}.annotations.txt
+│       ├── The Treasure Of The Sierra Madre (1948) {tmdb-3090}.frames.manifest.json
+│       ├── The Treasure Of The Sierra Madre (1948) {tmdb-3090}.frames.npy
+│       ├── The Treasure Of The Sierra Madre (1948) {tmdb-3090}.frames.valid.npy
+│       ├── The True Story Of Jesse James (1957) {tmdb-83354}.annotations.json
+│       ├── The True Story Of Jesse James (1957) {tmdb-83354}.annotations.manifest.json
+│       ├── The True Story Of Jesse James (1957) {tmdb-83354}.annotations.npy
+│       ├── The True Story Of Jesse James (1957) {tmdb-83354}.annotations.txt
+│       ├── The True Story Of Jesse James (1957) {tmdb-83354}.frames.manifest.json
+│       ├── The True Story Of Jesse James (1957) {tmdb-83354}.frames.npy
+│       ├── The True Story Of Jesse James (1957) {tmdb-83354}.frames.valid.npy
+│       ├── The Undefeated (1969) {tmdb-18972}.annotations.json
+│       ├── The Undefeated (1969) {tmdb-18972}.annotations.manifest.json
+│       ├── The Undefeated (1969) {tmdb-18972}.annotations.npy
+│       ├── The Undefeated (1969) {tmdb-18972}.annotations.txt
+│       ├── The Undefeated (1969) {tmdb-18972}.frames.manifest.json
+│       ├── The Undefeated (1969) {tmdb-18972}.frames.npy
+│       ├── The Undefeated (1969) {tmdb-18972}.frames.valid.npy
+│       ├── The Unholy Four (1970) {tmdb-075086}.annotations.json
+│       ├── The Unholy Four (1970) {tmdb-075086}.annotations.manifest.json
+│       ├── The Unholy Four (1970) {tmdb-075086}.annotations.npy
+│       ├── The Unholy Four (1970) {tmdb-075086}.annotations.txt
+│       ├── The Unholy Four (1970) {tmdb-075086}.frames.manifest.json
+│       ├── The Unholy Four (1970) {tmdb-075086}.frames.npy
+│       ├── The Unholy Four (1970) {tmdb-075086}.frames.valid.npy
+│       ├── The War Wagon (1967) {tmdb-27277}.annotations.json
+│       ├── The War Wagon (1967) {tmdb-27277}.annotations.manifest.json
+│       ├── The War Wagon (1967) {tmdb-27277}.annotations.npy
+│       ├── The War Wagon (1967) {tmdb-27277}.annotations.txt
+│       ├── The War Wagon (1967) {tmdb-27277}.frames.manifest.json
+│       ├── The War Wagon (1967) {tmdb-27277}.frames.npy
+│       ├── The War Wagon (1967) {tmdb-27277}.frames.valid.npy
+│       ├── The Way West (1967) {tmdb-42703}.annotations.json
+│       ├── The Way West (1967) {tmdb-42703}.annotations.manifest.json
+│       ├── The Way West (1967) {tmdb-42703}.annotations.npy
+│       ├── The Way West (1967) {tmdb-42703}.annotations.txt
+│       ├── The Way West (1967) {tmdb-42703}.frames.manifest.json
+│       ├── The Way West (1967) {tmdb-42703}.frames.npy
+│       ├── The Way West (1967) {tmdb-42703}.frames.valid.npy
+│       ├── The Wild Bunch (1969) {tmdb-576}.annotations.json
+│       ├── The Wild Bunch (1969) {tmdb-576}.annotations.manifest.json
+│       ├── The Wild Bunch (1969) {tmdb-576}.annotations.npy
+│       ├── The Wild Bunch (1969) {tmdb-576}.annotations.txt
+│       ├── The Wild Bunch (1969) {tmdb-576}.frames.manifest.json
+│       ├── The Wild Bunch (1969) {tmdb-576}.frames.npy
+│       ├── The Wild Bunch (1969) {tmdb-576}.frames.valid.npy
+│       ├── The Wonderful Country (1959) {tmdb-6610}.annotations.json
+│       ├── The Wonderful Country (1959) {tmdb-6610}.annotations.manifest.json
+│       ├── The Wonderful Country (1959) {tmdb-6610}.annotations.npy
+│       ├── The Wonderful Country (1959) {tmdb-6610}.annotations.txt
+│       ├── The Wonderful Country (1959) {tmdb-6610}.frames.manifest.json
+│       ├── The Wonderful Country (1959) {tmdb-6610}.frames.npy
+│       ├── The Wonderful Country (1959) {tmdb-6610}.frames.valid.npy
+│       ├── The World To Come (2020) {tmdb-506281}.annotations.json
+│       ├── The World To Come (2020) {tmdb-506281}.annotations.manifest.json
+│       ├── The World To Come (2020) {tmdb-506281}.annotations.npy
+│       ├── The World To Come (2020) {tmdb-506281}.annotations.txt
+│       ├── The World To Come (2020) {tmdb-506281}.frames.manifest.json
+│       ├── The World To Come (2020) {tmdb-506281}.frames.npy
+│       ├── The World To Come (2020) {tmdb-506281}.frames.valid.npy
+│       ├── They Call Her Death (2024) {tmdb-1307258}.annotations.json
+│       ├── They Call Her Death (2024) {tmdb-1307258}.annotations.manifest.json
+│       ├── They Call Her Death (2024) {tmdb-1307258}.annotations.npy
+│       ├── They Call Her Death (2024) {tmdb-1307258}.annotations.txt
+│       ├── They Call Her Death (2024) {tmdb-1307258}.frames.manifest.json
+│       ├── They Call Her Death (2024) {tmdb-1307258}.frames.npy
+│       ├── They Call Her Death (2024) {tmdb-1307258}.frames.valid.npy
+│       ├── They Call Me Trinity (1970) {tmdb-009394}.annotations.json
+│       ├── They Call Me Trinity (1970) {tmdb-009394}.annotations.manifest.json
+│       ├── They Call Me Trinity (1970) {tmdb-009394}.annotations.npy
+│       ├── They Call Me Trinity (1970) {tmdb-009394}.annotations.txt
+│       ├── They Call Me Trinity (1970) {tmdb-009394}.frames.manifest.json
+│       ├── They Call Me Trinity (1970) {tmdb-009394}.frames.npy
+│       ├── They Call Me Trinity (1970) {tmdb-009394}.frames.valid.npy
+│       ├── They Died With Their Boots On (1941) {tmdb-017382}.annotations.json
+│       ├── They Died With Their Boots On (1941) {tmdb-017382}.annotations.manifest.json
+│       ├── They Died With Their Boots On (1941) {tmdb-017382}.annotations.npy
+│       ├── They Died With Their Boots On (1941) {tmdb-017382}.annotations.txt
+│       ├── They Died With Their Boots On (1941) {tmdb-017382}.frames.manifest.json
+│       ├── They Died With Their Boots On (1941) {tmdb-017382}.frames.npy
+│       ├── They Died With Their Boots On (1941) {tmdb-017382}.frames.valid.npy
+│       ├── Tombstone (1993) {tmdb-11969}.annotations.json
+│       ├── Tombstone (1993) {tmdb-11969}.annotations.manifest.json
+│       ├── Tombstone (1993) {tmdb-11969}.annotations.npy
+│       ├── Tombstone (1993) {tmdb-11969}.annotations.txt
+│       ├── Tombstone (1993) {tmdb-11969}.frames.manifest.json
+│       ├── Tombstone (1993) {tmdb-11969}.frames.npy
+│       ├── Tombstone (1993) {tmdb-11969}.frames.valid.npy
+│       ├── Touche Pas A La Femme Blanche (1974) {tmdb-83343}.annotations.json
+│       ├── Touche Pas A La Femme Blanche (1974) {tmdb-83343}.annotations.manifest.json
+│       ├── Touche Pas A La Femme Blanche (1974) {tmdb-83343}.annotations.npy
+│       ├── Touche Pas A La Femme Blanche (1974) {tmdb-83343}.annotations.txt
+│       ├── Touche Pas A La Femme Blanche (1974) {tmdb-83343}.frames.manifest.json
+│       ├── Touche Pas A La Femme Blanche (1974) {tmdb-83343}.frames.npy
+│       ├── Touche Pas A La Femme Blanche (1974) {tmdb-83343}.frames.valid.npy
+│       ├── Track Of The Cat (1954) {tmdb-86608}.annotations.json
+│       ├── Track Of The Cat (1954) {tmdb-86608}.annotations.manifest.json
+│       ├── Track Of The Cat (1954) {tmdb-86608}.annotations.npy
+│       ├── Track Of The Cat (1954) {tmdb-86608}.annotations.txt
+│       ├── Track Of The Cat (1954) {tmdb-86608}.frames.manifest.json
+│       ├── Track Of The Cat (1954) {tmdb-86608}.frames.npy
+│       ├── Track Of The Cat (1954) {tmdb-86608}.frames.valid.npy
+│       ├── Trinity Is Still My Name (1971) {tmdb-011829}.annotations.json
+│       ├── Trinity Is Still My Name (1971) {tmdb-011829}.annotations.manifest.json
+│       ├── Trinity Is Still My Name (1971) {tmdb-011829}.annotations.npy
+│       ├── Trinity Is Still My Name (1971) {tmdb-011829}.annotations.txt
+│       ├── Trinity Is Still My Name (1971) {tmdb-011829}.frames.manifest.json
+│       ├── Trinity Is Still My Name (1971) {tmdb-011829}.frames.npy
+│       ├── Trinity Is Still My Name (1971) {tmdb-011829}.frames.valid.npy
+│       ├── True Grit (1969) {tmdb-17529}.annotations.json
+│       ├── True Grit (1969) {tmdb-17529}.annotations.manifest.json
+│       ├── True Grit (1969) {tmdb-17529}.annotations.npy
+│       ├── True Grit (1969) {tmdb-17529}.annotations.txt
+│       ├── True Grit (1969) {tmdb-17529}.frames.manifest.json
+│       ├── True Grit (1969) {tmdb-17529}.frames.npy
+│       ├── True Grit (1969) {tmdb-17529}.frames.valid.npy
+│       ├── True Grit (2010) {tmdb-44264}.annotations.json
+│       ├── True Grit (2010) {tmdb-44264}.annotations.manifest.json
+│       ├── True Grit (2010) {tmdb-44264}.annotations.npy
+│       ├── True Grit (2010) {tmdb-44264}.annotations.txt
+│       ├── True Grit (2010) {tmdb-44264}.frames.manifest.json
+│       ├── True Grit (2010) {tmdb-44264}.frames.npy
+│       ├── True Grit (2010) {tmdb-44264}.frames.valid.npy
+│       ├── Two Mules For Sister Sara (1970) {tmdb-11916}.annotations.json
+│       ├── Two Mules For Sister Sara (1970) {tmdb-11916}.annotations.manifest.json
+│       ├── Two Mules For Sister Sara (1970) {tmdb-11916}.annotations.npy
+│       ├── Two Mules For Sister Sara (1970) {tmdb-11916}.annotations.txt
+│       ├── Two Mules For Sister Sara (1970) {tmdb-11916}.frames.manifest.json
+│       ├── Two Mules For Sister Sara (1970) {tmdb-11916}.frames.npy
+│       ├── Two Mules For Sister Sara (1970) {tmdb-11916}.frames.valid.npy
+│       ├── Two Rode Together (1961) {tmdb-32634}.annotations.json
+│       ├── Two Rode Together (1961) {tmdb-32634}.annotations.manifest.json
+│       ├── Two Rode Together (1961) {tmdb-32634}.annotations.npy
+│       ├── Two Rode Together (1961) {tmdb-32634}.annotations.txt
+│       ├── Two Rode Together (1961) {tmdb-32634}.frames.manifest.json
+│       ├── Two Rode Together (1961) {tmdb-32634}.frames.npy
+│       ├── Two Rode Together (1961) {tmdb-32634}.frames.valid.npy
+│       ├── Under Western Stars (1938) {tmdb-85678}.annotations.json
+│       ├── Under Western Stars (1938) {tmdb-85678}.annotations.manifest.json
+│       ├── Under Western Stars (1938) {tmdb-85678}.annotations.npy
+│       ├── Under Western Stars (1938) {tmdb-85678}.annotations.txt
+│       ├── Under Western Stars (1938) {tmdb-85678}.frames.manifest.json
+│       ├── Under Western Stars (1938) {tmdb-85678}.frames.npy
+│       ├── Under Western Stars (1938) {tmdb-85678}.frames.valid.npy
+│       ├── Unforgiven (1992) {tmdb-33}.annotations.json
+│       ├── Unforgiven (1992) {tmdb-33}.annotations.manifest.json
+│       ├── Unforgiven (1992) {tmdb-33}.annotations.npy
+│       ├── Unforgiven (1992) {tmdb-33}.annotations.txt
+│       ├── Unforgiven (1992) {tmdb-33}.frames.manifest.json
+│       ├── Unforgiven (1992) {tmdb-33}.frames.npy
+│       ├── Unforgiven (1992) {tmdb-33}.frames.valid.npy
+│       ├── Vengeance Is Mine (1967) {tmdb-129701}.annotations.json
+│       ├── Vengeance Is Mine (1967) {tmdb-129701}.annotations.manifest.json
+│       ├── Vengeance Is Mine (1967) {tmdb-129701}.annotations.npy
+│       ├── Vengeance Is Mine (1967) {tmdb-129701}.annotations.txt
+│       ├── Vengeance Is Mine (1967) {tmdb-129701}.frames.manifest.json
+│       ├── Vengeance Is Mine (1967) {tmdb-129701}.frames.npy
+│       ├── Vengeance Is Mine (1967) {tmdb-129701}.frames.valid.npy
+│       ├── Vengeance Valley (1951) {tmdb-043384}.annotations.json
+│       ├── Vengeance Valley (1951) {tmdb-043384}.annotations.manifest.json
+│       ├── Vengeance Valley (1951) {tmdb-043384}.annotations.npy
+│       ├── Vengeance Valley (1951) {tmdb-043384}.annotations.txt
+│       ├── Vengeance Valley (1951) {tmdb-043384}.frames.manifest.json
+│       ├── Vengeance Valley (1951) {tmdb-043384}.frames.npy
+│       ├── Vengeance Valley (1951) {tmdb-043384}.frames.valid.npy
+│       ├── Villa Rides (1968) {tmdb-48564}.annotations.json
+│       ├── Villa Rides (1968) {tmdb-48564}.annotations.manifest.json
+│       ├── Villa Rides (1968) {tmdb-48564}.annotations.npy
+│       ├── Villa Rides (1968) {tmdb-48564}.annotations.txt
+│       ├── Villa Rides (1968) {tmdb-48564}.frames.manifest.json
+│       ├── Villa Rides (1968) {tmdb-48564}.frames.npy
+│       ├── Villa Rides (1968) {tmdb-48564}.frames.valid.npy
+│       ├── Virginia City (1940) {tmdb-17836}.annotations.json
+│       ├── Virginia City (1940) {tmdb-17836}.annotations.manifest.json
+│       ├── Virginia City (1940) {tmdb-17836}.annotations.npy
+│       ├── Virginia City (1940) {tmdb-17836}.annotations.txt
+│       ├── Virginia City (1940) {tmdb-17836}.frames.manifest.json
+│       ├── Virginia City (1940) {tmdb-17836}.frames.npy
+│       ├── Virginia City (1940) {tmdb-17836}.frames.valid.npy
+│       ├── Wagon Master (1950) {tmdb-37327}.annotations.json
+│       ├── Wagon Master (1950) {tmdb-37327}.annotations.manifest.json
+│       ├── Wagon Master (1950) {tmdb-37327}.annotations.npy
+│       ├── Wagon Master (1950) {tmdb-37327}.annotations.txt
+│       ├── Wagon Master (1950) {tmdb-37327}.frames.manifest.json
+│       ├── Wagon Master (1950) {tmdb-37327}.frames.npy
+│       ├── Wagon Master (1950) {tmdb-37327}.frames.valid.npy
+│       ├── Wagons West (1952) {tmdb-238662}.annotations.json
+│       ├── Wagons West (1952) {tmdb-238662}.annotations.manifest.json
+│       ├── Wagons West (1952) {tmdb-238662}.annotations.npy
+│       ├── Wagons West (1952) {tmdb-238662}.annotations.txt
+│       ├── Wagons West (1952) {tmdb-238662}.frames.manifest.json
+│       ├── Wagons West (1952) {tmdb-238662}.frames.npy
+│       ├── Wagons West (1952) {tmdb-238662}.frames.valid.npy
+│       ├── Walk Like A Dragon (1960) {tmdb-180286}.annotations.json
+│       ├── Walk Like A Dragon (1960) {tmdb-180286}.annotations.manifest.json
+│       ├── Walk Like A Dragon (1960) {tmdb-180286}.annotations.npy
+│       ├── Walk Like A Dragon (1960) {tmdb-180286}.annotations.txt
+│       ├── Walk Like A Dragon (1960) {tmdb-180286}.frames.manifest.json
+│       ├── Walk Like A Dragon (1960) {tmdb-180286}.frames.npy
+│       ├── Walk Like A Dragon (1960) {tmdb-180286}.frames.valid.npy
+│       ├── War Arrow (1954) {tmdb-60551}.annotations.json
+│       ├── War Arrow (1954) {tmdb-60551}.annotations.manifest.json
+│       ├── War Arrow (1954) {tmdb-60551}.annotations.npy
+│       ├── War Arrow (1954) {tmdb-60551}.annotations.txt
+│       ├── War Arrow (1954) {tmdb-60551}.frames.manifest.json
+│       ├── War Arrow (1954) {tmdb-60551}.frames.npy
+│       ├── War Arrow (1954) {tmdb-60551}.frames.valid.npy
+│       ├── Warlock (1959) {tmdb-37412}.annotations.json
+│       ├── Warlock (1959) {tmdb-37412}.annotations.manifest.json
+│       ├── Warlock (1959) {tmdb-37412}.annotations.npy
+│       ├── Warlock (1959) {tmdb-37412}.annotations.txt
+│       ├── Warlock (1959) {tmdb-37412}.frames.manifest.json
+│       ├── Warlock (1959) {tmdb-37412}.frames.npy
+│       ├── Warlock (1959) {tmdb-37412}.frames.valid.npy
+│       ├── Waterhole 3 (1967) {tmdb-54011}.annotations.json
+│       ├── Waterhole 3 (1967) {tmdb-54011}.annotations.manifest.json
+│       ├── Waterhole 3 (1967) {tmdb-54011}.annotations.npy
+│       ├── Waterhole 3 (1967) {tmdb-54011}.annotations.txt
+│       ├── Waterhole 3 (1967) {tmdb-54011}.frames.manifest.json
+│       ├── Waterhole 3 (1967) {tmdb-54011}.frames.npy
+│       ├── Waterhole 3 (1967) {tmdb-54011}.frames.valid.npy
+│       ├── Welcome To Hard Times (1967) {tmdb-118017}.annotations.json
+│       ├── Welcome To Hard Times (1967) {tmdb-118017}.annotations.manifest.json
+│       ├── Welcome To Hard Times (1967) {tmdb-118017}.annotations.npy
+│       ├── Welcome To Hard Times (1967) {tmdb-118017}.annotations.txt
+│       ├── Welcome To Hard Times (1967) {tmdb-118017}.frames.manifest.json
+│       ├── Welcome To Hard Times (1967) {tmdb-118017}.frames.npy
+│       ├── Welcome To Hard Times (1967) {tmdb-118017}.frames.valid.npy
+│       ├── Western Union (1941) {tmdb-43804}.annotations.json
+│       ├── Western Union (1941) {tmdb-43804}.annotations.manifest.json
+│       ├── Western Union (1941) {tmdb-43804}.annotations.npy
+│       ├── Western Union (1941) {tmdb-43804}.annotations.txt
+│       ├── Western Union (1941) {tmdb-43804}.frames.manifest.json
+│       ├── Western Union (1941) {tmdb-43804}.frames.npy
+│       ├── Western Union (1941) {tmdb-43804}.frames.valid.npy
+│       ├── West Of The Divide (1934) {tmdb-040799}.annotations.json
+│       ├── West Of The Divide (1934) {tmdb-040799}.annotations.manifest.json
+│       ├── West Of The Divide (1934) {tmdb-040799}.annotations.npy
+│       ├── West Of The Divide (1934) {tmdb-040799}.annotations.txt
+│       ├── West Of The Divide (1934) {tmdb-040799}.frames.manifest.json
+│       ├── West Of The Divide (1934) {tmdb-040799}.frames.npy
+│       ├── West Of The Divide (1934) {tmdb-040799}.frames.valid.npy
+│       ├── White Fang (1973) {tmdb-058061}.annotations.json
+│       ├── White Fang (1973) {tmdb-058061}.annotations.manifest.json
+│       ├── White Fang (1973) {tmdb-058061}.annotations.npy
+│       ├── White Fang (1973) {tmdb-058061}.annotations.txt
+│       ├── White Fang (1973) {tmdb-058061}.frames.manifest.json
+│       ├── White Fang (1973) {tmdb-058061}.frames.npy
+│       ├── White Fang (1973) {tmdb-058061}.frames.valid.npy
+│       ├── Wild West Days (1937) {tmdb-301925}.annotations.json
+│       ├── Wild West Days (1937) {tmdb-301925}.annotations.manifest.json
+│       ├── Wild West Days (1937) {tmdb-301925}.annotations.npy
+│       ├── Wild West Days (1937) {tmdb-301925}.annotations.txt
+│       ├── Wild West Days (1937) {tmdb-301925}.frames.manifest.json
+│       ├── Wild West Days (1937) {tmdb-301925}.frames.npy
+│       ├── Wild West Days (1937) {tmdb-301925}.frames.valid.npy
+│       ├── Will Penny (1967) {tmdb-1676}.annotations.json
+│       ├── Will Penny (1967) {tmdb-1676}.annotations.manifest.json
+│       ├── Will Penny (1967) {tmdb-1676}.annotations.npy
+│       ├── Will Penny (1967) {tmdb-1676}.annotations.txt
+│       ├── Will Penny (1967) {tmdb-1676}.frames.manifest.json
+│       ├── Will Penny (1967) {tmdb-1676}.frames.npy
+│       ├── Will Penny (1967) {tmdb-1676}.frames.valid.npy
+│       ├── Winchester 73 (1950) {tmdb-14551}.annotations.json
+│       ├── Winchester 73 (1950) {tmdb-14551}.annotations.manifest.json
+│       ├── Winchester 73 (1950) {tmdb-14551}.annotations.npy
+│       ├── Winchester 73 (1950) {tmdb-14551}.annotations.txt
+│       ├── Winchester 73 (1950) {tmdb-14551}.frames.manifest.json
+│       ├── Winchester 73 (1950) {tmdb-14551}.frames.npy
+│       ├── Winchester 73 (1950) {tmdb-14551}.frames.valid.npy
+│       ├── Wind From The East (1970) {tmdb-113629}.annotations.json
+│       ├── Wind From The East (1970) {tmdb-113629}.annotations.manifest.json
+│       ├── Wind From The East (1970) {tmdb-113629}.annotations.npy
+│       ├── Wind From The East (1970) {tmdb-113629}.annotations.txt
+│       ├── Wind From The East (1970) {tmdb-113629}.frames.manifest.json
+│       ├── Wind From The East (1970) {tmdb-113629}.frames.npy
+│       ├── Wind From The East (1970) {tmdb-113629}.frames.valid.npy
+│       ├── Winds Of The Wasteland (1936) {tmdb-40743}.annotations.json
+│       ├── Winds Of The Wasteland (1936) {tmdb-40743}.annotations.manifest.json
+│       ├── Winds Of The Wasteland (1936) {tmdb-40743}.annotations.npy
+│       ├── Winds Of The Wasteland (1936) {tmdb-40743}.annotations.txt
+│       ├── Winds Of The Wasteland (1936) {tmdb-40743}.frames.manifest.json
+│       ├── Winds Of The Wasteland (1936) {tmdb-40743}.frames.npy
+│       ├── Winds Of The Wasteland (1936) {tmdb-40743}.frames.valid.npy
+│       ├── Wings Of The Hawk (1953) {tmdb-184120}.annotations.json
+│       ├── Wings Of The Hawk (1953) {tmdb-184120}.annotations.manifest.json
+│       ├── Wings Of The Hawk (1953) {tmdb-184120}.annotations.npy
+│       ├── Wings Of The Hawk (1953) {tmdb-184120}.annotations.txt
+│       ├── Wings Of The Hawk (1953) {tmdb-184120}.frames.manifest.json
+│       ├── Wings Of The Hawk (1953) {tmdb-184120}.frames.npy
+│       ├── Wings Of The Hawk (1953) {tmdb-184120}.frames.valid.npy
+│       ├── Winnetou The Last Shot (1965) {tmdb-007085}.annotations.json
+│       ├── Winnetou The Last Shot (1965) {tmdb-007085}.annotations.manifest.json
+│       ├── Winnetou The Last Shot (1965) {tmdb-007085}.annotations.npy
+│       ├── Winnetou The Last Shot (1965) {tmdb-007085}.annotations.txt
+│       ├── Winnetou The Last Shot (1965) {tmdb-007085}.frames.manifest.json
+│       ├── Winnetou The Last Shot (1965) {tmdb-007085}.frames.npy
+│       ├── Winnetou The Last Shot (1965) {tmdb-007085}.frames.valid.npy
+│       ├── Woman They Almost Lynched (1953) {tmdb-158359}.annotations.json
+│       ├── Woman They Almost Lynched (1953) {tmdb-158359}.annotations.manifest.json
+│       ├── Woman They Almost Lynched (1953) {tmdb-158359}.annotations.npy
+│       ├── Woman They Almost Lynched (1953) {tmdb-158359}.annotations.txt
+│       ├── Woman They Almost Lynched (1953) {tmdb-158359}.frames.manifest.json
+│       ├── Woman They Almost Lynched (1953) {tmdb-158359}.frames.npy
+│       ├── Woman They Almost Lynched (1953) {tmdb-158359}.frames.valid.npy
+│       ├── Young Billy Young (1969) {tmdb-39295}.annotations.json
+│       ├── Young Billy Young (1969) {tmdb-39295}.annotations.manifest.json
+│       ├── Young Billy Young (1969) {tmdb-39295}.annotations.npy
+│       ├── Young Billy Young (1969) {tmdb-39295}.annotations.txt
+│       ├── Young Billy Young (1969) {tmdb-39295}.frames.manifest.json
+│       ├── Young Billy Young (1969) {tmdb-39295}.frames.npy
+│       ├── Young Billy Young (1969) {tmdb-39295}.frames.valid.npy
+│       ├── Young Guns (1988) {tmdb-11967}.annotations.json
+│       ├── Young Guns (1988) {tmdb-11967}.annotations.manifest.json
+│       ├── Young Guns (1988) {tmdb-11967}.annotations.npy
+│       ├── Young Guns (1988) {tmdb-11967}.annotations.txt
+│       ├── Young Guns (1988) {tmdb-11967}.frames.manifest.json
+│       ├── Young Guns (1988) {tmdb-11967}.frames.npy
+│       ├── Young Guns (1988) {tmdb-11967}.frames.valid.npy
+│       ├── Zachariah (1971) {tmdb-065134}.annotations.json
+│       ├── Zachariah (1971) {tmdb-065134}.annotations.manifest.json
+│       ├── Zachariah (1971) {tmdb-065134}.annotations.npy
+│       ├── Zachariah (1971) {tmdb-065134}.annotations.txt
+│       ├── Zachariah (1971) {tmdb-065134}.frames.manifest.json
+│       ├── Zachariah (1971) {tmdb-065134}.frames.npy
+│       ├── Zachariah (1971) {tmdb-065134}.frames.valid.npy
+│       ├── Zandys Bride (1974) {tmdb-96337}.annotations.json
+│       ├── Zandys Bride (1974) {tmdb-96337}.annotations.manifest.json
+│       ├── Zandys Bride (1974) {tmdb-96337}.annotations.npy
+│       ├── Zandys Bride (1974) {tmdb-96337}.annotations.txt
+│       ├── Zandys Bride (1974) {tmdb-96337}.frames.manifest.json
+│       ├── Zandys Bride (1974) {tmdb-96337}.frames.npy
+│       ├── Zandys Bride (1974) {tmdb-96337}.frames.valid.npy
+│       ├── Zorro (1975) {tmdb-018450}.annotations.json
+│       ├── Zorro (1975) {tmdb-018450}.annotations.manifest.json
+│       ├── Zorro (1975) {tmdb-018450}.annotations.npy
+│       ├── Zorro (1975) {tmdb-018450}.annotations.txt
+│       ├── Zorro (1975) {tmdb-018450}.frames.manifest.json
+│       ├── Zorro (1975) {tmdb-018450}.frames.npy
+│       └── Zorro (1975) {tmdb-018450}.frames.valid.npy
+└── tree.txt
+
+5 directories, 2207 files
