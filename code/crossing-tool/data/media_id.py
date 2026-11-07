@@ -13,6 +13,7 @@ ensuring the ID is stable and independent of descriptive label text.
 """
 import hashlib
 import re
+import unicodedata
 
 
 def compute_media_id(record: dict, media_type: str = "movie") -> str:
@@ -102,3 +103,38 @@ def parse_shot_id(shot_id: str) -> tuple:
             "Expected '<media_id>@fSTART-fEND' with 6+ digit zero-padded frames."
         )
     return m.group(1), int(m.group(2)), int(m.group(3))
+
+
+def label_slug(label: str) -> str:
+    """Classification slug: NFKC/casefold, letters/numbers, hyphen separators."""
+    normalized = unicodedata.normalize("NFKC", label).casefold().strip()
+    pieces = []
+    separator = False
+    for character in normalized:
+        if character.isalnum():
+            if separator and pieces:
+                pieces.append("-")
+            pieces.append(character)
+            separator = False
+        else:
+            separator = True
+    return "".join(pieces)
+
+
+def instance_identifier(shot_id: str, number: int) -> str:
+    """Format an already registered shot ordinal; this never allocates an ID."""
+    media, start, end = parse_shot_id(shot_id)
+    if (start > end or build_shot_id(media, start, end) != shot_id
+            or any(character in shot_id for character in "/\\#\x00")
+            or type(number) is not int or number < 1):
+        raise ValueError("Invalid canonical instance components")
+    return f"{shot_id}#{number:04d}"
+
+
+def parse_instance_id(instance_id: str) -> tuple:
+    """Parse a registered identity without interpreting classification/location."""
+    shot, separator, number = instance_id.rpartition("#")
+    if (not separator or not number.isascii() or not number.isdigit()
+            or instance_identifier(shot, int(number)) != instance_id):
+        raise ValueError("Invalid canonical instance identifier")
+    return shot, int(number)

@@ -265,8 +265,8 @@ def get_text_path(project_path: str, filename: str, media_type: str) -> Path:
     Sits alongside the annotation JSON:
     ``<project>/data/annotations/shots/<media_type>/<stem>.annotations.txt``
     """
-    stem = Path(filename).stem
-    return Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{stem}.annotations.txt"
+    from data.resource_locations import annotation_path
+    return annotation_path(project_path, filename, media_type, ".annotations.txt")
 
 
 def write_text_file(
@@ -343,8 +343,8 @@ def get_embeddings_path(project_path: str, filename: str, media_type: str) -> Pa
     - annotation JSON item order
     - serialized text line order
     """
-    stem = Path(filename).stem
-    return Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{stem}.annotations.npy"
+    from data.resource_locations import annotation_path
+    return annotation_path(project_path, filename, media_type, ".annotations.npy")
 
 
 def write_embeddings(
@@ -521,12 +521,8 @@ def get_manifest_path(project_path: str, filename: str, media_type: str) -> Path
 
     ``<project>/data/annotations/shots/<media_type>/<stem>.annotations.manifest.json``
     """
-    stem = Path(filename).stem
-    return (
-        Path(project_path)
-        / "data" / "annotations" / "shots" / media_type
-        / f"{stem}.annotations.manifest.json"
-    )
+    from data.resource_locations import annotation_path
+    return annotation_path(project_path, filename, media_type, ".annotations.manifest.json")
 
 
 def hash_file(path: "Path | str") -> str:
@@ -634,12 +630,8 @@ def get_frame_embeddings_path(project_path: str, filename: str, media_type: str)
 
     ``<project>/data/annotations/shots/<media_type>/<stem>.frames.npy``
     """
-    stem = Path(filename).stem
-    return (
-        Path(project_path)
-        / "data" / "annotations" / "shots" / media_type
-        / f"{stem}.frames.npy"
-    )
+    from data.resource_locations import annotation_path
+    return annotation_path(project_path, filename, media_type, ".frames.npy")
 
 
 def get_frame_valid_path(project_path: str, filename: str, media_type: str) -> Path:
@@ -647,12 +639,8 @@ def get_frame_valid_path(project_path: str, filename: str, media_type: str) -> P
 
     ``<project>/data/annotations/shots/<media_type>/<stem>.frames.valid.npy``
     """
-    stem = Path(filename).stem
-    return (
-        Path(project_path)
-        / "data" / "annotations" / "shots" / media_type
-        / f"{stem}.frames.valid.npy"
-    )
+    from data.resource_locations import annotation_path
+    return annotation_path(project_path, filename, media_type, ".frames.valid.npy")
 
 
 def get_frame_manifest_path(project_path: str, filename: str, media_type: str) -> Path:
@@ -660,9 +648,5 @@ def get_frame_manifest_path(project_path: str, filename: str, media_type: str) -
 
     ``<project>/data/annotations/shots/<media_type>/<stem>.frames.manifest.json``
     """
-    stem = Path(filename).stem
-    return (
-        Path(project_path)
-        / "data" / "annotations" / "shots" / media_type
-        / f"{stem}.frames.manifest.json"
-    )
+    from data.resource_locations import annotation_path
+    return annotation_path(project_path, filename, media_type, ".frames.manifest.json")

@@ -1427,10 +1427,7 @@ def _load_existing_agg(project_path: str, filename: str, media_type: str) -> Dic
 
     Returns an empty dict if the file does not exist or cannot be parsed.
     """
-    stem = Path(filename).stem
-    agg_path = (
-        Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{stem}.annotations.json"
-    )
+    agg_path = get_annotation_json_path(project_path, filename, media_type)
     result: Dict[str, Any] = {}
     if not agg_path.exists():
         return result
@@ -2356,8 +2353,8 @@ def get_annotation_json_path(project_path: str, filename: str, media_type: str) 
 
     ``<project>/data/annotations/shots/<media_type>/<stem>.annotations.json``
     """
-    stem = Path(filename).stem
-    return Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{stem}.annotations.json"
+    from data.resource_locations import annotation_path
+    return annotation_path(project_path, filename, media_type)
 
 
 def canonical_shot_type(annotation: dict | None) -> str:

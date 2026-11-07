@@ -1,4 +1,9 @@
-"""Canonical path resolution for engraving assets.
+"""Transitional production-layout engraving API.
+
+Pure legacy constructors delegate to data.resource_locations_legacy. Approved
+media-first destinations are owned by data.resource_locations; exact registered
+lookup is owned by services.resource_resolution. Status repair below is an
+existing write workflow and is never invoked by the new read-only resolver.
 
 Engravings are derivative assets of silhouette catalog objects.  The
 canonical database path does **not** include the provider or model name —
@@ -41,16 +46,14 @@ ENGRAVING_STATUSES = ("pending", "generating", "generated", "failed")
 
 
 def _safe_part(value: str) -> str:
-    value = str(value or "").strip()
-    value = re.sub(r"[^a-zA-Z0-9._(){} -]+", "_", value)
-    value = re.sub(r"\s+", " ", value)
-    value = re.sub(r"_+", "_", value)
-    return value.strip(" ._") or "unknown"
+    from data.resource_locations_legacy import _safe_part as legacy_part
+    return legacy_part(value)
 
 
 def _safe_label(label: str) -> str:
     """Canonical silhouette-style label folder name (lowercase, underscores only)."""
-    return re.sub(r"[^a-z0-9_]", "_", str(label or "").lower().strip()) or "unknown"
+    from data.resource_locations_legacy import _safe_label as legacy_label
+    return legacy_label(label)
 
 
 def label_folder_for_source(source_json: str | Path, meta: dict) -> str:
@@ -67,31 +70,14 @@ def label_folder_for_source(source_json: str | Path, meta: dict) -> str:
     Falls back to ``_safe_label(meta["label"])`` when the parent name is
     missing (e.g. synthetic paths in tests).
     """
-    parent_name = Path(source_json).parent.name
-    if parent_name:
-        return parent_name
-    return _safe_label(meta.get("label", "unknown"))
+    from data.resource_locations_legacy import label_folder_for_source as legacy_folder
+    return legacy_folder(source_json, meta)
 
 
 def resolve_silhouette_png(source_json: str | Path, meta: dict) -> Path:
     """Return the sibling silhouette PNG path, raising ``FileNotFoundError`` if absent."""
-    source_json = Path(source_json)
-    parent = source_json.parent
-
-    png_name = meta.get("png")
-    if png_name:
-        candidate = parent / png_name
-        if candidate.exists():
-            return candidate
-
-    candidate = source_json.with_suffix(".png")
-    if candidate.exists():
-        return candidate
-
-    raise FileNotFoundError(
-        f"Could not resolve silhouette PNG for:\n  {source_json}\n"
-        f"Tried meta['png']={png_name!r} and sibling PNG:\n  {candidate}"
-    )
+    from data.resource_locations_legacy import silhouette_png
+    return silhouette_png(source_json, meta)
 
 
 def engraving_dir_for_source(
@@ -105,24 +91,8 @@ def engraving_dir_for_source(
     Each mode lives in its own sub-directory so isolated and frame engravings
     can coexist for the same object.
     """
-    source_json = Path(source_json)
-
-    media_type = meta.get("media_type", "movie")
-    filename_stem = meta.get("filename_stem") or Path(meta.get("filename", "unknown")).stem
-    label_folder = label_folder_for_source(source_json, meta)
-    object_id = source_json.stem
-
-    return (
-        Path(project_path)
-        / "data"
-        / "engravings"
-        / "catalog"
-        / _safe_part(media_type)
-        / _safe_part(filename_stem)
-        / label_folder
-        / object_id
-        / mode
-    )
+    from data.resource_locations_legacy import engraving_dir_for_source as legacy_directory
+    return legacy_directory(project_path, source_json, meta, mode)
 
 
 def engraving_output_filename(
@@ -139,18 +109,8 @@ def engraving_output_filename(
         django_1966-f001275-object_0001-isolated.png
         django_1966-f001275-object_0001-frame.png
     """
-    source_json = Path(source_json)
-    filename_stem = meta.get("filename_stem") or Path(meta.get("filename", "unknown")).stem
-    # Build a compact title stub: lowercase, spaces→underscores, strip parens/braces
-    title_stub = re.sub(r"[{(][^})]*[})]", "", filename_stem).strip()
-    title_stub = re.sub(r"[^a-zA-Z0-9]+", "_", title_stub).strip("_").lower()
-    title_stub = title_stub or "unknown"
-
-    frame = meta.get("frame")
-    frame_id = f"f{int(frame):06d}" if frame is not None else "f000000"
-
-    object_id = source_json.stem
-    return f"{title_stub}-{frame_id}-{object_id}-{mode}.png"
+    from data.resource_locations_legacy import engraving_output_filename as legacy_filename
+    return legacy_filename(source_json, meta, mode)
 
 
 def engraving_paths(
@@ -160,15 +120,8 @@ def engraving_paths(
     mode: str = "isolated",
 ) -> dict[str, Path]:
     """Return a dict of all canonical paths for a single engraving asset."""
-    base = engraving_dir_for_source(project_path, source_json, meta, mode)
-    out_name = engraving_output_filename(source_json, meta, mode)
-    return {
-        "dir": base,
-        "request": base / "request.json",
-        "raw_png": base / "raw.png",
-        "engraving_png": base / out_name,
-        "metadata": base / "engraving.json",
-    }
+    from data.resource_locations_legacy import engraving_paths as legacy_paths
+    return legacy_paths(project_path, source_json, meta, mode)
 
 
 def read_engraving_meta(eng_json_path: Path) -> dict | None:

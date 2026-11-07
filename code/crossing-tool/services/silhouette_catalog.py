@@ -266,12 +266,14 @@ def sort_labels(labels: "list[str]") -> "list[str]":
 
 def _safe_label(label: str) -> str:
     """Return a filesystem-safe label string (lowercase, spaces → underscores)."""
-    return re.sub(r"[^a-z0-9_]", "_", label.lower().strip())
+    from data.resource_locations_legacy import catalog_label
+    return catalog_label(label)
 
 
 def catalog_base_dir(project_path: str, media_type: str) -> Path:
     """Return the catalog root directory for *media_type*."""
-    return Path(project_path) / "data" / "silhouettes" / "catalog" / media_type
+    from data.resource_locations_legacy import silhouette_catalog_root
+    return silhouette_catalog_root(project_path, media_type)
 
 
 def catalog_item_dir(
@@ -281,7 +283,8 @@ def catalog_item_dir(
     label: str,
 ) -> Path:
     """Return the directory where objects for (media_item, label) are stored."""
-    return catalog_base_dir(project_path, media_type) / filename_stem / _safe_label(label)
+    from data.resource_locations_legacy import silhouette_catalog_item
+    return silhouette_catalog_item(project_path, media_type, filename_stem, label)
 
 
 def _next_object_index(label_dir: Path, *, count: int = 1) -> int:

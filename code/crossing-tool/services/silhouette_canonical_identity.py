@@ -11,8 +11,9 @@ import hashlib
 import json
 import re
 import sqlite3
-import unicodedata
 from pathlib import Path
+
+from data.media_id import instance_identifier, label_slug
 
 
 RESEARCH = Path("outputs/tests/silhouette-canonical-identity")
@@ -27,34 +28,8 @@ def research_path(project, path):
     return path
 
 
-def label_slug(label):
-    """NFKC/casefold, Unicode letters/numbers, hyphen separators; no semantics."""
-    normalized = unicodedata.normalize("NFKC", label).casefold().strip()
-    pieces = []
-    separator = False
-    for character in normalized:
-        if character.isalnum():
-            if separator and pieces:
-                pieces.append("-")
-            pieces.append(character)
-            separator = False
-        else:
-            separator = True
-    return "".join(pieces)
-
-
-def instance_identifier(shot_id, number):
-    from data.media_id import build_shot_id, parse_shot_id
-    media, start, end = parse_shot_id(shot_id)
-    if (start > end or build_shot_id(media, start, end) != shot_id
-            or any(character in shot_id for character in "/\\#\x00")
-            or type(number) is not int or number < 1):
-        raise ValueError("Invalid canonical instance components")
-    return f"{shot_id}#{number:04d}"
-
-
 def proposed_artifact_directory(kind, media_type, field, slug, instance_id):
-    """Shared future artifact hierarchy; never changes current path resolution."""
+    """Historical research proposal only; use data.resource_locations for new destinations."""
     if kind not in ("silhouettes", "engravings") or media_type not in ("movie", "gameplay"):
         raise ValueError("Invalid artifact kind/media")
     shot, separator, number = instance_id.rpartition("#")
