@@ -54,8 +54,9 @@ class WindowVisualizer(VisualizerWindow):
     Subclasses must implement `create_browser()` and `create_inspector()`.
     """
 
-    def __init__(self, pref_key: Optional[str] = None) -> None:
+    def __init__(self, pref_key: Optional[str] = None, *, registry=None) -> None:
         super().__init__()
+        self._resource_registry = registry if registry is not None else getattr(self, "_resource_registry", None)
         self._pref_key = pref_key
 
         self._inspector_hidden = False

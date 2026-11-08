@@ -29,7 +29,8 @@ Covers three related fixes:
 """
 
 import pytest
-from PyQt5.QtCore import Qt
+from PyQt5 import sip
+from PyQt5.QtCore import QCoreApplication, QEvent, Qt
 from PyQt5.QtWidgets import QApplication, QLabel, QMainWindow
 
 from visualizers.window_visualizer import WindowVisualizer
@@ -78,7 +79,7 @@ def _pump(app, ticks: int = 5) -> None:
         app.processEvents()
 
 
-def test_raise_existing_window_preserves_fullscreen(app, fake_prefs):
+def test_raise_existing_window_preserves_fullscreen(app, fake_prefs, monkeypatch):
     """Re-raising an already-open window must not force it out of fullscreen."""
     from visualizers._window_helpers import raise_existing_window
 
@@ -87,18 +88,24 @@ def test_raise_existing_window_preserves_fullscreen(app, fake_prefs):
     win.show()
     win.showFullScreen()
     _pump(app)
-    assert win.isFullScreen()
 
+    monkeypatch.setattr(QApplication, "topLevelWidgets", staticmethod(lambda: [win]))
     try:
+        assert win.isFullScreen()
         assert raise_existing_window("book") is True
         _pump(app)
         assert win.isFullScreen(), "re-raising should preserve fullscreen state"
     finally:
         win.close()
+        win.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+        assert sip.isdeleted(win)
 
 
-def test_raise_existing_window_still_unminimizes_when_not_fullscreen(app, fake_prefs):
+def test_raise_existing_window_still_unminimizes_when_not_fullscreen(app, fake_prefs, monkeypatch):
     """Non-fullscreen windows should still be restored from minimized state."""
+    import json
+    from visualizers._window_helpers import _candidate_titles, _title_matches
     from visualizers._window_helpers import raise_existing_window
 
     win = QMainWindow()
@@ -107,13 +114,40 @@ def test_raise_existing_window_still_unminimizes_when_not_fullscreen(app, fake_p
     win.showMinimized()
     _pump(app)
 
+    top_level_widgets = QApplication.topLevelWidgets
+    lookups = []
+
+    def traced_top_level_widgets():
+        widgets = top_level_widgets()
+        candidates = {title.lower() for title in _candidate_titles("book")}
+        matches = [
+            {"order": order, "python_id": id(widget),
+             "qt_id": int(sip.unwrapinstance(widget)), "title": widget.windowTitle(),
+             "visible": widget.isVisible(), "minimized": widget.isMinimized(),
+             "fullscreen": widget.isFullScreen(), "target": widget is win}
+            for order, widget in enumerate(widgets)
+            if any(_title_matches(title, widget.windowTitle().lower()) for title in candidates)
+        ]
+        snapshot = {"application_id": id(QApplication.instance()), "target_id": id(win),
+                "matches": matches,
+                "unscoped_selected_id": matches[0]["python_id"] if matches else None,
+                "lookup_order": [id(win)], "selected_id": id(win)}
+        lookups.append(snapshot)
+        print("WINDOW_LOOKUP " + json.dumps(snapshot), flush=True)
+        return [win]
+
+    monkeypatch.setattr(QApplication, "topLevelWidgets", staticmethod(traced_top_level_widgets))
     try:
         assert raise_existing_window("book") is True
+        assert lookups[0]["selected_id"] == id(win), json.dumps(lookups, indent=2)
         _pump(app)
-        assert not win.isMinimized()
+        assert not win.isMinimized(), json.dumps(lookups, indent=2)
         assert not win.isFullScreen()
     finally:
         win.close()
+        win.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+        assert sip.isdeleted(win)
 
 
 def test_window_visualizer_persists_geometry_fullscreen_and_panel_visibility(app, fake_prefs):

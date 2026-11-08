@@ -879,9 +879,9 @@ def cmd_search(args):
 
             if not vocab_fields_list:
                 # Fallback: discover fields from annotation files directly.
-                ann_base = Path(project_path) / "data" / "annotations" / "shots" / media_type
+                from data.resource_locations import annotation_files
                 fields_seen: set[str] = set()
-                for ann_file in ann_base.glob("*.json"):
+                for ann_file in annotation_files(project_path, media_type, **({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {})):
                     try:
                         entries = json.loads(ann_file.read_text(encoding="utf-8"))
                     except Exception:
@@ -910,6 +910,7 @@ def cmd_search(args):
                     project_path=project_path,
                     media_type=media_type,
                     sort="count",
+                    **({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}),
                 )
             if getattr(args, "markdown", False) or getattr(args, "open", False):
                 scope_stem = _resolve_movie_stem(project_path, scopes[0], media_type) if scopes else f"{media_type}-all"
@@ -958,6 +959,7 @@ def cmd_search(args):
             project_path=project_path,
             media_type=media_type,
             sort=sort,
+            **({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}),
         )
         if getattr(args, "markdown", False) or getattr(args, "open", False):
             scope_stem = _resolve_movie_stem(project_path, scopes[0], media_type) if scopes else f"{media_type}-all"
@@ -1110,6 +1112,7 @@ def cmd_search(args):
         use_all=use_all,
         project_path=prefs.get("path"),
         media_type=media_type,
+        **({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}),
     )
     print(json.dumps(result, indent=2))
 
@@ -1121,6 +1124,9 @@ def cmd_search(args):
 def cmd_metadata(args):
     _require_path()
     sub = args.metadata_subcommand
+    if getattr(args, "resource_registry", None) and sub in ("set", "update", "prune"):
+        print("Registered metadata mutation requires controlled association/location commits; CLI editing is deferred.", file=sys.stderr)
+        sys.exit(1)
     if sub == "get":
         _meta_get(args)
     elif sub == "set":
@@ -1729,6 +1735,7 @@ def _scene_detect(args):
                 project_path,
                 media_type,
                 force=force,
+                **({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}),
             )
 
             for result in summary["results"]:
@@ -1765,7 +1772,7 @@ def _scene_detect(args):
                         for i, shot in enumerate(shots):
                             if i < len(assignments):
                                 shot["Scene"] = str(assignments[i])
-                        write_shotlist(project_path, fn, media_type, shots)
+                        write_shotlist(project_path, fn, media_type, shots, **({"registry": args.resource_registry, "approved": getattr(args, "approved_resource_edit", False)} if getattr(args, "resource_registry", None) else {}))
 
                 print(f"Processed: {summary['processed']} movies")
                 print(f"Updated:   {summary['updated']}")
@@ -1801,6 +1808,7 @@ def _scene_detect(args):
             filename,
             media_type,
             force=force,
+            **({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}),
         )
 
         if result.get("skipped"):
@@ -1819,7 +1827,7 @@ def _scene_detect(args):
         for i, shot in enumerate(shots):
             if i < len(assignments):
                 shot["Scene"] = str(assignments[i])
-        write_shotlist(project_path, filename, media_type, shots)
+        write_shotlist(project_path, filename, media_type, shots, **({"registry": args.resource_registry, "approved": getattr(args, "approved_resource_edit", False)} if getattr(args, "resource_registry", None) else {}))
 
         print(f"{title}")
         print(f"  shots: {result['shots']}")
@@ -1942,7 +1950,8 @@ def _repair_annotation_file(project_path, filename, media_type, label_fields, *,
     """
     from data.annotate import normalize_label_list
 
-    ann_path = Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{Path(filename).stem}.annotations.json"
+    from data.annotate import get_annotation_json_path
+    ann_path = get_annotation_json_path(project_path, filename, media_type)
     if not ann_path.exists():
         return 0, False
 
@@ -2748,6 +2757,10 @@ def _shot_visualizer(args):
         cmd.append("--loop")
     if getattr(args, "no_continue", False):
         cmd.append("--no-continue")
+    if getattr(args, "resource_registry", None):
+        cmd += ["--resource-registry", str(args.resource_registry)]
+        if getattr(args, "approved_resource_edit", False):
+            cmd.append("--approved-resource-edit")
 
     try:
         subprocess.run(cmd, check=True)
@@ -3228,8 +3241,8 @@ def _annotate_remove(args):
     removed = 0
     skipped = 0
     for fn in filenames:
-        if remove_file_annotations(project_path, fn, media_type):
-            print(f"✓ Removed annotations: {fn}")
+        if remove_file_annotations(project_path, fn, media_type, **({"registry": args.resource_registry, "dry_run": not getattr(args, "apply", False)} if getattr(args, "resource_registry", None) else {})):
+            print(f"✓ {'Planned annotation retirement' if getattr(args, 'resource_registry', None) and not getattr(args, 'apply', False) else 'Removed annotations'}: {fn}")
             removed += 1
         else:
             print(f"  (no annotation file)  {fn}")
@@ -3353,7 +3366,8 @@ def _annotate_validate(args):
     invalid_files = 0
 
     for fn in filenames:
-        ann_path = Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{Path(fn).stem}.annotations.json"
+        from data.annotate import get_annotation_json_path
+        ann_path = get_annotation_json_path(project_path, fn, media_type)
         if not ann_path.exists():
             print(f"  ?  {fn}  (no annotation file)")
             continue
@@ -3391,7 +3405,7 @@ def _annotate_audit(args):
         print("No metadata entries found.")
         return
 
-    ann_dir = Path(project_path) / "data" / "annotations" / "shots" / media_type
+    from data.annotate import get_annotation_json_path
 
     missing    = []  # no annotation JSON
     empty      = []  # JSON exists but 0 valid annotations
@@ -3403,7 +3417,10 @@ def _annotate_audit(args):
         if not fn:
             continue
         stem = Path(fn).stem
-        ann_path = ann_dir / f"{stem}.annotations.json"
+        ann_path = get_annotation_json_path(project_path, fn, media_type, registry=getattr(args, "resource_registry", None))
+        if getattr(args, "resource_registry", None):
+            from data.resource_locations import resolve_annotation
+            ann_path = resolve_annotation(project_path, fn, media_type, registry=args.resource_registry)
 
         if not ann_path.exists():
             missing.append(fn)
@@ -3979,6 +3996,7 @@ def _mosaic_visualizer(args):
     run_visualizer(
         prefs.get("path"),
         media_type=normalize_media_type(getattr(args, "media", "movie")) or "movie",
+        **({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}),
     )
 
 
@@ -4085,6 +4103,7 @@ def cmd_cloud(args):
             max_words=max_words,
             min_count=min_count,
             style=style,
+            **({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}),
         )
         print(f"✓ Saved: {out}")
         if open_result:
@@ -4115,7 +4134,7 @@ def _cloud_visualizer(args):
     """cloud --visualizer — launch the interactive word-cloud explorer GUI."""
     _require_visualizer_deps()
     from visualizers.cloud_visualizer import run_visualizer
-    run_visualizer(prefs.get("path"))
+    run_visualizer(prefs.get("path"), **({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}))
 
 
 # ---------------------------------------------------------------------------
@@ -4277,6 +4296,7 @@ def cmd_flipbook(args):
             project_path, media_type=media_type,
             force=force, verbose=verbose,
             on_item_done=_flipbook_on_item if notify_each else None,
+            **({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}),
         )
         print()
         print(f"  processed: {summary['total_processed']}")
@@ -4311,6 +4331,7 @@ def cmd_flipbook(args):
         result = generate_flipbook_for_movie(
             project_path, filename, media_type,
             force=force, verbose=verbose,
+            **({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}),
         )
         out = result["output_path"]
         print(f"✓ Saved: {out}  ({result['pages']} pages)")
@@ -4345,6 +4366,7 @@ def _flipbook_visualizer(args):
     run_visualizer(
         prefs.get("path"),
         media_type=normalize_media_type(getattr(args, "media", "movie")) or "movie",
+        **({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}),
     )
 
 
@@ -4665,11 +4687,9 @@ def _resolve_all_annotation_filenames(project_path: str, media_type: str) -> lis
     """
     from pathlib import Path
 
-    ann_dir = Path(project_path) / "data" / "annotations" / "shots" / media_type
-    if not ann_dir.exists():
-        return []
+    from data.resource_locations import annotation_files
     filenames = []
-    for json_file in sorted(ann_dir.glob("*.json")):
+    for json_file in annotation_files(project_path, media_type):
         if json_file.name.endswith(".manifest.json"):
             continue
         try:
@@ -5137,7 +5157,7 @@ def _index_vocabulary(args):
         if family in {"canonical", "all"}:
             print(f"Building canonical vocabulary ({mt})...")
             try:
-                index = build_vocabulary_index(project_path, mt, force=force)
+                index = build_vocabulary_index(project_path, mt, force=force, **({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}))
             except FileNotFoundError as exc:
                 print(f"  ✗ {exc}", file=sys.stderr)
                 continue
@@ -5154,7 +5174,7 @@ def _index_vocabulary(args):
         if family in {"derived", "all"}:
             print(f"Building derived vocabulary ({mt})...")
             try:
-                index = build_derived_vocabulary(project_path, mt, force=force)
+                index = build_derived_vocabulary(project_path, mt, force=force, **({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}))
             except FileNotFoundError as exc:
                 print(f"  ✗ {exc}", file=sys.stderr)
                 continue
@@ -5512,12 +5532,12 @@ def _index_stats(args):
 
     if force:
         try:
-            stats = refresh_corpus_stats_cache(project_path)
+            stats = refresh_corpus_stats_cache(project_path, **({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}))
         except FileNotFoundError as exc:
             print(f"✗ {exc}", file=sys.stderr)
             sys.exit(1)
     else:
-        result = get_corpus_stats_state(project_path)
+        result = get_corpus_stats_state(project_path, **({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}))
         state = result["state"]
         if state == "missing":
             if output_json:
@@ -5791,7 +5811,7 @@ def _index_illustration(args):
         else (normalize_media_type(media),)
     )
     for media_type in media_types:
-        results = rebuild_all(project_path, media_type)
+        results = rebuild_all(project_path, media_type, **({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}))
         for source in ("silhouettes", "engravings"):
             result = results[source]
             if result.get("status") != "ready":
@@ -6637,11 +6657,16 @@ def _silhouette_catalog_deassign(args):
             field=args.field,
             label=args.label,
             object_id=args.object_id,
+            **({"registry": args.resource_registry, "instance_id": args.object_id, "dry_run": not getattr(args, "apply", False)} if getattr(args, "resource_registry", None) else {}),
         )
     except (RuntimeError, ValueError) as exc:
         print(f"✗ Could not de-assign silhouette: {exc}", file=sys.stderr)
         sys.exit(1)
 
+    if result.get("dry_run"):
+        print(json.dumps(result, indent=2, default=str))
+        print("Nothing changed; controlled registered lifecycle execution is deferred.")
+        return
     if result["status"] == "already_inactive":
         print("Silhouette already inactive; pending recheck preserved")
         return
@@ -6754,6 +6779,8 @@ def _silhouette_catalog_clear(args):
     tmdb         = getattr(args, "tmdb",  None)
     do_all       = getattr(args, "all",   False)
     dry_run      = getattr(args, "dry_run", False)
+    if getattr(args, "resource_registry", None) and not getattr(args, "apply", False):
+        dry_run = True
 
     filename_stem = None
     if movie or tmdb is not None:
@@ -6780,6 +6807,7 @@ def _silhouette_catalog_clear(args):
         label=label,
         filename_stem=filename_stem,
         dry_run=dry_run,
+        **({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}),
     )
 
     n_files = result["deleted_files"]
@@ -7988,6 +8016,7 @@ def _engraving_selection(args):
         title=getattr(args, "title", None),
         status=getattr(args, "status", None),
         mode=getattr(args, "mode", None),
+        **({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}),
     )
 
 
@@ -8068,7 +8097,7 @@ def _engraving_review(args):
     if target.is_dir():
         target = target / "engraving.json"
     try:
-        metadata = set_review_state(target, args.state)
+        metadata = set_review_state(target, args.state, **({"project_path": prefs.get("path"), "registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}))
     except PublicationError as exc:
         print(f"✗ {exc}", file=sys.stderr)
         sys.exit(1)
@@ -8182,6 +8211,7 @@ def _engraving_doctor(args):
     report = doctor(
         project_path,
         media_type=normalize_media_type(media) if media else None,
+        **({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}),
     )
 
     print(f"Engravings on disk : {report['engravings_on_disk']}")
@@ -8735,12 +8765,12 @@ def _cmd_sync_frame_match(args):
         vector = _load_vector_json(vector_json)
         from services.sync_frame_match import load_frame_catalog, match_frame_vector
         catalog = load_frame_catalog(project_path, media_type,
-                                     title=title, all_items=do_all)
+                                     title=title, all_items=do_all, **({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}))
         results = match_frame_vector(vector, catalog, top=top)
     else:
         from services.sync_frame_match import match_image_path
         results = match_image_path(frame_path, project_path, media_type,
-                                   title=title, all_items=do_all, top=top)
+                                   title=title, all_items=do_all, top=top, **({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}))
 
     print(json.dumps(results, indent=2, default=str))
 
@@ -8943,6 +8973,7 @@ def cmd_visualizer(args):
                 play=getattr(args, "play", False),
                 loop=getattr(args, "loop", False),
                 no_continue=getattr(args, "no_continue", False),
+                **({"registry": args.resource_registry, "approved": getattr(args, "approved_resource_edit", False)} if getattr(args, "resource_registry", None) else {}),
             )
         else:
             args.all = True
@@ -8981,7 +9012,7 @@ def _project_visualizer(args):
     """Launch the project launcher and configuration GUI."""
     _require_visualizer_deps()
     from visualizers.project_visualizer import run_visualizer
-    run_visualizer()
+    run_visualizer(**({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}))
 
 
 def _metadata_visualizer(args):
@@ -9011,6 +9042,7 @@ def _segmentation_visualizer(args):
     run_visualizer(
         prefs.get("path"),
         media_type=normalize_media_type(getattr(args, "media", "movie")) or "movie",
+        **({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}),
     )
 
 
@@ -9028,7 +9060,7 @@ def _sync_visualizer(args):
     """Launch the sync patching workspace GUI."""
     _require_visualizer_deps()
     from visualizers.sync_visualizer import run_visualizer
-    run_visualizer()
+    run_visualizer(**({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}))
 
 
 def _require_path():
@@ -9363,6 +9395,7 @@ def _search_frames_cmd(args):
         limit=limit,
         media_type=media_type,
         width=width,
+        **({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}),
     )
     if not frames:
         print(f"No frames found for query {query!r}.", file=sys.stderr)
@@ -9945,6 +9978,7 @@ def build_parser():
 
     p_annotate_audit = annotate_sub.add_parser("audit", help="Report annotation status per film (complete, incomplete, missing)")
     p_annotate_audit.set_defaults(func=_shotlist_annotate)
+    p_annotate_audit.add_argument("--resource-registry", default=None, metavar="DATABASE", help="Explicit approved resource registry for committed annotation reads")
     _add_media_arg(p_annotate_audit)
 
     p_annotate_validate = annotate_sub.add_parser(
@@ -10431,6 +10465,7 @@ def build_parser():
         help="Rebuild the Silhouette and Engraving browse indexes",
     )
     p_index_illustration.set_defaults(func=cmd_index)
+    p_index_illustration.add_argument("--resource-registry", default=None, metavar="DATABASE", help="Explicit resource registry for derived index rebuilding; never adopt or migrate")
     _add_media_arg(p_index_illustration, allow_both=True)
 
     p_index_untyped = index_sub.add_parser(
@@ -11822,6 +11857,7 @@ def build_parser():
     p_search.add_argument("--show_count", action="store_true", help="(vocabulary mode) include occurrence counts in output")
     p_search.add_argument("--sort", choices=["alphabetical", "count", "frequency", "rarity"], default="alphabetical", help="(vocabulary mode) sort order; (motifs mode) frequency, alphabetical, or rarity")
     p_search.add_argument("--all-fields", dest="all_fields", action="store_true", help="(vocabulary mode) emit vocabulary for every annotation field as a single JSON object")
+    p_search.add_argument("--resource-registry", default=None, metavar="DATABASE", help="Explicit approved resource registry for committed annotation reads")
     p_search.add_argument("--exclude", nargs="+", default=None, metavar="FIELD", help="(vocabulary mode) exclude one or more fields from output (e.g. --exclude description humans)")
     p_search.add_argument("--format", dest="output_format", choices=["json", "table", "list", "markdown", "bar", "auto"], default="auto", metavar="FORMAT", help="(vocabulary mode) output format: auto (default), json, table, list, markdown, bar")
     p_search.add_argument("--top", type=int, default=None, metavar="N", help="(vocabulary mode) show only the top N results")
@@ -12911,6 +12947,14 @@ def build_parser():
     )
     p_sync_fv.set_defaults(func=cmd_sync)
 
+    for context_parser in (p_cloud, p_flipbook, p_index_vocabulary, p_index_stats, p_eng_list, p_eng_remove, p_eng_doctor, p_sync_fm, p_sil_clear, p_sil_deassign, p_annotate_remove, p_sl_scene_detect, p_eng_review, p_meta):
+        context_parser.add_argument("--resource-registry", default=None, metavar="PATH", help="Explicit committed resource registry (legacy defaults remain unchanged)")
+    for retirement_parser in (p_sil_clear, p_sil_deassign, p_annotate_remove):
+        retirement_parser.add_argument("--apply", action="store_true", help="Request controlled registered execution (currently explicitly deferred)")
+    for name in ("project", "cloud", "sync", "segmentation", "shotlist", "mosaic", "flipbook"):
+        visualizer_sub.choices[name].add_argument("--resource-registry", default=None, metavar="PATH", help="Explicit committed resource registry")
+    p_vis_shot.add_argument("--approved-resource-edit", action="store_true", help="Explicit approval for controlled registered shotlist commits")
+    p_sl_scene_detect.add_argument("--approved-resource-edit", action="store_true", help="Explicit approval for controlled registered shotlist commits")
     return parser
 
 

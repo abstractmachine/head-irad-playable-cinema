@@ -407,6 +407,7 @@ class SearchWorker(QThread):
         media_type: str = "movie",
         parent=None,
         shot_type: Optional[str] = None,
+        registry=None,
     ):
         super().__init__(parent)
         self.query           = query
@@ -419,6 +420,7 @@ class SearchWorker(QThread):
         self.model_name      = model_name
         self.media_type      = media_type
         self.shot_type       = shot_type
+        self.registry        = registry
         self._cancelled      = False
 
     def cancel(self) -> None:
@@ -454,6 +456,7 @@ class SearchWorker(QThread):
                     project_path   = self.project_path,
                     media_type     = media_type,
                     shot_type      = self.shot_type,
+                    **({"registry": self.registry} if self.registry is not None else {}),
                 )
                 results.extend(
                     {**item, "media_type": media_type}
@@ -554,6 +557,7 @@ class VocabularyWorker(QThread):
         prefix: Optional[str] = None,
         sort: str = "count",
         parent=None,
+        registry=None,
     ):
         super().__init__(parent)
         self.field        = field
@@ -562,6 +566,7 @@ class VocabularyWorker(QThread):
         self.media_type   = media_type
         self.prefix       = prefix
         self.sort         = sort
+        self.registry     = registry
 
     def run(self) -> None:
         try:
@@ -572,6 +577,7 @@ class VocabularyWorker(QThread):
                 project_path = self.project_path,
                 media_type   = self.media_type,
                 sort         = self.sort,
+                **({"registry": self.registry} if self.registry is not None else {}),
             )
             if result.get("status") == "ready" and self.scope and self.scope != "--all":
                 result = {"status": "scope_unsupported"}
@@ -746,10 +752,11 @@ class VocabularyIndexWorker(QThread):
     finished_signal = pyqtSignal(str)
     error = pyqtSignal(str)
 
-    def __init__(self, media_type: str, family: str = "canonical", parent=None) -> None:
+    def __init__(self, media_type: str, family: str = "canonical", parent=None, *, registry=None) -> None:
         super().__init__(parent)
         self.media_type = media_type
         self.family = family
+        self.registry = registry
 
     def run(self) -> None:
         try:
@@ -764,6 +771,7 @@ class VocabularyIndexWorker(QThread):
                     "--family",
                     self.family,
                     "--force",
+                    *(["--resource-registry", str(self.registry)] if self.registry is not None else []),
                 ],
                 capture_output=True,
                 text=True,
@@ -1233,10 +1241,12 @@ class MosaicVisualizer(WindowVisualizer):
         media_type: str = "movie",
         shot_type: Optional[str] = None,
         initial_field: Optional[str] = None,
+        *, registry=None,
     ):
         # Instance attributes must be set before super().__init__() since the
         # base class calls create_browser()/create_inspector() synchronously.
         self.project_path = project_path
+        self._resource_registry = registry
         self.media_type   = media_type
         self._worker: Optional[SearchWorker] = None
         self._pdf_worker: Optional[PdfExportWorker] = None
@@ -1999,6 +2009,7 @@ class MosaicVisualizer(WindowVisualizer):
             model_name     = model_name,
             media_type     = scope_media_type,
             shot_type      = shot_type,
+            **({"registry": self._resource_registry} if self._resource_registry is not None else {}),
         )
         self._worker.tile_ready.connect(self._on_tile_ready)
         self._worker.finished_signal.connect(self._on_search_done)
@@ -2185,6 +2196,7 @@ class MosaicVisualizer(WindowVisualizer):
             prefix       = prefix,
             sort         = sort,
             parent       = self,
+            **({"registry": self._resource_registry} if self._resource_registry is not None else {}),
         )
         self._vocab_worker.result_ready.connect(
             lambda result, rid=request_id: self._on_vocab_result(result, rid)
@@ -2301,7 +2313,7 @@ class MosaicVisualizer(WindowVisualizer):
         family = "all" if field == "--all" else (
             "derived" if field in {"description", "text"} else "canonical"
         )
-        self._vocab_rebuild_worker = VocabularyIndexWorker(self.media_type, family, self)
+        self._vocab_rebuild_worker = VocabularyIndexWorker(self.media_type, family, self, **({"registry": self._resource_registry} if self._resource_registry is not None else {}))
         self._vocab_rebuild_worker.finished_signal.connect(self._on_vocab_rebuild_done)
         self._vocab_rebuild_worker.error.connect(self._on_vocab_rebuild_error)
         self._vocab_rebuild_worker.start()
@@ -2379,10 +2391,10 @@ class MosaicVisualizer(WindowVisualizer):
 # Public launcher
 # ---------------------------------------------------------------------------
 
-def run_visualizer(project_path: str, media_type: str = "movie") -> None:
+def run_visualizer(project_path: str, media_type: str = "movie", *, registry=None) -> None:
     """Create the QApplication (if needed) and launch the visualizer window."""
     from visualizers.launcher import run_visualizer_window
     run_visualizer_window(
         "mosaic",
-        lambda: MosaicVisualizer(project_path, media_type=media_type),
+        lambda: MosaicVisualizer(project_path, media_type=media_type, registry=registry),
     )

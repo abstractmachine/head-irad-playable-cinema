@@ -370,6 +370,7 @@ def load_flipbook_data(
     project_path: str,
     filename: str,
     media_type: str = "movie",
+    *, registry=None,
 ) -> dict:
     """Load and join annotation + palette data for a movie.
 
@@ -388,7 +389,10 @@ def load_flipbook_data(
     from data.metadata import get_metadata
 
     # Load annotation JSON
-    json_path = get_annotation_json_path(project_path, filename, media_type)
+    json_path = get_annotation_json_path(project_path, filename, media_type, **({"registry": registry} if registry is not None else {}))
+    if registry is not None:
+        from data.resource_locations import resolve_annotation
+        json_path = resolve_annotation(project_path, filename, media_type, registry=registry)
     if not json_path.exists():
         raise FileNotFoundError(
             f"No annotation JSON found: {json_path}\n"
@@ -645,6 +649,7 @@ def generate_flipbook_for_movie(
     *,
     force: bool = False,
     verbose: bool = False,
+    registry=None,
 ) -> dict:
     """Build and save a flipbook PDF for one movie.
 
@@ -673,7 +678,7 @@ def generate_flipbook_for_movie(
             "  Use --force to regenerate."
         )
 
-    data = load_flipbook_data(project_path, filename, media_type)
+    data = load_flipbook_data(project_path, filename, media_type, **({"registry": registry} if registry is not None else {}))
     pages = data["pages"]
 
     export_flipbook_pdf(pages, output_path, title=data["title"], verbose=verbose)
@@ -694,6 +699,7 @@ def generate_flipbook_for_all_movies(
     force: bool = False,
     verbose: bool = False,
     on_item_done=None,
+    registry=None,
 ) -> dict:
     """Generate flipbooks for all movies that have an annotation JSON.
 
@@ -715,7 +721,10 @@ def generate_flipbook_for_all_movies(
         if not filename:
             continue
 
-        json_path = get_annotation_json_path(project_path, filename, media_type)
+        json_path = get_annotation_json_path(project_path, filename, media_type, **({"registry": registry} if registry is not None else {}))
+        if registry is not None:
+            from data.resource_locations import resolve_annotation
+            json_path = resolve_annotation(project_path, filename, media_type, registry=registry, required=False)
         if not json_path.exists():
             continue
 
@@ -731,6 +740,7 @@ def generate_flipbook_for_all_movies(
             summary = generate_flipbook_for_movie(
                 project_path, filename, media_type,
                 force=force, verbose=verbose,
+                **({"registry": registry} if registry is not None else {}),
             )
             total_processed += 1
             if not verbose:

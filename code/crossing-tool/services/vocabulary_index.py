@@ -203,7 +203,8 @@ def _readable_vocab_path(project_path: str, media_type: str) -> Path:
 
 
 def _ann_dir(project_path: str, media_type: str) -> Path:
-    return Path(project_path) / "data" / "annotations" / "shots" / media_type
+    from data.resource_locations import annotation_directory
+    return annotation_directory(project_path, media_type)
 
 
 # ---------------------------------------------------------------------------
@@ -225,14 +226,17 @@ _SOURCE_HASH_TTL: float = 10.0  # seconds
 # Source hash (cheap staleness check — no file content reads)
 # ---------------------------------------------------------------------------
 
-def _compute_source_hash(project_path: str, media_type: str) -> str:
+def _compute_source_hash(project_path: str, media_type: str, *, registry=None) -> str:
     """Return an MD5 hex digest based on the mtime+size of every annotation JSON.
 
     The result is cached for up to ``_SOURCE_HASH_TTL`` seconds so that
     switching between annotation fields in a running visualizer does not
     re-scan the annotation directory on every field change.
     """
-    key = (project_path, media_type)
+    from data.resource_locations import annotation_context_token, annotation_files
+    token = annotation_context_token(project_path, registry, media_type)
+    files = list(annotation_files(project_path, media_type, registry=registry)) if registry is not None else None
+    key = (project_path, media_type) if registry is None else (project_path, media_type, token)
     cached = _source_hash_cache.get(key)
     if cached is not None:
         result, ts = cached
@@ -244,7 +248,10 @@ def _compute_source_hash(project_path: str, media_type: str) -> str:
         _source_hash_cache[key] = ("", time.monotonic())
         return ""
     h = hashlib.md5()
-    for p in sorted(ann.glob("*.json")):
+    if token is not None:
+        h.update(token.encode())
+    from data.resource_locations import annotation_files
+    for p in files if files is not None else annotation_files(project_path, media_type):
         if p.name.endswith(".manifest.json"):
             continue
         st = p.stat()
@@ -258,7 +265,7 @@ def _compute_source_hash(project_path: str, media_type: str) -> str:
 # Public API
 # ---------------------------------------------------------------------------
 
-def vocabulary_cache_is_stale(project_path: str, media_type: str = "movie") -> bool:
+def vocabulary_cache_is_stale(project_path: str, media_type: str = "movie", *, registry=None) -> bool:
     """Return True when the cache is missing or the annotation files have changed.
 
     Also returns True when the cache was built with an older canonicalization
@@ -272,20 +279,21 @@ def vocabulary_cache_is_stale(project_path: str, media_type: str = "movie") -> b
     if not path.exists():
         return True
     try:
-        index = load_vocabulary_index(project_path, media_type)
+        index = load_vocabulary_index(project_path, media_type, registry=registry)
         meta = index.get("meta", {})
     except (OSError, json.JSONDecodeError, FileNotFoundError):
         return True
     if meta.get("canonicalization") != CANONICALIZATION_VERSION:
         return True
     stored_hash = meta.get("source_hash", "")
-    return stored_hash != _compute_source_hash(project_path, media_type)
+    return stored_hash != _compute_source_hash(project_path, media_type, registry=registry)
 
 
 def build_vocabulary_index(
     project_path: str,
     media_type: str = "movie",
     force: bool = False,
+    *, registry=None,
 ) -> dict:
     """Scan annotation JSON files and build a vocabulary index.
 
@@ -298,7 +306,7 @@ def build_vocabulary_index(
     """
     out_path = _vocab_path(project_path, media_type)
 
-    source_hash = _compute_source_hash(project_path, media_type)
+    source_hash = _compute_source_hash(project_path, media_type, registry=registry)
 
     if not force and out_path.exists():
         try:
@@ -355,7 +363,8 @@ def build_vocabulary_index(
     # Using a plain dict so we can merge plural/singular variants under one key.
     canonical_counts: Dict[str, Dict[str, dict]] = {f: {} for f in indexed_fields}
 
-    json_files = sorted(ann_dir_path.glob("*.json"))
+    from data.resource_locations import annotation_files
+    json_files = list(annotation_files(project_path, media_type, registry=registry))
     files_processed = 0
 
     for json_path in json_files:
@@ -462,7 +471,7 @@ def build_vocabulary_index(
     return index
 
 
-def load_vocabulary_index(project_path: str, media_type: str = "movie") -> dict:
+def load_vocabulary_index(project_path: str, media_type: str = "movie", *, registry=None) -> dict:
     """Load the vocabulary index from cache.
 
     Raises FileNotFoundError if the cache file is missing (stale is allowed —
@@ -481,9 +490,9 @@ def load_vocabulary_index(project_path: str, media_type: str = "movie") -> dict:
     st = path.stat()
     cache_key = (str(path), st.st_mtime_ns, st.st_size)
     cached = _vocab_index_cache.get(cache_key)
-    if cached is not None:
-        return cached
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = cached if cached is not None else json.loads(path.read_text(encoding="utf-8"))
+    if registry is not None and data.get("meta", {}).get("source_hash") != _compute_source_hash(project_path, media_type, registry=registry):
+        raise ValueError("Vocabulary cache differs from committed annotation context")
     _vocab_index_cache[cache_key] = data
     return data
 
@@ -492,7 +501,7 @@ def load_vocabulary_index(project_path: str, media_type: str = "movie") -> dict:
 # Convenience query API
 # ---------------------------------------------------------------------------
 
-def get_vocabulary_fields(project_path: str, media_type: str = "movie") -> List[str]:
+def get_vocabulary_fields(project_path: str, media_type: str = "movie", *, registry=None) -> List[str]:
     """Return the list of fields included in the vocabulary index.
 
     Reads ``vocabulary_fields`` from the cache meta when available, otherwise
@@ -501,7 +510,7 @@ def get_vocabulary_fields(project_path: str, media_type: str = "movie") -> List[
     Raises FileNotFoundError if neither the cache nor fields.yaml exists.
     """
     try:
-        index = load_vocabulary_index(project_path, media_type)
+        index = load_vocabulary_index(project_path, media_type, **({"registry": registry} if registry is not None else {}))
         fields = index.get("meta", {}).get("vocabulary_fields")
         if isinstance(fields, list):
             return fields
@@ -516,6 +525,7 @@ def get_vocabulary(
     project_path: str,
     media_type: str = "movie",
     sort: str = "alphabetical",
+    *, registry=None,
 ) -> List[dict]:
     """Return vocabulary entries for *field* as ``[{"value": str, "count": int}, ...]``.
 
@@ -533,7 +543,7 @@ def get_vocabulary(
     KeyError
         If *field* is not present in the cached index.
     """
-    index = load_vocabulary_index(project_path, media_type)
+    index = load_vocabulary_index(project_path, media_type, **({"registry": registry} if registry is not None else {}))
     field_data = index.get("fields", {}).get(field)
     if field_data is None:
         available = sorted(index.get("fields", {}).keys())

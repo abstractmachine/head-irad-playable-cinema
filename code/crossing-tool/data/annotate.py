@@ -2407,6 +2407,7 @@ def canonical_shot_type(annotation: dict | None) -> str:
 def load_shot_type_lookup(
     project_path: str,
     media_type: str,
+    *, registry=None,
 ) -> tuple[dict[tuple[str, str], str], dict[str, int]]:
     """Build one canonical ``(media_id, shot_id) -> shot_type`` lookup.
 
@@ -2422,7 +2423,7 @@ def load_shot_type_lookup(
         for record in get_metadata(project_path, media_type=media_type)
         if record.get("filename")
     }
-    root = Path(project_path) / "data" / "annotations" / "shots" / media_type
+    from data.resource_locations import annotation_files
     lookup: dict[tuple[str, str], str] = {}
     stats = {
         "annotation_files_read": 0,
@@ -2430,10 +2431,7 @@ def load_shot_type_lookup(
         "annotation_entries_read": 0,
         "shot_types_indexed": 0,
     }
-    if not root.is_dir():
-        return lookup, stats
-
-    for annotation_path in sorted(root.glob("*.annotations.json")):
+    for annotation_path in annotation_files(project_path, media_type, registry=registry):
         stats["annotation_files_read"] += 1
         try:
             entries = json.loads(annotation_path.read_text(encoding="utf-8"))
@@ -2576,12 +2574,25 @@ def remove_file_annotations(
     project_path: str,
     filename: str,
     media_type: str = "movie",
+    *, registry=None, dry_run=False,
 ) -> bool:
     """Delete the shot-annotation JSON for *filename*.
 
     Returns True if the file existed and was removed, False if it was absent.
     """
-    path = get_annotation_json_path(project_path, filename, media_type)
+    path = get_annotation_json_path(project_path, filename, media_type, registry=registry)
+    if registry is not None:
+        from data.resource_locations import annotation_artifacts, find_media, resolve_annotation
+        collection = annotation_artifacts(project_path, find_media(project_path, media_type, filename=filename), media_type, registry=registry, required=())
+        if collection.get("changed"):
+            raise ValueError("Committed annotation collection is stale")
+        if ".annotations.json" not in collection["existing"]:
+            return False
+        path = resolve_annotation(project_path, filename, media_type, registry=registry)
+        if not dry_run:
+            raise ValueError("Registered annotation deletion requires controlled artifact commitment retirement; deferred")
+    if dry_run:
+        return path.exists()
     if path.exists():
         path.unlink()
         return True

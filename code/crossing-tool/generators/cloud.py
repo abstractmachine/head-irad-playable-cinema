@@ -342,6 +342,7 @@ def extract_annotation_words(
     field: str | None = None,
     media_type: str = "movie",
     min_count: int = 1,
+    registry=None,
 ) -> Counter:
     """Count word frequencies from annotation JSON files.
 
@@ -371,9 +372,12 @@ def extract_annotation_words(
                     field=field,
                     media_type=child_media_type,
                     min_count=1,
+                    registry=registry,
                 ))
                 found_annotations = True
             except FileNotFoundError:
+                if registry is not None:
+                    raise
                 continue
         if not found_annotations:
             raise FileNotFoundError(
@@ -384,9 +388,8 @@ def extract_annotation_words(
             counter = Counter({word: count for word, count in counter.items() if count >= min_count})
         return counter
 
-    ann_dir = (
-        Path(project_path) / "data" / "annotations" / "shots" / media_type
-    )
+    from data.resource_locations import annotation_directory, annotation_files
+    ann_dir = annotation_directory(project_path, media_type)
     if not ann_dir.exists():
         raise FileNotFoundError(
             f"Annotation directory not found: {ann_dir}\n"
@@ -397,7 +400,7 @@ def extract_annotation_words(
     if scope:
         scope_lower = scope.lower()
         json_files = [
-            p for p in sorted(ann_dir.glob("*.json"))
+            p for p in annotation_files(project_path, media_type)
             if scope_lower in p.stem.lower()
         ]
         if not json_files:
@@ -405,7 +408,7 @@ def extract_annotation_words(
                 f"No annotation file matching {scope!r} found in {ann_dir}."
             )
     else:
-        json_files = sorted(ann_dir.glob("*.json"))
+        json_files = list(annotation_files(project_path, media_type, registry=registry))
         if not json_files:
             raise FileNotFoundError(
                 f"No annotation files found in {ann_dir}."
@@ -616,6 +619,7 @@ def cloud_from_annotations(
     width: int = _DEFAULT_WIDTH,
     height: int = _DEFAULT_HEIGHT,
     style: str = DEFAULT_STYLE,
+    registry=None,
 ) -> Path:
     """Build a word-cloud PDF from project annotation data.
 
@@ -650,6 +654,7 @@ def cloud_from_annotations(
         field=field,
         media_type=media_type,
         min_count=min_count,
+        **({"registry": registry} if registry is not None else {}),
     )
 
     if not word_counts:

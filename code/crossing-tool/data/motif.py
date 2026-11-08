@@ -334,6 +334,7 @@ def generate_motifs_for_movie(
     project_path: str,
     filename: str,
     media_type: str = "movie",
+    *, registry=None,
     model_name: str = "Qwen3-VL-8B-Instruct",
     force: bool = False,
     verbose: bool = False,
@@ -373,7 +374,10 @@ def generate_motifs_for_movie(
     from data.media_id import compute_media_id, build_shot_id
     from data.shotlist import read_shotlist
 
-    json_path = get_annotation_json_path(project_path, filename, media_type)
+    json_path = get_annotation_json_path(project_path, filename, media_type, **({"registry": registry} if registry is not None else {}))
+    if registry is not None:
+        from data.resource_locations import resolve_annotation
+        json_path = resolve_annotation(project_path, filename, media_type, registry=registry)
     if not json_path.exists():
         raise FileNotFoundError(
             f"No annotation JSON found: {json_path}\n"
@@ -695,6 +699,8 @@ def load_motif_words(
     try:
         entries: list = json.loads(json_path.read_text(encoding="utf-8"))
     except Exception:
+        if registry is not None:
+            raise
         return []
 
     words: list[str] = []

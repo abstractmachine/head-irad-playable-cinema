@@ -462,10 +462,12 @@ class SAMExplorer(WindowVisualizer):
         project_path: str,
         media_type: str = "movie",
         model_name: str = _DEFAULT_MODEL,
+        *, registry=None,
     ) -> None:
         # Instance attributes must be set before super().__init__() since the
         # base class calls create_browser()/create_inspector() synchronously.
         self._project_path = project_path
+        self._resource_registry = registry
         self._media_type = media_type
         self._model_name = model_name
 
@@ -767,18 +769,22 @@ class SAMExplorer(WindowVisualizer):
 
         # Attach stable shot IDs
         meta_entry = self._films[self._film_idx] if self._films else {}
-        media_id = compute_media_id(meta_entry, self._media_type)
+        if self._resource_registry is not None:
+            from data.resource_locations import find_media
+            media_id = find_media(self._project_path, self._media_type, filename=self._filename)["media_id"]
+        else:
+            media_id = compute_media_id(meta_entry, self._media_type)
         attach_shot_ids(shots, media_id)
 
         # Merge best_frame info from annotation JSON (for display only)
         try:
             import json as _json
-            ann_path = (
-                Path(self._project_path)
-                / "data" / "annotations" / "shots"
-                / self._media_type
-                / f"{Path(self._filename).stem}.json"
-            )
+            if self._resource_registry is not None:
+                from data.resource_locations import resolve_annotation
+                ann_path = resolve_annotation(self._project_path, self._filename, self._media_type, registry=self._resource_registry)
+            else:
+                from data.resource_locations_legacy import annotation_v0_json_path
+                ann_path = annotation_v0_json_path(self._project_path, self._filename, self._media_type)
             if ann_path.exists():
                 ann_entries = _json.loads(ann_path.read_text(encoding="utf-8"))
                 bf_index: dict[str, dict] = {}
@@ -793,7 +799,10 @@ class SAMExplorer(WindowVisualizer):
                     sid = shot.get("shot_id", "")
                     if sid in bf_index and "best_frame" not in shot:
                         shot["best_frame"] = bf_index[sid]
-        except Exception:
+        except Exception as exc:
+            if self._resource_registry is not None:
+                self._status_lbl.setText(f"Error loading committed annotations: {exc}")
+                return
             pass  # annotation data is optional
 
         self._shots = shots
@@ -1247,6 +1256,7 @@ class SAMExplorer(WindowVisualizer):
 def run_visualizer(
     project_path: str,
     media_type: str = "movie",
+    *, registry=None,
 ) -> None:
     """Create QApplication (if needed) and open the segmentation visualizer."""
     from tool import prefs as _prefs
@@ -1254,7 +1264,7 @@ def run_visualizer(
     from visualizers.launcher import run_visualizer_window
     run_visualizer_window(
         "segmentation",
-        lambda: SAMExplorer(project_path, media_type=media_type, model_name=model_name),
+        lambda: SAMExplorer(project_path, media_type=media_type, model_name=model_name, registry=registry),
     )
 
 

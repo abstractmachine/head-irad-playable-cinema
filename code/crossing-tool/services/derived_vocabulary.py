@@ -55,10 +55,12 @@ def build_derived_vocabulary(
     *,
     force: bool = False,
     min_document_frequency: int = _MIN_DOCUMENT_FREQUENCY,
+    registry=None,
 ) -> dict:
     """Build the derived free-text vocabulary artifact."""
     output = derived_vocabulary_path(project_path, media_type)
-    source_hash = _compute_source_hash(project_path, media_type)
+    context = {"registry": registry} if registry is not None else {}
+    source_hash = _compute_source_hash(project_path, media_type, **context)
     if not force and output.exists():
         try:
             cached = json.loads(output.read_text(encoding="utf-8"))
@@ -81,9 +83,8 @@ def build_derived_vocabulary(
     source_fields: dict[str, set[str]] = defaultdict(set)
     files_processed = 0
     documents_processed = 0
-    for annotation_path in sorted(annotation_dir.glob("*.json")):
-        if annotation_path.name.endswith(".manifest.json"):
-            continue
+    from data.resource_locations import annotation_files
+    for annotation_path in annotation_files(project_path, media_type, **context):
         try:
             entries = json.loads(annotation_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -150,19 +151,22 @@ def build_derived_vocabulary(
     return artifact
 
 
-def load_derived_vocabulary(project_path: str, media_type: str = "movie") -> dict:
-    return json.loads(derived_vocabulary_path(project_path, media_type).read_text(encoding="utf-8"))
+def load_derived_vocabulary(project_path: str, media_type: str = "movie", *, registry=None) -> dict:
+    artifact = json.loads(derived_vocabulary_path(project_path, media_type).read_text(encoding="utf-8"))
+    if registry is not None and artifact.get("meta", {}).get("source_hash") != _compute_source_hash(project_path, media_type, registry=registry):
+        raise ValueError("Derived vocabulary cache does not match committed annotation context")
+    return artifact
 
 
-def derived_vocabulary_is_stale(project_path: str, media_type: str = "movie") -> bool:
+def derived_vocabulary_is_stale(project_path: str, media_type: str = "movie", *, registry=None) -> bool:
     try:
-        index = load_derived_vocabulary(project_path, media_type)
-    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        index = load_derived_vocabulary(project_path, media_type, **({"registry": registry} if registry is not None else {}))
+    except (FileNotFoundError, OSError, json.JSONDecodeError, ValueError):
         return True
     meta = index.get("meta", {})
     return (
         meta.get("normalization") != DERIVED_NORMALIZATION_VERSION
-        or meta.get("source_hash") != _compute_source_hash(project_path, media_type)
+        or meta.get("source_hash") != _compute_source_hash(project_path, media_type, **({"registry": registry} if registry is not None else {}))
     )
 
 
@@ -171,9 +175,10 @@ def get_derived_vocabulary(
     media_type: str = "movie",
     sort: str = "alphabetical",
     source_field: str | None = None,
+    *, registry=None,
 ) -> list[dict]:
     """Return derived terms, optionally limited to one free-text source field."""
-    fields = load_derived_vocabulary(project_path, media_type).get("fields", {})
+    fields = load_derived_vocabulary(project_path, media_type, **({"registry": registry} if registry is not None else {})).get("fields", {})
     items = [
         {"value": term, "count": int(entry.get("count", 0)), "provenance": entry}
         for term, entry in fields.get(DERIVED_FIELD, {}).items()

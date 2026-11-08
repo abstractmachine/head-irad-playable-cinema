@@ -105,21 +105,8 @@ def _object_local_root(
     source_json: str | Path,
     record: dict,
 ) -> Path:
-    source_json = Path(source_json)
-    media_type = record.get("media_type", "movie")
-    filename_stem = record.get("filename_stem") or Path(record.get("filename", "unknown")).stem
-
-    return (
-        Path(project_path)
-        / "data"
-        / "engravings"
-        / "catalog"
-        / _safe_part(media_type)
-        / _safe_part(filename_stem)
-        / label_folder_for_source(source_json, record)
-        / source_json.stem
-        / LOCAL_MODE
-    )
+    from data.resource_locations_legacy import engraving_dir_for_source
+    return engraving_dir_for_source(project_path, source_json, record, LOCAL_MODE)
 
 
 def _paths_for_dir(base: Path, source_json: str | Path, record: dict) -> dict:

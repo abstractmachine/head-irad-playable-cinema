@@ -246,6 +246,7 @@ def list_movies(
     compact: bool = False,
     limit: int = 0,
     offset: int = 0,
+    resource_registry: str = "",
 ) -> str:
     """List all films in the archive with their metadata.
 
@@ -275,13 +276,17 @@ def list_movies(
         from data.shotlist import get_shotlist_path
 
         entries = get_metadata(project_path, media_type=media_type)
-        ann_base = Path(project_path) / "data" / "annotations" / "shots" / media_type
+        from data.annotate import get_annotation_json_path
 
         summary = []
         for e in entries:
             filename = e.get("filename", "")
             stem = Path(filename).stem if filename else ""
-            has_ann = bool(stem and (ann_base / f"{stem}.annotations.json").exists())
+            ann_path = get_annotation_json_path(project_path, filename, media_type, registry=resource_registry or None) if filename else None
+            if resource_registry and ann_path:
+                from data.resource_locations import resolve_annotation
+                ann_path = resolve_annotation(project_path, filename, media_type, registry=resource_registry, required=False)
+            has_ann = bool(ann_path and ann_path.exists())
             poster_path, _ = _poster_reference(project_path, media_type, filename)
             summary.append({
                 "title":       e.get("title", ""),
@@ -962,6 +967,7 @@ def search_shots(
     limit: int = 40,
     limit_per_film: int = 0,
     media_type: str = "movie",
+    resource_registry: str = "",
 ) -> str:
     """Search shot annotations across the archive by keyword or phrase.
 
@@ -999,6 +1005,7 @@ def search_shots(
             use_all=use_all,
             project_path=project_path,
             media_type=media_type,
+            **({"registry": resource_registry} if resource_registry else {}),
         )
         return _ok(
             query=query,
@@ -1019,6 +1026,7 @@ def search_vocabulary(
     top: int = 50,
     sort: str = "count",
     media_type: str = "movie",
+    resource_registry: str = "",
 ) -> str:
     """Query the vocabulary index for a given annotation field.
 
@@ -1044,14 +1052,15 @@ def search_vocabulary(
     try:
         from services.vocabulary_index import get_vocabulary, get_vocabulary_fields
 
-        available_fields = get_vocabulary_fields(project_path, media_type)
+        context = {"registry": resource_registry} if resource_registry else {}
+        available_fields = get_vocabulary_fields(project_path, media_type, **context)
         if field not in available_fields:
             return _err(
                 f"Field {field!r} not in vocabulary index.",
                 f"Available fields: {available_fields}",
             )
 
-        items = get_vocabulary(field, project_path, media_type=media_type, sort=sort)
+        items = get_vocabulary(field, project_path, media_type=media_type, sort=sort, **context)
 
         # Filter by query substring when provided
         if query:
@@ -1348,6 +1357,7 @@ def get_best_frames(
     field: str = "",
     width: int = 400,
     media_type: str = "movie",
+    resource_registry: str = "",
 ) -> list:
     """Search shots by keyword and return frame thumbnails for the top results.
 
@@ -1378,6 +1388,7 @@ def get_best_frames(
             limit=max(1, min(limit, 12)),
             media_type=media_type,
             width=width,
+            **({"registry": resource_registry} if resource_registry else {}),
         )
         if not frames:
             return [_err(f"No frames found for query {query!r}.", "Try a different query or broaden the film filter.")]
@@ -1473,6 +1484,7 @@ def get_motif_frames(
     limit: int = 4,
     width: int = 400,
     media_type: str = "movie",
+    resource_registry: str = "",
 ) -> list:
     """Retrieve frame thumbnails for shots whose motif word matches *motif*.
 
@@ -1500,6 +1512,7 @@ def get_motif_frames(
             films=films, media_type=media_type,
             limit=max(1, min(limit, 12)),
             width=width,
+            **({"registry": resource_registry} if resource_registry else {}),
         )
         if not frames:
             return [_err(f"No frames found for motif {motif!r}.", "Check available motifs: crossing search motifs list")]
@@ -1742,6 +1755,7 @@ def generate_flipbook(
     film: str,
     media_type: str = "movie",
     force: bool = False,
+    resource_registry: str = "",
 ) -> str:
     """Generate a cinematic flipbook PDF for one film.
 
@@ -1774,7 +1788,7 @@ def generate_flipbook(
         entry, filename = result
 
         res = generate_flipbook_for_movie(
-            project_path, filename, media_type, force=force
+            project_path, filename, media_type, force=force, **({"registry": resource_registry} if resource_registry else {})
         )
         return _ok(**res)
 
@@ -1861,6 +1875,7 @@ def generate_cloud(
     max_words: int = 150,
     min_count: int = 2,
     media_type: str = "movie",
+    resource_registry: str = "",
 ) -> str:
     """Generate a word-cloud PDF from shot annotation text.
 
@@ -1899,6 +1914,7 @@ def generate_cloud(
             max_words=max_words,
             min_count=min_count,
             style=style,
+            **({"registry": resource_registry} if resource_registry else {}),
         )
         return _ok(
             film=film or None,
@@ -1994,6 +2010,7 @@ def generate_catalog(
     include_annotations: bool = False,
     include_motifs: bool = False,
     inline: bool = False,
+    resource_registry: str = "",
 ) -> str:
     """Generate a JSON catalog of films with metadata and data availability.
 
@@ -2030,7 +2047,7 @@ def generate_catalog(
         from data.shotlist import get_shotlist_path, read_shotlist
 
         all_entries = _get_metadata(project_path, media_type=media_type)
-        ann_base = Path(project_path) / "data" / "annotations" / "shots" / media_type
+        from data.annotate import get_annotation_json_path
 
         # Filter to requested films if given
         if films:
@@ -2045,7 +2062,10 @@ def generate_catalog(
             stem = Path(filename).stem if filename else ""
 
             shotlist_path = get_shotlist_path(project_path, filename, media_type) if filename else None
-            ann_path = ann_base / f"{stem}.annotations.json" if stem else None
+            ann_path = get_annotation_json_path(project_path, filename, media_type, registry=resource_registry or None) if filename else None
+            if resource_registry and ann_path:
+                from data.resource_locations import resolve_annotation
+                ann_path = resolve_annotation(project_path, filename, media_type, registry=resource_registry, required=False)
 
             record: dict = {
                 "title":      entry.get("title", ""),
@@ -2337,6 +2357,7 @@ def compare_motifs(
     mode: str = "overlap",
     limit: int | None = None,
     media_type: str = "movie",
+    resource_registry: str = "",
 ) -> str:
     """Compare motif usage across films.
 
@@ -2366,6 +2387,7 @@ def compare_motifs(
             films=films,
             mode=mode,
             limit=limit,
+            **({"registry": resource_registry} if resource_registry else {}),
         )
         return _ok(**data)
     except Exception as exc:
@@ -2378,6 +2400,7 @@ def get_all_motifs(
     sort: str = "frequency",
     limit: int | None = None,
     media_type: str = "movie",
+    resource_registry: str = "",
 ) -> str:
     """Return a global motif frequency index across the archive.
 
@@ -2406,6 +2429,7 @@ def get_all_motifs(
             films=films,
             sort=sort,
             limit=limit,
+            **({"registry": resource_registry} if resource_registry else {}),
         )
         return _ok(**data)
     except Exception as exc:
@@ -2546,6 +2570,7 @@ def get_shot_context(
     include_motif: bool = False,
     include_palette: bool = False,
     media_type: str = "movie",
+    resource_registry: str = "",
 ) -> str:
     """Return neighboring shots around a given shot_id with optional enrichment.
 
@@ -2581,6 +2606,7 @@ def get_shot_context(
             include_subtitles=include_subtitles,
             include_motif=include_motif,
             include_palette=include_palette,
+            **({"registry": resource_registry} if resource_registry else {}),
         )
         return _ok(**data)
     except ValueError as exc:
@@ -2631,6 +2657,7 @@ def align_subtitles_to_shots(
 @mcp.tool()
 def get_archive_stats(
     media_type: str = "movie",
+    resource_registry: str = "",
 ) -> str:
     """Return archive-level coverage statistics.
 
@@ -2652,7 +2679,7 @@ def get_archive_stats(
 
     try:
         from services.analysis import get_archive_stats as _get_archive_stats
-        data = _get_archive_stats(project_path=project_path, media_type=media_type)
+        data = _get_archive_stats(project_path=project_path, media_type=media_type, **({"registry": resource_registry} if resource_registry else {}))
         return _ok(**data)
     except Exception as exc:
         return _err(str(exc), traceback.format_exc())
@@ -2663,7 +2690,7 @@ def get_archive_stats(
 # ===========================================================================
 
 @mcp.tool()
-def crossing_about(media_type: str = "movie") -> str:
+def crossing_about(media_type: str = "movie", resource_registry: str = "") -> str:
     """Return a high-level summary of what is available in this archive.
 
     Designed as a first-call orientation tool for agents and assistants.
@@ -2694,7 +2721,8 @@ def crossing_about(media_type: str = "movie") -> str:
         def _has_files(d: Path, pattern: str) -> bool:
             return d.exists() and bool(next(d.glob(pattern), None))
 
-        ann_dir      = pp / "data" / "annotations" / "shots" / media_type
+        from data.resource_locations import annotation_directory
+        ann_dir      = annotation_directory(project_path, media_type)
         shotlist_dir = pp / "data" / "shotlists" / media_type
         subtitle_dir = pp / "media" / "subtitles" / media_type
         palette_dir  = pp / "data" / "palettes" / media_type
@@ -2707,14 +2735,16 @@ def crossing_about(media_type: str = "movie") -> str:
             except Exception:
                 pass
 
+        from data.resource_locations import annotation_files
+        registered_annotations = bool(list(annotation_files(project_path, media_type, registry=resource_registry))) if resource_registry else None
         capabilities = {
             "metadata":        bool(movies or gameplays),
             "shotlists":       _has_files(shotlist_dir, "*.csv"),
             "subtitles":       _has_files(subtitle_dir, "*.srt"),
-            "motifs":          _has_files(ann_dir, "*.json"),
+            "motifs":          registered_annotations if resource_registry else _has_files(ann_dir, "*.json"),
             "palettes":        _has_files(palette_dir, "*.json"),
             "frame_retrieval": frame_retrieval_ok,
-            "analysis":        ann_dir.exists(),
+            "analysis":        registered_annotations if resource_registry else ann_dir.exists(),
             "generation":      True,
         }
 
@@ -2748,7 +2778,7 @@ def crossing_about(media_type: str = "movie") -> str:
 
 
 @mcp.tool()
-def list_vocabulary_fields(media_type: str = "movie") -> str:
+def list_vocabulary_fields(media_type: str = "movie", resource_registry: str = "") -> str:
     """Return the annotation fields available in the vocabulary index.
 
     Use this before calling search_vocabulary or list_silhouette_candidates
@@ -2769,7 +2799,7 @@ def list_vocabulary_fields(media_type: str = "movie") -> str:
 
     try:
         from services.vocabulary_index import get_vocabulary_fields
-        fields = get_vocabulary_fields(project_path, media_type)
+        fields = get_vocabulary_fields(project_path, media_type, **({"registry": resource_registry} if resource_registry else {}))
         return _ok(media_type=media_type, fields=fields)
 
     except FileNotFoundError as exc:

@@ -55,6 +55,7 @@ def compare_motifs(
     films: list[str] | None = None,
     mode: str = "overlap",
     limit: int | None = None,
+    *, registry=None,
 ) -> dict:
     """Compare motif usage across films.
 
@@ -86,7 +87,7 @@ def compare_motifs(
         if not filename:
             continue
         from data.motif import load_motif_words
-        words = load_motif_words(project_path, filename, media_type)
+        words = load_motif_words(project_path, filename, media_type, **({"registry": registry} if registry is not None else {}))
         if words:
             title = entry.get("title") or Path(filename).stem
             per_film[title] = words
@@ -157,6 +158,7 @@ def get_all_motifs(
     films: list[str] | None = None,
     sort: str = "frequency",
     limit: int | None = None,
+    *, registry=None,
 ) -> dict:
     """Return a global motif frequency index across the archive.
 
@@ -184,7 +186,7 @@ def get_all_motifs(
         if not filename:
             continue
         from data.motif import load_motif_words
-        words = load_motif_words(project_path, filename, media_type)
+        words = load_motif_words(project_path, filename, media_type, **({"registry": registry} if registry is not None else {}))
         if words:
             title = entry.get("title") or Path(filename).stem
             film_titles.append(title)
@@ -516,6 +518,7 @@ def get_shot_context(
     include_subtitles: bool = False,
     include_motif: bool = False,
     include_palette: bool = False,
+    *, registry=None,
 ) -> dict:
     """Return neighboring shots around a given shot_id.
 
@@ -598,10 +601,18 @@ def get_shot_context(
             subtitle_lookup[idx] = overlapping
 
     if include_motif:
-        from data.motif import load_motif_doc
-        motif_doc = load_motif_doc(project_path, filename, media_type)
-        for i, s in enumerate(motif_doc.get("shots", [])):
-            motif_lookup[str(i)] = s.get("value", "")
+        if registry is not None:
+            import json
+            from data.resource_locations import resolve_annotation
+            from data.motif import _motif_value_from_entry
+            entries = json.loads(resolve_annotation(project_path, filename, media_type, registry=registry).read_text(encoding="utf-8"))
+            by_shot = {entry["shot"]["shot_id"]: _motif_value_from_entry(entry["shot"]) or "" for entry in entries if isinstance(entry.get("shot"), dict)}
+            motif_lookup = {str(index): by_shot.get(shot.get("shot_id"), "") for index, shot in enumerate(shots)}
+        else:
+            from data.motif import load_motif_doc
+            motif_doc = load_motif_doc(project_path, filename, media_type)
+            for i, s in enumerate(motif_doc.get("shots", [])):
+                motif_lookup[str(i)] = s.get("value", "")
 
     if include_palette:
         from data.palette import load_palette
@@ -759,6 +770,7 @@ def align_subtitles_to_shots(
 def get_archive_stats(
     project_path: str,
     media_type: str = "movie",
+    *, registry=None,
 ) -> dict:
     """Return archive-level coverage statistics.
 
@@ -776,7 +788,7 @@ def get_archive_stats(
     from data.subtitles import subtitle_exists
 
     base = Path(project_path)
-    ann_dir = base / "data" / "annotations" / "shots" / media_type
+    from data.annotate import get_annotation_json_path
 
     entries = _get_metadata(project_path, media_type=media_type)
     film_count = len(entries)
@@ -805,7 +817,10 @@ def get_archive_stats(
                 pass
 
         stem = Path(filename).stem
-        ann_path = ann_dir / f"{stem}.annotations.json"
+        ann_path = get_annotation_json_path(project_path, filename, media_type, registry=registry)
+        if registry is not None:
+            from data.resource_locations import resolve_annotation
+            ann_path = resolve_annotation(project_path, filename, media_type, registry=registry, required=False)
         if ann_path.exists():
             films_with_annotations += 1
             try:

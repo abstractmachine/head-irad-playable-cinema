@@ -4400,11 +4400,21 @@ class BookVisualizerWindow(WindowVisualizer):
         if self._doc is None or not self._slug:
             return
 
-        from services.silhouette_catalog import load_active_record
-        source = Path(png_path).resolve()
-        engraving_root = Path(self._project_path).resolve() / "data/engravings"
-        if not source.is_relative_to(engraving_root):
-            load_active_record(source.with_suffix(".json"), self._project_path)
+        resolved = None
+        if meta.get("resource_registry"):
+            from services.resource_resolution import resolve_index_record, resolve_silhouette, resolve_engraving
+            current = resolve_index_record(self._project_path, meta)
+            resolver = resolve_engraving if current.get("resource_kind") == "engravings" else resolve_silhouette
+            context = {"mode": current["mode"]} if resolver is resolve_engraving else {}
+            resolved = resolver(self._project_path, current["instance_id"], registry=current["resource_registry"], **context)
+            png_path = str(resolved["image"])
+            meta = {**meta, **resolved["record"]}
+        else:
+            from services.silhouette_catalog import load_active_record
+            source = Path(png_path).resolve()
+            engraving_root = Path(self._project_path).resolve() / "data/engravings"
+            if not source.is_relative_to(engraving_root):
+                load_active_record(source.with_suffix(".json"), self._project_path)
 
         # Copy PNG into book's illustrations/silhouettes/ directory
         from data.book import book_dir as _book_dir_fn
@@ -4416,7 +4426,10 @@ class BookVisualizerWindow(WindowVisualizer):
         dest_name = f"{meta.get('label', 'sil')}_{src.stem}_{uuid.uuid4().hex[:6]}.png"
         dest      = dest_dir / dest_name
         try:
-            _shutil.copy2(str(src), str(dest))
+            if resolved is not None:
+                dest.write_bytes(resolved["image_bytes"])
+            else:
+                _shutil.copy2(str(src), str(dest))
         except OSError:
             return
 

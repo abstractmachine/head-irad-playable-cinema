@@ -480,9 +480,18 @@ def load_json_metadata(project_path: str, media_type: str) -> list[dict]:
     return data.get("media", [])
 
 
-def save_json_metadata(project_path: str, media_type: str, records: list[dict]) -> Path:
+def save_json_metadata(project_path: str, media_type: str, records: list[dict], *, registry=None, approved=False) -> Path:
     """Write *records* to the JSON metadata file (overwrites atomically)."""
     from data.annotate import atomic_write_text
+    if registry is not None:
+        from data.resource_storage import ResourceStore
+        store = ResourceStore(project_path, registry, approved=approved)
+        previous = {record.get("media_id"): record.get("filename") for record in load_json_metadata(project_path, media_type)}
+        current = {record.get("media_id"): record.get("filename") for record in records}
+        with store.transaction() as database:
+            bound = {row[0] for row in database.execute("SELECT DISTINCT media_id FROM instances WHERE media_type=?", (media_type,))}
+        if any(previous.get(media_id) != current.get(media_id) for media_id in bound):
+            raise ValueError("Registered media association edits require controlled location transitions and dirty propagation; deferred")
     path = _json_path(project_path, media_type)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"version": _JSON_VERSION, "media": records}
@@ -495,6 +504,7 @@ def upsert_json_record(
     record: dict,
     media_type: str,
     match_key: str = "media_id",
+    *, registry=None, approved=False,
 ) -> Path:
     """Insert or update a single record in the JSON file, keyed by *match_key*.
 
@@ -516,7 +526,7 @@ def upsert_json_record(
         records.append(record)
 
     records.sort(key=lambda r: str(r.get("title", "")).lower())
-    return save_json_metadata(project_path, media_type, records)
+    return save_json_metadata(project_path, media_type, records, **({"registry": registry, "approved": approved} if registry is not None else {}))
 
 
 def migrate_csv_to_json(project_path: str, media_type: str) -> dict:

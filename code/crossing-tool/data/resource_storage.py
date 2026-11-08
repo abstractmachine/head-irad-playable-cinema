@@ -16,6 +16,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import re
+import threading
 
 from data import resource_locations as locations
 from data.media_id import parse_instance_id, parse_shot_id, INSTANCE_REGISTRATION_POLICY
@@ -86,9 +87,19 @@ def relative_path(project, path):
     return relative.as_posix()
 
 
+_registry_lock_state = threading.local()
+
+
 @contextmanager
 def registry_lock(project, registry, *, exclusive=False):
     path = locations.project_file(project, registry)
+    held = getattr(_registry_lock_state, "held", {})
+    key = (os.getpid(), str(path))
+    if key in held:
+        if exclusive and not held[key]:
+            raise ValueError("Shared registry lock cannot be implicitly upgraded")
+        yield
+        return
     with path.open("rb") as stream:
         header = stream.read(100)
     if header[:16] != b"SQLite format 3\x00" or header[18:20] != b"\x01\x01":
@@ -96,6 +107,8 @@ def registry_lock(project, registry, *, exclusive=False):
     descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+        held[key] = exclusive
+        _registry_lock_state.held = held
         if not exclusive:
             with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as database:
                 if database.execute("SELECT 1 FROM sqlite_master WHERE name='publication_operations'").fetchone():
@@ -103,6 +116,7 @@ def registry_lock(project, registry, *, exclusive=False):
                         raise ValueError("Explicit publication recovery required before lookup")
         yield
     finally:
+        held.pop(key, None)
         fcntl.flock(descriptor, fcntl.LOCK_UN)
         os.close(descriptor)
 

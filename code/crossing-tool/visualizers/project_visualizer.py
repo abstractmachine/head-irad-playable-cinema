@@ -1134,10 +1134,11 @@ class _ProjectColumnsWorker(QThread):
     tier_ready = pyqtSignal(int, list)  # generation, list[ProjectColumn]
     tier_failed = pyqtSignal(int, str, str)  # generation, tier, error message
 
-    def __init__(self, project_path, generation: int = 0, parent=None) -> None:
+    def __init__(self, project_path, generation: int = 0, parent=None, *, registry=None) -> None:
         super().__init__(parent)
         self.project_path = project_path
         self.generation = generation
+        self.registry = registry
 
     def run(self) -> None:
         try:
@@ -1153,7 +1154,7 @@ class _ProjectColumnsWorker(QThread):
             ("cached", get_cached_project_columns),
         ):
             try:
-                columns = getter(self.project_path)
+                columns = getter(self.project_path, **({"registry": self.registry} if self.registry is not None and tier == "cached" else {}))
             except Exception as exc:
                 self.tier_failed.emit(
                     self.generation, tier, f"{type(exc).__name__}: {exc}",
@@ -1195,7 +1196,8 @@ class _LauncherButton(ShortcutButton):
 
 class ProjectVisualizer(WindowVisualizer):
 
-    def __init__(self) -> None:
+    def __init__(self, *, registry=None) -> None:
+        self._resource_registry = registry
         self._project_load_generation = 0
         self._project_load_state = "not_started"
         # Provide pref key to the shell so geometry is saved/restored there
@@ -2359,7 +2361,7 @@ class ProjectVisualizer(WindowVisualizer):
 
         self._project_load_generation += 1
         generation = self._project_load_generation
-        worker = _ProjectColumnsWorker(_prefs.get("path"), generation)
+        worker = _ProjectColumnsWorker(_prefs.get("path"), generation, registry=self._resource_registry)
         worker.tier_ready.connect(self._on_columns_tier_ready)
         worker.tier_failed.connect(self._on_columns_tier_failed)
         self._project_columns_worker = worker
@@ -2489,8 +2491,8 @@ class ProjectVisualizer(WindowVisualizer):
             project_path = _prefs.get("path") or ""
             try:
                 from visualizers.shot_visualizer import ipc_send_load, _ipc_socket_path
-                if _ipc_socket_path(project_path).exists():
-                    ipc_send_load(project_path, "", "movie")
+                if _ipc_socket_path(project_path, registry=self._resource_registry).exists():
+                    ipc_send_load(project_path, "", "movie", **({"registry": self._resource_registry} if self._resource_registry is not None else {}))
                     return
             except Exception:
                 pass
@@ -2499,9 +2501,10 @@ class ProjectVisualizer(WindowVisualizer):
         if proc is not None and proc.poll() is None:
             return  # already running, nothing more we can do without OS tools
 
-        self._procs[subcommand] = subprocess.Popen(
-            [sys.executable, str(_CLI_PATH), "visualizer", subcommand]
-        )
+        command = [sys.executable, str(_CLI_PATH), "visualizer", subcommand]
+        if self._resource_registry is not None and subcommand in ("project", "cloud", "sync", "segmentation", "shotlist", "mosaic", "flipbook"):
+            command += ["--resource-registry", str(self._resource_registry)]
+        self._procs[subcommand] = subprocess.Popen(command)
 
     def _create_in_process_window(
         self,
@@ -2518,12 +2521,14 @@ class ProjectVisualizer(WindowVisualizer):
         Returns the window (not yet shown) or None for subcommands that must
         run as separate processes (e.g. shotlist with its own IPC server).
         """
+        registry = getattr(self, "_resource_registry", None)
+        context = {"registry": registry} if registry is not None else {}
         if subcommand == "metadata":
             from visualizers.metadata_visualizer import MetadataVisualizer
             return MetadataVisualizer(project_path, media_type=media_type)
         elif subcommand == "cloud":
             from visualizers.cloud_visualizer import CloudVisualizer
-            return CloudVisualizer(project_path)
+            return CloudVisualizer(project_path, **context)
         elif subcommand == "mosaic":
             from visualizers.mosaic_visualizer import MosaicVisualizer
             return MosaicVisualizer(
@@ -2531,6 +2536,7 @@ class ProjectVisualizer(WindowVisualizer):
                 media_type=media_type,
                 shot_type=shot_type,
                 initial_field=field,
+                **context,
             )
         elif subcommand == "book":
             from visualizers.book_visualizer import BookVisualizerWindow
@@ -2554,14 +2560,14 @@ class ProjectVisualizer(WindowVisualizer):
         elif subcommand == "flipbook":
             import visualizers.flipbook_visualizer as _fv
             _fv._FONT_FAMILY = _fv._load_flipbook_font()
-            return _fv.FlipbookVisualizerWindow(project_path, media_type=media_type)
+            return _fv.FlipbookVisualizerWindow(project_path, media_type=media_type, **context)
         elif subcommand == "sync":
             from visualizers.sync_visualizer import SyncVisualizerWindow
-            return SyncVisualizerWindow()
+            return SyncVisualizerWindow(**context)
         elif subcommand == "segmentation":
             model_name = _prefs.get("model_segmentation", "sam3.pt") or "sam3.pt"
             from visualizers.segmentation_visualizer import SAMExplorer
-            return SAMExplorer(project_path, model_name=model_name)
+            return SAMExplorer(project_path, model_name=model_name, **context)
         return None  # caller falls through to subprocess
 
     # Keyboard handled by WindowVisualizer (Tab/Shift+Tab/Esc/Ctrl+Q/Ctrl+W)
@@ -2571,10 +2577,10 @@ class ProjectVisualizer(WindowVisualizer):
 # Public launcher
 # ---------------------------------------------------------------------------
 
-def run_visualizer() -> None:
+def run_visualizer(*, registry=None) -> None:
     """Create QApplication (if needed) and launch the project window."""
     from visualizers.launcher import run_visualizer_window
-    run_visualizer_window("project", lambda: ProjectVisualizer(), check_existing=False)
+    run_visualizer_window("project", lambda: ProjectVisualizer(registry=registry), check_existing=False)
 
 
 if __name__ == "__main__":

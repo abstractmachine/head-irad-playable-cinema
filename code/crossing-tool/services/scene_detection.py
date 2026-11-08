@@ -32,17 +32,14 @@ _MOTIF_WEIGHT = 0.05
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _load_annotations(project_path: str, filename: str, media_type: str) -> list[dict]:
+def _load_annotations(project_path: str, filename: str, media_type: str, *, registry=None) -> list[dict]:
     """Load annotation JSON for *filename*. Returns an empty list when absent."""
-    stem = Path(filename).stem
-    ann_path = (
-        Path(project_path)
-        / "data"
-        / "annotations"
-        / "shots"
-        / media_type
-        / f"{stem}.json"
-    )
+    if registry is not None:
+        from data.resource_locations import resolve_annotation
+        ann_path = resolve_annotation(project_path, filename, media_type, registry=registry)
+    else:
+        from data.resource_locations_legacy import annotation_v0_json_path
+        ann_path = annotation_v0_json_path(project_path, filename, media_type)
     if not ann_path.exists():
         return []
     try:
@@ -247,6 +244,7 @@ def detect_scenes_for_movie(
     min_scene_length: int = 3,
     scale: float = 1.0,
     force: bool = False,
+    registry=None,
 ) -> dict:
     """Detect scenes for a single movie.
 
@@ -301,7 +299,7 @@ def detect_scenes_for_movie(
     if embeddings is None or len(embeddings) == 0:
         return {**_base, "skipped": True, "reason": "no embeddings", "shots": len(shots)}
 
-    annotations = _load_annotations(project_path, filename, media_type)
+    annotations = _load_annotations(project_path, filename, media_type, **({"registry": registry} if registry is not None else {}))
 
     ignore_flags = [
         str(s.get("Ignore", "")).strip().lower() == "yes"
@@ -346,6 +344,7 @@ def detect_scenes_for_all_movies(
     min_scene_length: int = 3,
     scale: float = 1.0,
     force: bool = False,
+    registry=None,
 ) -> dict:
     """Run scene detection across all available shotlists.
 
@@ -379,6 +378,7 @@ def detect_scenes_for_all_movies(
                 min_scene_length=min_scene_length,
                 scale=scale,
                 force=force,
+                **({"registry": registry} if registry is not None else {}),
             )
             results.append(result)
             if result["skipped"]:

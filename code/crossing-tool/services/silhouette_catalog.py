@@ -1315,6 +1315,7 @@ def clear_catalog(
     label: str | None = None,
     filename_stem: str | None = None,
     dry_run: bool = False,
+    *, registry=None,
 ) -> dict:
     """Delete catalog entries matching the given filters.
 
@@ -1327,6 +1328,14 @@ def clear_catalog(
       ``deleted_dirs``   — number of now-empty directories removed
       ``dry_run``        — True when no files were actually deleted
     """
+    if registry is not None:
+        from services.resource_resolution import indexed_publications
+        records = indexed_publications(project_path, "silhouettes", media_type, registry=registry)
+        selected = [record for record in records if (label is None or record["label"] == label) and (filename_stem is None or record["filename_stem"] == filename_stem)]
+        if not dry_run:
+            raise ValueError("Registered silhouette retirement requires controlled lifecycle commits; physical deletion is deferred")
+        return {"deleted_files": len(selected) * 2, "deleted_dirs": 0, "dry_run": True,
+                "resources": [{"instance_id": record["instance_id"], "metadata": record["path"], "image": record["output_png"]} for record in selected]}
     base = catalog_base_dir(project_path, media_type)
     if not base.exists():
         return {"deleted_files": 0, "deleted_dirs": 0, "dry_run": dry_run}

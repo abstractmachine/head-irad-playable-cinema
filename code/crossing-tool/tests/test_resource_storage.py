@@ -633,6 +633,633 @@ def test_annotation_commitment_rejects_missing_declared_field_without_repair(wri
     assert path.read_bytes() == before
 
 
+def test_registered_index_resolves_only_committed_publications_and_reports_drift(writable, monkeypatch):
+    from services.illustration_index import rebuild_index, query_page
+    project, registry, instance, content, image = writable
+    publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+    assert rebuild_index(project, "silhouettes", "movie", registry=registry)["count"] == 1
+    before = registry.read_bytes()
+    connections = []
+    connect = sqlite3.connect
+    def track_connection(database, *args, **kwargs):
+        connections.append((str(database), kwargs))
+        return connect(database, *args, **kwargs)
+    monkeypatch.setattr(sqlite3, "connect", track_connection)
+    page = query_page(project, "silhouettes", "movie")
+    assert connections and all(path.endswith("?mode=ro") and kwargs.get("uri") for path, kwargs in connections)
+    assert "image_bytes" not in page["records"][0]
+    assert page["records"][0]["instance_id"] == instance
+    assert page["records"][0]["output_png"] == resolve_silhouette(project, instance, registry=registry)["image"]
+    assert registry.read_bytes() == before
+    source = resolve_silhouette(project, instance, registry=registry)
+    source["image"].unlink()
+    stale = query_page(project, "silhouettes", "movie")
+    assert stale["status"] == "error" and stale["records"] == []
+
+
+def test_registered_candidate_summary_uses_current_image_and_stable_identity(writable):
+    from services.illustration_index import rebuild_index
+    from services.silhouette_discovery import list_active_candidate_references
+    project, registry, instance, content, image = writable
+    publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+    rebuild_index(project, "silhouettes", "movie", registry=registry)
+    before = registry.read_bytes()
+    page = list_active_candidate_references(project)
+    reference = page["entries"][0]
+    assert reference["instance_id"] == instance
+    assert reference["silhouette_path"].endswith("/silhouette.png")
+    assert registry.read_bytes() == before
+
+
+def test_dirty_assessment_survives_classification_edit_without_reallocation(writable):
+    from services.resource_publication import mark_media_resources_dirty
+    project, registry, instance, content, image = writable
+    publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+    original = resolve_silhouette(project, instance, registry=registry)
+    before_image = original["image"].read_bytes()
+    annotation = locations.annotation_path(project, "film.mp4", "movie")
+    annotation.write_text(json.dumps([{"shot": {"shot_id": content["shot_id"], "annotation": {"objects": ["different"]}}}]))
+    result = mark_media_resources_dirty(project, "film.mp4", "movie", "annotation_classification_edit", registry=registry, approved=True)
+    assert result["updated"] == 1
+    current = resolve_silhouette(project, instance, registry=registry)
+    assert current["record"]["instance_id"] == instance and current["image"].read_bytes() == before_image
+    assert current["record"]["source_validation"]["dirty"] is True
+    assert current["record"].get("assignment", {}).get("state", "active") == "active"
+
+
+def test_shotlist_commit_hook_marks_registered_resources_dirty(writable):
+    from data.shotlist import write_shotlist
+    project, registry, instance, content, image = writable
+    publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+    rows = [{"start_frame": 10, "end_frame": 20, "shot_id": content["shot_id"]}]
+    write_shotlist(project, "film.mp4", "movie", rows)
+    rows[0]["end_frame"] = 19
+    write_shotlist(project, "film.mp4", "movie", rows, registry=registry, approved=True)
+    current = resolve_silhouette(project, instance, registry=registry)
+    assert current["record"]["source_validation"]["reasons"] == ["committed_shotlist_edit"]
+    assert current["record"]["instance_id"] == instance
+
+
+def test_dirty_assessment_cannot_change_classification_or_create_resource(writable):
+    from services.resource_publication import mark_media_resources_dirty
+    project, registry, instance, content, image = writable
+    assert mark_media_resources_dirty(project, "film.mp4", "movie", "edit")["activated"] is False
+    publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+    assessment = {"dirty": True, "reasons": ["edit"], "instance_id": instance,
+                  "registered_shot_id": content["shot_id"], "current_shot_id": content["shot_id"]}
+    with pytest.raises(ValueError, match="cannot change"):
+        publish_resource(project, registry, instance, "silhouettes", {**content, "label": "different", "source_validation": assessment}, image,
+                         expected_revision=1, approved=True, _assessment_only=True)
+
+
+def test_cli_explicit_index_and_committed_search_use_shared_services(writable, monkeypatch, capsys):
+    import cli
+    from services.search import SearchCorpus, search_shots
+    project, registry, instance, content, image = writable
+    publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+    record = locations.find_media(project, "movie", media_id="tmdb_1")
+    legacy = locations.annotation_path(project, "film.mp4", "movie")
+    canonical = locations.annotation_path(project, "film.mp4", "movie", layout="media-first-v1")
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    legacy.rename(canonical)
+    ResourceStore(project, registry, approved=True).commit_annotation_layout(record, "movie", "media-first-v1")
+    monkeypatch.setattr(cli.prefs, "get", lambda key, default=None: str(project) if key == "path" else default)
+    monkeypatch.setattr(cli.prefs, "set", lambda *args, **kwargs: pytest.fail("CLI read changed preferences"))
+    before = registry.read_bytes(), canonical.read_bytes()
+    parser = cli.build_parser()
+    args = parser.parse_args(["index", "illustration", "--resource-registry", str(registry)])
+    args.func(args)
+    assert "Silhouettes: 1 indexed" in capsys.readouterr().out
+    args = parser.parse_args(["search", "field", "--field", "objects", "--all", "--resource-registry", str(registry)])
+    args.func(args)
+    assert json.loads(capsys.readouterr().out)["results"][0]["shot_id"] == content["shot_id"]
+    assert before == (registry.read_bytes(), canonical.read_bytes())
+    with pytest.raises(ValueError, match="registry context"):
+        search_shots("field", None, "objects", None, None, True, project_path=str(project), corpus=SearchCorpus(str(project)), registry=registry)
+    canonical.write_text("[]")
+    with pytest.raises(ValueError):
+        search_shots("field", None, "objects", None, None, True, project_path=str(project), registry=registry)
+
+
+def test_mcp_registered_candidates_use_service_and_report_stale_commitment(writable, monkeypatch):
+    import asyncio
+    from mcp_server import mcp_server as server
+    from services.illustration_index import rebuild_index
+    project, registry, instance, content, image = writable
+    publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+    rebuild_index(project, "silhouettes", "movie", registry=registry)
+    monkeypatch.setattr(server, "_ctx", lambda: (str(project), "movie"))
+    before = registry.read_bytes()
+    response = json.loads(server.list_silhouette_candidates("field"))
+    assert response["entries"][0]["instance_id"] == instance
+    assert registry.read_bytes() == before
+    names = {tool.name for tool in asyncio.run(server.mcp.list_tools())}
+    assert "list_silhouette_candidates" in names
+    assert not names.intersection({"adopt_registry", "repair_resource", "publish_resource"})
+    resolve_silhouette(project, instance, registry=registry)["image"].unlink()
+    response = json.loads(server.list_silhouette_candidates("field"))
+    assert not response.get("entries") and "STALE_RESOURCE" in json.dumps(response)
+    assert registry.read_bytes() == before
+
+
+def test_registered_both_modes_navigation_and_dirty_propagation(writable):
+    from services.illustration_index import rebuild_all, query_page
+    from services.resource_publication import mark_media_resources_dirty
+    from visualizers.components.illustration_source import EngravingSource
+    project, registry, instance, silhouette, image = writable
+    frame = _engraving_draft(writable)
+    publish_resource(project, registry, instance, "engravings", frame, image, mode="frame", approved=True)
+    generation = {**frame["generation"], "service": "local", "seed": 42, "model_version": "v1"}
+    isolated = {**frame, "mode": "isolated", "generation": generation}
+    run = publish_generation_run(project, registry, instance, "objects", "field", "local", 1,
+                                 {"source_instance_id": instance, "mode": "isolated", "generation": generation, "source": frame["source"]},
+                                 {"input.png": image}, approved=True)
+    isolated["published_run"] = {"provider": "local", "number": 1, "sha256": digest(run["run"])}
+    publish_resource(project, registry, instance, "engravings", isolated, image, mode="isolated", approved=True)
+    assert rebuild_all(project, "movie", registry=registry)["engravings"]["count"] == 2
+    origin = query_page(project, "silhouettes", "movie")["records"][0]
+    source = EngravingSource(str(project))
+    destination = source.resolve_destination({"origin": origin}, 50)
+    assert {choice["mode"] for choice in destination["choices"]} == {"frame", "isolated"}
+    before = {mode: resolve_engraving(project, instance, registry=registry, mode=mode)["image"].read_bytes() for mode in ("frame", "isolated")}
+    assert mark_media_resources_dirty(project, "film.mp4", "movie", "source_frame_edit", registry=registry, approved=True)["updated"] == 3
+    for mode in before:
+        current = resolve_engraving(project, instance, registry=registry, mode=mode)
+        assert current["record"]["source_validation"]["reasons"] == ["source_frame_edit"]
+        assert current["record"]["instance_id"] == instance and current["image"].read_bytes() == before[mode]
+
+
+@pytest.mark.parametrize("stage", ["prepared", "image-installed", "metadata-installed", "before-commit", "committed"])
+def test_dirty_assessment_recovery_preserves_invalidated_source_and_image(writable, stage):
+    project, registry, instance, content, image = writable
+    publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+    current = resolve_silhouette(project, instance, registry=registry)
+    original = current["image"].read_bytes()
+    annotation = locations.annotation_path(project, "film.mp4", "movie")
+    annotation.write_text("[]")
+    metadata = {**current["record"], "source_validation": {"dirty": True, "reasons": ["annotation_classification_edit"],
+                "instance_id": instance, "registered_shot_id": content["shot_id"], "current_shot_id": content["shot_id"]}}
+    def interrupt(current_stage):
+        if current_stage == stage:
+            raise RuntimeError("interrupted")
+    with pytest.raises(RuntimeError, match="interrupted"):
+        publish_resource(project, registry, instance, "silhouettes", metadata, current["image"], expected_revision=1,
+                         approved=True, _assessment_only=True, interrupt=interrupt)
+    operation = pending_id(registry)
+    assert recover_publication(project, registry, operation, approved=True)["state"] == "finished"
+    assert recover_publication(project, registry, operation, approved=True)["state"] == "finished"
+    recovered = resolve_silhouette(project, instance, registry=registry)
+    assert recovered["record"]["source_validation"]["reasons"] == ["annotation_classification_edit"]
+    assert recovered["record"]["instance_id"] == instance and recovered["image"].read_bytes() == original
+    assert annotation.read_text() == "[]"
+
+
+def test_registered_consumers_cache_revision_and_paired_arrays(writable):
+    import numpy as np
+    from services import corpus_stats, vocabulary_index, sync_frame_match, scene_detection
+    from generators.cloud import extract_annotation_words
+    project, registry, instance, content, image = writable
+    record = locations.find_media(project, "movie", media_id="tmdb_1")
+    legacy = locations.annotation_path(project, "film.mp4", "movie")
+    canonical = locations.annotation_path(project, "film.mp4", "movie", layout="media-first-v1")
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    legacy.rename(canonical)
+    for suffix, array in ((".frames.npy", np.ones((1, 2))), (".frames.valid.npy", np.array([False]))):
+        np.save(locations.annotation_path(project, "film.mp4", "movie", suffix, layout="media-first-v1"), array)
+    store = ResourceStore(project, registry, approved=True)
+    store.commit_annotation_layout(record, "movie", "media-first-v1")
+    assert corpus_stats._aggregate_annotated_shots(project, registry=registry)["total"] == 1
+    assert corpus_stats._count_frame_embeddings(project, registry=registry) == {"movie": 1}
+    first = corpus_stats._annotations_fingerprint(project, registry=registry)
+    source_hash = vocabulary_index._compute_source_hash(project, "movie", registry=registry)
+    catalog = sync_frame_match.load_frame_catalog(project, "movie", all_items=True, registry=registry)
+    assert catalog.valid_mask.tolist() == [False] and catalog.vectors.shape == (1, 2)
+    assert extract_annotation_words(project, field="objects", registry=registry)["field"] == 1
+    assert scene_detection._load_annotations(project, "film.mp4", "movie", registry=registry)[0]["shot"]["shot_id"] == content["shot_id"]
+    store.commit_annotation_layout(record, "movie", "media-first-v1", expected_revision=1)
+    assert corpus_stats._annotations_fingerprint(project, registry=registry) != first
+    assert vocabulary_index._compute_source_hash(project, "movie", registry=registry) != source_hash
+    assert sync_frame_match.load_frame_catalog(project, "movie", all_items=True, registry=registry) is not catalog
+    canonical.write_text("[]")
+    for call in (lambda: vocabulary_index._compute_source_hash(project, "movie", registry=registry),
+                 lambda: sync_frame_match.load_frame_catalog(project, "movie", all_items=True, registry=registry),
+                 lambda: extract_annotation_words(project, registry=registry)):
+        with pytest.raises(ValueError):
+            call()
+
+
+@pytest.mark.parametrize("stage", ["dependent-completed", "image-installed"])
+def test_multi_resource_dirty_resume_tracks_children_and_is_idempotent(writable, stage):
+    from services.resource_publication import mark_media_resources_dirty, resume_dirty_propagation
+    project, registry, instance, content, image = writable
+    engraving = _engraving_draft(writable)
+    publish_resource(project, registry, instance, "engravings", engraving, image, mode="frame", approved=True)
+    original = image.read_bytes()
+    def interrupt(current_stage):
+        if current_stage == stage:
+            raise RuntimeError("interrupted propagation")
+    with pytest.raises(RuntimeError):
+        mark_media_resources_dirty(project, "film.mp4", "movie", "committed_edit", registry=registry, approved=True,
+                                   edit_id="fixture-edit", interrupt=interrupt)
+    with sqlite3.connect(registry) as database:
+        parent = database.execute("SELECT state,details FROM publication_operations WHERE operation_id='fixture-edit'").fetchone()
+        assert parent[0] == "prepared"
+        if stage == "dependent-completed":
+            assert len(json.loads(parent[1])["completed"]) == 1
+    assert resume_dirty_propagation(project, registry, "fixture-edit", approved=True)["updated"] == 2
+    revisions = [resolve_silhouette(project, instance, registry=registry)["revision"], resolve_engraving(project, instance, registry=registry)["revision"]]
+    assert resume_dirty_propagation(project, registry, "fixture-edit", approved=True)["state"] == "finished"
+    assert revisions == [resolve_silhouette(project, instance, registry=registry)["revision"], resolve_engraving(project, instance, registry=registry)["revision"]]
+    assert resolve_silhouette(project, instance, registry=registry)["image"].read_bytes() == original
+
+
+def test_registered_lifecycle_plans_exact_pair_and_protects_runs(writable):
+    from services.engraving_lifecycle import scan_engravings, plan_removal, apply_removal
+    from services.silhouette_catalog import clear_catalog
+    from data.annotate import remove_file_annotations
+    project, registry, instance, content, image = writable
+    engraving = _engraving_draft(writable)
+    publish_resource(project, registry, instance, "engravings", engraving, image, mode="frame", approved=True)
+    entries = scan_engravings(project, registry=registry)
+    assert len(entries) == 1 and entries[0]["instance_id"] == instance
+    plan = plan_removal(project, entries)
+    current = resolve_engraving(project, instance, registry=registry)
+    assert plan["metadata_files"] == [current["metadata"]] and plan["canonical_assets"] == [current["image"]]
+    assert not plan["provenance_files"] and not plan_removal(project, entries, include_provenance=True)["safe"]
+    before = registry.read_bytes(), current["image"].read_bytes()
+    from services.engraving_local_publish import set_review_state, PublicationError
+    original_record = current["metadata"].read_bytes()
+    with pytest.raises(PublicationError, match="lifecycle commits"):
+        set_review_state(current["metadata"], "accepted", project_path=project, registry=registry)
+    assert current["metadata"].read_bytes() == original_record
+    with pytest.raises(ValueError, match="retirement"):
+        apply_removal(project, plan, force=True)
+    assert clear_catalog(project, "movie", dry_run=True, registry=registry)["resources"][0]["instance_id"] == instance
+    with pytest.raises(ValueError, match="retirement"):
+        clear_catalog(project, "movie", registry=registry)
+    assert remove_file_annotations(project, "film.mp4", registry=registry, dry_run=True)
+    with pytest.raises(ValueError, match="deletion"):
+        remove_file_annotations(project, "film.mp4", registry=registry)
+    assert before == (registry.read_bytes(), current["image"].read_bytes())
+
+
+@pytest.fixture
+def registered_gameplay(tmp_path):
+    from PIL import Image
+    media_id = "game_rdr2_ce5e0bba"
+    record = {"media_type": "gameplay", "media_id": media_id, "filename": "recording.mp4", "filename_stem": "recording",
+              "shot_id": media_id + "@f000010-f000020", "frame": 12, "field": "objects", "label": "wagon"}
+    source = tmp_path / "data/silhouettes/catalog/gameplay/recording/wagon/object_0008.json"
+    source.parent.mkdir(parents=True)
+    source.write_text(json.dumps(record))
+    Image.new("RGBA", (2, 2), (20, 30, 40, 255)).save(source.with_suffix(".png"))
+    proposal = InstanceRegistry(tmp_path, tmp_path / RESEARCH / "proposal.sqlite3")
+    instance = proposal.register([prepare_registration({**record, "path": source}, tmp_path)])[0][1]
+    proposal_path = proposal.path
+    proposal.close()
+    metadata = tmp_path / "data/metadata/gameplay.json"
+    metadata.parent.mkdir(parents=True)
+    metadata.write_text(json.dumps({"media": [record]}))
+    registry = tmp_path / "data/indexes/resources.sqlite3"
+    adopt_registry(tmp_path, proposal_path, registry, exceptions=[], approved=True)
+    annotation = locations.annotation_path(tmp_path, "recording.mp4", "gameplay")
+    annotation.parent.mkdir(parents=True)
+    annotation.write_text(json.dumps([{"shot": {"shot_id": record["shot_id"], "annotation": {"objects": ["wagon"]}, "best_frame": {"frame": 12}}}]))
+    content = {**record, "publication_contract": "media-first-v1", "resource_kind": "silhouettes", "instance_id": instance,
+               "bbox": [0, 0, 2, 2], "frame_size": [2, 2], "mask_area": 4, "sam_model": "fixture-sam",
+               "frame_match_model": "fixture-clip", "source_frame": "frame:12"}
+    publish_resource(tmp_path, registry, instance, "silhouettes", content, source.with_suffix(".png"), approved=True)
+    canonical = locations.annotation_path(tmp_path, "recording.mp4", "gameplay", layout="media-first-v1")
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    annotation.rename(canonical)
+    ResourceStore(tmp_path, registry, approved=True).commit_annotation_layout(record, "gameplay", "media-first-v1")
+    return tmp_path, registry, instance, content, canonical
+
+
+_resource_qt_application = None
+
+
+@pytest.fixture
+def resource_app():
+    from PyQt5.QtWidgets import QApplication
+    global _resource_qt_application
+    _resource_qt_application = QApplication.instance() or QApplication([])
+    return _resource_qt_application
+
+
+def test_registered_gameplay_mcp_and_segmentation_consume_current_annotations(registered_gameplay, monkeypatch, resource_app):
+    from mcp_server import mcp_server as server
+    from visualizers.segmentation_visualizer import SAMExplorer
+    from data.shotlist import write_shotlist
+    from tool import prefs
+    project, registry, instance, content, annotation = registered_gameplay
+    monkeypatch.setattr(server, "_ctx", lambda: (str(project), "gameplay"))
+    response = json.loads(server.search_shots("wagon", media_type="gameplay", resource_registry=str(registry)))
+    assert response["results"][0]["shot_id"] == content["shot_id"]
+    assert resolve_silhouette(project, instance, registry=registry)["record"]["media_type"] == "gameplay"
+    store = {"path": str(project)}
+    monkeypatch.setattr(prefs, "get", lambda key, default=None, **kwargs: store.get(key, default))
+    monkeypatch.setattr(prefs, "set", lambda key, value, *args, **kwargs: store.__setitem__(key, value))
+    write_shotlist(project, "recording.mp4", "gameplay", [{"shot_id": content["shot_id"], "start_frame": 10, "end_frame": 20, "Scene": "1"}])
+    window = SAMExplorer(str(project), "gameplay", registry=registry)
+    try:
+        window._films = [locations.find_media(project, "gameplay", filename="recording.mp4")]
+        window._film_idx = 0
+        window._filename = "recording.mp4"
+        window._load_shots()
+        assert window._shots[0]["best_frame"]["frame"] == 12
+        annotation.unlink()
+        window._load_shots()
+        assert "committed annotations" in window._status_lbl.text()
+    finally:
+        window.close()
+        window.deleteLater()
+        from PyQt5.QtCore import QCoreApplication, QEvent
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+        resource_app.processEvents()
+
+
+def test_real_book_insertion_resolves_registered_bytes_at_copy_boundary(writable, monkeypatch, resource_app):
+    import fitz
+    from visualizers.book_visualizer import BookVisualizerWindow
+    from services.illustration_index import rebuild_index, query_page
+    from data.book import book_dir
+    from tool import prefs
+    project, registry, instance, content, image = writable
+    publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+    rebuild_index(project, "silhouettes", "movie", registry=registry)
+    record = query_page(project, "silhouettes", "movie")["records"][0]
+    store = {"path": str(project)}
+    monkeypatch.setattr(prefs, "get", lambda key, default=None, **kwargs: store.get(key, default))
+    monkeypatch.setattr(prefs, "set", lambda key, value, *args, **kwargs: store.__setitem__(key, value))
+    window = BookVisualizerWindow(str(project))
+    window._doc = fitz.open()
+    window._doc.new_page()
+    window._slug = "registered-book"
+    monkeypatch.setattr(window, "_on_layer_committed", lambda layer: None)
+    monkeypatch.setattr(window._overlay, "_visible_page_rects", lambda: {})
+    try:
+        window._insert_silhouette_at(str(project / "stale-selection.png"), record, 0, 0.5, 0.5)
+        layer = window._overlay.current_layers()[-1]
+        copied = book_dir(project, window._slug) / layer["source"]
+        assert not copied.is_relative_to(project / "data") and copied.read_bytes() == image.read_bytes()
+        assert not __import__("pathlib").Path(layer["source"]).is_absolute()
+        resolve_silhouette(project, instance, registry=registry)["image"].unlink()
+        count = len(window._overlay.current_layers())
+        with pytest.raises((OSError, ValueError)):
+            window._insert_silhouette_at(str(image), record, 0, 0.5, 0.5)
+        assert len(window._overlay.current_layers()) == count and copied.exists()
+    finally:
+        window.close()
+        window.deleteLater()
+        from PyQt5.QtCore import QCoreApplication, QEvent
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+        resource_app.processEvents()
+
+
+def test_registered_metadata_association_write_is_explicitly_deferred(writable):
+    from data.metadata import save_json_metadata
+    project, registry, instance, content, image = writable
+    path = project / "data/metadata/movie.json"
+    before = path.read_bytes(), registry.read_bytes()
+    with pytest.raises(ValueError, match="association edits"):
+        save_json_metadata(project, "movie", [{"media_id": "tmdb_1", "filename": "renamed.mp4"}], registry=registry, approved=True)
+    assert before == (path.read_bytes(), registry.read_bytes())
+
+
+def test_shotlist_retry_resumes_pending_postcommit_propagation(writable, monkeypatch):
+    from data.shotlist import write_shotlist, read_shotlist
+    from services import resource_publication
+    project, registry, instance, content, image = writable
+    publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+    rows = [{"shot_id": content["shot_id"], "start_frame": 10, "end_frame": 20}]
+    write_shotlist(project, "film.mp4", "movie", rows)
+    resume = resource_publication.resume_dirty_propagation
+    monkeypatch.setattr(resource_publication, "resume_dirty_propagation", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("after CSV commit")))
+    rows[0]["end_frame"] = 19
+    with pytest.raises(RuntimeError, match="CSV commit"):
+        write_shotlist(project, "film.mp4", "movie", rows, registry=registry, approved=True)
+    assert read_shotlist(project, "film.mp4", "movie")[0]["end_frame"] == "19"
+    monkeypatch.setattr(resource_publication, "resume_dirty_propagation", resume)
+    with sqlite3.connect(registry) as database:
+        operation = database.execute("SELECT operation_id FROM publication_operations WHERE kind='dirty-propagation' AND state!='finished'").fetchone()[0]
+    assert recover_publication(project, registry, operation, approved=True)["state"] == "finished"
+    write_shotlist(project, "film.mp4", "movie", rows, registry=registry, approved=True)
+    assert resolve_silhouette(project, instance, registry=registry)["record"]["source_validation"]["dirty"] is True
+    with sqlite3.connect(registry) as database:
+        assert database.execute("SELECT count(*) FROM publication_operations WHERE kind='dirty-propagation' AND state!='finished'").fetchone()[0] == 0
+
+
+def test_actual_shot_save_handler_uses_opt_in_dirty_hook(writable):
+    from types import SimpleNamespace
+    from visualizers.shot_visualizer import ShotlistVisualizer
+    from data.shotlist import write_shotlist
+    project, registry, instance, content, image = writable
+    publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+    rows = [{"shot_id": content["shot_id"], "start_frame": 10, "end_frame": 20}]
+    write_shotlist(project, "film.mp4", "movie", rows)
+    rows[0]["end_frame"] = 18
+    handler = SimpleNamespace(project_path=project, filename="film.mp4", media_type="movie", shots=rows,
+                              _resource_registry=registry, _resource_edit_approved=True, modified=True,
+                              save_button=SimpleNamespace(setEnabled=lambda enabled: None))
+    ShotlistVisualizer.save_changes(handler)
+    assert handler.modified is False
+    assert resolve_silhouette(project, instance, registry=registry)["record"]["source_validation"]["reasons"] == ["committed_shotlist_edit"]
+
+
+def test_registered_live_preprocessing_ignores_stale_selected_png(writable):
+    from services.engraving_preprocess import preprocess_engraving_source
+    from services.illustration_index import rebuild_index, query_page
+    project, registry, instance, content, image = writable
+    publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+    rebuild_index(project, "silhouettes", "movie", registry=registry)
+    record = query_page(project, "silhouettes", "movie")["records"][0]
+    arguments = dict(source_png=project / "stale.png", engraving_id="fixture", parent_layer_id="layer", source_silhouette_id=instance,
+                     page_idx=0, x=0.5, y=0.5, width=0.1, height=0.1, rotation=0, flip_h=False, flip_v=False,
+                     page_pt_w=72, page_pt_h=72, cache_dir=project / "outputs/agent/preprocess", project_path=project, resource_record=record)
+    result = preprocess_engraving_source(**arguments)
+    assert __import__("pathlib").Path(result["preprocessing_path"]).is_file()
+    resolve_silhouette(project, instance, registry=registry)["image"].unlink()
+    with pytest.raises((OSError, ValueError)):
+        preprocess_engraving_source(**arguments)
+
+
+def test_actual_cli_registered_vocabulary_build_and_stale_revision(registered_gameplay, monkeypatch):
+    import cli
+    from services.vocabulary_index import load_vocabulary_index
+    from services.derived_vocabulary import load_derived_vocabulary
+    project, registry, instance, content, annotation = registered_gameplay
+    monkeypatch.setattr(cli.prefs, "get", lambda key, default=None: str(project) if key == "path" else default)
+    monkeypatch.setattr(cli.prefs, "set", lambda *args, **kwargs: None)
+    monkeypatch.setattr("data.index.load_vocabulary_fields", lambda project: ["objects"])
+    monkeypatch.setattr("data.index.load_atomic_fields", lambda project: ["objects"])
+    arguments = cli.build_parser().parse_args(["index", "vocabulary", "--media", "gameplay", "--resource-registry", str(registry), "--force"])
+    arguments.func(arguments)
+    assert load_vocabulary_index(project, "gameplay", registry=registry)["meta"]["files_processed"] == 1
+    assert load_derived_vocabulary(project, "gameplay", registry=registry)["meta"]["files_processed"] == 1
+    ResourceStore(project, registry, approved=True).commit_annotation_layout(locations.find_media(project, "gameplay", media_id=content["media_id"]), "gameplay", "media-first-v1", expected_revision=1)
+    for loader in (load_vocabulary_index, load_derived_vocabulary):
+        with pytest.raises(ValueError):
+            loader(project, "gameplay", registry=registry)
+
+
+def test_registered_history_is_indexed_but_not_an_active_source(writable):
+    from services.resource_resolution import indexed_publications
+    from services.illustration_index import rebuild_index, query_page
+    project, registry, instance, content, image = writable
+    publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+    current = resolve_silhouette(project, instance, registry=registry)
+    metadata = {**current["record"], "assignment": {"state": "inactive"}}
+    from data.annotate import atomic_write_text
+    atomic_write_text(current["metadata"], json.dumps(metadata))
+    store = ResourceStore(project, registry, approved=True)
+    binding = locations.registered_instance(project, registry, instance)
+    from data.resource_storage import relative_path
+    details = {"metadata": metadata, "record_path": relative_path(project, current["metadata"]), "image_path": relative_path(project, current["image"]),
+               "record_sha256": digest(current["metadata"]), "image_sha256": digest(current["image"]), "expected_revision": 1}
+    with store.transaction() as database:
+        database.execute("INSERT INTO publication_operations VALUES(?,?,?,?,?,?)", ("history-fixture", instance, "silhouettes", "", "files_published", json.dumps(details)))
+        store.commit_location(database, binding, "silhouettes", "", current, metadata, 1, operation_id="history-fixture")
+        database.execute("UPDATE publication_operations SET state='finished' WHERE operation_id='history-fixture'")
+    assert len(indexed_publications(project, "silhouettes", "movie", registry=registry)) == 1
+    rebuild_index(project, "silhouettes", "movie", registry=registry)
+    assert query_page(project, "silhouettes", "movie")["records"] == []
+    assert len(query_page(project, "silhouettes", "movie", assignment_state="inactive")["records"]) == 1
+    with pytest.raises(ValueError):
+        resolve_silhouette(project, instance, registry=registry)
+
+
+def test_registered_shot_navigation_context_is_preserved(writable, monkeypatch):
+    from visualizers import shot_visualizer
+    project, registry, instance, content, image = writable
+    assert shot_visualizer._ipc_socket_path(str(project)) != shot_visualizer._ipc_socket_path(str(project), registry=registry)
+    delivered = []
+    monkeypatch.setattr(shot_visualizer, "ipc_send_load", lambda *args, **kwargs: delivered.append(kwargs) or True)
+    shot_visualizer.open_at_shot(str(project), "film.mp4", registry=registry)
+    assert delivered[0]["registry"] == registry
+
+
+def test_existing_registry_lock_supports_nested_recovery_without_upgrade(writable):
+    from data.resource_storage import registry_lock
+    project, registry, instance, content, image = writable
+    with registry_lock(project, registry, exclusive=True):
+        with registry_lock(project, registry):
+            with ResourceStore(project, registry, approved=True).transaction() as database:
+                assert database.execute("SELECT count(*) FROM instances").fetchone()[0] == 1
+    with registry_lock(project, registry):
+        with pytest.raises(ValueError, match="upgraded"):
+            with registry_lock(project, registry, exclusive=True):
+                pytest.fail("Read lock was upgraded")
+
+
+def test_registered_mosaic_worker_context_and_close_invalidates_late_result(registered_gameplay, resource_app, monkeypatch):
+    import threading
+    from PyQt5.QtCore import QCoreApplication, QEvent
+    from visualizers.mosaic_visualizer import MosaicVisualizer
+    from services import search
+    project, registry, instance, content, annotation = registered_gameplay
+    monkeypatch.setattr("tool.prefs.get", lambda key, default=None: str(project) if key == "path" else default)
+    monkeypatch.setattr("tool.prefs.set", lambda *args, **kwargs: None)
+    entered, release = threading.Event(), threading.Event()
+    captured = []
+    original = search.vocabulary_from_index
+    def controlled(*args, **kwargs):
+        captured.append(kwargs.get("registry"))
+        entered.set()
+        assert release.wait(3)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(search, "vocabulary_from_index", controlled)
+    window = MosaicVisualizer(str(project), media_type="gameplay", registry=registry)
+    worker = None
+    try:
+        window.field_combo.setCurrentIndex(0)
+        window._start_vocabulary_load()
+        worker = window._vocab_worker
+        resource_app.processEvents()
+        assert entered.wait(1)
+        assert captured == [registry]
+        previous = window._vocab_request_id
+        window.close()
+        assert window._vocab_request_id > previous
+        release.set()
+        assert worker.wait(3000)
+        resource_app.processEvents()
+        assert window._vocab_request_id > previous
+    finally:
+        release.set()
+        if worker is not None:
+            try:
+                worker.wait(3000)
+            except RuntimeError:
+                pass
+        window.close()
+        window.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+
+
+def test_committed_association_changes_preserve_instance_and_unknown_evidence(writable):
+    from data.shotlist import write_shotlist
+    project, registry, instance, content, image = writable
+    publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+    original_bytes = resolve_silhouette(project, instance, registry=registry)["image_bytes"]
+    write_shotlist(project, "film.mp4", "movie", [{"shot_id": content["shot_id"], "start_frame": 10, "end_frame": 20}])
+    current_shot = "tmdb_1@f000010-f000019"
+    write_shotlist(project, "film.mp4", "movie", [{"shot_id": current_shot, "start_frame": 10, "end_frame": 19}], registry=registry, approved=True)
+    current = resolve_silhouette(project, instance, registry=registry)
+    assert current["record"]["instance_id"] == instance
+    assert current["record"]["source_validation"]["current_shot_id"] == current_shot
+    assert current["record"]["source_validation"]["current_association_known"] is True
+    write_shotlist(project, "film.mp4", "movie", [], registry=registry, approved=True)
+    current = resolve_silhouette(project, instance, registry=registry)
+    assert current["image_bytes"] == original_bytes
+    assert current["record"]["source_validation"]["current_association_known"] is False
+    assert current["record"]["source_validation"]["current_shot_id"] == current_shot
+    assert len(current["record"]["source_validation"]["committed_edits"]) == 2
+
+
+def test_precommit_intent_cannot_mark_resources_before_expected_commit(writable):
+    from services.resource_publication import mark_media_resources_dirty
+    project, registry, instance, content, image = writable
+    publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+    source = locations.annotation_path(project, "film.mp4", "movie")
+    before = source.read_bytes()
+    intent = mark_media_resources_dirty(project, "film.mp4", "movie", "committed_annotation_edit", registry=registry, approved=True,
+                                      committed_path=source, committed_sha256=__import__("hashlib").sha256(b"[]").hexdigest(), _defer=True)
+    with pytest.raises(ValueError, match="not committed"):
+        recover_publication(project, registry, intent["operation_id"], approved=True)
+    current = resolve_silhouette(project, instance, registry=registry)
+    assert not current["record"].get("source_validation", {}).get("dirty")
+    assert current["revision"] == 1 and source.read_bytes() == before
+
+
+def test_actual_registered_cli_retirement_plans_do_not_change_assets(registered_gameplay, monkeypatch):
+    import cli
+    project, registry, instance, content, annotation = registered_gameplay
+    monkeypatch.setattr(cli.prefs, "get", lambda key, default=None: str(project) if key == "path" else default)
+    monkeypatch.setattr(cli.prefs, "set", lambda *args, **kwargs: None)
+    before = registry.read_bytes(), annotation.read_bytes(), resolve_silhouette(project, instance, registry=registry)["image_bytes"]
+    arguments = cli.build_parser().parse_args(["index", "silhouette", "clear", "--all", "--media", "gameplay", "--resource-registry", str(registry)])
+    arguments.func(arguments)
+    assert before == (registry.read_bytes(), annotation.read_bytes(), resolve_silhouette(project, instance, registry=registry)["image_bytes"])
+    arguments = cli.build_parser().parse_args(["annotate", "remove", "--all", "--media", "gameplay", "--resource-registry", str(registry)])
+    arguments.func(arguments)
+    assert before == (registry.read_bytes(), annotation.read_bytes(), resolve_silhouette(project, instance, registry=registry)["image_bytes"])
+
+
+def test_optional_annotation_reader_still_rejects_missing_commitment(registered_gameplay):
+    project, registry, instance, content, annotation = registered_gameplay
+    metadata = project / "data/metadata/gameplay.json"
+    document = json.loads(metadata.read_text())
+    document["media"].append({"filename": "unannotated.mp4", "media_id": "game_rdr2_abcd0000"})
+    from data.annotate import atomic_write_text
+    atomic_write_text(metadata, json.dumps(document))
+    missing = locations.resolve_annotation(project, "unannotated.mp4", "gameplay", registry=registry, required=False)
+    assert not missing.exists()
+    annotation.unlink()
+    with pytest.raises((ValueError, OSError)):
+        locations.resolve_annotation(project, content["filename"], "gameplay", registry=registry, required=False)
+
+
 def test_metadata_read_does_not_repair(tmp_path):
     path = tmp_path / "engraving.json"
     path.write_text('{"status":"generating"}')

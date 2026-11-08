@@ -73,6 +73,48 @@ def annotation_destination(project, record, media_type, suffix=".annotations.jso
     return root / component(Path(record["filename"]).stem + suffix)
 
 
+def annotation_collections(project, media_type, *, registry=None):
+    """Enumerate exact collections without publishing or selecting transitional copies."""
+    from data.metadata import load_json_metadata
+    from data.resource_locations_legacy import annotation_filenames
+    records = load_json_metadata(project, media_type)
+    by_stem = {}
+    for record in records:
+        if record.get("filename"):
+            stem = Path(record["filename"]).stem
+            if stem in by_stem:
+                raise ValueError("Ambiguous annotation media filename")
+            by_stem[stem] = record
+    if registry is None:
+        for stem in annotation_filenames(project, media_type):
+            by_stem.setdefault(stem, {"filename": stem + ".mp4"})
+    for stem in sorted(by_stem):
+        record = by_stem[stem]
+        collection = annotation_artifacts(project, record, media_type, registry=registry, required=())
+        if registry is not None and collection.get("changed"):
+            raise ValueError("Committed annotation collection changed or missing")
+        if collection["existing"]:
+            yield record, collection
+
+
+def annotation_root(project):
+    return Path(project) / "data/annotations/shots"
+
+
+def annotation_directory(project, media_type):
+    normalize_media_type(media_type)
+    return annotation_root(project) / media_type
+
+
+def annotation_files(project, media_type, suffix=".annotations.json", *, registry=None):
+    for record, collection in annotation_collections(project, media_type, registry=registry):
+        if suffix in collection["existing"]:
+            path = collection["existing"][suffix]
+            if registry is not None:
+                path = resolve_annotation(project, record["filename"], media_type, suffix, registry=registry)
+            yield path
+
+
 def artifact_directory(project, kind, record, media_type, instance_id, field, label):
     """Pure approved destination; classification cannot allocate/change identity."""
     if kind not in ("silhouettes", "engravings"):
@@ -213,7 +255,7 @@ def annotation_path(project, filename, media_type, suffix=".annotations.json", *
     return annotation_destination(project, find_media(project, media_type, filename=filename), media_type, suffix)
 
 
-def resolve_annotation(project, filename, media_type, suffix=".annotations.json", *, layout=None, registry=None):
+def resolve_annotation(project, filename, media_type, suffix=".annotations.json", *, layout=None, registry=None, required=True):
     """Exact read-only lookup; an explicit layout avoids treating staging as committed."""
     if registry is not None:
         from data.resource_storage import registry_lock, digest
@@ -230,20 +272,36 @@ def resolve_annotation(project, filename, media_type, suffix=".annotations.json"
                 if digest(path) != commitment["artifacts"][suffix]:
                     raise ValueError("Annotation artifact checksum differs from committed authority")
                 return path
-            return resolve_annotation(project, filename, media_type, suffix, layout=layout)
+            return resolve_annotation(project, filename, media_type, suffix, layout=layout, required=required)
     path = annotation_path(project, filename, media_type, suffix, layout=layout, registry=registry)
     committed = committed_annotation_layout(project, filename, media_type, registry) if registry is not None else None
     if layout == "media-first-v1" and committed is None:
         legacy = annotation_path(project, filename, media_type, suffix)
         if legacy.exists():
             raise ValueError("Ambiguous transitional annotation copies; migration publication required")
-    return project_file(project, path)
+    return path if not required and not path.exists() else project_file(project, path)
 
 
 def committed_annotation_layout(project, filename, media_type, registry):
     """Read an explicitly committed layout; absence preserves legacy behavior."""
     commitment = annotation_commitment(project, filename, media_type, registry)
     return commitment["layout"] if commitment else None
+
+
+def annotation_context_token(project, registry=None, media_type=None):
+    """Cheap cache identity for explicit committed layouts; never inspect corpus files."""
+    if registry is None:
+        return None
+    import hashlib
+    from data.resource_storage import registry_lock, relative_path
+    path = project_file(project, registry)
+    with registry_lock(project, path), sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as database:
+        if dict(database.execute("SELECT key,value FROM meta")).get("project") != str(Path(project).resolve()):
+            raise ValueError("Annotation registry project mismatch")
+        rows = []
+        if database.execute("SELECT 1 FROM sqlite_master WHERE name='annotation_layouts'").fetchone():
+            rows = database.execute("SELECT media_type,media_id,filename,layout,revision,artifacts FROM annotation_layouts WHERE (? IS NULL OR media_type=?) ORDER BY media_type,media_id", (media_type, media_type)).fetchall()
+    return hashlib.sha256(json.dumps([relative_path(project, path), rows], sort_keys=True).encode()).hexdigest()
 
 
 def annotation_commitment(project, filename, media_type, registry):

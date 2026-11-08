@@ -1298,8 +1298,11 @@ class IllustrationPane(QWidget):
         if not all((filename, media_type, shot_id)):
             return None, "Unavailable"
         annotation_path = get_annotation_json_path(
-            self._project_path, filename, media_type
+            self._project_path, filename, media_type, registry=rec.get("resource_registry")
         )
+        if rec.get("resource_registry"):
+            from data.resource_locations import resolve_annotation
+            annotation_path = resolve_annotation(self._project_path, filename, media_type, registry=rec["resource_registry"])
         try:
             entries = json.loads(annotation_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):

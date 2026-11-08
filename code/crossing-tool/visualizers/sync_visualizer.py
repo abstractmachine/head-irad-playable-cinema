@@ -2848,6 +2848,7 @@ class _FrameMatchWorker(QObject):
         title:        "str | None",
         all_items:    bool,
         top:          int,
+        registry=None,
     ) -> None:
         super().__init__()
         self._frame_rgb   = frame_rgb
@@ -2856,6 +2857,7 @@ class _FrameMatchWorker(QObject):
         self._title        = title
         self._all_items    = all_items
         self._top          = top
+        self._resource_registry = registry
 
     def run(self) -> None:
         try:
@@ -2915,6 +2917,7 @@ class _CatalogSearchWorker(QObject):
             catalog = load_frame_catalog(
                 self._project_path, self._media_type,
                 title=self._title, all_items=self._all_items,
+                **({"registry": self._resource_registry} if self._resource_registry is not None else {}),
             )
             hits = match_frame_vector(self._vector, catalog, top=self._top)
             try:
@@ -3319,6 +3322,7 @@ class FrameMatchNode(SyncNode):
         worker = _CatalogSearchWorker(
             vec, project_path, self._media_type,
             self._scope_title, self._scope_all, self._top,
+            registry=getattr(self.window(), "_resource_registry", None),
         )
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
@@ -4682,7 +4686,8 @@ class SyncVisualizerWindow(WindowVisualizer):
     persisted here.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, registry=None) -> None:
+        self._resource_registry = registry
         self._prefs_dialog: SyncPreferencesDialog | None = None
         # Distinct from `_inspector_hidden` (WindowVisualizer's Tab/'h'
         # state, which hides the Inspector AND its grip handle entirely):
@@ -5005,7 +5010,7 @@ class SyncVisualizerWindow(WindowVisualizer):
 # Public launcher
 # ---------------------------------------------------------------------------
 
-def run_visualizer() -> None:
+def run_visualizer(*, registry=None) -> None:
     """Create QApplication (if needed) and open the Sync Visualizer."""
     import os as _os
     # Suppress OpenCV WARN-level stderr noise (V4L2 timeouts, metadata-node
@@ -5019,7 +5024,7 @@ def run_visualizer() -> None:
     from visualizers.launcher import run_visualizer_window
     run_visualizer_window(
         "sync",
-        lambda: SyncVisualizerWindow(),
+        lambda: SyncVisualizerWindow(registry=registry),
         check_existing=False,
     )
 

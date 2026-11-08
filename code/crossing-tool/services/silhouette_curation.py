@@ -617,6 +617,7 @@ def deassign_catalog_object(
     field: str,
     label: str,
     object_id: str,
+    registry=None, instance_id=None, dry_run=False,
 ) -> dict[str, Any]:
     """De-assign one exact catalog object and rebuild its scoped browse index.
 
@@ -624,6 +625,18 @@ def deassign_catalog_object(
     target a same-labeled object from another source shot. Historical PNG/JSON
     assets, search provenance, and human-best selection remain untouched.
     """
+    if registry is not None:
+        from services.resource_resolution import resolve_silhouette
+        if not instance_id:
+            raise ValueError("Registered deassignment requires an exact instance ID")
+        current = resolve_silhouette(project_path, instance_id, registry=registry)
+        record = current["record"]
+        if any(record.get(key) != value for key, value in (("media_type", media_type), ("media_id", media_id), ("shot_id", shot_id), ("field", field), ("label", label))):
+            raise ValueError("Registered deassignment source identity is stale")
+        if not dry_run:
+            raise ValueError("Registered assignment mutation requires controlled lifecycle commits; deferred")
+        return {"instance_id": instance_id, "path": current["metadata"], "image": current["image"], "dry_run": True,
+                "assignment": {"state": "inactive"}, "physical_deletion": False}
     request = {
         "media_type": str(media_type or ""),
         "filename_stem": str(filename_stem or ""),

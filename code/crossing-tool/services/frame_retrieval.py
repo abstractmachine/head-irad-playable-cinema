@@ -243,6 +243,7 @@ def retrieve_frames_for_query(
     media_type: str = "movie",
     width: int = _DEFAULT_WIDTH,
     quality: int = _DEFAULT_QUALITY,
+    registry=None,
 ) -> list[dict]:
     """Retrieve frames for shots matching a text query.
 
@@ -261,6 +262,7 @@ def retrieve_frames_for_query(
         use_all=use_all,
         project_path=project_path,
         media_type=media_type,
+        **({"registry": registry} if registry is not None else {}),
     )
 
     results: list[dict] = []
@@ -396,6 +398,7 @@ def retrieve_motif_frames(
     limit: int = 4,
     width: int = _DEFAULT_WIDTH,
     quality: int = _DEFAULT_QUALITY,
+    registry=None,
 ) -> list[dict]:
     """Retrieve frames for shots whose motif word matches *motif*.
 
@@ -436,13 +439,18 @@ def retrieve_motif_frames(
         if not filename:
             continue
 
-        ann_path = get_annotation_json_path(project_path, filename, media_type)
+        ann_path = get_annotation_json_path(project_path, filename, media_type, **({"registry": registry} if registry is not None else {}))
+        if registry is not None:
+            from data.resource_locations import resolve_annotation
+            ann_path = resolve_annotation(project_path, filename, media_type, registry=registry)
         if not ann_path.exists():
             continue
 
         try:
             ann_entries = _json.loads(ann_path.read_text(encoding="utf-8"))
         except Exception:
+            if registry is not None:
+                raise
             continue
 
         film_title = entry.get("title", Path(filename).stem)

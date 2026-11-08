@@ -137,7 +137,7 @@ def load_index(
         return {"status": "missing", "count": 0}
 
     try:
-        with sqlite3.connect(path) as connection:
+        with sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True) as connection:
             meta = dict(connection.execute("SELECT key, value FROM meta"))
         if int(meta.get("schema_version", -1)) != INDEX_SCHEMA_VERSION:
             return {"status": "stale", "count": 0, "usable": False}
@@ -178,23 +178,23 @@ def _load_index_all_media(project_path: str | Path, source: str) -> dict:
     return {"status": "missing", "count": 0}
 
 
-def rebuild_index(project_path: str | Path, source: str, media_type: str) -> dict:
+def rebuild_index(project_path: str | Path, source: str, media_type: str, *, registry=None) -> dict:
     """Rebuild one source index from canonical sidecars."""
     from data.annotate import load_shot_type_lookup
 
     project = Path(project_path)
-    shot_type_lookup, lookup_stats = load_shot_type_lookup(str(project), media_type)
-    return _rebuild_index(project, source, media_type, shot_type_lookup, lookup_stats)
+    shot_type_lookup, lookup_stats = load_shot_type_lookup(str(project), media_type, **({"registry": registry} if registry is not None else {}))
+    return _rebuild_index(project, source, media_type, shot_type_lookup, lookup_stats, registry=registry)
 
 
-def rebuild_all(project_path: str | Path, media_type: str) -> dict:
+def rebuild_all(project_path: str | Path, media_type: str, *, registry=None) -> dict:
     """Rebuild both source indexes from one shared annotation type lookup."""
     from data.annotate import load_shot_type_lookup
 
     project = Path(project_path)
-    shot_type_lookup, lookup_stats = load_shot_type_lookup(str(project), media_type)
+    shot_type_lookup, lookup_stats = load_shot_type_lookup(str(project), media_type, **({"registry": registry} if registry is not None else {}))
     return {
-        source: _rebuild_index(project, source, media_type, shot_type_lookup, lookup_stats)
+        source: _rebuild_index(project, source, media_type, shot_type_lookup, lookup_stats, **({"registry": registry} if registry is not None else {}))
         for source in SOURCES
     }
 
@@ -205,11 +205,15 @@ def _rebuild_index(
     media_type: str,
     shot_type_lookup: dict[tuple[str, str], str],
     lookup_stats: dict[str, int],
+    *, registry=None,
 ) -> dict:
     """Build one index using a precomputed canonical shot-type lookup."""
     _validate_source(source)
     revision = _read_revision(project, source, media_type)
-    if source == "silhouettes":
+    if registry is not None:
+        from services.resource_resolution import indexed_publications
+        records = indexed_publications(project, source, media_type, registry=registry)
+    elif source == "silhouettes":
         records = _scan_silhouettes(project, media_type)
     else:
         records = _scan_engravings(project, media_type)
@@ -307,7 +311,7 @@ def query_facets(
         assignment_state=_default_assignment_state(source, assignment_state),
         shot_type=shot_type,
     )
-    with sqlite3.connect(index_path(project_path, source, media_type)) as connection:
+    with sqlite3.connect(index_path(project_path, source, media_type).resolve().as_uri() + "?mode=ro", uri=True) as connection:
         titles = (
             [row[0] for row in connection.execute(
                 f"SELECT DISTINCT title FROM records {where} ORDER BY title COLLATE NOCASE",
@@ -367,7 +371,7 @@ def query_field_counts(
             shot_type=shot_type,
             assignment_state=_default_assignment_state(source, None),
         )
-        with sqlite3.connect(index_path(project_path, source, media_type)) as connection:
+        with sqlite3.connect(index_path(project_path, source, media_type).resolve().as_uri() + "?mode=ro", uri=True) as connection:
             rows = connection.execute(
                 f"SELECT field, COUNT(*) FROM records {where} "
                 "GROUP BY field ORDER BY COUNT(*) DESC, field",
@@ -437,7 +441,7 @@ def query_shot_type_counts(
         title=title,
         assignment_state=_default_assignment_state(source, None),
     )
-    with sqlite3.connect(index_path(project_path, source, media_type)) as connection:
+    with sqlite3.connect(index_path(project_path, source, media_type).resolve().as_uri() + "?mode=ro", uri=True) as connection:
         rows = connection.execute(
             f"SELECT shot_type, COUNT(*) FROM records {where} "
             "GROUP BY shot_type ORDER BY COUNT(*) DESC, shot_type",
@@ -543,7 +547,7 @@ def query_page(
         min_mask_area=min_mask_area,
         min_confidence=min_confidence,
     )
-    with sqlite3.connect(index_path(project_path, source, media_type)) as connection:
+    with sqlite3.connect(index_path(project_path, source, media_type).resolve().as_uri() + "?mode=ro", uri=True) as connection:
         total = int(connection.execute(
             f"SELECT COUNT(*) FROM records {where}", params
         ).fetchone()[0])
@@ -552,7 +556,10 @@ def query_page(
             "LIMIT ? OFFSET ?",
             [*params, max(1, int(limit)), max(0, int(offset))],
         )
-        records = [_deserialize_record(Path(project_path), row[0]) for row in rows]
+        try:
+            records = [_deserialize_record(Path(project_path), row[0]) for row in rows]
+        except (ValueError, OSError, KeyError) as exc:
+            return {"status": "error", "error": str(exc), "total": total, "records": []}
     return {**status, "total": total, "records": records}
 
 
@@ -640,17 +647,19 @@ def resolve_record_destination(
     one read-only snapshot; ordering is identical to ordinary indexed pages.
     """
     media = identity.get("media_type")
-    if media not in MEDIA_TYPES or not all(identity.get(key) for key in (
+    registered = bool(identity.get("instance_id"))
+    if media not in MEDIA_TYPES or (not registered and not all(identity.get(key) for key in (
         "filename_stem", "label", "object_id",
-    )):
+    ))):
         raise ValueError("Incomplete destination identity")
     status = load_index(project_path, source, media)
     if not status.get("usable"):
         raise ValueError("Illustration index unavailable: " + str(status.get("status")))
     where, params = _where(
-        title=_clean_stem(identity["filename_stem"]),
-        object_id=identity["object_id"], mode=identity.get("mode"),
-        field=identity.get("field"),
+        title=None if registered else _clean_stem(identity["filename_stem"]),
+        instance_id=identity.get("instance_id"),
+        object_id=None if registered else identity["object_id"], mode=identity.get("mode"),
+        field=None if registered else identity.get("field"),
         assignment_state=_default_assignment_state(source, None),
     )
     project = Path(project_path)
@@ -664,7 +673,7 @@ def resolve_record_destination(
                 Path(record["path"]).parent.name if source == "silhouettes"
                 else record.get("label")
             )
-            if (record.get("filename_stem") == identity["filename_stem"]
+            if registered or (record.get("filename_stem") == identity["filename_stem"]
                     and identity["label"] in (record.get("label"), label_directory)):
                 candidates.append((index, record))
         if not candidates:
@@ -737,7 +746,7 @@ def query_untyped_records(
     status = load_index(project_path, source, media_type)
     if not status.get("usable"):
         return {**status, "total": 0, "records": []}
-    with sqlite3.connect(index_path(project_path, source, media_type)) as connection:
+    with sqlite3.connect(index_path(project_path, source, media_type).resolve().as_uri() + "?mode=ro", uri=True) as connection:
         rows = connection.execute(
             "SELECT payload FROM records WHERE field = ? ORDER BY id",
             (ALL,),
@@ -862,6 +871,7 @@ def _where(**filters) -> tuple[str, list]:
         "label": "label", "mode": "mode", "object_id": "object_id",
         "media_id": "json_extract(payload, '$.media_id')",
         "shot_id": "json_extract(payload, '$.shot_id')",
+        "instance_id": "json_extract(payload, '$.instance_id')",
         "frame_index": "CAST(json_extract(payload, '$.frame') AS INTEGER)",
         "record_path": "json_extract(payload, '$.path')",
         "provenance_state": "search_provenance_state",
@@ -930,7 +940,8 @@ def _deserialize_record(project: Path, payload: str) -> dict:
         if value:
             path = Path(value)
             record[key] = path if path.is_absolute() else project / path
-    return record
+    from services.resource_resolution import resolve_index_record
+    return resolve_index_record(project, record)
 
 
 def _clean_stem(stem: str) -> str:
@@ -967,18 +978,19 @@ def _apply_shot_types(
 def _engraved_source_keys(project: Path, media_type: str) -> set[tuple[str, str, str]]:
     from services.engraving_paths import read_engraving_meta
 
-    base = project / "data" / "engravings" / "catalog" / media_type
+    from data.resource_locations_legacy import engraving_catalog_root, engraving_catalog_paths, engraving_catalog_identity
+    base = engraving_catalog_root(project, media_type)
     keys: set[tuple[str, str, str]] = set()
     if not base.is_dir():
         return keys
-    for metadata_path in base.glob("*/*/*/isolated/engraving.json"):
+    for metadata_path in engraving_catalog_paths(project, media_type, isolated_only=True):
         metadata = read_engraving_meta(metadata_path)
         if metadata and metadata.get("status") == "generated":
-            mode_dir = metadata_path.parent
+            identity = engraving_catalog_identity(metadata_path)
             keys.add((
-                mode_dir.parents[2].name,
-                mode_dir.parents[1].name,
-                mode_dir.parent.name,
+                identity["filename_stem"],
+                identity["label"],
+                identity["object_id"],
             ))
     return keys
 
@@ -986,27 +998,22 @@ def _engraved_source_keys(project: Path, media_type: str) -> set[tuple[str, str,
 def _scan_engravings(project: Path, media_type: str) -> list[dict]:
     from services.engraving_paths import read_engraving_meta
 
-    base = project / "data" / "engravings" / "catalog" / media_type
+    from data.resource_locations_legacy import engraving_catalog_root, engraving_catalog_paths, engraving_catalog_identity, engraving_output
+    base = engraving_catalog_root(project, media_type)
     if not base.is_dir():
         return []
 
     records: list[dict] = []
-    for metadata_path in sorted(base.rglob("engraving.json")):
+    for metadata_path in engraving_catalog_paths(project, media_type):
         metadata = read_engraving_meta(metadata_path)
         if not metadata or metadata.get("status") != "generated":
             continue
         try:
             mode_dir = metadata_path.parent
-            label_dir = mode_dir.parent.parent
-            film_dir = label_dir.parent
+            identity = engraving_catalog_identity(metadata_path)
             raw_path = mode_dir / "raw.png"
             raw_png = raw_path if raw_path.exists() else None
-            output_png = Path(str(metadata.get("output_png", ""))) if metadata.get("output_png") else None
-            if output_png and not output_png.is_absolute():
-                output_png = project / output_png
-            if not output_png or not output_png.exists():
-                named = [path for path in mode_dir.glob("*.png") if path.name != "raw.png"]
-                output_png = named[0] if named else raw_png
+            output_png = engraving_output(project, mode_dir, metadata, include_raw=True)
 
             silhouette = metadata.get("silhouette")
             silhouette_field = (
@@ -1020,14 +1027,14 @@ def _scan_engravings(project: Path, media_type: str) -> list[dict]:
             )
 
             record = {
-                "label": label_dir.name,
+                "label": identity["label"],
                 "field": silhouette_field or ALL,
                 "media_id": silhouette_media_id or "",
                 "shot_id": silhouette_shot_id or "",
-                "filename_stem": film_dir.name,
+                "filename_stem": identity["filename_stem"],
                 "media_type": media_type,
-                "mode": mode_dir.name,
-                "object_id": mode_dir.parent.name,
+                "mode": identity["mode"],
+                "object_id": identity["object_id"],
                 "output_png": output_png,
                 "raw_png": raw_png,
                 "path": metadata_path,

@@ -151,6 +151,10 @@ def _scope_media_id(scope: str | None) -> str | None:
 
 def _record_paths(project_path: str | Path, record: dict[str, Any]) -> tuple[Path, Path | None]:
     project = Path(project_path).resolve()
+    if record.get("resource_registry"):
+        from services.resource_resolution import resolve_index_record
+        resolved = resolve_index_record(project, record)
+        return resolved["path"], resolved["output_png"]
     record_media_type = str(record.get("media_type") or "")
     if record_media_type not in MEDIA_TYPES:
         raise ActiveSilhouetteIndexError(
@@ -189,7 +193,7 @@ def candidate_reference(project_path: str | Path, record: dict[str, Any]) -> dic
     """Return a stable public reference for an active indexed catalog object."""
     project = Path(project_path).resolve()
     record_path, png_path = _record_paths(project, record)
-    return {
+    reference = {
         "candidate_id": str(record_path.relative_to(project)),
         "object_id": str(record.get("object_id") or record_path.stem),
         "media_type": record.get("media_type"),
@@ -205,6 +209,9 @@ def candidate_reference(project_path: str | Path, record: dict[str, Any]) -> dic
         "mask_area": record.get("mask_area"),
         "silhouette_path": str(png_path.relative_to(project)) if png_path else None,
     }
+    if record.get("instance_id"):
+        reference["instance_id"] = record["instance_id"]
+    return reference
 
 
 def active_candidate_page(
@@ -254,6 +261,8 @@ def active_candidate_page(
         offset=offset,
         limit=page_limit,
     )
+    if result.get("status") == "error":
+        raise ActiveSilhouetteIndexError("STALE_RESOURCE", result.get("error", "Stale registered resource"), {})
     total = int(result.get("total", 0))
     records = list(result.get("records", []))
     next_offset = offset + len(records)

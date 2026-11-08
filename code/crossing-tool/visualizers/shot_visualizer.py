@@ -86,10 +86,11 @@ class _TimelineHitArea(TimelineHitArea):
 # Visualizer to load a specific film without opening a second window.
 # ---------------------------------------------------------------------------
 
-def _ipc_socket_path(project_path: str) -> Path:
+def _ipc_socket_path(project_path: str, *, registry=None) -> Path:
     """Return a per-project socket file path inside the system temp dir."""
     import tempfile, hashlib
-    h = hashlib.md5(str(project_path).encode()).hexdigest()[:8]
+    context = str(project_path) if registry is None else str(project_path) + "\0" + str((Path(project_path) / registry).resolve())
+    h = hashlib.md5(context.encode()).hexdigest()[:8]
     return Path(tempfile.gettempdir()) / f"crossing_shotlist_{h}.sock"
 
 
@@ -98,8 +99,8 @@ class _IpcServer(IpcServer):
 
     load_requested = _pyqtSignal(str, str, str, str)   # filename, media_type, shot_id, playback
 
-    def __init__(self, project_path: str, parent=None) -> None:
-        super().__init__(_ipc_socket_path(project_path), parent)
+    def __init__(self, project_path: str, parent=None, *, registry=None) -> None:
+        super().__init__(_ipc_socket_path(project_path, registry=registry), parent)
 
     def _handle_message(self, msg: dict) -> None:
         if msg.get("action") == "load":
@@ -117,6 +118,7 @@ def ipc_send_load(
     media_type: str,
     shot_id: str = "",
     playback: str = "pause",
+    *, registry=None,
 ) -> bool:
     """Send a load request to a running Shotlist Visualizer.
 
@@ -129,7 +131,7 @@ def ipc_send_load(
     Returns True if the message was delivered, False if no server is listening.
     """
     import socket as _socket
-    sock_path = _ipc_socket_path(project_path)
+    sock_path = _ipc_socket_path(project_path, registry=registry)
     if not sock_path.exists():
         return False
     try:
@@ -158,6 +160,7 @@ def open_at_shot(
     play: bool = False,
     loop: bool = False,
     no_continue: bool = False,
+    *, registry=None, approved=False,
 ) -> None:
     """Open (or navigate) the Shotlist Visualizer to *filename* / *shot_id*.
 
@@ -177,7 +180,7 @@ def open_at_shot(
         if app is not None:
             for w in app.topLevelWidgets():
                 try:
-                    if isinstance(w, ShotlistVisualizer) and getattr(w, "project_path", None) == project_path:
+                    if isinstance(w, ShotlistVisualizer) and getattr(w, "project_path", None) == project_path and _ipc_socket_path(project_path, registry=getattr(w, "_resource_registry", None)) == _ipc_socket_path(project_path, registry=registry):
                         # Defer to the main loop to perform the load so callers
                         # don't block and UI state updates happen cleanly.
                         QTimer.singleShot(0, lambda w=w: w._on_ipc_load(filename, media_type, shot_id, "play" if play else "pause"))
@@ -190,7 +193,7 @@ def open_at_shot(
         pass
 
     import subprocess as _sp
-    if ipc_send_load(project_path, filename, media_type, shot_id=shot_id, playback="play" if play else "pause"):
+    if ipc_send_load(project_path, filename, media_type, shot_id=shot_id, playback="play" if play else "pause", **({"registry": registry} if registry is not None else {})):
         return
     cmd = [
         sys.executable, str(Path(__file__)),
@@ -206,6 +209,10 @@ def open_at_shot(
         cmd += ["--loop"]
     if no_continue:
         cmd += ["--no-continue"]
+    if registry is not None:
+        cmd += ["--resource-registry", str(registry)]
+        if approved:
+            cmd += ["--approved-resource-edit"]
     _sp.Popen(cmd)
 
 
@@ -504,9 +511,13 @@ def _allow_metadata_wrap(block: MetadataBlock) -> None:
         lbl.setMaximumHeight(16777215)
 
 
-def _get_annotation_json_path(project_path: str, filename: str, media_type: str) -> Path:
-    stem = Path(filename).stem
-    return Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{stem}.annotations.json"
+def _get_annotation_json_path(project_path: str, filename: str, media_type: str, *, registry=None) -> Path:
+    from data.annotate import get_annotation_json_path
+    path = get_annotation_json_path(project_path, filename, media_type, registry=registry)
+    if registry is not None:
+        from data.resource_locations import resolve_annotation
+        path = resolve_annotation(project_path, filename, media_type, registry=registry, required=False)
+    return path
 
 
 def _read_annotation_json(path: Path) -> list:
@@ -700,7 +711,9 @@ class ShotlistVisualizer(WindowVisualizer):
     _audio_start_signal = pyqtSignal(float, float)
 
     def __init__(self, project_path: str, filenames: list, current_index: int = 0,
-                 media_type: str = "movie", verbose: bool = False):
+                 media_type: str = "movie", verbose: bool = False, *, registry=None, approved=False):
+        self._resource_registry = registry
+        self._resource_edit_approved = approved
         self._verbose = verbose
 
         # ---- Core state ----
@@ -828,7 +841,7 @@ class ShotlistVisualizer(WindowVisualizer):
 
         # Start the IPC server so the Metadata Visualizer (and CLI) can
         # tell this window to load a different film without opening a second instance.
-        self._ipc_server = _IpcServer(project_path, self)
+        self._ipc_server = _IpcServer(project_path, self, registry=self._resource_registry)
         self._ipc_server.load_requested.connect(self._on_ipc_load)
         self._ipc_server.start()
 
@@ -967,7 +980,7 @@ class ShotlistVisualizer(WindowVisualizer):
         self.audio_channels = raw_channel_map if isinstance(raw_channel_map, dict) else None
         attach_shot_ids(self.shots, self.media_id)
 
-        ann_path    = _get_annotation_json_path(self.project_path, self.filename, self.media_type)
+        ann_path    = _get_annotation_json_path(self.project_path, self.filename, self.media_type, registry=self._resource_registry)
         ann_entries = _read_annotation_json(ann_path)
         self._has_ann_file              = ann_path.exists()
         self.annotation_index           = _build_annotation_index(ann_entries)
@@ -2180,6 +2193,9 @@ class ShotlistVisualizer(WindowVisualizer):
             entry_idx = self._annotation_entry_index.get(shot_id)
             if entry_idx is not None and 0 <= entry_idx < len(entries):
                 entries[entry_idx]["shot"]["best_frame"] = shot.get("best_frame")
+                if self._resource_registry is not None:
+                    from data.annotate import write_annotation_aggregate
+                    write_annotation_aggregate(self.project_path, self.filename, self.media_type, entries, registry=self._resource_registry)
                 atomic_write_text(path, json.dumps(entries, indent=2, ensure_ascii=False))
         except Exception as exc:
             QMessageBox.critical(self, "Save failed", str(exc))
@@ -2472,7 +2488,8 @@ class ShotlistVisualizer(WindowVisualizer):
     def save_changes(self):
         """Save modified shotlist. Shows an error dialog only on failure."""
         try:
-            write_shotlist(self.project_path, self.filename, self.media_type, self.shots)
+            context = {"registry": self._resource_registry, "approved": self._resource_edit_approved} if self._resource_registry is not None else {}
+            write_shotlist(self.project_path, self.filename, self.media_type, self.shots, **context)
             self.modified = False
             self.save_button.setEnabled(False)
         except Exception as e:
@@ -2806,7 +2823,7 @@ class ShotlistVisualizer(WindowVisualizer):
         self.annotation_index[shot_id] = ann
 
         import json as _json
-        path = _get_annotation_json_path(self.project_path, self.filename, self.media_type)
+        path = _get_annotation_json_path(self.project_path, self.filename, self.media_type, registry=self._resource_registry)
         if path is None:
             return
         try:
@@ -2821,6 +2838,9 @@ class ShotlistVisualizer(WindowVisualizer):
             else:
                 existing.append(ann)
                 self._annotation_entry_index[shot_id] = len(existing) - 1
+            if self._resource_registry is not None:
+                from data.annotate import write_annotation_aggregate
+                write_annotation_aggregate(self.project_path, self.filename, self.media_type, existing, registry=self._resource_registry)
             atomic_write_text(path, _json.dumps(existing, indent=2, ensure_ascii=False))
             self._edited_shots.add(idx)
             self._refresh_shot_row(idx)
@@ -2941,7 +2961,7 @@ class ShotlistVisualizer(WindowVisualizer):
             QMessageBox.warning(self, "Invalid JSON", str(exc))
             return
 
-        path = _get_annotation_json_path(self.project_path, self.filename, self.media_type)
+        path = _get_annotation_json_path(self.project_path, self.filename, self.media_type, registry=self._resource_registry)
         if path is None:
             QMessageBox.warning(self, "No annotation file", "Cannot determine annotation file path.")
             return
@@ -2965,6 +2985,9 @@ class ShotlistVisualizer(WindowVisualizer):
 
             # Serialise with json_repair-safe format
             out_text = _json.dumps(existing, indent=2, ensure_ascii=False)
+            if self._resource_registry is not None:
+                from data.annotate import write_annotation_aggregate
+                write_annotation_aggregate(self.project_path, self.filename, self.media_type, existing, registry=self._resource_registry)
             atomic_write_text(path, out_text)
 
             self.annotation_index[shot_id] = data
@@ -3029,7 +3052,7 @@ class ShotlistVisualizer(WindowVisualizer):
         if ann is None:
             # Re-read from disk
             try:
-                path = _get_annotation_json_path(self.project_path, self.filename, self.media_type)
+                path = _get_annotation_json_path(self.project_path, self.filename, self.media_type, registry=self._resource_registry)
                 if path:
                     all_anns = _read_annotation_json(path)
                     self.annotation_index           = _build_annotation_index(all_anns)
@@ -3053,7 +3076,7 @@ class ShotlistVisualizer(WindowVisualizer):
 
         # Reload annotation indexes from disk so partial runs are reflected.
         try:
-            path = _get_annotation_json_path(self.project_path, self.filename, self.media_type)
+            path = _get_annotation_json_path(self.project_path, self.filename, self.media_type, registry=self._resource_registry)
             if path and path.exists():
                 all_anns = _read_annotation_json(path)
                 self.annotation_index        = _build_annotation_index(all_anns)
@@ -3075,7 +3098,7 @@ class ShotlistVisualizer(WindowVisualizer):
         import json as _json
         idx = self.current_shot_index
         shot_id = self.shots[idx].get("shot_id", "") if 0 <= idx < len(self.shots) else ""
-        path = _get_annotation_json_path(self.project_path, self.filename, self.media_type)
+        path = _get_annotation_json_path(self.project_path, self.filename, self.media_type, registry=self._resource_registry)
         if not path.exists() or shot_id not in self.annotation_index:
             QMessageBox.information(self, "No Annotation", "No annotation found for the selected shot.")
             return
@@ -3088,6 +3111,9 @@ class ShotlistVisualizer(WindowVisualizer):
                 if not (isinstance(e.get("shot"), dict)
                         and str(e["shot"].get("shot_id", "")) == shot_id)
             ]
+            if self._resource_registry is not None:
+                from data.annotate import write_annotation_aggregate
+                write_annotation_aggregate(self.project_path, self.filename, self.media_type, entries, registry=self._resource_registry)
             atomic_write_text(path, _json.dumps(entries, indent=2, ensure_ascii=False))
             self.annotation_index.pop(shot_id, None)
             self._annotation_entry_index.pop(shot_id, None)
@@ -3101,7 +3127,7 @@ class ShotlistVisualizer(WindowVisualizer):
 
     def _remove_all_annotations(self):
         """Delete all annotation data for the current film."""
-        path = _get_annotation_json_path(self.project_path, self.filename, self.media_type)
+        path = _get_annotation_json_path(self.project_path, self.filename, self.media_type, registry=self._resource_registry)
         if path is None or not path.exists():
             QMessageBox.information(self, "No Annotations", "No annotation file found.")
             return
@@ -3113,6 +3139,9 @@ class ShotlistVisualizer(WindowVisualizer):
         if reply != QMessageBox.Yes:
             return
         try:
+            if self._resource_registry is not None:
+                from data.annotate import remove_file_annotations
+                remove_file_annotations(self.project_path, self.filename, self.media_type, registry=self._resource_registry)
             path.unlink()
             self.annotation_index       = {}
             self._annotation_entry_index = {}
@@ -3144,6 +3173,8 @@ def main():
     parser.add_argument('--play', action='store_true', help="Start playback immediately on startup")
     parser.add_argument('--loop', action='store_true', help="Enable loop mode on startup")
     parser.add_argument('--no-continue', dest='no_continue', action='store_true', help="Disable continue mode on startup")
+    parser.add_argument('--resource-registry', default=None, help="Explicit committed resource registry")
+    parser.add_argument('--approved-resource-edit', action='store_true', help="Explicit approval for controlled registered shotlist commits")
 
     args = parser.parse_args()
 
@@ -3211,6 +3242,7 @@ def main():
         args.media,
         shot_id=args.shot_id,
         playback="play" if getattr(args, "play", False) else "pause",
+        **({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}),
     ):
         return
 
@@ -3234,7 +3266,7 @@ def main():
     # ShotlistVisualizer now subclasses WindowVisualizer (-> VisualizerWindow),
     # which installs the shared KeyboardManager automatically on construction
     # (handling F1-F10/F12/Tab/Shift+Tab/Escape) — no manual installation needed.
-    visualizer = ShotlistVisualizer(project_path, filenames, 0, args.media, verbose=args.verbose)
+    visualizer = ShotlistVisualizer(project_path, filenames, 0, args.media, verbose=args.verbose, registry=args.resource_registry, approved=args.approved_resource_edit)
 
     # Use saved geometry if available; otherwise open maximised.
     from tool import prefs as _prefs

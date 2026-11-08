@@ -11,6 +11,22 @@
 - Generation tools write only to `outputs/` subdirectories.
 - No tool may write to source data (`data/annotations/`, `data/shotlists/`, `data/metadata/`, or `preferences/`).
 
+**Explicit committed-resource context**
+
+Existing annotation consumers accept optional `resource_registry`: `list_movies`,
+`search_shots`, `search_vocabulary`, `get_best_frames`, `get_motif_frames`,
+`generate_cloud`, `generate_catalog`, `generate_flipbook`, `compare_motifs`,
+`get_all_motifs`, `get_shot_context`, `get_archive_stats`, `crossing_about`, and
+`list_vocabulary_fields`. Supply an already committed project-local registry path.
+Omitting it preserves legacy defaults; tools never adopt a registry, infer a layout,
+upgrade a schema, or rebuild indexes automatically. Missing or changed committed
+artifacts and incompatible cached annotation contexts are reported explicitly.
+Indexed silhouette tools use their indexed committed resource references instead.
+
+This does not authorize production media-first activation. Registered annotation,
+frame, review, and lifecycle mutations remain controlled CLI/service operations or
+explicit deferrals; no MCP administration tools have been added.
+
 **Architecture: one canonical implementation**
 
 Crossing services define project semantics. The CLI, local Python scripts, visualizers,

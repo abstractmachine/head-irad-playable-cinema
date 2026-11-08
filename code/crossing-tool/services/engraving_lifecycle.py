@@ -42,7 +42,8 @@ def _project(project_path: str | Path) -> Path:
 
 
 def catalog_root(project_path: str | Path, media_type: str) -> Path:
-    return _project(project_path) / "data" / "engravings" / "catalog" / media_type
+    from data.resource_locations_legacy import engraving_catalog_root
+    return engraving_catalog_root(project_path, media_type)
 
 
 # ---------------------------------------------------------------------------
@@ -57,15 +58,8 @@ def _read_json(path: Path) -> dict | None:
 
 
 def _resolve_output(project: Path, mode_dir: Path, metadata: dict) -> Path | None:
-    raw = metadata.get("output_png")
-    if raw:
-        candidate = Path(str(raw))
-        if not candidate.is_absolute():
-            candidate = project / candidate
-        if candidate.exists():
-            return candidate
-    named = [p for p in sorted(mode_dir.glob("*.png")) if p.name != "raw.png"]
-    return named[0] if named else None
+    from data.resource_locations_legacy import engraving_output
+    return engraving_output(project, mode_dir, metadata, sorted_names=True)
 
 
 def scan_engravings(
@@ -78,6 +72,7 @@ def scan_engravings(
     title: str | None = None,
     status: str | None = None,
     mode: str | None = None,
+    registry=None,
 ) -> list[dict]:
     """Enumerate canonical engravings from the filesystem, newest path order.
 
@@ -89,10 +84,27 @@ def scan_engravings(
 
     found: list[dict] = []
     for current in media_types:
+        if registry is not None:
+            from services.resource_resolution import indexed_publications
+            for record in indexed_publications(project, "engravings", current, registry=registry):
+                entry = {"media_type": current, "engraving_json": record["path"], "mode_dir": record["path"].parent,
+                         "mode": record["mode"], "instance_id": record["instance_id"], "object_id": record["instance_id"],
+                         "label": record["label"], "title": record.get("filename_stem", ""), "status": record.get("status"),
+                         "review_state": record.get("review_state"), "backend": (record.get("generation") or {}).get("service"),
+                         "output_png": record["output_png"], "source_instance_id": record.get("source_instance_id"),
+                         "field": record["field"], "shot_id": record["shot_id"], "metadata": record,
+                         "resource_registry": registry, "location_revision": record["location_revision"], "unreadable": False}
+                if any(value and entry[key] != value for key, value in (("backend", backend), ("mode", mode), ("review_state", review_state), ("label", label), ("status", status))):
+                    continue
+                if title and title.lower() not in entry["title"].lower():
+                    continue
+                found.append(entry)
+            continue
         base = catalog_root(project, current)
         if not base.is_dir():
             continue
-        for metadata_path in sorted(base.rglob("engraving.json")):
+        from data.resource_locations_legacy import engraving_catalog_paths, engraving_catalog_identity
+        for metadata_path in engraving_catalog_paths(project, current):
             metadata = _read_json(metadata_path)
             if metadata is None:
                 found.append({
@@ -105,14 +117,15 @@ def scan_engravings(
 
             mode_dir = metadata_path.parent
             silhouette = metadata.get("silhouette") or {}
+            legacy_identity = engraving_catalog_identity(metadata_path)
             entry = {
                 "media_type": current,
                 "engraving_json": metadata_path,
                 "mode_dir": mode_dir,
                 "mode": metadata.get("mode") or mode_dir.name,
-                "object_id": mode_dir.parent.name,
-                "label": mode_dir.parent.parent.name,
-                "title": mode_dir.parent.parent.parent.name,
+                "object_id": legacy_identity["object_id"],
+                "label": legacy_identity["label"],
+                "title": legacy_identity["filename_stem"],
                 "status": metadata.get("status"),
                 "review_state": metadata.get("review_state"),
                 "backend": (metadata.get("generation") or {}).get("service"),
@@ -146,6 +159,8 @@ def provenance_dirs_for(entry: dict) -> list[Path]:
     take the frame variant's provenance with it.  A legacy unmigrated run is
     only claimed when it actually belongs to this mode.
     """
+    if entry.get("resource_registry"):
+        return []
     from services.engraving_local_paths import legacy_run_mode
 
     object_dir = entry["mode_dir"].parent
@@ -312,6 +327,16 @@ def plan_removal(
             continue
 
         media_types.add(entry["media_type"])
+        if entry.get("resource_registry"):
+            from services.resource_resolution import resolve_engraving
+            current = resolve_engraving(project, entry["instance_id"], entry["mode"], registry=entry["resource_registry"], active_only=False)
+            if current["revision"] != entry["location_revision"] or current["metadata"] != entry["engraving_json"] or current["image"] != entry["output_png"]:
+                raise ValueError("Registered engraving removal selection is stale")
+            metadata_files.append(current["metadata"])
+            canonical_assets.append(current["image"])
+            if include_provenance:
+                blocking.append("Immutable registered generation evidence cannot be removed with a publication")
+            continue
         metadata_files.append(entry["engraving_json"])
 
         output = entry.get("output_png")
@@ -360,6 +385,7 @@ def plan_removal(
         "blocking": blocking,
         "safe": not blocking,
         "include_provenance": include_provenance,
+        "registered_entries": [entry for entry in entries if entry.get("resource_registry")],
     }
 
 
@@ -414,6 +440,8 @@ def apply_removal(project_path: str | Path, plan: dict, *, force: bool = False) 
     from services.illustration_index import invalidate_index
 
     project = _project(project_path)
+    if plan.get("registered_entries"):
+        raise ValueError("Registered publication retirement requires controlled location commits; physical removal is deferred")
     if not plan.get("safe") and not force:
         raise RuntimeError(
             "Refusing to apply an unsafe removal plan:\n  "
@@ -528,7 +556,7 @@ def _check_source_paths(project: Path, entry: dict, findings: list[dict]) -> Non
         ))
 
 
-def doctor(project_path: str | Path, *, media_type: str | None = None) -> dict:
+def doctor(project_path: str | Path, *, media_type: str | None = None, registry=None) -> dict:
     """Audit engraving/Illustration integrity and return structured findings."""
     from services.illustration_index import load_index, query_records
 
@@ -536,7 +564,7 @@ def doctor(project_path: str | Path, *, media_type: str | None = None) -> dict:
     media_types = (media_type,) if media_type else MEDIA_TYPES
     findings: list[dict] = []
 
-    entries = scan_engravings(project, media_type=media_type)
+    entries = scan_engravings(project, media_type=media_type, **({"registry": registry} if registry is not None else {}))
     readable = [e for e in entries if not e.get("unreadable")]
 
     for entry in entries:
@@ -643,7 +671,7 @@ def doctor(project_path: str | Path, *, media_type: str | None = None) -> dict:
                 ))
 
     # Local runs that were generated but never published.
-    for run_dir in orphan_provenance_dirs(project, media_type):
+    for run_dir in (orphan_provenance_dirs(project, media_type) if registry is None else []):
         findings.append(_finding(
             WARNING, "unpublished_run",
             f"local run exists but was never published as an Illustration: {run_dir}",
@@ -652,7 +680,7 @@ def doctor(project_path: str | Path, *, media_type: str | None = None) -> dict:
     # Provenance still using the pre-mode-aware layout.
     from services.engraving_local_paths import find_legacy_runs
 
-    for run_json in find_legacy_runs(project, media_type):
+    for run_json in (find_legacy_runs(project, media_type) if registry is None else []):
         findings.append(_finding(
             WARNING, "legacy_provenance_layout",
             f"local run still uses the pre-mode-aware layout and should be migrated: "

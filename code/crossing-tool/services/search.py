@@ -261,12 +261,17 @@ def _load_search_source(
     project_path: str,
     media_type: str,
     filename: str,
+    *, registry=None,
 ) -> dict[str, Any] | None:
     """Load one annotation source using the same inputs as ``search_shots``."""
     from data.shotlist import read_shotlist
 
-    ann_path = Path(project_path) / "data" / "annotations" / "shots" / media_type / f"{Path(filename).stem}.annotations.json"
-    if not ann_path.exists():
+    from data.annotate import get_annotation_json_path
+    from data.resource_locations import resolve_annotation
+    ann_path = get_annotation_json_path(project_path, filename, media_type, registry=registry)
+    if registry is not None:
+        ann_path = resolve_annotation(project_path, filename, media_type, registry=registry)
+    elif not ann_path.exists():
         return None
     try:
         raw_entries = json.loads(ann_path.read_text(encoding="utf-8"))
@@ -306,8 +311,9 @@ class SearchCorpus:
     it is neither a persisted index nor a second matching implementation.
     """
 
-    def __init__(self, project_path: str) -> None:
+    def __init__(self, project_path: str, *, registry=None) -> None:
         self.project_path = str(Path(project_path).resolve())
+        self.registry = registry
         self._metadata: dict[str, list[dict]] = {}
         self._states: dict[str, dict[str, Any]] = {}
 
@@ -423,7 +429,7 @@ class SearchCorpus:
             if not filename:
                 continue
             if filename not in sources:
-                source = _load_search_source(self.project_path, media_type, filename)
+                source = _load_search_source(self.project_path, media_type, filename, **({"registry": self.registry} if self.registry is not None else {}))
                 if source is not None:
                     sources[filename] = source
             source = sources.get(filename)
@@ -459,6 +465,7 @@ def search_shots(
     media_type: str = "movie",
     shot_type: str | None = None,
     corpus: SearchCorpus | None = None,
+    registry=None,
 ) -> dict:
     """Search shot annotations and return a structured result dict.
 
@@ -486,6 +493,8 @@ def search_shots(
     resolved_project_path = str(Path(project_path).resolve())
     if corpus is not None and corpus.project_path != resolved_project_path:
         raise ValueError("corpus project_path does not match project_path")
+    if corpus is not None and registry is not None and corpus.registry != registry:
+        raise ValueError("corpus registry context does not match registry")
 
     # Step 1 – resolve movies
     if corpus is not None:
@@ -525,7 +534,7 @@ def search_shots(
         source = (
             corpus.source(media_type, filename)
             if corpus is not None
-            else _load_search_source(project_path, media_type, filename)
+            else _load_search_source(project_path, media_type, filename, **({"registry": registry} if registry is not None else {}))
         )
         if source is None:
             continue
@@ -666,6 +675,7 @@ def vocabulary_from_index(
     show_count: bool = True,
     sort: str = "alphabetical",
     family: str | None = None,
+    *, registry=None,
 ) -> dict:
     """Return an index-only vocabulary result without scanning annotations.
 
@@ -676,6 +686,7 @@ def vocabulary_from_index(
     search and semantic retrieval do not use this API.
     """
     derived_fields = {"description", "text"}
+    context = {"registry": registry} if registry is not None else {}
     if family is None:
         family = "all" if field == "--all" else (
             "derived" if field in derived_fields else "canonical"
@@ -684,10 +695,12 @@ def vocabulary_from_index(
         canonical = vocabulary_from_index(
             "--all", project_path, media_type, show_count=True, sort=sort,
             family="canonical",
+            **context,
         )
         derived = vocabulary_from_index(
             "--all", project_path, media_type, show_count=True, sort=sort,
             family="derived",
+            **context,
         )
         for result in (canonical, derived):
             if result.get("status") != "ready":
@@ -717,10 +730,12 @@ def vocabulary_from_index(
             load_derived_vocabulary,
         )
         try:
-            load_derived_vocabulary(project_path, media_type)
+            load_derived_vocabulary(project_path, media_type, **context)
         except FileNotFoundError:
             return {"status": "missing"}
-        if derived_vocabulary_is_stale(project_path, media_type):
+        except ValueError:
+            return {"status": "stale"}
+        if derived_vocabulary_is_stale(project_path, media_type, **context):
             return {"status": "stale"}
         if field not in ("--all", DERIVED_FIELD, "description", "text"):
             return {"status": "field_missing"}
@@ -729,6 +744,7 @@ def vocabulary_from_index(
             media_type,
             sort=sort,
             source_field=None if field == "--all" else field,
+            **context,
         )
         if not show_count:
             items = [item["value"] for item in items]
@@ -743,20 +759,22 @@ def vocabulary_from_index(
     )
 
     try:
-        load_vocabulary_index(project_path, media_type)
+        load_vocabulary_index(project_path, media_type, **context)
     except FileNotFoundError:
         return {"status": "missing"}
+    except ValueError:
+        return {"status": "stale"}
 
-    if vocabulary_cache_is_stale(project_path, media_type):
+    if vocabulary_cache_is_stale(project_path, media_type, **context):
         return {"status": "stale"}
 
     try:
         if field == "--all":
-            index = load_vocabulary_index(project_path, media_type)
+            index = load_vocabulary_index(project_path, media_type, **context)
             merged_counts: dict[str, int] = {}
             for indexed_field in index.get("fields", {}):
                 for item in get_vocabulary(
-                    indexed_field, project_path, media_type, sort="count"
+                    indexed_field, project_path, media_type, sort="count", **context
                 ):
                     value = item["value"]
                     merged_counts[value] = merged_counts.get(value, 0) + item["count"]
@@ -771,7 +789,7 @@ def vocabulary_from_index(
             elif sort == "count_alphabetical":
                 items.sort(key=lambda item: (-item["count"], item["value"].lower()))
         else:
-            items = get_vocabulary(field, project_path, media_type, sort=sort)
+            items = get_vocabulary(field, project_path, media_type, sort=sort, **context)
     except KeyError:
         return {"status": "field_missing"}
 
@@ -788,6 +806,7 @@ def vocabulary_from_field(
     project_path: str,
     media_type: str = "movie",
     sort: str = "alphabetical",
+    *, registry=None,
 ) -> list:
     """Return distinct values found in *field* across all matching shots.
 
@@ -818,7 +837,7 @@ def vocabulary_from_field(
         raise RuntimeError("project_path is required")
 
     # Fast path: use the vocabulary cache when no scope filter is active.
-    if use_all or not scopes:
+    if registry is None and (use_all or not scopes):
         cached = _vocabulary_from_cache(field, project_path, media_type, show_count, sort)
         if cached is not None:
             return cached
@@ -826,7 +845,7 @@ def vocabulary_from_field(
     all_entries = get_metadata(project_path, media_type=media_type)
     selected, _ = _resolve_movies_exact_first(scopes, use_all, all_entries)
 
-    ann_base = Path(project_path) / "data" / "annotations" / "shots" / media_type
+    from data.annotate import get_annotation_json_path
 
     def _norm_key(v: str) -> str:
         return re.sub(r"\s+", " ", v.strip()).lower()
@@ -842,8 +861,11 @@ def vocabulary_from_field(
         if not filename:
             continue
         stem = Path(filename).stem
-        ann_path = ann_base / f"{stem}.annotations.json"
-        if not ann_path.exists():
+        ann_path = get_annotation_json_path(project_path, filename, media_type, registry=registry)
+        if registry is not None:
+            from data.resource_locations import resolve_annotation
+            ann_path = resolve_annotation(project_path, filename, media_type, registry=registry)
+        elif not ann_path.exists():
             continue
         try:
             ann_entries: list = json.loads(ann_path.read_text(encoding="utf-8"))

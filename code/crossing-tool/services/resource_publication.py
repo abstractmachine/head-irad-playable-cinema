@@ -220,8 +220,26 @@ def _complete(store, database, binding, operation_id, kind, mode, stage):
     _cleanup(stage)
 
 
+def _validate_dirty_assessment(binding, previous, metadata, image_sha, previous_image_sha):
+    from data.media_id import parse_shot_id
+    old_content, new_content = dict(previous), dict(metadata)
+    old_assessment = old_content.pop("source_validation", {})
+    assessment = new_content.pop("source_validation", {})
+    reasons = assessment.get("reasons") if isinstance(assessment, dict) else None
+    if (old_content != new_content or image_sha != previous_image_sha
+            or not isinstance(reasons, list) or not reasons
+            or any(not isinstance(reason, str) or not reason for reason in reasons)
+            or not set(old_assessment.get("reasons", [])).issubset(reasons)
+            or not set(old_assessment.get("committed_edits", [])).issubset(assessment.get("committed_edits", []))
+            or assessment.get("dirty") is not True
+            or assessment.get("instance_id") != binding["instance_id"]
+            or assessment.get("registered_shot_id") != binding["shot_id"]
+            or parse_shot_id(assessment.get("current_shot_id"))[0] != binding["media_id"]):
+        raise ValueError("Dirty assessment cannot change identity, content or image")
+
+
 def publish_resource(project, registry, instance_id, kind, metadata, image, *, mode="", expected_revision=0,
-                     approved=False, interrupt=None):
+                     approved=False, interrupt=None, _assessment_only=False, _propagation_id=None):
     """Publish an explicit pair with CAS revision. Interrupted operations need recovery."""
     from data.annotate import atomic_write_text
     from PIL import Image
@@ -232,12 +250,21 @@ def publish_resource(project, registry, instance_id, kind, metadata, image, *, m
     binding = locations.registered_instance(project, registry, instance_id)
     operation_id = uuid4().hex
     with store.transaction() as database:
-        pending = database.execute("SELECT 1 FROM publication_operations WHERE state NOT IN ('finished','rolled_back')").fetchone()
+        pending = database.execute("SELECT 1 FROM publication_operations WHERE kind!='dirty-propagation' AND state NOT IN ('finished','rolled_back')").fetchone()
         if pending:
             raise ValueError("Pending publication requires explicit recovery")
         binding = locations.registered_instance(project, registry, instance_id)
         _silhouette(project, binding)
-        validation = _validation(store, database, binding, metadata, kind, mode)
+        if _assessment_only:
+            old = locations.current_location(project, binding, kind, mode)
+            if old is None:
+                raise ValueError("Dirty assessment requires an existing committed pair")
+            _validate_dirty_assessment(binding, old["record"], metadata,
+                                       digest(locations.project_file(project, image)), digest(old["image"]))
+            validation = {"state": "valid", "missing": [], "errors": [],
+                          "destination": {"dir": old["metadata"].parent, "metadata": old["metadata"], "image": old["image"]}}
+        else:
+            validation = _validation(store, database, binding, metadata, kind, mode)
         if validation["state"] != "valid":
             raise ValueError("Publication metadata rejected: " + json.dumps({key: validation[key] for key in ("state", "missing", "errors")}))
         paths = validation["destination"]
@@ -273,7 +300,7 @@ def publish_resource(project, registry, instance_id, kind, metadata, image, *, m
         details = {"stage": relative_path(project, stage), "record_path": relative_path(project, paths["metadata"]),
                    "image_path": relative_path(project, paths["image"]), "record_sha256": digest(stage / "new.json"),
                    "image_sha256": digest(stage / "new.png"), "expected_revision": expected_revision,
-                   "metadata": metadata, "before": before}
+                   "metadata": metadata, "before": before, "assessment_only": _assessment_only, "propagation_id": _propagation_id}
         _sync(stage)
         database.execute("INSERT INTO publication_operations VALUES(?,?,?,?,?,?)", (operation_id, instance_id, kind, mode, "prepared", json.dumps(details)))
         database.commit()
@@ -281,6 +308,96 @@ def publish_resource(project, registry, instance_id, kind, metadata, image, *, m
             interrupt("prepared")
         _finish(store, database, binding, operation_id, kind, mode, details, interrupt)
     return {"operation_id": operation_id, "revision": expected_revision + 1, "published": True}
+
+
+def mark_media_resources_dirty(project, filename, media_type, reason, *, registry=None, approved=False,
+                               edit_id=None, committed_path=None, committed_sha256=None, interrupt=None,
+                               current_associations=None, _defer=False):
+    """Explicit post-commit hook; production without registry context remains inactive."""
+    if registry is None:
+        return {"activated": False, "updated": 0}
+    import sqlite3
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValueError("Dirty propagation requires an explicit committed-edit reason")
+    store = ResourceStore(project, registry, approved=approved)
+    media = locations.find_media(project, media_type, filename=filename)
+    with store.transaction() as database:
+        previous = database.execute("SELECT * FROM publication_operations WHERE operation_id=? AND kind='dirty-propagation'", (edit_id,)).fetchone() if edit_id else None
+        if previous is not None:
+            details = json.loads(previous["details"])
+            if (details["media_id"], details["media_type"], details["filename"], details["reason"]) != (media["media_id"], media_type, filename, reason):
+                raise ValueError("Committed edit token belongs to a different operation")
+            operation_id = previous["operation_id"]
+        else:
+            keys = database.execute("SELECT l.instance_id,l.kind,l.mode FROM resource_locations l JOIN instances i USING(instance_id) WHERE i.media_id=? AND i.media_type=? ORDER BY l.instance_id,l.kind DESC,l.mode",
+                                    (media["media_id"], media_type)).fetchall()
+            if not keys:
+                return {"activated": True, "updated": 0, "state": "finished"}
+            operation_id = edit_id or uuid4().hex
+            details = {"media_id": media["media_id"], "media_type": media_type, "filename": filename, "reason": reason,
+                       "resources": [list(key) for key in keys], "completed": [], "associations": current_associations or {},
+                       "association_tracking": current_associations is not None}
+            if committed_path is not None:
+                details["committed_path"] = relative_path(project, committed_path)
+                details["committed_sha256"] = committed_sha256 or digest(locations.project_file(project, committed_path))
+            database.execute("INSERT INTO publication_operations VALUES(?,?,?,?,?,?)", (operation_id, keys[0][0], "dirty-propagation", "", "prepared", json.dumps(details)))
+    if _defer:
+        return {"activated": True, "updated": 0, "state": "prepared", "operation_id": operation_id}
+    return resume_dirty_propagation(project, registry, operation_id, approved=approved, interrupt=interrupt)
+
+
+def resume_dirty_propagation(project, registry, operation_id, *, approved=False, interrupt=None):
+    """Resume a retained dependent set using the existing per-pair publication journal."""
+    from data.resource_storage import registry_lock
+    with registry_lock(project, registry, exclusive=True):
+        return _resume_dirty_propagation(project, registry, operation_id, approved=approved, interrupt=interrupt)
+
+
+def _resume_dirty_propagation(project, registry, operation_id, *, approved=False, interrupt=None):
+    store = ResourceStore(project, registry, approved=approved)
+    with store.transaction() as database:
+        row = database.execute("SELECT * FROM publication_operations WHERE operation_id=? AND kind='dirty-propagation'", (operation_id,)).fetchone()
+        if row is None:
+            raise ValueError("Unknown committed-edit propagation operation")
+        details = json.loads(row["details"])
+        if row["state"] == "finished":
+            return {"activated": True, "updated": len(details["completed"]), "state": "finished", "operation_id": operation_id}
+        pending = [dict(child) for child in database.execute("SELECT * FROM publication_operations WHERE kind!='dirty-propagation' AND state NOT IN ('finished','rolled_back')")]
+    if details.get("committed_path") and digest(locations.project_file(project, details["committed_path"])) != details["committed_sha256"]:
+        raise ValueError("Committed edit changed or was not committed before dirty propagation")
+    for child in pending:
+        if json.loads(child["details"]).get("propagation_id") != operation_id:
+            raise ValueError("Unrelated pending publication requires explicit recovery")
+        recover_publication(project, registry, child["operation_id"], approved=approved)
+    for key in details["resources"]:
+        if key in details["completed"]:
+            continue
+        instance_id, kind, mode = key
+        binding = locations.registered_instance(project, registry, instance_id)
+        current = locations.current_location(project, binding, kind, mode)
+        assessment = dict(current["record"].get("source_validation") or {})
+        reasons = list(assessment.get("reasons") or [])
+        if details["reason"] not in reasons:
+            reasons.append(details["reason"])
+        edits = list(assessment.get("committed_edits") or [])
+        if operation_id not in edits:
+            edits.append(operation_id)
+            assessment.update({"dirty": True, "instance_id": instance_id, "registered_shot_id": binding["shot_id"],
+                               "current_shot_id": details["associations"].get(instance_id) or assessment.get("current_shot_id") or binding["shot_id"],
+                               "reasons": reasons, "committed_edits": edits})
+            if details.get("association_tracking"):
+                assessment["current_association_known"] = instance_id in details["associations"]
+            publish_resource(project, registry, instance_id, kind, {**current["record"], "source_validation": assessment}, current["image"], mode=mode,
+                             expected_revision=current["revision"], approved=approved, _assessment_only=True,
+                             _propagation_id=operation_id, interrupt=interrupt)
+        with store.transaction() as database:
+            details["completed"].append(key)
+            database.execute("UPDATE publication_operations SET details=? WHERE operation_id=?", (json.dumps(details), operation_id))
+        if interrupt:
+            interrupt("dependent-completed")
+    with store.transaction() as database:
+        database.execute("UPDATE publication_operations SET state='finished' WHERE operation_id=?", (operation_id,))
+    return {"activated": True, "updated": len(details["completed"]), "state": "finished", "operation_id": operation_id}
 
 
 def _finish(store, database, binding, operation_id, kind, mode, details, interrupt=None):
@@ -330,6 +447,12 @@ def recover_publication(project, registry, operation_id, *, approved=False, acti
     if action not in ("complete", "rollback"):
         raise ValueError("Unknown recovery action")
     with store.transaction() as database:
+        operation = database.execute("SELECT kind FROM publication_operations WHERE operation_id=?", (operation_id,)).fetchone()
+    if operation is not None and operation["kind"] == "dirty-propagation":
+        if action != "complete":
+            raise ValueError("Committed-edit intent cannot be implicitly rolled back; preserve and resume it")
+        return resume_dirty_propagation(project, registry, operation_id, approved=approved)
+    with store.transaction() as database:
         row = database.execute("SELECT * FROM publication_operations WHERE operation_id=?", (operation_id,)).fetchone()
         if row is None:
             raise ValueError("Unknown publication operation")
@@ -370,9 +493,16 @@ def recover_publication(project, registry, operation_id, *, approved=False, acti
             _complete(store, database, binding, operation_id, row["kind"], row["mode"], stage)
         else:
             binding["locations"] = [dict(item) for item in database.execute("SELECT * FROM resource_locations WHERE instance_id=?", (row["instance_id"],))]
-            validation = _validation(store, database, binding, details["metadata"], row["kind"], row["mode"])
-            if validation["state"] != "valid":
-                raise ValueError("Recovery requires valid source/publication metadata")
+            if details.get("assessment_only") is True:
+                previous = locations.project_file(project, stage / "previous.json")
+                if digest(previous) != details["before"].get("metadata"):
+                    raise ValueError("Dirty assessment before-image corrupted")
+                _validate_dirty_assessment(binding, json.loads(previous.read_text(encoding="utf-8")),
+                                           details["metadata"], details["image_sha256"], details["before"].get("image"))
+            else:
+                validation = _validation(store, database, binding, details["metadata"], row["kind"], row["mode"])
+                if validation["state"] != "valid":
+                    raise ValueError("Recovery requires valid source/publication metadata")
             _finish(store, database, binding, operation_id, row["kind"], row["mode"], details)
         return {"operation_id": operation_id, "state": "rolled_back" if action == "rollback" else "finished"}
 

@@ -168,9 +168,13 @@ def read_shotlist(project_path: str, filename: str, media_type: str = "movie") -
         return [normalize_shot_fields(row) for row in reader]
 
 
-def write_shotlist(project_path: str, filename: str, media_type: str, shots: list[dict[str, Any]]) -> None:
+def write_shotlist(project_path: str, filename: str, media_type: str, shots: list[dict[str, Any]], *, registry=None, approved=False) -> None:
     """Write shotlist data back to CSV."""
     shotlist_path = get_shotlist_path(project_path, filename, media_type)
+    previous = read_shotlist(project_path, filename, media_type) if registry is not None and shotlist_path.exists() else None
+    if registry is not None:
+        from data.resource_storage import ResourceStore
+        resource_store = ResourceStore(project_path, registry, approved=approved)
 
     has_frames = shots and any("start_frame" in shot for shot in shots)
 
@@ -198,7 +202,40 @@ def write_shotlist(project_path: str, filename: str, media_type: str, shots: lis
     writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
     writer.writerows(shots)
+    propagation = None
+    if registry is not None and previous is not None:
+        keys = ("shot_id", "start_frame", "end_frame", "start_time", "end_time")
+        signature = lambda rows: [tuple(str(row.get(key) or "") for key in keys) for row in rows]
+        import hashlib
+        import json
+        committed_sha = hashlib.sha256(buf.getvalue().encode()).hexdigest()
+        with resource_store.transaction() as database:
+            pending = [dict(row) for row in database.execute("SELECT operation_id,details FROM publication_operations WHERE kind='dirty-propagation' AND state NOT IN ('finished','rolled_back') AND json_extract(details,'$.filename')=? AND json_extract(details,'$.media_type')=?", (filename, media_type))]
+        if pending:
+            if len(pending) != 1 or json.loads(pending[0]["details"]).get("committed_sha256") != committed_sha:
+                raise ValueError("Previous committed edit has incomplete dirty propagation; resume it before another edit")
+            propagation = {"operation_id": pending[0]["operation_id"]}
+        elif signature(previous) != signature(shots):
+            from services.resource_publication import mark_media_resources_dirty
+            from uuid import uuid4
+            edit_id = uuid4().hex
+            from data.resource_locations import find_media
+            media = find_media(project_path, media_type, filename=filename)
+            with resource_store.transaction() as database:
+                instances = database.execute("SELECT instance_id FROM instances WHERE media_id=? AND media_type=?", (media["media_id"], media_type)).fetchall()
+            associations = {}
+            from services.resource_resolution import resolve_silhouette
+            for instance in instances:
+                frame = resolve_silhouette(project_path, instance["instance_id"], registry=registry, active_only=False)["record"].get("frame")
+                matches = [row.get("shot_id") for row in shots if frame is not None and row.get("shot_id") and row.get("start_frame") not in (None, "") and row.get("end_frame") not in (None, "") and int(row["start_frame"]) <= int(frame) <= int(row["end_frame"])]
+                if len(matches) == 1:
+                    associations[instance["instance_id"]] = matches[0]
+            propagation = mark_media_resources_dirty(project_path, filename, media_type, "committed_shotlist_edit", registry=registry, approved=approved,
+                                                      edit_id=edit_id, committed_path=shotlist_path, committed_sha256=committed_sha, current_associations=associations, _defer=True)
     atomic_write_text(shotlist_path, buf.getvalue())
+    if propagation and propagation.get("operation_id"):
+        from services.resource_publication import resume_dirty_propagation
+        resume_dirty_propagation(project_path, registry, propagation["operation_id"], approved=approved)
 
 
 def annotate_shot(project_path: str, filename: str, shot_index: int, caption: str, media_type: str = "movie") -> None:

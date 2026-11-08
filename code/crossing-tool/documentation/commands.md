@@ -1,5 +1,31 @@
 # Commands
 
+## Explicit Resource Context
+
+`--resource-registry PATH` selects an already committed project-local registry for
+supported annotation/resource consumers. It never adopts a registry, migrates files,
+chooses a layout from directory existence, or enables production cutover. Legacy
+behavior is unchanged when the option is omitted.
+
+Supported surfaces include `search`, `index illustration`, `index stats`,
+`index vocabulary` (both families), `sync frame-match`, `shotlist scene detect`,
+`generate cloud`, `generate flipbook`, and the `project`, `cloud`, `sync`,
+`segmentation`, `shotlist`, `mosaic`, and `flipbook` visualizer subcommands.
+For visualizers, place the option after the selected subcommand.
+
+Registered `engraving list/remove/doctor/review`, `index silhouette clear/deassign`,
+and `annotate remove` use exact current commitments. Annotation/silhouette retirement
+requests default to planning; `--apply` does not bypass the controlled-retirement
+deferral. Registered engraving removal and review mutation are likewise deferred.
+For registered deassignment, `--object-id` carries the exact instance ID, not a
+legacy ordinal. Existing source identity arguments remain stale-selection checks.
+
+Registered Shotlist and Scene commits require `--approved-resource-edit`; this
+approval covers the existing controlled shotlist/dirty-state operation, not annotation
+or best-frame rewrites. `metadata --resource-registry PATH` refuses unsupported
+`set/update/prune` operations before mutation. Historical migration/repair and provider
+writers remain separate legacy-only operations until Stage 2B.3 authorization.
+
 ## Backup
 
 `crossing backup update` uses the guarded mirror service by default, not additive

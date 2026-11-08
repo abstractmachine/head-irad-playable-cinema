@@ -307,9 +307,11 @@ class CloudWorker(QThread):
         width: int = 1200,
         height: int = 840,
         parent=None,
+        registry=None,
     ):
         super().__init__(parent)
         self.project_path = project_path
+        self.registry = registry
         self.scope        = scope or None
         self.field        = field or None
         self.media_type   = media_type
@@ -334,6 +336,7 @@ class CloudWorker(QThread):
                 style=self.style,
                 width=self.width,
                 height=self.height,
+                **({"registry": self.registry} if self.registry is not None else {}),
             )
             self.result_ready.emit(canvas.convert("RGB"), str(out))
         except Exception as exc:
@@ -409,7 +412,8 @@ class _CloudCanvas(QWidget):
 class CloudVisualizer(WindowVisualizer):
     """Word-cloud visualizer — canvas browser, controls in the inspector."""
 
-    def __init__(self, project_path: str) -> None:
+    def __init__(self, project_path: str, *, registry=None) -> None:
+        self._resource_registry = registry
         # Instance attributes must be set before super().__init__() since the
         # base class calls create_browser()/create_inspector() synchronously.
         self.project_path  = project_path
@@ -695,6 +699,7 @@ class CloudVisualizer(WindowVisualizer):
             style,
             width=width,
             height=height,
+            registry=self._resource_registry,
         )
         self._worker.result_ready.connect(self._on_result_ready)
         self._worker.error.connect(self._on_error)
@@ -961,10 +966,10 @@ class CloudVisualizer(WindowVisualizer):
 # Public launcher
 # ---------------------------------------------------------------------------
 
-def run_visualizer(project_path: str) -> None:
+def run_visualizer(project_path: str, *, registry=None) -> None:
     """Create the QApplication (if needed) and launch the cloud visualizer."""
     from visualizers.launcher import run_visualizer_window
-    run_visualizer_window("cloud", lambda: CloudVisualizer(project_path))
+    run_visualizer_window("cloud", lambda: CloudVisualizer(project_path, registry=registry))
 
 
 if __name__ == "__main__":

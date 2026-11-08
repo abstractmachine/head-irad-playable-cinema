@@ -225,17 +225,18 @@ def _count_best_frames(project_path: str) -> dict[str, int]:
     return result
 
 
-def _count_motifs(project_path: str) -> dict[str, int]:
+def _count_motifs(project_path: str, *, registry=None) -> dict[str, int]:
     """Count shots with a canonical shot.motif string in annotation JSON, by media type."""
     result: dict[str, int] = {}
-    base = Path(project_path) / "data" / "annotations" / "shots"
+    from data.resource_locations import annotation_root, annotation_files
+    base = annotation_root(project_path)
     if not base.exists():
         return result
     for mt_dir in sorted(base.iterdir()):
         if not mt_dir.is_dir():
             continue
         total = 0
-        for json_file in mt_dir.glob("*.json"):
+        for json_file in annotation_files(project_path, mt_dir.name, registry=registry):
             if json_file.name.endswith(".manifest.json"):
                 continue
             try:
@@ -269,7 +270,7 @@ def _count_palettes(project_path: str) -> dict[str, int]:
     return result
 
 
-def _count_embeddings(project_path: str) -> dict[str, int]:
+def _count_embeddings(project_path: str, *, registry=None) -> dict[str, int]:
     """Count annotation-embedding ``.annotations.npy`` files under data/annotations/shots/.
 
     Counts only ``*.annotations.npy`` — the canonical new name.
@@ -277,47 +278,50 @@ def _count_embeddings(project_path: str) -> dict[str, int]:
     here so that the stats reflect the new canonical naming convention.
     """
     result: dict[str, int] = {}
-    base = Path(project_path) / "data" / "annotations" / "shots"
+    from data.resource_locations import annotation_root, annotation_files
+    base = annotation_root(project_path)
     if not base.exists():
         return result
     for mt_dir in sorted(base.iterdir()):
         if mt_dir.is_dir():
-            count = sum(1 for f in mt_dir.glob("*.annotations.npy"))
+            count = sum(1 for f in annotation_files(project_path, mt_dir.name, ".annotations.npy", registry=registry))
             result[mt_dir.name] = count
     return result
 
 
-def _count_frame_embeddings(project_path: str) -> dict[str, int]:
+def _count_frame_embeddings(project_path: str, *, registry=None) -> dict[str, int]:
     """Count frame-embedding .frames.npy files under data/annotations/shots/<media_type>/.
 
     Counts only ``*.frames.npy`` — does not count ``*.frames.valid.npy``.
     """
     result: dict[str, int] = {}
-    base = Path(project_path) / "data" / "annotations" / "shots"
+    from data.resource_locations import annotation_root, annotation_files
+    base = annotation_root(project_path)
     if not base.exists():
         return result
     for mt_dir in sorted(base.iterdir()):
         if mt_dir.is_dir():
             count = sum(
                 1
-                for f in mt_dir.glob("*.frames.npy")
+                for f in annotation_files(project_path, mt_dir.name, ".frames.npy", registry=registry)
                 if not f.name.endswith(".frames.valid.npy")
             )
             result[mt_dir.name] = count
     return result
 
 
-def _count_shots_with_best_frame(project_path: str) -> dict[str, int]:
+def _count_shots_with_best_frame(project_path: str, *, registry=None) -> dict[str, int]:
     """Count annotation entries that have a best_frame.frame value, per media type."""
     result: dict[str, int] = {}
-    base = Path(project_path) / "data" / "annotations" / "shots"
+    from data.resource_locations import annotation_root, annotation_files
+    base = annotation_root(project_path)
     if not base.exists():
         return result
     for mt_dir in sorted(base.iterdir()):
         if not mt_dir.is_dir():
             continue
         total = 0
-        for json_file in mt_dir.glob("*.json"):
+        for json_file in annotation_files(project_path, mt_dir.name, registry=registry):
             if json_file.name.endswith(".manifest.json"):
                 continue
             try:
@@ -350,16 +354,13 @@ def _count_flipbooks(project_path: str) -> int:
 
 
 _ANNOTATION_MEDIA_TYPES = ("movie", "gameplay")
-def _aggregate_annotated_shots(project_path: str) -> dict[str, Any]:
+def _aggregate_annotated_shots(project_path: str, *, registry=None) -> dict[str, Any]:
     """Aggregate the canonical annotated-shot population and its type values."""
     by_media_type = {media_type: 0 for media_type in _ANNOTATION_MEDIA_TYPES}
     type_counts: Counter[tuple[str, bool]] = Counter()
-    base = Path(project_path) / "data" / "annotations" / "shots"
+    from data.resource_locations import annotation_files
     for media_type in _ANNOTATION_MEDIA_TYPES:
-        annotation_dir = base / media_type
-        if not annotation_dir.is_dir():
-            continue
-        for json_file in sorted(annotation_dir.glob("*.json")):
+        for json_file in annotation_files(project_path, media_type, registry=registry):
             if json_file.name.endswith(".manifest.json"):
                 continue
             try:
@@ -391,7 +392,7 @@ def _aggregate_annotated_shots(project_path: str) -> dict[str, Any]:
     }
 
 
-def get_corpus_stats(project_path: str) -> dict[str, Any]:
+def get_corpus_stats(project_path: str, *, registry=None) -> dict[str, Any]:
     """Return corpus-level project statistics.
 
     Scans annotation/shotlist/palette/embedding files directly (proportional
@@ -406,10 +407,11 @@ def get_corpus_stats(project_path: str) -> dict[str, Any]:
     movie_metadata = load_json_metadata(project_path, "movie")
     gameplay_metadata = load_json_metadata(project_path, "gameplay")
 
-    vocabulary_index = load_vocabulary_index(project_path, "movie")
+    vocabulary_index = load_vocabulary_index(project_path, "movie", **({"registry": registry} if registry is not None else {}))
     vocabulary_terms = int(vocabulary_index.get("meta", {}).get("total_tokens", 0))
 
-    annotated_shots_aggregation = _aggregate_annotated_shots(project_path)
+    context = {"registry": registry} if registry is not None else {}
+    annotated_shots_aggregation = _aggregate_annotated_shots(project_path, **context)
     annotated_shots_by_media_type = annotated_shots_aggregation["by_media_type"]
     annotated_shots_movie = annotated_shots_by_media_type["movie"]
     annotated_shots_gameplay = annotated_shots_by_media_type["gameplay"]
@@ -429,11 +431,11 @@ def get_corpus_stats(project_path: str) -> dict[str, Any]:
     shotlists = _count_present_assets(project_path, movie_metadata, _shotlist_path_exists)
 
     best_frames_by_type = _count_best_frames(project_path)
-    motifs_by_type = _count_motifs(project_path)
+    motifs_by_type = _count_motifs(project_path, **context)
     palettes = _count_palettes(project_path)
-    embeddings_by_type = _count_embeddings(project_path)
-    frame_embeddings_by_type = _count_frame_embeddings(project_path)
-    shots_with_best_frame_by_type = _count_shots_with_best_frame(project_path)
+    embeddings_by_type = _count_embeddings(project_path, **context)
+    frame_embeddings_by_type = _count_frame_embeddings(project_path, **context)
+    shots_with_best_frame_by_type = _count_shots_with_best_frame(project_path, **context)
 
     flipbooks = _count_flipbooks(project_path)
 
@@ -549,7 +551,7 @@ def corpus_stats_cache_path(project_path: str) -> Path:
     return Path(project_path) / "data" / "indexes" / "corpus_stats.json"
 
 
-def load_cached_corpus_stats(project_path: str) -> Optional[dict[str, Any]]:
+def load_cached_corpus_stats(project_path: str, *, registry=None) -> Optional[dict[str, Any]]:
     """Return the persisted corpus-stats dict, or None if missing/unreadable/wrong schema.
 
     Cheap — only reads one small JSON file, never traverses project data.
@@ -563,11 +565,14 @@ def load_cached_corpus_stats(project_path: str) -> Optional[dict[str, Any]]:
         return None
     if payload.get("schema_version") != CORPUS_STATS_SCHEMA_VERSION:
         return None
+    from data.resource_locations import annotation_context_token
+    if payload.get("annotation_context") != annotation_context_token(project_path, registry):
+        return None
     stats = payload.get("stats")
     return stats if isinstance(stats, dict) else None
 
 
-def _annotations_fingerprint(project_path: str) -> str:
+def _annotations_fingerprint(project_path: str, *, registry=None) -> str:
     """Cheap mtime+size fingerprint over every annotation JSON file.
 
     Used only to detect whether the corpus-stats cache (whose figures are
@@ -579,13 +584,18 @@ def _annotations_fingerprint(project_path: str) -> str:
     import hashlib
 
     digest = hashlib.md5()
-    base = Path(project_path) / "data" / "annotations" / "shots"
+    from data.resource_locations import annotation_context_token
+    token = annotation_context_token(project_path, registry)
+    if token is not None:
+        digest.update(token.encode())
+    from data.resource_locations import annotation_root, annotation_files
+    base = annotation_root(project_path)
     if not base.exists():
         return ""
     for mt_dir in sorted(base.iterdir()):
         if not mt_dir.is_dir():
             continue
-        for json_file in sorted(mt_dir.glob("*.json")):
+        for json_file in annotation_files(project_path, mt_dir.name, registry=registry):
             if json_file.name.endswith(".manifest.json"):
                 continue
             try:
@@ -596,7 +606,7 @@ def _annotations_fingerprint(project_path: str) -> str:
     return digest.hexdigest()
 
 
-def refresh_corpus_stats_cache(project_path: str) -> dict[str, Any]:
+def refresh_corpus_stats_cache(project_path: str, *, registry=None) -> dict[str, Any]:
     """Recompute corpus stats and persist them, along with a staleness fingerprint.
 
     This is the only place `get_corpus_stats()` should be called from the
@@ -607,20 +617,26 @@ def refresh_corpus_stats_cache(project_path: str) -> dict[str, Any]:
     """
     from data.annotate import atomic_write_text
 
-    stats = get_corpus_stats(project_path)
+    from data.resource_locations import annotation_context_token
+    context = {"registry": registry} if registry is not None else {}
+    token = annotation_context_token(project_path, registry)
+    stats = get_corpus_stats(project_path, **context)
     payload = {
         "schema_version": CORPUS_STATS_SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "annotations_fingerprint": _annotations_fingerprint(project_path),
+        "annotations_fingerprint": _annotations_fingerprint(project_path, **context),
+        "annotation_context": token,
         "stats": stats,
     }
     path = corpus_stats_cache_path(project_path)
+    if token != annotation_context_token(project_path, registry):
+        raise ValueError("Annotation context changed while computing corpus statistics")
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(path, json.dumps(payload, indent=2, ensure_ascii=False))
     return stats
 
 
-def get_corpus_stats_state(project_path: Optional[str]) -> dict[str, Any]:
+def get_corpus_stats_state(project_path: Optional[str], *, registry=None) -> dict[str, Any]:
     """Return the corpus-stats cache's current read-only state.
 
     Never recomputes anything — the only work here is a small JSON read plus
@@ -644,7 +660,16 @@ def get_corpus_stats_state(project_path: Optional[str]) -> dict[str, Any]:
     stats = payload.get("stats")
     if not isinstance(stats, dict):
         return {"state": "missing"}
-    if payload.get("annotations_fingerprint") != _annotations_fingerprint(project_path):
+    from data.resource_locations import annotation_context_token
+    if payload.get("annotation_context") != annotation_context_token(project_path, registry):
+        return {"state": "stale", "stats": stats, "reason": "annotation_context_changed"}
+    try:
+        fingerprint = _annotations_fingerprint(project_path, registry=registry)
+    except (ValueError, OSError) as exc:
+        if registry is None:
+            raise
+        return {"state": "stale", "stats": stats, "reason": str(exc)}
+    if payload.get("annotations_fingerprint") != fingerprint:
         return {"state": "stale", "stats": stats}
     return {"state": "ready", "stats": stats}
 
@@ -748,10 +773,10 @@ def _media_items_datavis(
 
 
 def get_vocabulary_field_counts(
-    project_path: str, expected_total: Optional[int] = None,
+    project_path: str, expected_total: Optional[int] = None, *, registry=None,
 ) -> list[dict[str, Any]]:
     """Return unique vocabulary-term counts from largest to smallest."""
-    index = load_vocabulary_index(project_path, "movie")
+    index = load_vocabulary_index(project_path, "movie", **({"registry": registry} if registry is not None else {}))
     fields = index.get("fields", {})
     if not isinstance(fields, dict):
         raise ValueError("Vocabulary index has no valid fields mapping")
@@ -880,7 +905,7 @@ def get_live_project_columns(project_path: Optional[str]) -> list[ProjectColumn]
     ]
 
 
-def get_cached_project_columns(project_path: Optional[str]) -> list[ProjectColumn]:
+def get_cached_project_columns(project_path: Optional[str], *, registry=None) -> list[ProjectColumn]:
     """Return the Shots/Vocabulary columns.
 
     Sourced only from the persisted stats cache (see `get_corpus_stats_state`)
@@ -889,7 +914,7 @@ def get_cached_project_columns(project_path: Optional[str]) -> list[ProjectColum
     annotation data it was computed from has changed since — never silently
     triggering a rebuild in either case.
     """
-    result = get_corpus_stats_state(project_path)
+    result = get_corpus_stats_state(project_path, **({"registry": registry} if registry is not None else {}))
     state = result["state"]
     if state == "missing":
         return [
@@ -917,7 +942,7 @@ def get_cached_project_columns(project_path: Optional[str]) -> list[ProjectColum
     vocabulary = columns[1]
     if project_path and vocabulary.count is not None:
         try:
-            fields = get_vocabulary_field_counts(project_path, vocabulary.count)
+            fields = get_vocabulary_field_counts(project_path, vocabulary.count, **({"registry": registry} if registry is not None else {}))
         except FileNotFoundError:
             vocabulary.count = None
             vocabulary.state = "unavailable"
@@ -927,7 +952,7 @@ def get_cached_project_columns(project_path: Optional[str]) -> list[ProjectColum
             vocabulary.state = "stale"
             vocabulary.reason = "vocabulary_count_mismatch"
         else:
-            if vocabulary_cache_is_stale(project_path, "movie"):
+            if vocabulary_cache_is_stale(project_path, "movie", **({"registry": registry} if registry is not None else {})):
                 vocabulary.count = None
                 vocabulary.state = "stale"
                 vocabulary.reason = "vocabulary_index_stale"
@@ -936,7 +961,7 @@ def get_cached_project_columns(project_path: Optional[str]) -> list[ProjectColum
     return columns
 
 
-def get_project_columns(project_path: Optional[str]) -> list[ProjectColumn]:
+def get_project_columns(project_path: Optional[str], *, registry=None) -> list[ProjectColumn]:
     """Return the fixed V0 set of all six Project Visualizer columns.
 
     Always fast and synchronous — never performs a full corpus traversal.
@@ -952,6 +977,6 @@ def get_project_columns(project_path: Optional[str]) -> list[ProjectColumn]:
     """
     by_id = {
         column.id: column
-        for column in get_live_project_columns(project_path) + get_cached_project_columns(project_path)
+        for column in get_live_project_columns(project_path) + get_cached_project_columns(project_path, **({"registry": registry} if registry is not None else {}))
     }
     return [by_id[col_id] for col_id, _title in PROJECT_COLUMN_IDS_AND_TITLES]

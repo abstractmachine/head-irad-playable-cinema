@@ -154,6 +154,8 @@ def preprocess_engraving_source(
     page_pt_h: float,
     cache_dir: Path,
     dpi: int = _PAGE_DPI,
+    project_path=None,
+    resource_record=None,
 ) -> dict:
     """Preprocess a placed silhouette and write the result to *cache_dir*.
 
@@ -195,6 +197,18 @@ def preprocess_engraving_source(
         version            : str   — preprocessing version tag
     """
     from PIL import Image
+    source_bytes = None
+    if resource_record is not None:
+        from services.resource_resolution import resolve_index_record, resolve_silhouette, resolve_engraving
+        if project_path is None or not resource_record.get("resource_registry"):
+            raise ValueError("Registered preprocessing requires project and registry context")
+        record = resolve_index_record(project_path, resource_record)
+        if record.get("resource_kind") == "engravings":
+            resolved = resolve_engraving(project_path, record["instance_id"], record["mode"], registry=record["resource_registry"])
+        else:
+            resolved = resolve_silhouette(project_path, record["instance_id"], registry=record["resource_registry"])
+        source_png = resolved["image"]
+        source_bytes = resolved["image_bytes"]
 
     source_png = Path(source_png)
     cache_dir  = Path(cache_dir)
@@ -203,6 +217,8 @@ def preprocess_engraving_source(
     cache_key = build_cache_key(
         source_png, page_idx, x, y, width, height, rotation, flip_h, flip_v,
     )
+    if source_bytes is not None:
+        cache_key = hashlib.sha256(cache_key.encode() + source_bytes).hexdigest()
 
     out_png  = cache_dir / f"{engraving_id}_preprocess_{PREPROCESS_VERSION}.png"
     out_json = cache_dir / f"{engraving_id}_preprocess_{PREPROCESS_VERSION}.json"
@@ -233,7 +249,11 @@ def preprocess_engraving_source(
     # Load source image
     # ------------------------------------------------------------------
     try:
-        img = Image.open(source_png).convert("RGBA")
+        if source_bytes is not None:
+            from io import BytesIO
+            img = Image.open(BytesIO(source_bytes)).convert("RGBA")
+        else:
+            img = Image.open(source_png).convert("RGBA")
     except Exception as exc:
         raise RuntimeError(
             f"engraving_preprocess: cannot open source PNG {source_png!r}: {exc}"

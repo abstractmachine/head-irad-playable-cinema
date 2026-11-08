@@ -31,6 +31,11 @@ from typing import Optional
 def record_identity(record: dict, kind: str) -> dict:
     """Existing catalog identity, independent from display titles and filters."""
     path = Path(str(record.get("path", "")))
+    if record.get("resource_registry") and record.get("instance_id"):
+        identity = {"media_type": record["media_type"], "instance_id": record["instance_id"]}
+        if kind == "engravings":
+            identity["mode"] = record.get("mode")
+        return identity
     identity = {
         "media_type": record.get("media_type"),
         "filename_stem": record.get("filename_stem"),
@@ -100,7 +105,13 @@ class IllustrationSource(ABC):
         from services.illustration_index import resolve_record_destination
         kind = "engravings" if isinstance(self, EngravingSource) else "silhouettes"
         origin = identity.get("origin")
-        if origin is not None:
+        if origin is not None and origin.get("resource_registry"):
+            from services.resource_resolution import resolve_index_record
+            origin = resolve_index_record(self._project_path, origin)
+            identity = record_identity(origin, kind)
+            if kind == "silhouettes":
+                identity.pop("mode", None)
+        elif origin is not None:
             if kind == "silhouettes":
                 import json
                 from services.silhouette_archive_reference import (
@@ -410,6 +421,9 @@ class SilhouetteSource(IllustrationSource):
 
     def thumbnail_path(self, record: dict) -> Optional[Path]:
         """Return the sibling PNG for a silhouette JSON sidecar record."""
+        if record.get("resource_registry"):
+            from services.resource_resolution import resolve_index_record
+            return resolve_index_record(self._project_path, record)["output_png"]
         json_path = record.get("path")
         if not json_path:
             return None
@@ -493,6 +507,9 @@ class EngravingSource(IllustrationSource):
 
     def thumbnail_path(self, record: dict) -> Optional[Path]:
         """Return the best available output PNG for an engraving record."""
+        if record.get("resource_registry"):
+            from services.resource_resolution import resolve_index_record
+            return Path(resolve_index_record(self._project_path, record)["output_png"])
         for key in ("output_png", "raw_png"):
             val = record.get(key, "")
             if val:

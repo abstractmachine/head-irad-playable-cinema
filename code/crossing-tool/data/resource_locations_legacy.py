@@ -21,6 +21,64 @@ def annotation_path(project, filename, media_type, suffix):
     return Path(project) / "data/annotations/shots" / media_type / (Path(filename).stem + suffix)
 
 
+def annotation_filenames(project, media_type):
+    from data.resource_locations import ANNOTATION_SUFFIXES
+    root = Path(project) / "data/annotations/shots" / media_type
+    stems = set()
+    for path in root.glob("*"):
+        if path.is_file():
+            suffix = next((value for value in ANNOTATION_SUFFIXES if path.name.endswith(value)), None)
+            if suffix:
+                stems.add(path.name.removesuffix(suffix))
+    return sorted(stems)
+
+
+def annotation_v0_json_path(project, filename, media_type):
+    """Explicit pre-suffix reader compatibility; never select an alternate layout."""
+    return annotation_path(project, filename, media_type, ".annotations.json").with_name(Path(filename).stem + ".json")
+
+
+def annotation_frame_sidecar(project, frames_path, media_type, suffix):
+    from data.resource_locations import ANNOTATION_SUFFIXES
+    frames_path = Path(frames_path)
+    if suffix not in ANNOTATION_SUFFIXES or not frames_path.name.endswith(".frames.npy"):
+        raise ValueError("Unsupported legacy frame sidecar")
+    stem = frames_path.name.removesuffix(".frames.npy")
+    expected = annotation_path(project, stem + ".mp4", media_type, ".frames.npy")
+    if expected.resolve() != frames_path.resolve():
+        raise ValueError("Frame artifact differs from legacy location contract")
+    return annotation_path(project, stem + ".mp4", media_type, suffix)
+
+
+def engraving_catalog_root(project, media_type):
+    return Path(project) / "data/engravings/catalog" / media_type
+
+
+def engraving_catalog_paths(project, media_type, *, isolated_only=False):
+    root = engraving_catalog_root(project, media_type)
+    return root.glob("*/*/*/isolated/engraving.json") if isolated_only else sorted(root.rglob("engraving.json"))
+
+
+def engraving_catalog_identity(metadata_path):
+    mode_dir = Path(metadata_path).parent
+    return {"mode": mode_dir.name, "object_id": mode_dir.parent.name,
+            "label": mode_dir.parent.parent.name, "filename_stem": mode_dir.parent.parent.parent.name}
+
+
+def engraving_output(project, mode_dir, metadata, *, include_raw=False, sorted_names=False):
+    raw = metadata.get("output_png")
+    if raw:
+        candidate = Path(str(raw))
+        candidate = candidate if candidate.is_absolute() else Path(project) / candidate
+        if candidate.exists():
+            return candidate
+    names = mode_dir.glob("*.png")
+    names = sorted(names) if sorted_names else names
+    named = [path for path in names if path.name != "raw.png"]
+    raw_path = mode_dir / "raw.png"
+    return named[0] if named else (raw_path if include_raw and raw_path.exists() else None)
+
+
 def catalog_label(label):
     """Preserve catalog spelling exactly; unlike engraving's synthetic fallback."""
     return re.sub(r"[^a-z0-9_]", "_", label.lower().strip())

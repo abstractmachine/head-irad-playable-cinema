@@ -319,8 +319,10 @@ class FlipbookVisualizerWindow(WindowVisualizer):
         self,
         project_path: str,
         media_type: str = "movie",
+        *, registry=None,
     ) -> None:
         self._project_path = project_path
+        self._resource_registry = registry
         self._media_type   = media_type
 
         # List of (display_label, flipbook_data) tuples
@@ -448,7 +450,11 @@ class FlipbookVisualizerWindow(WindowVisualizer):
                 continue
             json_path = get_annotation_json_path(
                 self._project_path, filename, self._media_type,
+                **({"registry": self._resource_registry} if self._resource_registry is not None else {}),
             )
+            if self._resource_registry is not None:
+                from data.resource_locations import resolve_annotation
+                json_path = resolve_annotation(self._project_path, filename, self._media_type, registry=self._resource_registry, required=False)
             if not json_path.exists():
                 continue
 
@@ -484,6 +490,7 @@ class FlipbookVisualizerWindow(WindowVisualizer):
             from generators.flipbook import load_flipbook_data
             fb = load_flipbook_data(
                 self._project_path, filename, self._media_type,
+                **({"registry": self._resource_registry} if self._resource_registry is not None else {}),
             )
             data.update(fb)
             data["loaded"] = True
@@ -671,6 +678,7 @@ class FlipbookVisualizerWindow(WindowVisualizer):
 def run_visualizer(
     project_path: str,
     media_type: str = "movie",
+    *, registry=None,
 ) -> None:
     """Create QApplication (if needed) and open the flipbook visualizer."""
     from visualizers.launcher import run_visualizer_window
@@ -678,7 +686,7 @@ def run_visualizer(
     def _build() -> FlipbookVisualizerWindow:
         global _FONT_FAMILY
         _FONT_FAMILY = _load_flipbook_font()
-        return FlipbookVisualizerWindow(project_path, media_type=media_type)
+        return FlipbookVisualizerWindow(project_path, media_type=media_type, registry=registry)
 
     run_visualizer_window("flipbook", _build)
 

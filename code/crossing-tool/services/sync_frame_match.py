@@ -81,22 +81,23 @@ def _cache_key(project_path: str, media_type: str,
 # ---------------------------------------------------------------------------
 
 def _shots_dir(project_path: str, media_type: str) -> Path:
-    return Path(project_path) / "data" / "annotations" / "shots" / media_type
+    from data.resource_locations import annotation_directory
+    return annotation_directory(project_path, media_type)
 
 
 def _frames_npy(project_path: str, filename: str, media_type: str) -> Path:
-    stem = Path(filename).stem
-    return _shots_dir(project_path, media_type) / f"{stem}.frames.npy"
+    from data.index import get_frame_embeddings_path
+    return get_frame_embeddings_path(project_path, filename, media_type)
 
 
 def _frames_valid(project_path: str, filename: str, media_type: str) -> Path:
-    stem = Path(filename).stem
-    return _shots_dir(project_path, media_type) / f"{stem}.frames.valid.npy"
+    from data.index import get_frame_valid_path
+    return get_frame_valid_path(project_path, filename, media_type)
 
 
 def _annotations_json(project_path: str, filename: str, media_type: str) -> Path:
-    stem = Path(filename).stem
-    return _shots_dir(project_path, media_type) / f"{stem}.annotations.json"
+    from data.annotate import get_annotation_json_path
+    return get_annotation_json_path(project_path, filename, media_type)
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +123,8 @@ def _find_indexed_stems(project_path: str, media_type: str) -> list[Path]:
     shots_dir = _shots_dir(project_path, media_type)
     if not shots_dir.exists():
         return []
-    return sorted(shots_dir.glob("*.frames.npy"))
+    from data.resource_locations import annotation_files
+    return list(annotation_files(project_path, media_type, ".frames.npy"))
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +135,7 @@ def _load_single_file_catalog(
     project_path: str,
     frames_npy_path: Path,
     media_type: str,
+    *, registry=None, filename=None,
 ) -> tuple[np.ndarray, np.ndarray, list[dict], str]:
     """Load vectors, valid mask, and metadata for one .frames.npy file.
 
@@ -141,8 +144,21 @@ def _load_single_file_catalog(
     stem = frames_npy_path.name[: -len(".frames.npy")]   # strip suffix
 
     # Find the annotation JSON — try *.annotations.json matching the stem
-    ann_path = frames_npy_path.parent / f"{stem}.annotations.json"
-    valid_path = frames_npy_path.parent / f"{stem}.frames.valid.npy"
+    if registry is not None:
+        from data.resource_locations import annotation_path, resolve_annotation
+        if not filename:
+            raise ValueError("Registered frame catalog requires the authoritative filename")
+        expected = resolve_annotation(project_path, filename, media_type, ".frames.npy", registry=registry)
+        if expected != frames_npy_path.resolve():
+            raise ValueError("Frame catalog differs from committed collection")
+        ann_path = resolve_annotation(project_path, filename, media_type, registry=registry)
+        valid_path = annotation_path(project_path, filename, media_type, ".frames.valid.npy", registry=registry)
+        if valid_path.exists():
+            valid_path = resolve_annotation(project_path, filename, media_type, ".frames.valid.npy", registry=registry)
+    else:
+        from data.resource_locations_legacy import annotation_frame_sidecar
+        ann_path = annotation_frame_sidecar(project_path, frames_npy_path, media_type, ".annotations.json")
+        valid_path = annotation_frame_sidecar(project_path, frames_npy_path, media_type, ".frames.valid.npy")
 
     vectors = np.load(str(frames_npy_path)).astype("float32")
 
@@ -254,6 +270,7 @@ def load_frame_catalog(
     title:     str | None = None,
     all_items: bool = False,
     force_reload: bool = False,
+    registry=None,
 ) -> FrameCatalog:
     """Load (or return cached) a frame catalog for the given scope.
 
@@ -275,10 +292,16 @@ def load_frame_catalog(
 
     media_type = _canonical_media_type(media_type)
     key = _cache_key(project_path, media_type, title, all_items)
+    filenames = {}
+    if registry is not None:
+        from data.resource_locations import annotation_collections, annotation_context_token
+        collections = list(annotation_collections(project_path, media_type, registry=registry))
+        filenames = {collection["existing"][".frames.npy"]: record["filename"] for record, collection in collections if ".frames.npy" in collection["existing"]}
+        key = (*key, annotation_context_token(project_path, registry, media_type))
     if not force_reload and key in _catalog_cache:
         return _catalog_cache[key]
 
-    npy_paths = _find_indexed_stems(project_path, media_type)
+    npy_paths = list(filenames) if registry is not None else _find_indexed_stems(project_path, media_type)
     if not npy_paths:
         # Return empty catalog
         catalog = FrameCatalog(
@@ -304,8 +327,10 @@ def load_frame_catalog(
     for npy_path in selected:
         try:
             vecs, valid, rows, _ = _load_single_file_catalog(
-                project_path, npy_path, media_type)
+                project_path, npy_path, media_type, **({"registry": registry, "filename": filenames[npy_path]} if registry is not None else {}))
         except Exception:
+            if registry is not None:
+                raise
             continue
         all_vectors.append(vecs)
         all_valid.append(valid)
@@ -394,6 +419,7 @@ def match_rgb_frame(
     title:     str | None = None,
     all_items: bool = False,
     top:       int = 5,
+    registry=None,
 ) -> list[dict]:
     """Embed *frame_rgb* with CLIP then search the catalog.
 
@@ -405,7 +431,7 @@ def match_rgb_frame(
     bundle  = load_frame_vector_model(project_path)
     vector  = embed_rgb_frame(frame_rgb, bundle)
     catalog = load_frame_catalog(project_path, media_type,
-                                 title=title, all_items=all_items)
+                                 title=title, all_items=all_items, **({"registry": registry} if registry is not None else {}))
     return match_frame_vector(vector, catalog, top=top)
 
 
@@ -417,6 +443,7 @@ def match_image_path(
     title:     "str | None" = None,
     all_items: bool = False,
     top:       int = 5,
+    registry=None,
 ) -> list[dict]:
     """Load an image file, embed it with CLIP, then search the catalog.
 
@@ -441,7 +468,7 @@ def match_image_path(
     img = Image.open(Path(image_path)).convert("RGB")
     frame_rgb = _np.array(img)
     return match_rgb_frame(frame_rgb, project_path, media_type,
-                           title=title, all_items=all_items, top=top)
+                           title=title, all_items=all_items, top=top, **({"registry": registry} if registry is not None else {}))
 
 
 # ---------------------------------------------------------------------------
