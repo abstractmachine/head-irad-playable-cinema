@@ -81,16 +81,17 @@ def prepare_engraving_from_source(
     source_json = Path(source_json).resolve()
     project = Path(project_path).resolve()
 
-    from services.silhouette_catalog import load_active_record
-    meta = load_active_record(source_json, project)
+    from services.resource_resolution import resolve_source_silhouette
+    source = resolve_source_silhouette(project, source_json)
+    meta = source["record"]
     sil_png = resolve_silhouette_png(source_json, meta)
 
     paths = engraving_paths(str(project), source_json, meta, mode)
     eng_json_path = paths["metadata"]
 
     if eng_json_path.exists() and not force:
-        from services.engraving_paths import read_engraving_meta
-        existing = read_engraving_meta(eng_json_path)
+        from services.engraving_paths import repair_engraving_meta
+        existing = repair_engraving_meta(eng_json_path, approved=True)
         existing_status = (existing or {}).get("status", "pending")
         # Only block re-preparation when engraving is already done or queued.
         # Failed engravings can be retried without --force.

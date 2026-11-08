@@ -421,6 +421,7 @@ class TestBuildSilhouettePayloadShape(unittest.TestCase):
             "contained": True,
             "rejection_reason": None,
             "bbox": [100, 100, 200, 200],
+            "mask_area": 40000,
             "polygon": self._make_fake_polygon(),
             "polygon_simplification": "douglas_peucker_0.005_perimeter",
             "timestamp": "2026-05-15T00:00:00+00:00",
@@ -444,6 +445,13 @@ class TestBuildSilhouettePayloadShape(unittest.TestCase):
         }
 
         with tempfile.TemporaryDirectory() as tmp:
+            metadata = Path(tmp) / "data/metadata/movie.json"
+            metadata.parent.mkdir(parents=True)
+            metadata.write_text(json.dumps({"media": [{"filename": "film.mp4", "media_id": "tmdb_1"}]}))
+            from data.annotate import get_annotation_json_path
+            annotation = get_annotation_json_path(tmp, "film.mp4", "movie")
+            annotation.parent.mkdir(parents=True)
+            annotation.write_text(json.dumps([{"shot": {"shot_id": "tmdb_1@f000000-f000100", "annotation": {"animals": ["horse"]}}}]))
             from services.silhouette import build_silhouette, compute_media_id as _cmi
             with patch("services.silhouette.compute_media_id", return_value="tmdb_1"):
                 result = build_silhouette(

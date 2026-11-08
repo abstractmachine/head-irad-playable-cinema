@@ -66,6 +66,8 @@ def _write_catalog_object(
         "label": label,
         "png": png_path.name,
         "source_frame": "frame:5",
+        "bbox": [0, 0, 32, 24], "frame_size": [32, 24], "mask_area": 768,
+        "sam_model": "fixture-sam", "frame_match_model": "fixture-clip",
         "search_provenance": {
             "state": "valid",
             "match": "number_variant",
@@ -81,6 +83,16 @@ def _write_catalog_object(
 
 def _load(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _write_publication_source(project):
+    metadata = project / "data/metadata/movie.json"
+    metadata.parent.mkdir(parents=True, exist_ok=True)
+    metadata.write_text(json.dumps({"media": [{"filename": "film_a.mp4", "media_id": "tmdb_1"}]}))
+    annotation = project / "data/annotations/shots/movie/film_a.annotations.json"
+    annotation.parent.mkdir(parents=True, exist_ok=True)
+    annotation.write_text(json.dumps([{"shot": {"shot_id": "tmdb_1@f000001-f000010",
+                                               "annotation": {"wearing": ["arm band", "arm bands"]}}}]))
 
 
 def test_legacy_and_explicit_assignments_filter_normal_illustration_browse(tmp_path):
@@ -251,6 +263,7 @@ def test_deassign_refuses_missing_and_ambiguous_targets(tmp_path, monkeypatch):
 
 
 def test_pending_recheck_bypasses_only_matching_per_shot_cache(tmp_path):
+    _write_publication_source(tmp_path)
     old_path, _ = _write_catalog_object(tmp_path, object_index=1)
     mark_recheck_pending(old_path, annotation_value="arm bands")
 
@@ -297,6 +310,7 @@ def test_pending_recheck_bypasses_only_matching_per_shot_cache(tmp_path):
 
 
 def test_fresh_catalog_extraction_writes_explicit_active_assignment(tmp_path, monkeypatch):
+    _write_publication_source(tmp_path)
     video_path = tmp_path / "media" / "videos" / "movie" / "film_a.mp4"
     video_path.parent.mkdir(parents=True)
     video_path.write_bytes(b"placeholder")
@@ -354,6 +368,7 @@ def test_fresh_catalog_extraction_writes_explicit_active_assignment(tmp_path, mo
 
 
 def test_successful_recheck_supersedes_prior_active_duplicates_without_deletion(tmp_path):
+    _write_publication_source(tmp_path)
     old_path, old_png = _write_catalog_object(tmp_path, object_index=1)
     duplicate_path, duplicate_png = _write_catalog_object(tmp_path, object_index=2)
     new_path, new_png = _write_catalog_object(

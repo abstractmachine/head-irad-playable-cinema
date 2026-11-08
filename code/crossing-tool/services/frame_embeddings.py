@@ -42,15 +42,23 @@ def is_frame_index_current(
     filename: str,
     media_type: str,
     model_name: str,
+    *, registry=None,
 ) -> bool:
     """Return True when all three frame-embedding files exist and match the model.
 
     Existence check only (no hash comparison) for speed.  Pass ``--force`` to
     force a rebuild regardless.
     """
-    npy_path = get_frame_embeddings_path(project_path, filename, media_type)
-    valid_path = get_frame_valid_path(project_path, filename, media_type)
-    manifest_path = get_frame_manifest_path(project_path, filename, media_type)
+    from data.index import annotation_artifacts_for_file
+    collection = annotation_artifacts_for_file(project_path, filename, media_type, registry=registry,
+                                               required=(".annotations.json", ".frames.npy", ".frames.valid.npy", ".frames.manifest.json"))
+    npy_path = collection["expected"][".frames.npy"]
+    valid_path = collection["expected"][".frames.valid.npy"]
+    manifest_path = collection["expected"][".frames.manifest.json"]
+    if registry is not None:
+        from data.resource_locations import resolve_annotation
+        for suffix in (".annotations.json", ".frames.npy", ".frames.valid.npy", ".frames.manifest.json"):
+            resolve_annotation(project_path, filename, media_type, suffix, registry=registry)
 
     if not (npy_path.exists() and valid_path.exists() and manifest_path.exists()):
         return False
@@ -79,6 +87,7 @@ def build_frame_embeddings(
     verbose: bool = False,
     batch_size: int = 32,
     limit: int | None = None,
+    registry=None,
 ) -> dict[str, Any]:
     """Embed best-frame PNGs for all shots in *filename* and save index files.
 
@@ -101,13 +110,14 @@ def build_frame_embeddings(
         RuntimeError:      If all frames are missing (writing an all-zero index
                            would be useless).
     """
-    from data.annotate import get_annotation_json_path
+    from data.index import annotation_artifacts_for_file
 
     stem = Path(filename).stem
-    json_path = get_annotation_json_path(project_path, filename, media_type)
-    npy_path = get_frame_embeddings_path(project_path, filename, media_type)
-    valid_path = get_frame_valid_path(project_path, filename, media_type)
-    manifest_path = get_frame_manifest_path(project_path, filename, media_type)
+    collection = annotation_artifacts_for_file(project_path, filename, media_type, registry=registry)
+    json_path = collection["expected"][".annotations.json"]
+    npy_path = collection["expected"][".frames.npy"]
+    valid_path = collection["expected"][".frames.valid.npy"]
+    manifest_path = collection["expected"][".frames.manifest.json"]
 
     if not json_path.exists():
         raise FileNotFoundError(
@@ -116,7 +126,7 @@ def build_frame_embeddings(
         )
 
     # Up-to-date skip
-    if not force and is_frame_index_current(project_path, filename, media_type, model_name):
+    if not force and is_frame_index_current(project_path, filename, media_type, model_name, registry=registry):
         if verbose:
             print(f"  — {stem}  (frame-embeddings up to date, use --force to rebuild)")
         return {
@@ -130,7 +140,9 @@ def build_frame_embeddings(
         }
 
     # Load items
-    items = load_annotation_items(project_path, filename, media_type)
+    items = load_annotation_items(project_path, filename, media_type, registry=registry)
+    if registry is not None:
+        raise ValueError("Registered frame-sidecar regeneration requires controlled artifact publication; committed collections are read-only")
     if limit is not None:
         items = items[:limit]
 

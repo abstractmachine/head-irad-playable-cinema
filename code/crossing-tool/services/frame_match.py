@@ -71,6 +71,7 @@ def load_best_frame_lookup(
     project_path: str,
     filename: str,
     media_type: str = "movie",
+    *, registry=None,
 ) -> dict:
     """Return a {shot_id: best_frame_dict} mapping for *filename*.
 
@@ -83,9 +84,12 @@ def load_best_frame_lookup(
     """
     from data.annotate import get_annotation_json_path
 
-    agg_path = get_annotation_json_path(project_path, filename, media_type)
+    agg_path = get_annotation_json_path(project_path, filename, media_type, registry=registry)
     if not agg_path.exists():
         return {}
+    if registry is not None:
+        from data.resource_locations import resolve_annotation
+        agg_path = resolve_annotation(project_path, filename, media_type, registry=registry)
 
     entries = json.loads(agg_path.read_text(encoding="utf-8"))
 
@@ -556,6 +560,7 @@ def annotate_best_frames(
     model_name: str = "clip-vit-base-patch32",
     force: bool = False,
     verbose: bool = False,
+    *, registry=None,
 ) -> Dict[str, Any]:
     """Find the best matching frame for every annotated shot in *filename*.
 
@@ -576,7 +581,9 @@ def annotate_best_frames(
     from data.media_id import compute_media_id, build_shot_id
 
     project = Path(project_path)
-    agg_path = get_annotation_json_path(project_path, filename, media_type)
+    if registry is not None:
+        raise ValueError("Registered best-frame writes require controlled annotation artifact publication")
+    agg_path = get_annotation_json_path(project_path, filename, media_type, registry=registry)
 
     if not agg_path.exists():
         raise FileNotFoundError(

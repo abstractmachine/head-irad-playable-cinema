@@ -277,6 +277,9 @@ def generate_engraving_openai(
     model: str = DEFAULT_MODEL,
     size: str = DEFAULT_SIZE,
     force: bool = False,
+    registry=None,
+    instance_id=None,
+    approved: bool = False,
 ) -> dict:
     """Prepare and generate an engraving via the OpenAI images API.
 
@@ -321,7 +324,7 @@ def generate_engraving_openai(
         for m in ("isolated", "frame"):
             r = generate_engraving_openai(
                 project_path, source_json,
-                mode=m, model=model, size=size, force=force,
+                mode=m, model=model, size=size, force=force, registry=registry, instance_id=instance_id, approved=approved,
             )
             results.append(r)
         return results  # type: ignore[return-value]
@@ -329,13 +332,19 @@ def generate_engraving_openai(
     source_json = Path(source_json).resolve()
     project = Path(project_path).resolve()
 
-    from services.silhouette_catalog import load_active_record
-    meta = load_active_record(source_json, project)
+    from services.resource_resolution import resolve_source_silhouette
+    source = resolve_source_silhouette(project, source_json, registry=registry, instance_id=instance_id)
+    source_json, meta = source["metadata"], source["record"]
+    if source["layout"] != "legacy-v1":
+        raise ValueError("Canonical generation output requires the later explicit provider cutover; legacy writer is inactive for canonical sources")
+    if registry is not None:
+        from data.resource_storage import ResourceStore
+        store = ResourceStore(project, registry, approved=approved)
     paths = engraving_paths(str(project), source_json, meta, mode)
 
     # ── Guard: bail early before any expensive work ──────────────────────────
-    from services.engraving_paths import read_engraving_meta, ENGRAVING_STATUSES
-    existing = read_engraving_meta(paths["metadata"])
+    from services.engraving_paths import repair_engraving_meta, ENGRAVING_STATUSES
+    existing = repair_engraving_meta(paths["metadata"], approved=True)
     existing_status = (existing or {}).get("status")
     if existing_status == "generated" and not force:
         raise FileExistsError(
@@ -344,20 +353,22 @@ def generate_engraving_openai(
         )
 
     # ── Step 1: (re-)prepare the metadata folder ─────────────────────────────
-    prepare_engraving_from_source(str(project), source_json, mode=mode, force=True)
+    reservation = None
+    if registry is not None:
+        reservation = store.reserve_generation_run(source["instance_id"], meta["field"], meta["label"], "openai", mode)
+    try:
+        prepare_engraving_from_source(str(project), source_json, mode=mode, force=True)
 
     # ── Step 2: resolve image(s) and prompt ──────────────────────────────────
-    sil_png = resolve_silhouette_png(source_json, meta)
-    prompt_filename, prompt_template = load_engraving_prompt(str(project), mode)
-    expanded_prompt = _expand_prompt(prompt_template, meta)
+        sil_png = resolve_silhouette_png(source_json, meta)
+        prompt_filename, prompt_template = load_engraving_prompt(str(project), mode)
+        expanded_prompt = _expand_prompt(prompt_template, meta)
 
     # ── Step 3: get OpenAI key ────────────────────────────────────────────────
-    api_key = get_key(OPENAI_API_NAME, str(project))
+        api_key = get_key(OPENAI_API_NAME, str(project))
 
     # ── Mark as generating before the API call so crashed processes are detected
-    _set_status(paths["metadata"], "generating")
-
-    try:
+        _set_status(paths["metadata"], "generating")
         # ── Step 4: call the API ──────────────────────────────────────────────────
         if mode == "frame":
             frame_png = _resolve_source_frame_png(source_json, meta, str(project))
@@ -367,6 +378,8 @@ def generate_engraving_openai(
         else:
             image_bytes = _call_openai_api(api_key, expanded_prompt, sil_png, model, size)
     except Exception as exc:
+        if reservation is not None:
+            store.finish_generation_attempt(reservation, "failed")
         _set_status(paths["metadata"], "failed",
                     last_error=str(exc),
                     last_attempt=datetime.now(timezone.utc).isoformat())
@@ -393,7 +406,13 @@ def generate_engraving_openai(
         "api": "images.edit",
         "size": size,
         "created": created,
+        "seed_policy": "provider-managed",
+        "version_policy": "provider-managed",
+        "prompt": expanded_prompt,
+        "parameters": {"size": size, "n": 1},
     })
+    if reservation is not None:
+        eng_meta["generation_run"] = reservation
     # Store provenance for which image(s) were used
     eng_meta["inputs"] = {
         "silhouette_png": _project_rel(str(project), sil_png),
@@ -403,10 +422,8 @@ def generate_engraving_openai(
             else None
         ),
     }
-    paths["metadata"].write_text(
-        json.dumps(eng_meta, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    from services.resource_publication import publish_engraving
+    publish_engraving(project, source, eng_meta, paths["engraving_png"], mode)
     try:
         from services.illustration_index import invalidate_index
         invalidate_index(project, "engravings", meta.get("media_type", "movie"))

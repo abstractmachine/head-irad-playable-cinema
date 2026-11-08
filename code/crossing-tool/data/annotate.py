@@ -254,6 +254,10 @@ def _validate_annotation(data: Dict[str, Any], *, label_fields: Optional[frozens
         _lk = _k.lower()
         if _lk not in result or (not result[_lk] and _v):
             result[_lk] = _v
+    from services.resource_validation import validate_annotation_classifications
+    findings = validate_annotation_classifications(result)
+    if findings:
+        raise ValueError("Annotation classification validation failed: " + json.dumps(findings))
     for field, expected_type in _ANNOTATION_SCHEMA.items():
         val = result.get(field)
         if expected_type is str:
@@ -1418,7 +1422,28 @@ def _build_prompt(
 # ETA helpers — used by annotate_file_shots and annotate_all_files
 # ---------------------------------------------------------------------------
 
-def _load_existing_agg(project_path: str, filename: str, media_type: str) -> Dict[str, Any]:
+def write_annotation_aggregate(project_path, filename, media_type, entries, *, registry=None):
+    """Validate declared classifications before the existing atomic legacy write."""
+    from data.index import annotation_artifacts_for_file
+    from services.resource_validation import validate_annotation_classifications
+    if registry is not None:
+        raise ValueError("Registered annotation writes require controlled artifact publication; generation cannot overwrite committed hashes")
+    findings = []
+    for entry in entries:
+        shot = entry.get("shot", {}) if isinstance(entry, dict) else {}
+        annotation = shot.get("annotation", {}) if isinstance(shot, dict) else {}
+        if isinstance(annotation, dict):
+            findings.extend({"shot_id": shot.get("shot_id"), **finding} for finding in validate_annotation_classifications(annotation))
+    if findings:
+        raise ValueError("Annotation classification validation failed: " + json.dumps(findings))
+    artifacts = annotation_artifacts_for_file(project_path, filename, media_type, required=())
+    path = artifacts["expected"][".annotations.json"]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(path, json.dumps(entries, indent=2, ensure_ascii=False))
+    return path
+
+
+def _load_existing_agg(project_path: str, filename: str, media_type: str, *, registry=None) -> Dict[str, Any]:
     """Load the aggregated annotations JSON for *filename*, keyed by string shot_id.
 
     Both old integer shot_ids and new stable string shot_ids are supported:
@@ -1427,10 +1452,13 @@ def _load_existing_agg(project_path: str, filename: str, media_type: str) -> Dic
 
     Returns an empty dict if the file does not exist or cannot be parsed.
     """
-    agg_path = get_annotation_json_path(project_path, filename, media_type)
+    agg_path = get_annotation_json_path(project_path, filename, media_type, registry=registry)
     result: Dict[str, Any] = {}
     if not agg_path.exists():
         return result
+    if registry is not None:
+        from data.resource_locations import resolve_annotation
+        agg_path = resolve_annotation(project_path, filename, media_type, registry=registry)
     try:
         raw = json.loads(agg_path.read_text(encoding="utf-8"))
         for entry in raw:
@@ -1645,6 +1673,8 @@ def annotate_file_shots(
     timer: Optional[Any] = None,
     subsequent_shots: int = 0,
     on_failure=None,
+    registry=None,
+    repair_legacy_ids: bool = False,
 ) -> Dict[str, Any]:
     """Annotate all shots in a single file and write canonical outputs.
 
@@ -1661,7 +1691,7 @@ def annotate_file_shots(
     entries = get_metadata(project_path, media_type=media_type)
     meta = next((e for e in entries if e.get('filename') == filename), {})
     # Stable media_id drives the new shot identity scheme
-    media_id = compute_media_id(meta, media_type)
+    media_id = meta.get("media_id") or compute_media_id(meta, media_type)
     movie_info = {
         "tmdb": meta.get("tmdb") if meta else None,
         "title": meta.get("title") if meta else Path(filename).stem,
@@ -1670,6 +1700,10 @@ def annotate_file_shots(
 
     # Load atomic label fields from project YAML (falls back to built-in defaults).
     _label_fields = load_label_list_fields(project_path)
+    from data.index import annotation_artifacts_for_file
+    artifacts = annotation_artifacts_for_file(project_path, filename, media_type, registry=registry, required=())
+    if registry is not None and repair_legacy_ids:
+        raise ValueError("Registered legacy-ID repair requires controlled artifact publication")
 
     system_prompt, prompt_path = load_system_prompt(project_path, media_type, prompt_file, prompt_text)
     # Sanitize system prompt to remove any large example JSON blocks
@@ -1687,7 +1721,8 @@ def annotate_file_shots(
 
     # Build output dirs: annotations are stored under data/annotations/shots/<media_type>/<stem>.json
     stem = Path(filename).stem
-    annotations_dir = project / "data" / "annotations" / "shots" / media_type
+    aggregated = artifacts["expected"][".annotations.json"]
+    annotations_dir = aggregated.parent
     annotations_dir.mkdir(parents=True, exist_ok=True)
     # Track whether we modified the shotlist CSV entries (we no longer write full
     # annotation JSON into the shotlist; this avoids duplicating data)
@@ -1709,7 +1744,9 @@ def annotate_file_shots(
     if shot_index is not None:
         if shot_index < 0 or shot_index >= len(shots):
             raise IndexError(f"Shot index {shot_index} out of range (0-{len(shots)-1})")
-    aggregated = annotations_dir / f"{stem}.annotations.json"
+    if registry is not None and aggregated.exists():
+        from data.resource_locations import resolve_annotation
+        aggregated = resolve_annotation(project_path, filename, media_type, registry=registry)
     _existing_agg: Dict[str, Any] = {}
     if aggregated.exists():
         try:
@@ -1722,7 +1759,7 @@ def annotate_file_shots(
             try:
                 # Migrate legacy integer shot_ids to stable string shot_ids in-place.
                 # _migrate_legacy_shot_ids no longer raises — it skips bad entries.
-                if any(
+                if repair_legacy_ids and any(
                     isinstance(_e["shot"].get("shot_id"), int)
                     for _e in _raw
                     if isinstance(_e, dict) and isinstance(_e.get("shot"), dict)
@@ -1755,6 +1792,8 @@ def annotate_file_shots(
             "failed": [],
             "annotations_path": str(aggregated),
         }
+    if registry is not None:
+        raise ValueError("Registered annotation generation requires controlled artifact publication; no model or committed write was started")
 
     # Initialize model pipeline (local-first). If this fails we abort early
     try:
@@ -1764,7 +1803,7 @@ def annotate_file_shots(
         raise RuntimeError(f"Failed to initialize model pipeline for '{model_name}': {exc}") from exc
 
     # Create a per-run log file for debugging generation behavior and outputs
-    log_path = annotations_dir / f"{stem}.log" if write_log else None
+    log_path = artifacts["expected"][".log"] if write_log else None
     if write_log:
         try:
             resolved_name = None
@@ -2141,12 +2180,10 @@ def annotate_file_shots(
                 _sid = _r.get("shot", {}).get("shot_id") if isinstance(_r.get("shot"), dict) else None
                 if _sid is not None:
                     _write_map[str(_sid)] = _r
-            atomic_write_text(
-                aggregated,
-                json.dumps([_write_map[k] for k in sorted(_write_map)], indent=2),
-            )
-        except Exception:
-            pass
+            write_annotation_aggregate(project_path, filename, media_type,
+                                       [_write_map[k] for k in sorted(_write_map)])
+        except Exception as exc:
+            raise RuntimeError(f"Annotation aggregate publication failed: {exc}") from exc
         if on_shot_done is not None and success:
             on_shot_done(i)
         if stop_event is not None and stop_event.is_set():
@@ -2175,12 +2212,10 @@ def annotate_file_shots(
             _sid = _r.get("shot", {}).get("shot_id") if isinstance(_r.get("shot"), dict) else None
             if _sid is not None:
                 _write_map[str(_sid)] = _r
-        atomic_write_text(
-            aggregated,
-            json.dumps([_write_map[k] for k in sorted(_write_map)], indent=2),
-        )
-    except Exception:
-        pass
+        write_annotation_aggregate(project_path, filename, media_type,
+                                   [_write_map[k] for k in sorted(_write_map)])
+    except Exception as exc:
+        raise RuntimeError(f"Annotation aggregate publication failed: {exc}") from exc
 
     # Optional exports
     if export_csv:
@@ -2348,13 +2383,13 @@ def annotate_all_files(
     return results
 
 
-def get_annotation_json_path(project_path: str, filename: str, media_type: str) -> Path:
+def get_annotation_json_path(project_path: str, filename: str, media_type: str, *, registry=None) -> Path:
     """Return the canonical annotation JSON path.
 
     ``<project>/data/annotations/shots/<media_type>/<stem>.annotations.json``
     """
     from data.resource_locations import annotation_path
-    return annotation_path(project_path, filename, media_type)
+    return annotation_path(project_path, filename, media_type, registry=registry)
 
 
 def canonical_shot_type(annotation: dict | None) -> str:

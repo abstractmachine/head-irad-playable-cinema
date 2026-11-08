@@ -107,6 +107,8 @@ def batch_generate_engravings(
     force: bool = False,
     verbose: bool = False,
     on_item_done: Callable[[dict, dict | list, Exception | None], None] | None = None,
+    registry=None,
+    approved: bool = False,
 ) -> dict:
     """Generate engravings for a list of catalog targets.
 
@@ -147,8 +149,9 @@ def batch_generate_engravings(
 
     for target in targets:
         source_json = target["path"]
-        from services.silhouette_catalog import load_active_record
-        meta = load_active_record(source_json, project_path)
+        from services.resource_resolution import resolve_source_silhouette
+        source = resolve_source_silhouette(project_path, source_json, registry=registry)
+        source_json, meta = source["metadata"], source["record"]
         label = target.get("label", meta.get("label", "?"))
 
         # Skip if all required modes are already successfully generated.
@@ -177,6 +180,7 @@ def batch_generate_engravings(
                 model=model,
                 size=size,
                 force=force,
+                **({"registry": registry, "approved": approved} if registry is not None else {}),
             )
             generated += 1
             if on_item_done:

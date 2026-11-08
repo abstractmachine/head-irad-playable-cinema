@@ -13,11 +13,11 @@ import re
 import sqlite3
 from pathlib import Path
 
-from data.media_id import instance_identifier, label_slug
+from data.media_id import instance_identifier, label_slug, INSTANCE_REGISTRATION_POLICY
 
 
 RESEARCH = Path("outputs/tests/silhouette-canonical-identity")
-POLICY = "frame-ordinal-field-label-reference-path-v1"
+POLICY = INSTANCE_REGISTRATION_POLICY
 
 
 def research_path(project, path):

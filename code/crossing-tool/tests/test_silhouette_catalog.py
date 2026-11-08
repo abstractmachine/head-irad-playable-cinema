@@ -14,6 +14,7 @@ Covers:
 import json
 import tempfile
 import unittest
+import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -53,6 +54,22 @@ def test_extraction_marks_illustration_index_stale_before_search(tmp_path):
 
     invalidate.assert_called_once_with(str(tmp_path), "silhouettes", "movie")
     assert result["total_shots"] == 0
+
+
+@pytest.mark.parametrize("field,label", [(None, "field"), ("objects", None), ("animals", "field")])
+def test_extraction_rejects_classification_before_inference(tmp_path, field, label):
+    metadata = tmp_path / "data/metadata/movie.json"
+    metadata.parent.mkdir(parents=True)
+    metadata.write_text(json.dumps({"media": [{"filename": "Film.mp4", "media_id": "tmdb_1"}]}))
+    annotation = tmp_path / "data/annotations/shots/movie/Film.annotations.json"
+    annotation.parent.mkdir(parents=True)
+    annotation.write_text(json.dumps([{"shot": {"shot_id": "tmdb_1@f000000-f000100", "annotation": {"objects": ["field"]}}}]))
+    with patch("services.frame_match._load_clip_model", side_effect=AssertionError("inference forbidden")):
+        result = silhouette_catalog.extract_objects_for_shot(project_path=str(tmp_path), media_type="movie", filename="Film.mp4", media_id="tmdb_1",
+                                     shot_id="tmdb_1@f000000-f000100", label=label, field=field,
+                                     sam_model_name="sam", frame_model_name="clip")
+    assert result["reason"] == "classification validation failed"
+    assert not (tmp_path / "data/silhouettes").exists()
 
 
 # ---------------------------------------------------------------------------

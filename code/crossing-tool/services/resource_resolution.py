@@ -14,17 +14,49 @@ def _silhouette(project, binding):
 
 def resolve_silhouette(project, instance_id, *, registry):
     """Resolve an active registered instance without allocation or directory search."""
-    return _silhouette(project, locations.registered_instance(project, registry, instance_id))
+    from data.resource_storage import registry_lock
+    with registry_lock(project, registry):
+        result = _silhouette(project, locations.registered_instance(project, registry, instance_id))
+        result["image_bytes"] = result["image"].read_bytes()
+        return result
+
+
+def resolve_source_silhouette(project, source_json=None, *, registry=None, instance_id=None):
+    """Shared producer source interface: exact registered identity or current legacy input."""
+    from pathlib import Path
+    from services.silhouette_catalog import load_active_record
+    from services.engraving_paths import resolve_silhouette_png
+    if registry is not None:
+        if instance_id is None:
+            import sqlite3
+            from data.resource_storage import registry_lock, relative_path
+            reference = relative_path(project, source_json)
+            with registry_lock(project, registry), sqlite3.connect(locations.project_file(project, registry).as_uri() + "?mode=ro", uri=True) as database:
+                rows = database.execute("SELECT instance_id FROM instances WHERE legacy_json=? UNION SELECT instance_id FROM resource_locations WHERE kind='silhouettes' AND record_path=?", (reference, reference)).fetchall()
+                if len(rows) != 1:
+                    raise ValueError("Source path has no exact unique registered binding")
+                instance_id = rows[0][0]
+        return resolve_silhouette(project, instance_id, registry=registry)
+    if instance_id is not None:
+        raise ValueError("Registered source identity requires an explicit registry")
+    path = Path(source_json)
+    record = load_active_record(path, project)
+    return {"metadata": path, "image": resolve_silhouette_png(path, record), "record": record, "layout": "legacy-v1",
+            "instance_id": record.get("instance_id")}
 
 
 def resolve_engraving(project, instance_id, mode="frame", *, registry):
     """Resolve a generated mode publication, preserving canonical source authorization."""
     if mode not in locations.MODES:
         raise ValueError("Unsupported engraving mode")
-    binding = locations.registered_instance(project, registry, instance_id)
-    _silhouette(project, binding)
-    result = locations.current_location(project, binding, "engravings", mode)
-    result = result if result is not None else legacy.registered_engraving(project, binding, mode)
-    if result["record"].get("status") != "generated":
-        raise ValueError("Engraving is not a generated publication")
-    return result
+    from data.resource_storage import registry_lock
+    with registry_lock(project, registry):
+        binding = locations.registered_instance(project, registry, instance_id)
+        source = _silhouette(project, binding)
+        result = locations.current_location(project, binding, "engravings", mode)
+        result = result if result is not None else legacy.registered_engraving(project, binding, mode)
+        if result["record"].get("status") != "generated":
+            raise ValueError("Engraving is not a generated publication")
+        result["source_dirty"] = bool(source["record"].get("source_validation", {}).get("dirty"))
+        result["image_bytes"] = result["image"].read_bytes()
+        return result

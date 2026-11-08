@@ -1038,6 +1038,7 @@ def process_shot_silhouette(
         "contained": True,
         "rejection_reason": None,
         "bbox": bbox,
+        "mask_area": int(accepted_seg.sum()),
         "polygon": accepted_polygon,
         "polygon_simplification": "douglas_peucker_0.005_perimeter",
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -1372,6 +1373,18 @@ def build_silhouette(
         # ----- accepted: fill in scope + save -----
         payload = result["payload"]
         payload["scope"] = _scope_label(scope_type, scope_value)
+        from services.resource_validation import validate_source_classification
+        findings = validate_source_classification(project_path, {
+            "media_type": media_type, "media_id": cand_media_id, "filename": filename,
+            "shot_id": candidate_shot_id, "field": payload.get("field"), "label": payload.get("word"),
+            "frame": payload.get("frame_index"),
+            "bbox": payload.get("bbox"), "frame_size": payload.get("frame_size"), "mask_area": payload.get("mask_area"),
+            "sam_model": payload.get("sam_model"), "frame_match_model": payload.get("frame_match_model"),
+            "source_frame": payload.get("frame_provenance"),
+        }, segmentation=True)
+        if findings["state"] != "valid":
+            return {"accepted": False, "reason": "classification validation failed", "validation": findings,
+                    "payload": None, "output_path": None, "candidates": candidates}
 
         frame_index = payload["frame_index"]
         clip_score = payload["score"]

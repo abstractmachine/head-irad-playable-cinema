@@ -259,14 +259,14 @@ def serialize_annotation_item(item: dict, mapping: dict) -> str:
     return separator.join(parts)
 
 
-def get_text_path(project_path: str, filename: str, media_type: str) -> Path:
+def get_text_path(project_path: str, filename: str, media_type: str, *, registry=None) -> Path:
     """Return the canonical path for the serialized ``.annotations.txt`` file.
 
     Sits alongside the annotation JSON:
     ``<project>/data/annotations/shots/<media_type>/<stem>.annotations.txt``
     """
     from data.resource_locations import annotation_path
-    return annotation_path(project_path, filename, media_type, ".annotations.txt")
+    return annotation_path(project_path, filename, media_type, ".annotations.txt", registry=registry)
 
 
 def write_text_file(
@@ -302,7 +302,7 @@ def write_text_file(
     return dest
 
 
-def load_annotation_items(project_path: str, filename: str, media_type: str) -> list[dict]:
+def load_annotation_items(project_path: str, filename: str, media_type: str, *, registry=None) -> list[dict]:
     """Load annotation JSON items for a given film.
 
     Args:
@@ -318,13 +318,16 @@ def load_annotation_items(project_path: str, filename: str, media_type: str) -> 
     """
     from data.annotate import get_annotation_json_path
 
-    json_path = get_annotation_json_path(project_path, filename, media_type)
+    json_path = get_annotation_json_path(project_path, filename, media_type, registry=registry)
     if not json_path.exists():
         raise FileNotFoundError(
             f"No annotation JSON found: {json_path}\n"
             f"  Run: crossing annotate shot {filename}"
         )
 
+    if registry is not None:
+        from data.resource_locations import resolve_annotation
+        json_path = resolve_annotation(project_path, filename, media_type, registry=registry)
     with json_path.open("r", encoding="utf-8") as f:
         return json.load(f)
 
@@ -333,7 +336,7 @@ def load_annotation_items(project_path: str, filename: str, media_type: str) -> 
 # Embeddings
 # ---------------------------------------------------------------------------
 
-def get_embeddings_path(project_path: str, filename: str, media_type: str) -> Path:
+def get_embeddings_path(project_path: str, filename: str, media_type: str, *, registry=None) -> Path:
     """Return the canonical path for the embeddings ``.annotations.npy`` file.
 
     Sits alongside the annotation JSON and serialized text:
@@ -344,7 +347,7 @@ def get_embeddings_path(project_path: str, filename: str, media_type: str) -> Pa
     - serialized text line order
     """
     from data.resource_locations import annotation_path
-    return annotation_path(project_path, filename, media_type, ".annotations.npy")
+    return annotation_path(project_path, filename, media_type, ".annotations.npy", registry=registry)
 
 
 def write_embeddings(
@@ -382,7 +385,7 @@ def write_embeddings(
     return dest
 
 
-def load_embeddings(project_path: str, filename: str, media_type: str):
+def load_embeddings(project_path: str, filename: str, media_type: str, *, registry=None):
     """Load the embeddings array from ``<stem>.npy``, or return ``None`` if absent.
 
     Returns:
@@ -390,9 +393,12 @@ def load_embeddings(project_path: str, filename: str, media_type: str):
     """
     import numpy as np
 
-    path = get_embeddings_path(project_path, filename, media_type)
+    path = get_embeddings_path(project_path, filename, media_type, registry=registry)
     if not path.exists():
         return None
+    if registry is not None:
+        from data.resource_locations import resolve_annotation
+        path = resolve_annotation(project_path, filename, media_type, ".annotations.npy", registry=registry)
     return np.load(path)
 
 
@@ -516,13 +522,13 @@ def embed_texts(
 MANIFEST_VERSION = 1
 
 
-def get_manifest_path(project_path: str, filename: str, media_type: str) -> Path:
+def get_manifest_path(project_path: str, filename: str, media_type: str, *, registry=None) -> Path:
     """Return the canonical path for the sidecar manifest.
 
     ``<project>/data/annotations/shots/<media_type>/<stem>.annotations.manifest.json``
     """
     from data.resource_locations import annotation_path
-    return annotation_path(project_path, filename, media_type, ".annotations.manifest.json")
+    return annotation_path(project_path, filename, media_type, ".annotations.manifest.json", registry=registry)
 
 
 def hash_file(path: "Path | str") -> str:
@@ -536,9 +542,12 @@ def hash_file(path: "Path | str") -> str:
     return f"sha256:{h.hexdigest()}"
 
 
-def load_manifest(project_path: str, filename: str, media_type: str) -> "dict | None":
+def load_manifest(project_path: str, filename: str, media_type: str, *, registry=None) -> "dict | None":
     """Load and return the manifest dict, or ``None`` if absent."""
-    path = get_manifest_path(project_path, filename, media_type)
+    path = get_manifest_path(project_path, filename, media_type, registry=registry)
+    if registry is not None and path.exists():
+        from data.resource_locations import resolve_annotation
+        path = resolve_annotation(project_path, filename, media_type, ".annotations.manifest.json", registry=registry)
     if not path.exists():
         return None
     with path.open("r", encoding="utf-8") as f:
@@ -625,28 +634,42 @@ def build_manifest(
 # Frame-embedding paths
 # ---------------------------------------------------------------------------
 
-def get_frame_embeddings_path(project_path: str, filename: str, media_type: str) -> Path:
+def get_frame_embeddings_path(project_path: str, filename: str, media_type: str, *, registry=None) -> Path:
     """Return the canonical path for the frame-embeddings ``.frames.npy`` file.
 
     ``<project>/data/annotations/shots/<media_type>/<stem>.frames.npy``
     """
     from data.resource_locations import annotation_path
-    return annotation_path(project_path, filename, media_type, ".frames.npy")
+    return annotation_path(project_path, filename, media_type, ".frames.npy", registry=registry)
 
 
-def get_frame_valid_path(project_path: str, filename: str, media_type: str) -> Path:
+def get_frame_valid_path(project_path: str, filename: str, media_type: str, *, registry=None) -> Path:
     """Return the canonical path for the frame validity mask ``.frames.valid.npy`` file.
 
     ``<project>/data/annotations/shots/<media_type>/<stem>.frames.valid.npy``
     """
     from data.resource_locations import annotation_path
-    return annotation_path(project_path, filename, media_type, ".frames.valid.npy")
+    return annotation_path(project_path, filename, media_type, ".frames.valid.npy", registry=registry)
 
 
-def get_frame_manifest_path(project_path: str, filename: str, media_type: str) -> Path:
+def get_frame_manifest_path(project_path: str, filename: str, media_type: str, *, registry=None) -> Path:
     """Return the canonical path for the frame-embedding manifest ``.frames.manifest.json``.
 
     ``<project>/data/annotations/shots/<media_type>/<stem>.frames.manifest.json``
     """
     from data.resource_locations import annotation_path
-    return annotation_path(project_path, filename, media_type, ".frames.manifest.json")
+    return annotation_path(project_path, filename, media_type, ".frames.manifest.json", registry=registry)
+
+
+def annotation_artifacts_for_file(project_path, filename, media_type, *, registry=None, required=(".annotations.json",)):
+    """Shared exact collection for loaders/builders, including legacy metadata-less fixtures."""
+    from data.resource_locations import annotation_artifacts, find_media
+    try:
+        record = find_media(project_path, media_type, filename=filename)
+    except ValueError as exc:
+        from data.metadata import get_metadata
+        matches = [entry for entry in get_metadata(project_path, media_type=media_type) if entry.get("filename") == filename]
+        if registry is not None or matches:
+            raise
+        record = {"filename": filename}
+    return annotation_artifacts(project_path, record, media_type, registry=registry, required=required)

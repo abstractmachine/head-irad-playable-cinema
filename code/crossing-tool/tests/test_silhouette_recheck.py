@@ -87,6 +87,10 @@ def _write_source_annotation(
     shot_id: str = "tmdb_1@f000010-f000020",
     append: bool = False,
 ) -> Path:
+    metadata = project / "data/metadata/movie.json"
+    metadata.parent.mkdir(parents=True, exist_ok=True)
+    if not metadata.exists():
+        metadata.write_text(json.dumps({"media": [{"filename": "film_a.mp4", "media_id": "tmdb_1"}]}))
     path = project / "data" / "annotations" / "shots" / "movie" / "film_a.annotations.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     entries = json.loads(path.read_text(encoding="utf-8")) if append and path.exists() else []
@@ -107,6 +111,8 @@ def _write_replacement(
     object_id: str = "object_0001",
     shot_id: str = "tmdb_1@f000010-f000020",
 ) -> Path:
+    from data.media_id import parse_shot_id
+    frame = parse_shot_id(shot_id)[1]
     replacement_dir = (
         project / "data" / "silhouettes" / "catalog" / "movie" / "film_a" / label.replace(" ", "_")
     )
@@ -121,9 +127,11 @@ def _write_replacement(
         "filename_stem": "film_a",
         "media_id": "tmdb_1",
         "shot_id": shot_id,
-        "frame": 13,
+        "frame": frame,
         "field": "objects",
         "label": label,
+        "bbox": [0, 0, 20, 20], "frame_size": [20, 20], "mask_area": 400,
+        "sam_model": "fixture-sam", "frame_match_model": "fixture-clip", "source_frame": f"frame:{frame}",
         "png": replacement_png.name,
         "assignment": {"state": ASSIGNMENT_ACTIVE},
     }, indent=2) + "\n", encoding="utf-8")
@@ -781,6 +789,7 @@ def test_shared_replacement_preserves_relationships_to_each_old_object(tmp_path,
 
 def test_automated_pending_recheck_bypasses_only_queued_atomic_value(tmp_path):
     old_json, _ = _write_old_questionable(tmp_path)
+    _write_source_annotation(tmp_path, ["gun belt"])
     queue_recheck_pending(old_json, annotation_values=["gun belt"])
 
     allowed = extract_objects_for_shot(

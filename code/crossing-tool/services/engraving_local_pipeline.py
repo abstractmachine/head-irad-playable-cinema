@@ -77,6 +77,9 @@ def convert_one(
     seed: int | None = None,
     force: bool = False,
     output_png: str | Path | None = None,
+    registry=None,
+    instance_id=None,
+    approved: bool = False,
 ) -> dict:
     """Convert one silhouette into an isolated engraving and return the run record.
 
@@ -91,13 +94,18 @@ def convert_one(
 
     project_path = Path(project_path)
     source_json = Path(source_json)
-    from services.silhouette_catalog import load_active_record
-    load_active_record(source_json, project_path)
+    from services.resource_resolution import resolve_source_silhouette
+    source = resolve_source_silhouette(project_path, source_json, registry=registry, instance_id=instance_id)
+    source_json = source["metadata"]
+    if source["layout"] != "legacy-v1":
+        raise ValueError("Canonical generation requires explicit provider output cutover; legacy writer is disabled for canonical sources")
+    if registry is not None:
+        from data.resource_storage import ResourceStore
+        store = ResourceStore(project_path, registry, approved=approved)
     config = config or resolve_config()
     seed = int(config["run"]["seed"] if seed is None else seed)
 
-    evidence = assemble_evidence(source_json, config)
-    record = evidence["record"]
+    record = source["record"]
     mode = canonical_mode(config)
     # Each (object, mode) owns an independent provenance namespace, so an
     # isolated run can never be served from a frame cache or vice versa.
@@ -111,16 +119,29 @@ def convert_one(
         if config["run"].get("publish", True) and not (existing.get("publication") or {}).get("published"):
             from services.engraving_local_publish import publish_run
 
-            existing["publication"] = publish_run(project_path, existing, config)
+            existing["publication"] = publish_run(project_path, existing, config, registry=registry)
             _write_json(paths["run_json"], existing)
         return existing
+
+    reservation = store.reserve_generation_run(source["instance_id"], record["field"], record["label"], "local", mode) if registry is not None else None
+    try:
+        evidence = assemble_evidence(source_json, config)
+    except Exception:
+        if reservation is not None:
+            store.finish_generation_attempt(reservation, "failed")
+        raise
 
     paths["dir"].mkdir(parents=True, exist_ok=True)
     paths["evidence_dir"].mkdir(parents=True, exist_ok=True)
 
     owns_model = model is None
     if owns_model:
-        model = LocalEngravingModel(project_path, config)
+        try:
+            model = LocalEngravingModel(project_path, config)
+        except Exception:
+            if reservation is not None:
+                store.finish_generation_attempt(reservation, "failed")
+            raise
 
     run: dict = {
         "schema_version": LOCAL_ENGRAVING_SCHEMA_VERSION,
@@ -128,6 +149,7 @@ def convert_one(
         "status": "running",
         "created_at": _now(),
         "seed": seed,
+        "generation_run": reservation,
         "mode": mode,
         "provenance_layout": "legacy" if legacy_layout else "mode-aware",
         "provenance": evidence["provenance"],
@@ -264,11 +286,13 @@ def convert_one(
         if config["run"].get("publish", True):
             from services.engraving_local_publish import publish_run
 
-            run["publication"] = publish_run(project_path, run, config, force=force)
+            run["publication"] = publish_run(project_path, run, config, force=force, registry=registry)
         else:
             run["publication"] = {"published": False, "reason": "publishing disabled"}
 
     except Exception as exc:
+        if reservation is not None:
+            store.finish_generation_attempt(reservation, "failed")
         run["status"] = "failed"
         run["error"] = f"{type(exc).__name__}: {exc}"
         run["total_seconds"] = time.time() - started
@@ -297,6 +321,8 @@ def convert_batch(
     config: dict | None = None,
     force: bool = False,
     on_result=None,
+    registry=None,
+    approved: bool = False,
 ) -> dict:
     """Convert many silhouettes with one shared model instance.
 
@@ -309,6 +335,9 @@ def convert_batch(
     project_path = Path(project_path)
     config = config or resolve_config()
     total = len(sources)
+    if registry is not None:
+        from data.resource_storage import ResourceStore
+        ResourceStore(project_path, registry, approved=approved)
 
     summary = {
         "total": total,
@@ -333,6 +362,7 @@ def convert_batch(
                     config=config,
                     model=model,
                     force=force,
+                    **({"registry": registry, "approved": approved} if registry is not None else {}),
                 )
                 if run.get("reused_cache"):
                     summary["reused"] += 1

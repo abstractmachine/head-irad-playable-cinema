@@ -112,3 +112,22 @@ class TestSaveAnnotationEntries:
         nested = tmp_path / "data" / "annotations" / "shots" / "trailer" / "New.annotations.json"
         _save_annotation_entries(nested, [])
         assert nested.exists()
+
+
+@pytest.mark.parametrize("classified", [{"label": "field"}, {"field": "objects"}, {"field": "animals", "label": "field"}])
+def test_invalid_classification_preserves_previous_aggregate(tmp_path, classified):
+    before = [{"shot": {"shot_id": "tmdb_1@f000001-f000010", "annotation": {"objects": ["field"]}}}]
+    path = annotate.write_annotation_aggregate(tmp_path, "film.mp4", "movie", before)
+    original = path.read_bytes()
+    invalid = [{"shot": {"shot_id": "tmdb_1@f000001-f000010", "annotation": {"objects": ["field"], "classified": [classified]}}}]
+    with pytest.raises(ValueError, match="classification validation failed"):
+        annotate.write_annotation_aggregate(tmp_path, "film.mp4", "movie", invalid)
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("field,label", [("objects", "field"), ("action", "running"), ("setting", "a field"), ("wearing", "arm band")])
+def test_valid_semantic_classifications_keep_their_schema(tmp_path, field, label):
+    annotation = {field: [label], "classified": [{"field": field, "label": label}]}
+    entries = [{"shot": {"shot_id": "tmdb_1@f000001-f000010", "annotation": annotation}}]
+    path = annotate.write_annotation_aggregate(tmp_path, "film.mp4", "movie", entries)
+    assert json.loads(path.read_text()) == entries

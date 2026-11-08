@@ -15,6 +15,8 @@ import hashlib
 import re
 import unicodedata
 
+INSTANCE_REGISTRATION_POLICY = "frame-ordinal-field-label-reference-path-v1"
+
 
 def compute_media_id(record: dict, media_type: str = "movie") -> str:
     """Return a stable media_id for a metadata record.

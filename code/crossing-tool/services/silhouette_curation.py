@@ -367,6 +367,29 @@ def staged_recheck_replacement_matches(
     )
 
 
+def _validate_replacement_publication(project_path, path, record, historical):
+    from services.resource_validation import validate_source_classification
+    from data.resource_locations import project_file
+    dirty = [old.get("source_validation") for old in historical if old.get("source_validation", {}).get("dirty")]
+    if dirty:
+        current_shots = {state.get("current_shot_id") for state in dirty if state.get("current_shot_id")}
+        if len(current_shots) > 1:
+            raise ValueError("Historical dirty-source bindings disagree; explicit source resolution is required")
+        source_validation = dict(record.get("source_validation") or dirty[0])
+        source_validation["dirty"] = True
+        source_validation["inherited_sources"] = [
+            {"instance_id": old.get("instance_id"), "shot_id": old.get("shot_id"), "source_validation": old["source_validation"]}
+            for old in historical if old.get("source_validation", {}).get("dirty")
+        ]
+        if current_shots:
+            source_validation["current_shot_id"] = next(iter(current_shots))
+        record["source_validation"] = source_validation
+    findings = validate_source_classification(project_path, record, segmentation=True)
+    if findings["state"] != "valid":
+        raise ValueError("Replacement publication validation failed: " + json.dumps(findings))
+    project_file(project_path, path.with_name(record.get("png") or path.with_suffix(".png").name))
+
+
 def complete_recheck_source(
     project_path: str | Path,
     *,
@@ -430,6 +453,7 @@ def complete_recheck_source(
         replacements.append((replacement_path, replacement))
 
     return _commit_completed_source_job(
+        project_path=project_path,
         historical=historical,
         replacements=replacements,
         source_identity=source_identity,
@@ -439,6 +463,7 @@ def complete_recheck_source(
 
 def _commit_completed_source_job(
     *,
+    project_path: str | Path,
     historical: list[tuple[Path, dict[str, Any], dict[str, Any]]],
     replacements: list[tuple[Path, dict[str, Any]]],
     source_identity: dict[str, str],
@@ -448,6 +473,9 @@ def _commit_completed_source_job(
     references: list[dict[str, str]] = []
     updated_replacements: list[dict[str, Any]] = []
     updated_historical: list[dict[str, Any]] = []
+    for replacement_path, replacement in replacements:
+        _validate_replacement_publication(project_path, replacement_path, replacement,
+                                          [record for _path, record, _recheck in historical])
     try:
         with _defer_sigint_during_source_commit():
             for replacement_path, replacement in replacements:
@@ -723,6 +751,7 @@ def complete_recheck(
     if old_recheck.get("state") != RECHECK_PENDING:
         raise ValueError("Original recheck request is not pending")
 
+    _validate_replacement_publication(project_path, new_path, new_record, [old_record])
     new_reference = catalog_object_reference(new_record, new_path)
     old_reference = catalog_object_reference(old_record, old_path)
     new_assignment = active_assignment()

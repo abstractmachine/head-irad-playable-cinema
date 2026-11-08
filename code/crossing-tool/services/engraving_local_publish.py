@@ -144,6 +144,7 @@ def publish_run(
     config: dict,
     *,
     force: bool = False,
+    registry=None,
 ) -> dict:
     """Publish a completed local run as a canonical Illustration.
 
@@ -169,9 +170,11 @@ def publish_run(
         raise PublicationError(f"Run has no final engraving to publish: {final_png}")
 
     source_json = Path(run["source_json"])
-    record = run.get("silhouette_record") or {}
-    if not record:
-        record = json.loads(source_json.read_text(encoding="utf-8"))
+    from services.resource_resolution import resolve_source_silhouette
+    source = resolve_source_silhouette(project_path, source_json, registry=registry)
+    source_json, record = source["metadata"], source["record"]
+    if source["layout"] != "legacy-v1":
+        raise PublicationError("Canonical sources require an explicit canonical reproduction payload; legacy publication is disabled")
 
     mode = canonical_mode(config)
     paths = engraving_paths(project_path, source_json, record, mode=mode)
@@ -202,11 +205,8 @@ def publish_run(
         review_state=review_state,
     )
 
-    from data.annotate import atomic_write_text
-
-    atomic_write_text(
-        paths["metadata"], json.dumps(metadata, indent=2, ensure_ascii=False) + "\n"
-    )
+    from services.resource_publication import publish_engraving
+    publish_engraving(project_path, source, metadata, final_png, mode)
 
     media_type = record.get("media_type") or "movie"
     invalidate_index(project_path, "engravings", media_type)

@@ -508,6 +508,13 @@ def extract_objects_for_shot(
     """
     import numpy as np
 
+    from services.resource_validation import validate_source_classification
+    source_metadata = {"media_type": media_type, "media_id": media_id, "filename": filename,
+                       "shot_id": shot_id, "field": field, "label": label}
+    if not isinstance(field, str) or not field.strip() or not isinstance(label, str) or not label.strip():
+        findings = validate_source_classification(project_path, source_metadata)
+        return {"saved": [], "skipped": 0, "reason": "classification validation failed", "validation": findings}
+
     from data.media_id import parse_shot_id
     from services.silhouette import (
         extract_frame_as_pil,
@@ -573,6 +580,10 @@ def extract_objects_for_shot(
                     return {"saved": [], "skipped": 0, "reason": "cached"}
             except Exception:
                 pass
+
+    findings = validate_source_classification(project_path, source_metadata)
+    if findings["state"] != "valid":
+        return {"saved": [], "skipped": 0, "reason": "classification validation failed", "validation": findings}
 
     # --- resolve video path ---
     video_path = Path(project_path) / "media" / "videos" / media_type / filename
@@ -743,9 +754,6 @@ def extract_objects_for_shot(
         png_path  = label_dir / png_name
         json_path = label_dir / json_name
 
-        # Save PNG
-        png_img.save(str(png_path), format="PNG", optimize=False)
-
         # Build metadata
         bbox = [int(v) for v in mask_dict.get("bbox", [])]
         meta: dict[str, Any] = {
@@ -770,9 +778,17 @@ def extract_objects_for_shot(
             "timestamp":          timestamp,
             "assignment":         active_assignment(),
         }
-        from data.annotate import atomic_write_text
+        if recheck_source_json_path is not None:
+            from services.silhouette_curation import SOURCE_RECHECK_STAGED, SOURCE_RECHECK_JOB_FIELD
+            meta["assignment"] = {"state": ASSIGNMENT_INACTIVE, "reason": SOURCE_RECHECK_STAGED,
+                                  SOURCE_RECHECK_JOB_FIELD: {key: str(meta[key]) for key in ("media_type", "media_id", "shot_id", "field")}}
 
-        atomic_write_text(json_path, json.dumps(meta, indent=2, ensure_ascii=False))
+        findings = validate_source_classification(project_path, meta, segmentation=True)
+        if findings["state"] != "valid":
+            return {"saved": saved_paths, "skipped": skipped_quality + skipped_confidence,
+                "reason": "publication validation failed", "validation": findings}
+        from services.resource_publication import publish_silhouette
+        publish_silhouette(project_path, meta, png_img, source_path=json_path)
 
         # Inline semantic enrichment — uses the already-loaded CLIP model so
         # there is no extra model load.  Best-effort: any failure is logged
@@ -789,7 +805,7 @@ def extract_objects_for_shot(
                 project_path=project_path,
             )
             meta.update(sem)
-            atomic_write_text(json_path, json.dumps(meta, indent=2, ensure_ascii=False))
+            publish_silhouette(project_path, meta, png_path, source_path=json_path)
         except Exception as _sem_exc:
             if verbose:
                 print(f"    (semantic enrichment skipped: {_sem_exc})")

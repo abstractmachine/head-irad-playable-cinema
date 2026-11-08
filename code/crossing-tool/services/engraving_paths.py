@@ -125,7 +125,16 @@ def engraving_paths(
 
 
 def read_engraving_meta(eng_json_path: Path) -> dict | None:
-    """Read ``engraving.json`` and migrate legacy / interrupted files in-place.
+    """Pure JSON lookup: never infer status, write metadata, or repair a run."""
+    try:
+        metadata = json.loads(Path(eng_json_path).read_text(encoding="utf-8"))
+        return metadata if isinstance(metadata, dict) else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def repair_engraving_meta(eng_json_path: Path, *, approved: bool = False) -> dict | None:
+    """Explicitly repair legacy / interrupted status in-place.
 
     Migration rules
     ---------------
@@ -137,11 +146,11 @@ def read_engraving_meta(eng_json_path: Path) -> dict | None:
 
     Returns ``None`` when the file does not exist.
     """
-    if not eng_json_path.exists():
-        return None
-    try:
-        meta = json.loads(eng_json_path.read_text(encoding="utf-8"))
-    except Exception:
+    if not approved:
+        raise ValueError("Explicit engraving repair approval required")
+    eng_json_path = Path(eng_json_path)
+    meta = read_engraving_meta(eng_json_path)
+    if meta is None:
         return None
 
     changed = False
@@ -159,14 +168,15 @@ def read_engraving_meta(eng_json_path: Path) -> dict | None:
         changed = True
 
     if changed:
-        try:
-            eng_json_path.write_text(
-                json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8"
-            )
-        except Exception:
-            pass
+        from data.annotate import atomic_write_text
+        atomic_write_text(eng_json_path, json.dumps(meta, indent=2, ensure_ascii=False))
 
     return meta
+
+
+def read_engraving_meta_legacy(eng_json_path: Path) -> dict | None:
+    """Transitional old behavior; explicit repair boundary for unmigrated callers."""
+    return repair_engraving_meta(eng_json_path, approved=True)
 
 
 def engraving_status(
@@ -178,7 +188,7 @@ def engraving_status(
     """Return the explicit lifecycle status from ``engraving.json``.
 
     Returns ``None`` when no engraving exists for the given mode.
-    Migrates legacy files transparently.
+    Does not repair missing, legacy or interrupted status.
     """
     paths = engraving_paths(project_path, source_json, meta, mode)
     eng_meta = read_engraving_meta(paths["metadata"])

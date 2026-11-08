@@ -159,6 +159,8 @@ def registered_instance(project, registry, instance_id):
             locations = [dict(row) for row in database.execute(
                 "SELECT * FROM resource_locations WHERE instance_id=?", (instance_id,))]
         binding["locations"] = locations
+        if database.execute("SELECT 1 FROM sqlite_master WHERE name='generation_runs'").fetchone():
+            binding["runs"] = [dict(row) for row in database.execute("SELECT * FROM generation_runs WHERE instance_id=?", (instance_id,))]
         return binding
     finally:
         database.close()
@@ -183,19 +185,27 @@ def current_location(project, binding, kind, mode):
     image_path = project_file(project, row["image_path"])
     if metadata_path != expected["metadata"].absolute() or image_path != expected["image"].absolute():
         raise ValueError("Registered location differs from approved destination")
+    from data.resource_storage import digest
+    for key, path in (("record_sha256", metadata_path), ("image_sha256", image_path)):
+        if key in row and digest(path) != row[key]:
+            raise ValueError("Committed resource checksum differs from registry")
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     identity_key = "instance_id" if kind == "silhouettes" else "source_instance_id"
-    if (metadata.get(identity_key) != binding["instance_id"]
+    if (not isinstance(metadata, dict) or metadata.get(identity_key) != binding["instance_id"]
             or metadata.get("field") != row["field"] or metadata.get("label") != row["label"]
             or (kind == "engravings" and metadata.get("mode") != mode)):
         raise ValueError("Stale resource identity/classification/location binding")
     return {"instance_id": binding["instance_id"], "metadata": metadata_path,
-            "image": image_path, "record": metadata, "layout": row["layout"]}
+            "image": image_path, "record": metadata, "layout": row["layout"], "revision": row["revision"]}
 
 
-def annotation_path(project, filename, media_type, suffix=".annotations.json", *, layout="legacy-v1"):
+def annotation_path(project, filename, media_type, suffix=".annotations.json", *, layout=None, registry=None):
     """Existing callers default to legacy writes; new-layout reads are explicit."""
     from data.resource_locations_legacy import annotation_path as legacy_path
+    committed = committed_annotation_layout(project, filename, media_type, registry) if registry is not None else None
+    if committed is not None and layout is not None and committed != layout:
+        raise ValueError("Requested annotation layout differs from committed authority")
+    layout = committed or layout or "legacy-v1"
     if layout == "legacy-v1":
         return legacy_path(project, filename, media_type, suffix)
     if layout != "media-first-v1":
@@ -203,14 +213,97 @@ def annotation_path(project, filename, media_type, suffix=".annotations.json", *
     return annotation_destination(project, find_media(project, media_type, filename=filename), media_type, suffix)
 
 
-def resolve_annotation(project, filename, media_type, suffix=".annotations.json", *, layout="legacy-v1"):
+def resolve_annotation(project, filename, media_type, suffix=".annotations.json", *, layout=None, registry=None):
     """Exact read-only lookup; an explicit layout avoids treating staging as committed."""
-    path = annotation_path(project, filename, media_type, suffix, layout=layout)
-    if layout == "media-first-v1":
+    if registry is not None:
+        from data.resource_storage import registry_lock, digest
+        with registry_lock(project, registry):
+            commitment = annotation_commitment(project, filename, media_type, registry)
+            committed = commitment["layout"] if commitment else None
+            if committed is not None and layout is not None and committed != layout:
+                raise ValueError("Requested annotation layout differs from committed authority")
+            path = annotation_path(project, filename, media_type, suffix, layout=committed or layout)
+            if commitment is not None:
+                if suffix not in commitment["artifacts"]:
+                    raise ValueError("Annotation artifact has not been committed")
+                path = project_file(project, path)
+                if digest(path) != commitment["artifacts"][suffix]:
+                    raise ValueError("Annotation artifact checksum differs from committed authority")
+                return path
+            return resolve_annotation(project, filename, media_type, suffix, layout=layout)
+    path = annotation_path(project, filename, media_type, suffix, layout=layout, registry=registry)
+    committed = committed_annotation_layout(project, filename, media_type, registry) if registry is not None else None
+    if layout == "media-first-v1" and committed is None:
         legacy = annotation_path(project, filename, media_type, suffix)
         if legacy.exists():
             raise ValueError("Ambiguous transitional annotation copies; migration publication required")
     return project_file(project, path)
+
+
+def committed_annotation_layout(project, filename, media_type, registry):
+    """Read an explicitly committed layout; absence preserves legacy behavior."""
+    commitment = annotation_commitment(project, filename, media_type, registry)
+    return commitment["layout"] if commitment else None
+
+
+def annotation_commitment(project, filename, media_type, registry):
+    """Read one registry commitment, not an inference from directory existence."""
+    from data.resource_storage import registry_lock
+    record = find_media(project, media_type, filename=filename)
+    path = project_file(project, registry)
+    with registry_lock(project, path), sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as database:
+        meta = dict(database.execute("SELECT key,value FROM meta"))
+        if meta.get("project") != str(Path(project).resolve()):
+            raise ValueError("Annotation registry project mismatch")
+        if not database.execute("SELECT 1 FROM sqlite_master WHERE name='annotation_layouts'").fetchone():
+            return None
+        row = database.execute("SELECT layout,filename,revision,artifacts FROM annotation_layouts WHERE media_type=? AND media_id=?",
+                               (media_type, record["media_id"])).fetchone()
+        if row is not None and row[1] != filename:
+            raise ValueError("Stale committed annotation media filename")
+        if row is None:
+            return None
+        if row[0] not in ("legacy-v1", "media-first-v1") or type(row[2]) is not int or row[2] < 1:
+            raise ValueError("Unknown or invalid committed annotation layout")
+        artifacts = json.loads(row[3])
+        if not isinstance(artifacts, dict) or any(suffix not in ANNOTATION_SUFFIXES for suffix in artifacts):
+            raise ValueError("Invalid committed annotation artifact manifest")
+        return {"layout": row[0], "filename": row[1], "revision": row[2], "artifacts": artifacts}
+
+
+def annotation_artifacts(project, record, media_type, *, layout=None, registry=None, required=(".annotations.json",)):
+    """Enumerate only the exact approved artifact set; never glob or merge layouts."""
+    from data.resource_storage import registry_lock, relative_path, digest
+    if registry is not None:
+        with registry_lock(project, registry):
+            commitment = annotation_commitment(project, record["filename"], media_type, registry)
+            committed = commitment["layout"] if commitment else None
+            if committed is not None and layout is not None and committed != layout:
+                raise ValueError("Requested collection differs from committed layout")
+            collection = annotation_artifacts(project, record, media_type, layout=committed or layout, required=required)
+            collection["commitment"] = commitment
+            collection["changed"] = ([suffix for suffix, sha in commitment["artifacts"].items()
+                                      if suffix not in collection["existing"] or digest(collection["existing"][suffix]) != sha]
+                                     if commitment else [])
+            return collection
+    if any(suffix not in ANNOTATION_SUFFIXES for suffix in required):
+        raise ValueError("Unknown required annotation suffix")
+    committed = committed_annotation_layout(project, record["filename"], media_type, registry) if registry is not None else None
+    if committed is not None and layout is not None and committed != layout:
+        raise ValueError("Requested collection differs from committed layout")
+    layout = committed or layout or "legacy-v1"
+    expected = {suffix: annotation_path(project, record["filename"], media_type, suffix, layout=layout) for suffix in ANNOTATION_SUFFIXES}
+    other_layout = "legacy-v1" if layout == "media-first-v1" else "media-first-v1"
+    other = ({suffix: annotation_path(project, record["filename"], media_type, suffix, layout=other_layout) for suffix in ANNOTATION_SUFFIXES}
+             if record.get("media_id") or other_layout == "legacy-v1" else {})
+    for path in (*expected.values(), *other.values()):
+        relative_path(project, path)
+    existing = {suffix: project_file(project, path) for suffix, path in expected.items() if path.exists()}
+    other_existing = {suffix: project_file(project, path) for suffix, path in other.items() if path.exists()}
+    return {"layout": layout, "expected": expected, "existing": existing, "other": other_existing,
+            "missing_required": [suffix for suffix in required if suffix not in existing],
+            "optional": [suffix for suffix in ANNOTATION_SUFFIXES if suffix not in required],
+            "conflicts": sorted(set(existing) & set(other_existing))}
 
 
 def source_validation(instance_id, current_shot_id, *, registered_frame=None, current_frame=None):
