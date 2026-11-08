@@ -72,7 +72,7 @@ def get_metadata(project_path: str, query: str | None = None, media_type: str = 
     ]
 
 
-def set_metadata(project_path: str, data: dict, match_filename: str | None = None) -> Path:
+def set_metadata(project_path: str, data: dict, match_filename: str | None = None, *, registry=None, approved=False) -> Path:
     """Write metadata to the JSON file for the appropriate media type.
 
     The data dict must contain 'filename'. 'media_type' defaults to 'movie'.
@@ -87,6 +87,14 @@ def set_metadata(project_path: str, data: dict, match_filename: str | None = Non
 
     record = {k: v for k, v in data.items() if k != "media_type"}
 
+    if registry is not None:
+        from data.resource_storage import ResourceStore
+        from data.resource_locations import find_media
+        ResourceStore(project_path, registry, approved=approved)
+        previous = find_media(project_path, media_type, filename=match_filename or filename)
+        if filename != previous["filename"] or record.get("media_id", previous["media_id"]) != previous["media_id"]:
+            raise ValueError("Registered media association transition requires physical migration; unsupported")
+        record["media_id"] = previous["media_id"]
     # Ensure media_id is present
     if not record.get("media_id"):
         record["media_id"] = compute_media_id(record, media_type)
@@ -109,7 +117,8 @@ def set_metadata(project_path: str, data: dict, match_filename: str | None = Non
         records.sort(key=lambda r: str(r.get("title", "")).lower())
         return save_json_metadata(project_path, media_type, records)
 
-    return upsert_json_record(project_path, record, media_type, match_key="media_id")
+    return upsert_json_record(project_path, record, media_type, match_key="media_id",
+                              **({"registry": registry, "approved": approved} if registry is not None else {}))
 
 
 def prune_metadata(project_path: str, media_type: str = "movie") -> list[dict]:
@@ -490,6 +499,10 @@ def save_json_metadata(project_path: str, media_type: str, records: list[dict], 
         current = {record.get("media_id"): record.get("filename") for record in records}
         with store.transaction() as database:
             bound = {row[0] for row in database.execute("SELECT DISTINCT media_id FROM instances WHERE media_type=?", (media_type,))}
+            bound.update(row[0] for row in database.execute("SELECT media_id FROM annotation_layouts WHERE media_type=?", (media_type,)))
+            if (len(current) != len(records) or any(not record.get("media_id") or not record.get("filename") for record in records)
+                    or len({record["filename"] for record in records}) != len(records)):
+                raise ValueError("Duplicate or missing metadata identity")
         if any(previous.get(media_id) != current.get(media_id) for media_id in bound):
             raise ValueError("Registered media association edits require controlled location transitions and dirty propagation; deferred")
     path = _json_path(project_path, media_type)

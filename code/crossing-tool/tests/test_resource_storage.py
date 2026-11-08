@@ -102,11 +102,691 @@ def pending_id(registry):
         return database.execute("SELECT operation_id FROM publication_operations WHERE state NOT IN ('finished','rolled_back')").fetchone()[0]
 
 
+def test_collection_journal_supports_media_without_instance(writable):
+    from data.resource_storage import upgrade_collection_journal
+    project, registry, instance, content, image = writable
+    with pytest.raises(ValueError, match="approval"):
+        upgrade_collection_journal(project, registry)
+    assert upgrade_collection_journal(project, registry, approved=True) == {"upgraded": False}
+    with ResourceStore(project, registry, approved=True).transaction() as database:
+        database.execute("INSERT INTO publication_operations VALUES(?,?,?,?,?,?)",
+                         ("collection-probe", None, "annotation-collection", "", "finished", "{}"))
+
+
+@pytest.mark.parametrize("state", ["finished", "prepared"])
+def test_existing_collection_journal_upgrade_preserves_rows(writable, state):
+    from data.resource_storage import upgrade_collection_journal
+    project, registry, instance, content, image = writable
+    with sqlite3.connect(registry) as database:
+        schema = database.execute("SELECT sql FROM sqlite_master WHERE name='publication_operations'").fetchone()[0]
+        database.execute("DROP TABLE publication_operations")
+        database.execute(schema.replace("instance_id TEXT REFERENCES", "instance_id TEXT NOT NULL REFERENCES"))
+        database.execute("CREATE UNIQUE INDEX one_pending_publication ON publication_operations(instance_id,kind,mode) WHERE state NOT IN ('finished','rolled_back')")
+        database.execute("INSERT INTO publication_operations VALUES(?,?,?,?,?,?)", ("existing", instance, "silhouettes", "", state, '{"evidence":"retained"}'))
+    if state == "prepared":
+        with pytest.raises(ValueError, match="recovery"):
+            upgrade_collection_journal(project, registry, approved=True)
+    else:
+        assert upgrade_collection_journal(project, registry, approved=True) == {"upgraded": True}
+    with sqlite3.connect(registry) as database:
+        assert database.execute("SELECT * FROM publication_operations").fetchone() == ("existing", instance, "silhouettes", "", state, '{"evidence":"retained"}')
+        assert next(row for row in database.execute("PRAGMA table_info(publication_operations)") if row[1] == "instance_id")[3] == int(state == "prepared")
+
+
+def test_registered_layout_cannot_bypass_publication(writable):
+    project, registry, instance, content, image = writable
+    store = ResourceStore(project, registry, approved=True)
+    media = locations.find_media(project, "movie", filename="film.mp4")
+    store.commit_annotation_layout(media, "movie", "legacy-v1")
+    with pytest.raises(ValueError, match="controlled artifact publication"):
+        store.commit_annotation_layout(media, "movie", "legacy-v1", expected_revision=1)
+    locations.annotation_path(project, "film.mp4", "movie").write_text("[]")
+    with pytest.raises(ValueError, match="controlled artifact publication"):
+        store.commit_annotation_layout(media, "movie", "legacy-v1", expected_revision=1)
+
+
+def test_registered_annotation_worker_passes_loaded_commitment(writable, monkeypatch, resource_app):
+    from visualizers.shot_visualizer import AnnotateWorker
+    project, registry, instance, content, image = writable
+    commitment = ResourceStore(project, registry, approved=True).commit_annotation_layout(locations.find_media(project, "movie", filename="film.mp4"), "movie", "legacy-v1")
+    received = []
+    monkeypatch.setattr("data.annotate.annotate_file_shots", lambda **kwargs: received.append(kwargs) or {"updated": 1})
+    worker = AnnotateWorker(project, "film.mp4", "movie", "fixture", 1, registry=registry, approved=True, commitment=commitment)
+    worker.run()
+    assert received[0]["registry"] == registry and received[0]["approved"]
+    assert received[0]["expected_revision"] == 1 and received[0]["expected_hashes"] == commitment["artifacts"]
+    assert received[0]["on_shot_done"] is None
+    worker.deleteLater()
+    from PyQt5.QtCore import QCoreApplication, QEvent
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+
+
+def test_actual_cli_registered_descriptive_metadata(writable, monkeypatch):
+    import cli
+    from data.metadata import MOVIE_REQUIRED
+    project, registry, instance, content, image = writable
+    monkeypatch.setattr(cli.prefs, "get", lambda key, default=None: str(project) if key == "path" else default)
+    monkeypatch.setattr(cli.prefs, "set", lambda *args, **kwargs: None)
+    record = {field: "descriptive" for field in MOVIE_REQUIRED}
+    record.update(filename="film.mp4", media_id="tmdb_1", title="Edited title", year=1970, runtime=90)
+    arguments = ["metadata", "--resource-registry", str(registry), "set", json.dumps(record)]
+    with pytest.raises(ValueError, match="approval"):
+        parsed = cli.build_parser().parse_args(arguments)
+        parsed.func(parsed)
+    parsed = cli.build_parser().parse_args(arguments + ["--approved-resource-edit"])
+    parsed.func(parsed)
+    assert locations.find_media(project, "movie", media_id="tmdb_1")["title"] == "Edited title"
+    before = (project / "data/metadata/movie.json").read_bytes()
+    record["media_id"] = "tmdb_2"
+    parsed = cli.build_parser().parse_args(["metadata", "--resource-registry", str(registry), "set", json.dumps(record), "--approved-resource-edit"])
+    with pytest.raises(ValueError, match="association"):
+        parsed.func(parsed)
+    assert (project / "data/metadata/movie.json").read_bytes() == before
+
+
+def test_actual_cli_registered_frame_publication(writable, monkeypatch):
+    import cli
+    import numpy as np
+    from services.frame_embeddings import commit_frame_artifacts
+    project, registry, instance, content, image = writable
+    media = locations.find_media(project, "movie", filename="film.mp4")
+    commitment = ResourceStore(project, registry, approved=True).commit_annotation_layout(media, "movie", "legacy-v1")
+    video = project / "media/videos/movie/film.mp4"
+    video.parent.mkdir(parents=True)
+    video.write_bytes(b"inert resolver fixture")
+    monkeypatch.setattr(cli.prefs, "get", lambda key, default=None: str(project) if key == "path" else default)
+    monkeypatch.setattr(cli.prefs, "set", lambda *args, **kwargs: None)
+    received = []
+    def precomputed(**kwargs):
+        received.append(kwargs)
+        commit_frame_artifacts(project, kwargs["filename"], kwargs["media_type"], np.ones((1, 2), dtype="float32"), np.ones(1, dtype=bool),
+                               registry=kwargs["registry"], approved=kwargs["approved"], expected_revision=kwargs["expected_revision"], expected_hashes=kwargs["expected_hashes"])
+        return {"status": "ok", "valid_count": 1, "item_count": 1}
+    monkeypatch.setattr("services.frame_embeddings.build_frame_embeddings", precomputed)
+    parsed = cli.build_parser().parse_args(["index", "frame-embeddings", "--title", "film.mp4", "--resource-registry", str(registry), "--approved-resource-edit"])
+    parsed.func(parsed)
+    assert received[0]["expected_hashes"] == commitment["artifacts"]
+    assert locations.annotation_commitment(project, "film.mp4", "movie", registry)["revision"] == 2
+    assert np.load(locations.resolve_annotation(project, "film.mp4", "movie", ".frames.npy", registry=registry)).shape == (1, 2)
+
+
+def test_simultaneous_registered_annotation_writers_conflict(writable):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from data.annotate import write_annotation_aggregate
+    project, registry, instance, content, image = writable
+    commitment = ResourceStore(project, registry, approved=True).commit_annotation_layout(locations.find_media(project, "movie", filename="film.mp4"), "movie", "legacy-v1")
+    barrier = Barrier(2)
+    def write(description):
+        entries = [{"shot": {"shot_id": content["shot_id"], "annotation": {"objects": ["field"], "description": description}}}]
+        barrier.wait(timeout=10)
+        try:
+            write_annotation_aggregate(project, "film.mp4", "movie", entries, registry=registry, approved=True,
+                                       expected_revision=1, expected_hashes=commitment["artifacts"])
+            return "committed"
+        except ValueError as exc:
+            assert "conflict" in str(exc).lower()
+            return "conflict"
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(write, description) for description in ("first", "second")]
+        assert sorted(future.result(timeout=20) for future in futures) == ["committed", "conflict"]
+    assert locations.annotation_commitment(project, "film.mp4", "movie", registry)["revision"] == 2
+    with sqlite3.connect(registry) as database:
+        assert database.execute("SELECT count(*) FROM publication_operations WHERE kind='annotation-collection'").fetchone()[0] == 1
+
+
+def _annotation_producer_fixture(request, media_type, monkeypatch):
+    from PIL import Image
+    from data.shotlist import write_shotlist
+    import cli
+    if media_type == "movie":
+        project, registry, instance, content, image = request.getfixturevalue("writable")
+        publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+        annotation = locations.annotation_path(project, content["filename"], media_type)
+        entries = json.loads(annotation.read_text())
+        entries[0]["shot"]["best_frame"] = {"frame": 12, "score": 0.8, "method": "semantic"}
+        annotation.write_text(json.dumps(entries))
+        ResourceStore(project, registry, approved=True).commit_annotation_layout(locations.find_media(project, media_type, filename=content["filename"]), media_type, "legacy-v1")
+    else:
+        project, registry, instance, content, annotation = request.getfixturevalue("registered_gameplay")
+    filename = content["filename"]
+    video = project / "media/videos" / media_type / filename
+    video.parent.mkdir(parents=True, exist_ok=True)
+    video.write_bytes(b"inert resolver fixture")
+    write_shotlist(project, filename, media_type, [{"shot_id": content["shot_id"], "start_frame": 10, "end_frame": 20,
+                                                  "start_time": "00:00:00", "end_time": "00:00:01", "Scene": "1"}])
+    frame = project / "sample.png"
+    Image.new("RGB", (4, 4), (30, 60, 90)).save(frame)
+    mapping = project / "preferences/data/mapping.yaml"
+    mapping.parent.mkdir(parents=True, exist_ok=True)
+    mapping.write_text("mapping:\n  fields: [objects]\n  include_labels: true\n")
+    monkeypatch.setattr(cli.prefs, "get", lambda key, default=None: str(project) if key == "path" else default)
+    monkeypatch.setattr(cli.prefs, "set", lambda *args, **kwargs: None)
+    monkeypatch.setattr("data.annotate.load_system_prompt", lambda *args: ("fixture system", "fixture-prompt"))
+    monkeypatch.setattr("data.annotate.load_user_prompt", lambda *args: ("$title $shot_index", "fixture-user"))
+    monkeypatch.setattr("data.annotate._find_prebaked_frames", lambda *args: [str(frame)])
+    monkeypatch.setattr("data.annotate._load_text_generation_pipeline", lambda *args: object())
+    monkeypatch.setattr(cli, "_auto_index_and_motif", lambda *args, **kwargs: pytest.fail("Registered CLI fell through to legacy follow-ups"))
+    monkeypatch.setattr("services.frame_match.annotate_best_frames", lambda *args, **kwargs: pytest.fail("Annotation CLI recalculated BEST"))
+    return project, registry, instance, content, annotation
+
+
+@pytest.mark.parametrize("media_type", ["movie", "gameplay"])
+@pytest.mark.parametrize("mode", ["manual", "generate", "batch"])
+def test_actual_registered_annotation_cli_body(request, monkeypatch, media_type, mode):
+    import cli
+    manual = mode == "manual"
+    all_files = mode == "batch"
+    project, registry, instance, content, annotation = _annotation_producer_fixture(request, media_type, monkeypatch)
+    previous = json.loads(annotation.read_text())[0]["shot"]["best_frame"]
+    response = {"description": "generated description", "objects": [content["label"]],
+                "classification": {"field": "objects", "label": content["label"]}}
+    calls = []
+    def model(*args, **kwargs):
+        calls.append(kwargs)
+        return json.dumps(response), json.dumps(response), "fixture device"
+    monkeypatch.setattr("data.annotate._call_model", model)
+    arguments = ["annotate", "shot", content["filename"], "0", "--media", media_type, "--resource-registry", str(registry), "--approved-resource-edit"]
+    if manual:
+        arguments += ["--manual", "manual description"]
+    if all_files and not manual:
+        arguments += ["--all"]
+    parsed = cli.build_parser().parse_args(arguments)
+    result = parsed.func(parsed)
+    if all_files and not manual:
+        result = result[0]["commitment"]
+    current = json.loads(annotation.read_text())[0]
+    assert current["shot"]["annotation"]["description"] == ("manual description" if manual else "generated description")
+    assert current["shot"]["best_frame"] == previous and current["shot"]["shot_id"] == content["shot_id"]
+    assert result["revision"] == 2 and result["artifacts"][".annotations.json"] == digest(annotation)
+    assert len(calls) == int(not manual)
+    if manual:
+        assert current["annotation"]["edit_service"] == "manual"
+    if not manual:
+        assert current["annotation"]["generation_parameters"]["do_sample"] is False
+        assert current["annotation"]["sampled_frame_count"] == 1
+    assert resolve_silhouette(project, instance, registry=registry)["record"]["source_validation"]["dirty"]
+    assert not locations.annotation_path(project, content["filename"], media_type, layout="legacy-v1" if media_type == "gameplay" else "media-first-v1").exists()
+
+
+@pytest.mark.parametrize("classification", [{"label": "field"}, {"field": "objects"}, {"field": "animals", "label": "field"}])
+def test_generation_body_rejects_invalid_classification(request, monkeypatch, classification):
+    from data.annotate import annotate_file_shots
+    project, registry, instance, content, annotation = _annotation_producer_fixture(request, "movie", monkeypatch)
+    before = annotation.read_bytes()
+    response = json.dumps({"description": "bad result", "objects": ["field"], "classification": classification})
+    monkeypatch.setattr("data.annotate._call_model", lambda *args, **kwargs: (response, response, "fixture"))
+    commitment = locations.annotation_commitment(project, content["filename"], "movie", registry)
+    with pytest.raises(RuntimeError, match="no successful annotations"):
+        annotate_file_shots(project, content["filename"], registry=registry, approved=True,
+                            expected_revision=1, expected_hashes=commitment["artifacts"])
+    assert annotation.read_bytes() == before
+    assert locations.annotation_commitment(project, content["filename"], "movie", registry)["revision"] == 1
+
+
+@pytest.mark.parametrize("media_type", ["movie", "gameplay"])
+@pytest.mark.parametrize("all_files", [False, True])
+def test_actual_grouped_annotation_index_cli(request, monkeypatch, media_type, all_files):
+    import cli
+    import numpy as np
+    project, registry, instance, content, annotation = _annotation_producer_fixture(request, media_type, monkeypatch)
+    source = annotation.read_bytes()
+    monkeypatch.setattr("data.index.embed_texts", lambda lines, *args: np.full((len(lines), 3), 0.5, dtype="float32"))
+    arguments = ["index", "process", "--media", media_type, "--resource-registry", str(registry), "--approved-resource-edit"]
+    arguments += ["--all"] if all_files else ["--title", content["filename"]]
+    parsed = cli.build_parser().parse_args(arguments)
+    parsed.func(parsed)
+    commitment = locations.annotation_commitment(project, content["filename"], media_type, registry)
+    assert commitment["revision"] == 2 and annotation.read_bytes() == source
+    manifest_path = locations.resolve_annotation(project, content["filename"], media_type, ".annotations.manifest.json", registry=registry)
+    manifest = json.loads(manifest_path.read_text())
+    for section, suffix in (("json", ".annotations.json"), ("txt", ".annotations.txt"), ("npy", ".annotations.npy")):
+        path = locations.resolve_annotation(project, content["filename"], media_type, suffix, registry=registry)
+        assert manifest[section]["hash"] == "sha256:" + digest(path)
+    assert manifest["npy"]["shape"] == [1, 3] and ".frames.npy" not in commitment["artifacts"]
+    parsed.func(parsed)
+    assert locations.annotation_commitment(project, content["filename"], media_type, registry)["revision"] == 2
+
+
+@pytest.mark.parametrize("boundary", [".annotations.txt-installed", ".annotations.npy-installed", ".annotations.manifest.json-installed", "committed"])
+def test_grouped_annotation_producer_recovery(request, monkeypatch, boundary):
+    import numpy as np
+    from data.index import rebuild_annotation_index
+    project, registry, instance, content, annotation = _annotation_producer_fixture(request, "movie", monkeypatch)
+    monkeypatch.setattr("data.index.embed_texts", lambda lines, *args: np.ones((len(lines), 2), dtype="float32"))
+    commitment = locations.annotation_commitment(project, content["filename"], "movie", registry)
+    def interrupt(stage):
+        if stage == boundary:
+            raise RuntimeError("interrupted producer")
+    with pytest.raises(RuntimeError, match="interrupted producer"):
+        rebuild_annotation_index(project, content["filename"], "movie", "fixture", registry=registry, approved=True,
+                                 expected_revision=1, expected_hashes=commitment["artifacts"], operation_id="groupedproducer", interrupt=interrupt)
+    with pytest.raises(ValueError, match="recovery"):
+        locations.resolve_annotation(project, content["filename"], "movie", registry=registry)
+    monkeypatch.setattr("data.index.embed_texts", lambda *args: pytest.fail("Retry invoked embedding inference"))
+    rebuild_annotation_index(project, content["filename"], "movie", "fixture", registry=registry, approved=True,
+                             expected_revision=1, expected_hashes=commitment["artifacts"], operation_id="groupedproducer")
+    revision = resolve_silhouette(project, instance, registry=registry)["revision"]
+    rebuild_annotation_index(project, content["filename"], "movie", "fixture", registry=registry, approved=True,
+                             expected_revision=1, expected_hashes=commitment["artifacts"], operation_id="groupedproducer")
+    assert locations.annotation_commitment(project, content["filename"], "movie", registry)["revision"] == 2
+    assert resolve_silhouette(project, instance, registry=registry)["revision"] == revision
+    manifest = json.loads(locations.resolve_annotation(project, content["filename"], "movie", ".annotations.manifest.json", registry=registry).read_text())
+    array = locations.resolve_annotation(project, content["filename"], "movie", ".annotations.npy", registry=registry)
+    assert manifest["npy"]["hash"] == "sha256:" + digest(array)
+
+
+def test_generation_producer_concurrent_conflict(request, monkeypatch):
+    from data.annotate import annotate_file_shots, annotate_manual
+    project, registry, instance, content, annotation = _annotation_producer_fixture(request, "movie", monkeypatch)
+    commitment = locations.annotation_commitment(project, content["filename"], "movie", registry)
+    def model(*args, **kwargs):
+        annotate_manual(project, content["filename"], "movie", [content["shot_id"]], "winning manual edit", registry=registry,
+                        approved=True, expected_revision=1, expected_hashes=commitment["artifacts"])
+        response = json.dumps({"description": "stale generated edit", "objects": ["field"]})
+        return response, response, "fixture"
+    monkeypatch.setattr("data.annotate._call_model", model)
+    with pytest.raises(RuntimeError, match="conflict"):
+        annotate_file_shots(project, content["filename"], registry=registry, approved=True, expected_revision=1, expected_hashes=commitment["artifacts"])
+    assert json.loads(annotation.read_text())[0]["shot"]["annotation"]["description"] == "winning manual edit"
+    assert locations.annotation_commitment(project, content["filename"], "movie", registry)["revision"] == 2
+
+
+def test_grouped_producer_rejects_mapping_drift(request, monkeypatch):
+    import numpy as np
+    from data.index import rebuild_annotation_index
+    project, registry, instance, content, annotation = _annotation_producer_fixture(request, "movie", monkeypatch)
+    commitment = locations.annotation_commitment(project, content["filename"], "movie", registry)
+    def embed(lines, *args):
+        (project / "preferences/data/mapping.yaml").write_text("mapping:\n  fields: [description]\n")
+        return np.ones((len(lines), 2), dtype="float32")
+    monkeypatch.setattr("data.index.embed_texts", embed)
+    with pytest.raises(ValueError, match="mapping changed"):
+        rebuild_annotation_index(project, content["filename"], "movie", "fixture", registry=registry, approved=True,
+                                 expected_revision=1, expected_hashes=commitment["artifacts"])
+    assert locations.annotation_commitment(project, content["filename"], "movie", registry)["revision"] == 1
+    assert not locations.annotation_path(project, content["filename"], "movie", ".annotations.npy", registry=registry).exists()
+
+
+def test_generation_source_change_makes_grouped_arrays_stale(request, monkeypatch):
+    import numpy as np
+    from data.index import rebuild_annotation_index, load_embeddings
+    from data.annotate import annotate_file_shots
+    project, registry, instance, content, annotation = _annotation_producer_fixture(request, "movie", monkeypatch)
+    commitment = locations.annotation_commitment(project, content["filename"], "movie", registry)
+    monkeypatch.setattr("data.index.embed_texts", lambda lines, *args: np.ones((len(lines), 2), dtype="float32"))
+    rebuild_annotation_index(project, content["filename"], "movie", "fixture", registry=registry, approved=True,
+                             expected_revision=1, expected_hashes=commitment["artifacts"])
+    commitment = locations.annotation_commitment(project, content["filename"], "movie", registry)
+    response = json.dumps({"description": "new source", "objects": ["field"]})
+    monkeypatch.setattr("data.annotate._call_model", lambda *args, **kwargs: (response, response, "fixture"))
+    summary = annotate_file_shots(project, content["filename"], registry=registry, approved=True,
+                                  expected_revision=2, expected_hashes=commitment["artifacts"])
+    assert summary["commitment"]["revision"] == 3
+    with pytest.raises(ValueError, match="(?i)stale"):
+        load_embeddings(project, content["filename"], "movie", registry=registry)
+
+
+@pytest.mark.parametrize("option", ["--log", "--with-frame", "--export-csv"])
+def test_registered_cli_unsupported_side_effects_refuse_before_mutation(request, monkeypatch, option):
+    import cli
+    project, registry, instance, content, annotation = _annotation_producer_fixture(request, "movie", monkeypatch)
+    before = annotation.read_bytes()
+    monkeypatch.setattr("data.annotate._load_text_generation_pipeline", lambda *args: pytest.fail("Unsupported option loaded a model"))
+    arguments = ["annotate", "shot", content["filename"], "--resource-registry", str(registry), "--approved-resource-edit", option]
+    if option == "--export-csv":
+        arguments.append(str(project / "data/unsafe.csv"))
+    parsed = cli.build_parser().parse_args(arguments)
+    with pytest.raises(SystemExit):
+        parsed.func(parsed)
+    assert annotation.read_bytes() == before and locations.annotation_commitment(project, content["filename"], "movie", registry)["revision"] == 1
+
+
+def test_manual_cli_legacy_caption_behavior(request, monkeypatch):
+    import cli
+    from data.shotlist import read_shotlist
+    project, registry, instance, content, annotation = _annotation_producer_fixture(request, "movie", monkeypatch)
+    before = annotation.read_bytes()
+    parsed = cli.build_parser().parse_args(["annotate", "shot", content["filename"], "0", "--manual", "legacy caption"])
+    parsed.func(parsed)
+    assert read_shotlist(project, content["filename"], "movie")[0]["Shot_Caption"] == "legacy caption"
+    assert annotation.read_bytes() == before
+
+
+@pytest.mark.parametrize("manual", [True, False])
+def test_actual_registered_scene_cli(request, monkeypatch, manual):
+    import cli
+    project, registry, instance, content, annotation = _annotation_producer_fixture(request, "movie", monkeypatch)
+    response = json.dumps({"description": "scene generated", "objects": ["field"]})
+    monkeypatch.setattr("data.annotate._call_model", lambda *args, **kwargs: (response, response, "fixture"))
+    arguments = ["annotate", "scene", content["filename"], "1", "--resource-registry", str(registry), "--approved-resource-edit"]
+    if manual:
+        arguments += ["--manual", "scene manual"]
+    parsed = cli.build_parser().parse_args(arguments)
+    result = parsed.func(parsed)
+    assert result["revision"] == 2
+    assert json.loads(annotation.read_text())[0]["shot"]["annotation"]["description"] == ("scene manual" if manual else "scene generated")
+
+
+def test_generation_body_interrupted_commit_recovers(request, monkeypatch):
+    from data.annotate import annotate_file_shots
+    project, registry, instance, content, annotation = _annotation_producer_fixture(request, "movie", monkeypatch)
+    response = json.dumps({"description": "recoverable generated result", "objects": ["field"]})
+    monkeypatch.setattr("data.annotate._call_model", lambda *args, **kwargs: (response, response, "fixture"))
+    commitment = locations.annotation_commitment(project, content["filename"], "movie", registry)
+    def interrupt(stage):
+        if stage == ".annotations.json-installed":
+            raise RuntimeError("source interrupted")
+    with pytest.raises(RuntimeError, match="source interrupted"):
+        annotate_file_shots(project, content["filename"], registry=registry, approved=True, expected_revision=1,
+                            expected_hashes=commitment["artifacts"], operation_id="generationproducer", interrupt=interrupt)
+    with pytest.raises(ValueError, match="recovery"):
+        locations.resolve_annotation(project, content["filename"], "movie", registry=registry)
+    monkeypatch.setattr("data.annotate._call_model", lambda *args, **kwargs: pytest.fail("Recovery invoked annotation inference"))
+    recover_publication(project, registry, "generationproducer", approved=True)
+    recover_publication(project, registry, "generationproducer", approved=True)
+    assert json.loads(annotation.read_text())[0]["shot"]["annotation"]["description"] == "recoverable generated result"
+    assert locations.annotation_commitment(project, content["filename"], "movie", registry)["revision"] == 2
+    assert resolve_silhouette(project, instance, registry=registry)["revision"] == 2
+
+
+def test_automatic_cli_legacy_behavior(request, monkeypatch):
+    import cli
+    project, registry, instance, content, annotation = _annotation_producer_fixture(request, "movie", monkeypatch)
+    response = json.dumps({"description": "legacy generated", "objects": ["field"]})
+    monkeypatch.setattr("data.annotate._call_model", lambda *args, **kwargs: (response, response, "fixture"))
+    followups = []
+    monkeypatch.setattr(cli, "_auto_index_and_motif", lambda *args, **kwargs: followups.append(args))
+    parsed = cli.build_parser().parse_args(["annotate", "shot", content["filename"], "0", "--no-best"])
+    parsed.func(parsed)
+    assert json.loads(annotation.read_text())[0]["shot"]["annotation"]["description"] == "legacy generated"
+    assert followups
+    with sqlite3.connect(registry) as database:
+        assert database.execute("SELECT revision FROM annotation_layouts").fetchone()[0] == 1
+
+
 def test_valid_silhouette_publication(writable):
     project, registry, instance, content, image = writable
     assert publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)["revision"] == 1
     result = resolve_silhouette(project, instance, registry=registry)
     assert result["record"]["field"] == "objects" and result["record"]["label"] == "field"
+
+
+@pytest.mark.parametrize("boundary", [None, "prepared", ".annotations.json-installed", "before-commit", "committed", "invalidated", "image-installed", "metadata-installed", "dependent-completed"])
+def test_controlled_annotation_write_and_resume(writable, boundary):
+    from data.annotate import write_annotation_aggregate
+    project, registry, instance, content, image = writable
+    publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+    media = locations.find_media(project, "movie", filename="film.mp4")
+    before = ResourceStore(project, registry, approved=True).commit_annotation_layout(media, "movie", "legacy-v1")
+    entries = [{"shot": {"shot_id": content["shot_id"], "annotation": {"objects": ["field"], "description": "edited"}}}]
+    def interrupt(current):
+        if current == boundary:
+            raise RuntimeError("interrupted")
+    arguments = dict(registry=registry, approved=True, expected_revision=before["revision"],
+                     expected_hashes=before["artifacts"], operation_id="sourceedit")
+    if boundary:
+        with pytest.raises(RuntimeError, match="interrupted"):
+            write_annotation_aggregate(project, "film.mp4", "movie", entries, interrupt=interrupt, **arguments)
+        if boundary in (".annotations.json-installed", "before-commit"):
+            with pytest.raises(ValueError, match="recovery"):
+                locations.resolve_annotation(project, "film.mp4", "movie", registry=registry)
+    write_annotation_aggregate(project, "film.mp4", "movie", entries, **arguments)
+    assert locations.annotation_commitment(project, "film.mp4", "movie", registry)["revision"] == 2
+    current = resolve_silhouette(project, instance, registry=registry)
+    assert current["record"]["source_validation"]["dirty"]
+    assert current["image"].read_bytes() == image.read_bytes()
+    assert current["revision"] == 2
+
+
+@pytest.mark.parametrize("annotation", [
+    {"objects": ["field"], "classification": {"label": "field"}},
+    {"objects": ["field"], "classification": {"field": "objects"}},
+    {"objects": ["field"], "classification": {"field": "animals", "label": "field"}},
+    {"objects": ["field"], "classification": {"field": "objects", "label": "field"}},
+])
+def test_registered_annotation_classification(writable, annotation):
+    from data.annotate import write_annotation_aggregate
+    project, registry, instance, content, image = writable
+    media = locations.find_media(project, "movie", filename="film.mp4")
+    commitment = ResourceStore(project, registry, approved=True).commit_annotation_layout(media, "movie", "legacy-v1")
+    entries = [{"shot": {"shot_id": content["shot_id"], "annotation": annotation}}]
+    arguments = dict(registry=registry, approved=True, expected_revision=1, expected_hashes=commitment["artifacts"])
+    valid = annotation["classification"] == {"field": "objects", "label": "field"}
+    if valid:
+        write_annotation_aggregate(project, "film.mp4", "movie", entries, **arguments)
+    else:
+        with pytest.raises(ValueError, match="classification"):
+            write_annotation_aggregate(project, "film.mp4", "movie", entries, **arguments)
+    assert locations.annotation_commitment(project, "film.mp4", "movie", registry)["revision"] == 1 + int(valid)
+
+
+@pytest.mark.parametrize("frame", [10, 19, 20, 21, -1, True])
+def test_registered_best_frame_owner(writable, frame):
+    from services.frame_match import commit_best_frame
+    project, registry, instance, content, image = writable
+    publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+    media = locations.find_media(project, "movie", filename="film.mp4")
+    commitment = ResourceStore(project, registry, approved=True).commit_annotation_layout(media, "movie", "legacy-v1")
+    arguments = dict(registry=registry, approved=True, expected_revision=1, expected_hashes=commitment["artifacts"])
+    if type(frame) is int and 10 <= frame <= 20:
+        commit_best_frame(project, "film.mp4", "movie", content["shot_id"], {"frame": frame, "source": "user"}, **arguments)
+        current = resolve_silhouette(project, instance, registry=registry)
+        assert current["instance_id"] == instance
+        assert current["record"]["source_validation"]["dirty"]
+        assert current["image"].read_bytes() == image.read_bytes()
+    else:
+        with pytest.raises(ValueError, match="source frame"):
+            commit_best_frame(project, "film.mp4", "movie", content["shot_id"], {"frame": frame}, **arguments)
+
+
+@pytest.mark.parametrize("boundary", [None, ".frames.npy-installed", ".frames.valid.npy-installed", "before-commit", "committed"])
+def test_registered_frame_artifacts(writable, boundary):
+    import numpy as np
+    from services.frame_embeddings import commit_frame_artifacts
+    project, registry, instance, content, image = writable
+    media = locations.find_media(project, "movie", filename="film.mp4")
+    commitment = ResourceStore(project, registry, approved=True).commit_annotation_layout(media, "movie", "legacy-v1")
+    def interrupt(current):
+        if current == boundary:
+            raise RuntimeError("interrupted")
+    arguments = dict(registry=registry, expected_revision=1, expected_hashes=commitment["artifacts"], approved=True)
+    if boundary:
+        with pytest.raises(RuntimeError):
+            commit_frame_artifacts(project, "film.mp4", "movie", np.ones((1, 3), dtype="float32"), np.ones(1, dtype=bool),
+                                   interrupt=interrupt, operation_id="frameupdate", **arguments)
+        recover_publication(project, registry, "frameupdate", approved=True)
+        commit_frame_artifacts(project, "film.mp4", "movie", np.ones((1, 3), dtype="float32"), np.ones(1, dtype=bool),
+                       operation_id="frameupdate", **arguments)
+    else:
+        commit_frame_artifacts(project, "film.mp4", "movie", np.ones((1, 3), dtype="float32"), np.ones(1, dtype=bool), **arguments)
+    assert locations.annotation_commitment(project, "film.mp4", "movie", registry)["revision"] == 2
+    path = locations.resolve_annotation(project, "film.mp4", "movie", ".frames.npy", registry=registry)
+    assert np.load(path).shape == (1, 3)
+
+
+@pytest.mark.parametrize("boundary", [".annotations.json-installed", "committed", "dependent-completed"])
+def test_best_frame_retry_reuses_committed_edit(writable, boundary):
+    from services.frame_match import commit_best_frame
+    project, registry, instance, content, image = writable
+    publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+    media = locations.find_media(project, "movie", filename="film.mp4")
+    commitment = ResourceStore(project, registry, approved=True).commit_annotation_layout(media, "movie", "legacy-v1")
+    arguments = dict(registry=registry, approved=True, expected_revision=1, expected_hashes=commitment["artifacts"], operation_id="bestframeedit")
+    def interrupt(current):
+        if current == boundary:
+            raise RuntimeError("interrupted")
+    assignment = {"frame": 15, "source": "user"}
+    with pytest.raises(RuntimeError):
+        commit_best_frame(project, "film.mp4", "movie", content["shot_id"], assignment, interrupt=interrupt, **arguments)
+    commit_best_frame(project, "film.mp4", "movie", content["shot_id"], assignment, **arguments)
+    commit_best_frame(project, "film.mp4", "movie", content["shot_id"], assignment, **arguments)
+    assert locations.annotation_commitment(project, "film.mp4", "movie", registry)["revision"] == 2
+    assert resolve_silhouette(project, instance, registry=registry)["revision"] == 2
+
+
+def test_registered_cli_annotation_repair(writable, monkeypatch):
+    import cli
+    project, registry, instance, content, image = writable
+    video = project / "media/videos/movie/film.mp4"
+    video.parent.mkdir(parents=True)
+    video.write_bytes(b"inert resolver fixture")
+    path = locations.annotation_path(project, "film.mp4", "movie")
+    path.write_text(json.dumps([{"shot": {"shot_id": content["shot_id"], "annotation": {"objects": "field, wagon"}}}]))
+    media = locations.find_media(project, "movie", filename="film.mp4")
+    ResourceStore(project, registry, approved=True).commit_annotation_layout(media, "movie", "legacy-v1")
+    monkeypatch.setattr(cli.prefs, "get", lambda key, default=None: str(project) if key == "path" else default)
+    monkeypatch.setattr(cli.prefs, "set", lambda *arguments: None)
+    arguments = cli.build_parser().parse_args(["annotate", "validate", "film", "--media", "movie",
+                                               "--resource-registry", str(registry), "--approved-resource-edit"])
+    arguments.func(arguments)
+    assert locations.annotation_commitment(project, "film.mp4", "movie", registry)["revision"] == 2
+    assert json.loads(path.read_text())[0]["shot"]["annotation"]["objects"] == ["field", "wagon"]
+
+
+def test_shot_best_frame_actual_persistence(writable, monkeypatch):
+    from types import SimpleNamespace
+    from visualizers.shot_visualizer import ShotlistVisualizer, QMessageBox
+    project, registry, instance, content, image = writable
+    media = locations.find_media(project, "movie", filename="film.mp4")
+    commitment = ResourceStore(project, registry, approved=True).commit_annotation_layout(media, "movie", "legacy-v1")
+    monkeypatch.setattr(QMessageBox, "critical", lambda *arguments: pytest.fail(str(arguments)))
+    fake = SimpleNamespace(project_path=project, filename="film.mp4", media_type="movie", _resource_registry=registry,
+                           _resource_edit_approved=True, _annotation_commitment=commitment,
+                           _ann_path=locations.annotation_path(project, "film.mp4", "movie"))
+    ShotlistVisualizer._persist_best_frame(fake, {"shot_id": content["shot_id"], "best_frame": {"frame": 15, "source": "user"}})
+    assert fake._annotation_commitment["revision"] == 2
+    assert json.loads(fake._ann_path.read_text())[0]["shot"]["best_frame"]["frame"] == 15
+
+
+@pytest.mark.parametrize("layout", ["legacy-v1", "media-first-v1"])
+def test_registered_collection_conflict_and_explicit_layout(writable, layout):
+    from data.annotate import write_annotation_aggregate
+    project, registry, instance, content, image = writable
+    media = locations.find_media(project, "movie", filename="film.mp4")
+    entries = [{"shot": {"shot_id": content["shot_id"], "annotation": {"objects": ["field"]}}}]
+    target = locations.annotation_path(project, "film.mp4", "movie", layout=layout)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(entries))
+    optional = locations.annotation_path(project, "film.mp4", "movie", ".log", layout=layout)
+    optional.write_text("retained optional log")
+    commitment = ResourceStore(project, registry, approved=True).commit_annotation_layout(media, "movie", layout)
+    other_layout = "legacy-v1" if layout == "media-first-v1" else "media-first-v1"
+    other = locations.annotation_path(project, "film.mp4", "movie", layout=other_layout)
+    other.parent.mkdir(parents=True, exist_ok=True)
+    other.write_text("not the committed collection")
+    entries[0]["shot"]["annotation"]["description"] = "first writer"
+    arguments = dict(registry=registry, approved=True, expected_revision=1, expected_hashes=commitment["artifacts"])
+    assert write_annotation_aggregate(project, "film.mp4", "movie", entries, **arguments) == target
+    assert optional.read_text() == "retained optional log"
+    assert other.read_text() == "not the committed collection"
+    entries[0]["shot"]["annotation"]["description"] = "stale writer"
+    with pytest.raises(ValueError, match="conflict"):
+        write_annotation_aggregate(project, "film.mp4", "movie", entries, **arguments)
+    assert json.loads(target.read_text())[0]["shot"]["annotation"]["description"] == "first writer"
+
+
+@pytest.mark.parametrize("fault", ["hash", "missing", "expected"])
+def test_collection_rejects_source_drift(writable, fault):
+    from data.annotate import write_annotation_aggregate
+    project, registry, instance, content, image = writable
+    media = locations.find_media(project, "movie", filename="film.mp4")
+    commitment = ResourceStore(project, registry, approved=True).commit_annotation_layout(media, "movie", "legacy-v1")
+    path = locations.annotation_path(project, "film.mp4", "movie")
+    entries = json.loads(path.read_text())
+    if fault == "hash":
+        path.write_text(path.read_text() + "\n")
+    elif fault == "missing":
+        path.unlink()
+    else:
+        commitment["artifacts"][".annotations.json"] = "0" * 64
+    with pytest.raises((ValueError, FileNotFoundError)):
+        write_annotation_aggregate(project, "film.mp4", "movie", entries, registry=registry, approved=True,
+                                   expected_revision=1, expected_hashes=commitment["artifacts"])
+    assert locations.annotation_commitment(project, "film.mp4", "movie", registry)["revision"] == 1
+
+
+@pytest.mark.parametrize("fault", ["shape", "dtype", "mask", "partial"])
+def test_frame_contract_rejection(writable, fault):
+    import io
+    import numpy as np
+    from services.frame_embeddings import commit_frame_artifacts
+    from services.resource_publication import publish_annotation_collection
+    project, registry, instance, content, image = writable
+    media = locations.find_media(project, "movie", filename="film.mp4")
+    commitment = ResourceStore(project, registry, approved=True).commit_annotation_layout(media, "movie", "legacy-v1")
+    arguments = dict(approved=True, expected_revision=1, expected_hashes=commitment["artifacts"])
+    if fault == "partial":
+        buffer = io.BytesIO()
+        np.save(buffer, np.ones((1, 3), dtype="float32"))
+        with pytest.raises(ValueError, match="pair"):
+            publish_annotation_collection(project, registry, "film.mp4", "movie", {".frames.npy": buffer.getvalue()}, **arguments)
+    else:
+        vectors = np.ones((2 if fault == "shape" else 1, 3), dtype="float64" if fault == "dtype" else "float32")
+        mask = np.ones(1, dtype="int64" if fault == "mask" else "bool")
+        with pytest.raises(ValueError):
+            commit_frame_artifacts(project, "film.mp4", "movie", vectors, mask, registry=registry, **arguments)
+    assert locations.annotation_commitment(project, "film.mp4", "movie", registry)["revision"] == 1
+
+
+def test_source_edit_invalidates_frame_readback(writable):
+    import numpy as np
+    from data.annotate import write_annotation_aggregate
+    from services.frame_embeddings import commit_frame_artifacts
+    project, registry, instance, content, image = writable
+    media = locations.find_media(project, "movie", filename="film.mp4")
+    commitment = ResourceStore(project, registry, approved=True).commit_annotation_layout(media, "movie", "legacy-v1")
+    commit_frame_artifacts(project, "film.mp4", "movie", np.ones((1, 3), dtype="float32"), np.ones(1, dtype=bool),
+                           registry=registry, approved=True, expected_revision=1, expected_hashes=commitment["artifacts"])
+    commitment = locations.annotation_commitment(project, "film.mp4", "movie", registry)
+    token = locations.annotation_context_token(project, registry)
+    frame_path = locations.annotation_path(project, "film.mp4", "movie", ".frames.npy", registry=registry)
+    before = frame_path.read_bytes()
+    entries = [{"shot": {"shot_id": content["shot_id"], "annotation": {"objects": ["field"], "description": "edited"}}}]
+    write_annotation_aggregate(project, "film.mp4", "movie", entries, registry=registry, approved=True,
+                               expected_revision=2, expected_hashes=commitment["artifacts"])
+    assert token != locations.annotation_context_token(project, registry)
+    assert frame_path.read_bytes() == before
+    with pytest.raises(ValueError, match="Stale"):
+        locations.resolve_annotation(project, "film.mp4", "movie", ".frames.npy", registry=registry)
+
+
+@pytest.mark.parametrize("layout", ["legacy-v1", "media-first-v1"])
+def test_gameplay_collection_without_instance_and_optional_members(writable, layout):
+    import io
+    import numpy as np
+    from services.resource_publication import publish_annotation_collection
+    project, registry, instance, content, image = writable
+    media_id = "game_rdr2_ce5e0bba"
+    metadata = project / "data/metadata/gameplay.json"
+    metadata.write_text(json.dumps({"media": [{"filename": "recording.mp4", "media_id": media_id}]}))
+    media = locations.find_media(project, "gameplay", filename="recording.mp4")
+    path = locations.annotation_path(project, "recording.mp4", "gameplay", layout=layout)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps([{"shot": {"shot_id": media_id + "@f000010-f000020", "annotation": {"objects": ["field"]}}}]))
+    commitment = ResourceStore(project, registry, approved=True).commit_annotation_layout(media, "gameplay", layout)
+    buffer = io.BytesIO()
+    np.save(buffer, np.ones((1, 2), dtype="float32"))
+    changes = {".annotations.npy": buffer.getvalue(), ".annotations.txt": b"field\n", ".log": b"explicit optional log\n"}
+    result = publish_annotation_collection(project, registry, "recording.mp4", "gameplay", changes, approved=True,
+                                          expected_revision=1, expected_hashes=commitment["artifacts"])
+    assert result["revision"] == 2
+    assert locations.resolve_annotation(project, "recording.mp4", "gameplay", ".log", registry=registry).read_bytes() == changes[".log"]
+    assert locations.annotation_commitment(project, "recording.mp4", "gameplay", registry)["layout"] == layout
+    with sqlite3.connect(registry) as database:
+        assert database.execute("SELECT COUNT(*) FROM instances WHERE media_id=?", (media_id,)).fetchone()[0] == 0
+
+
+def test_registered_descriptive_metadata_and_association_refusal(writable):
+    from data.metadata import upsert_json_record
+    project, registry, instance, content, image = writable
+    upsert_json_record(project, {"media_id": "tmdb_1", "filename": "film.mp4", "title": "New title"}, "movie",
+                       registry=registry, approved=True)
+    path = project / "data/metadata/movie.json"
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="association"):
+        upsert_json_record(project, {"media_id": "tmdb_1", "filename": "renamed.mp4"}, "movie", registry=registry, approved=True)
+    assert path.read_bytes() == before
 
 
 @pytest.mark.parametrize("stage", ["prepared", "image-installed", "metadata-installed", "before-commit", "committed"])
@@ -836,7 +1516,10 @@ def test_registered_consumers_cache_revision_and_paired_arrays(writable):
     assert catalog.valid_mask.tolist() == [False] and catalog.vectors.shape == (1, 2)
     assert extract_annotation_words(project, field="objects", registry=registry)["field"] == 1
     assert scene_detection._load_annotations(project, "film.mp4", "movie", registry=registry)[0]["shot"]["shot_id"] == content["shot_id"]
-    store.commit_annotation_layout(record, "movie", "media-first-v1", expected_revision=1)
+    from services.resource_publication import publish_annotation_collection
+    commitment = locations.annotation_commitment(project, "film.mp4", "movie", registry)
+    publish_annotation_collection(project, registry, "film.mp4", "movie", {".log": b"controlled cache revision"},
+                                  expected_revision=1, expected_hashes=commitment["artifacts"], approved=True)
     assert corpus_stats._annotations_fingerprint(project, registry=registry) != first
     assert vocabulary_index._compute_source_hash(project, "movie", registry=registry) != source_hash
     assert sync_frame_match.load_frame_catalog(project, "movie", all_items=True, registry=registry) is not catalog
@@ -1097,7 +1780,11 @@ def test_actual_cli_registered_vocabulary_build_and_stale_revision(registered_ga
     arguments.func(arguments)
     assert load_vocabulary_index(project, "gameplay", registry=registry)["meta"]["files_processed"] == 1
     assert load_derived_vocabulary(project, "gameplay", registry=registry)["meta"]["files_processed"] == 1
-    ResourceStore(project, registry, approved=True).commit_annotation_layout(locations.find_media(project, "gameplay", media_id=content["media_id"]), "gameplay", "media-first-v1", expected_revision=1)
+    from services.resource_publication import publish_annotation_collection
+    filename = locations.find_media(project, "gameplay", media_id=content["media_id"])["filename"]
+    commitment = locations.annotation_commitment(project, filename, "gameplay", registry)
+    publish_annotation_collection(project, registry, filename, "gameplay", {".log": b"controlled cache revision"},
+                                  expected_revision=1, expected_hashes=commitment["artifacts"], approved=True)
     for loader in (load_vocabulary_index, load_derived_vocabulary):
         with pytest.raises(ValueError):
             loader(project, "gameplay", registry=registry)

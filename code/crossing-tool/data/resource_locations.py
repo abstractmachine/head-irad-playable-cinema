@@ -271,6 +271,21 @@ def resolve_annotation(project, filename, media_type, suffix=".annotations.json"
                 path = project_file(project, path)
                 if digest(path) != commitment["artifacts"][suffix]:
                     raise ValueError("Annotation artifact checksum differs from committed authority")
+                if suffix in (".annotations.npy", ".annotations.txt", ".frames.npy", ".frames.valid.npy"):
+                    with sqlite3.connect(project_file(project, registry).as_uri() + "?mode=ro", uri=True) as database:
+                        rows = database.execute("SELECT details FROM publication_operations WHERE kind='annotation-collection' AND state IN ('committed','finished')").fetchall()
+                    source_revision = artifact_revision = 0
+                    for operation in rows:
+                        details = json.loads(operation[0])
+                        if details["filename"] != filename or details["media_type"] != media_type:
+                            continue
+                        revision = details["expected_revision"] + 1
+                        if ".annotations.json" in details["changed"]:
+                            source_revision = max(source_revision, revision)
+                        if suffix in details["proposed"]:
+                            artifact_revision = max(artifact_revision, revision)
+                    if source_revision > artifact_revision:
+                        raise ValueError("Stale derived annotation artifact; explicit rebuild required")
                 return path
             return resolve_annotation(project, filename, media_type, suffix, layout=layout, required=required)
     path = annotation_path(project, filename, media_type, suffix, layout=layout, registry=registry)

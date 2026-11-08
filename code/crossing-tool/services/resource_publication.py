@@ -250,7 +250,7 @@ def publish_resource(project, registry, instance_id, kind, metadata, image, *, m
     binding = locations.registered_instance(project, registry, instance_id)
     operation_id = uuid4().hex
     with store.transaction() as database:
-        pending = database.execute("SELECT 1 FROM publication_operations WHERE kind!='dirty-propagation' AND state NOT IN ('finished','rolled_back')").fetchone()
+        pending = database.execute("SELECT 1 FROM publication_operations WHERE kind!='dirty-propagation' AND NOT (kind='annotation-collection' AND state='committed' AND operation_id||'dirty'=?) AND state NOT IN ('finished','rolled_back')", (_propagation_id or "",)).fetchone()
         if pending:
             raise ValueError("Pending publication requires explicit recovery")
         binding = locations.registered_instance(project, registry, instance_id)
@@ -362,7 +362,7 @@ def _resume_dirty_propagation(project, registry, operation_id, *, approved=False
         details = json.loads(row["details"])
         if row["state"] == "finished":
             return {"activated": True, "updated": len(details["completed"]), "state": "finished", "operation_id": operation_id}
-        pending = [dict(child) for child in database.execute("SELECT * FROM publication_operations WHERE kind!='dirty-propagation' AND state NOT IN ('finished','rolled_back')")]
+        pending = [dict(child) for child in database.execute("SELECT * FROM publication_operations WHERE kind NOT IN ('dirty-propagation','annotation-collection') AND state NOT IN ('finished','rolled_back')")]
     if details.get("committed_path") and digest(locations.project_file(project, details["committed_path"])) != details["committed_sha256"]:
         raise ValueError("Committed edit changed or was not committed before dirty propagation")
     for child in pending:
@@ -452,6 +452,10 @@ def recover_publication(project, registry, operation_id, *, approved=False, acti
         if action != "complete":
             raise ValueError("Committed-edit intent cannot be implicitly rolled back; preserve and resume it")
         return resume_dirty_propagation(project, registry, operation_id, approved=approved)
+    if operation is not None and operation["kind"] == "annotation-collection":
+        if action != "complete":
+            raise ValueError("Collection rollback requires explicit intervention; preserve and resume the edit")
+        return resume_annotation_collection(project, registry, operation_id, approved=approved)
     with store.transaction() as database:
         row = database.execute("SELECT * FROM publication_operations WHERE operation_id=?", (operation_id,)).fetchone()
         if row is None:
@@ -505,6 +509,259 @@ def recover_publication(project, registry, operation_id, *, approved=False, acti
                     raise ValueError("Recovery requires valid source/publication metadata")
             _finish(store, database, binding, operation_id, row["kind"], row["mode"], details)
         return {"operation_id": operation_id, "state": "rolled_back" if action == "rollback" else "finished"}
+
+
+def _validate_collection_payload(project, media, paths, payloads, changed, *, media_type):
+    import hashlib
+    import io
+    import numpy as np
+    from data.media_id import parse_shot_id
+    from services.resource_validation import validate_annotation_classifications
+    entries = json.loads(payloads[".annotations.json"])
+    if not isinstance(entries, list):
+        raise ValueError("Annotation collection requires a shot list")
+    identities = set()
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("shot"), dict):
+            raise ValueError("Annotation entry requires a shot object")
+        shot = entry["shot"]
+        identity = shot.get("shot_id")
+        source_media, start, end = parse_shot_id(identity)
+        if source_media != media["media_id"] or identity in identities:
+            raise ValueError("Annotation shot identity mismatch or duplicate")
+        identities.add(identity)
+        if shot.get("best_frame") is not None:
+            frame = shot["best_frame"].get("frame") if isinstance(shot["best_frame"], dict) else None
+            if type(frame) is not int or not start <= frame <= end:
+                raise ValueError("Best-frame source frame is outside the registered shot")
+        if shot.get("annotation") is not None:
+            findings = validate_annotation_classifications(shot["annotation"])
+            if findings:
+                raise ValueError("Annotation classification validation failed: " + json.dumps(findings))
+    families = [(".frames.manifest.json", {"npy": ".frames.npy", "valid": ".frames.valid.npy"}),
+                (".annotations.manifest.json", {"npy": ".annotations.npy", "txt": ".annotations.txt"})]
+    for suffix, sections in families:
+        family = {suffix, *sections.values()}
+        if not family.intersection(changed):
+            continue
+        if suffix not in payloads and not suffix.startswith(".frames"):
+            for member in sections.values():
+                if member not in changed:
+                    continue
+                if member.endswith(".npy"):
+                    array = np.load(io.BytesIO(payloads[member]), allow_pickle=False)
+                    if array.ndim != 2 or array.shape[0] != len(entries) or array.dtype != np.dtype("float32") or not np.isfinite(array).all():
+                        raise ValueError("Optional annotation embedding shape/dtype mismatch")
+                    if paths[member].exists():
+                        previous = np.load(locations.project_file(project, paths[member]), allow_pickle=False)
+                        if previous.shape != array.shape or previous.dtype != array.dtype:
+                            raise ValueError("Existing array shape/dtype must be preserved")
+                else:
+                    payloads[member].decode("utf-8")
+            continue
+        if suffix not in payloads or (suffix.startswith(".frames") and not family.issubset(changed)):
+            raise ValueError("Frame/embedding update requires its array/mask/manifest pair")
+        manifest = json.loads(payloads[suffix])
+        if (manifest.get("version") != 1 or manifest.get("media_type") != media_type
+                or manifest.get("index_type") != ("frame-embeddings" if suffix.startswith(".frames") else "annotation-embeddings")):
+            raise ValueError("Manifest type/version/media association mismatch")
+        source = manifest.get("json", {})
+        if (source.get("hash") != "sha256:" + hashlib.sha256(payloads[".annotations.json"]).hexdigest()
+                or source.get("item_count") != len(entries)
+                or source.get("path") != relative_path(project, paths[".annotations.json"])
+                or source.get("filename") != paths[".annotations.json"].name):
+            raise ValueError("Manifest annotation source mismatch")
+        arrays = {}
+        for section, member in sections.items():
+            if member not in payloads:
+                raise ValueError("Manifest member missing")
+            description = manifest.get(section, {})
+            if (description.get("hash") != "sha256:" + hashlib.sha256(payloads[member]).hexdigest()
+                    or description.get("path") != relative_path(project, paths[member])
+                    or description.get("filename") != paths[member].name):
+                raise ValueError("Manifest artifact hash/path mismatch")
+            if member.endswith(".npy"):
+                array = np.load(io.BytesIO(payloads[member]), allow_pickle=False)
+                arrays[section] = array
+                if description.get("shape") != list(array.shape) or description.get("dtype") != str(array.dtype):
+                    raise ValueError("Manifest array shape/dtype mismatch")
+                if paths[member].exists():
+                    previous = np.load(locations.project_file(project, paths[member]), allow_pickle=False)
+                    if previous.shape != array.shape or previous.dtype != array.dtype:
+                        raise ValueError("Existing array shape/dtype must be preserved")
+            elif description.get("line_count") != len([line for line in payloads[member].decode("utf-8").splitlines() if line.strip()]):
+                raise ValueError("Annotation text manifest line count mismatch")
+        vectors = arrays["npy"]
+        if (vectors.ndim != 2 or vectors.shape[0] != len(entries) or vectors.dtype != np.dtype("float32")
+                or not np.isfinite(vectors).all()):
+            raise ValueError("Embedding array shape/dtype/source correspondence mismatch")
+        if "valid" in arrays:
+            valid = arrays["valid"]
+            if valid.dtype != np.dtype("bool") or valid.shape != (len(entries),):
+                raise ValueError("Frame validity mask mismatch")
+            counts = manifest.get("frames", {})
+            if counts.get("valid_count") != int(valid.sum()) or counts.get("missing_count") != int((~valid).sum()):
+                raise ValueError("Frame manifest validity counts mismatch")
+            if np.any(vectors[~valid] != 0):
+                raise ValueError("Invalid frame rows must remain zero vectors")
+    return entries
+
+
+def publish_annotation_collection(project, registry, filename, media_type, changes, *, expected_revision,
+                                  expected_hashes, approved=False, operation_id=None, interrupt=None):
+    """CAS publish selected collection members through the existing journal."""
+    import hashlib
+    from data.resource_storage import registry_lock
+    store = ResourceStore(project, registry, approved=approved)
+    if type(expected_revision) is not int or expected_revision < 1 or not changes:
+        raise ValueError("Committed collection revision and changed artifacts required")
+    if any(suffix not in locations.ANNOTATION_SUFFIXES for suffix in changes):
+        raise ValueError("Unknown annotation artifact")
+    proposed = {suffix: value if isinstance(value, bytes) else locations.project_file(project, value).read_bytes()
+                for suffix, value in changes.items()}
+    hashes = {suffix: hashlib.sha256(value).hexdigest() for suffix, value in proposed.items()}
+    with registry_lock(project, registry, exclusive=True):
+        with store.transaction() as database:
+            if next(row for row in database.execute("PRAGMA table_info(publication_operations)")
+                    if row["name"] == "instance_id")["notnull"]:
+                raise ValueError("Explicit collection journal upgrade required")
+            existing = database.execute("SELECT * FROM publication_operations WHERE operation_id=?", (operation_id,)).fetchone()
+            if existing is not None:
+                details = json.loads(existing["details"])
+                if (existing["kind"] != "annotation-collection" or details["filename"] != filename
+                        or details["media_type"] != media_type or details["proposed"] != hashes
+                        or details["expected_revision"] != expected_revision or details["before"] != expected_hashes):
+                    raise ValueError("Operation token belongs to a different collection edit")
+            else:
+                if database.execute("SELECT 1 FROM publication_operations WHERE state NOT IN ('finished','rolled_back')").fetchone():
+                    raise ValueError("Pending publication requires explicit recovery")
+                media = locations.find_media(project, media_type, filename=filename)
+                row = database.execute("SELECT * FROM annotation_layouts WHERE media_type=? AND media_id=?",
+                                       (media_type, media["media_id"])).fetchone()
+                if row is None or row["filename"] != filename:
+                    raise ValueError("Explicit committed annotation collection required")
+                before = json.loads(row["artifacts"])
+                if row["revision"] != expected_revision or before != expected_hashes:
+                    raise ValueError("Annotation revision/hash conflict")
+                paths = {suffix: locations.annotation_path(project, filename, media_type, suffix, layout=row["layout"])
+                         for suffix in set(before) | set(proposed)}
+                payloads = {}
+                for suffix, sha in before.items():
+                    path = locations.project_file(project, paths[suffix])
+                    if digest(path) != sha:
+                        raise ValueError("Committed annotation artifact checksum mismatch")
+                    payloads[suffix] = path.read_bytes()
+                for suffix in set(proposed) - set(before):
+                    if paths[suffix].exists():
+                        raise ValueError("Uncommitted annotation destination already exists")
+                payloads.update(proposed)
+                _validate_collection_payload(project, media, paths, payloads, proposed, media_type=media_type)
+                changed = {suffix: value for suffix, value in proposed.items() if hashes[suffix] != before.get(suffix)}
+                if not changed:
+                    return {"revision": expected_revision, "published": False}
+                operation_id = operation_id or uuid4().hex
+                if not isinstance(operation_id, str) or not operation_id.isalnum():
+                    raise ValueError("Invalid collection operation token")
+                stage = store.registry.parent / ".resource-publications" / operation_id
+                create_storage_directory(project, stage, exclusive=True)
+                for suffix, value in changed.items():
+                    path = stage / ("new" + suffix)
+                    path.write_bytes(value)
+                    _sync(path)
+                    if suffix in before:
+                        _copy(paths[suffix], stage / ("previous" + suffix))
+                _sync(stage)
+                details = {"stage": relative_path(project, stage), "filename": filename, "media_type": media_type,
+                           "media_id": media["media_id"], "layout": row["layout"], "expected_revision": expected_revision,
+                           "before": before, "proposed": hashes, "changed": {suffix: hashes[suffix] for suffix in changed},
+                           "artifacts": {**before, **hashes}}
+                database.execute("INSERT INTO publication_operations VALUES(?,?,?,?,?,?)",
+                                 (operation_id, None, "annotation-collection", "", "prepared", json.dumps(details)))
+        if interrupt and existing is None:
+            interrupt("prepared")
+        return resume_annotation_collection(project, registry, operation_id, approved=approved, interrupt=interrupt)
+
+
+def resume_annotation_collection(project, registry, operation_id, *, approved=False, interrupt=None):
+    from data.resource_storage import registry_lock
+    store = ResourceStore(project, registry, approved=approved)
+    with registry_lock(project, registry, exclusive=True):
+        with store.transaction() as database:
+            row = database.execute("SELECT * FROM publication_operations WHERE operation_id=? AND kind='annotation-collection'",
+                                   (operation_id,)).fetchone()
+            if row is None:
+                raise ValueError("Unknown collection operation")
+            details = json.loads(row["details"])
+            state = row["state"]
+            if state == "rolled_back":
+                raise ValueError("Rolled-back collection operation cannot be resumed")
+            media = locations.find_media(project, details["media_type"], filename=details["filename"])
+            if media["media_id"] != details["media_id"]:
+                raise ValueError("Collection media association changed; explicit intervention required")
+            stage = store.registry.parent / ".resource-publications" / operation_id
+            if relative_path(project, stage) != details["stage"]:
+                raise ValueError("Collection staging ownership mismatch")
+            paths = {suffix: locations.annotation_path(project, details["filename"], details["media_type"], suffix,
+                                                      layout=details["layout"]) for suffix in details["artifacts"]}
+            current = database.execute("SELECT * FROM annotation_layouts WHERE media_type=? AND media_id=?",
+                                       (details["media_type"], details["media_id"])).fetchone()
+            committed = state in ("committed", "finished")
+            if (current is None or current["layout"] != details["layout"] or current["filename"] != details["filename"]
+                    or current["revision"] != details["expected_revision"] + int(committed)
+                    or json.loads(current["artifacts"]) != (details["artifacts"] if committed else details["before"])):
+                raise ValueError("Collection recovery revision/hash conflict")
+            payloads = {}
+            for suffix, sha in details["artifacts"].items():
+                path = stage / ("new" + suffix) if suffix in details["changed"] and not committed else paths[suffix]
+                path = locations.project_file(project, path)
+                if digest(path) != sha:
+                    raise ValueError("Collection recovery artifact checksum mismatch")
+                payloads[suffix] = path.read_bytes()
+                target = paths[suffix]
+                if not committed and suffix in details["changed"]:
+                    allowed = {details["changed"][suffix], details["before"].get(suffix)}
+                    if target.exists() and digest(locations.project_file(project, target)) not in allowed:
+                        raise ValueError("Recovery refuses unrelated destination content")
+                    if suffix in details["before"] and (not target.exists() or digest(stage / ("previous" + suffix)) != details["before"][suffix]):
+                        raise ValueError("Collection before-image missing or corrupt")
+            _validate_collection_payload(project, media, paths, payloads, details["proposed"], media_type=details["media_type"])
+            if state == "finished":
+                return {"operation_id": operation_id, "revision": details["expected_revision"] + 1, "published": True}
+            if not committed:
+                database.execute("UPDATE publication_operations SET state='installing' WHERE operation_id=?", (operation_id,))
+                database.commit()
+                for suffix in sorted(details["changed"]):
+                    temporary = paths[suffix].parent / (".publication-" + operation_id + suffix)
+                    _copy(stage / ("new" + suffix), temporary)
+                    os.replace(temporary, paths[suffix])
+                    _sync(paths[suffix].parent)
+                    if interrupt:
+                        interrupt(suffix + "-installed")
+                database.execute("UPDATE publication_operations SET state='files_published' WHERE operation_id=?", (operation_id,))
+                database.commit()
+                if any(digest(paths[suffix]) != sha for suffix, sha in details["artifacts"].items()):
+                    raise ValueError("Installed collection checksum mismatch")
+                if interrupt:
+                    interrupt("before-commit")
+                store.commit_annotation_update(database, operation_id)
+                database.execute("UPDATE publication_operations SET state='committed' WHERE operation_id=?", (operation_id,))
+                database.commit()
+                if interrupt:
+                    interrupt("committed")
+        from services.illustration_index import invalidate_index
+        for kind in ("silhouettes", "engravings"):
+            invalidate_index(project, kind, details["media_type"])
+        if interrupt:
+            interrupt("invalidated")
+        mark_media_resources_dirty(project, details["filename"], details["media_type"], "annotation collection edited",
+                                  registry=registry, approved=approved, edit_id=operation_id + "dirty",
+                                  committed_path=paths[".annotations.json"], committed_sha256=details["artifacts"][".annotations.json"],
+                                  interrupt=interrupt)
+        with store.transaction() as database:
+            if any(digest(paths[suffix]) != sha for suffix, sha in details["artifacts"].items()):
+                raise ValueError("Completed collection checksum mismatch")
+            database.execute("UPDATE publication_operations SET state='finished' WHERE operation_id=?", (operation_id,))
+        return {"operation_id": operation_id, "revision": details["expected_revision"] + 1, "published": True}
 
 
 def publication_status(project, registry, *, instance_id=None):

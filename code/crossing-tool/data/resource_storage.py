@@ -112,7 +112,7 @@ def registry_lock(project, registry, *, exclusive=False):
         if not exclusive:
             with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as database:
                 if database.execute("SELECT 1 FROM sqlite_master WHERE name='publication_operations'").fetchone():
-                    if database.execute("SELECT 1 FROM publication_operations WHERE state IN ('installing','files_published') LIMIT 1").fetchone():
+                    if database.execute("SELECT 1 FROM publication_operations WHERE state IN ('installing','files_published') OR (kind='annotation-collection' AND state='committed') LIMIT 1").fetchone():
                         raise ValueError("Explicit publication recovery required before lookup")
         yield
     finally:
@@ -154,7 +154,7 @@ def _install_schema(database):
       WHEN NEW.revision!=OLD.revision+1 OR NEW.media_id!=OLD.media_id OR NEW.media_type!=OLD.media_type
       BEGIN SELECT RAISE(ABORT,'Non-monotonic annotation layout revision'); END;
     CREATE TABLE publication_operations(
-      operation_id TEXT PRIMARY KEY,instance_id TEXT NOT NULL REFERENCES instances(instance_id),
+            operation_id TEXT PRIMARY KEY,instance_id TEXT REFERENCES instances(instance_id),
       kind TEXT NOT NULL,mode TEXT NOT NULL,state TEXT NOT NULL
         CHECK(state IN ('prepared','installing','files_published','committed','finished','rolled_back')),
       details TEXT NOT NULL);
@@ -175,6 +175,30 @@ def _install_schema(database):
             BEGIN SELECT RAISE(ABORT,'Generation reservations cannot be recycled'); END;
     """)
     database.executemany("INSERT INTO meta VALUES(?,?)", [("location_schema_version", "1"), ("storage_schema_version", "1")])
+
+
+def upgrade_collection_journal(project, registry, *, approved=False):
+    """Explicitly allow media-owned operations in the existing publication journal."""
+    store = ResourceStore(project, registry, approved=approved)
+    with store.transaction() as database:
+        column = next(row for row in database.execute("PRAGMA table_info(publication_operations)")
+                      if row["name"] == "instance_id")
+        if not column["notnull"]:
+            return {"upgraded": False}
+        if database.execute("SELECT 1 FROM publication_operations WHERE state NOT IN ('finished','rolled_back')").fetchone():
+            raise ValueError("Pending publication requires recovery before journal upgrade")
+        database.execute("DROP INDEX one_pending_publication")
+        database.execute("ALTER TABLE publication_operations RENAME TO previous_publication_operations")
+        database.execute("""CREATE TABLE publication_operations(
+            operation_id TEXT PRIMARY KEY,instance_id TEXT REFERENCES instances(instance_id),
+            kind TEXT NOT NULL,mode TEXT NOT NULL,state TEXT NOT NULL
+            CHECK(state IN ('prepared','installing','files_published','committed','finished','rolled_back')),
+            details TEXT NOT NULL)""")
+        database.execute("INSERT INTO publication_operations SELECT * FROM previous_publication_operations")
+        database.execute("DROP TABLE previous_publication_operations")
+        database.execute("""CREATE UNIQUE INDEX one_pending_publication ON publication_operations(instance_id,kind,mode)
+            WHERE state NOT IN ('finished','rolled_back')""")
+        return {"upgraded": True}
 
 
 def adopt_registry(project, proposal, destination, *, exceptions, approved=False, interrupt=None):
@@ -380,6 +404,28 @@ class ResourceStore:
         database.execute(statement, values)
         return expected_revision + 1
 
+    def commit_annotation_update(self, database, operation_id):
+        """Commit only the installed collection named by its publication intent."""
+        operation = database.execute("SELECT * FROM publication_operations WHERE operation_id=?", (operation_id,)).fetchone()
+        if operation is None or operation["kind"] != "annotation-collection" or operation["state"] != "files_published":
+            raise ValueError("Collection commit requires its files_published operation")
+        details = json.loads(operation["details"])
+        current = database.execute("SELECT * FROM annotation_layouts WHERE media_type=? AND media_id=?",
+                                   (details["media_type"], details["media_id"])).fetchone()
+        if (current is None or current["revision"] != details["expected_revision"]
+                or current["layout"] != details["layout"] or current["filename"] != details["filename"]
+                or json.loads(current["artifacts"]) != details["before"]):
+            raise ValueError("Concurrent collection revision/hash conflict")
+        for suffix, sha in details["artifacts"].items():
+            path = locations.annotation_path(self.project, details["filename"], details["media_type"], suffix, layout=details["layout"])
+            if digest(locations.project_file(self.project, path)) != sha:
+                raise ValueError("Collection commit differs from installed publication")
+        updated = database.execute("UPDATE annotation_layouts SET revision=revision+1,artifacts=? WHERE media_type=? AND media_id=? AND revision=?",
+                                   (json.dumps(details["artifacts"]), details["media_type"], details["media_id"], details["expected_revision"]))
+        if updated.rowcount != 1:
+            raise ValueError("Concurrent collection revision conflict")
+        return details["expected_revision"] + 1
+
     def commit_annotation_layout(self, record, media_type, layout, *, expected_revision=0, required=(".annotations.json",)):
         """Explicit collection commit, no file moves, rewrites or regeneration."""
         if type(expected_revision) is not int or expected_revision < 0 or not required:
@@ -406,11 +452,13 @@ class ResourceStore:
             for suffix in collection["conflicts"]:
                 if digest(collection["expected"][suffix]) != digest(collection["other"][suffix]):
                     raise ValueError("Conflicting annotation collections")
-            previous = database.execute("SELECT revision FROM annotation_layouts WHERE media_type=? AND media_id=?",
+            previous = database.execute("SELECT revision,artifacts FROM annotation_layouts WHERE media_type=? AND media_id=?",
                                         (media_type, record["media_id"])).fetchone()
             if (previous[0] if previous else 0) != expected_revision:
                 raise ValueError("Annotation layout revision changed")
             artifacts = {suffix: digest(path) for suffix, path in collection["existing"].items()}
+            if previous is not None:
+                raise ValueError("Registered collection edits require controlled artifact publication, not layout adoption")
             database.execute("""INSERT INTO annotation_layouts VALUES(?,?,?,?,?,?)
               ON CONFLICT(media_type,media_id) DO UPDATE SET filename=excluded.filename,
               layout=excluded.layout,revision=excluded.revision,artifacts=excluded.artifacts""",

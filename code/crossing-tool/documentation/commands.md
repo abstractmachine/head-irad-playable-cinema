@@ -21,10 +21,27 @@ For registered deassignment, `--object-id` carries the exact instance ID, not a
 legacy ordinal. Existing source identity arguments remain stale-selection checks.
 
 Registered Shotlist and Scene commits require `--approved-resource-edit`; this
-approval covers the existing controlled shotlist/dirty-state operation, not annotation
-or best-frame rewrites. `metadata --resource-registry PATH` refuses unsupported
-`set/update/prune` operations before mutation. Historical migration/repair and provider
-writers remain separate legacy-only operations until Stage 2B.3 authorization.
+approval covers the controlled shotlist/dirty-state operation. Registered Shot
+inspector annotation edits and best-frame assignments use controlled collection
+publication as well. `metadata --resource-registry PATH set JSON
+--approved-resource-edit` permits descriptive edits while preserving media identity
+and filename; registered `update/prune` and association changes remain unsupported.
+
+`annotate shot`, `annotate scene`, `index process`, and `index frame-embeddings`
+accept `--resource-registry PATH --approved-resource-edit`. Generation and manual
+captions publish through the committed collection; `annotate shot --all` and
+`index process --all` retain per-collection revision/hash checks. Registered manual
+captions update annotation JSON descriptions, not duplicate captions in the CSV.
+`index process` publishes text, annotation embeddings and manifest together; it
+does not regenerate frame embeddings. Single-member legacy `index serialize/embed`
+commands do not accept registered context; use `index process` instead.
+
+Registered annotation generation preserves the committed BEST selection and does
+not run legacy BEST, motif or index-generation follow-ups. Explicit `--with-frame`,
+append-style `--log`, and annotation exports are refused before mutation. Existing
+committed logs remain unchanged. An interrupted collection requires explicit
+publication recovery, not a fallback to legacy paths. Provider publication, physical
+association changes and production registry adoption remain separately authorized.
 
 ## Backup
 

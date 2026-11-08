@@ -666,7 +666,7 @@ class AnnotateWorker(QThread):
     finished  = pyqtSignal(str)
 
     def __init__(self, project_path, filename, media_type, model_name, frames_per_shot,
-                 shot_indices=None, shots=None):
+                 shot_indices=None, shots=None, *, registry=None, approved=False, commitment=None):
         super().__init__()
         self._stop_event    = threading.Event()
         self.project_path   = project_path
@@ -676,6 +676,9 @@ class AnnotateWorker(QThread):
         self.frames_per_shot = frames_per_shot
         self.shot_indices   = shot_indices
         self.shots          = shots
+        self.registry = registry
+        self.approved = approved
+        self.commitment = commitment
 
     def stop(self):
         self._stop_event.set()
@@ -691,8 +694,11 @@ class AnnotateWorker(QThread):
                 frames_per_shot=self.frames_per_shot,
                 skip_existing=True,
                 verbose=True,
-                on_shot_done=lambda i: self.shot_done.emit(i),
+                on_shot_done=(lambda i: self.shot_done.emit(i)) if self.registry is None else None,
                 stop_event=self._stop_event,
+                **({"registry": self.registry, "approved": self.approved,
+                    "expected_revision": self.commitment["revision"], "expected_hashes": self.commitment["artifacts"]}
+                   if self.registry is not None else {}),
             )
             updated = summary.get("updated", 0)
             skipped = summary.get("skipped", 0)
@@ -981,6 +987,9 @@ class ShotlistVisualizer(WindowVisualizer):
         attach_shot_ids(self.shots, self.media_id)
 
         ann_path    = _get_annotation_json_path(self.project_path, self.filename, self.media_type, registry=self._resource_registry)
+        if self._resource_registry is not None:
+            from data.resource_locations import annotation_commitment
+            self._annotation_commitment = annotation_commitment(self.project_path, self.filename, self.media_type, self._resource_registry)
         ann_entries = _read_annotation_json(ann_path)
         self._has_ann_file              = ann_path.exists()
         self.annotation_index           = _build_annotation_index(ann_entries)
@@ -2180,6 +2189,15 @@ class ShotlistVisualizer(WindowVisualizer):
             self._display_frame(frame)
         self.update_frame_info()
 
+    def _commit_registered_annotations(self, entries):
+        from data.annotate import write_annotation_aggregate
+        from data.resource_locations import annotation_commitment
+        commitment = self._annotation_commitment
+        write_annotation_aggregate(self.project_path, self.filename, self.media_type, entries,
+                                   registry=self._resource_registry, approved=self._resource_edit_approved,
+                                   expected_revision=commitment["revision"], expected_hashes=commitment["artifacts"])
+        self._annotation_commitment = annotation_commitment(self.project_path, self.filename, self.media_type, self._resource_registry)
+
     def _persist_best_frame(self, shot: dict) -> None:
         """Write the shot's current best_frame value to the annotation JSON on disk."""
         shot_id = shot.get("shot_id", "")
@@ -2189,13 +2207,19 @@ class ShotlistVisualizer(WindowVisualizer):
         if path is None:
             return
         try:
+            if self._resource_registry is not None:
+                from data.resource_locations import annotation_commitment
+                from services.frame_match import commit_best_frame
+                commitment = self._annotation_commitment
+                commit_best_frame(self.project_path, self.filename, self.media_type, shot_id, shot.get("best_frame"),
+                                  registry=self._resource_registry, approved=self._resource_edit_approved,
+                                  expected_revision=commitment["revision"], expected_hashes=commitment["artifacts"])
+                self._annotation_commitment = annotation_commitment(self.project_path, self.filename, self.media_type, self._resource_registry)
+                return
             entries = _read_annotation_json(path)
             entry_idx = self._annotation_entry_index.get(shot_id)
             if entry_idx is not None and 0 <= entry_idx < len(entries):
                 entries[entry_idx]["shot"]["best_frame"] = shot.get("best_frame")
-                if self._resource_registry is not None:
-                    from data.annotate import write_annotation_aggregate
-                    write_annotation_aggregate(self.project_path, self.filename, self.media_type, entries, registry=self._resource_registry)
                 atomic_write_text(path, json.dumps(entries, indent=2, ensure_ascii=False))
         except Exception as exc:
             QMessageBox.critical(self, "Save failed", str(exc))
@@ -2839,9 +2863,9 @@ class ShotlistVisualizer(WindowVisualizer):
                 existing.append(ann)
                 self._annotation_entry_index[shot_id] = len(existing) - 1
             if self._resource_registry is not None:
-                from data.annotate import write_annotation_aggregate
-                write_annotation_aggregate(self.project_path, self.filename, self.media_type, existing, registry=self._resource_registry)
-            atomic_write_text(path, _json.dumps(existing, indent=2, ensure_ascii=False))
+                self._commit_registered_annotations(existing)
+            else:
+                atomic_write_text(path, _json.dumps(existing, indent=2, ensure_ascii=False))
             self._edited_shots.add(idx)
             self._refresh_shot_row(idx)
         except Exception as exc:
@@ -2986,9 +3010,9 @@ class ShotlistVisualizer(WindowVisualizer):
             # Serialise with json_repair-safe format
             out_text = _json.dumps(existing, indent=2, ensure_ascii=False)
             if self._resource_registry is not None:
-                from data.annotate import write_annotation_aggregate
-                write_annotation_aggregate(self.project_path, self.filename, self.media_type, existing, registry=self._resource_registry)
-            atomic_write_text(path, out_text)
+                self._commit_registered_annotations(existing)
+            else:
+                atomic_write_text(path, out_text)
 
             self.annotation_index[shot_id] = data
             self._edited_shots.add(idx)
@@ -3011,6 +3035,10 @@ class ShotlistVisualizer(WindowVisualizer):
             self.annotate_button.setText("\u26a1 Auto-Annotate")
             return
 
+        if self._resource_registry is not None and not self._resource_edit_approved:
+            QMessageBox.warning(self, "Unsupported operation", "Registered background annotation requires explicit resource-edit approval; no generation was started.")
+            self.annotate_button.setChecked(False)
+            return
         if self.modified:
             QMessageBox.warning(
                 self,
@@ -3038,6 +3066,8 @@ class ShotlistVisualizer(WindowVisualizer):
             shots=self.shots,
             frames_per_shot=self._frames_per_shot,
             model_name=self._model_name,
+            **({"registry": self._resource_registry, "approved": self._resource_edit_approved,
+                "commitment": self._annotation_commitment} if self._resource_registry is not None else {}),
         )
         self._annotate_worker.shot_done.connect(self._on_shot_annotated)
         self._annotate_worker.finished.connect(self._on_annotate_finished)
@@ -3083,6 +3113,9 @@ class ShotlistVisualizer(WindowVisualizer):
                 self._annotation_entry_index = _build_entry_index(all_anns)
                 self._embedding_row_index    = _build_embedding_row_index(all_anns)
                 self._has_ann_file           = True
+                if self._resource_registry is not None:
+                    from data.resource_locations import annotation_commitment
+                    self._annotation_commitment = annotation_commitment(self.project_path, self.filename, self.media_type, self._resource_registry)
         except Exception as exc:
             print(f"Warning: could not reload annotations: {exc}", flush=True)
 
@@ -3112,9 +3145,9 @@ class ShotlistVisualizer(WindowVisualizer):
                         and str(e["shot"].get("shot_id", "")) == shot_id)
             ]
             if self._resource_registry is not None:
-                from data.annotate import write_annotation_aggregate
-                write_annotation_aggregate(self.project_path, self.filename, self.media_type, entries, registry=self._resource_registry)
-            atomic_write_text(path, _json.dumps(entries, indent=2, ensure_ascii=False))
+                self._commit_registered_annotations(entries)
+            else:
+                atomic_write_text(path, _json.dumps(entries, indent=2, ensure_ascii=False))
             self.annotation_index.pop(shot_id, None)
             self._annotation_entry_index.pop(shot_id, None)
             self._embedding_row_index.pop(shot_id, None)

@@ -1124,7 +1124,7 @@ def cmd_search(args):
 def cmd_metadata(args):
     _require_path()
     sub = args.metadata_subcommand
-    if getattr(args, "resource_registry", None) and sub in ("set", "update", "prune"):
+    if getattr(args, "resource_registry", None) and sub in ("update", "prune"):
         print("Registered metadata mutation requires controlled association/location commits; CLI editing is deferred.", file=sys.stderr)
         sys.exit(1)
     if sub == "get":
@@ -1193,7 +1193,9 @@ def _meta_set(args):
         for e in errors:
             print(f"  {e}", file=sys.stderr)
         sys.exit(1)
-    dest = set_metadata(prefs.get("path"), data)
+    registry = getattr(args, "resource_registry", None)
+    dest = set_metadata(prefs.get("path"), data,
+                        **({"registry": registry, "approved": getattr(args, "approved_resource_edit", False)} if registry is not None else {}))
     print(f"Saved: {dest}")
 
 
@@ -1942,7 +1944,8 @@ def _shotlist_get(args):
 _ANNOTATION_ARRAY_FIELDS = {"type", "humans", "action", "wearing", "animals", "objects", "text"}
 
 
-def _repair_annotation_file(project_path, filename, media_type, label_fields, *, dry_run=False):
+def _repair_annotation_file(project_path, filename, media_type, label_fields, *, dry_run=False,
+                            registry=None, approved=False):
     """Normalize a single annotation JSON file in-place.
 
     Returns ``(fixes, invalid)`` where *fixes* is the number of fields
@@ -1951,7 +1954,13 @@ def _repair_annotation_file(project_path, filename, media_type, label_fields, *,
     from data.annotate import normalize_label_list
 
     from data.annotate import get_annotation_json_path
-    ann_path = get_annotation_json_path(project_path, filename, media_type)
+    commitment = None
+    if registry is not None:
+        from data.resource_locations import annotation_commitment, resolve_annotation
+        commitment = annotation_commitment(project_path, filename, media_type, registry)
+        ann_path = resolve_annotation(project_path, filename, media_type, registry=registry)
+    else:
+        ann_path = get_annotation_json_path(project_path, filename, media_type)
     if not ann_path.exists():
         return 0, False
 
@@ -1987,10 +1996,13 @@ def _repair_annotation_file(project_path, filename, media_type, label_fields, *,
                     file_fixes += 1
 
     if file_fixes > 0 and not dry_run:
-        ann_path.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
+        if registry is not None:
+            from data.annotate import write_annotation_aggregate
+            write_annotation_aggregate(project_path, filename, media_type, data, registry=registry,
+                                       approved=approved, expected_revision=commitment["revision"],
+                                       expected_hashes=commitment["artifacts"])
+        else:
+            ann_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return file_fixes, False
 
 
@@ -2048,6 +2060,56 @@ def _auto_index_and_motif(
         print(f"  ✗ [{stem}] Index processing error: {_exc}", file=sys.stderr)
 
 
+def _registered_annotate(args):
+    from data.resource_storage import ResourceStore
+    from data.resource_locations import annotation_commitment
+    from data.shotlist import resolve_filename, annotate_shot, annotate_scene
+    from data.annotate import annotate_file_shots
+    project_path = prefs.get("path")
+    registry = args.resource_registry
+    approved = getattr(args, "approved_resource_edit", False)
+    ResourceStore(project_path, registry, approved=approved)
+    if getattr(args, "with_frame", False) or getattr(args, "log", False) or getattr(args, "export_csv", None) or getattr(args, "export_md", None):
+        raise ValueError("Registered --with-frame, append --log and exports are unsupported; no mutation was started")
+    if getattr(args, "all", False):
+        if getattr(args, "manual", None) is not None or getattr(args, "caption", None) is not None:
+            raise ValueError("Registered batch manual annotation requires explicit shot selection")
+        from data.annotate import annotate_all_files
+        summaries = annotate_all_files(project_path, media_type=args.media, model_name=args.model,
+                                       prompt_file=args.prompt_file, prompt_text=args.prompt_text,
+                                       user_prompt_file=getattr(args, "user_prompt_file", None), frames_per_shot=args.frames_per_shot,
+                                       min_frame_interval_s=getattr(args, "min_frame_interval", 4.0), max_frames_per_shot=getattr(args, "max_frames_per_shot", 16),
+                                       sample_mode=args.sample_mode, force=args.force, skip_existing=args.skip_existing,
+                                       limit=getattr(args, "limit", None), verbose=getattr(args, "verbose", False),
+                                       reload_every_n_shots=getattr(args, "reload_every_n_shots", 25), registry=registry, approved=approved)
+        for summary in summaries:
+            print(f"Committed annotation collection: {summary['filename']} revision={summary['commitment']['revision']}")
+        return summaries
+    filename = resolve_filename(project_path, args.tmdb, args.filename, args.media)
+    commitment = annotation_commitment(project_path, filename, args.media, registry)
+    context = {"registry": registry, "approved": approved, "expected_revision": commitment["revision"], "expected_hashes": commitment["artifacts"]}
+    manual_text = getattr(args, "manual", None) or getattr(args, "caption", None)
+    if manual_text is not None:
+        if args.annotate_type == "shot":
+            if args.index is None:
+                raise ValueError("Provide shot index when annotating manually")
+            result = annotate_shot(project_path, filename, args.index, manual_text, args.media, **context)
+        else:
+            result = annotate_scene(project_path, filename, args.scene_number, manual_text, args.media, **context)
+    else:
+        summary = annotate_file_shots(project_path, filename, media_type=args.media, model_name=args.model,
+                                     prompt_file=args.prompt_file, prompt_text=args.prompt_text,
+                                     user_prompt_file=getattr(args, "user_prompt_file", None), frames_per_shot=args.frames_per_shot,
+                                     min_frame_interval_s=getattr(args, "min_frame_interval", 4.0), max_frames_per_shot=getattr(args, "max_frames_per_shot", 16),
+                                     sample_mode=args.sample_mode, force=args.force, skip_existing=args.skip_existing,
+                                     shot_index=getattr(args, "index", None), scene_number=getattr(args, "scene_number", None),
+                                     limit=getattr(args, "limit", None), verbose=getattr(args, "verbose", False),
+                                     reload_every_n_shots=getattr(args, "reload_every_n_shots", 25), **context)
+        result = summary["commitment"]
+    print(f"Committed annotation collection: {filename} revision={result['revision']}")
+    return result
+
+
 def _shotlist_annotate(args):
     if getattr(args, "annotate_type", None) is None:
         print("✗ annotate: specify a subcommand.", file=sys.stderr)
@@ -2062,6 +2124,8 @@ def _shotlist_annotate(args):
     project_path = prefs.get("path")
 
     try:
+        if getattr(args, "resource_registry", None) is not None:
+            return _registered_annotate(args)
         # Determine manual vs automatic mode. Manual mode is triggered by
         # presence of `--manual` text or a positional caption.
         manual_text = getattr(args, "manual", None) or getattr(args, "caption", None)
@@ -3342,6 +3406,7 @@ def _annotate_validate(args):
     project_path = prefs.get("path")
     media_type   = normalize_media_type(getattr(args, "media", "movie"))
     dry_run      = getattr(args, "dry_run", False)
+    registry = getattr(args, "resource_registry", None)
 
     label_fields = load_label_list_fields(project_path)
 
@@ -3367,12 +3432,13 @@ def _annotate_validate(args):
 
     for fn in filenames:
         from data.annotate import get_annotation_json_path
-        ann_path = get_annotation_json_path(project_path, fn, media_type)
+        ann_path = get_annotation_json_path(project_path, fn, media_type, registry=registry)
         if not ann_path.exists():
             print(f"  ?  {fn}  (no annotation file)")
             continue
         total_files += 1
-        fixes, invalid = _repair_annotation_file(project_path, fn, media_type, label_fields, dry_run=dry_run)
+        fixes, invalid = _repair_annotation_file(project_path, fn, media_type, label_fields, dry_run=dry_run,
+                             **({"registry": registry, "approved": getattr(args, "approved_resource_edit", False)} if registry is not None else {}))
         if invalid:
             print(f"  ✗  {fn}: invalid JSON or unexpected structure")
             invalid_files += 1
@@ -4720,6 +4786,8 @@ def _update_one_film(
     force: bool = False,
     verbose: bool = False,
     limit: int | None = None,
+    registry=None,
+    approved=False,
 ) -> str:
     """Reconcile .txt, .npy, and manifest for one film.
 
@@ -4728,6 +4796,16 @@ def _update_one_film(
         ``"skip"``  — everything was already up to date.
         ``"error"`` — a fatal error occurred; message already printed.
     """
+    if registry is not None:
+        from data.index import rebuild_annotation_index
+        from data.resource_locations import annotation_commitment
+        from data.resource_storage import ResourceStore
+        ResourceStore(project_path, registry, approved=approved)
+        commitment = annotation_commitment(project_path, filename, media_type, registry)
+        result = rebuild_annotation_index(project_path, filename, media_type, model_name, registry=registry, approved=approved,
+                                          expected_revision=commitment["revision"], expected_hashes=commitment["artifacts"], force=force, limit=limit)
+        print(f"{filename}: {result['status']} revision={result['commitment']['revision']}")
+        return result["status"]
     from pathlib import Path
     from data.annotate import get_annotation_json_path
     from data.index import (
@@ -5037,9 +5115,18 @@ def _index_update(args):
     limit = getattr(args, "limit", None)
     notify_each = getattr(args, "notify_items", False)
     notify = getattr(args, "notify", False) or notify_each
+    registry = getattr(args, "resource_registry", None)
+    context = {"registry": registry, "approved": getattr(args, "approved_resource_edit", False)} if registry is not None else {}
+    if registry is not None:
+        from data.resource_storage import ResourceStore
+        ResourceStore(project_path, registry, approved=context["approved"])
 
     if do_all:
-        filenames = _resolve_all_annotation_filenames(project_path, media_type)
+        if registry is not None:
+            from data.resource_locations import annotation_collections
+            filenames = [record["filename"] for record, collection in annotation_collections(project_path, media_type, registry=registry)]
+        else:
+            filenames = _resolve_all_annotation_filenames(project_path, media_type)
         if not filenames:
             print(f"No annotation JSON files found under {media_type}.", file=sys.stderr)
             sys.exit(1)
@@ -5048,6 +5135,7 @@ def _index_update(args):
             result = _update_one_film(
                 project_path, fn, media_type, model_name,
                 force=force, verbose=verbose, limit=limit,
+                **context,
             )
             counts[result] = counts.get(result, 0) + 1
             if notify_each:
@@ -5082,6 +5170,7 @@ def _index_update(args):
         result = _update_one_film(
             project_path, filename, media_type, model_name,
             force=force, verbose=verbose, limit=limit,
+            **context,
         )
         if notify:
             from services.notify import discord_notify
@@ -5336,6 +5425,15 @@ def _index_frame_embeddings(args):
     def _run_one(filename: str) -> str:
         """Embed one film. Returns 'ok', 'skip', or 'error'."""
         try:
+            context = {}
+            registry = getattr(args, "resource_registry", None)
+            if registry is not None:
+                from data.resource_storage import ResourceStore
+                from data.resource_locations import annotation_commitment
+                approved = getattr(args, "approved_resource_edit", False)
+                ResourceStore(project_path, registry, approved=approved)
+                commitment = annotation_commitment(project_path, filename, media_type, registry)
+                context = {"registry": registry, "approved": approved, "expected_revision": commitment["revision"], "expected_hashes": commitment["artifacts"]}
             result = build_frame_embeddings(
                 project_path=project_path,
                 filename=filename,
@@ -5345,6 +5443,7 @@ def _index_frame_embeddings(args):
                 verbose=verbose,
                 batch_size=batch_size,
                 limit=limit,
+                **context,
             )
         except FileNotFoundError as exc:
             print(f"  ✗ {exc}", file=sys.stderr)
@@ -12947,7 +13046,15 @@ def build_parser():
     )
     p_sync_fv.set_defaults(func=cmd_sync)
 
-    for context_parser in (p_cloud, p_flipbook, p_index_vocabulary, p_index_stats, p_eng_list, p_eng_remove, p_eng_doctor, p_sync_fm, p_sil_clear, p_sil_deassign, p_annotate_remove, p_sl_scene_detect, p_eng_review, p_meta):
+    p_annotate_validate.add_argument("--approved-resource-edit", action="store_true", help="Approve controlled registered annotation corrections")
+    p_index_update.add_argument("--resource-registry", default=None, metavar="PATH", help="Explicit committed annotation registry")
+    p_index_update.add_argument("--approved-resource-edit", action="store_true", help="Approve grouped annotation text/embedding publication")
+    for annotation_parser in (p_annotate_shot, p_annotate_scene):
+        annotation_parser.add_argument("--resource-registry", default=None, metavar="PATH", help="Explicit committed annotation registry")
+        annotation_parser.add_argument("--approved-resource-edit", action="store_true", help="Approve controlled registered annotation publication")
+    p_meta_set.add_argument("--approved-resource-edit", action="store_true", help="Approve descriptive edits while preserving registered media identity and filename")
+    p_index_frame_embed.add_argument("--approved-resource-edit", action="store_true", help="Approve controlled registered frame artifact publication")
+    for context_parser in (p_cloud, p_flipbook, p_index_vocabulary, p_index_stats, p_eng_list, p_eng_remove, p_eng_doctor, p_sync_fm, p_sil_clear, p_sil_deassign, p_annotate_remove, p_annotate_validate, p_sl_scene_detect, p_eng_review, p_meta, p_index_frame_embed):
         context_parser.add_argument("--resource-registry", default=None, metavar="PATH", help="Explicit committed resource registry (legacy defaults remain unchanged)")
     for retirement_parser in (p_sil_clear, p_sil_deassign, p_annotate_remove):
         retirement_parser.add_argument("--apply", action="store_true", help="Request controlled registered execution (currently explicitly deferred)")

@@ -238,20 +238,33 @@ def write_shotlist(project_path: str, filename: str, media_type: str, shots: lis
         resume_dirty_propagation(project_path, registry, propagation["operation_id"], approved=approved)
 
 
-def annotate_shot(project_path: str, filename: str, shot_index: int, caption: str, media_type: str = "movie") -> None:
+def annotate_shot(project_path: str, filename: str, shot_index: int, caption: str, media_type: str = "movie", *, registry=None, approved=False, expected_revision=None, expected_hashes=None, operation_id=None, interrupt=None):
     """Add or update annotation for a specific shot (0-indexed)."""
     shots = read_shotlist(project_path, filename, media_type)
     
     if shot_index < 0 or shot_index >= len(shots):
         raise IndexError(f"Shot index {shot_index} out of range (0-{len(shots)-1})")
+    if registry is not None:
+        from data.annotate import annotate_manual
+        return annotate_manual(project_path, filename, media_type, [shots[shot_index]["shot_id"]], caption,
+                               registry=registry, approved=approved, expected_revision=expected_revision,
+                               expected_hashes=expected_hashes, operation_id=operation_id, interrupt=interrupt)
     
     shots[shot_index]['Shot_Caption'] = caption
     write_shotlist(project_path, filename, media_type, shots)
 
 
-def annotate_scene(project_path: str, filename: str, scene_number: int, caption: str, media_type: str = "movie") -> None:
+def annotate_scene(project_path: str, filename: str, scene_number: int, caption: str, media_type: str = "movie", *, registry=None, approved=False, expected_revision=None, expected_hashes=None, operation_id=None, interrupt=None):
     """Add or update annotation for all shots in a scene."""
     shots = read_shotlist(project_path, filename, media_type)
+    if registry is not None:
+        from data.annotate import annotate_manual
+        selected = [shot["shot_id"] for shot in shots if shot.get("Scene") == str(scene_number)]
+        if not selected:
+            raise ValueError(f"Scene {scene_number} not found in shotlist")
+        return annotate_manual(project_path, filename, media_type, selected, caption,
+                               registry=registry, approved=approved, expected_revision=expected_revision,
+                               expected_hashes=expected_hashes, operation_id=operation_id, interrupt=interrupt)
     
     # Find all shots in this scene
     updated = 0

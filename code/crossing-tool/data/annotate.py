@@ -1422,12 +1422,18 @@ def _build_prompt(
 # ETA helpers — used by annotate_file_shots and annotate_all_files
 # ---------------------------------------------------------------------------
 
-def write_annotation_aggregate(project_path, filename, media_type, entries, *, registry=None):
+def write_annotation_aggregate(project_path, filename, media_type, entries, *, registry=None, approved=False,
+                               expected_revision=None, expected_hashes=None, operation_id=None, interrupt=None):
     """Validate declared classifications before the existing atomic legacy write."""
     from data.index import annotation_artifacts_for_file
     from services.resource_validation import validate_annotation_classifications
     if registry is not None:
-        raise ValueError("Registered annotation writes require controlled artifact publication; generation cannot overwrite committed hashes")
+        from services.resource_publication import publish_annotation_collection
+        publish_annotation_collection(project_path, registry, filename, media_type,
+                                      {".annotations.json": json.dumps(entries, indent=2, ensure_ascii=False, allow_nan=False).encode()},
+                                      expected_revision=expected_revision, expected_hashes=expected_hashes,
+                                      approved=approved, operation_id=operation_id, interrupt=interrupt)
+        return get_annotation_json_path(project_path, filename, media_type, registry=registry)
     findings = []
     for entry in entries:
         shot = entry.get("shot", {}) if isinstance(entry, dict) else {}
@@ -1441,6 +1447,32 @@ def write_annotation_aggregate(project_path, filename, media_type, entries, *, r
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(path, json.dumps(entries, indent=2, ensure_ascii=False))
     return path
+
+
+def annotate_manual(project_path, filename, media_type, shot_ids, caption, *, registry, approved=False,
+                    expected_revision=None, expected_hashes=None, operation_id=None, interrupt=None):
+    from data.resource_storage import ResourceStore
+    from data.resource_locations import resolve_annotation, annotation_commitment, find_media
+    from data.media_id import parse_shot_id
+    ResourceStore(project_path, registry, approved=approved)
+    media = find_media(project_path, media_type, filename=filename)
+    if any(parse_shot_id(shot_id)[0] != media["media_id"] for shot_id in shot_ids):
+        raise ValueError("Manual annotation shot identity differs from registered media")
+    path = resolve_annotation(project_path, filename, media_type, registry=registry)
+    entries = json.loads(path.read_text(encoding="utf-8"))
+    by_id = {entry["shot"]["shot_id"]: entry for entry in entries}
+    for shot_id in shot_ids:
+        entry = by_id.get(shot_id)
+        if entry is None:
+            entry = {"shot": {"shot_id": shot_id}}
+            entries.append(entry)
+        annotation = entry["shot"].get("annotation") or {}
+        entry["shot"]["annotation"] = {**annotation, "description": caption}
+        entry["annotation"] = {**(entry.get("annotation") or {}), "edit_service": "manual", "edited_fields": ["description"]}
+    write_annotation_aggregate(project_path, filename, media_type, entries, registry=registry, approved=approved,
+                               expected_revision=expected_revision, expected_hashes=expected_hashes,
+                               operation_id=operation_id, interrupt=interrupt)
+    return annotation_commitment(project_path, filename, media_type, registry)
 
 
 def _load_existing_agg(project_path: str, filename: str, media_type: str, *, registry=None) -> Dict[str, Any]:
@@ -1626,6 +1658,7 @@ def _count_file_pending_shots(
     force: bool,
     skip_existing: bool,
     limit: Optional[int],
+    *, registry=None,
 ) -> int:
     """Count annotation-pending shots for *filename* without loading the model.
 
@@ -1639,10 +1672,12 @@ def _count_file_pending_shots(
         shots = read_shotlist(project_path, filename, media_type)
         entries = get_metadata(project_path, media_type=media_type)
         meta = next((e for e in entries if e.get("filename") == filename), {})
-        mid = compute_media_id(meta, media_type)
-        existing_agg = _load_existing_agg(project_path, filename, media_type)
+        mid = meta.get("media_id") or compute_media_id(meta, media_type)
+        existing_agg = _load_existing_agg(project_path, filename, media_type, **({"registry": registry} if registry is not None else {}))
         return _count_pending_shots(shots, existing_agg, force, skip_existing, None, None, limit, media_id=mid)
     except Exception:
+        if registry is not None:
+            raise
         return 0
 
 
@@ -1675,6 +1710,11 @@ def annotate_file_shots(
     on_failure=None,
     registry=None,
     repair_legacy_ids: bool = False,
+    approved: bool = False,
+    expected_revision=None,
+    expected_hashes=None,
+    operation_id=None,
+    interrupt=None,
 ) -> Dict[str, Any]:
     """Annotate all shots in a single file and write canonical outputs.
 
@@ -1685,6 +1725,16 @@ def annotate_file_shots(
     from data.media_id import compute_media_id, build_shot_id
 
     project = Path(project_path)
+    if registry is not None:
+        from data.resource_storage import ResourceStore
+        from data.resource_locations import annotation_commitment, resolve_annotation
+        ResourceStore(project_path, registry, approved=approved)
+        commitment = annotation_commitment(project_path, filename, media_type, registry)
+        if commitment is None or commitment["revision"] != expected_revision or commitment["artifacts"] != expected_hashes:
+            raise ValueError("Annotation generation revision/hash conflict")
+        resolve_annotation(project_path, filename, media_type, registry=registry)
+        if write_log:
+            raise ValueError("Registered diagnostic append logging is unsupported; committed logs remain unchanged")
     shots = read_shotlist(project_path, filename, media_type)
 
     # Movie metadata lookup (best-effort)
@@ -1702,6 +1752,8 @@ def annotate_file_shots(
     _label_fields = load_label_list_fields(project_path)
     from data.index import annotation_artifacts_for_file
     artifacts = annotation_artifacts_for_file(project_path, filename, media_type, registry=registry, required=())
+    if registry is not None and artifacts["changed"]:
+        raise ValueError("Committed annotation collection hash validation failed")
     if registry is not None and repair_legacy_ids:
         raise ValueError("Registered legacy-ID repair requires controlled artifact publication")
 
@@ -1723,7 +1775,8 @@ def annotate_file_shots(
     stem = Path(filename).stem
     aggregated = artifacts["expected"][".annotations.json"]
     annotations_dir = aggregated.parent
-    annotations_dir.mkdir(parents=True, exist_ok=True)
+    if registry is None:
+        annotations_dir.mkdir(parents=True, exist_ok=True)
     # Track whether we modified the shotlist CSV entries (we no longer write full
     # annotation JSON into the shotlist; this avoids duplicating data)
     shotlist_modified = False
@@ -1791,9 +1844,20 @@ def annotate_file_shots(
             "skipped": len(shots),
             "failed": [],
             "annotations_path": str(aggregated),
+            **({"commitment": commitment} if registry is not None else {}),
         }
     if registry is not None:
-        raise ValueError("Registered annotation generation requires controlled artifact publication; no model or committed write was started")
+        from data.resource_storage import ResourceStore
+        ResourceStore(project_path, registry, approved=approved)
+        if type(expected_revision) is not int or expected_hashes is None or write_log:
+            raise ValueError("Registered annotation generation requires a collection revision/hashes and no append-only debug log")
+        from data.resource_locations import annotation_commitment
+        commitment = annotation_commitment(project_path, filename, media_type, registry)
+        if commitment is None or commitment["revision"] != expected_revision or commitment["artifacts"] != expected_hashes:
+            raise ValueError("Annotation generation revision/hash conflict")
+        from data.media_id import parse_shot_id
+        if any(parse_shot_id(shot.get("shot_id"))[0] != media_id or shot["shot_id"] != build_shot_id(media_id, int(shot.get("start_frame") or 0), int(shot.get("end_frame") or 0)) for shot in shots):
+            raise ValueError("Registered generation requires existing immutable shot identities")
 
     # Initialize model pipeline (local-first). If this fails we abort early
     try:
@@ -2100,6 +2164,17 @@ def annotate_file_shots(
                 "annotation": ann,
             },
         }
+        if registry is not None:
+            import hashlib
+            shot_annotation["annotation"].update({"prompt_sha256": hashlib.sha256(system_prompt.encode()).hexdigest(),
+                                                  "user_prompt_sha256": hashlib.sha256(filled_user.encode()).hexdigest(),
+                                                  "sample_mode": sample_mode, "sampled_frame_count": len(pil_frames),
+                                                  "resolved_model": getattr(getattr(getattr(pipeline, "model", None), "config", None), "_name_or_path", model_name),
+                                                  "user_prompt_file": user_prompt_path,
+                                                  "prompt_text": system_prompt if prompt_text is not None else None,
+                                                  "generation_parameters": cfg})
+            if _prior is not None:
+                shot_annotation = {**_prior, **shot_annotation, "shot": {**_prior["shot"], **shot_annotation["shot"]}}
 
         # (No per-shot JSON files) — we'll write a single aggregated JSON file below
 
@@ -2124,6 +2199,8 @@ def annotate_file_shots(
             # Do NOT append failed shots to results: they are omitted from the JSON
             # so the visualizer shows them as unannotated (? not ✗), and they are
             # retried automatically on the next run without --force.
+            if not any(index == i for index, reason in failed):
+                failed.append((i, "No valid annotation result after model response validation"))
             _consecutive_failures += 1
             if _consecutive_failures >= 5:
                 # Consecutive failures indicate device-drift or memory corruption
@@ -2180,8 +2257,9 @@ def annotate_file_shots(
                 _sid = _r.get("shot", {}).get("shot_id") if isinstance(_r.get("shot"), dict) else None
                 if _sid is not None:
                     _write_map[str(_sid)] = _r
-            write_annotation_aggregate(project_path, filename, media_type,
-                                       [_write_map[k] for k in sorted(_write_map)])
+            if registry is None:
+                write_annotation_aggregate(project_path, filename, media_type,
+                                           [_write_map[k] for k in sorted(_write_map)])
         except Exception as exc:
             raise RuntimeError(f"Annotation aggregate publication failed: {exc}") from exc
         if on_shot_done is not None and success:
@@ -2191,6 +2269,8 @@ def annotate_file_shots(
 
     # Write back shotlist CSV only if we actually modified it
     if shotlist_modified:
+        if registry is not None:
+            raise ValueError("Registered generation cannot repair shot identities; explicit association transition required")
         try:
             write_shotlist(project_path, filename, media_type, shots)
         except Exception:
@@ -2213,7 +2293,12 @@ def annotate_file_shots(
             if _sid is not None:
                 _write_map[str(_sid)] = _r
         write_annotation_aggregate(project_path, filename, media_type,
-                                   [_write_map[k] for k in sorted(_write_map)])
+                                   [_write_map[k] for k in sorted(_write_map)],
+                                   **({"registry": registry, "approved": approved, "expected_revision": expected_revision,
+                                       "expected_hashes": expected_hashes, "operation_id": operation_id,
+                                       "interrupt": interrupt} if registry is not None else {}))
+        if registry is not None:
+            commitment = annotation_commitment(project_path, filename, media_type, registry)
     except Exception as exc:
         raise RuntimeError(f"Annotation aggregate publication failed: {exc}") from exc
 
@@ -2236,6 +2321,7 @@ def annotate_file_shots(
         "skipped": skipped,
         "failed": failed,
         "annotations_path": str(aggregated),
+        **({"commitment": commitment} if registry is not None else {}),
     }
     return summary
 
@@ -2298,10 +2384,27 @@ def annotate_all_files(
     write_log: bool = False,
     reload_every_n_shots: int = 25,
     on_file_done=None,
+    registry=None,
+    approved=False,
+    expected_commitments=None,
 ) -> List[Dict[str, Any]]:
     from data.metadata import get_metadata
 
     entries = get_metadata(project_path, media_type=media_type)
+    if registry is not None:
+        from data.resource_storage import ResourceStore
+        from data.resource_locations import annotation_collections, annotation_commitment, resolve_annotation
+        ResourceStore(project_path, registry, approved=approved)
+        if write_log:
+            raise ValueError("Registered diagnostic append logging is unsupported")
+        entries = [record for record, collection in annotation_collections(project_path, media_type, registry=registry)]
+        commitments = expected_commitments if expected_commitments is not None else {
+            entry["filename"]: annotation_commitment(project_path, entry["filename"], media_type, registry) for entry in entries}
+        for entry in entries:
+            current = annotation_commitment(project_path, entry["filename"], media_type, registry)
+            if current != commitments.get(entry["filename"]):
+                raise ValueError("Batch annotation revision/hash conflict")
+            resolve_annotation(project_path, entry["filename"], media_type, registry=registry)
 
     # Pre-compute pending shot counts so we can project corpus-level ETA from
     # the very first annotation.  Failures are silently treated as 0.
@@ -2310,7 +2413,8 @@ def annotate_all_files(
         _fn = _e.get("filename")
         if _fn:
             _pending_counts[_fn] = _count_file_pending_shots(
-                project_path, _fn, media_type, force, skip_existing, limit
+                project_path, _fn, media_type, force, skip_existing, limit,
+                **({"registry": registry} if registry is not None else {})
             )
 
     # Shared timer spans the entire corpus run so the rolling window reflects
@@ -2362,8 +2466,12 @@ def annotate_all_files(
                 reload_every_n_shots=reload_every_n_shots,
                 timer=_timer,
                 subsequent_shots=_corpus_subsequent,
+                **({"registry": registry, "approved": approved, "expected_revision": commitments[fn]["revision"],
+                    "expected_hashes": commitments[fn]["artifacts"]} if registry is not None else {}),
             )
         except RuntimeError as exc:
+            if registry is not None:
+                raise
             if verbose:
                 print(f"  ✗ Skipping {fn}: {exc}")
             summary = {
@@ -2379,6 +2487,8 @@ def annotate_all_files(
             try:
                 on_file_done(summary, _elapsed)
             except Exception:
+                if registry is not None:
+                    raise
                 pass
     return results
 

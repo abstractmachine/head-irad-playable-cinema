@@ -803,6 +803,46 @@ def set_best_frame(
     shot["best_frame"] = bf
 
 
+def commit_best_frame(project_path, filename, media_type, shot_id, best_frame, *, registry,
+                      expected_revision, expected_hashes, approved=False, operation_id=None, interrupt=None):
+    """Persist an explicit frame association without allocating or renaming identities."""
+    from data.annotate import write_annotation_aggregate
+    from data.media_id import parse_shot_id
+    from data.resource_locations import resolve_annotation, find_media
+    media = find_media(project_path, media_type, filename=filename)
+    identity, start, end = parse_shot_id(shot_id)
+    if identity != media["media_id"]:
+        raise ValueError("Best-frame media identity mismatch")
+    if best_frame is not None:
+        frame = best_frame.get("frame") if isinstance(best_frame, dict) else None
+        if type(frame) is not int or not start <= frame <= end:
+            raise ValueError("Best-frame source frame is outside the registered shot")
+    path = None
+    if operation_id is not None:
+        from data.resource_storage import ResourceStore
+        from data.resource_locations import project_file
+        with ResourceStore(project_path, registry, approved=approved).transaction() as database:
+            operation = database.execute("SELECT details FROM publication_operations WHERE operation_id=? AND kind='annotation-collection'",
+                                         (operation_id,)).fetchone()
+        if operation is not None:
+            details = json.loads(operation["details"])
+            if details["filename"] != filename or details["media_type"] != media_type:
+                raise ValueError("Best-frame retry belongs to a different collection")
+            path = project_file(project_path, Path(project_path) / details["stage"] / "new.annotations.json")
+    if path is None:
+        path = resolve_annotation(project_path, filename, media_type, registry=registry)
+    entries = json.loads(path.read_text())
+    matches = [entry["shot"] for entry in entries if entry.get("shot", {}).get("shot_id") == shot_id]
+    if len(matches) != 1:
+        raise ValueError("Best-frame requires one exact committed shot association")
+    if operation_id is not None and path.name == "new.annotations.json" and matches[0].get("best_frame") != best_frame:
+        raise ValueError("Best-frame retry differs from the prepared assignment")
+    matches[0]["best_frame"] = best_frame
+    return write_annotation_aggregate(project_path, filename, media_type, entries, registry=registry,
+                                      approved=approved, expected_revision=expected_revision,
+                                      expected_hashes=expected_hashes, operation_id=operation_id, interrupt=interrupt)
+
+
 def clear_best_frame(shot: Dict[str, Any]) -> None:
     """Remove the best_frame entry from *shot* in-place."""
     shot["best_frame"] = None

@@ -57,6 +57,10 @@ def is_frame_index_current(
     manifest_path = collection["expected"][".frames.manifest.json"]
     if registry is not None:
         from data.resource_locations import resolve_annotation
+        resolve_annotation(project_path, filename, media_type, ".annotations.json", registry=registry)
+        commitment = collection.get("commitment")
+        if commitment is not None and not {".frames.npy", ".frames.valid.npy", ".frames.manifest.json"}.issubset(commitment["artifacts"]):
+            return False
         for suffix in (".annotations.json", ".frames.npy", ".frames.valid.npy", ".frames.manifest.json"):
             resolve_annotation(project_path, filename, media_type, suffix, registry=registry)
 
@@ -87,7 +91,7 @@ def build_frame_embeddings(
     verbose: bool = False,
     batch_size: int = 32,
     limit: int | None = None,
-    registry=None,
+    registry=None, approved=False, expected_revision=None, expected_hashes=None,
 ) -> dict[str, Any]:
     """Embed best-frame PNGs for all shots in *filename* and save index files.
 
@@ -112,6 +116,15 @@ def build_frame_embeddings(
     """
     from data.index import annotation_artifacts_for_file
 
+    if registry is not None:
+        from data.resource_storage import ResourceStore
+        ResourceStore(project_path, registry, approved=approved)
+        if type(expected_revision) is not int or expected_hashes is None:
+            raise ValueError("Registered frame generation requires explicit collection revision/hashes")
+        from data.resource_locations import annotation_commitment
+        commitment = annotation_commitment(project_path, filename, media_type, registry)
+        if commitment is None or commitment["revision"] != expected_revision or commitment["artifacts"] != expected_hashes:
+            raise ValueError("Frame generation revision/hash conflict")
     stem = Path(filename).stem
     collection = annotation_artifacts_for_file(project_path, filename, media_type, registry=registry)
     json_path = collection["expected"][".annotations.json"]
@@ -251,6 +264,13 @@ def build_frame_embeddings(
     ).astype("float32")
     valid_mask = np.array(result_valid, dtype=bool)
 
+    if registry is not None:
+        commit_frame_artifacts(project_path, filename, media_type, embeddings, valid_mask, model_name=model_name,
+                               registry=registry, approved=approved, expected_revision=expected_revision,
+                               expected_hashes=expected_hashes)
+        return {"filename": filename, "status": "ok", "shape": list(embeddings.shape),
+                "valid_count": int(valid_count), "missing_count": int(missing_count),
+                "model": model_name, "npy_path": npy_path}
     # Write files
     npy_path.parent.mkdir(parents=True, exist_ok=True)
     np.save(npy_path, embeddings)
@@ -291,6 +311,57 @@ def build_frame_embeddings(
 # Manifest builder
 # ---------------------------------------------------------------------------
 
+def commit_frame_artifacts(project_path, filename, media_type, embeddings, valid_mask, *, registry,
+                           expected_revision, expected_hashes, approved=False, model_name="precomputed",
+                           operation_id=None, interrupt=None):
+    """Commit precomputed frame rows and their mask; never run a model or infer paths."""
+    import hashlib
+    import io
+    from data.resource_locations import annotation_commitment, annotation_path, resolve_annotation
+    from data.resource_storage import ResourceStore
+    from services.resource_publication import publish_annotation_collection
+    if operation_id is not None:
+        with ResourceStore(project_path, registry, approved=approved).transaction() as database:
+            operation = database.execute("SELECT * FROM publication_operations WHERE operation_id=? AND kind='annotation-collection'",
+                                         (operation_id,)).fetchone()
+        if operation is not None:
+            details = json.loads(operation["details"])
+            if details["filename"] != filename or details["media_type"] != media_type:
+                raise ValueError("Frame retry belongs to a different collection")
+            changes = {}
+            for suffix, array in ((".frames.npy", embeddings), (".frames.valid.npy", valid_mask)):
+                buffer = io.BytesIO()
+                np.save(buffer, array, allow_pickle=False)
+                changes[suffix] = buffer.getvalue()
+            from data.resource_locations import project_file
+            changes[".frames.manifest.json"] = project_file(project_path, Path(project_path) / details["stage"] / "new.frames.manifest.json").read_bytes()
+            if json.loads(changes[".frames.manifest.json"])["model"]["name"] != model_name:
+                raise ValueError("Frame retry model association mismatch")
+            return publish_annotation_collection(project_path, registry, filename, media_type, changes,
+                                                 expected_revision=expected_revision, expected_hashes=expected_hashes,
+                                                 approved=approved, operation_id=operation_id, interrupt=interrupt)
+    commitment = annotation_commitment(project_path, filename, media_type, registry)
+    if commitment is None:
+        raise ValueError("Committed annotation collection required")
+    json_path = resolve_annotation(project_path, filename, media_type, registry=registry)
+    paths = {suffix: annotation_path(project_path, filename, media_type, suffix, layout=commitment["layout"])
+             for suffix in (".frames.npy", ".frames.valid.npy", ".frames.manifest.json")}
+    changes = {}
+    for suffix, array in ((".frames.npy", embeddings), (".frames.valid.npy", valid_mask)):
+        buffer = io.BytesIO()
+        np.save(buffer, array, allow_pickle=False)
+        changes[suffix] = buffer.getvalue()
+    hashes = {str(paths[suffix]): "sha256:" + hashlib.sha256(payload).hexdigest() for suffix, payload in changes.items()}
+    manifest = _build_frame_manifest(project_path, filename, media_type, model_name, json_path,
+                                     paths[".frames.npy"], paths[".frames.valid.npy"], embeddings, valid_mask,
+                                     len(json.loads(json_path.read_text())), int(valid_mask.sum()),
+                                     int((~valid_mask).sum()), datetime.now(timezone.utc).isoformat(), prepared_hashes=hashes)
+    changes[".frames.manifest.json"] = (json.dumps(manifest, indent=2, allow_nan=False) + "\n").encode()
+    return publish_annotation_collection(project_path, registry, filename, media_type, changes,
+                                         expected_revision=expected_revision, expected_hashes=expected_hashes,
+                                         approved=approved, operation_id=operation_id, interrupt=interrupt)
+
+
 def _build_frame_manifest(
     project_path: str,
     filename: str,
@@ -305,6 +376,7 @@ def _build_frame_manifest(
     valid_count: int,
     missing_count: int,
     now: str,
+    prepared_hashes=None,
 ) -> dict:
     project = Path(project_path)
     stem = Path(filename).stem
@@ -332,14 +404,14 @@ def _build_frame_manifest(
         "npy": {
             "filename": npy_path.name,
             "path": str(npy_path.relative_to(project)),
-            "hash": hash_file(npy_path),
+            "hash": prepared_hashes[str(npy_path)] if prepared_hashes is not None else hash_file(npy_path),
             "shape": list(embeddings.shape),
             "dtype": str(embeddings.dtype),
         },
         "valid": {
             "filename": valid_path.name,
             "path": str(valid_path.relative_to(project)),
-            "hash": hash_file(valid_path),
+            "hash": prepared_hashes[str(valid_path)] if prepared_hashes is not None else hash_file(valid_path),
             "shape": [int(valid_mask.shape[0])],
             "dtype": str(valid_mask.dtype),
         },

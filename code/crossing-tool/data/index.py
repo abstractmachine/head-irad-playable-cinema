@@ -276,6 +276,7 @@ def write_text_file(
     lines: list[str],
     *,
     force: bool = False,
+    registry=None, approved=False, expected_revision=None, expected_hashes=None,
 ) -> Path:
     """Write serialized text lines to ``<project>/data/index/text/<media_type>/<stem>.txt``.
 
@@ -292,6 +293,12 @@ def write_text_file(
     Raises:
         FileExistsError: If the file already exists and ``force`` is False.
     """
+    if registry is not None:
+        from services.resource_publication import publish_annotation_collection
+        publish_annotation_collection(project_path, registry, filename, media_type,
+                                      {".annotations.txt": ("\n".join(lines) + "\n").encode()},
+                                      approved=approved, expected_revision=expected_revision, expected_hashes=expected_hashes)
+        return get_text_path(project_path, filename, media_type, registry=registry)
     dest = get_text_path(project_path, filename, media_type)
     if dest.exists() and not force:
         raise FileExistsError(
@@ -555,9 +562,21 @@ def load_manifest(project_path: str, filename: str, media_type: str, *, registry
 
 
 def write_manifest(
-    project_path: str, filename: str, media_type: str, manifest: dict
+    project_path: str, filename: str, media_type: str, manifest: dict, *, registry=None,
+    approved=False, expected_revision=None, expected_hashes=None, artifacts=None,
+    operation_id=None, interrupt=None,
 ) -> Path:
     """Serialise *manifest* to the canonical manifest path and return it."""
+    if registry is not None:
+        from services.resource_publication import publish_annotation_collection
+        changes = dict(artifacts or {})
+        if set(changes) - {".annotations.npy", ".annotations.txt"}:
+            raise ValueError("Annotation manifest writer only owns annotation text/embeddings")
+        changes[".annotations.manifest.json"] = (json.dumps(manifest, indent=2, allow_nan=False) + "\n").encode()
+        publish_annotation_collection(project_path, registry, filename, media_type, changes,
+                                      approved=approved, expected_revision=expected_revision,
+                                      expected_hashes=expected_hashes, operation_id=operation_id, interrupt=interrupt)
+        return get_manifest_path(project_path, filename, media_type, registry=registry)
     path = get_manifest_path(project_path, filename, media_type)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
@@ -572,6 +591,8 @@ def build_manifest(
     media_type: str,
     *,
     embed_model: str,
+    registry=None,
+    prepared=None,
 ) -> dict:
     """Build a manifest dict from the current on-disk state of all derived files.
 
@@ -582,18 +603,19 @@ def build_manifest(
     from datetime import datetime, timezone
     from data.annotate import get_annotation_json_path
 
-    json_path = get_annotation_json_path(project_path, filename, media_type)
+    json_path = get_annotation_json_path(project_path, filename, media_type, registry=registry)
     mapping_path = Path(project_path) / "preferences" / "data" / "mapping.yaml"
-    txt_path = get_text_path(project_path, filename, media_type)
-    npy_path = get_embeddings_path(project_path, filename, media_type)
+    txt_path = get_text_path(project_path, filename, media_type, registry=registry)
+    npy_path = get_embeddings_path(project_path, filename, media_type, registry=registry)
 
     with json_path.open("r", encoding="utf-8") as f:
         items = json.load(f)
 
-    txt_lines = [
-        ln for ln in txt_path.read_text(encoding="utf-8").splitlines() if ln.strip()
-    ]
-    arr = np.load(npy_path)
+    import io
+    import hashlib
+    text = prepared[".annotations.txt"].decode("utf-8") if prepared is not None else txt_path.read_text(encoding="utf-8")
+    txt_lines = [ln for ln in text.splitlines() if ln.strip()]
+    arr = np.load(io.BytesIO(prepared[".annotations.npy"]), allow_pickle=False) if prepared is not None else np.load(npy_path)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     return {
@@ -616,13 +638,13 @@ def build_manifest(
         "txt": {
             "filename": txt_path.name,
             "path": str(txt_path.relative_to(project_path)),
-            "hash": hash_file(txt_path),
+            "hash": "sha256:" + hashlib.sha256(prepared[".annotations.txt"]).hexdigest() if prepared is not None else hash_file(txt_path),
             "line_count": len(txt_lines),
         },
         "npy": {
             "filename": npy_path.name,
             "path": str(npy_path.relative_to(project_path)),
-            "hash": hash_file(npy_path),
+            "hash": "sha256:" + hashlib.sha256(prepared[".annotations.npy"]).hexdigest() if prepared is not None else hash_file(npy_path),
             "shape": list(arr.shape),
             "dtype": str(arr.dtype),
             "embed_model": embed_model,
@@ -633,6 +655,67 @@ def build_manifest(
 # ---------------------------------------------------------------------------
 # Frame-embedding paths
 # ---------------------------------------------------------------------------
+
+def rebuild_annotation_index(project_path, filename, media_type, model_name, *, registry, approved=False,
+                             expected_revision=None, expected_hashes=None, force=False, limit=None,
+                             operation_id=None, interrupt=None):
+    import io
+    import numpy as np
+    from data.resource_storage import ResourceStore
+    from data.resource_locations import annotation_commitment, resolve_annotation
+    store = ResourceStore(project_path, registry, approved=approved)
+    if operation_id is not None:
+        with store.transaction() as database:
+            operation = database.execute("SELECT * FROM publication_operations WHERE operation_id=?", (operation_id,)).fetchone()
+        if operation is not None:
+            from data.resource_storage import relative_path
+            from data.resource_locations import project_file
+            from services.resource_publication import resume_annotation_collection
+            details = json.loads(operation["details"])
+            if (operation["kind"] != "annotation-collection" or details.get("filename") != filename or details.get("media_type") != media_type
+                    or details.get("expected_revision") != expected_revision or details.get("before") != expected_hashes
+                    or not {".annotations.txt", ".annotations.npy", ".annotations.manifest.json"}.issubset(details.get("proposed", {}))
+                    or details.get("stage") != relative_path(project_path, store.registry.parent / ".resource-publications" / operation_id)):
+                raise ValueError("Annotation index retry differs from prepared operation")
+            prepared_manifest = json.loads(project_file(project_path, Path(details["stage"]) / "new.annotations.manifest.json").read_text())
+            if prepared_manifest["npy"]["embed_model"] != model_name or (limit is not None and limit < prepared_manifest["json"]["item_count"]):
+                raise ValueError("Annotation index retry differs from prepared model/source rows")
+            resume_annotation_collection(project_path, registry, operation_id, approved=approved, interrupt=interrupt)
+            return {"status": "ok", "commitment": annotation_commitment(project_path, filename, media_type, registry)}
+    commitment = annotation_commitment(project_path, filename, media_type, registry)
+    if commitment is None or commitment["revision"] != expected_revision or commitment["artifacts"] != expected_hashes:
+        raise ValueError("Annotation index revision/hash conflict")
+    source = resolve_annotation(project_path, filename, media_type, registry=registry)
+    items = load_annotation_items(project_path, filename, media_type, registry=registry)
+    if annotation_artifacts_for_file(project_path, filename, media_type, registry=registry, required=())["changed"]:
+        raise ValueError("Committed annotation collection hash validation failed")
+    if limit is not None and limit < len(items):
+        raise ValueError("Registered annotation embeddings require the complete source row set")
+    mapping_path = Path(project_path) / "preferences/data/mapping.yaml"
+    manifest = load_manifest(project_path, filename, media_type, registry=registry)
+    if not force and manifest is not None and all(suffix in commitment["artifacts"] for suffix in (".annotations.txt", ".annotations.npy")):
+        if (manifest["json"]["hash"] == hash_file(source) and manifest["mapping"]["hash"] == (hash_file(mapping_path) if mapping_path.exists() else None)
+                and manifest["npy"]["embed_model"] == model_name):
+            resolve_annotation(project_path, filename, media_type, ".annotations.txt", registry=registry)
+            resolve_annotation(project_path, filename, media_type, ".annotations.npy", registry=registry)
+            return {"status": "skip", "commitment": commitment}
+    mapping_hash = hash_file(mapping_path) if mapping_path.exists() else None
+    mapping = load_mapping(project_path)
+    lines = [serialize_annotation_item(item, mapping) for item in items]
+    if any(not line.strip() or "\n" in line or "\r" in line for line in lines):
+        raise ValueError("Registered annotation serialization requires one nonempty line per source row")
+    array = embed_texts(lines, model_name, project_path)
+    if (hash_file(mapping_path) if mapping_path.exists() else None) != mapping_hash:
+        raise ValueError("Annotation mapping changed during embedding preparation")
+    output = io.BytesIO()
+    np.save(output, array, allow_pickle=False)
+    prepared = {".annotations.txt": ("\n".join(lines) + "\n").encode(), ".annotations.npy": output.getvalue()}
+    manifest = build_manifest(project_path, filename, media_type, embed_model=model_name, registry=registry, prepared=prepared)
+    manifest["mapping"]["hash"] = mapping_hash
+    write_manifest(project_path, filename, media_type, manifest, registry=registry, approved=approved,
+                   expected_revision=expected_revision, expected_hashes=expected_hashes, artifacts=prepared,
+                   operation_id=operation_id, interrupt=interrupt)
+    return {"status": "ok", "commitment": annotation_commitment(project_path, filename, media_type, registry)}
 
 def get_frame_embeddings_path(project_path: str, filename: str, media_type: str, *, registry=None) -> Path:
     """Return the canonical path for the frame-embeddings ``.frames.npy`` file.
