@@ -36,7 +36,8 @@ def _validation(store, database, binding, metadata, kind, mode):
     row = database.execute("SELECT layout FROM annotation_layouts WHERE media_type=? AND media_id=?",
                            (binding["media_type"], binding["media_id"])).fetchone()
     binding["runs"] = [dict(item) for item in database.execute("SELECT * FROM generation_runs WHERE instance_id=?", (binding["instance_id"],))]
-    return validate_metadata(store.project, binding, metadata, kind, mode, annotation_layout=row[0] if row else "legacy-v1")
+    return validate_metadata(store.project, binding, metadata, kind, mode, annotation_layout=row[0] if row else "legacy-v1",
+                             preserve_assignment=kind == "silhouettes" and bool(binding["locations"]))
 
 
 def publish_silhouette(project, metadata, image, *, source_path=None, registry=None, expected_revision=0, approved=False):
@@ -44,6 +45,14 @@ def publish_silhouette(project, metadata, image, *, source_path=None, registry=N
     from services.resource_validation import validate_source_classification
     from data.annotate import atomic_write_text
     if registry is not None:
+        if hasattr(image, "save"):
+            import tempfile
+            store = ResourceStore(project, registry, approved=approved)
+            with tempfile.TemporaryDirectory(prefix=".silhouette-input-", dir=store.registry.parent) as temporary:
+                prepared = Path(temporary) / "silhouette.png"
+                image.save(prepared, format="PNG")
+                return publish_resource(project, registry, metadata["instance_id"], "silhouettes", metadata, prepared,
+                                        expected_revision=expected_revision, approved=approved)
         return publish_resource(project, registry, metadata["instance_id"], "silhouettes", metadata, image,
                                 expected_revision=expected_revision, approved=approved)
     findings = validate_source_classification(project, metadata, segmentation=True)
@@ -186,6 +195,105 @@ def publish_generation_run(project, registry, instance_id, field, label, provide
         return {"run": target / "run.json", "sha256": run_sha, "published": True}
 
 
+def resume_registered_generation_run(project, registry, instance_id, provider, number, *, approved=False):
+    store = ResourceStore(project, registry, approved=approved)
+    with store.transaction() as database:
+        row = database.execute("SELECT * FROM generation_runs WHERE instance_id=? AND provider=? AND number=?", (instance_id, provider, number)).fetchone()
+        if row is None or row["state"] not in ("prepared", "complete"):
+            raise ValueError("Only a retained prepared/completed run can resume without inference")
+        target = store.project / relative_path(project, row["run_path"])
+        staged = store.project / relative_path(project, row["stage"]) / "run.json"
+        if staged.parent.parent != store.registry.parent / ".resource-runs":
+            raise ValueError("Retained run staging is outside its controlled owner")
+        source_path = locations.project_file(project, target if target.exists() else staged)
+        payload = json.loads(source_path.read_text())
+        manifest = payload.pop("artifacts")
+        binding = locations.registered_instance(project, registry, instance_id)
+        current = locations.current_location(project, binding, "silhouettes", "")
+        return publish_generation_run(project, registry, instance_id, current["record"]["field"], current["record"]["label"], provider, number,
+                                      payload, {name: source_path.parent / name for name in manifest}, approved=approved,
+                                      reservation_token=row["reservation"])
+
+
+def publish_registered_engraving_run(project, registry, instance_id, provider, number, *, approved=False, expected_revision=0, interrupt=None):
+    store = ResourceStore(project, registry, approved=approved)
+    with store.transaction() as database:
+        row = database.execute("SELECT * FROM generation_runs WHERE instance_id=? AND provider=? AND number=?", (instance_id, provider, number)).fetchone()
+        if row is not None and row["state"] == "prepared":
+            resume_registered_generation_run(project, registry, instance_id, provider, number, approved=approved)
+            row = database.execute("SELECT * FROM generation_runs WHERE instance_id=? AND provider=? AND number=?", (instance_id, provider, number)).fetchone()
+        if row is None or row["state"] != "complete":
+            raise ValueError("Explicit selection requires an immutable completed generation run")
+        run_path = locations.project_file(project, row["run_path"])
+        if digest(run_path) != row["run_sha256"]:
+            raise ValueError("Selected run commitment changed")
+        payload = json.loads(run_path.read_text())
+        if payload.get("review_state") == "rejected":
+            raise ValueError("Automatically rejected generation is not publishable")
+        pending = database.execute("SELECT * FROM publication_operations WHERE kind NOT IN ('dirty-propagation','annotation-collection') AND state NOT IN ('finished','rolled_back')").fetchall()
+        for operation in pending:
+            details = json.loads(operation["details"])
+            if (operation["instance_id"] != instance_id or operation["kind"] != "engravings" or operation["mode"] != row["mode"]
+                    or details["metadata"].get("published_run") != {"provider": provider, "number": number, "sha256": row["run_sha256"]}):
+                raise ValueError("Unrelated pending publication requires explicit recovery")
+            recover_publication(project, registry, operation["operation_id"], approved=approved)
+        from services.resource_resolution import resolve_silhouette
+        source = resolve_silhouette(project, instance_id, registry=registry)
+        binding = locations.registered_instance(project, registry, instance_id)
+        current = locations.current_location(project, binding, "engravings", row["mode"]) if any(item["kind"] == "engravings" and item["mode"] == row["mode"] for item in binding["locations"]) else None
+        metadata = {**(current["record"] if current else {}), **source["record"], "resource_kind": "engravings", "source_instance_id": instance_id,
+                    "mode": row["mode"], "status": "generated", "generation": payload["generation"], "source": payload["source"],
+                    "generation_service": payload["generation"]["service"], "review_state": payload.get("review_state", "needs_review"),
+                    "published_run": {"provider": provider, "number": number, "sha256": row["run_sha256"]}}
+        metadata.pop("instance_id", None)
+        if current:
+            for key in ("assignment", "human_best", "source_validation"):
+                if key in current["record"]:
+                    metadata[key] = current["record"][key]
+            if current["record"].get("reviewed_at") and current["record"].get("published_run") != metadata["published_run"]:
+                metadata["prior_review"] = {key: current["record"][key] for key in ("review_state", "reviewed_at", "published_run") if key in current["record"]}
+                metadata.pop("reviewed_at", None)
+        output = locations.project_file(project, run_path.parent / "result.png")
+        binding = locations.registered_instance(project, registry, instance_id)
+        findings = validate_metadata(project, binding, metadata, "engravings", row["mode"])
+        if findings["state"] not in ("valid", "historical"):
+            raise ValueError("Selected run publication rejected: " + json.dumps(findings))
+        if current is not None and current["record"].get("published_run") == metadata["published_run"]:
+            return {"published": False, "revision": current["revision"], "metadata": current["metadata"], "image": current["image"]}
+        result = publish_resource(project, registry, instance_id, "engravings", metadata, output, mode=row["mode"],
+                      expected_revision=expected_revision, approved=approved, interrupt=interrupt)
+        binding = locations.registered_instance(project, registry, instance_id)
+        installed = locations.current_location(project, binding, "engravings", row["mode"])
+        return {**result, "metadata": installed["metadata"], "image": installed["image"]}
+
+
+def complete_registered_engraving_run(project, registry, reservation, generation, source_info, artifacts, *, approved=False,
+                                    publish_selected=False, expected_revision=0, review_state="needs_review", interrupt=None):
+    from services.resource_resolution import resolve_silhouette
+    source = resolve_silhouette(project, reservation["instance_id"], registry=registry)
+    result = publish_generation_run(project, registry, reservation["instance_id"], source["record"]["field"], source["record"]["label"],
+                                    reservation["provider"], reservation["number"],
+                                    {"source_instance_id": reservation["instance_id"], "mode": reservation["mode"], "generation": generation,
+                                     "source": source_info, "review_state": review_state}, artifacts,
+                                    approved=approved, reservation_token=reservation["token"], interrupt=interrupt)
+    if publish_selected:
+        result["publication"] = publish_registered_engraving_run(project, registry, reservation["instance_id"], reservation["provider"], reservation["number"],
+                                                               approved=approved, expected_revision=expected_revision, interrupt=interrupt)
+    return result
+
+
+def prepare_registered_frame(project, source, output):
+    from services.frame_match import _get_video_fps
+    from services.silhouette import extract_frame_as_pil
+    record = source["record"]
+    video = locations.project_file(project, Path(project) / "media/videos" / record["media_type"] / record["filename"])
+    frame = extract_frame_as_pil(str(video), record["frame"], _get_video_fps(str(video)))
+    if frame is None:
+        raise ValueError("Exact registered source frame could not be decoded")
+    frame.save(output, format="PNG")
+    return Path(output)
+
+
 def _operation_paths(store, binding, operation_id, kind, mode, details):
     expected_stage = store.registry.parent / ".resource-publications" / operation_id
     if details["stage"] != relative_path(store.project, expected_stage):
@@ -215,6 +323,14 @@ def _complete(store, database, binding, operation_id, kind, mode, stage):
     binding["locations"] = [dict(row) for row in database.execute("SELECT * FROM resource_locations WHERE instance_id=?", (binding["instance_id"],))]
     locations.current_location(store.project, binding, kind, mode)
     invalidate_index(store.project, kind, binding["media_type"])
+    operation = database.execute("SELECT details FROM publication_operations WHERE operation_id=?", (operation_id,)).fetchone()
+    details = json.loads(operation[0])
+    if details.get("dependent_resources"):
+        record = locations.find_media(store.project, binding["media_type"], media_id=binding["media_id"])
+        mark_media_resources_dirty(store.project, record["filename"], binding["media_type"], "silhouette_content_changed",
+                                  registry=store.registry, approved=True, edit_id=operation_id + "dirty",
+                                  committed_path=store.project / details["image_path"], committed_sha256=details["image_sha256"],
+                                  _resources=details["dependent_resources"])
     database.execute("UPDATE publication_operations SET state='finished' WHERE operation_id=?", (operation_id,))
     database.commit()
     _cleanup(stage)
@@ -239,7 +355,7 @@ def _validate_dirty_assessment(binding, previous, metadata, image_sha, previous_
 
 
 def publish_resource(project, registry, instance_id, kind, metadata, image, *, mode="", expected_revision=0,
-                     approved=False, interrupt=None, _assessment_only=False, _propagation_id=None):
+                     approved=False, interrupt=None, _assessment_only=False, _propagation_id=None, _review_only=False, _assignment_only=False):
     """Publish an explicit pair with CAS revision. Interrupted operations need recovery."""
     from data.annotate import atomic_write_text
     from PIL import Image
@@ -250,17 +366,45 @@ def publish_resource(project, registry, instance_id, kind, metadata, image, *, m
     binding = locations.registered_instance(project, registry, instance_id)
     operation_id = uuid4().hex
     with store.transaction() as database:
-        pending = database.execute("SELECT 1 FROM publication_operations WHERE kind!='dirty-propagation' AND NOT (kind='annotation-collection' AND state='committed' AND operation_id||'dirty'=?) AND state NOT IN ('finished','rolled_back')", (_propagation_id or "",)).fetchone()
+        pending = database.execute("SELECT 1 FROM publication_operations WHERE kind!='dirty-propagation' AND NOT (kind IN ('annotation-collection','silhouettes') AND state='committed' AND operation_id||'dirty'=?) AND state NOT IN ('finished','rolled_back')", (_propagation_id or "",)).fetchone()
         if pending:
             raise ValueError("Pending publication requires explicit recovery")
         binding = locations.registered_instance(project, registry, instance_id)
-        _silhouette(project, binding)
-        if _assessment_only:
+        if (kind != "silhouettes" or binding["locations"]
+            or json.loads(binding["legacy_identity"]).get("registration_kind") != "extraction"):
+            source = _silhouette(project, binding, active_only=False)
+            if not (_assessment_only or _review_only or _assignment_only):
+                from services.silhouette_catalog import assignment_is_active, require_active_record
+                if not (kind == "silhouettes" and binding["locations"] and not assignment_is_active(source["record"])
+                        and metadata.get("assignment") == source["record"].get("assignment")):
+                    require_active_record(source["record"])
+        if _assessment_only or _review_only or _assignment_only:
             old = locations.current_location(project, binding, kind, mode)
             if old is None:
                 raise ValueError("Dirty assessment requires an existing committed pair")
-            _validate_dirty_assessment(binding, old["record"], metadata,
-                                       digest(locations.project_file(project, image)), digest(old["image"]))
+            if _assignment_only:
+                from services.silhouette_catalog import ASSIGNMENT_ACTIVE, ASSIGNMENT_INACTIVE, ASSIGNMENT_SUPERSEDED
+                before, after = dict(old["record"]), dict(metadata)
+                before.pop("assignment", None)
+                after.pop("assignment", None)
+                if (kind != "silhouettes" or before != after
+                        or not isinstance(metadata.get("assignment"), dict)
+                        or metadata["assignment"].get("state") not in (ASSIGNMENT_ACTIVE, ASSIGNMENT_INACTIVE, ASSIGNMENT_SUPERSEDED)
+                        or digest(locations.project_file(project, image)) != digest(old["image"])):
+                    raise ValueError("Assignment commit cannot change content, source, image or identity")
+            elif _review_only:
+                from services.engraving_local_publish import REVIEW_STATES
+                before, after = dict(old["record"]), dict(metadata)
+                for key in ("review_state", "reviewed_at"):
+                    before.pop(key, None)
+                    after.pop(key, None)
+                if (kind != "engravings" or before != after or metadata.get("review_state") not in REVIEW_STATES
+                        or not isinstance(metadata.get("reviewed_at"), str) or not metadata["reviewed_at"]
+                        or digest(locations.project_file(project, image)) != digest(old["image"])):
+                    raise ValueError("Review commit cannot change content, image, source or lifecycle identity")
+            else:
+                _validate_dirty_assessment(binding, old["record"], metadata,
+                                           digest(locations.project_file(project, image)), digest(old["image"]))
             validation = {"state": "valid", "missing": [], "errors": [],
                           "destination": {"dir": old["metadata"].parent, "metadata": old["metadata"], "image": old["image"]}}
         else:
@@ -302,6 +446,8 @@ def publish_resource(project, registry, instance_id, kind, metadata, image, *, m
                    "image_sha256": digest(stage / "new.png"), "expected_revision": expected_revision,
                    "metadata": metadata, "before": before, "assessment_only": _assessment_only, "propagation_id": _propagation_id}
         _sync(stage)
+        if kind == "silhouettes" and previous is not None and details["image_sha256"] != previous["image_sha256"]:
+            details["dependent_resources"] = [list(row) for row in database.execute("SELECT instance_id,kind,mode FROM resource_locations WHERE instance_id=? AND kind='engravings' ORDER BY mode", (instance_id,))]
         database.execute("INSERT INTO publication_operations VALUES(?,?,?,?,?,?)", (operation_id, instance_id, kind, mode, "prepared", json.dumps(details)))
         database.commit()
         if interrupt:
@@ -312,7 +458,7 @@ def publish_resource(project, registry, instance_id, kind, metadata, image, *, m
 
 def mark_media_resources_dirty(project, filename, media_type, reason, *, registry=None, approved=False,
                                edit_id=None, committed_path=None, committed_sha256=None, interrupt=None,
-                               current_associations=None, _defer=False):
+                               current_associations=None, _defer=False, _resources=None):
     """Explicit post-commit hook; production without registry context remains inactive."""
     if registry is None:
         return {"activated": False, "updated": 0}
@@ -331,6 +477,11 @@ def mark_media_resources_dirty(project, filename, media_type, reason, *, registr
         else:
             keys = database.execute("SELECT l.instance_id,l.kind,l.mode FROM resource_locations l JOIN instances i USING(instance_id) WHERE i.media_id=? AND i.media_type=? ORDER BY l.instance_id,l.kind DESC,l.mode",
                                     (media["media_id"], media_type)).fetchall()
+            if _resources is not None:
+                wanted = {tuple(key) for key in _resources}
+                if not wanted.issubset({tuple(key) for key in keys}):
+                    raise ValueError("Dirty dependency selection differs from registered ownership")
+                keys = [key for key in keys if tuple(key) in wanted]
             if not keys:
                 return {"activated": True, "updated": 0, "state": "finished"}
             operation_id = edit_id or uuid4().hex
@@ -362,7 +513,8 @@ def _resume_dirty_propagation(project, registry, operation_id, *, approved=False
         details = json.loads(row["details"])
         if row["state"] == "finished":
             return {"activated": True, "updated": len(details["completed"]), "state": "finished", "operation_id": operation_id}
-        pending = [dict(child) for child in database.execute("SELECT * FROM publication_operations WHERE kind NOT IN ('dirty-propagation','annotation-collection') AND state NOT IN ('finished','rolled_back')")]
+        pending = [dict(child) for child in database.execute("SELECT * FROM publication_operations WHERE kind NOT IN ('dirty-propagation','annotation-collection') AND state NOT IN ('finished','rolled_back')")
+               if not (child["kind"] == "silhouettes" and child["state"] == "committed" and child["operation_id"] + "dirty" == operation_id)]
     if details.get("committed_path") and digest(locations.project_file(project, details["committed_path"])) != details["committed_sha256"]:
         raise ValueError("Committed edit changed or was not committed before dirty propagation")
     for child in pending:

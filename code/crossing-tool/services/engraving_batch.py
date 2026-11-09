@@ -42,6 +42,7 @@ def scan_best_silhouettes(
     project_path: str,
     media_type: str = "movie",
     label: str | None = None,
+    *, registry=None,
 ) -> list[dict]:
     """Return catalog objects that are marked ``human_best=true``.
 
@@ -61,6 +62,12 @@ def scan_best_silhouettes(
         Each entry has keys:
         ``path`` (Path), ``meta`` (dict), ``media_type``, ``label``.
     """
+    if registry is not None:
+        from services.resource_resolution import indexed_publications
+        return [{"path": Path(record["path"]), "meta": record,
+                 "media_type": media_type, "label": record["label"]}
+                for record in indexed_publications(project_path, "silhouettes", media_type, registry=registry)
+            if assignment_state_for_record(record) == "active" and record.get("human_best") and (label is None or record["label"] == label)]
     base = catalog_base_dir(project_path, media_type)
     if not base.is_dir():
         return []
@@ -109,6 +116,8 @@ def batch_generate_engravings(
     on_item_done: Callable[[dict, dict | list, Exception | None], None] | None = None,
     registry=None,
     approved: bool = False,
+    publish_selected: bool = False,
+    expected_revision: int = 0,
 ) -> dict:
     """Generate engravings for a list of catalog targets.
 
@@ -140,6 +149,9 @@ def batch_generate_engravings(
         ``generated``, ``skipped``, ``failed``, ``total`` counts.
     """
     from services.engraving_generate_openai import generate_engraving_openai
+    if registry is not None:
+        from data.resource_storage import ResourceStore
+        ResourceStore(project_path, registry, approved=approved)
 
     generated = 0
     skipped = 0
@@ -156,7 +168,7 @@ def batch_generate_engravings(
 
         # Skip if all required modes are already successfully generated.
         # Failed and pending engravings are retried without needing --force.
-        if not force:
+        if registry is None and not force:
             all_done = all(
                 engraving_status(project_path, source_json, meta, m) == "generated"
                 for m in modes_to_check
@@ -180,7 +192,7 @@ def batch_generate_engravings(
                 model=model,
                 size=size,
                 force=force,
-                **({"registry": registry, "approved": approved} if registry is not None else {}),
+                **({"registry": registry, "approved": approved, "publish_selected": publish_selected, "expected_revision": expected_revision} if registry is not None else {}),
             )
             generated += 1
             if on_item_done:

@@ -5991,6 +5991,34 @@ def _silhouette_catalog_extract_unlocked(args):
     )
 
     # --all-fields: resolve vocabulary fields and treat as --fields
+    if getattr(args, "resource_registry", None):
+        from services.silhouette_catalog import extract_registered_plan
+        if not label or not field or fields_multi or all_fields:
+            raise ValueError("Registered extraction requires explicit LABEL/FIELD and an identity plan; vocabulary expansion is disabled")
+        plan_path = getattr(args, "extraction_plan", None)
+        shot = getattr(args, "shot", None)
+        if plan_path:
+            if shot or getattr(args, "instance_ids", None) or getattr(args, "registration_keys", None):
+                raise ValueError("Use either an extraction plan or single-shot identities")
+            plan = json.loads(Path(plan_path).read_text(encoding="utf-8"))
+        elif shot:
+            identities = {"instance_ids": args.instance_ids} if getattr(args, "instance_ids", None) else {"registration_keys": getattr(args, "registration_keys", None)}
+            plan = {shot: identities}
+        else:
+            raise ValueError("Registered extraction requires --shot identities or --extraction-plan")
+        if getattr(args, "movie", None) or getattr(args, "tmdb", None) is not None:
+            from services.silhouette import _resolve_shot_details
+            filename = resolve_filename(project_path, getattr(args, "tmdb", None), getattr(args, "movie", None), media_type)
+            if any(_resolve_shot_details(project_path, source_id, media_type, registry=args.resource_registry)[0] != filename for source_id in plan):
+                raise ValueError("Extraction plan differs from the selected media scope")
+        summary = extract_registered_plan(project_path, plan, label, field, media_type, registry=args.resource_registry,
+                                          approved=getattr(args, "approved_resource_edit", False), sam_model_name=sam_model,
+                                          frame_model_name=frame_model, force=force, verbose=verbose, dry_run=dry_run)
+        _print_silhouette_extract_summary(summary, label, "registered sources")
+        if summary["failed"]:
+            sys.exit(1)
+        return
+
     if all_fields:
         if label:
             print(
@@ -6756,7 +6784,8 @@ def _silhouette_catalog_deassign(args):
             field=args.field,
             label=args.label,
             object_id=args.object_id,
-            **({"registry": args.resource_registry, "instance_id": args.object_id, "dry_run": not getattr(args, "apply", False)} if getattr(args, "resource_registry", None) else {}),
+            **({"registry": args.resource_registry, "instance_id": args.object_id, "dry_run": not getattr(args, "apply", False),
+                "approved": getattr(args, "approved_resource_edit", False), "expected_revision": getattr(args, "expected_publication_revision", None)} if getattr(args, "resource_registry", None) else {}),
         )
     except (RuntimeError, ValueError) as exc:
         print(f"✗ Could not de-assign silhouette: {exc}", file=sys.stderr)
@@ -6778,7 +6807,10 @@ def _silhouette_catalog_deassign(args):
     print("  recheck: pending")
     print("  PNG preserved")
     print("  JSON preserved")
-    print(f"  Illustration index rebuilt: {index.get('count', 0)} indexed")
+    if getattr(args, "resource_registry", None):
+        print("  Scoped Illustration index invalidated")
+    else:
+        print(f"  Illustration index rebuilt: {index.get('count', 0)} indexed")
 
 
 def _silhouette_catalog_recheck(args):
@@ -6809,6 +6841,7 @@ def _silhouette_catalog_recheck(args):
             frame_model_name=frame_model,
             verbose=getattr(args, "verbose", False),
             log_path=getattr(args, "log_path", None),
+            **({"registry": args.resource_registry, "approved": getattr(args, "approved_resource_edit", False), "instance_ids": getattr(args, "instance_ids", None)} if getattr(args, "resource_registry", None) else {}),
         )
     except (RuntimeError, ValueError) as exc:
         print(f"✗ Silhouette recheck failed to start: {exc}", file=sys.stderr)
@@ -7673,12 +7706,27 @@ def _index_motif_audit(args):
 # book command family
 # ---------------------------------------------------------------------------
 
+def _registered_generation_context(args):
+    registry = getattr(args, "resource_registry", None)
+    return {"registry": registry, "approved": getattr(args, "approved_resource_edit", False),
+            "publish_selected": getattr(args, "publish_selected", False),
+            "expected_revision": getattr(args, "expected_publication_revision", 0)} if registry is not None else {}
+
+
 def cmd_engraving(args):
     sub = args.engraving_subcommand
     if sub == "smoke-test":
         _engraving_smoke_test(args)
     elif sub == "generate":
         _engraving_generate(args)
+    elif sub == "publish-run":
+        _require_path()
+        if not getattr(args, "resource_registry", None):
+            raise ValueError("Completed run selection requires an explicit resource registry")
+        from services.resource_publication import publish_registered_engraving_run
+        result = publish_registered_engraving_run(prefs.get("path"), args.resource_registry, args.instance_id, args.provider, args.run_number,
+                                                 approved=getattr(args, "approved_resource_edit", False), expected_revision=args.expected_publication_revision)
+        print(f"Registered run selection: published={result['published']} revision={result['revision']}")
     elif sub == "batch":
         _engraving_batch(args)
     elif sub == "local-download":
@@ -7738,6 +7786,8 @@ def _engraving_generate(args):
             return str(p)
 
     if provider == "prepare":
+        if getattr(args, "resource_registry", None):
+            raise ValueError("Registered preparation never publishes a pending engraving; generate an explicit run instead")
         from services.engraving_smoke import prepare_engraving_from_source
         from services.engraving_prompt import EngravingPromptError
         try:
@@ -7768,6 +7818,7 @@ def _engraving_generate(args):
             result = generate_engraving_openai(
                 project_path, args.source,
                 mode=mode, model=model, size=size, force=force,
+                **_registered_generation_context(args),
             )
         except MissingKeyError as exc:
             print(f"✗ {exc}", file=sys.stderr)
@@ -7826,7 +7877,8 @@ def _engraving_batch(args):
     from services.engraving_batch import scan_best_silhouettes, batch_generate_engravings
     from services.keys import MissingKeyError
 
-    targets = scan_best_silhouettes(project_path, media_type=media_type, label=label)
+    targets = scan_best_silhouettes(project_path, media_type=media_type, label=label,
+                                   **({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}))
     if not targets:
         label_note = f" (label={label!r})" if label else ""
         print(f"No human-best silhouettes found for {media_type}{label_note}.")
@@ -7868,6 +7920,7 @@ def _engraving_batch(args):
             force=force,
             verbose=True,  # always show per-item progress for batch
             on_item_done=_on_item if notify_each else None,
+            **_registered_generation_context(args),
         )
     except MissingKeyError as exc:
         print(f"✗ {exc}", file=sys.stderr)
@@ -7981,6 +8034,8 @@ def _print_local_run(run, project_path):
         print(f"  Repair:  {_rel(outputs['repair_png'])}")
     if run.get("run_json"):
         print(f"  Record:  {_rel(run['run_json'])}")
+    if run.get("registered_run"):
+        print(f"  Immutable run: {_rel(run['registered_run']['run'])}")
 
     if run.get("total_seconds"):
         line = f"  Runtime: {run['total_seconds']:.1f}s"
@@ -8013,6 +8068,7 @@ def _engraving_local_generate(args):
             seed=getattr(args, "seed", None),
             force=getattr(args, "force", False),
             output_png=getattr(args, "output", None),
+            **_registered_generation_context(args),
         )
     except (EvidenceError, ModelNotAvailableError) as exc:
         print(f"✗ {exc}", file=sys.stderr)
@@ -8040,6 +8096,7 @@ def _engraving_local_batch(args):
         project_path,
         media_type=getattr(args, "media", "movie"),
         label=getattr(args, "label", None),
+        **({"registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}),
     )]
     limit = getattr(args, "limit", None)
     if limit:
@@ -8070,6 +8127,7 @@ def _engraving_local_batch(args):
             config=config,
             force=getattr(args, "force", False),
             on_result=_progress,
+            **_registered_generation_context(args),
         )
     except ModelNotAvailableError as exc:
         print(f"✗ {exc}", file=sys.stderr)
@@ -8196,12 +8254,13 @@ def _engraving_review(args):
     if target.is_dir():
         target = target / "engraving.json"
     try:
-        metadata = set_review_state(target, args.state, **({"project_path": prefs.get("path"), "registry": args.resource_registry} if getattr(args, "resource_registry", None) else {}))
+        metadata = set_review_state(target, args.state, **({"project_path": prefs.get("path"), "registry": args.resource_registry,
+                                  "approved": getattr(args, "approved_resource_edit", False), "expected_revision": getattr(args, "expected_publication_revision", None)} if getattr(args, "resource_registry", None) else {}))
     except PublicationError as exc:
         print(f"✗ {exc}", file=sys.stderr)
         sys.exit(1)
 
-    media_type = (metadata.get("silhouette") or {}).get("media_type") or "movie"
+    media_type = metadata.get("media_type") or (metadata.get("silhouette") or {}).get("media_type") or "movie"
     invalidate_index(prefs.get("path"), "engravings", media_type)
     print(f"✓ review_state = {metadata['review_state']}  (status={metadata['status']})")
     print("  Run 'crossing index illustration' to refresh the browse index.")
@@ -10865,6 +10924,9 @@ def build_parser():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_sil_extract.set_defaults(func=cmd_index)
+    p_sil_extract.add_argument("--instance-id", dest="instance_ids", action="append", help="Explicit existing identity for registered single-shot replacement (repeatable)")
+    p_sil_extract.add_argument("--registration-key", dest="registration_keys", action="append", help="Explicit 64-hex fresh extraction key (repeatable)")
+    p_sil_extract.add_argument("--extraction-plan", metavar="JSON", help="Explicit shot_id to instance_ids/registration_keys mapping for registered batch extraction")
     p_sil_extract.add_argument(
         "label",
         nargs="?",
@@ -11015,6 +11077,7 @@ def build_parser():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_sil_deassign.set_defaults(func=cmd_index)
+    p_sil_deassign.add_argument("--expected-publication-revision", type=int, default=None, help="Required loaded CAS revision for approved registered deassignment")
     _add_media_arg(p_sil_deassign)
     p_sil_deassign.add_argument(
         "--filename-stem", required=True, metavar="STEM",
@@ -11058,6 +11121,7 @@ def build_parser():
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    p_sil_recheck.add_argument("--instance-id", dest="instance_ids", action="append", help="Exact registered identity for a bounded same-identity recheck (repeatable)")
     p_sil_recheck.set_defaults(func=cmd_index)
     _add_media_arg(p_sil_recheck, default="both", allow_both=True)
     p_sil_recheck.add_argument(
@@ -12511,11 +12575,22 @@ def build_parser():
         help="Overwrite existing engraving files if already prepared/generated",
     )
     p_eng_generate.set_defaults(func=cmd_engraving)
+    p_eng_generate.add_argument("--publish-selected", action="store_true", help="Explicitly select this completed registered attempt for publication")
+    p_eng_generate.add_argument("--expected-publication-revision", type=int, default=0, help="Loaded engraving CAS revision; zero means no current pair")
+
+    p_eng_publish = engraving_sub.add_parser("publish-run", help="Publish an explicitly selected completed registered run without inference")
+    p_eng_publish.add_argument("--instance-id", required=True)
+    p_eng_publish.add_argument("--provider", choices=["local", "openai"], required=True)
+    p_eng_publish.add_argument("--run-number", type=int, required=True)
+    p_eng_publish.add_argument("--expected-publication-revision", type=int, default=0)
+    p_eng_publish.set_defaults(func=cmd_engraving)
 
     p_eng_batch = engraving_sub.add_parser(
         "batch",
         help="Generate missing engravings for all human-best silhouettes",
     )
+    p_eng_batch.add_argument("--publish-selected", action="store_true", help="Explicitly publish each selected registered attempt")
+    p_eng_batch.add_argument("--expected-publication-revision", type=int, default=0)
     p_eng_batch.add_argument(
         "--mode",
         dest="mode",
@@ -12609,6 +12684,8 @@ def build_parser():
     p_eng_ldl.set_defaults(func=cmd_engraving)
 
     def _add_local_run_args(parser):
+        parser.add_argument("--publish-selected", action="store_true", help="Explicitly publish each selected registered attempt")
+        parser.add_argument("--expected-publication-revision", type=int, default=0)
         _add_local_common(parser)
         parser.add_argument(
             "--seed",
@@ -12800,6 +12877,7 @@ def build_parser():
         help="Review decision to record",
     )
     p_eng_review.set_defaults(func=cmd_engraving)
+    p_eng_review.add_argument("--expected-publication-revision", type=int, default=None, help="Required loaded CAS revision for registered human review")
 
     p_eng_remove = engraving_sub.add_parser(
         "remove",

@@ -16,9 +16,15 @@ For visualizers, place the option after the selected subcommand.
 Registered `engraving list/remove/doctor/review`, `index silhouette clear/deassign`,
 and `annotate remove` use exact current commitments. Annotation/silhouette retirement
 requests default to planning; `--apply` does not bypass the controlled-retirement
-deferral. Registered engraving removal and review mutation are likewise deferred.
+deferral. Registered engraving removal remains plan-only. Registered human review
+requires `--approved-resource-edit --expected-publication-revision N`; it journals
+only the review decision and preserves PNG, run, identity and dirty state. Rejection
+is a review state, not destruction of a completed generation run.
 For registered deassignment, `--object-id` carries the exact instance ID, not a
 legacy ordinal. Existing source identity arguments remain stale-selection checks.
+Logical deassignment can commit with `--apply --approved-resource-edit
+--expected-publication-revision N`; it preserves the image and queues a bounded
+recheck. This does not authorize physical retirement or an index rebuild.
 
 Registered Shotlist and Scene commits require `--approved-resource-edit`; this
 approval covers the controlled shotlist/dirty-state operation. Registered Shot
@@ -42,6 +48,44 @@ append-style `--log`, and annotation exports are refused before mutation. Existi
 committed logs remain unchanged. An interrupted collection requires explicit
 publication recovery, not a fallback to legacy paths. Provider publication, physical
 association changes and production registry adoption remain separately authorized.
+
+## Registered Silhouette And Engraving Publication
+
+These commands require an already adopted explicit fixture registry; they do not
+activate or migrate production. Omit resource context to retain legacy workflows.
+
+`index silhouette extract LABEL --field FIELD --shot SHOT_ID` accepts repeatable
+`--registration-key HEX64` for fresh objects, or `--instance-id INSTANCE_ID --force`
+for same-identity replacement. Keys are explicit immutable extraction tokens, never
+legacy object ordinals. Accepted candidate count must match the provided identities.
+Batch extraction accepts `--extraction-plan FILE`, a JSON object mapping each exact
+shot ID to either `{"registration_keys": [...]}` or `{"instance_ids": [...]}`.
+`--dry-run` validates that plan without allocation, model loading or publication.
+Registered vocabulary expansion and `.scanned` publication are disabled.
+
+`engraving generate --provider openai`, `engraving local-generate`, and their batch
+commands accept `--resource-registry PATH --approved-resource-edit`. Each attempt
+reserves a provider run number; failures retain it, and completed runs are immutable.
+Completion alone never changes a current engraving. `--publish-selected` explicitly
+selects the result, with `--expected-publication-revision N` for replacement CAS.
+`engraving publish-run --instance-id ID --provider local|openai --run-number N`
+selects a retained completed run without inference, including exact prepared-run and
+selected-publication recovery. Unrelated pending operations still require recovery.
+`isolated` and `frame` are independent publications; provider is run provenance.
+Mixed-revision batch replacements should generate without selection and then select
+each exact run separately. Registered local arbitrary `--output` copies are refused.
+
+`index silhouette recheck --instance-id ID` (repeatable) uses committed atomic source
+values and reuses existing identities/models. Failures persist lifecycle error state;
+`--retry-errors` retries explicitly, retaining identity, PNG and human decisions.
+Completed rechecks do not automatically reactivate an inactive curated object.
+Changed classification or replacement
+cardinality is reported/refused without inferred allocation or partial relocation;
+zero candidates retain the current resource pending controlled retirement.
+The read-only `services.resource_corrections.plan_registered_reclassification` plans
+exact pair and immutable-run-tree destinations. Coordinated relocation and physical
+retirement remain deferred, not partially implemented. Silhouette content replacement
+journals only its dependent engravings dirty and preserves their PNGs and run evidence.
 
 ## Backup
 

@@ -386,6 +386,8 @@ def plan_removal(
         "safe": not blocking,
         "include_provenance": include_provenance,
         "registered_entries": [entry for entry in entries if entry.get("resource_registry")],
+        "execution_supported": not any(entry.get("resource_registry") for entry in entries),
+        "execution_limitation": "Registered retirement requires coordinated journaled location/lifecycle commits; this exact-pair plan never removes immutable runs or identities." if any(entry.get("resource_registry") for entry in entries) else None,
     }
 
 

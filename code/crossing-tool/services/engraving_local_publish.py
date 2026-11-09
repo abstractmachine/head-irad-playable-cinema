@@ -145,6 +145,8 @@ def publish_run(
     *,
     force: bool = False,
     registry=None,
+    approved: bool = False,
+    expected_revision: int | None = None,
 ) -> dict:
     """Publish a completed local run as a canonical Illustration.
 
@@ -164,6 +166,16 @@ def publish_run(
             "reason": "automatic gates rejected this run; it is not publishable",
             "review_state": review_state,
         }
+
+    if registry is not None:
+        reservation = run.get("generation_run")
+        if (not isinstance(reservation, dict) or reservation.get("provider") != "local"
+                or reservation.get("mode") != run.get("mode") or expected_revision is None):
+            raise PublicationError("Registered local publication requires an exact completed local run and loaded publication revision")
+        from services.resource_publication import publish_registered_engraving_run
+        result = publish_registered_engraving_run(project_path, registry, reservation["instance_id"], "local", reservation["number"],
+                                                approved=approved, expected_revision=expected_revision)
+        return {**result, "engraving_json": str(result["metadata"]), "engraving_png": str(result["image"]), "mode": reservation["mode"]}
 
     final_png = Path((run.get("outputs") or {}).get("final_png") or "")
     if not final_png.is_file():
@@ -222,7 +234,7 @@ def publish_run(
     }
 
 
-def set_review_state(engraving_json: str | Path, review_state: str, *, project_path=None, registry=None) -> dict:
+def set_review_state(engraving_json: str | Path, review_state: str, *, project_path=None, registry=None, approved=False, expected_revision=None) -> dict:
     """Record a human review decision on a published engraving.
 
     ``rejected`` also clears ``status`` so the record leaves the browse index
@@ -246,7 +258,13 @@ def set_review_state(engraving_json: str | Path, review_state: str, *, project_p
         current = resolve_engraving(project_path, metadata.get("source_instance_id") or metadata.get("instance_id"), metadata.get("mode"), registry=registry, active_only=False)
         if engraving_json.resolve() != current["metadata"]:
             raise PublicationError("Registered review target is not the exact committed publication")
-        raise PublicationError("Registered review/status mutation requires controlled lifecycle commits; deferred")
+        if expected_revision is None:
+            raise PublicationError("Registered review lifecycle commits require the explicitly loaded publication revision")
+        from services.resource_publication import publish_resource
+        metadata = {**current["record"], "review_state": review_state, "reviewed_at": _now()}
+        publish_resource(project_path, registry, current["instance_id"], "engravings", metadata, current["image"], mode=metadata["mode"],
+                         expected_revision=expected_revision, approved=approved, _review_only=True)
+        return metadata
 
     metadata["review_state"] = review_state
     metadata["status"] = "failed" if review_state == "rejected" else "generated"

@@ -94,6 +94,23 @@ def initial_order(binding):
     ))
 
 
+def prepare_extraction_registration(record, project, registration_key):
+    from data.media_id import parse_shot_id
+    from data.resource_locations import find_media
+    if re.fullmatch(r"[0-9a-f]{64}", registration_key or "") is None:
+        raise ValueError("Explicit immutable extraction registration key required")
+    media, start, end = parse_shot_id(record["shot_id"])
+    find_media(project, record["media_type"], media_id=media, filename=record["filename"])
+    if media != record["media_id"] or type(record.get("frame")) is not int or not start <= record["frame"] <= end:
+        raise ValueError("Extraction registration source frame/media mismatch")
+    reference = {key: record[key] for key in ("media_type", "media_id", "shot_id", "filename", "field", "label")}
+    reference.update(registration_kind="extraction", registration_key=registration_key)
+    origin = "outputs/agent/silhouette-registration/" + registration_key
+    return {"registration_key": registration_key, "shot_id": record["shot_id"], "media_type": record["media_type"],
+            "media_id": media, "legacy_identity": json.dumps(reference, sort_keys=True), "legacy_json": origin + ".json",
+            "legacy_png": origin + ".png", "frame": record["frame"], "ordinal": 0, "field": record["field"], "label": record["label"]}
+
+
 class InstanceRegistry:
     """Persist immutable record bindings and non-recycling shot high-water marks."""
 
@@ -135,7 +152,7 @@ class InstanceRegistry:
     def close(self):
         self.database.close()
 
-    def register(self, bindings, *, ordered=False, interrupt=None):
+    def register(self, bindings, *, ordered=False, interrupt=None, manage_transaction=True):
         """One transaction; unchanged bindings return their prior IDs.
 
         `ordered` is for a deterministic externally sorted stream. Ordinary
@@ -144,7 +161,8 @@ class InstanceRegistry:
         """
         bindings = bindings if ordered else sorted(bindings, key=initial_order)
         result = []
-        self.database.execute("BEGIN IMMEDIATE")
+        if manage_transaction:
+            self.database.execute("BEGIN IMMEDIATE")
         try:
             for binding in bindings:
                 from data.media_id import parse_shot_id
@@ -176,10 +194,12 @@ class InstanceRegistry:
                 result.append((key, instance, new))
                 if interrupt is not None:
                     interrupt(len(result))
-            self.database.commit()
+            if manage_transaction:
+                self.database.commit()
             self.transactions += 1
         except BaseException:
-            self.database.rollback()
+            if manage_transaction:
+                self.database.rollback()
             raise
         return result
 

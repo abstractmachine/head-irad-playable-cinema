@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 
 from data import resource_locations as locations
 from data.media_id import label_slug, parse_shot_id
@@ -19,6 +20,43 @@ from services.resource_validation import source_annotation
 def _token(proposal):
     payload = {key: value for key, value in proposal.items() if key != "approval_token"}
     return hashlib.sha256(json.dumps(payload, sort_keys=True, allow_nan=False).encode()).hexdigest()
+
+
+def plan_registered_reclassification(project, registry, instance_id, field, label):
+    from services.resource_resolution import resolve_silhouette
+    from services.resource_validation import validate_source_classification
+    current = resolve_silhouette(project, instance_id, registry=registry, active_only=False)
+    binding = locations.registered_instance(project, registry, instance_id)
+    record = current["record"]
+    commitment = locations.annotation_commitment(project, record["filename"], record["media_type"], registry)
+    locations.resolve_annotation(project, record["filename"], record["media_type"], registry=registry)
+    if commitment is None:
+        raise ValueError("Reclassification planning requires committed source annotations")
+    findings = validate_source_classification(project, {**record, "field": field, "label": label, "source_annotation_value": label}, annotation_layout=commitment["layout"])
+    if findings["state"] != "valid":
+        raise ValueError("Reclassification source/classification invalid: " + json.dumps(findings))
+    media = locations.find_media(project, record["media_type"], media_id=record["media_id"])
+    pairs = []
+    for row in binding["locations"]:
+        original = locations.current_location(project, binding, row["kind"], row["mode"])
+        target = locations.silhouette_destination(project, media, binding["media_type"], instance_id, field, label) if row["kind"] == "silhouettes" else locations.engraving_destination(project, media, binding["media_type"], instance_id, field, label, row["mode"])
+        for key in ("metadata", "image"):
+            if target[key] != original[key] and target[key].exists():
+                raise ValueError("Reclassification destination already exists")
+        pairs.append({"kind": row["kind"], "mode": row["mode"], "revision": row["revision"],
+                      "source": {key: str(original[key]) for key in ("metadata", "image")},
+                      "destination": {key: str(target[key]) for key in ("metadata", "image")}})
+    runs = []
+    for run in binding["runs"]:
+        if run["state"] in ("reserved", "prepared"):
+            raise ValueError("Reclassification requires explicit recovery of in-progress generation attempts")
+        target = locations.generation_run_destination(project, media, binding["media_type"], instance_id, field, label, run["provider"], run["number"]) / "run.json"
+        if str(target.relative_to(Path(project).resolve())) != run["run_path"] and target.exists():
+            raise ValueError("Reclassification run destination already exists")
+        runs.append({"provider": run["provider"], "number": run["number"], "state": run["state"], "source": run["run_path"], "destination": str(target), "sha256": run["run_sha256"]})
+    return {"instance_id": instance_id, "source_annotation_revision": commitment["revision"], "field": field, "label": label,
+            "pairs": pairs, "runs": runs, "execution_supported": False,
+            "limitation": "Coordinated pair/run-tree relocation and registry CAS are not implemented; preserve all bytes, IDs, modes, review/assignment state and run ordinals. No partial move is authorized."}
 
 
 def propose_missing_field(project, reference, field, annotation_value, *, annotation_layout="legacy-v1"):

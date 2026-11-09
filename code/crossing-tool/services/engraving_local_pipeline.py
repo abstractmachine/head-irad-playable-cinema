@@ -80,6 +80,8 @@ def convert_one(
     registry=None,
     instance_id=None,
     approved: bool = False,
+    publish_selected: bool = False,
+    expected_revision: int = 0,
 ) -> dict:
     """Convert one silhouette into an isolated engraving and return the run record.
 
@@ -97,11 +99,13 @@ def convert_one(
     from services.resource_resolution import resolve_source_silhouette
     source = resolve_source_silhouette(project_path, source_json, registry=registry, instance_id=instance_id)
     source_json = source["metadata"]
-    if source["layout"] != "legacy-v1":
+    if registry is None and source["layout"] != "legacy-v1":
         raise ValueError("Canonical generation requires explicit provider output cutover; legacy writer is disabled for canonical sources")
     if registry is not None:
         from data.resource_storage import ResourceStore
         store = ResourceStore(project_path, registry, approved=approved)
+        if source["layout"] != "media-first-v1" or output_png is not None:
+            raise ValueError("Registered conversion requires a canonical silhouette and run-owned output")
     config = config or resolve_config()
     seed = int(config["run"]["seed"] if seed is None else seed)
 
@@ -109,7 +113,15 @@ def convert_one(
     mode = canonical_mode(config)
     # Each (object, mode) owns an independent provenance namespace, so an
     # isolated run can never be served from a frame cache or vice versa.
-    paths, legacy_layout = resolve_run_paths(project_path, source_json, record, mode)
+    reservation = None
+    if registry is not None:
+        from data.resource_storage import create_storage_directory
+        from services.engraving_local_paths import _paths_for_dir
+        reservation = store.reserve_generation_run(source["instance_id"], record["field"], record["label"], "local", mode)
+        work = store.registry.parent / ".resource-attempts" / reservation["token"]
+        paths, legacy_layout = _paths_for_dir(work, source_json, record), False
+    else:
+        paths, legacy_layout = resolve_run_paths(project_path, source_json, record, mode)
 
     if is_complete(paths) and not force:
         existing = json.loads(paths["run_json"].read_text(encoding="utf-8"))
@@ -123,9 +135,10 @@ def convert_one(
             _write_json(paths["run_json"], existing)
         return existing
 
-    reservation = store.reserve_generation_run(source["instance_id"], record["field"], record["label"], "local", mode) if registry is not None else None
     try:
-        evidence = assemble_evidence(source_json, config)
+        if registry is not None:
+            create_storage_directory(project_path, work, exclusive=True)
+        evidence = assemble_evidence(source_json, config, resolved_source=source, project=project_path, workdir=work) if registry is not None else assemble_evidence(source_json, config)
     except Exception:
         if reservation is not None:
             store.finish_generation_attempt(reservation, "failed")
@@ -272,7 +285,7 @@ def convert_one(
             "named_png": str(paths["named_png"]),
         }
 
-        if not config["run"].get("keep_intermediates", True):
+        if registry is None and not config["run"].get("keep_intermediates", True):
             for key in ("repair_png", "raw_engraving_png"):
                 paths[key].unlink(missing_ok=True)
 
@@ -283,7 +296,7 @@ def convert_one(
             run["outputs"]["requested_png"] = str(output_png)
 
         # -- publication: the one canonical asset becomes an Illustration ---
-        if config["run"].get("publish", True):
+        if registry is None and config["run"].get("publish", True):
             from services.engraving_local_publish import publish_run
 
             run["publication"] = publish_run(project_path, run, config, force=force, registry=registry)
@@ -311,6 +324,27 @@ def convert_one(
 
     if owns_model:
         model.release()
+    if registry is not None:
+        from services.resource_publication import complete_registered_engraving_run
+        model_info = run["model"]
+        generation = {"service": "qwen-local", "model": model_info["pipeline_repo"],
+                      "model_version": model_info.get("model_version") or model_info["pipeline_repo"],
+                      "seed": seed, "prompt": json.dumps({stage["stage"]: stage["prompt"] for stage in run["stages"] if "prompt" in stage}, sort_keys=True),
+                      "parameters": {"config": config, "stages": [{key: stage[key] for key in ("stage", "settings") if key in stage} for stage in run["stages"]], "model": model_info},
+                      "software": {"python": run["environment"]["python"]}, "created": run["created_at"]}
+        source_info = {"image_sha256": run["inputs"]["silhouette_sha256"], "mask_association": "silhouette-alpha", "evidence": []}
+        artifacts = {"result.png": paths["final_png"], "input.png": Path(evidence["silhouette_png"]), "provider-run.json": paths["run_json"],
+                     "subject.png": paths["evidence_subject"], "mask.png": paths["evidence_mask"]}
+        for key in ("repair_png", "raw_engraving_png"):
+            if paths[key].is_file():
+                artifacts[paths[key].name] = paths[key]
+        if evidence["source_frame"]:
+            frame = Path(evidence["source_frame"])
+            source_info["evidence"].append({"media_id": record["media_id"], "frame": record["frame"], "image_sha256": _sha256(frame)})
+            artifacts["frame.png"] = frame
+        run["registered_run"] = complete_registered_engraving_run(project_path, registry, reservation, generation, source_info, artifacts, approved=approved,
+                                                                 publish_selected=publish_selected, expected_revision=expected_revision,
+                                                                 review_state="rejected" if run["status"] == "rejected" else "needs_review")
     return run
 
 
@@ -323,6 +357,8 @@ def convert_batch(
     on_result=None,
     registry=None,
     approved: bool = False,
+    publish_selected: bool = False,
+    expected_revision: int = 0,
 ) -> dict:
     """Convert many silhouettes with one shared model instance.
 
@@ -338,6 +374,10 @@ def convert_batch(
     if registry is not None:
         from data.resource_storage import ResourceStore
         ResourceStore(project_path, registry, approved=approved)
+        from services.resource_resolution import resolve_source_silhouette
+        for source_path in sources:
+            if resolve_source_silhouette(project_path, source_path, registry=registry)["layout"] != "media-first-v1":
+                raise ValueError("Registered batch requires explicitly published canonical silhouettes")
 
     summary = {
         "total": total,
@@ -362,7 +402,7 @@ def convert_batch(
                     config=config,
                     model=model,
                     force=force,
-                    **({"registry": registry, "approved": approved} if registry is not None else {}),
+                    **({"registry": registry, "approved": approved, "publish_selected": publish_selected, "expected_revision": expected_revision} if registry is not None else {}),
                 )
                 if run.get("reused_cache"):
                     summary["reused"] += 1

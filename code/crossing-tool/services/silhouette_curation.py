@@ -88,9 +88,20 @@ def _load_json_record(json_path: str | Path) -> tuple[Path, dict[str, Any]]:
     return path, data
 
 
-def _persist_record(json_path: Path, record: dict[str, Any]) -> None:
+def _persist_record(json_path: Path, record: dict[str, Any], *, project_path=None, registry=None, approved=False, expected_revision=None) -> None:
     data = dict(record)
     data.pop("path", None)
+    if registry is not None:
+        from services.resource_resolution import resolve_silhouette
+        from services.resource_publication import publish_resource
+        if project_path is None or expected_revision is None:
+            raise ValueError("Registered assignment lifecycle commits require explicit project and loaded revision")
+        current = resolve_silhouette(project_path, data["instance_id"], registry=registry, active_only=False)
+        if current["metadata"] != json_path.resolve():
+            raise ValueError("Registered assignment target is not the exact current publication")
+        publish_resource(project_path, registry, data["instance_id"], "silhouettes", data, current["image"], approved=approved,
+                         expected_revision=expected_revision, _assignment_only=True)
+        return
     from data.annotate import atomic_write_text
 
     atomic_write_text(json_path, json.dumps(data, indent=2, ensure_ascii=False))
@@ -145,6 +156,7 @@ def mark_recheck_pending(
     json_path: str | Path,
     *,
     annotation_value: str,
+    project_path=None, registry=None, approved=False, expected_revision=None,
 ) -> dict[str, Any]:
     """De-assign one object and embed its bounded, original-label recheck.
 
@@ -173,7 +185,7 @@ def mark_recheck_pending(
         },
     })
     record[ASSIGNMENT_FIELD] = assignment
-    _persist_record(path, record)
+    _persist_record(path, record, **({"project_path": project_path, "registry": registry, "approved": approved, "expected_revision": expected_revision} if registry is not None else {}))
     return record
 
 
@@ -276,6 +288,7 @@ def mark_recheck_error(
     *,
     error: str,
     annotation_values: list[str] | None = None,
+    project_path=None, registry=None, approved=False, expected_revision=None,
 ) -> dict[str, Any]:
     """Persist an explicit failed recheck without deleting historical evidence."""
     path, record = _load_json_record(json_path)
@@ -309,7 +322,22 @@ def mark_recheck_error(
         RECHECK_FIELD: recheck,
     })
     record[ASSIGNMENT_FIELD] = assignment
-    _persist_record(path, record)
+    _persist_record(path, record, **({"project_path": project_path, "registry": registry, "approved": approved, "expected_revision": expected_revision} if registry is not None else {}))
+    return record
+
+
+def complete_registered_recheck(project_path, registry, instance_id, *, approved=False, expected_revision):
+    from services.resource_resolution import resolve_silhouette
+    current = resolve_silhouette(project_path, instance_id, registry=registry, active_only=False)
+    record = dict(current["record"])
+    assignment = dict(record.get(ASSIGNMENT_FIELD) or {})
+    recheck = dict(assignment.get(RECHECK_FIELD) or {})
+    if not recheck:
+        return record
+    recheck.update(state=RECHECK_COMPLETED, completed_at=_now(), replacement_instance_ids=[instance_id])
+    assignment[RECHECK_FIELD] = recheck
+    record[ASSIGNMENT_FIELD] = assignment
+    _persist_record(current["metadata"], record, project_path=project_path, registry=registry, approved=approved, expected_revision=expected_revision)
     return record
 
 
@@ -552,7 +580,7 @@ def complete_recheck_replacements(
     return historical[0], replacements
 
 
-def _annotation_value_for_record(project_path: str | Path, record: dict[str, Any]) -> str:
+def _annotation_value_for_record(project_path: str | Path, record: dict[str, Any], *, registry=None) -> str:
     """Return one unambiguous source-shot annotation value for *record*."""
     from data.annotate import get_annotation_json_path
 
@@ -563,7 +591,10 @@ def _annotation_value_for_record(project_path: str | Path, record: dict[str, Any
     if not all((filename, media_type, shot_id, field)):
         raise ValueError("Catalog record cannot resolve its source annotation")
 
-    annotation_path = get_annotation_json_path(str(project_path), filename, media_type)
+    annotation_path = get_annotation_json_path(str(project_path), filename, media_type, **({"registry": registry} if registry is not None else {}))
+    if registry is not None:
+        from data.resource_locations import resolve_annotation
+        annotation_path = resolve_annotation(project_path, filename, media_type, registry=registry)
     try:
         entries = json.loads(annotation_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -617,7 +648,7 @@ def deassign_catalog_object(
     field: str,
     label: str,
     object_id: str,
-    registry=None, instance_id=None, dry_run=False,
+    registry=None, instance_id=None, dry_run=False, approved=False, expected_revision=None,
 ) -> dict[str, Any]:
     """De-assign one exact catalog object and rebuild its scoped browse index.
 
@@ -629,12 +660,19 @@ def deassign_catalog_object(
         from services.resource_resolution import resolve_silhouette
         if not instance_id:
             raise ValueError("Registered deassignment requires an exact instance ID")
-        current = resolve_silhouette(project_path, instance_id, registry=registry)
+        current = resolve_silhouette(project_path, instance_id, registry=registry, active_only=False)
         record = current["record"]
         if any(record.get(key) != value for key, value in (("media_type", media_type), ("media_id", media_id), ("shot_id", shot_id), ("field", field), ("label", label))):
             raise ValueError("Registered deassignment source identity is stale")
         if not dry_run:
-            raise ValueError("Registered assignment mutation requires controlled lifecycle commits; deferred")
+            if not approved or expected_revision is None:
+                raise ValueError("Registered assignment mutation requires controlled lifecycle commits with approval and loaded revision; deferred")
+            if assignment_state_for_record(record) == ASSIGNMENT_INACTIVE and pending_recheck_matches(record, **extraction_identity(record)):
+                return {"status": "already_inactive", "record": record, "index": None}
+            annotation_value = _annotation_value_for_record(project_path, record, registry=registry)
+            updated = mark_recheck_pending(current["metadata"], annotation_value=annotation_value, project_path=project_path, registry=registry,
+                                           approved=approved, expected_revision=expected_revision)
+            return {"status": "deassigned", "record": updated, "index": None, "physical_deletion": False}
         return {"instance_id": instance_id, "path": current["metadata"], "image": current["image"], "dry_run": True,
                 "assignment": {"state": "inactive"}, "physical_deletion": False}
     request = {

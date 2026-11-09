@@ -247,7 +247,7 @@ def assess_evidence(record: dict, config: dict) -> dict:
     }
 
 
-def assemble_evidence(source_json: str | Path, config: dict) -> dict:
+def assemble_evidence(source_json: str | Path, config: dict, *, resolved_source=None, project=None, workdir=None) -> dict:
     """Assemble every input the repair stage needs, with full provenance.
 
     Returns a dict with keys ``record``, ``silhouette_png``, ``source_frame``,
@@ -255,8 +255,12 @@ def assemble_evidence(source_json: str | Path, config: dict) -> dict:
     ``provenance``.
     """
     source_json = Path(source_json)
-    record = load_silhouette_record(source_json)
-    silhouette_png = resolve_silhouette_png(source_json, record)
+    record = load_silhouette_record(source_json) if resolved_source is None else resolved_source["record"]
+    if resolved_source is None:
+        silhouette_png = resolve_silhouette_png(source_json, record)
+    else:
+        silhouette_png = Path(workdir) / "input.png"
+        silhouette_png.write_bytes(resolved_source["image_bytes"])
 
     evidence_cfg = config.get("evidence", {})
     working = build_working_images(
@@ -266,8 +270,13 @@ def assemble_evidence(source_json: str | Path, config: dict) -> dict:
         crop_padding_fraction=evidence_cfg["crop_padding_fraction"],
     )
 
-    source_frame = resolve_source_frame(record) if evidence_cfg.get("use_source_frame") else None
-    context_frames = find_context_frames(record, int(evidence_cfg.get("max_context_frames", 0)))
+    if resolved_source is None:
+        source_frame = resolve_source_frame(record) if evidence_cfg.get("use_source_frame") else None
+        context_frames = find_context_frames(record, int(evidence_cfg.get("max_context_frames", 0)))
+    else:
+        from services.resource_publication import prepare_registered_frame
+        source_frame = prepare_registered_frame(project, resolved_source, Path(workdir) / "frame.png") if evidence_cfg.get("use_source_frame") else None
+        context_frames = []
 
     return {
         "record": record,

@@ -58,7 +58,7 @@ def resolve_engraving(project, instance_id, mode="frame", *, registry, active_on
         result = result if result is not None else legacy.registered_engraving(project, binding, mode)
         if result["record"].get("status") != "generated":
             raise ValueError("Engraving is not a generated publication")
-        result["source_dirty"] = bool(source["record"].get("source_validation", {}).get("dirty"))
+        result["source_dirty"] = bool(source["record"].get("source_validation", {}).get("dirty") or result["record"].get("source_validation", {}).get("dirty"))
         result["image_bytes"] = result["image"].read_bytes()
         return result
 

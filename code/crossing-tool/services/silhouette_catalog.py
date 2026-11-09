@@ -478,6 +478,10 @@ def extract_objects_for_shot(
     force: bool = False,
     verbose: bool = False,
     recheck_source_json_path: str | Path | None = None,
+    registry=None,
+    approved: bool = False,
+    instance_ids=None,
+    registration_keys=None,
 ) -> dict:
     """Extract all valid objects for *label* from one shot.
 
@@ -511,6 +515,24 @@ def extract_objects_for_shot(
     from services.resource_validation import validate_source_classification
     source_metadata = {"media_type": media_type, "media_id": media_id, "filename": filename,
                        "shot_id": shot_id, "field": field, "label": label}
+    annotation_layout = "legacy-v1"
+    loaded_locations = {}
+    if registry is not None:
+        from data.resource_storage import ResourceStore
+        from data import resource_locations
+        ResourceStore(project_path, registry, approved=approved)
+        commitment = resource_locations.annotation_commitment(project_path, filename, media_type, registry)
+        resource_locations.resolve_annotation(project_path, filename, media_type, registry=registry)
+        if commitment is None or bool(instance_ids) == bool(registration_keys):
+            raise ValueError("Registered extraction requires an existing annotation commitment and explicit reserved instance IDs")
+        annotation_layout = commitment["layout"]
+        for instance_id in instance_ids or []:
+            binding = resource_locations.registered_instance(project_path, registry, instance_id)
+            if any(binding[key] != source_metadata[key] for key in ("media_type", "media_id", "shot_id")):
+                raise ValueError("Extraction instance differs from exact registered source")
+            loaded_locations[instance_id] = resource_locations.current_location(project_path, binding, "silhouettes", "")
+        if (instance_ids and len(set(instance_ids)) != len(instance_ids)) or recheck_source_json_path is not None:
+            raise ValueError("Registered extraction requires distinct instance IDs; legacy recheck paths are unsupported")
     if not isinstance(field, str) or not field.strip() or not isinstance(label, str) or not label.strip():
         findings = validate_source_classification(project_path, source_metadata)
         return {"saved": [], "skipped": 0, "reason": "classification validation failed", "validation": findings}
@@ -569,7 +591,7 @@ def extract_objects_for_shot(
             return {"saved": [], "skipped": 0, "reason": "recheck request is not pending for this extraction identity"}
 
     # --- check if already done for this shot (unless --force or recheck) ---
-    if not force and not recheck_cache_bypass and label_dir.exists():
+    if registry is None and not force and not recheck_cache_bypass and label_dir.exists():
         existing = list(label_dir.glob("object_????.json"))
         for jf in existing:
             try:
@@ -581,7 +603,7 @@ def extract_objects_for_shot(
             except Exception:
                 pass
 
-    findings = validate_source_classification(project_path, source_metadata)
+    findings = validate_source_classification(project_path, source_metadata, annotation_layout=annotation_layout)
     if findings["state"] != "valid":
         return {"saved": [], "skipped": 0, "reason": "classification validation failed", "validation": findings}
 
@@ -717,12 +739,26 @@ def extract_objects_for_shot(
 
     # --- build source frame reference ---
     bf_path = best_frame_path(project_path, media_type, filename, shot_id)
-    source_frame = str(bf_path) if bf_path.exists() else f"frame:{frame_index}"
+    source_frame = str(bf_path) if registry is None and bf_path.exists() else f"frame:{frame_index}"
 
     # --- save accepted objects ---
-    label_dir.mkdir(parents=True, exist_ok=True)
+    if registry is None:
+        label_dir.mkdir(parents=True, exist_ok=True)
     saved_paths: list[str] = []
-    next_idx = _next_object_index(label_dir, count=len(deduped))
+    if registry is not None and registration_keys is not None:
+        if len(registration_keys) != len(deduped):
+            raise ValueError("Explicit registration keys must match prepared extraction candidates")
+        registrations = ResourceStore(project_path, registry, approved=approved).register_extractions([
+            {**source_metadata, "frame": frame_index, "registration_key": key} for key in registration_keys])
+        by_key = {key: instance_id for key, instance_id, created in registrations}
+        instance_ids = [by_key[key] for key in registration_keys]
+        for instance_id in instance_ids:
+            binding = resource_locations.registered_instance(project_path, registry, instance_id)
+            loaded_locations[instance_id] = resource_locations.current_location(project_path, binding, "silhouettes", "")
+    if registry is not None and len(deduped) != len(instance_ids):
+        raise ValueError("Replacement candidate count must match explicitly reserved identities; reassignment is not inferred")
+    next_idx = _next_object_index(label_dir, count=len(deduped)) if registry is None else 0
+    publications = []
     timestamp = datetime.now(timezone.utc).isoformat()
 
     # Load semantic analysis prompts once for this shot (best-effort).
@@ -734,7 +770,7 @@ def extract_objects_for_shot(
     except Exception:
         pass
 
-    for mask_dict, tight_score in deduped:
+    for candidate_index, (mask_dict, tight_score) in enumerate(deduped):
         # Find broad score for this mask
         broad_score = next(
             (bs for m, bs, ts in reranked if m is mask_dict),
@@ -782,13 +818,35 @@ def extract_objects_for_shot(
             from services.silhouette_curation import SOURCE_RECHECK_STAGED, SOURCE_RECHECK_JOB_FIELD
             meta["assignment"] = {"state": ASSIGNMENT_INACTIVE, "reason": SOURCE_RECHECK_STAGED,
                                   SOURCE_RECHECK_JOB_FIELD: {key: str(meta[key]) for key in ("media_type", "media_id", "shot_id", "field")}}
+        expected_revision = 0
+        if registry is not None:
+            instance_id = instance_ids[candidate_index]
+            binding = resource_locations.registered_instance(project_path, registry, instance_id)
+            previous = loaded_locations[instance_id]
+            if previous is not None:
+                if not force:
+                    raise ValueError("Existing silhouette replacement requires explicit force and identity")
+                if any(previous["record"].get(key) != meta[key] for key in ("field", "label")):
+                    raise ValueError("Coordinated reclassification relocation remains unsupported")
+                expected_revision = previous["revision"]
+                meta = {**previous["record"], **meta, "assignment": previous["record"].get("assignment", active_assignment())}
+            meta.update(publication_contract="media-first-v1", resource_kind="silhouettes", instance_id=instance_id, png="silhouette.png")
+            if resource_locations.annotation_commitment(project_path, filename, media_type, registry) != commitment:
+                raise ValueError("Extraction annotation revision/hash conflict")
+            paths = resource_locations.silhouette_destination(project_path, resource_locations.find_media(project_path, media_type, media_id=media_id), media_type, instance_id, field, label)
+            png_path, json_path = paths["image"], paths["metadata"]
 
-        findings = validate_source_classification(project_path, meta, segmentation=True)
+        findings = validate_source_classification(project_path, meta, annotation_layout=annotation_layout, segmentation=True)
         if findings["state"] != "valid":
             return {"saved": saved_paths, "skipped": skipped_quality + skipped_confidence,
                 "reason": "publication validation failed", "validation": findings}
         from services.resource_publication import publish_silhouette
-        publish_silhouette(project_path, meta, png_img, source_path=json_path)
+        publication = publish_silhouette(project_path, meta, png_img, source_path=json_path, registry=registry,
+                                         approved=approved, expected_revision=expected_revision)
+        if registry is not None:
+            publications.append(publication)
+            saved_paths.append(str(png_path))
+            continue
 
         # Inline semantic enrichment — uses the already-loaded CLIP model so
         # there is no extra model load.  Best-effort: any failure is logged
@@ -827,6 +885,7 @@ def extract_objects_for_shot(
         "saved": saved_paths,
         "skipped": skipped_quality + skipped_confidence + (len(deduped) - len(saved_paths)),
         "reason": "ok",
+        **({"publications": publications, "instance_ids": list(instance_ids[:len(saved_paths)])} if registry is not None else {}),
     }
 
 
@@ -867,6 +926,67 @@ def _find_shot_candidates(
 # Per-movie extraction
 # ---------------------------------------------------------------------------
 
+def extract_registered_plan(project_path, extraction_plan, label, field, media_type="movie", *, registry, approved=False,
+                            sam_model_name="sam3.pt", frame_model_name="clip-vit-base-patch32", force=False, verbose=False,
+                            clip_model=None, clip_processor=None, clip_device=None, mask_generator=None, dry_run=False):
+    from data.resource_storage import ResourceStore
+    from data import resource_locations
+    from data.media_id import parse_shot_id
+    from services.resource_validation import validate_source_classification
+    if not dry_run:
+        ResourceStore(project_path, registry, approved=approved)
+    if not isinstance(extraction_plan, dict) or not extraction_plan:
+        raise ValueError("Registered extraction requires a nonempty explicit source/identity plan")
+    sources = []
+    for shot_id, identities in extraction_plan.items():
+        if not isinstance(identities, dict) or set(identities) not in ({"instance_ids"}, {"registration_keys"}):
+            raise ValueError("Each planned source requires either instance_ids or registration_keys")
+        values = next(iter(identities.values()))
+        if not isinstance(values, list) or not values or any(not isinstance(value, str) for value in values) or len(values) != len(set(values)):
+            raise ValueError("Each planned identity list must be explicit, nonempty and distinct")
+        if "registration_keys" in identities and any(len(key) != 64 or set(key) - set("0123456789abcdef") for key in values):
+            raise ValueError("Registration keys must be explicit lowercase 64-hex values")
+        media_id, _, _ = parse_shot_id(shot_id)
+        media = resource_locations.find_media(project_path, media_type, media_id=media_id)
+        commitment = resource_locations.annotation_commitment(project_path, media["filename"], media_type, registry)
+        resource_locations.resolve_annotation(project_path, media["filename"], media_type, registry=registry)
+        if commitment is None:
+            raise ValueError("Planned extraction source has no annotation commitment")
+        findings = validate_source_classification(project_path, {"media_type": media_type, "media_id": media_id, "filename": media["filename"],
+                                                                 "shot_id": shot_id, "field": field, "label": label}, annotation_layout=commitment["layout"])
+        if findings["state"] != "valid":
+            raise ValueError("Planned source classification invalid: " + json.dumps(findings))
+        for identity in identities.get("instance_ids", []):
+            binding = resource_locations.registered_instance(project_path, registry, identity)
+            if binding["shot_id"] != shot_id or binding["media_type"] != media_type:
+                raise ValueError("Planned replacement identity belongs to another source")
+            current = resource_locations.current_location(project_path, binding, "silhouettes", "")
+            if current and (not force or any(current["record"].get(key) != value for key, value in (("field", field), ("label", label)))):
+                raise ValueError("Planned replacement requires force and unchanged classification")
+        sources.append((shot_id, media, identities))
+    if dry_run:
+        return {"total_shots": len(sources), "shots_saved": 0, "total_saved": 0, "total_skipped": 0, "failed": 0,
+                "dry_run": True, "results": [{"shot_id": shot_id, "identities": identities, "filename": media["filename"]} for shot_id, media, identities in sources]}
+    if clip_model is None:
+        from services.frame_match import _load_clip_model
+        clip_model, clip_processor, clip_device = _load_clip_model(project_path, frame_model_name)
+    if mask_generator is None:
+        from services.silhouette import load_sam_model
+        mask_generator, sam_model_name, _ = load_sam_model(project_path, sam_model_name)
+    summary = {"total_shots": len(sources), "shots_saved": 0, "total_saved": 0, "total_skipped": 0, "failed": 0, "results": []}
+    for shot_id, media, identities in sources:
+        result = extract_objects_for_shot(project_path, label, field, shot_id, media["filename"], media["media_id"], media_type,
+                                         sam_model_name, frame_model_name, clip_model=clip_model, clip_processor=clip_processor,
+                                         clip_device=clip_device, mask_generator=mask_generator, force=force, verbose=verbose,
+                                         registry=registry, approved=approved, **identities)
+        summary["results"].append(result)
+        summary["total_saved"] += len(result["saved"])
+        summary["shots_saved"] += bool(result["saved"])
+        summary["total_skipped"] += result["skipped"]
+        summary["failed"] += result.get("reason") not in ("ok", "cached") and not bool(result["saved"])
+    return summary
+
+
 def extract_catalog_for_movie(
     project_path: str,
     filename: str,
@@ -883,6 +1003,9 @@ def extract_catalog_for_movie(
     clip_processor=None,
     clip_device=None,
     mask_generator=None,
+    registry=None,
+    approved=False,
+    extraction_plan=None,
 ) -> dict:
     """Extract all catalog objects for *label* from one media item.
 
@@ -893,6 +1016,13 @@ def extract_catalog_for_movie(
       ``total_skipped``— total masks discarded
       ``failed``       — number of shots that hit an error
     """
+    if registry is not None:
+        from data.media_id import parse_shot_id
+        if not extraction_plan or any(parse_shot_id(shot_id)[0] != media_id for shot_id in extraction_plan):
+            raise ValueError("Registered movie extraction requires an exact same-media identity plan")
+        return extract_registered_plan(project_path, extraction_plan, label, field, media_type, registry=registry, approved=approved,
+                                       sam_model_name=sam_model_name, frame_model_name=frame_model_name, force=force, verbose=verbose,
+                                       clip_model=clip_model, clip_processor=clip_processor, clip_device=clip_device, mask_generator=mask_generator)
     from services.illustration_index import invalidate_index
     invalidate_index(project_path, "silhouettes", media_type)
 

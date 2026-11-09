@@ -218,7 +218,7 @@ def _uncoordinated_extraction_process_running() -> bool:
     return False
 
 
-def _source_annotation_values(project_path: Path, record: dict[str, Any]) -> list[str]:
+def _source_annotation_values(project_path: Path, record: dict[str, Any], *, registry=None) -> list[str]:
     """Read ordered atomic values from the current source-shot field."""
     from data.annotate import get_annotation_json_path
 
@@ -228,7 +228,10 @@ def _source_annotation_values(project_path: Path, record: dict[str, Any]) -> lis
     field = str(record.get("field") or "")
     if not all((filename, media_type, shot_id, field)):
         raise RecheckInputError("catalog record lacks source filename, media, shot, or field")
-    annotation_path = get_annotation_json_path(str(project_path), filename, media_type)
+    annotation_path = get_annotation_json_path(str(project_path), filename, media_type, **({"registry": registry} if registry is not None else {}))
+    if registry is not None:
+        from data.resource_locations import resolve_annotation
+        annotation_path = resolve_annotation(project_path, filename, media_type, registry=registry)
     try:
         entries = json.loads(annotation_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -733,6 +736,94 @@ def _sync_legacy_counts(report: dict[str, Any]) -> None:
     report["failed"] = report["historical_records_failed"]
 
 
+def _run_registered_rechecks(project, registry, instance_ids, approved, dry_run, sam_model_name, frame_model_name, retry_errors=False):
+    from data.resource_storage import ResourceStore
+    from data import resource_locations
+    from services.resource_resolution import resolve_silhouette
+    from services.silhouette_catalog import extract_registered_plan
+    if not instance_ids or len(set(instance_ids)) != len(instance_ids):
+        raise ValueError("Registered rechecks require a distinct explicitly bounded identity selection")
+    if not dry_run:
+        ResourceStore(project, registry, approved=approved)
+    groups = {}
+    revisions = {}
+    for identity in instance_ids:
+        source = resolve_silhouette(project, identity, registry=registry, active_only=False)
+        record = source["record"]
+        revisions[identity] = source["revision"]
+        key = RecheckSourceKey.from_record(record)
+        groups.setdefault(key, []).append((identity, record))
+    report = {"command": {"dry_run": dry_run, "mode": "explicit-identities"}, "source_jobs_available": len(groups), "source_jobs_examined": len(groups),
+              "source_jobs_attempted": 0, "source_jobs_completed": 0, "source_jobs_zero_result": 0, "source_jobs_failed": 0,
+              "historical_records_available": len(instance_ids), "historical_records_examined": len(instance_ids), "historical_records_superseded": 0,
+              "historical_records_skipped": 0, "historical_records_failed": 0, "deduplication_ratio": len(instance_ids) / len(groups),
+              "duplicate_source_jobs_avoided": len(instance_ids) - len(groups), "produced_objects": 0, "model_loads": 0, "errors": 0, "outcomes": []}
+    models = None
+    for key, members in groups.items():
+        record = members[0][1]
+        commitment = resource_locations.annotation_commitment(project, record["filename"], record["media_type"], registry)
+        if commitment is None:
+            raise ValueError("Registered recheck source annotations are not committed")
+        try:
+            values = _source_annotation_values(Path(project), record, registry=registry)
+        except RecheckInputError as exc:
+            from services.silhouette_curation import mark_recheck_error
+            if not dry_run:
+                for identity, item in members:
+                    current = resolve_silhouette(project, identity, registry=registry, active_only=False)
+                    mark_recheck_error(current["metadata"], error=str(exc), project_path=project, registry=registry,
+                                       approved=approved, expected_revision=revisions[identity])
+            report["source_jobs_failed"] += 1
+            report["historical_records_failed"] += len(members)
+            report["errors"] += 1
+            report["outcomes"].append({"source_job": _source_job_label(key), "historical_record_count": len(members), "recheck_values": [], "outcome": "error", "error": str(exc)})
+            continue
+        outcome = {"source_job": _source_job_label(key), "historical_record_count": len(members), "recheck_values": values}
+        if not retry_errors and any((item.get("assignment", {}).get("recheck") or {}).get("state") == "error" for identity, item in members):
+            outcome["outcome"] = "error-requires-explicit-retry"
+            report["historical_records_skipped"] += len(members)
+        elif set(values) != {member[1]["label"] for member in members}:
+            outcome.update(outcome="deferred-reclassification", error="Atomic current annotation values require coordinated reclassification; no identity allocation or partial relocation is permitted")
+            report["historical_records_skipped"] += len(members)
+        elif dry_run:
+            outcome["outcome"] = "planned"
+        else:
+            report["source_jobs_attempted"] += 1
+            try:
+                if models is None:
+                    models = _load_recheck_models(str(project), sam_model_name, frame_model_name)
+                    report["model_loads"] = 1
+                for value in values:
+                    plan = {record["shot_id"]: {"instance_ids": [identity for identity, item in members if item["label"] == value]}}
+                    result = extract_registered_plan(str(project), plan, value, record["field"], record["media_type"], registry=registry, approved=approved,
+                                                     force=True, sam_model_name=models.sam_model_name, frame_model_name=frame_model_name,
+                                                     clip_model=models.clip_model, clip_processor=models.clip_processor, clip_device=models.clip_device,
+                                                     mask_generator=models.mask_generator)
+                    if result["failed"]:
+                        raise RuntimeError("No cardinality-preserving replacement; existing identities and evidence retained")
+                    report["produced_objects"] += result["total_saved"]
+                    for extracted in result["results"]:
+                        for identity, publication in zip(extracted["instance_ids"], extracted["publications"]):
+                            revisions[identity] = publication["revision"]
+                from services.silhouette_curation import complete_registered_recheck
+                for identity, item in members:
+                    complete_registered_recheck(project, registry, identity, approved=approved, expected_revision=revisions[identity])
+                report["source_jobs_completed"] += 1
+                outcome["outcome"] = "replaced-same-identities"
+            except (RuntimeError, ValueError) as exc:
+                report["source_jobs_failed"] += 1
+                report["historical_records_failed"] += len(members)
+                report["errors"] += 1
+                outcome.update(outcome="error", error=str(exc))
+                from services.silhouette_curation import mark_recheck_error
+                for identity, item in members:
+                    current = resolve_silhouette(project, identity, registry=registry, active_only=False)
+                    mark_recheck_error(current["metadata"], error=str(exc), annotation_values=values, project_path=project, registry=registry,
+                                       approved=approved, expected_revision=revisions[identity])
+        report["outcomes"].append(outcome)
+    return report
+
+
 def run_silhouette_rechecks(
     project_path: str | Path,
     *,
@@ -748,6 +839,9 @@ def run_silhouette_rechecks(
     frame_model_name: str = "clip-vit-base-patch32",
     verbose: bool = False,
     log_path: str | Path | None = None,
+    registry=None,
+    approved: bool = False,
+    instance_ids=None,
 ) -> dict[str, Any]:
     """Process complete source jobs of queued or active-questionable records.
 
@@ -758,6 +852,10 @@ def run_silhouette_rechecks(
     backward-compatible alias for ``limit_records``.
     """
     project = Path(project_path)
+    if registry is not None:
+        if log_path is not None or all_sources or limit is not None or limit_records is not None or limit_sources is not None:
+            raise ValueError("Registered rechecks require explicit instance IDs; legacy corpus selection/logging is inactive")
+        return _run_registered_rechecks(project, registry, instance_ids, approved, dry_run, sam_model_name, frame_model_name, retry_errors)
     if media_type is not None and media_type not in _MEDIA_TYPES:
         raise ValueError("media_type must be 'movie', 'gameplay', or None")
     if limit is not None and limit_records is not None:

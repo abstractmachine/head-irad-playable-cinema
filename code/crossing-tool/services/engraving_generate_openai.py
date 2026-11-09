@@ -269,6 +269,53 @@ def _remove_white_background(image_bytes: bytes) -> bytes:
 # Main entry point
 # ---------------------------------------------------------------------------
 
+def _generate_registered_openai(project, registry, source, mode, model, size, approved, publish_selected, expected_revision):
+    import hashlib
+    import sys
+    from data.resource_storage import ResourceStore, create_storage_directory
+    from data.annotate import atomic_write_text
+    from services.resource_publication import complete_registered_engraving_run, prepare_registered_frame
+    if source["layout"] != "media-first-v1":
+        raise ValueError("Registered generation requires an explicitly published canonical silhouette")
+    store = ResourceStore(project, registry, approved=approved)
+    record = source["record"]
+    reservation = store.reserve_generation_run(source["instance_id"], record["field"], record["label"], "openai", mode)
+    work = store.registry.parent / ".resource-attempts" / reservation["token"]
+    try:
+        create_storage_directory(project, work, exclusive=True)
+        silhouette = work / "input.png"
+        silhouette.write_bytes(source["image_bytes"])
+        prompt_filename, template = load_engraving_prompt(str(project), mode)
+        prompt = _expand_prompt(template, record)
+        generation = {"service": OPENAI_API_NAME, "model": model, "prompt": prompt, "parameters": {"size": size, "n": 1},
+                      "seed_policy": "provider-managed", "version_policy": "provider-managed", "software": {"python": sys.version.split()[0]},
+                      "created": datetime.now(timezone.utc).isoformat(), "api": "images.edit", "prompt_file": str(prompt_filename)}
+        atomic_write_text(work / "request.json", json.dumps({"generation": generation, "reservation": reservation}, sort_keys=True))
+        source_info = {"image_sha256": hashlib.sha256(source["image_bytes"]).hexdigest(), "mask_association": "silhouette-alpha", "evidence": []}
+        artifacts = {"input.png": silhouette, "request.json": work / "request.json"}
+        api_key = get_key(OPENAI_API_NAME, str(project))
+        if mode == "frame":
+            frame = prepare_registered_frame(project, source, work / "frame.png")
+            source_info["evidence"].append({"media_id": record["media_id"], "frame": record["frame"], "image_sha256": hashlib.sha256(frame.read_bytes()).hexdigest()})
+            artifacts["frame.png"] = frame
+            image_bytes = _call_openai_api_dual(api_key, prompt, frame, silhouette, model, size)
+        else:
+            image_bytes = _call_openai_api(api_key, prompt, silhouette, model, size)
+        raw = work / "provider-response.png"
+        raw.write_bytes(image_bytes)
+        output = work / "result.png"
+        output.write_bytes(_remove_white_background(image_bytes) if mode == "isolated" else image_bytes)
+        artifacts.update({"provider-response.png": raw, "result.png": output})
+    except Exception:
+        store.finish_generation_attempt(reservation, "failed")
+        raise
+    completed = complete_registered_engraving_run(project, registry, reservation, generation, source_info, artifacts, approved=approved,
+                                                 publish_selected=publish_selected, expected_revision=expected_revision)
+    return {**completed, "generation_run": reservation, "metadata": completed.get("publication", {}).get("metadata", completed["run"]),
+            "dir": completed["run"].parent, "raw_png": completed["run"].parent / "provider-response.png", "engraving_png": completed["run"].parent / "result.png",
+            "mode": mode, "model": model, "size": size, "project": str(project), "expanded_prompt_length": len(prompt)}
+
+
 def generate_engraving_openai(
     project_path: str,
     source_json: str | Path,
@@ -280,6 +327,8 @@ def generate_engraving_openai(
     registry=None,
     instance_id=None,
     approved: bool = False,
+    publish_selected: bool = False,
+    expected_revision: int = 0,
 ) -> dict:
     """Prepare and generate an engraving via the OpenAI images API.
 
@@ -325,6 +374,7 @@ def generate_engraving_openai(
             r = generate_engraving_openai(
                 project_path, source_json,
                 mode=m, model=model, size=size, force=force, registry=registry, instance_id=instance_id, approved=approved,
+                publish_selected=publish_selected, expected_revision=expected_revision,
             )
             results.append(r)
         return results  # type: ignore[return-value]
@@ -335,6 +385,8 @@ def generate_engraving_openai(
     from services.resource_resolution import resolve_source_silhouette
     source = resolve_source_silhouette(project, source_json, registry=registry, instance_id=instance_id)
     source_json, meta = source["metadata"], source["record"]
+    if registry is not None:
+        return _generate_registered_openai(project, registry, source, mode, model, size, approved, publish_selected, expected_revision)
     if source["layout"] != "legacy-v1":
         raise ValueError("Canonical generation output requires the later explicit provider cutover; legacy writer is inactive for canonical sources")
     if registry is not None:

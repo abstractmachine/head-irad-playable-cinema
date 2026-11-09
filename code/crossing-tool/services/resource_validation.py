@@ -131,7 +131,7 @@ def validate_annotation_classifications(annotation):
     return findings
 
 
-def validate_metadata(project, binding, metadata, kind, mode="", *, annotation_layout="legacy-v1"):
+def validate_metadata(project, binding, metadata, kind, mode="", *, annotation_layout="legacy-v1", preserve_assignment=False):
     """Return valid/incomplete/invalid/historical and ordered explicit findings.
 
     Existing mask fields and actual annotation keys are used, not a replacement
@@ -224,7 +224,9 @@ def validate_metadata(project, binding, metadata, kind, mode="", *, annotation_l
             missing.extend(key for key in classification["missing"] if key not in missing)
         assignment = metadata.get("assignment", {"state": "active"})
         if not isinstance(assignment, dict) or assignment.get("state") != "active":
-            errors.append("only active validated silhouettes may be published")
+            current = locations.current_location(project, binding, "silhouettes", "") if preserve_assignment else None
+            if current is None or current["record"].get("assignment") != assignment:
+                errors.append("only active validated silhouettes may be published")
     elif kind == "engravings":
         if mode not in locations.MODES or required("mode") != mode:
             errors.append("engraving mode mismatch")

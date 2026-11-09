@@ -112,7 +112,7 @@ def registry_lock(project, registry, *, exclusive=False):
         if not exclusive:
             with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as database:
                 if database.execute("SELECT 1 FROM sqlite_master WHERE name='publication_operations'").fetchone():
-                    if database.execute("SELECT 1 FROM publication_operations WHERE state IN ('installing','files_published') OR (kind='annotation-collection' AND state='committed') LIMIT 1").fetchone():
+                    if database.execute("SELECT 1 FROM publication_operations WHERE state IN ('installing','files_published') OR (kind IN ('annotation-collection','silhouettes') AND state='committed') LIMIT 1").fetchone():
                         raise ValueError("Explicit publication recovery required before lookup")
         yield
     finally:
@@ -317,7 +317,7 @@ def adopt_registry(project, proposal, destination, *, exceptions, approved=False
 
 
 class ResourceStore:
-    """Explicit writer for an already adopted registry; never allocates IDs."""
+    """Explicit writer for an adopted registry, reusing the canonical allocator."""
 
     def __init__(self, project, registry, *, approved=False):
         if not approved:
@@ -360,6 +360,30 @@ class ResourceStore:
             database.execute("INSERT INTO generation_runs(instance_id,provider,number,mode,state,run_path,run_sha256,manifest,stage,reservation) VALUES(?,?,?,?,?,?,?,?,?,?)",
                              (instance_id, provider, number, mode, "reserved", relative_path(self.project, path), "", "{}", "", token))
             return {"instance_id": instance_id, "provider": provider, "number": number, "mode": mode, "token": token}
+
+    def register_extractions(self, records):
+        from services.silhouette_canonical_identity import InstanceRegistry, prepare_extraction_registration
+        from services.resource_validation import validate_source_classification
+        with self.transaction() as database:
+            database.execute("BEGIN IMMEDIATE")
+            bindings = []
+            for record in records:
+                commitment = locations.annotation_commitment(self.project, record["filename"], record["media_type"], self.registry)
+                locations.resolve_annotation(self.project, record["filename"], record["media_type"], registry=self.registry)
+                if commitment is None:
+                    raise ValueError("Extraction registration requires committed source annotations")
+                findings = validate_source_classification(self.project, record, annotation_layout=commitment["layout"])
+                if findings["state"] != "valid":
+                    raise ValueError("Extraction registration classification invalid: " + json.dumps(findings))
+                bindings.append(prepare_extraction_registration(record, self.project, record["registration_key"]))
+            for binding in bindings:
+                existing = database.execute("SELECT legacy_identity,legacy_json FROM instances WHERE registration_key=?", (binding["registration_key"],)).fetchone()
+                if existing is not None and (existing["legacy_identity"] != binding["legacy_identity"] or existing["legacy_json"] != binding["legacy_json"]):
+                    raise ValueError("Conflicting immutable extraction registration")
+            allocator = object.__new__(InstanceRegistry)
+            allocator.database = database
+            allocator.transactions = 0
+            return allocator.register(bindings, manage_transaction=False)
 
     def finish_generation_attempt(self, reservation, state):
         if state not in ("failed", "abandoned"):

@@ -788,6 +788,7 @@ def process_shot_silhouette(
     clip_processor=None,
     clip_device=None,
     mask_generator=None,
+    return_image=False,
 ) -> dict:
     """Run the full CLIP + SAM pipeline for a single shot.
 
@@ -1052,7 +1053,11 @@ def process_shot_silhouette(
             f"bbox={bbox}  polygon_pts={len(accepted_polygon)}"
         )
 
-    return {"accepted": True, "reason": "ok", "payload": payload}
+    result = {"accepted": True, "reason": "ok", "payload": payload}
+    if return_image:
+        from services.silhouette_catalog import extract_object_png
+        result["image"] = extract_object_png(image_pil, accepted_mask)
+    return result
 
 
 def _scope_label(scope_type: str | None, scope_value: str | None) -> str:
@@ -1104,6 +1109,7 @@ def _resolve_shot_details(
     project_path: str,
     shot_id: str,
     media_type: str,
+    *, registry=None,
 ) -> tuple[str | None, str | None]:
     """Return ``(filename, media_id)`` for *shot_id* by scanning annotation files.
 
@@ -1115,6 +1121,10 @@ def _resolve_shot_details(
     except ValueError:
         return None, None
 
+    if registry is not None:
+        from data.resource_locations import find_media
+        entry = find_media(project_path, media_type, media_id=media_id_part)
+        return entry["filename"], entry["media_id"]
     for entry in get_metadata(project_path, media_type=media_type):
         mid = compute_media_id(entry, media_type)
         if mid == media_id_part:
@@ -1178,6 +1188,7 @@ def build_silhouette(
     force: bool = False,
     verbose: bool = False,
     dry_run: bool = False,
+    *, registry=None, approved=False, instance_id=None, registration_key=None,
 ) -> dict:
     """Build and cache the best silhouette polygon for *word* in *field*.
 
@@ -1204,6 +1215,65 @@ def build_silhouette(
       - ``output_path``  str or None (path written)
       - ``candidates``   list of candidate shot dicts considered
     """
+    if registry is not None:
+        from data import resource_locations
+        from data.resource_storage import ResourceStore
+        from services.resource_validation import validate_source_classification
+        if scope_type != "shot" or not scope_value or bool(instance_id) == bool(registration_key):
+            raise ValueError("Registered silhouette rendering requires one exact shot and an explicit identity or registration key")
+        filename, media_id = _resolve_shot_details(project_path, scope_value, media_type, registry=registry)
+        commitment = resource_locations.annotation_commitment(project_path, filename, media_type, registry)
+        resource_locations.resolve_annotation(project_path, filename, media_type, registry=registry)
+        source_record = {"media_type": media_type, "media_id": media_id, "filename": filename, "filename_stem": Path(filename).stem,
+                         "shot_id": scope_value, "field": field, "label": word}
+        if commitment is None or validate_source_classification(project_path, source_record, annotation_layout=commitment["layout"])["state"] != "valid":
+            raise ValueError("Registered silhouette source classification is not committed and valid")
+        previous = None
+        if instance_id:
+            binding = resource_locations.registered_instance(project_path, registry, instance_id)
+            if binding["shot_id"] != scope_value:
+                raise ValueError("Registered rendering identity belongs to another shot")
+            previous = resource_locations.current_location(project_path, binding, "silhouettes", "")
+            if previous and (not force or any(previous["record"].get(key) != source_record[key] for key in ("field", "label"))):
+                raise ValueError("Replacement requires force and unchanged classification; coordinated relocation is deferred")
+        if dry_run:
+            return {"accepted": False, "reason": "dry run", "payload": None, "output_path": None, "candidates": [{"shot_id": scope_value, "filename": filename}]}
+        store = ResourceStore(project_path, registry, approved=approved)
+        if registration_key:
+            if len(registration_key) != 64 or set(registration_key) - set("0123456789abcdef"):
+                raise ValueError("Explicit lowercase 64-hex extraction registration key required")
+            with store.transaction() as database:
+                existing = database.execute("SELECT instance_id FROM instances WHERE registration_key=?", (registration_key,)).fetchone()
+            if existing:
+                instance_id = existing["instance_id"]
+                binding = resource_locations.registered_instance(project_path, registry, instance_id)
+                if binding["shot_id"] != scope_value or binding["media_type"] != media_type:
+                    raise ValueError("Extraction key belongs to another source")
+                previous = resource_locations.current_location(project_path, binding, "silhouettes", "")
+                if previous and (not force or any(previous["record"].get(key) != source_record[key] for key in ("field", "label"))):
+                    raise ValueError("Existing extraction key requires explicit force and unchanged classification")
+        result = process_shot_silhouette(project_path, word, field, scope_value, filename, media_id, media_type,
+                                         sam_model_name, frame_model_name, verbose=verbose, return_image=True)
+        if not result["accepted"]:
+            return {**result, "output_path": None, "candidates": []}
+        payload = result["payload"]
+        if result["image"] is None:
+            raise ValueError("Accepted segmentation has no publishable alpha image")
+        if resource_locations.annotation_commitment(project_path, filename, media_type, registry) != commitment:
+            raise ValueError("Registered rendering source annotation revision/hash conflict")
+        if registration_key:
+            instance_id = store.register_extractions([{**source_record, "frame": payload["frame_index"], "registration_key": registration_key}])[0][1]
+        metadata = {**(previous["record"] if previous else {}), **source_record, "publication_contract": "media-first-v1", "resource_kind": "silhouettes",
+                    "instance_id": instance_id, "frame": payload["frame_index"], "source_frame": f"frame:{payload['frame_index']}",
+                    "bbox": payload["bbox"], "frame_size": payload["frame_size"], "mask_area": payload["mask_area"],
+                    "sam_model": payload["sam_model"], "frame_match_model": payload["frame_match_model"], "polygon": payload["polygon"], "png": "silhouette.png"}
+        from services.resource_publication import publish_silhouette
+        publication = publish_silhouette(project_path, metadata, result["image"], registry=registry, approved=approved,
+                                         expected_revision=previous["revision"] if previous else 0)
+        target = resource_locations.silhouette_destination(project_path, resource_locations.find_media(project_path, media_type, media_id=media_id), media_type, instance_id, field, word)
+        return {"accepted": True, "reason": "ok", "payload": {**payload, "instance_id": instance_id}, "output_path": str(target["metadata"]),
+                "publication": publication, "candidates": [{"shot_id": scope_value, "filename": filename}]}
+
     # ----- scope directory name -----
     # For movie scope, resolve media_id first so the dir name is stable.
     resolved_media_id: str | None = None

@@ -855,6 +855,469 @@ def test_both_mode_publications_and_runs(writable):
     assert resolve_engraving(project, instance, "isolated", registry=registry)["metadata"].name == "engraving-isolated.json"
 
 
+def test_registered_run_requires_explicit_selection_and_preserves_dependents(writable):
+    from services.resource_publication import complete_registered_engraving_run, publish_registered_engraving_run
+    from PIL import Image
+    project, registry, instance, silhouette, image = writable
+    publish_resource(project, registry, instance, "silhouettes", silhouette, image, approved=True)
+    source = resolve_silhouette(project, instance, registry=registry)
+    generation = {"service": "qwen-local", "model": "fixture-model", "model_version": "v1", "prompt": "fixture prompt",
+                  "parameters": {}, "seed": 42, "software": {"pipeline": "fixture-v1"}}
+    source_info = {"image_sha256": digest(source["image"]), "mask_association": "silhouette-alpha", "evidence": []}
+    reservation = ResourceStore(project, registry, approved=True).reserve_generation_run(instance, "objects", "field", "local", "isolated")
+    result = complete_registered_engraving_run(project, registry, reservation, generation, source_info, {"result.png": image}, approved=True)
+    with pytest.raises(FileNotFoundError):
+        resolve_engraving(project, instance, "isolated", registry=registry)
+    publish_registered_engraving_run(project, registry, instance, "local", reservation["number"], approved=True)
+    assert not publish_registered_engraving_run(project, registry, instance, "local", reservation["number"], approved=True)["published"]
+    before = resolve_engraving(project, instance, "isolated", registry=registry)
+    replacement = project / "replacement.png"
+    Image.new("RGBA", (20, 20), (10, 10, 10, 255)).save(replacement)
+    publish_resource(project, registry, instance, "silhouettes", silhouette, replacement, approved=True, expected_revision=1)
+    after = resolve_engraving(project, instance, "isolated", registry=registry)
+    assert after["image"].read_bytes() == before["image"].read_bytes()
+    assert after["record"]["review_state"] == before["record"]["review_state"] == "needs_review"
+    assert after["record"]["source_validation"]["dirty"]
+    assert "silhouette_content_changed" in after["record"]["source_validation"]["reasons"]
+    assert result["run"].is_file()
+    from services.engraving_local_publish import set_review_state
+    reviewed = set_review_state(after["metadata"], "accepted", project_path=project, registry=registry, approved=True, expected_revision=after["revision"])
+    assert reviewed["source_validation"] == after["record"]["source_validation"]
+    assert reviewed["review_state"] == "accepted"
+    assert reviewed["generation"] == after["record"]["generation"]
+    assert resolve_engraving(project, instance, "isolated", registry=registry)["image"].read_bytes() == before["image"].read_bytes()
+    with pytest.raises(ValueError, match="revision"):
+        set_review_state(after["metadata"], "rejected", project_path=project, registry=registry, approved=True, expected_revision=after["revision"])
+    reservation = ResourceStore(project, registry, approved=True).reserve_generation_run(instance, "objects", "field", "local", "isolated")
+    source_info["image_sha256"] = digest(replacement)
+    complete_registered_engraving_run(project, registry, reservation, generation, source_info, {"result.png": replacement}, approved=True,
+                                     publish_selected=True, expected_revision=3)
+    regenerated = resolve_engraving(project, instance, "isolated", registry=registry)
+    assert regenerated["source_dirty"] and regenerated["record"]["source_validation"] == reviewed["source_validation"]
+    assert regenerated["record"]["review_state"] == "needs_review"
+    assert regenerated["record"]["prior_review"]["review_state"] == "accepted"
+
+
+@pytest.mark.parametrize("mode", ["isolated", "frame"])
+@pytest.mark.parametrize("media_type", ["movie", "gameplay"])
+def test_registered_openai_actual_adapter(request, monkeypatch, mode, media_type):
+    import services.engraving_generate_openai as provider
+    import services.resource_publication as publication
+    project, registry, instance, content, image = request.getfixturevalue("writable" if media_type == "movie" else "registered_gameplay")
+    if media_type == "movie":
+        publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+    else:
+        image = resolve_silhouette(project, instance, registry=registry)["image"]
+    source = resolve_silhouette(project, instance, registry=registry)
+    monkeypatch.setattr(provider, "load_engraving_prompt", lambda *args: ("fixture.txt", "Redraw $label"))
+    monkeypatch.setattr(provider, "get_key", lambda *args: "fixture-key")
+    calls = []
+    def api(*args):
+        calls.append(args)
+        return image.read_bytes()
+    monkeypatch.setattr(provider, "_call_openai_api", api)
+    monkeypatch.setattr(provider, "_call_openai_api_dual", api)
+    def frame(project, source, output):
+        output.write_bytes(image.read_bytes())
+        return output
+    monkeypatch.setattr(publication, "prepare_registered_frame", frame)
+    import cli
+    from argparse import Namespace
+    monkeypatch.setattr(cli, "_require_path", lambda: None)
+    monkeypatch.setattr(cli.prefs, "get", lambda key, *args: str(project) if key == "path" else (args[0] if args else None))
+    monkeypatch.setattr(cli.prefs, "set", lambda *args: None)
+    generated = []
+    original = provider.generate_engraving_openai
+    def capture(*args, **kwargs):
+        generated.append(original(*args, **kwargs))
+        return generated[-1]
+    monkeypatch.setattr(provider, "generate_engraving_openai", capture)
+    cli._engraving_generate(Namespace(source=source["metadata"], provider="openai", mode=mode, model="fixture-api", size="1024x1024", force=False,
+                                      resource_registry=registry, approved_resource_edit=True, publish_selected=True, expected_publication_revision=0))
+    result = generated[0]
+    current = resolve_engraving(project, instance, mode, registry=registry)
+    run = json.loads(result["run"].read_text())
+    assert len(calls) == 1
+    assert run["generation"]["seed_policy"] == "provider-managed"
+    assert content["label"] in run["generation"]["prompt"]
+    assert run["artifacts"]["input.png"] == digest(source["image"])
+    assert bool(run["source"]["evidence"]) == (mode == "frame")
+    assert current["record"]["published_run"]["number"] == 1
+    assert not (project / "data/engravings/catalog").exists()
+
+
+@pytest.mark.parametrize("frame_mode", [False, True])
+@pytest.mark.parametrize("media_type", ["movie", "gameplay"])
+def test_registered_local_actual_stages(request, monkeypatch, frame_mode, media_type):
+    import services.engraving_local_pipeline as provider
+    import services.engraving_local_validate as validation
+    import services.resource_publication as publication
+    from services.engraving_local_config import resolve_config
+    from PIL import Image, ImageDraw
+    project, registry, instance, content, image = request.getfixturevalue("writable" if media_type == "movie" else "registered_gameplay")
+    if media_type == "movie":
+        publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+    else:
+        image = resolve_silhouette(project, instance, registry=registry)["image"]
+    source = resolve_silhouette(project, instance, registry=registry)
+    config = resolve_config()
+    config["evidence"].update(working_size=32, use_source_frame=frame_mode, max_context_frames=0)
+    monkeypatch.setattr(provider, "_environment", lambda: {"python": "fixture-python", "device": "fixture"})
+    monkeypatch.setattr(validation, "validate_result", lambda *args: {"status": "needs_review", "reasons": []})
+    def frame(project, source, output):
+        output.write_bytes(image.read_bytes())
+        return output
+    monkeypatch.setattr(publication, "prepare_registered_frame", frame)
+    class Model:
+        def __init__(self):
+            self.calls = []
+        def edit(self, **kwargs):
+            self.calls.append(kwargs)
+            output = Image.new("RGB", (32, 32), "white")
+            ImageDraw.Draw(output).rectangle((8, 8, 23, 23), fill="black")
+            return {"image": output, "seconds": 0.01, "peak_vram_bytes": 0}
+        def provenance(self):
+            return {"pipeline_repo": "fixture/local-release", "model_version": "fixture-v1"}
+    model = Model()
+    import cli
+    from argparse import Namespace
+    monkeypatch.setattr(cli, "_require_path", lambda: None)
+    monkeypatch.setattr(cli.prefs, "get", lambda key, *args: str(project) if key == "path" else (args[0] if args else None))
+    monkeypatch.setattr(cli.prefs, "set", lambda *args: None)
+    monkeypatch.setattr(cli, "_local_engraving_config", lambda args: config)
+    generated = []
+    original = provider.convert_one
+    def capture(*args, **kwargs):
+        generated.append(original(*args, model=model, **kwargs))
+        return generated[-1]
+    monkeypatch.setattr(provider, "convert_one", capture)
+    cli._engraving_local_generate(Namespace(source=source["metadata"], seed=17, force=False, output=None, resource_registry=registry,
+                                           approved_resource_edit=True, publish_selected=True, expected_publication_revision=0))
+    result = generated[0]
+    run_path = result["registered_run"]["run"]
+    run = json.loads(run_path.read_text())
+    current = resolve_engraving(project, instance, "frame" if frame_mode else "isolated", registry=registry)
+    assert len(model.calls) == 2 and all(call["seed"] == 17 for call in model.calls)
+    assert run["generation"]["seed"] == 17
+    assert run["generation"]["model_version"] == "fixture-v1"
+    assert run["artifacts"]["input.png"] == digest(source["image"])
+    assert bool(run["source"]["evidence"]) == frame_mode
+    assert current["record"]["review_state"] == "needs_review"
+    assert (run_path.parent / "provider-run.json").is_file()
+    assert not (project / "data/engravings/catalog").exists()
+    from services.engraving_local_publish import publish_run
+    assert not publish_run(project, result, config, registry=registry, approved=True, expected_revision=current["revision"])["published"]
+
+
+def test_registered_openai_failure_retains_number(writable, monkeypatch):
+    import services.engraving_generate_openai as provider
+    project, registry, instance, content, image = writable
+    publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+    source = resolve_silhouette(project, instance, registry=registry)
+    monkeypatch.setattr(provider, "load_engraving_prompt", lambda *args: ("fixture.txt", "$label"))
+    monkeypatch.setattr(provider, "get_key", lambda *args: "fixture-key")
+    def fail(*args):
+        raise RuntimeError("fixture provider failure")
+    monkeypatch.setattr(provider, "_call_openai_api", fail)
+    with pytest.raises(RuntimeError, match="fixture provider"):
+        provider.generate_engraving_openai(str(project), source["metadata"], registry=registry, approved=True)
+    with sqlite3.connect(registry) as database:
+        assert database.execute("SELECT number,state FROM generation_runs").fetchone() == (1, "failed")
+    assert ResourceStore(project, registry, approved=True).reserve_generation_run(instance, "objects", "field", "openai", "isolated")["number"] == 2
+
+
+@pytest.mark.parametrize("media_type", ["movie", "gameplay"])
+def test_registered_actual_extraction_uses_shotwide_keys_and_replacement_cas(request, monkeypatch, media_type):
+    import numpy as np
+    from PIL import Image
+    import services.silhouette as engine
+    import services.frame_match as matching
+    from services.silhouette_catalog import extract_objects_for_shot
+    project, registry, instance, content, image = request.getfixturevalue("writable" if media_type == "movie" else "registered_gameplay")
+    media = locations.find_media(project, media_type, media_id=content["media_id"])
+    if media_type == "movie":
+        ResourceStore(project, registry, approved=True).commit_annotation_layout(media, media_type, "legacy-v1")
+    video = project / "media/videos" / media_type / content["filename"]
+    video.parent.mkdir(parents=True)
+    video.write_bytes(b"fixture video decoded by stub")
+    monkeypatch.setattr(matching, "_get_video_fps", lambda *args: 24.0)
+    monkeypatch.setattr(matching, "find_query_best_frame_for_shot", lambda **kwargs: (12, 0.95))
+    monkeypatch.setattr(engine, "extract_frame_as_pil", lambda *args: Image.new("RGB", (100, 100), "black"))
+    masks = []
+    for offset in (20, 60):
+        segmentation = np.zeros((100, 100), dtype=bool)
+        segmentation[20:40, offset:offset + 20] = True
+        masks.append({"segmentation": segmentation, "area": 400, "bbox": [offset, 20, 20, 20]})
+    monkeypatch.setattr(engine, "rank_masks_by_clip", lambda candidates, *args: [(candidate, 0.95) for candidate in candidates])
+    monkeypatch.setattr(engine, "rerank_by_tight_crop", lambda candidates, *args: [(candidate, score, score) for candidate, score in candidates])
+    class Segmenter:
+        def segment_concept(self, *args):
+            return masks
+    kwargs = {"project_path": str(project), "label": content["label"], "field": "objects", "shot_id": content["shot_id"],
+              "filename": content["filename"], "media_id": content["media_id"], "media_type": media_type, "sam_model_name": "fixture-sam",
+              "frame_model_name": "fixture-clip", "clip_model": object(), "mask_generator": Segmenter(), "registry": registry, "approved": True}
+    from services.silhouette_catalog import extract_registered_plan
+    before = digest(registry)
+    preview = extract_registered_plan(str(project), {content["shot_id"]: {"registration_keys": ["b" * 64, "a" * 64]}}, content["label"], "objects", media_type,
+                                      registry=registry, dry_run=True)
+    assert preview["dry_run"] and preview["total_saved"] == 0 and digest(registry) == before
+    result = extract_objects_for_shot(**kwargs, registration_keys=["b" * 64, "a" * 64])
+    assert len(result["saved"]) == 2
+    assert result["instance_ids"][0].endswith("#0003")
+    assert result["instance_ids"][1].endswith("#0002")
+    assert all(resolve_silhouette(project, identity, registry=registry)["record"]["source_frame"] == "frame:12" for identity in result["instance_ids"])
+    before_count = len(locations.registered_instance(project, registry, result["instance_ids"][0])["locations"])
+    replacement = extract_objects_for_shot(**kwargs, instance_ids=result["instance_ids"], force=True)
+    assert replacement["instance_ids"] == result["instance_ids"]
+    assert all(publication["revision"] == 2 for publication in replacement["publications"])
+    assert len(locations.registered_instance(project, registry, result["instance_ids"][0])["locations"]) == before_count
+    assert not (project / "data/silhouettes/catalog/movie/film/objects").exists()
+    import cli
+    from argparse import Namespace
+    import services.silhouette_recheck as rechecks
+    monkeypatch.setattr(cli.prefs, "get", lambda key, *args: str(project) if key == "path" else (args[0] if args else None))
+    monkeypatch.setattr(cli.prefs, "set", lambda *args: None)
+    monkeypatch.setattr(matching, "_load_clip_model", lambda *args: (object(), None, None))
+    monkeypatch.setattr(engine, "load_sam_model", lambda *args: (Segmenter(), "fixture-sam", "fixture-device"))
+    cli._silhouette_catalog_extract_unlocked(Namespace(label=content["label"], field="objects", media=media_type, shot=content["shot_id"],
+                                                      instance_ids=result["instance_ids"], registration_keys=None, resource_registry=registry,
+                                                      approved_resource_edit=True, force=True))
+    assert all(resolve_silhouette(project, identity, registry=registry)["revision"] == 3 for identity in result["instance_ids"])
+    loads = []
+    def load(*args):
+        loads.append(args)
+        return rechecks._RecheckModels(object(), None, None, Segmenter(), "fixture-sam", "fixture-device")
+    monkeypatch.setattr(rechecks, "_load_recheck_models", load)
+    report = rechecks.run_silhouette_rechecks(project, registry=registry, approved=True, instance_ids=result["instance_ids"])
+    assert len(loads) == report["model_loads"] == report["source_jobs_completed"] == 1
+    assert report["produced_objects"] == 2
+    assert all(resolve_silhouette(project, identity, registry=registry)["revision"] == 4 for identity in result["instance_ids"])
+
+
+@pytest.mark.parametrize("stage", ["run-prepared", "run-installed", "image-installed", "committed"])
+def test_registered_attempt_resume_and_selection_do_not_duplicate(writable, stage):
+    from services.resource_publication import complete_registered_engraving_run, publish_registered_engraving_run
+    project, registry, instance, content, image = writable
+    publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+    source = resolve_silhouette(project, instance, registry=registry)
+    reservation = ResourceStore(project, registry, approved=True).reserve_generation_run(instance, "objects", "field", "local", "isolated")
+    generation = {"service": "qwen-local", "model": "fixture", "model_version": "fixture-v1", "prompt": "fixture", "parameters": {}, "seed": 5, "software": {"python": "fixture"}}
+    source_info = {"image_sha256": digest(source["image"]), "mask_association": "silhouette-alpha", "evidence": []}
+    def interrupt(current):
+        if current == stage:
+            raise RuntimeError("fixture interruption")
+    with pytest.raises(RuntimeError, match="fixture interruption"):
+        complete_registered_engraving_run(project, registry, reservation, generation, source_info, {"result.png": image}, approved=True, publish_selected=True, interrupt=interrupt)
+    publish_registered_engraving_run(project, registry, instance, "local", 1, approved=True)
+    assert resolve_engraving(project, instance, "isolated", registry=registry)["revision"] == 1
+    assert not publish_registered_engraving_run(project, registry, instance, "local", 1, approved=True)["published"]
+    with sqlite3.connect(registry) as database:
+        assert database.execute("SELECT number,state FROM generation_runs").fetchall() == [(1, "complete")]
+
+
+def test_registered_reclassification_plan_preserves_pairs_and_runs(writable):
+    from services.resource_corrections import plan_registered_reclassification
+    project, registry, instance, silhouette, image = writable
+    annotation = locations.annotation_path(project, "film.mp4", "movie")
+    annotation.write_text(json.dumps([{"shot": {"shot_id": silhouette["shot_id"], "annotation": {"objects": ["field"], "setting": ["wagon"]}}}]))
+    media = locations.find_media(project, "movie", media_id="tmdb_1")
+    ResourceStore(project, registry, approved=True).commit_annotation_layout(media, "movie", "legacy-v1")
+    engraving = _engraving_draft(writable)
+    publish_resource(project, registry, instance, "engravings", engraving, image, mode="frame", approved=True)
+    binding = locations.registered_instance(project, registry, instance)
+    paths = [registry] + [project / row[key] for row in binding["locations"] for key in ("record_path", "image_path")] + [project / row["run_path"] for row in binding["runs"]]
+    before = {path: digest(path) for path in paths}
+    plan = plan_registered_reclassification(project, registry, instance, "setting", "wagon")
+    assert not plan["execution_supported"]
+    assert len(plan["pairs"]) == 2 and len(plan["runs"]) == 1
+    assert all("/setting/wagon/" in pair["destination"]["metadata"] for pair in plan["pairs"])
+    assert plan["runs"][0]["number"] == 1
+    assert {path: digest(path) for path in paths} == before
+    with pytest.raises(ValueError, match="classification"):
+        plan_registered_reclassification(project, registry, instance, "animals", "wagon")
+
+
+def test_registered_word_renderer_uses_existing_identity_owner(registered_gameplay, monkeypatch):
+    from PIL import Image
+    from pathlib import Path
+    import services.silhouette as engine
+    project, registry, original, content, annotation = registered_gameplay
+    calls = []
+    def process(*args, **kwargs):
+        calls.append((args, kwargs))
+        return {"accepted": True, "reason": "ok", "image": Image.new("RGBA", (2, 2), "black"),
+                "payload": {"word": "wagon", "field": "objects", "frame_index": 12, "bbox": [0, 0, 2, 2], "frame_size": [2, 2],
+                            "mask_area": 4, "sam_model": "fixture-sam", "frame_match_model": "fixture-clip", "polygon": [[0, 0], [1, 0], [1, 1]]}}
+    monkeypatch.setattr(engine, "process_shot_silhouette", process)
+    result = engine.build_silhouette(str(project), "wagon", "objects", "shot", content["shot_id"], "gameplay", registry=registry, approved=True, registration_key="c" * 64)
+    identity = result["payload"]["instance_id"]
+    assert identity.endswith("#0002") and identity != original
+    assert resolve_silhouette(project, identity, registry=registry)["metadata"] == Path(result["output_path"])
+    assert "/gameplay/" + content["media_id"] + "/objects/wagon/" in result["output_path"]
+    with pytest.raises(ValueError, match="force"):
+        engine.build_silhouette(str(project), "wagon", "objects", "shot", content["shot_id"], "gameplay", registry=registry, approved=True, registration_key="c" * 64)
+    assert len(calls) == 1
+    assert not (project / "data/silhouettes/gameplay/manifest.json").exists()
+
+
+def test_registered_human_best_scan_uses_current_pair(writable):
+    from services.engraving_batch import scan_best_silhouettes
+    project, registry, instance, content, image = writable
+    publish_resource(project, registry, instance, "silhouettes", {**content, "human_best": True}, image, approved=True)
+    current = resolve_silhouette(project, instance, registry=registry)
+    targets = scan_best_silhouettes(str(project), registry=registry)
+    assert len(targets) == 1 and targets[0]["path"] == current["metadata"]
+    assert targets[0]["meta"]["instance_id"] == instance
+
+
+def test_registered_extraction_allocator_is_concurrent_nonrecycling_and_readonly(writable):
+    from concurrent.futures import ThreadPoolExecutor
+    project, registry, original, content, image = writable
+    media = locations.find_media(project, "movie", media_id="tmdb_1")
+    store = ResourceStore(project, registry, approved=True)
+    store.commit_annotation_layout(media, "movie", "legacy-v1")
+    def register(key):
+        return store.register_extractions([{**content, "registration_key": key}])[0][1]
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        identities = list(executor.map(register, ["a" * 64, "b" * 64]))
+    assert {identity.rsplit("#", 1)[1] for identity in identities} == {"0002", "0003"}
+    before = digest(registry)
+    with pytest.raises(FileNotFoundError):
+        resolve_silhouette(project, identities[0], registry=registry)
+    assert digest(registry) == before
+    with store.transaction() as database:
+        allocator = object.__new__(InstanceRegistry)
+        allocator.database = database
+        allocator.retire("a" * 64)
+    assert register("a" * 64) == identities[0]
+    assert register("c" * 64).endswith("#0004")
+
+
+def test_actual_registered_openai_batch_modes_and_unselected_attempts(writable, monkeypatch):
+    import cli
+    import services.engraving_generate_openai as provider
+    import services.resource_publication as publication
+    from argparse import Namespace
+    project, registry, instance, content, image = writable
+    publish_resource(project, registry, instance, "silhouettes", {**content, "human_best": True}, image, approved=True)
+    monkeypatch.setattr(cli, "_require_path", lambda: None)
+    monkeypatch.setattr(cli.prefs, "get", lambda key, *args: str(project) if key == "path" else (args[0] if args else None))
+    monkeypatch.setattr(cli.prefs, "set", lambda *args: None)
+    monkeypatch.setattr(provider, "load_engraving_prompt", lambda *args: ("fixture.txt", "$label"))
+    monkeypatch.setattr(provider, "get_key", lambda *args: "fixture-key")
+    monkeypatch.setattr(provider, "_call_openai_api", lambda *args: image.read_bytes())
+    monkeypatch.setattr(provider, "_call_openai_api_dual", lambda *args: image.read_bytes())
+    def frame(project, source, output):
+        output.write_bytes(image.read_bytes())
+        return output
+    monkeypatch.setattr(publication, "prepare_registered_frame", frame)
+    args = Namespace(media="movie", mode="both", resource_registry=registry, approved_resource_edit=True, publish_selected=True, expected_publication_revision=0)
+    cli._engraving_batch(args)
+    assert all(resolve_engraving(project, instance, mode, registry=registry)["revision"] == 1 for mode in ("frame", "isolated"))
+    args.publish_selected = False
+    cli._engraving_batch(args)
+    assert all(resolve_engraving(project, instance, mode, registry=registry)["revision"] == 1 for mode in ("frame", "isolated"))
+    with sqlite3.connect(registry) as database:
+        assert database.execute("SELECT number,mode,state FROM generation_runs ORDER BY number").fetchall() == [(1, "isolated", "complete"), (2, "frame", "complete"), (3, "isolated", "complete"), (4, "frame", "complete")]
+
+
+def test_actual_registered_local_batch_reuses_one_model(writable, monkeypatch):
+    from unittest.mock import Mock
+    from PIL import Image, ImageDraw
+    import services.engraving_local_pipeline as provider
+    import services.engraving_local_model as model_module
+    import services.engraving_local_validate as validation
+    from services.engraving_local_config import resolve_config
+    project, registry, instance, content, image = writable
+    media = locations.find_media(project, "movie", media_id="tmdb_1")
+    store = ResourceStore(project, registry, approved=True)
+    store.commit_annotation_layout(media, "movie", "legacy-v1")
+    second = store.register_extractions([{**content, "registration_key": "d" * 64}])[0][1]
+    for identity in (instance, second):
+        publish_resource(project, registry, identity, "silhouettes", {**content, "instance_id": identity}, image, approved=True)
+    sources = [resolve_silhouette(project, identity, registry=registry)["metadata"] for identity in (instance, second)]
+    config = resolve_config()
+    config["evidence"].update(working_size=32, use_source_frame=False, max_context_frames=0)
+    model = Mock()
+    def edit(**kwargs):
+        output = Image.new("RGB", (32, 32), "white")
+        ImageDraw.Draw(output).rectangle((8, 8, 23, 23), fill="black")
+        return {"image": output, "seconds": 0.01, "peak_vram_bytes": 0}
+    model.edit.side_effect = edit
+    model.provenance.return_value = {"pipeline_repo": "fixture/local", "model_version": "fixture-v1"}
+    factory = Mock(return_value=model)
+    monkeypatch.setattr(model_module, "LocalEngravingModel", factory)
+    monkeypatch.setattr(provider, "_environment", lambda: {"python": "fixture-python"})
+    monkeypatch.setattr(validation, "validate_result", lambda *args: {"status": "needs_review"})
+    summary = provider.convert_batch(project, sources, config=config, registry=registry, approved=True)
+    assert summary["converted"] == 2 and summary["failed"] == 0
+    assert factory.call_count == model.release.call_count == 1 and model.edit.call_count == 4
+    with sqlite3.connect(registry) as database:
+        assert database.execute("SELECT number,state FROM generation_runs").fetchall() == [(1, "complete"), (1, "complete")]
+
+
+def test_registered_local_failure_retains_attempt(registered_gameplay, monkeypatch):
+    from unittest.mock import Mock
+    import services.engraving_local_pipeline as provider
+    from services.engraving_local_config import resolve_config
+    project, registry, instance, content, annotation = registered_gameplay
+    source = resolve_silhouette(project, instance, registry=registry)
+    config = resolve_config()
+    config["evidence"].update(working_size=32, use_source_frame=False, max_context_frames=0)
+    model = Mock()
+    model.edit.side_effect = RuntimeError("fixture model failure")
+    model.provenance.return_value = {"pipeline_repo": "fixture/local", "model_version": "fixture-v1"}
+    monkeypatch.setattr(provider, "_environment", lambda: {"python": "fixture-python"})
+    with pytest.raises(provider.EngravingRunError, match="fixture model failure"):
+        provider.convert_one(project, source["metadata"], config=config, model=model, registry=registry, approved=True)
+    with sqlite3.connect(registry) as database:
+        assert database.execute("SELECT number,state FROM generation_runs").fetchall() == [(1, "failed")]
+    assert ResourceStore(project, registry, approved=True).reserve_generation_run(instance, "objects", "wagon", "local", "isolated")["number"] == 2
+
+
+def test_registered_recheck_failure_and_explicit_retry_preserve_identity(registered_gameplay, monkeypatch):
+    import services.silhouette_recheck as rechecks
+    import services.silhouette_catalog as catalog
+    project, registry, instance, content, annotation = registered_gameplay
+    source = resolve_silhouette(project, instance, registry=registry)
+    before = source["image"].read_bytes()
+    import cli
+    from argparse import Namespace
+    monkeypatch.setattr(cli.prefs, "get", lambda key, *args: str(project) if key == "path" else (args[0] if args else None))
+    monkeypatch.setattr(cli.prefs, "set", lambda *args: None)
+    cli._silhouette_catalog_deassign(Namespace(media="gameplay", filename_stem=content["filename_stem"], media_id=content["media_id"],
+                                             shot=content["shot_id"], field="objects", label="wagon", object_id=instance,
+                                             resource_registry=registry, approved_resource_edit=True, apply=True, expected_publication_revision=1))
+    pending = resolve_silhouette(project, instance, registry=registry, active_only=False)
+    assert pending["record"]["assignment"]["recheck"]["state"] == "pending"
+    assert pending["image"].read_bytes() == before
+    loads = []
+    def load(*args):
+        loads.append(args)
+        return rechecks._RecheckModels(object(), None, None, object(), "fixture-sam", None)
+    monkeypatch.setattr(rechecks, "_load_recheck_models", load)
+    def fail(*args, **kwargs):
+        return {"failed": 1, "total_saved": 0, "results": []}
+    monkeypatch.setattr(catalog, "extract_registered_plan", fail)
+    report = rechecks.run_silhouette_rechecks(project, registry=registry, approved=True, instance_ids=[instance])
+    failed = resolve_silhouette(project, instance, registry=registry, active_only=False)
+    assert report["errors"] == 1 and failed["record"]["assignment"]["recheck"]["state"] == "error"
+    assert failed["image"].read_bytes() == before and failed["record"]["instance_id"] == instance
+    skipped = rechecks.run_silhouette_rechecks(project, registry=registry, approved=True, instance_ids=[instance])
+    assert skipped["historical_records_skipped"] == 1 and len(loads) == 1
+    def succeed(*args, **kwargs):
+        current = resolve_silhouette(project, instance, registry=registry, active_only=False)
+        publication = publish_resource(project, registry, instance, "silhouettes", current["record"], current["image"], approved=True, expected_revision=current["revision"])
+        return {"failed": 0, "total_saved": 1, "results": [{"instance_ids": [instance], "publications": [publication]}]}
+    monkeypatch.setattr(catalog, "extract_registered_plan", succeed)
+    completed = rechecks.run_silhouette_rechecks(project, registry=registry, approved=True, instance_ids=[instance], retry_errors=True)
+    current = resolve_silhouette(project, instance, registry=registry, active_only=False)
+    assert completed["source_jobs_completed"] == 1 and len(loads) == 2
+    assert current["record"]["assignment"]["recheck"]["state"] == "completed"
+    assert current["record"]["assignment"]["state"] == "inactive"
+    assert current["image"].read_bytes() == before and current["record"]["instance_id"] == instance
+
+
 def test_annotation_enumeration_and_commit(writable):
     project, registry, instance, content, image = writable
     record = locations.find_media(project, "movie", media_id="tmdb_1")
