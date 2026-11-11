@@ -9,12 +9,40 @@ from __future__ import annotations
 
 import hashlib
 import json
+import copy
 from pathlib import Path
 
 from data import resource_locations as locations
 from data.media_id import label_slug, parse_shot_id
 from data.resource_storage import ResourceStore, digest, relative_path, registry_lock
 from services.resource_validation import source_annotation
+
+
+def propose_objects_addition(project, reference, shot_id, *, expected_sha256, value):
+    """Prepare one exact additive source edit for controlled collection publication."""
+    from services.resource_publication import _validate_collection_payload
+    path = locations.project_file(project, reference)
+    if digest(path) != expected_sha256:
+        raise ValueError("Frozen source annotation changed before proposal")
+    before = json.loads(path.read_text())
+    after = copy.deepcopy(before)
+    matches = [entry["shot"] for entry in after if entry.get("shot", {}).get("shot_id") == shot_id]
+    if len(matches) != 1 or not isinstance(value, str) or not value.strip():
+        raise ValueError("Exact source shot and atomic object value are required")
+    objects = matches[0].get("annotation", {}).get("objects")
+    if not isinstance(objects, list) or value in objects:
+        raise ValueError("Additive correction requires an existing objects array and a new value")
+    objects.append(value)
+    media_id = parse_shot_id(shot_id)[0]
+    media = locations.find_media(project, "movie", media_id=media_id)
+    if locations.annotation_path(project, media["filename"], "movie") != path:
+        raise ValueError("Annotation path differs from exact source media")
+    payload = json.dumps(after, indent=2, ensure_ascii=False, allow_nan=False).encode()
+    _validate_collection_payload(project, media, {".annotations.json": path},
+                                 {".annotations.json": payload}, {".annotations.json"}, media_type="movie")
+    return {"reference": str(reference), "shot_id": shot_id, "media": media,
+            "before_sha256": expected_sha256, "after_sha256": hashlib.sha256(payload).hexdigest(),
+            "payload": payload, "value": value}
 
 
 def _token(proposal):
@@ -143,3 +171,83 @@ def correction_status(project, registry, reference):
     with registry_lock(project, registry), sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as database:
         rows = database.execute("SELECT correction_id,details FROM classification_corrections WHERE reference=? ORDER BY correction_id", (reference,))
         return [{"correction_id": row[0], **json.loads(row[1])} for row in rows]
+
+
+def execute_classification_cohort(project, registry, cases, additions, *, operation_id, approved=False, interrupt=None):
+    """Recover exactly one approved additive annotation / missing-field cohort."""
+    from data.resource_storage import create_storage_directory
+    from services.resource_publication import _copy, _sync, publish_annotation_collection, resume_annotation_collection
+    store = ResourceStore(project, registry, approved=approved)
+    if not isinstance(operation_id, str) or not operation_id.isalnum() or len(cases) != 6 or len(additions) != 2:
+        raise ValueError("Exact six-case/two-annotation cohort required")
+    annotations = [{key: value for key, value in item.items() if key != "payload"} for item in additions]
+    with store.transaction() as database:
+        existing = database.execute("SELECT * FROM publication_operations WHERE operation_id=?", (operation_id,)).fetchone()
+        if existing is None:
+            if database.execute("SELECT 1 FROM resource_locations LIMIT 1").fetchone():
+                raise ValueError("Historical correction cohort requires an unpublished preparation registry")
+            if database.execute("SELECT 1 FROM publication_operations WHERE state NOT IN ('finished','rolled_back')").fetchone():
+                raise ValueError("Recover pending publication before preparing a correction cohort")
+            for item in cases:
+                path = locations.project_file(project, item["reference"])
+                record = json.loads(path.read_text())
+                if digest(path) != item["before_sha256"] or digest(path.with_suffix(".png")) != item["image_sha256"]:
+                    raise ValueError("Frozen correction pair changed")
+                if record.get("field") not in (None, "") or any(record[key] != item[key] for key in ("media_id", "shot_id", "frame", "label")):
+                    raise ValueError("Frozen correction source association differs")
+                if digest(locations.project_file(project, item["annotation_reference"])) != item["annotation_sha256"]:
+                    raise ValueError("Frozen correction annotation changed")
+            for item in additions:
+                if digest(locations.project_file(project, item["reference"])) != item["before_sha256"] or hashlib.sha256(item["payload"]).hexdigest() != item["after_sha256"]:
+                    raise ValueError("Frozen annotation addition differs")
+            stage = store.registry.parent / ".resource-publications" / operation_id
+            create_storage_directory(project, stage, exclusive=True)
+            for number, item in enumerate(cases):
+                _copy(locations.project_file(project, item["reference"]), stage / ("previous-case-" + str(number) + ".json"))
+            for number, item in enumerate(additions):
+                _copy(locations.project_file(project, item["reference"]), stage / ("previous-annotation-" + str(number) + ".json"))
+                (stage / ("new-annotation-" + str(number) + ".json")).write_bytes(item["payload"])
+                _sync(stage / ("new-annotation-" + str(number) + ".json"))
+            _sync(stage)
+            details = {"cases": cases, "annotations": annotations, "stage": relative_path(project, stage)}
+            database.execute("INSERT INTO publication_operations VALUES(?,NULL,'classification-cohort','','prepared',?)", (operation_id, json.dumps(details)))
+        else:
+            details = json.loads(existing["details"])
+            if existing["kind"] != "classification-cohort" or details["cases"] != cases or details["annotations"] != annotations:
+                raise ValueError("Cohort approval differs from retained intent")
+            if existing["state"] == "rolled_back":
+                raise ValueError("Rolled-back cohort cannot be silently resumed")
+    if interrupt:
+        interrupt("cohort-prepared")
+    with registry_lock(project, registry, exclusive=True):
+        with store.transaction() as database:
+            database.execute("UPDATE publication_operations SET state='installing' WHERE operation_id=? AND state='prepared'", (operation_id,))
+        for number, item in enumerate(annotations):
+            child = operation_id + "annotation" + str(number)
+            with store.transaction() as database:
+                previous = database.execute("SELECT state FROM publication_operations WHERE operation_id=?", (child,)).fetchone()
+                commitment = database.execute("SELECT * FROM annotation_layouts WHERE media_type=? AND media_id=?", (item["media_type"], item["media_id"])).fetchone()
+            if previous is not None:
+                resume_annotation_collection(project, registry, child, approved=approved,
+                                             interrupt=(lambda state: interrupt("annotation" + str(number) + ":" + state)) if interrupt else None)
+            else:
+                payload = locations.project_file(project, Path(project) / details["stage"] / ("new-annotation-" + str(number) + ".json")).read_bytes()
+                publish_annotation_collection(project, registry, item["filename"], item["media_type"], {".annotations.json": payload},
+                                              expected_revision=commitment["revision"], expected_hashes=json.loads(commitment["artifacts"]),
+                                              approved=approved, operation_id=child, parent_operation=operation_id,
+                                              interrupt=(lambda state: interrupt("annotation" + str(number) + ":" + state)) if interrupt else None)
+        for number, item in enumerate(cases):
+            with store.transaction() as database:
+                retained = database.execute("SELECT details FROM classification_corrections WHERE reference=?", (item["reference"],)).fetchone()
+            proposal = json.loads(retained[0])["proposal"] if retained else propose_missing_field(project, item["reference"], item["approved_field"], item["label"])
+            if item.get("approval_token") and proposal["approval_token"] != item["approval_token"]:
+                raise ValueError("Existing human approval token differs")
+            apply_missing_field(project, registry, proposal, approval=proposal["approval_token"], approved=approved,
+                                interrupt=(lambda state: interrupt("case" + str(number) + ":" + state)) if interrupt else None)
+            path = locations.project_file(project, item["reference"])
+            before = json.loads(locations.project_file(project, Path(project) / details["stage"] / ("previous-case-" + str(number) + ".json")).read_text())
+            if json.loads(path.read_text()) != {**before, "field": item["approved_field"]} or digest(path.with_suffix(".png")) != item["image_sha256"]:
+                raise ValueError("Correction changed unapproved metadata or PNG bytes")
+        with store.transaction() as database:
+            database.execute("UPDATE publication_operations SET state='finished' WHERE operation_id=?", (operation_id,))
+        return {"operation_id": operation_id, "state": "finished", "corrections": 6, "annotation_updates": 2}

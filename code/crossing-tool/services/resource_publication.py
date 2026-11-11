@@ -760,7 +760,7 @@ def _validate_collection_payload(project, media, paths, payloads, changed, *, me
 
 
 def publish_annotation_collection(project, registry, filename, media_type, changes, *, expected_revision,
-                                  expected_hashes, approved=False, operation_id=None, interrupt=None):
+                                  expected_hashes, approved=False, operation_id=None, interrupt=None, parent_operation=None):
     """CAS publish selected collection members through the existing journal."""
     import hashlib
     from data.resource_storage import registry_lock
@@ -785,7 +785,16 @@ def publish_annotation_collection(project, registry, filename, media_type, chang
                         or details["expected_revision"] != expected_revision or details["before"] != expected_hashes):
                     raise ValueError("Operation token belongs to a different collection edit")
             else:
-                if database.execute("SELECT 1 FROM publication_operations WHERE state NOT IN ('finished','rolled_back')").fetchone():
+                if parent_operation is not None:
+                    parent = database.execute("SELECT * FROM publication_operations WHERE operation_id=? AND kind='classification-cohort' AND state='installing'", (parent_operation,)).fetchone()
+                    if parent is None:
+                        raise ValueError("Exact installing correction cohort is required")
+                    authorized = [item for item in json.loads(parent["details"])["annotations"]
+                                  if item["filename"] == filename and item["media_type"] == media_type]
+                    if (len(authorized) != 1 or hashes != {".annotations.json": authorized[0]["after_sha256"]}
+                            or expected_hashes.get(".annotations.json") != authorized[0]["before_sha256"]):
+                        raise ValueError("Annotation update differs from authorized correction cohort")
+                if database.execute("SELECT 1 FROM publication_operations WHERE state NOT IN ('finished','rolled_back') AND (? IS NULL OR operation_id!=?)", (parent_operation, parent_operation)).fetchone():
                     raise ValueError("Pending publication requires explicit recovery")
                 media = locations.find_media(project, media_type, filename=filename)
                 row = database.execute("SELECT * FROM annotation_layouts WHERE media_type=? AND media_id=?",

@@ -9,6 +9,246 @@ from services.resource_migration import activation_ready, correction_proposal, r
 from test_resource_storage import proposal
 
 
+@pytest.mark.parametrize("media_id,setting,objects", [
+    ("tmdb_21717", "camp", ["gun", "potted plants", "birdcages", "door"]),
+    ("tmdb_11259", "coast", []),
+])
+def test_approved_atomic_objects_addition_preserves_every_other_value(tmp_path, media_id, setting, objects):
+    from data import resource_locations as locations
+    from data.resource_storage import digest
+    from services.resource_corrections import propose_objects_addition
+    metadata = tmp_path / "data/metadata/movie.json"
+    metadata.parent.mkdir(parents=True)
+    metadata.write_text(json.dumps({"media": [{"filename": "film.mp4", "media_id": media_id}]}))
+    shot_id = media_id + "@f000010-f000020"
+    before = [{"shot": {"shot_id": shot_id, "annotation": {"setting": setting, "objects": objects, "description": "unchanged"},
+                        "best_frame": {"frame": 14, "score": 0.9}, "unknown": {"timing": [1, 2]}}},
+              {"shot": {"shot_id": media_id + "@f000021-f000030", "annotation": {"objects": ["door"], "setting": "room"}}}]
+    annotation = locations.annotation_path(tmp_path, "film.mp4", "movie")
+    annotation.parent.mkdir(parents=True)
+    annotation.write_text(json.dumps(before))
+    original = annotation.read_bytes()
+    result = propose_objects_addition(tmp_path, str(annotation.relative_to(tmp_path)), shot_id, expected_sha256=digest(annotation), value="fields")
+    after = json.loads(result["payload"])
+    assert after[0]["shot"]["annotation"]["objects"] == objects + ["fields"]
+    after[0]["shot"]["annotation"]["objects"] = objects
+    assert after == before and annotation.read_bytes() == original
+    with pytest.raises(ValueError, match="Frozen"):
+        propose_objects_addition(tmp_path, str(annotation.relative_to(tmp_path)), shot_id, expected_sha256="0" * 64, value="fields")
+
+
+def _approved_cohort_fixture(project):
+    from data import resource_locations as locations
+    from data.resource_storage import ResourceStore, adopt_registry, digest
+    from services.resource_corrections import propose_missing_field, propose_objects_addition
+    from services.silhouette_canonical_identity import InstanceRegistry, RESEARCH
+    metadata = project / "data/metadata/movie.json"
+    metadata.parent.mkdir(parents=True)
+    media = [{"filename": "film" + str(number) + ".mp4", "media_id": media_id}
+             for number, media_id in enumerate(("tmdb_32716", "tmdb_21717", "tmdb_11259", "tmdb_53830"))]
+    metadata.write_text(json.dumps({"media": media}))
+    cases, additions = [], []
+    for number, item in enumerate(media):
+        shot_id = item["media_id"] + "@f000010-f000020"
+        setting = ("field", "camp", "coast", "field")[number]
+        annotation = locations.annotation_path(project, item["filename"], "movie")
+        annotation.parent.mkdir(parents=True, exist_ok=True)
+        annotation.write_text(json.dumps([{"shot": {"shot_id": shot_id, "annotation": {"setting": setting, "objects": ["door"], "description": "original"}, "best_frame": {"frame": 14, "score": 0.9}}}]))
+        label = "field" if number in (0, 3) else "fields"
+        for ordinal in range(1, 4 if number == 2 else 2):
+            path = project / "data/silhouettes/catalog/movie" / ("film" + str(number)) / label / ("object_" + str(ordinal).zfill(4) + ".json")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            record = {**item, "media_type": "movie", "shot_id": shot_id, "frame": 12, "source_frame": "frame:12", "field": None, "label": label, "unknown": {"ordinal": ordinal}, "png": path.with_suffix(".png").name}
+            path.write_text(json.dumps(record))
+            path.with_suffix(".png").write_bytes(b"distinct original PNG " + str(number).encode() + str(ordinal).encode())
+            case = {"reference": str(path.relative_to(project)), "media_id": item["media_id"], "shot_id": shot_id, "frame": 12, "label": label,
+                    "before_sha256": digest(path), "image_sha256": digest(path.with_suffix(".png")), "annotation_reference": str(annotation.relative_to(project)),
+                    "annotation_sha256": digest(annotation), "approved_field": "setting" if label == "field" else "objects"}
+            if label == "field":
+                case["approval_token"] = propose_missing_field(project, case["reference"], "setting", label)["approval_token"]
+            cases.append(case)
+        if number in (1, 2):
+            addition = propose_objects_addition(project, str(annotation.relative_to(project)), shot_id, expected_sha256=digest(annotation), value="fields")
+            additions.append({**addition, "filename": item["filename"], "media_id": item["media_id"], "media_type": "movie"})
+    proposal_registry = InstanceRegistry(project, project / RESEARCH / "fixture-cohort.sqlite3")
+    source = proposal_registry.path
+    proposal_registry.close()
+    target = project / "data/indexes/preparation.sqlite3"
+    adopt_registry(project, source, target, approved=True, exceptions=[{"reference": case["reference"], "reason": "missing field"} for case in cases])
+    store = ResourceStore(project, target, approved=True)
+    for item in media:
+        store.commit_annotation_layout(locations.find_media(project, "movie", filename=item["filename"]), "movie", "legacy-v1")
+    return target, cases, additions
+
+
+@pytest.mark.parametrize("boundary", ["cohort-prepared", "annotation0:prepared", "annotation0:.annotations.json-installed", "annotation0:before-commit", "annotation0:committed", "annotation0:invalidated", "annotation1:committed", "case0:prepared", "case0:metadata-written", "case3:metadata-written", "case5:metadata-written"])
+def test_six_approved_corrections_resume_exactly_and_preserve_sources(tmp_path, boundary):
+    from data.resource_storage import digest, registry_lock
+    from services.resource_corrections import execute_classification_cohort
+    registry, cases, additions = _approved_cohort_fixture(tmp_path)
+    original = {case["reference"]: json.loads((tmp_path / case["reference"]).read_text()) for case in cases}
+    def interrupt(state):
+        if state == boundary:
+            raise RuntimeError("fixture interruption")
+    with pytest.raises(RuntimeError, match="interruption"):
+        execute_classification_cohort(tmp_path, registry, cases, additions, operation_id="approvedcohort", approved=True, interrupt=interrupt)
+    if boundary != "cohort-prepared":
+        with pytest.raises(ValueError, match="recovery"):
+            with registry_lock(tmp_path, registry):
+                pass
+    for _ in range(2):
+        assert execute_classification_cohort(tmp_path, registry, cases, additions, operation_id="approvedcohort", approved=True)["state"] == "finished"
+    with registry_lock(tmp_path, registry):
+        pass
+    for case in cases:
+        path = tmp_path / case["reference"]
+        assert json.loads(path.read_text()) == {**original[case["reference"]], "field": case["approved_field"]}
+        assert digest(path.with_suffix(".png")) == case["image_sha256"]
+    for addition in additions:
+        assert digest(tmp_path / addition["reference"]) == addition["after_sha256"]
+        assert json.loads((tmp_path / addition["reference"]).read_text())[0]["shot"]["annotation"]["setting"] in ("camp", "coast")
+    with sqlite3.connect(registry) as database:
+        assert database.execute("SELECT count(*) FROM classification_corrections").fetchone()[0] == 6
+        assert database.execute("SELECT count(*) FROM publication_operations WHERE state!='finished'").fetchone()[0] == 0
+        assert database.execute("SELECT count(*) FROM resource_locations").fetchone()[0] == 0
+    assert not (tmp_path / "data/indexes/resources.sqlite3").exists()
+
+
+def test_six_corrected_identity_allocations_preserve_reservations_and_retry(tmp_path):
+    from data.resource_storage import ResourceStore
+    from services.resource_corrections import execute_classification_cohort
+    registry, cases, additions = _approved_cohort_fixture(tmp_path)
+    store = ResourceStore(tmp_path, registry, approved=True)
+    with pytest.raises(ValueError, match="Finished"):
+        store.register_historical_corrections("approvedcohort")
+    execute_classification_cohort(tmp_path, registry, cases, additions, operation_id="approvedcohort", approved=True)
+    with store.transaction() as database:
+        database.execute("INSERT INTO shots VALUES(?,9)", (cases[2]["shot_id"],))
+    first = store.register_historical_corrections("approvedcohort")
+    second = store.register_historical_corrections("approvedcohort")
+    assert len({row[1] for row in first}) == 6 and all(row[2] for row in first)
+    assert [(row[0], row[1]) for row in first] == [(row[0], row[1]) for row in second]
+    assert not any(row[2] for row in second)
+    with sqlite3.connect(registry) as database:
+        assert database.execute("SELECT high_water FROM shots WHERE shot_id=?", (cases[2]["shot_id"],)).fetchone()[0] == 12
+        assert database.execute("SELECT count(*) FROM resource_locations").fetchone()[0] == 0
+    assert all(int(instance.rsplit("#", 1)[1]) >= 10 for _, instance, _ in first if instance.startswith(cases[2]["shot_id"]))
+    assert not (tmp_path / "data/indexes/resources.sqlite3").exists()
+
+
+def test_revised_six_case_plan_preserves_original_and_accounts_for_every_identity(tmp_path):
+    from data import resource_locations as locations
+    from data.resource_storage import ResourceStore, digest
+    from services.resource_corrections import execute_classification_cohort
+    from services.resource_migration import _schema, _file, _reference, revise_corrected_plan
+    registry, cases, additions = _approved_cohort_fixture(tmp_path)
+    original = tmp_path / "outputs/maintenance/original.sqlite3"
+    original.parent.mkdir(parents=True, exist_ok=True)
+    bookkeeping = []
+    for kind in ("silhouettes", "engravings"):
+        path = tmp_path / "data/indexes/illustration" / ("movie-" + kind + ".revision")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("original-revision")
+        bookkeeping.append({"reference": str(path.relative_to(tmp_path)), "before_sha256": digest(path)})
+    with sqlite3.connect(original) as database:
+        _schema(database)
+        database.executemany("INSERT INTO meta VALUES(?,?)", [("inputs", "{}"), ("project", json.dumps(str(tmp_path)))])
+        for case in cases:
+            source = case["reference"]
+            record = json.loads((tmp_path / source).read_text())
+            database.execute("INSERT INTO silhouettes VALUES(?,?,NULL,NULL,?,?,?,?,?,?,?,NULL,'Review')", (source, str((tmp_path / source).with_suffix(".png").relative_to(tmp_path)), "movie", case["media_id"], case["shot_id"], "fixture", None, case["label"], case["label"]))
+            _file(database, tmp_path, source, None, "Review", "fixture", hash_bytes=True)
+            _file(database, tmp_path, str((tmp_path / source).with_suffix(".png").relative_to(tmp_path)), None, "Review", "fixture", hash_bytes=True)
+            database.execute("INSERT INTO corrections VALUES(?,?)", (source, json.dumps(case)))
+            _reference(database, source, "/png", str((tmp_path / source).with_suffix(".png").relative_to(tmp_path)), None, "withheld pending classification")
+        for item in bookkeeping:
+            _file(database, tmp_path, item["reference"], None, "Rebuild", "index owner", hash_bytes=True)
+        for addition in additions:
+            reference = addition["reference"]
+            _file(database, tmp_path, reference, "future/" + addition["filename"] + ".json", "Move", "fixture", hash_bytes=True)
+            database.execute("INSERT INTO collections VALUES(?,?,?,?,0)", ("movie", addition["media_id"], addition["filename"], json.dumps({".annotations.json": {"source": reference, "sha256": addition["before_sha256"]}})))
+    frozen_bytes = original.read_bytes()
+    execute_classification_cohort(tmp_path, registry, cases, additions, operation_id="approvedcohort", approved=True)
+    ResourceStore(tmp_path, registry, approved=True).register_historical_corrections("approvedcohort")
+    for item in bookkeeping:
+        item["after_sha256"] = digest(tmp_path / item["reference"])
+    revised = tmp_path / "outputs/maintenance/revised.sqlite3"
+    revise_corrected_plan(tmp_path, original, revised, registry, expected_original_sha256=digest(original), cases=cases, additions=additions, bookkeeping=bookkeeping)
+    assert original.read_bytes() == frozen_bytes
+    with sqlite3.connect(revised) as database:
+        assert database.execute("SELECT count(*) FROM silhouettes WHERE instance_id IS NOT NULL AND field IS NOT NULL").fetchone()[0] == 6
+        assert database.execute("SELECT count(*) FROM identity_bindings").fetchone()[0] == 6
+        assert database.execute("SELECT count(*) FROM files WHERE instance_id IS NOT NULL AND destination IS NOT NULL").fetchone()[0] == 12
+        assert database.execute("SELECT count(*) FROM correction_execution").fetchone()[0] == 6
+        assert database.execute("SELECT count(*) FROM collections WHERE revision=2").fetchone()[0] == 2
+        assert database.execute("SELECT count(*) FROM reference_plan WHERE required=1 AND proposed_target IS NULL").fetchone()[0] == 0
+        for item in bookkeeping:
+            assert database.execute("SELECT sha256 FROM files WHERE source=?", (item["reference"],)).fetchone()[0] == item["after_sha256"]
+        assert database.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert not database.execute("PRAGMA foreign_key_check").fetchall()
+    with pytest.raises(ValueError, match="new maintenance"):
+        revise_corrected_plan(tmp_path, original, revised, registry, expected_original_sha256=digest(original), cases=cases, additions=additions)
+    from services.resource_migration import reconcile_rehearsal_bookkeeping
+    with sqlite3.connect(revised) as database:
+        database.execute("UPDATE reference_plan SET proposed_target=NULL WHERE pointer='/png'")
+        for item in bookkeeping:
+            database.execute("UPDATE files SET sha256=? WHERE source=?", (item["before_sha256"], item["reference"]))
+        file_count = database.execute("SELECT count(*) FROM files").fetchone()[0]
+    failures = [{"source": item["reference"], "error": "Source fingerprint changed"} for item in bookkeeping]
+    failures += [{"source": case["reference"], "error": "Unresolved proposed reference"} for case in cases]
+    initial = {"failure_count": 8, "failures": failures, "files_checked": file_count - 2, "preparation_blockers": 0, "withheld": 0}
+    before = {"production": {item["reference"]: {"sha256": item["before_sha256"]} for item in bookkeeping}}
+    checked = reconcile_rehearsal_bookkeeping(tmp_path, revised, initial, before)
+    assert checked["files_checked"] == file_count and checked["failure_count"] == 0 and not checked["accepted"]
+    assert len(checked["bounded_rechecks"]) == 8 and initial["failure_count"] == 8
+    with sqlite3.connect(revised) as database:
+        assert database.execute("SELECT count(*) FROM rehearsal_plan_amendments").fetchone()[0] == 8
+        assert database.execute("SELECT count(*) FROM reference_plan WHERE required=1 AND proposed_target IS NULL").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("failure", [None, "missing_target", "wrong_shot"])
+def test_exhaustive_alias_check_freezes_exact_best_and_rejects_failures(tmp_path, failure):
+    from data.resource_storage import digest
+    from services.frame_match import best_frame_path
+    from services.resource_migration import _schema, _file, source_frame_reference_plan, verify_legacy_references
+    registry, cases, additions = _approved_cohort_fixture(tmp_path)
+    case = cases[1]
+    source = tmp_path / case["reference"]
+    record = json.loads(source.read_text())
+    best = best_frame_path(str(tmp_path), "movie", record["filename"], record["shot_id"])
+    best.parent.mkdir(parents=True)
+    best.write_bytes(b"exact existing BEST fixture")
+    record["source_frame"] = "/old/project/" + str(best.relative_to(tmp_path))
+    source.write_text(json.dumps(record))
+    decision = source_frame_reference_plan(tmp_path, record)
+    plan = tmp_path / "outputs/maintenance/aliases.sqlite3"
+    plan.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(plan) as database:
+        _schema(database)
+        database.execute("INSERT INTO meta VALUES('inputs','{}')")
+        database.execute("CREATE TABLE reference_decisions(source TEXT PRIMARY KEY,pointer TEXT,original_target TEXT,proposed_target TEXT,classification TEXT,approval_required INTEGER,payload TEXT)")
+        database.execute("INSERT INTO silhouettes VALUES(?,?,NULL,NULL,?,?,?,?,?,?,?,NULL,'Review')", (case["reference"], str(source.with_suffix(".png").relative_to(tmp_path)), "movie", record["media_id"], record["shot_id"], "fixture", None, record["label"], record["label"]))
+        _file(database, tmp_path, case["reference"], None, "Review", "fixture", hash_bytes=True)
+        database.execute("INSERT INTO reference_decisions VALUES(?,?,?,?,?,?,?)", (case["reference"], "/source_frame", record["source_frame"], decision["proposed_target"], decision["classification"], 1, json.dumps(decision)))
+        database.execute("INSERT INTO issues VALUES('unresolved-reference',?,?,1)", (case["reference"], record["source_frame"] + ": missing obsolete root"))
+    if failure == "missing_target":
+        best.unlink()
+    elif failure == "wrong_shot":
+        record["shot_id"] = record["media_id"] + "@f000030-f000040"
+        source.write_text(json.dumps(record))
+        with sqlite3.connect(plan) as database:
+            database.execute("UPDATE files SET sha256=?", (digest(source),))
+    result = verify_legacy_references(tmp_path, plan, plan.parent / "reference-checks.sqlite3")
+    assert result["failures"] == (1 if failure else 0)
+    with sqlite3.connect(plan) as database:
+        assert database.execute("SELECT count(*) FROM issues").fetchone()[0] == (1 if failure else 0)
+    with sqlite3.connect(plan.parent / "reference-checks.sqlite3") as database:
+        row = database.execute("SELECT state,target_sha256,query_frame,best_frame FROM checks").fetchone()
+        assert row[0] == ("failed" if failure else "verified")
+        if not failure:
+            assert row[1:] == (digest(best), 12, 14)
+
+
 def test_silhouette_transform_preserves_semantics_and_best():
     record = {"shot_id": "tmdb_1@f000010-f000020", "field": "objects", "label": "NOTICES board", "png": "object_0008.png",
               "frame": 12, "source_frame": "media/frames/best/movie/Film/tmdb_1@f000010-f000020.png",

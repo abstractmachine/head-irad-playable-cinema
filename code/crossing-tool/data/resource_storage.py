@@ -385,6 +385,33 @@ class ResourceStore:
             allocator.transactions = 0
             return allocator.register(bindings, manage_transaction=False)
 
+    def register_historical_corrections(self, operation_id):
+        """Allocate corrected legacy records only in an unpublished preparation store."""
+        from services.silhouette_canonical_identity import InstanceRegistry, prepare_registration
+        from services.resource_validation import validate_source_classification
+        with self.transaction() as database:
+            database.execute("BEGIN IMMEDIATE")
+            operation = database.execute("SELECT details FROM publication_operations WHERE operation_id=? AND kind='classification-cohort' AND state='finished'", (operation_id,)).fetchone()
+            if operation is None or database.execute("SELECT 1 FROM resource_locations LIMIT 1").fetchone():
+                raise ValueError("Finished historical correction cohort and unpublished registry required")
+            bindings = []
+            for case in json.loads(operation[0])["cases"]:
+                path = locations.project_file(self.project, case["reference"])
+                record = json.loads(path.read_text())
+                if record.get("field") != case["approved_field"] or digest(path.with_suffix(".png")) != case["image_sha256"]:
+                    raise ValueError("Corrected classification/PNG differs from approved cohort")
+                findings = validate_source_classification(self.project, record)
+                if findings["state"] != "valid":
+                    raise ValueError("Corrected historical source classification is invalid: " + json.dumps(findings))
+                stem = Path(record["filename"]).stem
+                if record.get("filename_stem", stem) != stem:
+                    raise ValueError("Historical filename stem differs from source media")
+                bindings.append(prepare_registration({**record, "filename_stem": stem, "path": path}, self.project))
+            allocator = object.__new__(InstanceRegistry)
+            allocator.database = database
+            allocator.transactions = 0
+            return allocator.register(bindings, manage_transaction=False)
+
     def finish_generation_attempt(self, reservation, state):
         if state not in ("failed", "abandoned"):
             raise ValueError("Only failed/abandoned attempts use this lifecycle operation")

@@ -9,6 +9,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import stat
 import time
@@ -444,9 +445,243 @@ def _check_membership(database, project):
         database.commit()
 
 
+def revise_corrected_plan(project, original, destination, registry, *, expected_original_sha256, cases, additions, bookkeeping=()):
+    """Derive a new preparation plan; never overwrite frozen evidence or sources."""
+    from data.resource_storage import digest, relative_path
+    from data.media_id import label_slug
+    project = Path(project).resolve(strict=True)
+    original = locations.project_file(project, original)
+    destination = project / relative_path(project, destination)
+    if not relative_path(project, destination).startswith("outputs/maintenance/") or destination.exists():
+        raise ValueError("A new maintenance plan destination is required")
+    if digest(original) != expected_original_sha256:
+        raise ValueError("Frozen original plan changed")
+    with readonly(original) as before, sqlite3.connect(destination.as_uri() + "?mode=rwc", uri=True) as database:
+        before.backup(database)
+        database.row_factory = sqlite3.Row
+        database.execute("PRAGMA foreign_keys=ON")
+        database.execute("ATTACH DATABASE ? AS corrected_registry", (locations.project_file(project, registry).as_uri() + "?mode=ro",))
+        if database.execute("SELECT * FROM identity_bindings EXCEPT SELECT * FROM corrected_registry.instances LIMIT 1").fetchone():
+            raise ValueError("Existing identity bindings changed")
+        new = database.execute("SELECT * FROM corrected_registry.instances EXCEPT SELECT * FROM identity_bindings").fetchall()
+        if len(new) != 6 or {row["legacy_json"] for row in new} != {item["reference"] for item in cases}:
+            raise ValueError("Revised registry must add exactly the six approved identities")
+        for reservation in database.execute("SELECT * FROM shot_reservations"):
+            expected = reservation["high_water"] + sum(row["shot_id"] == reservation["shot_id"] for row in new)
+            current = database.execute("SELECT high_water FROM corrected_registry.shots WHERE shot_id=?", (reservation["shot_id"],)).fetchone()
+            if current is None or current[0] != expected:
+                raise ValueError("Existing shot reservation changed unexpectedly")
+        database.executemany("INSERT INTO identity_bindings VALUES(?,?,?,?,?,?,?,?,?,?,?)", [tuple(row) for row in new])
+        database.execute("INSERT OR REPLACE INTO shot_reservations SELECT * FROM corrected_registry.shots")
+        database.execute("ALTER TABLE collections ADD COLUMN revision INTEGER NOT NULL DEFAULT 1")
+        database.execute("CREATE TABLE correction_execution(reference TEXT PRIMARY KEY,instance_id TEXT UNIQUE,before_sha256 TEXT,after_sha256 TEXT,payload TEXT)")
+        def refresh(reference):
+            path = locations.project_file(project, reference)
+            info = path.stat()
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise ValueError("Corrected source is not a regular single-link file")
+            database.execute("UPDATE files SET size=?,mtime_ns=?,ctime_ns=?,inode=?,device=?,links=?,sha256=?,hash_evidence=? WHERE source=?",
+                             (info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino, info.st_dev, info.st_nlink, digest(path), "fresh approved Stage 2B.3d source commitment", reference))
+        for item in cases:
+            source = item["reference"]
+            binding = next(row for row in new if row["legacy_json"] == source)
+            frozen = database.execute("SELECT sha256 FROM files WHERE source=?", (source,)).fetchone()
+            if frozen is None or frozen[0] != item["before_sha256"]:
+                raise ValueError("Correction does not match the original plan source")
+            record = json.loads(locations.project_file(project, source).read_text())
+            media = locations.find_media(project, record["media_type"], media_id=record["media_id"], filename=record["filename"])
+            target = locations.silhouette_destination(project, media, record["media_type"], binding["instance_id"], item["approved_field"], record["label"])
+            relative_dir = str(target["dir"].relative_to(project))
+            database.execute("UPDATE silhouettes SET registration_key=?,instance_id=?,field=?,slug=?,destination=?,status='planned' WHERE legacy_json=?",
+                             (binding["registration_key"], binding["instance_id"], item["approved_field"], label_slug(record["label"]), relative_dir, source))
+            for reference, key, disposition in ((source, "metadata", "Transform"), (str(Path(source).with_suffix(".png")), "image", "Move")):
+                if target[key].exists():
+                    raise ValueError("Corrected canonical destination collision")
+                database.execute("UPDATE files SET destination=?,disposition=?,instance_id=?,reason=? WHERE source=?",
+                                 (str(target[key].relative_to(project)), disposition, binding["instance_id"], "approved exact classification correction; no production movement", reference))
+            refresh(source)
+            transformed = transform_silhouette(record, binding["instance_id"])
+            patch = {key: value for key, value in transformed.items() if record.get(key) != value}
+            _transform(database, source, "silhouette-v1", transformed, patch=patch)
+            database.execute("UPDATE reference_plan SET proposed_target=?,classification='approved corrected PNG relocation' WHERE source=? AND pointer='/png'", (str(target["image"].relative_to(project)), source))
+            _reference(database, source, "/source_frame", record["source_frame"], record["source_frame"], "retained exact current BEST reference", required=not record["source_frame"].startswith("frame:"))
+            after_sha = digest(locations.project_file(project, source))
+            database.execute("INSERT INTO correction_execution VALUES(?,?,?,?,?)", (source, binding["instance_id"], item["before_sha256"], after_sha, json.dumps(item)))
+            payload = json.loads(database.execute("SELECT payload FROM corrections WHERE reference=?", (source,)).fetchone()[0])
+            payload["execution"] = {"state": "applied", "field": item["approved_field"], "instance_id": binding["instance_id"], "after_sha256": after_sha}
+            database.execute("UPDATE corrections SET payload=? WHERE reference=?", (json.dumps(payload), source))
+        for item in additions:
+            reference = item["reference"]
+            refresh(reference)
+            collection = database.execute("SELECT * FROM collections WHERE media_type=? AND media_id=?", (item["media_type"], item["media_id"])).fetchone()
+            artifacts = json.loads(collection["artifacts"])
+            if artifacts[".annotations.json"]["sha256"] != item["before_sha256"] or digest(locations.project_file(project, reference)) != item["after_sha256"]:
+                raise ValueError("Updated collection source differs from approved publication")
+            artifacts[".annotations.json"]["sha256"] = item["after_sha256"]
+            commitment = database.execute("SELECT * FROM corrected_registry.annotation_layouts WHERE media_type=? AND media_id=?", (item["media_type"], item["media_id"])).fetchone()
+            database.execute("UPDATE collections SET artifacts=?,revision=? WHERE media_type=? AND media_id=?", (json.dumps(artifacts), commitment["revision"], item["media_type"], item["media_id"]))
+        for item in bookkeeping:
+            if item["reference"] not in ("data/indexes/illustration/movie-silhouettes.revision", "data/indexes/illustration/movie-engravings.revision"):
+                raise ValueError("Unauthorized correction bookkeeping path")
+            previous = database.execute("SELECT sha256 FROM files WHERE source=?", (item["reference"],)).fetchone()
+            if previous is None or previous[0] != item["before_sha256"] or digest(locations.project_file(project, item["reference"])) != item["after_sha256"]:
+                raise ValueError("Correction bookkeeping hash differs from frozen intent")
+            refresh(item["reference"])
+        inputs = json.loads(database.execute("SELECT value FROM meta WHERE key='inputs'").fetchone()[0])
+        inputs[relative_path(project, registry)] = digest(locations.project_file(project, registry))
+        for key, value in (("inputs", inputs), ("identity_registry", relative_path(project, registry)),
+                           ("plan_revision", {"stage": "2B.3d", "original": relative_path(project, original), "original_sha256": expected_original_sha256})):
+            database.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", (key, json.dumps(value)))
+        if database.execute("PRAGMA foreign_key_check").fetchone():
+            raise ValueError("Revised plan foreign-key failure")
+        database.commit()
+    return destination
+
+
+def reconcile_rehearsal_bookkeeping(project, plan, results, safety_before):
+    """Recheck only the eight explicit post-correction plan omissions, retaining evidence."""
+    from data.resource_storage import digest
+    revisions = {"data/indexes/illustration/movie-silhouettes.revision", "data/indexes/illustration/movie-engravings.revision"}
+    amended = []
+    with sqlite3.connect(plan) as database:
+        database.row_factory = sqlite3.Row
+        cases = {row[0] for row in database.execute("SELECT reference FROM correction_execution")}
+        expected = {(source, "Source fingerprint changed") for source in revisions} | {(source, "Unresolved proposed reference") for source in cases}
+        observed = {(row["source"], row["error"]) for row in results["failures"]}
+        if len(cases) != 6 or results["failure_count"] != 8 or observed != expected:
+            raise ValueError("Rehearsal failures are not the exact authorized eight-row reconciliation")
+        database.execute("CREATE TABLE rehearsal_plan_amendments(source TEXT PRIMARY KEY,reason TEXT,before_state TEXT,after_state TEXT)")
+        for source in sorted(revisions):
+            previous = database.execute("SELECT * FROM files WHERE source=?", (source,)).fetchone()
+            if previous["sha256"] != safety_before["production"][source]["sha256"] or previous["disposition"] != "Rebuild":
+                raise ValueError("Revision token is not the frozen authorized bookkeeping source")
+            path = locations.project_file(project, source)
+            info = path.stat()
+            content = path.read_text()
+            if not re.fullmatch(r"[0-9a-f]{32}", content) or info.st_nlink != 1:
+                raise ValueError("Invalid installed index revision token")
+            current = {"size": info.st_size, "mtime_ns": info.st_mtime_ns, "ctime_ns": info.st_ctime_ns, "inode": info.st_ino,
+                       "device": info.st_dev, "links": info.st_nlink, "sha256": digest(path)}
+            database.execute("UPDATE files SET size=?,mtime_ns=?,ctime_ns=?,inode=?,device=?,links=?,sha256=?,hash_evidence=? WHERE source=?",
+                             (*current.values(), "fresh authorized correction-owner index revision", source))
+            database.execute("INSERT INTO rehearsal_plan_amendments VALUES(?,?,?,?)", (source, "authorized index invalidation", json.dumps(dict(previous)), json.dumps(current)))
+            amended.append({"source": source, "reason": "authorized revision token freshly hashed", "sha256": current["sha256"]})
+        for source in sorted(cases):
+            old = database.execute("SELECT * FROM reference_plan WHERE source=? AND pointer='/png'", (source,)).fetchall()
+            silhouette = database.execute("SELECT * FROM silhouettes WHERE legacy_json=?", (source,)).fetchone()
+            image = database.execute("SELECT * FROM files WHERE source=?", (silhouette["legacy_png"],)).fetchone()
+            if len(old) != 1 or old[0]["proposed_target"] is not None or not image["destination"] or image["instance_id"] != silhouette["instance_id"]:
+                raise ValueError("Corrected PNG reference differs from exact revised identity mapping")
+            path = locations.project_file(project, image["source"])
+            if digest(path) != image["sha256"] or (Path(project) / image["destination"]).exists():
+                raise ValueError("Corrected PNG bytes changed or destination collided")
+            database.execute("UPDATE reference_plan SET proposed_target=?,classification='approved corrected PNG relocation' WHERE source=? AND pointer='/png'", (image["destination"], source))
+            database.execute("INSERT INTO rehearsal_plan_amendments VALUES(?,?,?,?)", (source, "approved corrected PNG target", json.dumps(dict(old[0])), json.dumps({"proposed_target": image["destination"]})))
+            amended.append({"source": source, "reason": "exact corrected PNG relocation rechecked", "target": image["destination"], "image_sha256": image["sha256"]})
+        if database.execute("SELECT 1 FROM reference_plan WHERE required=1 AND proposed_target IS NULL LIMIT 1").fetchone():
+            raise ValueError("Other unresolved references remain")
+        if database.execute("PRAGMA foreign_key_check").fetchone():
+            raise ValueError("Reconciliation foreign-key failure")
+        if database.execute("SELECT count(*) FROM files").fetchone()[0] != results["files_checked"] + 2:
+            raise ValueError("Complete file coverage differs from bounded amendment")
+        database.commit()
+    return {**results, "initial_failure_count": results["failure_count"], "initial_run_retained": "rehearsal-results.json",
+            "files_checked": results["files_checked"] + 2, "failures": [], "failure_count": 0,
+            "mapping_checks_passed": not results["preparation_blockers"] and not results["withheld"],
+            "bounded_rechecks": amended, "complete_second_traversal_performed": False, "accepted": False}
+
+
+def verify_legacy_references(project, plan, report):
+    """Check every frozen alias individually, writing only maintenance evidence."""
+    from data.resource_storage import digest, relative_path
+    from data.media_id import parse_shot_id
+    from services.frame_match import best_frame_path
+    project = Path(project).resolve(strict=True)
+    report = project / relative_path(project, report)
+    if not relative_path(project, report).startswith("outputs/maintenance/") or report.exists():
+        raise ValueError("A new maintenance reference report is required")
+    counts = {"aliases": 0, "numeric_markers": 0, "failures": 0}
+    targets, obsolete, media_cache = {}, set(), {}
+    current_source, current_shots = None, None
+    with readonly(plan) as database, sqlite3.connect(report) as results:
+        results.execute("CREATE TABLE checks(source TEXT PRIMARY KEY,classification TEXT,target TEXT,target_sha256 TEXT,query_frame INTEGER,best_frame INTEGER,state TEXT,error TEXT)")
+        results.execute("CREATE INDEX checks_by_target ON checks(target)")
+        for row in database.execute("SELECT d.*,f.sha256,s.media_id,s.media_type,s.shot_id,s.field,s.label FROM reference_decisions d JOIN files f ON f.source=d.source JOIN silhouettes s ON s.legacy_json=d.source ORDER BY d.source"):
+            target, target_sha, query_frame, best_frame = None, None, None, None
+            error = None
+            try:
+                path = locations.project_file(project, row["source"])
+                if digest(path) != row["sha256"]:
+                    raise ValueError("Frozen alias source JSON hash differs")
+                record = json.loads(path.read_text())
+                if any(record.get(key) != row[key] for key in ("media_id", "media_type", "shot_id", "field", "label")) or record.get("source_frame") != row["original_target"]:
+                    raise ValueError("Frozen alias source identity differs")
+                media_id, start, end = parse_shot_id(record["shot_id"])
+                query_frame = record.get("frame")
+                if media_id != record["media_id"] or type(query_frame) is not int or not start <= query_frame <= end:
+                    raise ValueError("Alias query frame is outside its exact source shot")
+                proposal = source_frame_reference_plan(project, record)
+                frozen = json.loads(row["payload"])
+                if proposal["classification"] != row["classification"] or proposal["patch"] != frozen["patch"] or proposal["proposed_target"] != row["proposed_target"]:
+                    raise ValueError("Exact frozen reference transformation differs")
+                if row["classification"] == "numeric source-frame marker, not a file":
+                    counts["numeric_markers"] += 1
+                    target = row["original_target"]
+                else:
+                    key = record["media_type"], record["media_id"]
+                    if key not in media_cache:
+                        media_cache[key] = locations.find_media(project, key[0], media_id=key[1], filename=record["filename"])
+                    if media_cache[key]["filename"] != record["filename"]:
+                        raise ValueError("Alias filename/media binding differs")
+                    annotation = locations.annotation_path(project, record["filename"], record["media_type"])
+                    if str(annotation) != current_source:
+                        current_source = str(annotation)
+                        current_shots = {entry["shot"]["shot_id"]: entry["shot"] for entry in json.loads(locations.project_file(project, annotation).read_text())}
+                    shot = current_shots.get(record["shot_id"])
+                    best_frame = shot.get("best_frame", {}).get("frame") if shot else None
+                    if type(best_frame) is not int or not start <= best_frame <= end:
+                        raise ValueError("Alias exact source shot or committed BEST selection is invalid")
+                    best = locations.project_file(project, best_frame_path(str(project), record["media_type"], record["filename"], record["shot_id"]))
+                    target = str(best.relative_to(project))
+                    if target != row["proposed_target"]:
+                        raise ValueError("Alias target differs from the canonical BEST path")
+                    if record.get("historical_source_frame", record["source_frame"]) != record["source_frame"]:
+                        raise ValueError("Conflicting historical reference evidence")
+                    info = best.stat()
+                    fingerprint = (info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino, info.st_dev, info.st_nlink)
+                    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                        raise ValueError("BEST target is not a regular single-link file")
+                    if target not in targets:
+                        targets[target] = digest(best), fingerprint
+                    target_sha, first_fingerprint = targets[target]
+                    if first_fingerprint != fingerprint:
+                        raise ValueError("BEST target changed during source freeze")
+                    obsolete.add(row["original_target"])
+                    counts["aliases"] += 1
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                error = str(exc)
+                counts["failures"] += 1
+            results.execute("INSERT INTO checks VALUES(?,?,?,?,?,?,?,?)", (row["source"], row["classification"], target, target_sha, query_frame, best_frame, "failed" if error else "verified", error))
+            if sum(counts.values()) % 4096 == 0:
+                results.commit()
+        results.commit()
+    if not counts["failures"]:
+        with sqlite3.connect(plan) as database:
+            for rowid, detail in database.execute("SELECT rowid,detail FROM issues WHERE category='unresolved-reference'").fetchall():
+                prefix, marker, _ = detail.partition(".png: ")
+                if marker and prefix + ".png" in obsolete:
+                    database.execute("DELETE FROM issues WHERE rowid=?", (rowid,))
+            inputs = json.loads(database.execute("SELECT value FROM meta WHERE key='inputs'").fetchone()[0])
+            inputs[relative_path(project, report)] = digest(report)
+            for key, value in (("inputs", inputs), ("verified_legacy_references", {**counts, "distinct_targets": len(targets), "report": relative_path(project, report)})):
+                database.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", (key, json.dumps(value)))
+    return {**counts, "distinct_targets": len(targets), "distinct_obsolete_references": len(obsolete)}
+
+
 def rehearsal(project, plan, *, approved=False):
     """Stage 2B.3d read-only full mapping traversal; never called by preparation."""
     from data.resource_storage import digest
+    from data.media_id import parse_shot_id
     if not approved:
         raise ValueError("Separate Stage 2B.3d rehearsal approval required")
     checked = 0
@@ -454,6 +689,7 @@ def rehearsal(project, plan, *, approved=False):
     failure_count = 0
     coverage = {"identities": 0, "collections": 0, "references": 0, "index_rows": 0, "generation_runs": 0, "retained_dependencies": 0}
     dependency_fingerprint = hashlib.sha256()
+    media_bindings = {}
     def fail(source, message):
         nonlocal failure_count
         failure_count += 1
@@ -463,6 +699,9 @@ def rehearsal(project, plan, *, approved=False):
         metadata = {key: json.loads(value) for key, value in database.execute("SELECT key,value FROM meta")}
         if metadata["project"] != str(Path(project).resolve()):
             raise ValueError("Rehearsal project mismatch")
+        legacy_report = metadata.get("verified_legacy_references", {}).get("report")
+        if legacy_report:
+            database.execute("ATTACH DATABASE ? AS verified_references", (locations.project_file(project, legacy_report).as_uri() + "?mode=ro",))
         for source, expected in metadata["inputs"].items():
             if digest(locations.project_file(project, source)) != expected:
                 raise ValueError("Frozen preparation input changed")
@@ -476,6 +715,18 @@ def rehearsal(project, plan, *, approved=False):
                     raise ValueError("Missing or changed frozen content hash")
                 if row["destination"] and (Path(project) / row["destination"]).exists():
                     raise ValueError("Destination collision")
+                if row["destination"]:
+                    destination = Path(project) / row["destination"]
+                    for parent in (destination, *destination.parents):
+                        if parent == Path(project):
+                            break
+                        if parent.is_symlink():
+                            raise ValueError("Symlink destination ancestry")
+                    parent = destination.parent
+                    while not parent.exists():
+                        parent = parent.parent
+                    if parent.stat().st_dev != info.st_dev:
+                        raise ValueError("Destination requires an unauthorized cross-device move")
                 transform = database.execute("SELECT * FROM transformations WHERE source=?", (row["source"],)).fetchone()
                 if transform:
                     record = json.loads(path.read_text())
@@ -483,12 +734,27 @@ def rehearsal(project, plan, *, approved=False):
                     result = {**record, **patch} if transform["schema"] == "silhouette-v1" else patch
                     if sha256(encode(result)) != transform["after_sha256"]:
                         raise ValueError("Proposed transformed bytes differ")
+                    if transform["schema"] == "silhouette-v1":
+                        binding = database.execute("SELECT * FROM identity_bindings WHERE instance_id=?", (row["instance_id"],)).fetchone()
+                        media_id, start, end = parse_shot_id(record["shot_id"])
+                        if (binding is None or binding["legacy_json"] != row["source"] or binding["shot_id"] != record["shot_id"]
+                                or binding["media_id"] != media_id or record["media_id"] != media_id
+                                or type(record.get("frame")) is not int or not start <= record["frame"] <= end):
+                            raise ValueError("Silhouette registered source/query identity differs")
+                        key = record["media_type"], record["media_id"]
+                        if key not in media_bindings:
+                            media_bindings[key] = locations.find_media(project, key[0], media_id=key[1], filename=record["filename"])
+                        if media_bindings[key]["filename"] != record["filename"]:
+                            raise ValueError("Silhouette source filename differs from canonical media")
+                        expected = locations.silhouette_destination(project, media_bindings[key], key[0], binding["instance_id"], record["field"], record["label"])
+                        if str(expected["metadata"].relative_to(project)) != row["destination"]:
+                            raise ValueError("Silhouette canonical classification/destination differs")
                 checked += 1
             except (OSError, ValueError, TypeError) as exc:
                 fail(row["source"], exc)
         if database.execute("PRAGMA integrity_check").fetchone()[0] != "ok" or database.execute("PRAGMA foreign_key_check").fetchone():
             fail(plan, "Plan integrity/foreign-key failure")
-        proposal_relative = next(source for source in metadata["inputs"] if source.endswith("registry-proposal.sqlite3"))
+        proposal_relative = metadata.get("identity_registry") or next(source for source in metadata["inputs"] if source.endswith("registry-proposal.sqlite3"))
         identity_check = registry_adoption_plan(locations.project_file(project, proposal_relative))
         coverage["identities"] = identity_check["identities"]
         if coverage["identities"] != database.execute("SELECT count(*) FROM identity_bindings").fetchone()[0]:
@@ -557,7 +823,12 @@ def rehearsal(project, plan, *, approved=False):
                 continue
             try:
                 path = locations.project_file(project, reference[0])
-                dependency_fingerprint.update((reference[0] + "\0" + digest(path) + "\n").encode())
+                checksum = digest(path)
+                if legacy_report:
+                    expected = database.execute("SELECT target_sha256 FROM verified_references.checks WHERE target=? LIMIT 1", (str(path.relative_to(project)),)).fetchone()
+                    if expected and expected[0] != checksum:
+                        raise ValueError("BEST dependency changed after exact alias verification")
+                dependency_fingerprint.update((reference[0] + "\0" + checksum + "\n").encode())
                 coverage["retained_dependencies"] += 1
             except (OSError, ValueError) as exc:
                 fail(reference[0], exc)
@@ -572,7 +843,13 @@ def rehearsal(project, plan, *, approved=False):
                     relative = str(source.relative_to(Path(project).resolve())) if source.is_absolute() else str(source)
                     expected = database.execute("SELECT * FROM silhouettes WHERE legacy_json=?", (relative,)).fetchone()
                     if expected is None or any(expected[key] != record.get(key) for key in ("media_id", "shot_id", "field", "label")):
-                        fail(relative, "Active index source/classification differs")
+                        correction = database.execute("SELECT payload FROM corrections WHERE reference=?", (relative,)).fetchone()
+                        approval = json.loads(correction[0]) if correction else {}
+                        allowed = approval.get("execution", {}).get("state") == "applied" and record.get("field") is None and expected is not None and all(expected[key] == record.get(key) for key in ("media_id", "shot_id", "label"))
+                        if not allowed:
+                            fail(relative, "Active index source/classification differs")
+                        else:
+                            coverage["approved_stale_index_rows"] = coverage.get("approved_stale_index_rows", 0) + 1
                     coverage["index_rows"] += 1
         if coverage["index_rows"] != database.execute("SELECT count(*) FROM silhouettes").fetchone()[0]:
             fail(plan, "Complete active index membership count differs")
@@ -589,7 +866,7 @@ def rehearsal(project, plan, *, approved=False):
                 fail(run["source"], "Canonical run wrapper/source relationship changed")
             coverage["generation_runs"] = 1
         blocking = database.execute("SELECT count(*) FROM issues WHERE blocking=1").fetchone()[0]
-        withheld = database.execute("SELECT count(*) FROM corrections").fetchone()[0]
+        withheld = database.execute("SELECT count(*) FROM corrections WHERE coalesce(json_extract(payload,'$.execution.state'),'pending')!='applied'").fetchone()[0]
         return {"files_checked": checked, "coverage": coverage, "retained_dependency_fingerprint": dependency_fingerprint.hexdigest(), "failures": failures, "failure_count": failure_count, "preparation_blockers": blocking, "withheld": withheld,
             "mapping_checks_passed": not failure_count and not blocking and not withheld, "accepted": False,
             "remaining_gates": ["source/classification and collection validation through existing owners", "fixture registry/adoption/publication/index checks", "reference traversal and full source/index membership reconciliation", "verified recovery source", "human release approval"],
