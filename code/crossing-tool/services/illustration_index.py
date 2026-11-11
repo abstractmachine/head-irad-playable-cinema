@@ -178,13 +178,16 @@ def _load_index_all_media(project_path: str | Path, source: str) -> dict:
     return {"status": "missing", "count": 0}
 
 
-def rebuild_index(project_path: str | Path, source: str, media_type: str, *, registry=None) -> dict:
+def rebuild_index(project_path: str | Path, source: str, media_type: str, *, registry=None, destination=None) -> dict:
     """Rebuild one source index from canonical sidecars."""
     from data.annotate import load_shot_type_lookup
 
     project = Path(project_path)
     shot_type_lookup, lookup_stats = load_shot_type_lookup(str(project), media_type, **({"registry": registry} if registry is not None else {}))
-    return _rebuild_index(project, source, media_type, shot_type_lookup, lookup_stats, registry=registry)
+    kwargs = {"registry": registry}
+    if destination is not None:
+        kwargs["destination"] = destination
+    return _rebuild_index(project, source, media_type, shot_type_lookup, lookup_stats, **kwargs)
 
 
 def rebuild_all(project_path: str | Path, media_type: str, *, registry=None) -> dict:
@@ -205,7 +208,7 @@ def _rebuild_index(
     media_type: str,
     shot_type_lookup: dict[tuple[str, str], str],
     lookup_stats: dict[str, int],
-    *, registry=None,
+    *, registry=None, destination=None,
 ) -> dict:
     """Build one index using a precomputed canonical shot-type lookup."""
     _validate_source(source)
@@ -223,6 +226,14 @@ def _rebuild_index(
         return {"status": "stale", "count": 0}
 
     path = index_path(project, source, media_type)
+    if destination is not None:
+        from data.resource_storage import relative_path
+        relative = relative_path(project, destination)
+        if not relative.startswith("outputs/maintenance/"):
+            raise ValueError("Unpublished index destination must be below outputs/maintenance")
+        path = project.resolve() / relative
+        if path.exists():
+            raise ValueError("Unpublished index destination already exists")
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
     try:
@@ -255,8 +266,9 @@ def _rebuild_index(
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
-    for obsolete in _obsolete_index_paths(project, source, media_type):
-        obsolete.unlink(missing_ok=True)
+    if destination is None:
+        for obsolete in _obsolete_index_paths(project, source, media_type):
+            obsolete.unlink(missing_ok=True)
     return {
         "status": "ready",
         "count": len(records),
