@@ -8,6 +8,294 @@ import pytest
 from services import backup_mirror as mirror
 
 
+def test_preview_session_executes_exact_plan(environment):
+    project, destination, mount = environment
+    ready(environment)
+    preview = mirror.prepare_mirror(project, destination)
+    events = []
+    with pytest.raises(mirror.MirrorError, match='additional explicit approval'):
+        mirror.execute_preview(project, destination, preview)
+    result = mirror.execute_preview(project, destination, preview, approve_delete=True, progress=events.append)
+    assert result['sha256'] and result['files_verified'] > 0
+    assert {'copy', 'verify', 'complete'} <= {event['phase'] for event in events}
+    assert 'Destination:' in mirror.preview_text(preview)
+    with pytest.raises(mirror.MirrorError, match='Approval does not match'):
+        mirror.execute_preview(project, destination, {**preview, 'plan_digest': 'wrong'})
+
+
+@pytest.fixture
+def cli_mirror(environment, monkeypatch):
+    import cli
+    from types import SimpleNamespace
+    project, destination, mount = environment
+    (project / 'preferences/preferences.json').write_text(json.dumps({'backup_path': str(destination)}))
+    (project / 'data/current').write_text('current data')
+    initial = mirror.plan_mirror(project, destination)
+    mirror.adopt_mirror(project, destination, initial['plan'], initial['plan_digest'])
+    monkeypatch.setattr(cli.prefs, 'get', lambda key, default=None: str(project) if key == 'path' else default)
+    monkeypatch.setattr(cli.sys, 'stdin', SimpleNamespace(isatty=lambda: True))
+    return project, destination, mount
+
+
+@pytest.mark.parametrize('answer,execute', [('y', True), ('yes', True), (' YES ', True),
+                                          ('n', False), ('no', False), ('', False), ('maybe', False)])
+def test_cli_interactive_answers(cli_mirror, monkeypatch, capsys, answer, execute):
+    import cli
+    project, destination, mount = cli_mirror
+    prompts = []
+    def confirm(prompt):
+        prompts.append(prompt)
+        return answer
+    monkeypatch.setattr('builtins.input', confirm)
+    cli.cmd_backup(cli.build_parser().parse_args(['backup', 'mirror']))
+    assert (destination / 'data/current').exists() == execute
+    assert len(prompts) == 1 and '[y/N]' in prompts[0]
+    output = capsys.readouterr().out
+    assert ('synchronized and verified' in output) == execute
+    assert 'Already present:' in output and 'Copy-before-delete required:' in output
+
+
+@pytest.mark.parametrize('mode', ['eof', 'noninteractive', 'interrupt'])
+def test_cli_confirmation_never_implicitly_authorizes(cli_mirror, monkeypatch, mode, capsys):
+    import cli
+    project, destination, mount = cli_mirror
+    def interrupted(prompt):
+        raise EOFError if mode == 'eof' else KeyboardInterrupt
+    monkeypatch.setattr('builtins.input', interrupted)
+    if mode == 'noninteractive':
+        monkeypatch.setattr(cli.sys.stdin, 'isatty', lambda: False)
+        cli.cmd_backup(cli.build_parser().parse_args(['backup', 'mirror']))
+    elif mode == 'interrupt':
+        with pytest.raises(SystemExit) as error:
+            cli.cmd_backup(cli.build_parser().parse_args(['backup', 'mirror']))
+        assert error.value.code == 130
+    else:
+        cli.cmd_backup(cli.build_parser().parse_args(['backup', 'mirror']))
+    assert not (destination / 'data/current').exists()
+    assert not (destination / mirror.CONTROL).exists()
+
+
+def test_cli_unattended_non_destructive_apply_needs_no_plan_or_digest(cli_mirror, monkeypatch, capsys):
+    import cli
+    project, destination, mount = cli_mirror
+    monkeypatch.setattr(cli.sys.stdin, 'isatty', lambda: False)
+    def forbidden(prompt):
+        raise AssertionError('Unattended apply must not prompt')
+    monkeypatch.setattr('builtins.input', forbidden)
+    cli.cmd_backup(cli.build_parser().parse_args(['backup', 'mirror', '--apply']))
+    assert (destination / 'data/current').read_text() == 'current data'
+    assert 'synchronized and verified' in capsys.readouterr().out
+
+
+def test_full_verification_resolves_completed_retained_plan(cli_mirror):
+    project, destination, mount = cli_mirror
+    preview = mirror.prepare_mirror(project, destination)
+    mirror.execute_preview(project, destination, preview)
+    assert mirror.restore_verification(project, destination, full=True)['full_payload_verified']
+    marker = mirror.read_marker(mirror.destination_context(project, destination))
+    retained = destination / mirror.CONTROL / ('metadata-' + marker['last_verified_plan'] + '.sqlite3')
+    with sqlite3.connect(retained) as database:
+        mirror.metadata(database, 'tampered', True)
+    with pytest.raises(mirror.MirrorError, match='Approval does not match'):
+        mirror.restore_verification(project, destination, full=True)
+
+
+def test_full_verification_does_not_infer_an_unverified_plan(cli_mirror):
+    project, destination, mount = cli_mirror
+    with pytest.raises(mirror.MirrorError, match='completed mirror'):
+        mirror.restore_verification(project, destination, full=True)
+
+
+def test_full_verification_progress_and_cooperative_cancel(cli_mirror):
+    project, destination, mount = cli_mirror
+    preview = mirror.prepare_mirror(project, destination)
+    mirror.execute_preview(project, destination, preview)
+    events = []
+    result = mirror.restore_verification(project, destination, full=True, progress=events.append)
+    assert result['full_payload_verified']
+    payload = [event for event in events if event['phase'] == 'payload_checked'][-1]
+    assert payload['files_verified'] == payload['total_files'] == 2
+    assert payload['sqlite_databases_verified'] == 0
+    assert 'population' in {event['phase'] for event in events}
+    with pytest.raises(mirror.MirrorCancelled):
+        mirror.restore_verification(project, destination, full=True, cancelled=lambda: True)
+
+
+def test_persistent_mirror_and_full_verification_are_independent(cli_mirror):
+    project, destination, mount = cli_mirror
+    assert mirror.backup_status(project, destination)['last_mirror'] is None
+    preview = mirror.prepare_mirror(project, destination)
+    assert mirror.backup_status(project, destination)['last_full_verify'] is None
+    mirror.execute_preview(project, destination, preview)
+    status = mirror.backup_status(project, destination)
+    assert status['last_mirror'] and status['last_full_verify'] is None
+    verified = mirror.restore_verification(project, destination, full=True)
+    current = mirror.backup_status(project, destination)
+    assert current['last_full_verify'] == verified['completed_at'] and current['verification_current']
+    (project / 'data/new').write_text('new content')
+    mirror.execute_preview(project, destination, mirror.prepare_mirror(project, destination))
+    historical = mirror.backup_status(project, destination)
+    assert historical['last_full_verify'] == current['last_full_verify']
+    assert not historical['verification_current']
+    mirror.restore_verification(project, destination, full=True)
+    assert mirror.backup_status(project, destination)['verification_current']
+
+
+@pytest.mark.parametrize('failure', ['cancel', 'population', 'disconnect', 'late_change'])
+def test_failed_full_verification_does_not_persist_success(cli_mirror, monkeypatch, failure):
+    project, destination, mount = cli_mirror
+    mirror.execute_preview(project, destination, mirror.prepare_mirror(project, destination))
+    before = (destination / mirror.MARKER).read_bytes()
+    stopping = False
+    def progress(event):
+        nonlocal stopping
+        if failure == 'late_change' and event['phase'] == 'final_validation':
+            (destination / 'data/current').write_text('changed after checksums')
+        if event['phase'] == 'payload_checked':
+            if failure == 'population':
+                (destination / 'unexpected').write_text('unexpected')
+            elif failure == 'disconnect':
+                monkeypatch.setattr(mirror, 'mounted_filesystems', lambda: [])
+            elif failure == 'cancel':
+                stopping = True
+    with pytest.raises(mirror.MirrorError):
+        mirror.restore_verification(project, destination, full=True, progress=progress, cancelled=lambda: stopping)
+    assert (destination / mirror.MARKER).read_bytes() == before
+
+
+def test_invalid_or_unrelated_status_evidence_is_unknown(cli_mirror, monkeypatch):
+    project, destination, mount = cli_mirror
+    mirror.execute_preview(project, destination, mirror.prepare_mirror(project, destination))
+    marker = mirror.read_marker(mirror.destination_context(project, destination))
+    marker['last_verified_at'] = 'yesterday'
+    marker['last_full_verification'] = {'completed_at': 12345}
+    (destination / mirror.MARKER).write_text(json.dumps(marker))
+    status = mirror.backup_status(project, destination)
+    assert status['last_mirror'] is status['last_full_verify'] is None
+    marker['device_uuid'] = 'another-disk'
+    (destination / mirror.MARKER).write_text(json.dumps(marker))
+    assert mirror.backup_status(project, destination)['last_mirror'] is None
+
+
+def test_full_verification_record_is_bound_to_selected_mirror(cli_mirror):
+    project, destination, mount = cli_mirror
+    mirror.execute_preview(project, destination, mirror.prepare_mirror(project, destination))
+    mirror.restore_verification(project, destination, full=True)
+    marker = mirror.read_marker(mirror.destination_context(project, destination))
+    marker['last_full_verification']['destination'] = '/different/mirror'
+    (destination / mirror.MARKER).write_text(json.dumps(marker))
+    assert mirror.backup_status(project, destination)['last_full_verify'] is None
+
+
+def test_status_rejects_incomplete_journal(cli_mirror):
+    project, destination, mount = cli_mirror
+    mirror.execute_preview(project, destination, mirror.prepare_mirror(project, destination))
+    marker = mirror.read_marker(mirror.destination_context(project, destination))
+    journal = destination / mirror.CONTROL / ('journal-' + marker['last_verified_plan'] + '.sqlite3')
+    with sqlite3.connect(journal) as database:
+        database.execute("UPDATE operation SET phase='interrupted'")
+    marker['journal_sha256'] = mirror.file_hash(journal)
+    (destination / mirror.MARKER).write_text(json.dumps(marker))
+    assert mirror.backup_status(project, destination)['last_mirror'] is None
+
+
+def test_full_verification_sqlite_progress_preserves_payload(cli_mirror):
+    project, destination, mount = cli_mirror
+    with sqlite3.connect(project / 'data/example.sqlite3') as database:
+        database.execute('CREATE TABLE example(value TEXT)')
+        database.execute("INSERT INTO example VALUES('fixture')")
+    mirror.execute_preview(project, destination, mirror.prepare_mirror(project, destination))
+    payload = {path: mirror.file_hash(path) for directory in ('data', 'preferences')
+               for path in (destination / directory).rglob('*') if path.is_file()}
+    events = []
+    result = mirror.restore_verification(project, destination, full=True, progress=events.append)
+    assert result['verification']['sqlite_databases_verified'] == 1
+    assert events[-1]['phase'] == 'complete' and events[-1]['sqlite_databases_verified'] == 1
+    assert all(mirror.file_hash(path) == checksum for path, checksum in payload.items())
+
+
+@pytest.mark.parametrize('answer', ['yes', 'no', ''])
+def test_cli_requires_second_destructive_confirmation(cli_mirror, monkeypatch, answer):
+    import cli
+    project, destination, mount = cli_mirror
+    (destination / 'obsolete').write_text('unique old data')
+    answers = iter(['yes', answer])
+    prompts = []
+    def confirm(prompt):
+        prompts.append(prompt)
+        return next(answers)
+    monkeypatch.setattr('builtins.input', confirm)
+    cli.cmd_backup(cli.build_parser().parse_args(['backup', 'mirror']))
+    assert len(prompts) == 2 and 'Additionally authorize' in prompts[1]
+    assert (destination / 'obsolete').exists() == (answer != 'yes')
+    assert (destination / 'data/current').exists() == (answer == 'yes')
+
+
+def test_cli_unattended_deletion_requires_advanced_exact_approval(cli_mirror, monkeypatch):
+    import cli
+    project, destination, mount = cli_mirror
+    (destination / 'obsolete').write_text('unique old data')
+    monkeypatch.setattr(cli.sys.stdin, 'isatty', lambda: False)
+    with pytest.raises(SystemExit) as error:
+        cli.cmd_backup(cli.build_parser().parse_args(['backup', 'mirror', '--apply']))
+    assert error.value.code == 1
+    assert (destination / 'obsolete').read_text() == 'unique old data'
+    assert not (destination / mirror.CONTROL).exists()
+
+
+@pytest.mark.parametrize('side', ['source', 'destination'])
+def test_cli_stale_preview_refuses_without_replanning(cli_mirror, monkeypatch, side, capsys):
+    import cli
+    project, destination, mount = cli_mirror
+    root = project if side == 'source' else destination
+    def confirm(prompt):
+        (root / 'changed-after-preview').write_text('new data')
+        return 'yes'
+    monkeypatch.setattr('builtins.input', confirm)
+    with pytest.raises(SystemExit):
+        cli.cmd_backup(cli.build_parser().parse_args(['backup', 'mirror']))
+    assert 'Restart preview' in capsys.readouterr().err
+    assert not (destination / 'data/current').exists()
+    assert not (destination / mirror.CONTROL).exists()
+
+
+@pytest.mark.parametrize('phase', ['before', 'copy', 'verify'])
+def test_shared_session_cancels_safely_and_resumes(cli_mirror, phase):
+    project, destination, mount = cli_mirror
+    preview = mirror.prepare_mirror(project, destination)
+    stopping = phase == 'before'
+    def progress(event):
+        nonlocal stopping
+        if event['phase'] == phase:
+            stopping = True
+    with pytest.raises(mirror.MirrorCancelled):
+        mirror.execute_preview(project, destination, preview, progress=progress, cancelled=lambda: stopping)
+    if phase == 'before':
+        assert not (destination / mirror.CONTROL).exists()
+    else:
+        journal = destination / mirror.CONTROL / ('journal-' + preview['plan_digest'] + '.sqlite3')
+        with sqlite3.connect(journal) as database:
+            assert database.execute('SELECT phase FROM operation').fetchone()[0] == 'interrupted'
+    result = mirror.execute_preview(project, destination, preview)
+    assert result['sha256'] and result['files_verified'] == 2
+
+
+def test_preparation_does_not_publish_over_existing_evidence_or_verify_mirror(cli_mirror, monkeypatch):
+    project, destination, mount = cli_mirror
+    report = project / mirror.REPORT_RELATIVE
+    evidence = report / 'reconciliation-summary.json'
+    evidence.write_text('existing evidence')
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Ordinary preparation must not run restoration verification or old report publication')
+    monkeypatch.setattr(mirror, 'restore_verification', forbidden)
+    monkeypatch.setattr(mirror, 'publish_preview', forbidden)
+    first = mirror.prepare_mirror(project, destination)
+    second = mirror.prepare_mirror(project, destination)
+    assert first['plan'] != second['plan']
+    assert evidence.read_text() == 'existing evidence'
+    assert not (destination / mirror.CONTROL).exists()
+
+
 @pytest.mark.parametrize('name', ['.Spotlight-V100', '.fseventsd'])
 def test_exfat_macos_sibling_inode_exception(environment, name):
     project, destination, mount = environment
@@ -499,9 +787,10 @@ def test_cli_preview_calls_shared_service(environment, monkeypatch, capsys):
     calls = []
     def preview(source, backup, **kwargs):
         calls.append((source, backup))
-        return {'preview': 'shared-service-result'}
-    monkeypatch.setattr(mirror, 'publish_preview', preview)
-    cli.cmd_backup(SimpleNamespace(backup_subcommand='mirror', project=str(project), apply=False, checksum=False))
+        return {'preview': 'shared-service-result', 'plan': 'fixture.sqlite3', 'plan_digest': 'digest'}
+    monkeypatch.setattr(mirror, 'prepare_mirror', preview)
+    monkeypatch.setattr(mirror, 'preview_text', lambda result: result['preview'])
+    cli.cmd_backup(SimpleNamespace(backup_subcommand='mirror', project=str(project), apply=False, checksum=False, dry_run=True))
     assert calls == [(str(project), str(destination))]
     assert 'shared-service-result' in capsys.readouterr().out
 
@@ -529,12 +818,14 @@ def test_normal_backup_defaults_to_guarded_mirror(environment, monkeypatch, argu
     calls = []
     def preview(source, backup, **kwargs):
         calls.append((source, backup))
-        return {'mode': 'guarded mirror'}
+        return {'apply_blocked': [], 'mode': 'guarded mirror', 'plan': 'fixture.sqlite3', 'plan_digest': 'digest'}
     def forbidden(*args, **kwargs):
         raise AssertionError('Normal backup must never use legacy additive copy or implicit apply')
-    monkeypatch.setattr(mirror, 'publish_preview', preview)
+    monkeypatch.setattr(mirror, 'prepare_mirror', preview)
+    monkeypatch.setattr(mirror, 'preview_text', lambda result: result['mode'])
+    monkeypatch.setattr(cli, '_backup_confirm', lambda prompt: False)
     monkeypatch.setattr(mirror, 'apply_mirror', forbidden)
-    monkeypatch.setattr(cli, '_backup_update', forbidden)
+    assert not hasattr(cli, '_backup_update')
     args = cli.build_parser().parse_args(['backup', *arguments])
     cli.cmd_backup(args)
     assert calls == [(str(project), str(destination))]
@@ -548,10 +839,15 @@ def test_normal_backup_dry_run_always_prevents_apply(environment, monkeypatch, a
     (project / 'preferences/preferences.json').write_text(json.dumps({'backup_path': str(destination)}))
     monkeypatch.setattr(cli.prefs, 'get', lambda key, default=None: str(project) if key == 'path' else default)
     calls = []
-    monkeypatch.setattr(mirror, 'publish_preview', lambda *args, **kwargs: calls.append('preview'))
+    def preview(*args, **kwargs):
+        calls.append('preview')
+        return {'plan': 'fixture.sqlite3', 'plan_digest': 'digest'}
+    monkeypatch.setattr(mirror, 'prepare_mirror', preview)
+    monkeypatch.setattr(mirror, 'preview_text', lambda result: 'preview')
     def forbidden(*args, **kwargs):
         raise AssertionError('Dry run must override apply')
     monkeypatch.setattr(mirror, 'apply_mirror', forbidden)
+    monkeypatch.setattr(cli, '_backup_confirm', forbidden)
     cli.cmd_backup(cli.build_parser().parse_args(['backup', *arguments]))
     assert calls == ['preview']
 
@@ -560,15 +856,19 @@ def test_normal_backup_apply_delegates_to_guarded_mirror(environment, monkeypatc
     import cli
     project, destination, mount = environment
     (project / 'preferences/preferences.json').write_text(json.dumps({'backup_path': str(destination)}))
+    preview = ready(environment)
     calls = []
     def apply(source, backup, plan, **kwargs):
         calls.append((source, backup, plan, kwargs))
         return {'verified': True}
     monkeypatch.setattr(mirror, 'apply_mirror', apply)
     args = cli.build_parser().parse_args(['backup', 'update', '--project', str(project),
-                                          '--apply', '--plan', 'reviewed.sqlite3', '--approve-plan', 'approved-digest'])
+                                          '--apply', '--plan', preview['plan'], '--approve-plan', preview['plan_digest']])
     cli.cmd_backup(args)
-    assert calls == [(str(project), str(destination), 'reviewed.sqlite3', {'approval': 'approved-digest'})]
+    assert len(calls) == 1
+    source, backup, plan, options = calls[0]
+    assert (source, backup, plan) == (str(project), str(destination), preview['plan'])
+    assert options['approval'] == options['expected_digest'] == preview['plan_digest']
 
 
 def test_source_changes_during_copy_block_deletion(environment, monkeypatch):

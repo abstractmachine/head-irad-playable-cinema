@@ -89,25 +89,45 @@ journals only its dependent engravings dirty and preserves their PNGs and run ev
 
 ## Backup
 
-`crossing backup update` uses the guarded mirror service by default, not additive
-copying. Bare `crossing backup` is a mirror preview alias. Execution remains
-explicit with `--apply` and a reviewed plan; `--dry-run` always prevents apply.
+`crossing backup mirror` previews the guarded SQLite reconciliation plan, displays
+counts, bytes and capacity, then asks a default-No confirmation. Accept with `y`
+or `yes`. Blank, invalid input, EOF and noninteractive input cancel without
+changing the backup. Bare `crossing backup` and `backup update` are compatibility
+aliases for this same workflow, not separate copying implementations.
 `crossing backup path [folder]` and `backup status` retain their existing behavior.
 
 ```bash
-crossing backup                           # guarded mirror preview, no implicit apply
-crossing backup update --dry-run          # normal backup command now uses mirror planning
-crossing backup update --project /path/to/project --dry-run
-crossing backup mirror                    # read-only external-disk reconciliation preview
-crossing backup mirror --project /path/to/project
-crossing backup mirror --checksum         # optional full content comparison; potentially hours
-crossing backup verify                   # non-destructive identity/census/restore readiness
+crossing backup mirror                    # preview, confirm, synchronize and verify
+crossing backup mirror --dry-run          # preview only; never prompts or changes the backup
+crossing backup mirror --apply            # unattended non-destructive synchronization
 ```
+
+No plan filename or SHA256 needs to be copied for ordinary synchronization. The
+service retains the immutable plan and carries its exact digest internally. Source,
+destination or device changes between preview and execution stop the operation;
+restart preview rather than applying a silently regenerated plan. `--dry-run`
+overrides `--apply`, including when supplied before the subcommand. Plans and
+the operation lock are local maintenance artifacts; preview never writes the mirror.
+
+Deleting backup-only files or directories needs a **second** explicit default-No
+confirmation after the ordinary confirmation, showing deletion counts and bytes.
+Unattended `--apply` refuses deletion without the advanced exact-plan approval
+contract below, even when adopted deletion limits would otherwise allow it.
+Adoption is never automatic. A missing marker, wrong device, conflict or insufficient
+copy-before-delete capacity blocks synchronization. `--project /path/to/project`
+selects an existing project without changing preferences; `--checksum` adds full
+preview hashing and can take hours. Execution always verifies content regardless
+of whether preview used checksums.
 
 Preview resolves the mounted PLAYABLE disk via `findmnt`, verifies its UUID/label,
 and uses the existing `backups/<project>/` directory. It never creates an internal
 fallback, changes preferences, writes a marker or applies deletions. Reports and
-queryable SQLite plans live in `outputs/maintenance/backup-mirror/`.
+queryable SQLite plans live in `outputs/maintenance/backup-mirror/`. Ordinary
+preparation creates a new uniquely named plan and does not overwrite prior reports,
+production plans or approval evidence. Cancellation before apply leaves the mirror
+unchanged. During apply, cancellation takes effect at a safe file/verification
+checkpoint, not halfway through an atomic install. Large individual files can
+delay cancellation. Keep journals and staged files for reviewed resume.
 
 For an existing destination, approve the exact plan SHA256 before destructive
 reconciliation. Alternatively, explicitly approve clearing a precisely identified
@@ -118,10 +138,29 @@ backup command or by preview. The following are **separate explicit operations**
 
 ```bash
 crossing backup adopt --plan <plan.sqlite3> --approve-plan <sha256> --apply
-crossing backup update --plan <plan.sqlite3> --approve-plan <sha256> --apply
+crossing backup mirror --plan <plan.sqlite3> --approve-plan <sha256> --apply
 crossing backup verify --plan <plan.sqlite3> --full
 crossing backup verify --offline --destination <mounted-backups/project>
 ```
+
+Synchronization and recovery verification are different operations.
+`backup verify --full` checks the synchronized mirror against the live source and
+retained plan; it does not synchronize. Project Visualizer's **Verify** button runs
+that same full operation asynchronously. Full verification can take several hours;
+payload checksums alone are not a completed full verification. Successful full
+verification is recorded separately from successful mirroring in the existing
+mirror metadata, bound to its retained plan, sealed journal and mirror completion
+time. A newer mirror leaves an earlier full verification historical rather than
+current. Failed, canceled and preview-only operations never advance success dates.
+The Project **Path** button selects a destination; **Mirror** uses an inline
+preview/Confirm workflow with separate deletion authorization. These GUI refinements
+do not change the CLI's default-No confirmation behavior.
+
+`backup verify --offline --destination ...`
+checks retained recovery evidence without requiring the primary project. **Keep a
+verified pre-migration mirror frozen until migration succeeds.** Running mirror
+after migration replaces that snapshot with the new source state; a successful
+synchronization is not proof of recovery from the pre-migration snapshot.
 
 Offline verification uses the mirror marker's last-verified metadata-plan digest
 and sealed checksum journal without requiring the primary project to survive.

@@ -9,7 +9,6 @@ Opened via:
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 import sys
 import tempfile
@@ -25,6 +24,7 @@ from visualizers.components.collapsible_section import CollapsibleSection
 from visualizers.components.combo_popup import style_canonical_combo
 from visualizers.components.inspector import Inspector
 from visualizers.components.metadata_block import (
+    MetadataBlock,
     INSPECTOR_ROW_HEIGHT,
     table_key_cell_style,
     table_ui_cell_style,
@@ -113,15 +113,6 @@ def _start_untyped_audit_cli(
     )
 
 
-def _backup_free_bytes(backup_path: str) -> Optional[int]:
-    """Return free bytes on the backup volume, or ``None`` if unreadable."""
-    import shutil
-    try:
-        return shutil.disk_usage(str(backup_path)).free
-    except Exception:
-        return None
-
-
 def _write_error_log(project_path: str, title: str, detail: str) -> Optional[Path]:
     """Write *detail* to ``<project>/outputs/logs/log-<stamp>.txt``.
 
@@ -138,24 +129,9 @@ def _write_error_log(project_path: str, title: str, detail: str) -> Optional[Pat
         return None
 
 
-# rsync --info=progress2 emits "<bytes>  <pct>%  <rate>  <eta>" separated by \r.
-_RSYNC_PERCENT_RE = re.compile(r"\s(\d{1,3})%\s")
-
-
-def _parse_rsync_percent(text: str) -> Optional[int]:
-    """Return the most recent whole-transfer percentage in *text*, or ``None``."""
-    matches = _RSYNC_PERCENT_RE.findall(text)
-    if not matches:
-        return None
-    return min(100, max(0, int(matches[-1])))
-
 # ---------------------------------------------------------------------------
 # Constants mirrored from cli.py to avoid importing the full CLI module
 # ---------------------------------------------------------------------------
-
-# Mirrors cli.py's BACKUP_MIN_FREE_BYTES so the button warns exactly when
-# `crossing backup update` would refuse to run.
-_BACKUP_MIN_FREE_BYTES = 100 * 1024 * 1024
 
 _MODEL_KEYS = {
     "annotate":     "model_annotate",
@@ -1111,6 +1087,80 @@ class _ProjectColumnWidget(QWidget):
         )
 
 
+class _BackupPathLabel(QLabel):
+    def __init__(self):
+        super().__init__()
+        self._path = ''
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.setTextFormat(Qt.PlainText)
+        self.setFont(theme.font_ui(bold=True))
+        self.setStyleSheet(theme.tooltip_stylesheet())
+
+    def set_path(self, path):
+        self._path = path
+        self.setToolTip(path)
+        self._elide()
+
+    def _elide(self):
+        self.setText(self.fontMetrics().elidedText(self._path or '(not set)', Qt.ElideMiddle, self.contentsRect().width()))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._elide()
+
+
+class _BackupWorker(QThread):
+    progress = pyqtSignal(object)
+
+    def __init__(self, project, configured, *, mode='preview', preview=None, approve_delete=False, parent=None):
+        super().__init__(parent)
+        self.project = project
+        self.configured = configured
+        self.mode = mode
+        self.preview = preview
+        self.approve_delete = approve_delete
+        self.result = None
+        self.error = None
+        self.was_cancelled = False
+        self._cancel = threading.Event()
+        self._last_phase = None
+        self._last_update = 0.0
+
+    def cancel(self):
+        self._cancel.set()
+
+    def _progress(self, event):
+        import time
+        now = time.monotonic()
+        if event['phase'] != self._last_phase or now - self._last_update >= 0.1:
+            self.progress.emit(event)
+            self._last_phase, self._last_update = event['phase'], now
+
+    def run(self):
+        from services import backup_mirror
+        try:
+            options = {'progress': self._progress, 'cancelled': self._cancel.is_set}
+            if self.mode == 'status':
+                self.result = backup_mirror.backup_status(self.project, self.configured)
+                backup_mirror.checkpoint(None, self._cancel.is_set, 'status')
+            elif self.mode == 'verify':
+                self.result = backup_mirror.restore_verification(self.project, self.configured, full=True, **options)
+                if not self.result.get('full_payload_verified'):
+                    raise backup_mirror.MirrorError('Full verification did not complete')
+            elif self.mode == 'preview':
+                self.result = backup_mirror.prepare_mirror(self.project, self.configured, **options)
+            else:
+                self.result = backup_mirror.execute_preview(
+                    self.project, self.configured, self.preview,
+                    approve_delete=self.approve_delete, **options,
+                )
+        except backup_mirror.MirrorCancelled:
+            self.was_cancelled = True
+        except Exception as error:
+            self.error = str(error)
+
+
 class _ProjectColumnsWorker(QThread):
     """Load Project Visualizer columns off the GUI thread.
 
@@ -1200,18 +1250,15 @@ class ProjectVisualizer(WindowVisualizer):
         self._resource_registry = registry
         self._project_load_generation = 0
         self._project_load_state = "not_started"
+        self._backup_worker = None
+        self._backup_active = False
+        self._backup_preview = None
+        self._backup_state = 'idle'
         # Provide pref key to the shell so geometry is saved/restored there
         super().__init__(pref_key="window_project")
         self.setWindowTitle("Crossing — Project")
         self._procs: dict[str, subprocess.Popen] = {}
         self._windows: dict[str, object] = {}  # in-process visualizer windows
-        self._backup_proc: subprocess.Popen | None = None
-        self._backup_poll_timer: QTimer | None = None
-        self._backup_stdout_lock = threading.Lock()
-        self._backup_session_token: object | None = None
-        self._backup_stdout_buf: bytes = b""
-        self._backup_anim_frame: int = 0
-        self._backup_percent: Optional[int] = None
         self._thumbnail_palette_proc: subprocess.Popen | None = None
         self._thumbnail_palette_output = None
         self._thumbnail_palette_media_queue: list[str] = []
@@ -1242,6 +1289,7 @@ class ProjectVisualizer(WindowVisualizer):
         # open. This flag flips True the first time the window is actually
         # shown (see `showEvent`), regardless of which path did the showing.
         self._shown_as_project = False
+        self._refresh_backup_status()
 
     # geometry handled by WindowVisualizer (pref_key passed at construction)
 
@@ -1250,6 +1298,14 @@ class ProjectVisualizer(WindowVisualizer):
         self._shown_as_project = True
 
     def closeEvent(self, event) -> None:
+        if self._backup_active:
+            if self._backup_worker is not None:
+                self._backup_worker.cancel()
+            self.backup_status.setText("Stopping at a safe checkpoint; close again when stopped.")
+            self.backup_status.show()
+            event.ignore()
+            return
+        self._backup_preview = None
         timer = getattr(self, "_column_loading_timer", None)
         if timer is not None:
             timer.stop()
@@ -1301,6 +1357,8 @@ class ProjectVisualizer(WindowVisualizer):
             self.path_edit.setText(folder)
             self._reload_model_combos()
             self._start_project_columns_load(force=True)
+            self._refresh_backup_button()
+            self._refresh_backup_status()
 
     # ------------------------------------------------------------------
     # Backup path
@@ -1313,33 +1371,53 @@ class ProjectVisualizer(WindowVisualizer):
 
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(0)
-
-        self.backup_path_edit = QLineEdit()
-        self.backup_path_edit.setReadOnly(True)
-        self.backup_path_edit.setPlaceholderText("(no backup folder set)")
-        self.backup_path_edit.setText(_prefs.get("backup_path") or "")
-        self.backup_path_edit.setFont(theme.font_ui(bold=True))
-        row.addWidget(self.backup_path_edit, 1)
-
-        outer.addLayout(row)
-
-        self.backup_browse_btn = QPushButton("Browse…")
+        row.setSpacing(theme.SECTION_GAP)
+        self.backup_browse_btn = QPushButton("Path")
+        self.backup_browse_btn.setToolTip("Select the configured backup destination")
         self.backup_browse_btn.clicked.connect(self._on_backup_browse)
         self.backup_browse_btn.setStyleSheet(theme.action_button_stylesheet())
-        self.backup_browse_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        row.addWidget(self.backup_browse_btn)
+        self.backup_path_edit = _BackupPathLabel()
+        self.backup_path_edit.set_path(_prefs.get("backup_path") or "")
+        row.addWidget(self.backup_path_edit, 1)
+        outer.addLayout(row)
 
-        self.backup_btn = QPushButton("Backup")
+        self.backup_btn = QPushButton("Mirror")
+        self.backup_btn.setToolTip("Prepare and confirm project synchronization")
         self.backup_btn.clicked.connect(self._on_backup_run)
         self.backup_btn.setStyleSheet(theme.action_button_stylesheet())
         self.backup_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.backup_verify_btn = QPushButton("Verify")
+        self.backup_verify_btn.setToolTip("Fully verify the existing mirror; this can take several hours")
+        self.backup_verify_btn.clicked.connect(self._on_backup_verify)
+        self.backup_verify_btn.setStyleSheet(theme.action_button_stylesheet())
+        self.backup_verify_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         buttons_row = QHBoxLayout()
         buttons_row.setContentsMargins(0, 0, 0, 0)
         buttons_row.setSpacing(theme.SECTION_GAP)
-        buttons_row.addWidget(self.backup_browse_btn, 1)
         buttons_row.addWidget(self.backup_btn, 1)
+        buttons_row.addWidget(self.backup_verify_btn, 1)
         outer.addLayout(buttons_row)
+
+        self.backup_status = QLabel()
+        self.backup_status.setTextFormat(Qt.PlainText)
+        self.backup_status.setWordWrap(True)
+        self.backup_status.setFont(theme.font_mono())
+        self.backup_status.hide()
+        self.backup_cancel_btn = QPushButton("Cancel")
+        self.backup_cancel_btn.setStyleSheet(theme.action_button_stylesheet())
+        self.backup_cancel_btn.clicked.connect(self._cancel_backup)
+        self.backup_cancel_btn.setToolTip("Stop at a safe checkpoint; a large file can delay stopping")
+        self.backup_cancel_btn.hide()
+        information = QHBoxLayout()
+        information.setSpacing(theme.SECTION_GAP)
+        information.addWidget(self.backup_status, 1)
+        information.addWidget(self.backup_cancel_btn, 0, Qt.AlignTop)
+        outer.addLayout(information)
+        self.backup_history = MetadataBlock(['Last mirror', 'Last full verify'])
+        outer.addWidget(self.backup_history)
+        self._set_backup_history({})
 
         outer_widget = QWidget()
         outer_widget.setLayout(outer)
@@ -1361,160 +1439,179 @@ class ProjectVisualizer(WindowVisualizer):
         folder = QFileDialog.getExistingDirectory(
             self,
             "Select Backup Folder",
-            self.backup_path_edit.text() or str(Path.home()),
+            _prefs.get("backup_path") or str(Path.home()),
         )
         if folder:
             _prefs.set("backup_path", folder)
-            self.backup_path_edit.setText(folder)
+            self._backup_preview = None
+            self._backup_state = 'idle'
+            self.backup_status.hide()
             self._refresh_backup_button()
+            self._refresh_backup_status()
 
     def _refresh_backup_button(self) -> None:
-        """Enable/disable the Backup button based on lightweight path checks."""
-        backup_path = _prefs.get("backup_path")
-        if not backup_path:
-            self.backup_btn.setEnabled(False)
-            self._set_backup_space_warning(None)
-            return
-        p = Path(backup_path)
-        if not p.exists() or not os.access(str(p), os.W_OK):
-            self.backup_btn.setEnabled(False)
-            self._set_backup_space_warning(None)
-            return
-        self.backup_btn.setEnabled(True)
-        free = _backup_free_bytes(str(p))
-        self._set_backup_space_warning(
-            free if free is not None and free < _BACKUP_MIN_FREE_BYTES else None
-        )
+        ready = bool(_prefs.get("backup_path") and _prefs.get("path"))
+        self.backup_path_edit.set_path(_prefs.get("backup_path") or "")
+        self.backup_btn.setEnabled(ready and not self._backup_active)
+        self.backup_verify_btn.setEnabled(ready and not self._backup_active and self._backup_preview is None)
+        self.backup_btn.setText('Confirm' if self._backup_preview is not None else 'Mirror')
+        self.backup_verify_btn.setText('Verify')
 
-    def _set_backup_space_warning(self, free_bytes: Optional[int]) -> None:
-        """Show the out-of-space state on the Backup button, or clear it."""
-        if free_bytes is None:
-            self.backup_btn.setText("Backup")
-            self.backup_btn.setStyleSheet(theme.action_button_stylesheet())
-            self.backup_btn.setToolTip("")
-            return
-        free_gb = free_bytes / (1024 ** 3)
-        self.backup_btn.setText(f"Free Space: {free_gb:.0f} GB")
-        self.backup_btn.setStyleSheet(theme.action_button_stylesheet(warning=True))
-        self.backup_btn.setToolTip(
-            f"The backup volume is full ({free_gb:.1f} GB free) — "
-            "backups will not sync until space is freed."
-        )
+    def _set_backup_history(self, status):
+        from datetime import datetime
+        def date(value, fallback):
+            return datetime.fromtimestamp(value).strftime('%d %b %Y, %H:%M') if value else fallback
+        self.backup_history.set('Last mirror', date(status.get('last_mirror'), 'Unknown'))
+        verified = date(status.get('last_full_verify'), 'Not verified')
+        if status.get('last_full_verify') and not status.get('verification_current'):
+            verified += ' (previous mirror)'
+        self.backup_history.set('Last full verify', verified)
 
-    def _append_backup_stdout(self, chunk: bytes, session_token: object | None = None) -> None:
-        if not chunk:
+    def _refresh_backup_status(self):
+        if self._backup_active:
             return
-        if session_token is not None and self._backup_session_token is not session_token:
-            return
-        with self._backup_stdout_lock:
-            if session_token is not None and self._backup_session_token is not session_token:
-                return
-            self._backup_stdout_buf = (self._backup_stdout_buf + chunk)[-4096:]
-
-    def _backup_stdout_reader(
-        self,
-        process: subprocess.Popen,
-        session_token: object,
-    ) -> None:
-        stdout = process.stdout
-        if stdout is None:
-            return
-
-        try:
-            while True:
-                chunk = stdout.read(4096)
-                if not chunk:
-                    break
-                self._append_backup_stdout(chunk, session_token)
-        except Exception:
-            pass
+        self._set_backup_history({})
+        if _prefs.get('path') and _prefs.get('backup_path'):
+            self._backup_idle_labels = (self.backup_btn.text(), self.backup_verify_btn.text())
+            self._backup_project = _prefs.get('path')
+            self._backup_configured = _prefs.get('backup_path')
+            self._start_backup_worker(mode='status')
 
     def _on_backup_run(self) -> None:
-        if self._backup_proc is not None and self._backup_proc.poll() is None:
-            self._stop_backup_proc()
-            return  # Clicking while running stops the backup instead.
-
+        if self._backup_active:
+            return
+        if self._backup_preview is not None:
+            preview = self._backup_preview
+            deleting = any(preview['actions'].get(action, {}).get('count', 0) for action in ('delete', 'rmdir'))
+            if deleting:
+                from services import backup_mirror
+                if QMessageBox.warning(self, "Authorize Deletion", backup_mirror.preview_text(preview) + "\n\nAdditionally authorize these deletions?",
+                                       QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                    return
+            self._backup_preview = None
+            self._start_backup_worker(mode='mirror', preview=preview, approve_delete=deleting)
+            return
         project_path = _prefs.get("path")
         if not project_path:
             QMessageBox.warning(self, "No Project", "Please set a project folder first.")
             return
+        self._backup_project = project_path
+        self._backup_configured = _prefs.get("backup_path")
+        self._start_backup_worker()
 
-        cmd = [sys.executable, str(_CLI_PATH), "backup", "update"]
-        try:
-            self._backup_proc = subprocess.Popen(
-                cmd,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                close_fds=True,
-            )
-        except Exception as exc:
-            QMessageBox.critical(self, "Backup failed", str(exc))
+    def _on_backup_verify(self):
+        if self._backup_active or self._backup_preview is not None:
             return
+        self._backup_project = _prefs.get('path')
+        self._backup_configured = _prefs.get('backup_path')
+        if self._backup_project and self._backup_configured:
+            self._start_backup_worker(mode='verify')
 
-        self._backup_session_token = object()
-        self._backup_stdout_buf = b""
-        self._backup_anim_frame = 0
-        self._backup_percent = None
-        self.backup_browse_btn.setEnabled(False)
-        self.backup_btn.setText("Backing Up")
-        self._backup_loading_bar.start()
-        self._backup_loading_timer.start()
-
-        reader = threading.Thread(
-            target=self._backup_stdout_reader,
-            args=(self._backup_proc, self._backup_session_token),
-            daemon=True,
-        )
-        reader.start()
-
-        self._backup_poll_timer = QTimer(self)
-        self._backup_poll_timer.setInterval(500)
-        self._backup_poll_timer.timeout.connect(self._poll_backup_proc)
-        self._backup_poll_timer.start()
-
-    def _stop_backup_proc(self) -> None:
-        """Terminate a running backup process (user clicked Backup while it was running).
-
-        UI cleanup (re-enabling Browse, resetting the button text, stopping
-        the section's loading animation) happens on the next
-        ``_poll_backup_proc`` tick once ``poll()`` reports the process exited.
-        """
-        if self._backup_proc is not None:
-            try:
-                self._backup_proc.terminate()
-            except Exception:
-                pass
-
-    def _poll_backup_proc(self) -> None:
-        """Called every 500 ms to update backup progress and detect completion."""
-        with self._backup_stdout_lock:
-            stdout_buf = self._backup_stdout_buf
-
-        percent = _parse_rsync_percent(stdout_buf.decode("utf-8", errors="ignore"))
-        # rsync can sit at a literal 0% while it is still scanning the file
-        # list; treat that as indeterminate so the button does not look stuck.
-        if percent is not None and percent > 0:
-            self._backup_percent = percent
-
-        if self._backup_percent is not None:
-            self.backup_btn.setText(f"Backing Up {self._backup_percent}%")
+    def _cancel_backup(self):
+        if self._backup_worker is not None:
+            self._backup_worker.cancel()
+            self.backup_cancel_btn.setEnabled(False)
+            self.backup_status.setText('Stopping at a safe checkpoint...')
         else:
-            # No progress line yet (rsync is still building its file list, or
-            # the shutil fallback is running) — fall back to the dots animation.
-            self._backup_anim_frame = (self._backup_anim_frame + 1) % 4
-            dots = "." * self._backup_anim_frame
-            self.backup_btn.setText(f"Backing Up{dots}")
+            self._backup_preview = None
+            self._finish_backup('Cancelled: backup unchanged.')
 
-        # Check if the process has finished
-        if self._backup_proc is None or self._backup_proc.poll() is not None:
-            self._backup_poll_timer.stop()
-            self._backup_proc = None
-            self._backup_session_token = None
-            self._backup_loading_timer.stop()
-            self._backup_loading_bar.stop()
+    def _start_backup_worker(self, preview=None, approve_delete=False, mode='preview'):
+        self._backup_active = True
+        self._backup_state = mode
+        self._backup_worker = _BackupWorker(
+            self._backup_project, self._backup_configured, preview=preview,
+            mode=mode, approve_delete=approve_delete, parent=self,
+        )
+        self._backup_worker.progress.connect(self._on_backup_progress)
+        self._backup_worker.finished.connect(self._on_backup_finished)
+        self.backup_browse_btn.setEnabled(False)
+        self.project_browse_btn.setEnabled(False)
+        self._refresh_backup_button()
+        if mode != 'status':
+            self.backup_btn.setText('Mirroring\u2026' if mode == 'mirror' else 'Preparing\u2026' if mode == 'preview' else 'Mirror')
+            self.backup_verify_btn.setText('Preparing\u2026' if mode == 'verify' else 'Verify')
+            self.backup_status.setText('Preparing...')
+            self.backup_status.setToolTip('')
+            self.backup_status.show()
+            self.backup_cancel_btn.show()
+            self.backup_cancel_btn.setEnabled(True)
+            self._backup_loading_bar.start()
+            self._backup_loading_timer.start()
+        self._backup_worker.start()
+
+    def _on_backup_progress(self, event):
+        detail = event.get('path', event.get('entries', ''))
+        if 'files_verified' in event:
+            checked, total = event['files_verified'], event.get('total_files')
+            detail = f"{checked:,}" + (f" / {total:,} files ({100 * checked / total:.1f}%)" if total else ' files checked') + f"; SQLite: {event.get('sqlite_databases_verified', 0):,}; {detail}"
+        if self._backup_state == 'verify' and event['phase'] not in ('preparing', 'preflight'):
+            self.backup_verify_btn.setText('Verifying\u2026')
+        self.backup_status.setText(f"{event['phase'].replace('_', ' ').capitalize()}: {detail}")
+
+    def _finish_backup(self, status):
+        self._backup_active = False
+        self._backup_state = 'idle'
+        self._backup_loading_timer.stop()
+        self._backup_loading_bar.stop()
+        self.backup_browse_btn.setEnabled(True)
+        self.project_browse_btn.setEnabled(True)
+        self._refresh_backup_button()
+        self.backup_status.setText(status)
+        self.backup_status.setToolTip('')
+        self.backup_status.setVisible(bool(status))
+        self.backup_cancel_btn.hide()
+
+    def _on_backup_finished(self):
+        from services import backup_mirror
+        worker = self._backup_worker
+        self._backup_worker = None
+        worker.deleteLater()
+        if worker.was_cancelled or (worker.mode in ('preview', 'status') and worker._cancel.is_set()):
+            self._finish_backup("Cancelled. Any installed files retain recovery journals; no verified completion.")
+            if worker.mode in ('mirror', 'verify'):
+                self._refresh_backup_status()
+        elif worker.error is not None:
+            self._finish_backup("Backup stopped: " + worker.error)
+            (self.backup_verify_btn if worker.mode == 'verify' else self.backup_btn).setText('Retry')
+            if worker.mode in ('mirror', 'verify'):
+                self._refresh_backup_status()
+        elif worker.mode == 'status':
+            self._backup_active = False
+            self._backup_state = 'idle'
             self.backup_browse_btn.setEnabled(True)
+            self.project_browse_btn.setEnabled(True)
             self._refresh_backup_button()
+            self.backup_btn.setText(self._backup_idle_labels[0])
+            self.backup_verify_btn.setText(self._backup_idle_labels[1])
+            self._set_backup_history(worker.result)
+        elif worker.mode in ('mirror', 'verify'):
+            if worker.mode == 'verify':
+                self._finish_backup(f"Done: full verification completed; {worker.result['verification']['files_verified']:,} files checked.")
+            else:
+                self._finish_backup(f"Done: {worker.result['files_verified']:,} files verified.")
+            self._refresh_backup_status()
+        else:
+            preview = worker.result
+            actions = preview['actions']
+            count = lambda action: actions.get(action, {}).get('count', 0)
+            summary = (f"Copy: {count('copy'):,}; update: {count('update'):,}; delete: {count('delete'):,} files, {count('rmdir'):,} directories\n"
+                       f"Transfer: {preview['bytes_to_transfer']:,} bytes; available: {preview['available_bytes']:,} bytes\n"
+                       f"Deletion: {preview['estimated_delete_recovery_bytes']:,} bytes")
+            if preview['context']['destination'] != self._backup_configured:
+                summary += '\nDestination: ' + preview['context']['destination']
+            summary += ''.join('\nBLOCKED: ' + message for message in preview['apply_blocked'])
+            self._finish_backup(summary)
+            self.backup_status.setToolTip(backup_mirror.preview_text(preview))
+            if not preview['apply_blocked']:
+                self._backup_preview = preview
+                self._refresh_backup_button()
+                self.backup_browse_btn.setEnabled(False)
+                self.project_browse_btn.setEnabled(False)
+                self.backup_cancel_btn.setEnabled(True)
+                self.backup_cancel_btn.show()
+            else:
+                self.backup_btn.setText('Retry')
 
     # ------------------------------------------------------------------
     # Defaults

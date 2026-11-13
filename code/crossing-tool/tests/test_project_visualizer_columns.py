@@ -898,6 +898,7 @@ def fake_prefs(monkeypatch):
     store = {}
     monkeypatch.setattr("tool.prefs.get", lambda key, default=None: store.get(key, default))
     monkeypatch.setattr("tool.prefs.set", lambda key, value: store.__setitem__(key, value))
+    monkeypatch.setattr("services.backup_mirror.backup_status", lambda *args: {})
     return store
 
 
@@ -4349,161 +4350,344 @@ def test_format_column_count(count, expected):
 
 
 # ---------------------------------------------------------------------------
-# Backup section: low-disk-space warning
+# Backup section: shared guarded mirror workflow
 # ---------------------------------------------------------------------------
 
-def _build_project_window(monkeypatch, fake_prefs, tmp_path, free_bytes):
+def _build_project_window(monkeypatch, fake_prefs, tmp_path):
     fake_prefs["path"] = str(tmp_path)
     fake_prefs["backup_path"] = str(tmp_path)
     monkeypatch.setattr(
         "visualizers.project_visualizer._ProjectColumnsWorker.start",
         lambda self: None,
     )
-    monkeypatch.setattr(
-        "visualizers.project_visualizer._backup_free_bytes",
-        lambda path: free_bytes,
-    )
     from visualizers.project_visualizer import ProjectVisualizer
 
-    return ProjectVisualizer()
+    window = ProjectVisualizer()
+    _wait_backup(QApplication.instance(), window)
+    return window
 
 
-def test_backup_button_warns_when_backup_volume_is_full(
-    app, fake_prefs, monkeypatch, tmp_path,
-):
-    window = _build_project_window(monkeypatch, fake_prefs, tmp_path, 0)
-    try:
-        assert window.backup_btn.text() == "Free Space: 0 GB"
-        assert theme.WARNING_COLOR in window.backup_btn.styleSheet()
-        assert "full" in window.backup_btn.toolTip()
-        assert window.backup_btn.isEnabled()
-    finally:
-        window.close()
+def _backup_preview(tmp_path, *, deleting=False, blocked=False):
+    return {'context': {'destination': str(tmp_path / 'external')},
+            'actions': {'copy': {'count': 2}, 'update': {'count': 1},
+                        'delete': {'count': int(deleting)}, 'check': {'count': 3}},
+            'source_file_count': 6, 'estimated_delete_recovery_bytes': 123,
+            'bytes_to_transfer': 456, 'capacity_bytes': 10000,
+            'available_bytes': 1000, 'required_capacity_bytes': 500,
+            'apply_blocked': ['Explicit adoption required'] if blocked else [],
+            'plan': str(tmp_path / 'plan.sqlite3'), 'plan_digest': 'fixture-digest'}
 
 
-def test_backup_button_is_normal_when_space_is_available(
-    app, fake_prefs, monkeypatch, tmp_path,
-):
-    window = _build_project_window(
-        monkeypatch, fake_prefs, tmp_path, 500 * 1024 ** 3,
-    )
-    try:
-        assert window.backup_btn.text() == "Backup"
-        assert theme.WARNING_COLOR not in window.backup_btn.styleSheet()
-        assert window.backup_btn.toolTip() == ""
-    finally:
-        window.close()
+def _wait_backup(app, window):
+    from PyQt5.QtCore import QElapsedTimer
+    from PyQt5.QtTest import QTest
+    timer = QElapsedTimer()
+    timer.start()
+    while window._backup_active and timer.elapsed() < 5000:
+        app.processEvents()
+        QTest.qWait(1)
+    assert not window._backup_active
 
 
-def test_backup_button_stays_normal_when_free_space_is_unreadable(
-    app, fake_prefs, monkeypatch, tmp_path,
-):
-    window = _build_project_window(monkeypatch, fake_prefs, tmp_path, None)
-    try:
-        assert window.backup_btn.text() == "Backup"
-        assert theme.WARNING_COLOR not in window.backup_btn.styleSheet()
-    finally:
-        window.close()
-
-
-def test_backup_free_space_threshold_matches_cli_abort_threshold():
-    import cli as cli_mod
-    from visualizers.project_visualizer import _BACKUP_MIN_FREE_BYTES
-
-    assert _BACKUP_MIN_FREE_BYTES == cli_mod.BACKUP_MIN_FREE_BYTES
-
-
-# ---------------------------------------------------------------------------
-# Backup section: rsync progress percentage
-# ---------------------------------------------------------------------------
-
-@pytest.mark.parametrize("text, expected", [
-    ("", None),
-    ("Backing up project to: /media/backup\r\n", None),
-    ("\r      1,234,567  42%    3.45MB/s    0:00:12", 42),
-    ("\r  1,000  7%  1MB/s  0:01:00\r  2,000  9%  1MB/s  0:00:50", 9),
-    ("\r  9,999,999,999  100%  120MB/s    0:00:00 (xfr#4, to-chk=0/9)", 100),
-    ("  Free space on backup volume: 3.5 GB\r\n", None),
+@pytest.mark.parametrize('confirm,deleting,delete_confirm', [
+    (False, False, False), (True, False, False),
+    (True, True, False), (True, True, True),
 ])
-def test_parse_rsync_percent(text, expected):
-    from visualizers.project_visualizer import _parse_rsync_percent
-
-    assert _parse_rsync_percent(text) == expected
-
-
-def test_backup_button_shows_rsync_percentage_while_running(
-    app, fake_prefs, monkeypatch, tmp_path,
+def test_backup_button_preview_confirm_and_shared_execute(
+    app, fake_prefs, monkeypatch, tmp_path, confirm, deleting, delete_confirm,
 ):
-    window = _build_project_window(
-        monkeypatch, fake_prefs, tmp_path, 500 * 1024 ** 3,
-    )
+    from PyQt5.QtWidgets import QMessageBox
+    from services import backup_mirror
+    window = _build_project_window(monkeypatch, fake_prefs, tmp_path)
+    preview = _backup_preview(tmp_path, deleting=deleting)
+    calls, dialogs = [], []
+
+    def prepare(project, configured, **options):
+        calls.append(('preview', project, configured))
+        options['progress']({'phase': 'preview', 'entries': 6})
+        return preview
+
+    def execute(project, configured, reviewed, **options):
+        assert reviewed is preview
+        assert options['approve_delete'] == deleting
+        calls.append(('execute', project, configured))
+        options['progress']({'phase': 'verify', 'files_verified': 6})
+        return {'files_verified': 6}
+
+    def question(*args):
+        raise AssertionError('Ordinary confirmation must be inline')
+
+    def warning(parent, title, text, buttons, default):
+        assert default == QMessageBox.No
+        dialogs.append(text)
+        return QMessageBox.Yes if delete_confirm else QMessageBox.No
+
+    monkeypatch.setattr(backup_mirror, 'prepare_mirror', prepare)
+    monkeypatch.setattr(backup_mirror, 'execute_preview', execute)
+    monkeypatch.setattr(QMessageBox, 'question', question)
+    monkeypatch.setattr(QMessageBox, 'warning', warning)
     try:
-        window._backup_proc = SimpleNamespace(poll=lambda: None)
-        window._append_backup_stdout(
-            b"\r      1,234,567  42%    3.45MB/s    0:00:12",
-        )
-
-        window._poll_backup_proc()
-
-        assert window.backup_btn.text() == "Backing Up 42%"
-    finally:
-        window._backup_proc = None
-        window.close()
-
-
-def test_backup_button_falls_back_to_dots_before_first_progress_line(
-    app, fake_prefs, monkeypatch, tmp_path,
-):
-    window = _build_project_window(
-        monkeypatch, fake_prefs, tmp_path, 500 * 1024 ** 3,
-    )
-    try:
-        window._backup_proc = SimpleNamespace(poll=lambda: None)
-        window._append_backup_stdout(b"Backing up project to: /media/backup\r\n")
-
-        window._poll_backup_proc()
-        assert window.backup_btn.text() == "Backing Up."
-        window._poll_backup_proc()
-        assert window.backup_btn.text() == "Backing Up.."
-    finally:
-        window._backup_proc = None
-        window.close()
-
-
-def test_backup_button_ignores_initial_rsync_zero_percent(
-    app, fake_prefs, monkeypatch, tmp_path,
-):
-    window = _build_project_window(
-        monkeypatch, fake_prefs, tmp_path, 500 * 1024 ** 3,
-    )
-    try:
-        window._backup_proc = SimpleNamespace(poll=lambda: None)
-        window._append_backup_stdout(
-            b"\r      0   0%    0.00kB/s    0:00:00 (xfr#0, to-chk=0/2965337)",
-        )
-
-        window._poll_backup_proc()
-
-        assert window._backup_percent is None
-        assert window.backup_btn.text() == "Backing Up."
-    finally:
-        window._backup_proc = None
-        window.close()
-
-
-def test_backup_output_buffer_is_bounded(
-    app, fake_prefs, monkeypatch, tmp_path,
-):
-    window = _build_project_window(
-        monkeypatch, fake_prefs, tmp_path, 500 * 1024 ** 3,
-    )
-    try:
-        for _ in range(20):
-            window._append_backup_stdout(b"\r  1,000  55%  1MB/s  0:01:00" * 100)
-
-        assert len(window._backup_stdout_buf) <= 4096
+        window.backup_btn.click()
+        _wait_backup(app, window)
+        assert window.backup_btn.text() == 'Confirm'
+        summary = window.backup_status.text()
+        assert 'Copy: 2; update: 1' in summary
+        assert '456 bytes' in summary and 'available: 1,000 bytes' in summary
+        assert not window.backup_verify_btn.isEnabled()
+        if confirm:
+            window.backup_btn.click()
+            if not deleting or delete_confirm:
+                assert window.backup_btn.text().startswith('Mirroring')
+                _wait_backup(app, window)
+            else:
+                assert window.backup_btn.text() == 'Confirm'
+                window.backup_cancel_btn.click()
+        else:
+            window.backup_cancel_btn.click()
+        expected = ['preview', 'execute'] if confirm and (not deleting or delete_confirm) else ['preview']
+        assert [call[0] for call in calls] == expected
+        assert all(call[1:] == (str(tmp_path), str(tmp_path)) for call in calls)
+        assert str(tmp_path / 'external') in summary
+        assert len(dialogs) == int(confirm and deleting)
+        assert ('Done:' in window.backup_status.text()) == ('execute' in expected)
+        assert window.backup_browse_btn.isEnabled() and window.project_browse_btn.isEnabled()
+        assert not window._backup_loading_timer.isActive()
     finally:
         window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.parametrize('stage', ['preview', 'execute', 'blocked'])
+def test_backup_reports_blockers_and_service_errors(app, fake_prefs, monkeypatch, tmp_path, stage):
+    from services import backup_mirror
+    from PyQt5.QtWidgets import QMessageBox
+    window = _build_project_window(monkeypatch, fake_prefs, tmp_path)
+    def fail(*args, **options):
+        raise backup_mirror.MirrorError('fixture device or stale plan failure')
+
+    monkeypatch.setattr(backup_mirror, 'prepare_mirror', fail if stage == 'preview' else
+                        lambda *args, **options: _backup_preview(tmp_path, blocked=stage == 'blocked'))
+    monkeypatch.setattr(backup_mirror, 'execute_preview', fail)
+    try:
+        window._on_backup_run()
+        _wait_backup(app, window)
+        if stage == 'execute':
+            assert window.backup_btn.text() == 'Confirm'
+            window._on_backup_run()
+            _wait_backup(app, window)
+        assert 'Done:' not in window.backup_status.text()
+        assert ('BLOCKED' if stage == 'blocked' else 'fixture device or stale plan failure') in window.backup_status.text()
+        assert window.backup_btn.text() == 'Retry'
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_backup_worker_responsive_cancel_duplicate_and_close(app, fake_prefs, monkeypatch, tmp_path):
+    import threading
+    from PyQt5.QtCore import QThread, QTimer
+    from services import backup_mirror
+    window = _build_project_window(monkeypatch, fake_prefs, tmp_path)
+    entered, release = threading.Event(), threading.Event()
+    calls, ticks = [], []
+
+    def prepare(*args, **options):
+        assert QThread.currentThread() != app.thread()
+        calls.append('preview')
+        entered.set()
+        release.wait(5)
+        backup_mirror.checkpoint(options['progress'], options['cancelled'], 'preview')
+        raise AssertionError('Cancellation must stop preview')
+
+    monkeypatch.setattr(backup_mirror, 'prepare_mirror', prepare)
+    try:
+        window._on_backup_run()
+        assert window.backup_btn.text().startswith('Preparing')
+        assert entered.wait(2)
+        QTimer.singleShot(0, lambda: ticks.append('responsive'))
+        app.processEvents()
+        assert ticks == ['responsive']
+        window._on_backup_run()
+        assert calls == ['preview']
+        window._cancel_backup()
+        assert not window.backup_btn.isEnabled()
+        assert not window.close()
+        assert window._backup_worker.isRunning()
+    finally:
+        release.set()
+        _wait_backup(app, window)
+        assert 'Cancelled' in window.backup_status.text()
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_backup_path_resolution_is_deferred_to_worker(app, fake_prefs, monkeypatch, tmp_path):
+    window = _build_project_window(monkeypatch, fake_prefs, tmp_path)
+    try:
+        fake_prefs['backup_path'] = '/nonexistent/old-mount/backups/project'
+        window._refresh_backup_button()
+        assert window.backup_btn.isEnabled()
+        assert not hasattr(window, '_backup_proc')
+        fake_prefs['backup_path'] = ''
+        window._refresh_backup_button()
+        assert not window.backup_btn.isEnabled()
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_backup_layout_path_selection_and_long_path(app, fake_prefs, monkeypatch, tmp_path):
+    from visualizers.project_visualizer import QFileDialog
+    window = _build_project_window(monkeypatch, fake_prefs, tmp_path)
+    try:
+        window.show()
+        long_path = str(tmp_path / ('long-destination-' * 30))
+        fake_prefs['backup_path'] = long_path
+        window._refresh_backup_button()
+        app.processEvents()
+        assert window.backup_browse_btn.text() == 'Path'
+        assert window.backup_browse_btn.mapTo(window, QPoint()).x() < window.backup_path_edit.mapTo(window, QPoint()).x()
+        assert window.backup_path_edit.toolTip() == long_path
+        assert window.backup_path_edit.text() != long_path
+        assert window.backup_btn.text() == 'Mirror' and window.backup_verify_btn.text() == 'Verify'
+        assert abs(window.backup_btn.width() - window.backup_verify_btn.width()) <= 1
+        assert window.backup_path_edit.width() < window.width()
+        monkeypatch.setattr(QFileDialog, 'getExistingDirectory', lambda *args: '')
+        window.backup_browse_btn.click()
+        assert fake_prefs['backup_path'] == long_path
+        monkeypatch.setattr(QFileDialog, 'getExistingDirectory', lambda *args: str(tmp_path / 'new-destination'))
+        window.backup_browse_btn.click()
+        _wait_backup(app, window)
+        assert fake_prefs['backup_path'] == str(tmp_path / 'new-destination')
+        assert window.backup_path_edit.toolTip() == fake_prefs['backup_path']
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.parametrize('outcome', ['success', 'partial', 'error'])
+def test_backup_verify_shared_service_progress_and_result(app, fake_prefs, monkeypatch, tmp_path, outcome):
+    from services import backup_mirror
+    window = _build_project_window(monkeypatch, fake_prefs, tmp_path)
+    calls = []
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Verify must never synchronize or plan')
+    def verify(project, configured, **options):
+        calls.append((project, configured, options['full']))
+        options['progress']({'phase': 'verify', 'files_verified': 4, 'total_files': 8, 'sqlite_databases_verified': 2})
+        if outcome == 'error':
+            raise backup_mirror.MirrorError('USB disconnected after checksums')
+        return {'full_payload_verified': outcome == 'success', 'verification': {'files_verified': 8}}
+    monkeypatch.setattr(backup_mirror, 'prepare_mirror', forbidden)
+    monkeypatch.setattr(backup_mirror, 'execute_preview', forbidden)
+    monkeypatch.setattr(backup_mirror, 'restore_verification', verify)
+    try:
+        window.backup_verify_btn.click()
+        assert window.backup_verify_btn.text().startswith('Preparing')
+        assert not window.backup_btn.isEnabled() and not window.backup_verify_btn.isEnabled()
+        window._on_backup_run()
+        window._on_backup_verify()
+        _wait_backup(app, window)
+        assert calls == [(str(tmp_path), str(tmp_path), True)]
+        assert ('Done: full verification' in window.backup_status.text()) == (outcome == 'success')
+        assert window.backup_verify_btn.text() == ('Verify' if outcome == 'success' else 'Retry')
+        window._backup_state = 'verify'
+        window._on_backup_progress({'phase': 'verify', 'files_verified': 4, 'total_files': 8, 'sqlite_databases_verified': 2})
+        assert '50.0%' in window.backup_status.text() and 'SQLite: 2' in window.backup_status.text()
+        window._on_backup_progress({'phase': 'population', 'entries': 100})
+        assert '%' not in window.backup_status.text()
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_backup_full_verify_close_requests_safe_cancellation(app, fake_prefs, monkeypatch, tmp_path):
+    import threading
+    from services import backup_mirror
+    window = _build_project_window(monkeypatch, fake_prefs, tmp_path)
+    entered, release = threading.Event(), threading.Event()
+    def verify(*args, **options):
+        entered.set()
+        release.wait(5)
+        backup_mirror.checkpoint(options['progress'], options['cancelled'], 'population')
+        raise AssertionError('Cancelled verification must not report success')
+    monkeypatch.setattr(backup_mirror, 'restore_verification', verify)
+    try:
+        window._on_backup_verify()
+        assert entered.wait(2)
+        assert not window.close()
+        assert window._backup_worker.isRunning()
+        assert 'safe checkpoint' in window.backup_status.text()
+    finally:
+        release.set()
+        _wait_backup(app, window)
+        assert 'Cancelled' in window.backup_status.text()
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_backup_history_reopens_and_refreshes_for_new_destination(app, fake_prefs, monkeypatch, tmp_path):
+    from services import backup_mirror
+    from visualizers.project_visualizer import QFileDialog
+    calls = []
+    def status(project, destination):
+        calls.append(destination)
+        return ({'last_mirror': 1794480000, 'last_full_verify': 1794000000, 'verification_current': False}
+                if destination == str(tmp_path) else {})
+    monkeypatch.setattr(backup_mirror, 'backup_status', status)
+    for iteration in range(2):
+        window = _build_project_window(monkeypatch, fake_prefs, tmp_path)
+        try:
+            text = window.backup_history._labels['Last full verify'].text().replace('\u200b', '')
+            assert '(previous mirror)' in text
+            assert window.backup_history._labels['Last mirror'].text().replace('\u200b', '') != 'Unknown'
+            if iteration:
+                monkeypatch.setattr(QFileDialog, 'getExistingDirectory', lambda *args: str(tmp_path / 'other'))
+                window.backup_browse_btn.click()
+                _wait_backup(app, window)
+                assert window.backup_history._labels['Last mirror'].text().replace('\u200b', '') == 'Unknown'
+                assert window.backup_history._labels['Last full verify'].text().replace('\u200b', '') == 'Not verified'
+        finally:
+            window.close()
+            window.deleteLater()
+            app.processEvents()
+    assert str(tmp_path / 'other') in calls
+
+
+@pytest.mark.parametrize('operation', ['preview', 'verify'])
+def test_backup_retry_restarts_the_same_operation(app, fake_prefs, monkeypatch, tmp_path, operation):
+    from services import backup_mirror
+    window = _build_project_window(monkeypatch, fake_prefs, tmp_path)
+    attempts = []
+    def service(*args, **options):
+        attempts.append(operation)
+        if len(attempts) == 1:
+            raise backup_mirror.MirrorError('temporary fixture failure')
+        return (_backup_preview(tmp_path) if operation == 'preview' else
+                {'full_payload_verified': True, 'verification': {'files_verified': 6}})
+    monkeypatch.setattr(backup_mirror, 'prepare_mirror' if operation == 'preview' else 'restore_verification', service)
+    button = window.backup_btn if operation == 'preview' else window.backup_verify_btn
+    try:
+        button.click()
+        _wait_backup(app, window)
+        assert button.text() == 'Retry'
+        button.click()
+        _wait_backup(app, window)
+        assert attempts == [operation, operation]
+        assert button.text() == ('Confirm' if operation == 'preview' else 'Verify')
+        if operation == 'preview':
+            window.backup_cancel_btn.click()
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
 
 
 # ---------------------------------------------------------------------------
@@ -4538,7 +4722,7 @@ def test_index_failure_writes_log_and_opens_it_without_a_dialog(
     import visualizers.project_visualizer as pv
 
     window = _build_project_window(
-        monkeypatch, fake_prefs, tmp_path, 500 * 1024 ** 3,
+        monkeypatch, fake_prefs, tmp_path,
     )
     try:
         opened = []
@@ -4566,7 +4750,7 @@ def test_index_failure_falls_back_to_dialog_when_log_cannot_be_written(
     import visualizers.project_visualizer as pv
 
     window = _build_project_window(
-        monkeypatch, fake_prefs, tmp_path, 500 * 1024 ** 3,
+        monkeypatch, fake_prefs, tmp_path,
     )
     try:
         dialogs = []

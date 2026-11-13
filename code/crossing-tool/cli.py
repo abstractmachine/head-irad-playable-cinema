@@ -9231,112 +9231,63 @@ def _require_path():
 # Backup
 # ---------------------------------------------------------------------------
 
-# Minimum free space on the backup volume below which a backup is refused.
-# Mirrored by visualizers/project_visualizer.py's _BACKUP_MIN_FREE_BYTES.
-BACKUP_MIN_FREE_BYTES = 100 * 1024 * 1024
-
-
-def _validate_backup_paths() -> tuple[str, str]:
-    """Validate project and backup paths. Returns (project_path, backup_path) or exits."""
-    project_path = prefs.get("path")
-    backup_path = prefs.get("backup_path")
-
-    if not project_path:
-        print("✗ No project path set. Run: crossing tool path <folder>", file=sys.stderr)
-        sys.exit(1)
-    if not backup_path:
-        print("✗ No backup path set. Run: crossing backup path <folder>", file=sys.stderr)
-        sys.exit(1)
-
-    project = Path(project_path)
-    backup = Path(backup_path)
-
-    if not project.exists():
-        print(f"✗ Project folder does not exist: {project}", file=sys.stderr)
-        sys.exit(1)
-    if not backup.exists():
-        print(f"✗ Backup folder does not exist: {backup}", file=sys.stderr)
-        sys.exit(1)
-    if not os.access(str(backup), os.W_OK):
-        print(f"✗ Backup folder is not writable: {backup}", file=sys.stderr)
-        sys.exit(1)
-
-    return str(project), str(backup_path)
-
-
-def _backup_update(project_path: str, backup_path: str, dry_run: bool = False) -> None:
-    """Synchronize project folder contents into backup folder."""
-    import shutil
-    import subprocess as _sp
-
-    project = Path(project_path)
-    backup = Path(backup_path)
-
-    # Estimate available disk space and abort if essentially full
+def _backup_confirm(prompt):
+    if not sys.stdin.isatty():
+        return False
     try:
-        usage = shutil.disk_usage(str(backup))
-        free_gb = usage.free / (1024 ** 3)
-        print(f"  Free space on backup volume: {free_gb:.1f} GB")
-        if not dry_run and usage.free < BACKUP_MIN_FREE_BYTES:
-            print(f"✗ Backup volume is full ({free_gb:.1f} GB free) — aborting", file=sys.stderr)
-            sys.exit(1)
-    except Exception:
-        pass
+        return input(prompt + " [y/N] ").strip().lower() in ("y", "yes")
+    except EOFError:
+        return False
 
-    # Ensure source path ends with / so rsync syncs contents, not the folder itself
-    src = str(project).rstrip("/") + "/"
-    dst = str(backup).rstrip("/") + "/"
 
-    # Try rsync first
-    rsync_available = shutil.which("rsync") is not None
-    if rsync_available:
-        cmd = ["rsync", "-a", "--no-links", "--info=progress2", src, dst]
-        if dry_run:
-            cmd.insert(1, "--dry-run")
-            print("  (dry run — no files will be written)")
-        print(f"  rsync {src!r} → {dst!r}")
-        try:
-            _sp.run(cmd, check=True)
-            return
-        except _sp.CalledProcessError as exc:
-            print(f"✗ rsync failed (exit {exc.returncode})", file=sys.stderr)
-            sys.exit(exc.returncode)
+def _run_backup_mirror(args, project, configured):
+    import time
+    from services import backup_mirror
 
-    # Fallback: shutil-based incremental copy
-    if dry_run:
-        print("  (dry run — no files will be written)")
-        print(f"  [shutil fallback] would sync {src!r} → {dst!r}")
+    last_phase, last_update = None, 0.0
+
+    def progress(event):
+        nonlocal last_phase, last_update
+        now = time.monotonic()
+        if event['phase'] != last_phase or now - last_update >= 1:
+            detail = event.get('path', event.get('entries', ''))
+            print(f"{event['phase']}: {detail}", flush=True)
+            last_phase, last_update = event['phase'], now
+
+    preview = backup_mirror.prepare_mirror(
+        project, configured, plan=getattr(args, 'plan', None),
+        checksums=getattr(args, 'checksum', False), progress=progress,
+    )
+    print(backup_mirror.preview_text(preview))
+    if getattr(args, 'dry_run', False):
+        print(f"Retained plan: {preview['plan']}\nPlan SHA256: {preview['plan_digest']}")
+        print("Dry run: backup unchanged. No confirmation requested.")
         return
-
-    print(f"  rsync not found — using shutil fallback")
-    print(f"  Copying {src!r} → {dst!r}")
-    copied = 0
-    skipped = 0
-    for root, dirs, files in os.walk(str(project)):
-        rel_root = os.path.relpath(root, str(project))
-        dst_root = backup / rel_root
-        dst_root.mkdir(parents=True, exist_ok=True)
-        for filename in files:
-            src_file = Path(root) / filename
-            dst_file = dst_root / filename
-            try:
-                src_stat = src_file.stat()
-                if dst_file.exists():
-                    dst_stat = dst_file.stat()
-                    # Skip if same size and dst is not older
-                    if (dst_stat.st_size == src_stat.st_size and
-                            dst_stat.st_mtime >= src_stat.st_mtime):
-                        skipped += 1
-                        continue
-                shutil.copy2(str(src_file), str(dst_file))
-                copied += 1
-            except Exception as exc:
-                print(f"  ✗ Failed to copy {src_file}: {exc}", file=sys.stderr)
-    print(f"  Done — {copied} file(s) copied, {skipped} skipped (up to date)")
+    if preview['apply_blocked']:
+        raise backup_mirror.MirrorError('; '.join(preview['apply_blocked']))
+    unattended = getattr(args, 'apply', False)
+    if not unattended and not _backup_confirm("Synchronize this exact preview?"):
+        print("Cancelled: backup unchanged.")
+        return
+    deleting = any(preview['actions'].get(action, {}).get('count', 0) for action in ('delete', 'rmdir'))
+    approve_delete = False
+    if deleting and not unattended:
+        approve_delete = _backup_confirm(
+            f"Additionally authorize the displayed deletions ({preview['estimated_delete_recovery_bytes']:,} bytes)?"
+        )
+        if not approve_delete:
+            print("Cancelled: backup unchanged.")
+            return
+    result = backup_mirror.execute_preview(
+        project, configured, preview, approve_delete=approve_delete,
+        approval=getattr(args, 'approve_plan', None), progress=progress,
+    )
+    print("Backup synchronized and verified.")
+    print(json.dumps(result, indent=2))
 
 
 def cmd_backup(args):
-    sub = args.backup_subcommand or "update"
+    sub = args.backup_subcommand or "mirror"
     if sub in ("update", "mirror", "adopt", "verify"):
         import sqlite3
         from services import backup_mirror
@@ -9358,7 +9309,7 @@ def cmd_backup(args):
             configuration = json.loads((Path(project) / "preferences/preferences.json").read_text())
             configured = configuration.get("backup_path")
             if sub == "adopt":
-                if not args.apply:
+                if not args.apply or getattr(args, 'dry_run', False):
                     print("Adoption requires --apply, --plan and --approve-plan after human review")
                     return
                 if not args.plan or not args.approve_plan:
@@ -9368,15 +9319,15 @@ def cmd_backup(args):
                 result = backup_mirror.adopt_mirror(project, configured, args.plan, args.approve_plan, limits=limits)
             elif sub == "verify":
                 result = backup_mirror.restore_verification(project, configured, args.plan, full=args.full)
-            elif getattr(args, "apply", False) and not getattr(args, "dry_run", False):
-                if not args.plan:
-                    raise backup_mirror.MirrorError("Apply requires a reviewed --plan")
-                result = backup_mirror.apply_mirror(project, configured, args.plan, approval=args.approve_plan)
             else:
-                result = backup_mirror.publish_preview(project, configured, checksums=getattr(args, "checksum", False))
+                _run_backup_mirror(args, project, configured)
+                return
             print(json.dumps(result, indent=2))
+        except KeyboardInterrupt:
+            print("Backup cancelled. Any completed transfers retain their recovery journal; no verified completion claimed.", file=sys.stderr)
+            sys.exit(130)
         except (backup_mirror.MirrorError, OSError, ValueError, sqlite3.Error) as error:
-            print(f"Backup mirror stopped: {error}", file=sys.stderr)
+            print(f"Backup mirror stopped: {error}. Restart preview after resolving the blocker; do not discard recovery journals.", file=sys.stderr)
             sys.exit(1)
         return
     if sub == "status":
@@ -12352,7 +12303,7 @@ def build_parser():
     backup_sub = p_backup.add_subparsers(dest="backup_subcommand", required=False)
 
     for name in ("update", "mirror", "adopt", "verify"):
-        p_backup_mode = backup_sub.add_parser(name, help=f"Verified mirror {name} (preview by default)")
+        p_backup_mode = backup_sub.add_parser(name, help=("Compatibility alias for mirror" if name == "update" else f"Guarded mirror {name}"))
         p_backup_mode.set_defaults(func=cmd_backup)
         p_backup_mode.add_argument("--project", help="Explicit existing source project; does not change preferences")
         p_backup_mode.add_argument("--plan", help="Immutable reconciliation SQLite plan")
@@ -12361,7 +12312,7 @@ def build_parser():
             p_backup_mode.add_argument("--offline", action="store_true", help="Verify retained mirror without the primary project")
             p_backup_mode.add_argument("--destination", help="Existing mounted mirror for offline verification")
         else:
-            p_backup_mode.add_argument("--apply", action="store_true", help="Explicitly execute reviewed adoption/synchronization")
+            p_backup_mode.add_argument("--apply", action="store_true", help="Execute without the normal prompt; deletion still requires exact reviewed approval")
             p_backup_mode.add_argument("--approve-plan", help="Exact reviewed plan SHA256; required for adoption/first deletion")
         if name in ("update", "mirror"):
             p_backup_mode.add_argument("--dry-run", action="store_true", default=argparse.SUPPRESS,

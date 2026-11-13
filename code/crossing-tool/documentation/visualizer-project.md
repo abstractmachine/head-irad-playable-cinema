@@ -86,7 +86,45 @@ The path to your active project folder. Click **Browse…** to choose a differen
 
 ### Backup
 
-Set a backup destination path and click **Backup** to copy the project data there.
+**Path** selects the project-scoped backup destination; it does not open its
+contents. Canceling the folder picker leaves the setting unchanged. The path stays
+visible, elides in the middle when necessary, and has a full-path tooltip.
+
+**Mirror** synchronizes the project through the same guarded service as
+`crossing backup mirror`. Its states are Mirror, Preparing, Confirm, Mirroring,
+and Mirror again on success (Retry on failure). Preparation runs in the background
+and displays copy/update/delete counts, affected bytes, free capacity and blockers.
+Click the inline **Confirm** to execute that exact reviewed plan; an ordinary
+preview never applies automatically or opens a modal confirmation. Deletions still
+need a separate explicit default-No authorization. Canceling before execution
+leaves the backup unchanged. Adoption remains a separate advanced CLI operation.
+
+**Verify** runs `crossing backup verify --full` asynchronously against the retained,
+digest-pinned mirror plan. It does not synchronize, copy, delete or adopt payload.
+Full verification can take several hours. Progress reports checked/expected files,
+payload percentage when known, completed SQLite checks and the current phase.
+Finishing payload checks is not success: population, source and device checks must
+also pass. Unknown-duration phases do not display a made-up percentage. Only one
+backup operation can run at a time; the window remains responsive.
+
+**Cancel** requests a cooperative safe-checkpoint stop for Mirror or Verify, never
+thread termination. A large file, inventory validation, or evidence hash can delay
+stopping. Closing while a worker is active requests stopping and keeps ownership
+of the worker/window until it finishes; close again afterward. During interrupted
+mirroring, installed files and durable journals remain available for recovery.
+
+**Last mirror** is the last successful synchronization, not the last preview or
+attempt. **Last full verify** is independent: mirroring never advances it. The
+service reads completed, sealed mirror evidence and persists successful full
+verification metadata only after every check finishes. An older verification is
+marked **previous mirror** after a newer mirror state. A new complete verification
+clears that distinction. Dates survive reopening and refresh when Path changes;
+missing/invalid evidence shows Unknown / Not verified. No historical success is
+inferred from file dates or partial checksum logs.
+
+Keep a verified pre-migration mirror frozen until the physical media-first
+migration succeeds. See [Backup](commands.md#backup) for independent full/offline
+verification and advanced reviewed-plan recovery options.
 
 ### Defaults
 

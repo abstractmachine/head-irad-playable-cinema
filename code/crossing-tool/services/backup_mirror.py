@@ -1,5 +1,5 @@
 """Verified project mirroring; previews never write to the external destination."""
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 import ctypes
 import fcntl
 import hashlib
@@ -26,6 +26,17 @@ DEFAULT_LIMITS = {'max_files': 0, 'max_bytes': 0, 'max_percentage': 0.0}
 
 class MirrorError(RuntimeError):
     pass
+
+
+class MirrorCancelled(MirrorError):
+    pass
+
+
+def checkpoint(progress, cancelled, phase, **details):
+    if cancelled is not None and cancelled():
+        raise MirrorCancelled('Cancelled at a safe checkpoint; any installed files are journaled. No verified completion claimed.')
+    if progress is not None:
+        progress({'phase': phase, **details})
 
 
 def mounted_filesystems():
@@ -245,12 +256,13 @@ def new_inventory(database):
     ''')
 
 
-def inventory_tree(database, root, side, *, checksums=False):
+def inventory_tree(database, root, side, *, checksums=False, progress=None, cancelled=None):
     root = Path(root)
     pending = [root]
     batch = []
     count = 0
     while pending:
+        checkpoint(progress, cancelled, 'preview', side=side, entries=count + len(batch))
         directory = pending.pop()
         with os.scandir(directory) as entries:
             folded = {}
@@ -278,6 +290,7 @@ def inventory_tree(database, root, side, *, checksums=False):
                 if kind == 'directory':
                     pending.append(path)
                 if len(batch) >= 2048:
+                    checkpoint(progress, cancelled, 'preview', side=side, entries=count + len(batch))
                     database.executemany('INSERT INTO inventory VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', batch)
                     database.commit()
                     count += len(batch)
@@ -366,7 +379,8 @@ def summarize(database, context):
             'estimates': 'Apparent payload bytes, not guaranteed block recovery; protected excluded subtree sizes not traversed; update count is conservative until checksummed'}
 
 
-def plan_mirror(project, configured, report_dir=None, *, checksums=False):
+def plan_mirror(project, configured, report_dir=None, *, checksums=False, progress=None, cancelled=None):
+    checkpoint(progress, cancelled, 'preview')
     context = destination_context(project, configured)
     check_context(context)
     require_source(context['project'])
@@ -381,8 +395,8 @@ def plan_mirror(project, configured, report_dir=None, *, checksums=False):
         metadata(database, 'context', context)
         metadata(database, 'policy', policy())
         metadata(database, 'marker', marker)
-        inventory_tree(database, context['project'], 'source', checksums=checksums)
-        inventory_tree(database, context['destination'], 'destination', checksums=checksums)
+        inventory_tree(database, context['project'], 'source', checksums=checksums, progress=progress, cancelled=cancelled)
+        inventory_tree(database, context['destination'], 'destination', checksums=checksums, progress=progress, cancelled=cancelled)
         if not database.execute("SELECT 1 FROM inventory WHERE side='source' AND kind='file' LIMIT 1").fetchone():
             raise MirrorError('Unexpectedly empty source; deletion plan refused')
         first = marker is None or not marker.get('reconciled')
@@ -400,6 +414,67 @@ def plan_mirror(project, configured, report_dir=None, *, checksums=False):
                     'apply_blocked': ['Explicit adoption required'] if marker is None else [],
                     'checksum_mode': checksums, 'census_backup_verified': False})
     return summary
+
+
+def prepare_mirror(project, configured, *, plan=None, checksums=False, progress=None, cancelled=None):
+    with operation_lock(project):
+        checkpoint(progress, cancelled, 'preview')
+        if plan is None:
+            preview = plan_mirror(project, configured, checksums=checksums, progress=progress, cancelled=cancelled)
+            plan = preview['plan']
+            os.chmod(plan, 0o444)
+        plan, digest = approved_plan(plan)
+        with readonly_database(plan) as database:
+            context = reviewed_context(database, project, configured)
+            check_context(context)
+            marker = read_marker(context)
+            result = dict(metadata(database, 'summary'))
+            largest_update = database.execute("SELECT coalesce(max(source_size),0) FROM actions WHERE action='update'").fetchone()[0]
+            conflicts = database.execute("SELECT count(*) FROM actions WHERE action='conflict'").fetchone()[0]
+            required = result['actions'].get('copy', {}).get('source_bytes', 0) + largest_update + plan.stat().st_size
+            blocks = []
+            if marker is None:
+                blocks.append('Explicit adoption required; use the advanced adopt workflow')
+            if result['issues'] or conflicts:
+                blocks.append('Unresolved filename, special-file or type conflicts')
+            available = shutil.disk_usage(context['destination']).free
+            if available < required:
+                blocks.append('Insufficient copy-before-delete capacity')
+            result.update(plan=str(plan), plan_digest=digest, context=context,
+                          available_bytes=available, required_capacity_bytes=required,
+                          apply_blocked=blocks, marker_present=marker is not None,
+                          first_reconciliation=metadata(database, 'first_reconciliation'))
+        checkpoint(progress, cancelled, 'preview_ready')
+        return result
+
+
+def preview_text(preview):
+    actions = preview['actions']
+    count = lambda action: actions.get(action, {}).get('count', 0)
+    lines = [f"Destination: {preview['context']['destination']}",
+             f"Source files: {preview['source_file_count']:,}",
+             f"Already present: {count('same') + count('check'):,} (metadata matches are not verified)",
+             f"Copy: {count('copy'):,}; update: {count('update'):,}",
+             f"Delete: {count('delete'):,} files, {count('rmdir'):,} directories; {preview['estimated_delete_recovery_bytes']:,} bytes",
+             f"Transfer: {preview['bytes_to_transfer']:,} bytes",
+             f"Capacity: {preview['capacity_bytes']:,} bytes; available: {preview['available_bytes']:,} bytes",
+             f"Copy-before-delete required: {preview['required_capacity_bytes']:,} bytes",
+             'Verification: every source file is checksummed before deletion and at completion.']
+    lines.extend('BLOCKED: ' + message for message in preview['apply_blocked'])
+    return '\n'.join(lines)
+
+
+def execute_preview(project, configured, preview, *, approve_delete=False, approval=None, progress=None, cancelled=None):
+    checkpoint(progress, cancelled, 'preflight')
+    if preview['apply_blocked']:
+        raise MirrorError('; '.join(preview['apply_blocked']))
+    digest = preview['plan_digest']
+    approved_plan(preview['plan'], digest)
+    deleting = any(preview['actions'].get(action, {}).get('count', 0) for action in ('delete', 'rmdir'))
+    if deleting and not approve_delete and approval != digest:
+        raise MirrorError('Deletion requires additional explicit approval of this exact preview; restart with interactive review or advanced --approve-plan')
+    return apply_mirror(project, configured, preview['plan'], approval=digest if approve_delete else approval,
+                        expected_digest=digest, progress=progress, cancelled=cancelled)
 
 
 @contextmanager
@@ -656,10 +731,14 @@ def atomic_copy(context, source_descriptor, destination_descriptor, row, destina
         os.close(source_file)
 
 
-def verify_payload(context, database, journal=None):
+def verify_payload(context, database, journal=None, *, progress=None, cancelled=None):
     checked = 0
+    sqlite_checked = 0
+    total = database.execute("SELECT count(*) FROM inventory WHERE side='source' AND kind='file'").fetchone()[0]
     for row in database.execute("SELECT path,kind FROM inventory WHERE side='source' AND kind IN ('file','directory') ORDER BY path"):
         path, kind = row
+        checkpoint(progress, cancelled, 'verify', files_verified=checked, total_files=total,
+                   sqlite_databases_verified=sqlite_checked, path=path)
         source = Path(context['project']) / path
         destination = Path(context['destination']) / path
         if kind == 'directory':
@@ -671,6 +750,7 @@ def verify_payload(context, database, journal=None):
             verify_copy(destination, source_hash)
             if is_database:
                 sqlite_integrity(destination)
+                sqlite_checked += 1
         if journal is not None:
             journal.execute('INSERT OR REPLACE INTO verified VALUES(?,?)', (path, source_hash))
             if checked % 256 == 0:
@@ -678,7 +758,10 @@ def verify_payload(context, database, journal=None):
         checked += 1
     if journal is not None:
         journal.commit()
-    return {'files_verified': checked, 'sha256': True, 'sqlite_integrity': True}
+    checkpoint(progress, cancelled, 'payload_checked', files_verified=checked, total_files=total,
+               sqlite_databases_verified=sqlite_checked)
+    return {'files_verified': checked, 'total_files': total, 'sqlite_databases_verified': sqlite_checked,
+            'sha256': True, 'sqlite_integrity': True}
 
 
 def deletion_authorized(database, marker, approval, digest):
@@ -743,8 +826,11 @@ class SourceGuard:
             self.descriptor = None
 
 
-def apply_mirror(project, configured, plan, *, approval=None):
+def apply_mirror(project, configured, plan, *, approval=None, expected_digest=None, progress=None, cancelled=None):
+    checkpoint(progress, cancelled, 'preflight')
     plan, digest = approved_plan(plan, approval)
+    if expected_digest is not None and digest != expected_digest:
+        raise MirrorError('Reviewed plan changed; restart preview')
     with operation_lock(project), readonly_database(plan) as database:
         database.row_factory = sqlite3.Row
         context = reviewed_context(database, project, configured)
@@ -765,6 +851,10 @@ def apply_mirror(project, configured, plan, *, approval=None):
         if shutil.disk_usage(context['destination']).free < required_capacity:
             raise MirrorError('Insufficient copy-before-delete space; obsolete bytes cannot be spent before verification')
         control = Path(context['destination']) / CONTROL
+        journal_path = control / ('journal-' + digest + '.sqlite3')
+        if not journal_path.exists():
+            validate_inventory(database, 'destination', context['destination'])
+        checkpoint(progress, cancelled, 'copy')
         if control.is_symlink():
             raise MirrorError('Control namespace is a symlink')
         control.mkdir(exist_ok=True)
@@ -793,6 +883,7 @@ def apply_mirror(project, configured, plan, *, approval=None):
             validate_inventory(database, 'destination', context['destination'], allow_paths=changing + added_directories)
             for entry in journal.execute("SELECT * FROM entries WHERE action IN ('copy','update','mkdir') ORDER BY path").fetchall():
                 path = entry['path']
+                checkpoint(progress, cancelled, 'copy', path=path)
                 current_path = path
                 source_guard.check()
                 check_context(context, fast=True)
@@ -819,12 +910,13 @@ def apply_mirror(project, configured, plan, *, approval=None):
                 journal.execute("UPDATE entries SET state='copied',sha256=? WHERE path=?", (checksum, path))
                 journal.commit()
             validate_inventory(database, 'source', project)
-            verification = verify_payload(context, database, journal)
+            verification = verify_payload(context, database, journal, progress=progress, cancelled=cancelled)
             validate_inventory(database, 'source', project)
             source_guard.check()
             check_context(context)
             for entry in journal.execute("SELECT * FROM entries WHERE action IN ('delete','rmdir') ORDER BY length(path) DESC,path DESC").fetchall():
                 path = entry['path']
+                checkpoint(progress, cancelled, 'delete', path=path)
                 current_path = path
                 source_guard.check()
                 check_context(context, fast=True)
@@ -868,9 +960,10 @@ def apply_mirror(project, configured, plan, *, approval=None):
                     journal.execute("UPDATE entries SET state='deleted' WHERE path=?", (path,))
                     journal.commit()
             validate_inventory(database, 'source', project)
-            verification = verify_payload(context, database, journal)
+            verification = verify_payload(context, database, journal, progress=progress, cancelled=cancelled)
             source_guard.check()
             with tempfile.TemporaryDirectory(dir=Path(project) / REPORT_RELATIVE) as temporary:
+                checkpoint(progress, cancelled, 'final_verify')
                 with sqlite3.connect(Path(temporary) / 'final.sqlite3') as final:
                     new_inventory(final)
                     inventory_tree(final, project, 'source')
@@ -898,7 +991,10 @@ def apply_mirror(project, configured, plan, *, approval=None):
             marker['journal_sha256'] = file_hash(journal_path)
             from data.annotate import atomic_write_text
             source_guard.check()
+            checkpoint(progress, cancelled, 'finalize')
             atomic_write_text(Path(context['destination']) / MARKER, json.dumps(marker, indent=2))
+            if progress is not None:
+                progress({'phase': 'complete', **verification})
             return verification
         except BaseException as error:
             if current_path is not None:
@@ -993,17 +1089,104 @@ def restoration_context(project, configured, plan, expected_device):
         os.close(descriptor)
 
 
-def restore_verification(project, configured, plan=None, *, full=False, remount_identity=None):
-    if remount_identity is None:
-        return _restore_verification(destination_context(project, configured), plan, full=full)
-    if not full or plan is None:
-        raise MirrorError('Remount validation requires full read-only restoration and a sealed plan')
-    with restoration_context(project, configured, plan, remount_identity) as (context, evidence):
-        result = _restore_verification(context, plan, full=True, restoration_identity=evidence)
+def _completed_mirror_evidence(context, marker):
+    if not marker or marker.get('reconciled') is not True:
+        raise MirrorError('No completed mirror evidence')
+    digest = marker.get('last_verified_plan', '')
+    seal = marker.get('journal_sha256', '')
+    if any(not isinstance(value, str) or len(value) != 64 or any(character not in '0123456789abcdef' for character in value)
+           for value in (digest, seal)):
+        raise MirrorError('Invalid completed mirror seals')
+    control = Path(context['destination']) / CONTROL
+    plan = control / ('metadata-' + digest + '.sqlite3')
+    journal = control / ('journal-' + digest + '.sqlite3')
+    if control.is_symlink() or plan.is_symlink() or journal.is_symlink():
+        raise MirrorError('Mirror evidence must not use symlinks')
+    approved_plan(plan, digest)
+    verify_copy(journal, seal)
+    with readonly_database(plan) as database, readonly_database(journal) as ledger:
+        recorded = metadata(database, 'context')
+        if any(recorded.get(key) != context.get(key) for key in ('project', 'destination')) or recorded['mount']['uuid'] != context['mount']['uuid']:
+            raise MirrorError('Completed mirror evidence belongs to a different destination')
+        total = metadata(database, 'summary')['source_file_count']
+        if (ledger.execute('SELECT phase FROM operation WHERE plan_digest=?', (digest,)).fetchone() != ('verified',)
+                or ledger.execute('SELECT count(*) FROM verified').fetchone()[0] != total
+                or marker.get('source_file_count') != total):
+            raise MirrorError('Mirror journal does not prove completed synchronization')
+    return plan
+
+
+def _valid_backup_timestamp(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and 0 < value < 253402300800
+
+
+def backup_status(project, configured):
+    result = {'last_mirror': None, 'last_full_verify': None, 'verification_current': False}
+    try:
+        context = destination_context(project, configured)
+        marker = read_marker(context)
+        plan = _completed_mirror_evidence(context, marker)
+        with readonly_database(plan) as database:
+            recorded = metadata(database, 'context')
+            if any(recorded.get(key) != context.get(key) for key in ('destination_inode', 'destination_device')):
+                raise MirrorError('Selected mirror root no longer matches completed evidence')
+        mirrored = marker.get('last_verified_at')
+        if _valid_backup_timestamp(mirrored):
+            result['last_mirror'] = mirrored
+        verification = marker.get('last_full_verification')
+        if (isinstance(verification, dict) and _valid_backup_timestamp(verification.get('completed_at'))
+                and _valid_backup_timestamp(verification.get('mirror_completed_at'))
+            and verification.get('project') == context['project']
+            and verification.get('destination') == context['destination']
+            and verification.get('device_uuid') == context['mount']['uuid']
+                and all(isinstance(verification.get(key), str) and len(verification[key]) == 64
+                        and all(character in '0123456789abcdef' for character in verification[key])
+                        for key in ('plan_digest', 'journal_sha256'))):
+            result['last_full_verify'] = verification['completed_at']
+            result['verification_current'] = (verification['plan_digest'] == marker['last_verified_plan']
+                                              and verification['journal_sha256'] == marker['journal_sha256']
+                                              and verification['mirror_completed_at'] == mirrored)
+    except (MirrorError, OSError, ValueError, TypeError, KeyError, AttributeError, sqlite3.Error) as error:
+        result['warning'] = str(error)
     return result
 
 
-def _restore_verification(context, plan, *, full, restoration_identity=None):
+def restore_verification(project, configured, plan=None, *, full=False, remount_identity=None, progress=None, cancelled=None):
+    checkpoint(progress, cancelled, 'preparing')
+    if full:
+        with operation_lock(project):
+            return _run_full_verification(project, configured, plan, remount_identity, progress, cancelled)
+    if remount_identity is not None:
+        raise MirrorError('Remount validation requires full read-only restoration and a sealed plan')
+    return _restore_verification(destination_context(project, configured), plan, full=False)
+
+
+def _run_full_verification(project, configured, plan, remount_identity, progress, cancelled):
+    if remount_identity is None:
+        context = destination_context(project, configured)
+        if plan is None:
+            marker = read_marker(context)
+            digest = marker.get('last_verified_plan', '') if marker else ''
+            if not marker or not marker.get('reconciled') or len(digest) != 64 or any(character not in '0123456789abcdef' for character in digest):
+                raise MirrorError('Full verification requires a completed mirror and retained verified plan')
+            control = Path(context['destination']) / CONTROL
+            plan = control / ('metadata-' + digest + '.sqlite3')
+            if control.is_symlink() or plan.is_symlink():
+                raise MirrorError('Retained verification plan must not use symlinks')
+            approved_plan(plan, digest)
+        result = _restore_verification(context, plan, full=True, progress=progress, cancelled=cancelled)
+    else:
+        if plan is None:
+            raise MirrorError('Remount validation requires full read-only restoration and a sealed plan')
+        with restoration_context(project, configured, plan, remount_identity) as (context, evidence):
+            result = _restore_verification(context, plan, full=True, restoration_identity=evidence,
+                                          progress=progress, cancelled=cancelled)
+    if progress is not None:
+        progress({'phase': 'complete', **result['verification']})
+    return result
+
+
+def _restore_verification(context, plan, *, full, restoration_identity=None, progress=None, cancelled=None):
     project = Path(context['project'])
     marker = read_marker(context)
     destination = Path(context['destination'])
@@ -1026,20 +1209,51 @@ def _restore_verification(context, plan, *, full, restoration_identity=None):
     if full:
         if marker is None or plan is None:
             raise MirrorError('Full restore verification requires an adopted mirror and retained plan')
-        with readonly_database(plan) as database:
+        with readonly_database(plan) as database, ExitStack() as guards:
             if restoration_identity is None:
                 reviewed_context(database, project, context['configured'])
+            source_guard = SourceGuard(database, project)
+            guards.callback(source_guard.close)
+            destination_guard = SourceGuard(database, destination)
+            guards.callback(destination_guard.close)
+            checkpoint(progress, cancelled, 'source_validation')
             validate_inventory(database, 'source', project)
-            result['verification'] = verify_payload(context, database)
+            result['verification'] = verify_payload(context, database, progress=progress, cancelled=cancelled)
+            checkpoint(progress, cancelled, 'population')
             with tempfile.TemporaryDirectory(dir=Path(project) / REPORT_RELATIVE) as temporary:
                 with sqlite3.connect(Path(temporary) / 'restore-check.sqlite3') as final:
                     new_inventory(final)
-                    inventory_tree(final, project, 'source')
-                    inventory_tree(final, context['destination'], 'destination')
+                    def population_progress(event):
+                        if progress is not None:
+                            progress({**event, 'phase': 'population'})
+                    inventory_tree(final, project, 'source', progress=population_progress, cancelled=cancelled)
+                    inventory_tree(final, context['destination'], 'destination', progress=population_progress, cancelled=cancelled)
                     classify(final, exfat=context['mount']['fstype'] == 'exfat', first=False)
                     if final.execute("SELECT 1 FROM actions WHERE action IN ('copy','conflict','delete','rmdir') LIMIT 1").fetchone():
                         raise MirrorError('Restore population contains missing/unexpected comparable entries')
             validate_inventory(database, 'source', project)
+            source_guard.check()
+            destination_guard.check()
+            checkpoint(progress, cancelled, 'final_validation')
+            if restoration_identity is None:
+                check_context(context)
+                if read_marker(context) != marker:
+                    raise MirrorError('Mirror evidence changed during full verification')
+                if marker.get('reconciled') and marker.get('last_verified_plan') == file_hash(plan):
+                    _completed_mirror_evidence(context, marker)
+                    checkpoint(None, cancelled, 'final_validation')
+                    source_guard.check()
+                    destination_guard.check()
+                    completed = time.time()
+                    marker['last_full_verification'] = {
+                        'completed_at': completed, 'plan_digest': marker['last_verified_plan'],
+                        'journal_sha256': marker['journal_sha256'], 'mirror_completed_at': marker.get('last_verified_at'),
+                        'project': context['project'], 'destination': context['destination'],
+                        'device_uuid': context['mount']['uuid'],
+                    }
+                    from data.annotate import atomic_write_text
+                    atomic_write_text(destination / MARKER, json.dumps(marker, indent=2))
+                    result['completed_at'] = completed
             result['full_payload_verified'] = True
             if restoration_identity is not None:
                 result['restoration_identity'] = restoration_identity
