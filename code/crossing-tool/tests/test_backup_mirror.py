@@ -8,6 +8,216 @@ import pytest
 from services import backup_mirror as mirror
 
 
+@pytest.mark.parametrize('side', ['source', 'destination'])
+def test_directory_preflight_reports_identity_not_type_for_inode_change(tmp_path, side):
+    root = tmp_path / side
+    root.mkdir()
+    directory = root / '.pytest_cache'
+    directory.mkdir()
+    with sqlite3.connect(':memory:') as database:
+        mirror.new_inventory(database)
+        mirror.inventory_tree(database, root, side)
+        info = directory.lstat()
+        database.execute('UPDATE inventory SET inode=? WHERE side=? AND path=?', (info.st_ino + 1, side, '.pytest_cache'))
+        with pytest.raises(mirror.MirrorError) as error:
+            mirror.validate_inventory(database, side, root)
+        message = str(error.value)
+        assert f'Inventory {side} directory identity changed: .pytest_cache' in message
+        assert f'expected type=directory inode={info.st_ino + 1}' in message
+        assert f'observed type=directory inode={info.st_ino}' in message
+
+
+@pytest.mark.parametrize('filesystem', ['ext4', 'exfat'])
+@pytest.mark.parametrize('side', ['source', 'destination'])
+@pytest.mark.parametrize('change', ['unchanged', 'timestamps', 'permissions', 'file', 'symlink', 'missing', 'recreated', 'inode', 'device'])
+def test_directory_preflight_preserves_identity_guards(environment, tmp_path, filesystem, side, change):
+    project, destination, mount = environment
+    mount['fstype'] = filesystem
+    root = project if side == 'source' else destination
+    directory = root / '.pytest_cache'
+    directory.mkdir()
+    info = directory.lstat()
+    with sqlite3.connect(':memory:') as database:
+        mirror.new_inventory(database)
+        mirror.inventory_tree(database, root, side)
+        if change == 'timestamps':
+            os.utime(directory, ns=(info.st_atime_ns + 4_000_000_000, info.st_mtime_ns + 4_000_000_000))
+        elif change == 'permissions':
+            directory.chmod(0o700 if info.st_mode & 0o777 != 0o700 else 0o755)
+        elif change in ('file', 'symlink', 'missing'):
+            directory.rmdir()
+            if change == 'file':
+                directory.write_text('replacement')
+            elif change == 'symlink':
+                outside = tmp_path / 'outside'
+                outside.mkdir()
+                (outside / 'must-not-traverse').write_text('external data')
+                directory.symlink_to(outside, target_is_directory=True)
+        elif change == 'recreated':
+            replacement = tmp_path / 'replacement'
+            replacement.mkdir()
+            directory.rmdir()
+            replacement.rename(directory)
+            assert directory.lstat().st_ino != info.st_ino
+        elif change in ('inode', 'device'):
+            column = change
+            previous = info.st_ino + 1 if change == 'inode' else info.st_dev + 1
+            database.execute(f'UPDATE inventory SET {column}=? WHERE side=? AND path=?', (previous, side, '.pytest_cache'))
+        if change in ('unchanged', 'timestamps', 'permissions'):
+            mirror.validate_inventory(database, side, root)
+        else:
+            with pytest.raises(mirror.MirrorError) as error:
+                mirror.validate_inventory(database, side, root)
+            message = str(error.value)
+            if change == 'missing':
+                assert 'Inventory entry disappeared: .pytest_cache' in message
+            else:
+                reason = 'type' if change in ('file', 'symlink') else 'identity'
+                assert f'Inventory {side} directory {reason} changed: .pytest_cache' in message
+                assert f'device={info.st_dev}' in message
+
+
+@pytest.mark.parametrize('side', ['source', 'destination'])
+def test_stale_directory_plan_is_not_amended_or_executed(environment, tmp_path, side):
+    project, destination, mount = environment
+    root = project if side == 'source' else destination
+    directory = root / '.pytest_cache'
+    directory.mkdir()
+    if side == 'destination':
+        mount['fstype'] = 'ext4'
+    preview = ready(environment)
+    marker = (destination / mirror.MARKER).read_bytes()
+    replacement = tmp_path / 'replacement'
+    replacement.mkdir()
+    directory.rmdir()
+    replacement.rename(directory)
+    with pytest.raises(mirror.MirrorError, match=f'Inventory {side} directory identity changed'):
+        mirror.apply_mirror(project, destination, preview['plan'], approval=preview['plan_digest'])
+    assert mirror.file_hash(preview['plan']) == preview['plan_digest']
+    assert (destination / mirror.MARKER).read_bytes() == marker
+    assert (destination / 'obsolete/old').read_text() == 'old data'
+    assert not (destination / mirror.CONTROL).exists()
+    assert not (destination / 'data/current').exists()
+
+
+@pytest.mark.parametrize('filesystem,side,change,error', [
+    ('exfat', 'destination', 'unchanged', None),
+    ('ext4', 'destination', 'unchanged', 'Inventory destination directory identity changed'),
+    ('exfat', 'source', 'unchanged', 'Inventory source directory identity changed'),
+    ('exfat', 'destination', 'file', 'Inventory destination directory type changed'),
+    ('exfat', 'destination', 'symlink', 'Inventory destination directory type changed'),
+    ('exfat', 'destination', 'missing', 'Inventory entry disappeared'),
+    ('exfat', 'destination', 'unexpected_child', 'file population changed'),
+    ('exfat', 'destination', 'missing_child', 'Inventory entry disappeared'),
+    ('exfat', 'destination', 'content', 'Inventory file changed'),
+    ('exfat', 'destination', 'file_inode', 'Inventory file changed'),
+    ('exfat', 'destination', 'directory_device', 'Inventory destination directory identity changed'),
+    ('exfat', 'destination', 'mount_uuid', 'identity changed'),
+    ('exfat', 'destination', 'mount_device', 'identity changed'),
+    ('exfat', 'destination', 'mount_type', 'identity changed'),
+    ('exfat', 'destination', 'mount_missing', 'absent'),
+    ('exfat', 'destination', 'root_inode', 'identity changed'),
+    ('exfat', 'destination', 'rmdir', 'Inventory destination directory identity changed'),
+    ('exfat', 'destination', 'approval', 'requires exact plan approval'),
+    ('exfat', 'destination', 'wrong_approval', 'Approval does not match'),
+])
+def test_directory_inode_preflight_through_actual_apply(cli_mirror, monkeypatch, filesystem, side, change, error):
+    project, destination, mount = cli_mirror
+    mount['fstype'] = filesystem
+    directory = destination / 'media/empty'
+    directory.mkdir(parents=True)
+    child = directory / 'expected'
+    child.write_text('original')
+    if change != 'rmdir':
+        (project / 'media/empty').mkdir(parents=True)
+        (project / 'media/empty/expected').write_text('original')
+    if change == 'approval':
+        (destination / 'obsolete').write_text('must remain')
+    preview = mirror.prepare_mirror(project, destination)
+    marker = (destination / mirror.MARKER).read_bytes()
+    database = sqlite3.connect(':memory:')
+    try:
+        with mirror.readonly_database(preview['plan']) as original:
+            original.backup(database)
+        database.execute("UPDATE inventory SET inode=inode+1 WHERE side=? AND kind='directory'", (side,))
+        if change == 'directory_device':
+            database.execute("UPDATE inventory SET device=device+1 WHERE side='destination' AND path='media/empty'")
+        elif change == 'file_inode':
+            database.execute("UPDATE inventory SET inode=inode+1 WHERE side='destination' AND path='media/empty/expected'")
+        elif change == 'root_inode':
+            context = mirror.metadata(database, 'context')
+            context['destination_inode'] += 1
+            mirror.metadata(database, 'context', context)
+        database.commit()
+        amended = project / mirror.REPORT_RELATIVE / 'fixture-inode.sqlite3'
+        with sqlite3.connect(amended) as output:
+            database.backup(output)
+        digest = mirror.file_hash(amended)
+        if change in ('file', 'symlink', 'missing'):
+            child.unlink()
+            directory.rmdir()
+            if change == 'file':
+                directory.write_text('replacement')
+            elif change == 'symlink':
+                directory.symlink_to(project / 'media/empty', target_is_directory=True)
+        elif change == 'unexpected_child':
+            (directory / 'unexpected').write_text('unexpected')
+        elif change == 'missing_child':
+            child.unlink()
+        elif change == 'content':
+            info = child.stat()
+            child.write_text('tampered')
+            os.utime(child, ns=(info.st_atime_ns, info.st_mtime_ns))
+        elif change == 'mount_uuid':
+            mount['uuid'] = 'different-device'
+        elif change == 'mount_device':
+            mount['maj:min'] = '8:2'
+        elif change == 'mount_type':
+            mount['fstype'] = 'ext4'
+        elif change == 'mount_missing':
+            monkeypatch.setattr(mirror, 'mounted_filesystems', lambda: [])
+        approval = digest if change == 'rmdir' else 'wrong' if change == 'wrong_approval' else None
+        if error is None:
+            result = mirror.apply_mirror(project, destination, amended)
+            assert result['sha256'] and result['files_verified'] == 3
+            assert (destination / 'data/current').read_text() == 'current data'
+        else:
+            with pytest.raises(mirror.MirrorError, match=error):
+                mirror.apply_mirror(project, destination, amended, approval=approval)
+            assert (destination / mirror.MARKER).read_bytes() == marker
+            assert not (destination / mirror.CONTROL).exists()
+            assert not (destination / 'data/current').exists()
+            if change == 'rmdir':
+                assert child.read_text() == 'original'
+            elif change == 'approval':
+                assert (destination / 'obsolete').read_text() == 'must remain'
+        assert mirror.file_hash(amended) == digest
+        assert mirror.file_hash(preview['plan']) == preview['plan_digest']
+    finally:
+        database.close()
+
+
+@pytest.mark.parametrize('change', ['mount_type', 'mount_uuid', 'root_inode', 'wrong_root'])
+def test_exfat_inventory_exception_requires_validated_context(environment, change):
+    project, destination, mount = environment
+    directory = destination / '.pytest_cache'
+    directory.mkdir()
+    context = json.loads(json.dumps(mirror.destination_context(project, destination)))
+    with sqlite3.connect(':memory:') as database:
+        mirror.new_inventory(database)
+        mirror.inventory_tree(database, destination, 'destination')
+        database.execute("UPDATE inventory SET inode=inode+1 WHERE side='destination' AND kind='directory'")
+        if change == 'mount_type':
+            mount['fstype'] = 'ext4'
+        elif change == 'mount_uuid':
+            mount['uuid'] = 'different-device'
+        elif change == 'root_inode':
+            context['destination_inode'] += 1
+        root = project if change == 'wrong_root' else destination
+        with pytest.raises(mirror.MirrorError):
+            mirror.validate_inventory(database, 'destination', root, context=context)
+
+
 def test_preview_session_executes_exact_plan(environment):
     project, destination, mount = environment
     ready(environment)

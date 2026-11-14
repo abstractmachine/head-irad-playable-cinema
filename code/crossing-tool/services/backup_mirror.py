@@ -539,9 +539,18 @@ def check_context(context, *, fast=False):
     return current
 
 
-def validate_inventory(database, side, root, *, allow_paths=()):
+def validate_inventory(database, side, root, *, allow_paths=(), context=None):
     root = Path(root)
     allowed = set(allow_paths)
+    exfat_destination = False
+    removal_directories = set()
+    if side == 'destination' and context is not None:
+        if root != Path(context['destination']):
+            raise MirrorError('Inventory destination does not match the reviewed context')
+        check_context(context)
+        exfat_destination = context['mount']['fstype'] == 'exfat'
+        if exfat_destination:
+            removal_directories = {row[0] for row in database.execute("SELECT path FROM actions WHERE action='rmdir'")}
     expected_count = 0
     for row in database.execute('SELECT path,kind,size,mtime,ctime,inode,device,mode FROM inventory WHERE side=?', (side,)):
         path, kind = row[:2]
@@ -554,8 +563,16 @@ def validate_inventory(database, side, root, *, allow_paths=()):
             raise MirrorError('Inventory entry disappeared: ' + path) from error
         if kind == 'file' and identity(info) != tuple(row[2:]):
             raise MirrorError('Inventory file changed: ' + path)
-        if kind == 'directory' and (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode) or info.st_ino != row[5] or info.st_dev != row[6]):
-            raise MirrorError('Inventory directory changed type: ' + path)
+        require_inode = not exfat_destination or path in removal_directories
+        if kind == 'directory' and (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
+                        or (require_inode and info.st_ino != row[5]) or info.st_dev != row[6]):
+            reason = 'type' if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode) else 'identity'
+            observed = 'directory' if stat.S_ISDIR(info.st_mode) else 'symlink' if stat.S_ISLNK(info.st_mode) else 'regular file' if stat.S_ISREG(info.st_mode) else 'special'
+            raise MirrorError(
+                f'Inventory {side} directory {reason} changed: {path}; '
+                f'expected type=directory inode={row[5]} device={row[6]} mode={oct(row[7])}; '
+                f'observed type={observed} inode={info.st_ino} device={info.st_dev} mode={oct(info.st_mode)}'
+            )
         if kind == 'symlink' and not stat.S_ISLNK(info.st_mode):
             raise MirrorError('Source link changed type: ' + path)
     current_count = 0
@@ -853,7 +870,7 @@ def apply_mirror(project, configured, plan, *, approval=None, expected_digest=No
         control = Path(context['destination']) / CONTROL
         journal_path = control / ('journal-' + digest + '.sqlite3')
         if not journal_path.exists():
-            validate_inventory(database, 'destination', context['destination'])
+            validate_inventory(database, 'destination', context['destination'], context=context)
         checkpoint(progress, cancelled, 'copy')
         if control.is_symlink():
             raise MirrorError('Control namespace is a symlink')
@@ -880,7 +897,7 @@ def apply_mirror(project, configured, plan, *, approval=None, expected_digest=No
             validate_inventory(database, 'source', project)
             changing = [row['path'] for row in journal.execute("SELECT path FROM entries WHERE state!='pending'")]
             added_directories = [row['path'] for row in database.execute("SELECT path FROM actions WHERE action='mkdir'")]
-            validate_inventory(database, 'destination', context['destination'], allow_paths=changing + added_directories)
+            validate_inventory(database, 'destination', context['destination'], allow_paths=changing + added_directories, context=context)
             for entry in journal.execute("SELECT * FROM entries WHERE action IN ('copy','update','mkdir') ORDER BY path").fetchall():
                 path = entry['path']
                 checkpoint(progress, cancelled, 'copy', path=path)
