@@ -59,6 +59,34 @@ def test_interrupted_adoption_retries(proposal, stage):
     assert adopt_registry(project, source, target, exceptions=[], approved=True)["adopted"]
 
 
+@pytest.mark.parametrize("boundary", ["directory", "schema", "install"])
+@pytest.mark.parametrize("failure", ["enospc", "permission"])
+def test_adoption_filesystem_failure_remains_unpublished(proposal, monkeypatch, boundary, failure):
+    import errno
+    from data import resource_storage
+    project, source, target, instance, path, metadata = proposal
+    before = digest(source)
+    def fail(*args, **kwargs):
+        raise OSError(errno.ENOSPC if failure == "enospc" else errno.EACCES, "qualification adoption fault")
+    with monkeypatch.context() as patch:
+        if boundary == "directory":
+            patch.setattr(resource_storage, "create_storage_directory", fail)
+        elif boundary == "schema":
+            patch.setattr(resource_storage, "_install_schema", fail)
+        else:
+            patch.setattr(resource_storage.os, "link", fail)
+        with pytest.raises(OSError) as error:
+            adopt_registry(project, source, target, exceptions=[], approved=True)
+        assert error.value.errno == (errno.ENOSPC if failure == "enospc" else errno.EACCES)
+    assert not target.exists() and digest(source) == before
+    if target.parent.exists():
+        assert not list(target.parent.glob(".*-adopting-*"))
+    assert adopt_registry(project, source, target, exceptions=[], approved=True)["adopted"]
+    with sqlite3.connect(target) as database:
+        assert database.execute("SELECT instance_id FROM instances").fetchall() == [(instance,)]
+        assert database.execute("SELECT count(*) FROM resource_locations").fetchone()[0] == 0
+
+
 def test_missing_classification_blocks_adoption(proposal):
     project, source, target, instance, path, metadata = proposal
     metadata.pop("field")
@@ -100,6 +128,234 @@ def writable(proposal):
 def pending_id(registry):
     with sqlite3.connect(registry) as database:
         return database.execute("SELECT operation_id FROM publication_operations WHERE state NOT IN ('finished','rolled_back')").fetchone()[0]
+
+
+@pytest.mark.parametrize("boundary", ["prepared", "image-installed", "metadata-installed", "before-commit", "committed"])
+def test_publication_process_exit_recovers_from_durable_journal(writable, boundary):
+    import subprocess
+    import sys
+    project, registry, instance, content, image = writable
+    legacy = project / "data/silhouettes/catalog/movie/film/field/object_0001.json"
+    before = legacy.read_bytes(), legacy.with_suffix(".png").read_bytes()
+    child = '''
+import json
+import os
+import sys
+from services.resource_publication import publish_resource
+project, registry, instance, content, image, boundary = sys.argv[1:]
+def interrupt(state):
+    if state == boundary:
+        os._exit(73)
+publish_resource(project, registry, instance, "silhouettes", json.loads(content), image,
+                 approved=True, interrupt=interrupt)
+raise RuntimeError("fault boundary was not reached")
+'''
+    result = subprocess.run([sys.executable, "-c", child, str(project), str(registry), instance,
+                             json.dumps(content), str(image), boundary], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 73, result.stderr
+    operation = pending_id(registry)
+    with sqlite3.connect(registry) as database:
+        assert database.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert database.execute("SELECT count(*) FROM instances").fetchone()[0] == 1
+    if boundary != "prepared":
+        with pytest.raises(ValueError, match="recovery"):
+            resolve_silhouette(project, instance, registry=registry)
+    for repeat in range(2):
+        assert recover_publication(project, registry, operation, approved=True)["state"] == "finished"
+    current = resolve_silhouette(project, instance, registry=registry)
+    assert current["record"]["instance_id"] == instance and current["revision"] == 1
+    assert current["image"].read_bytes() == image.read_bytes()
+    assert before == (legacy.read_bytes(), legacy.with_suffix(".png").read_bytes())
+
+
+@pytest.mark.parametrize("boundary", ["prepared", "image-installed"])
+@pytest.mark.parametrize("member", ["record_path", "image_path"])
+def test_interrupted_publication_refuses_changed_destination(writable, boundary, member):
+    project, registry, instance, content, image = writable
+    def interrupt(state):
+        if state == boundary:
+            raise RuntimeError("qualification interruption")
+    with pytest.raises(RuntimeError, match="qualification interruption"):
+        publish_resource(project, registry, instance, "silhouettes", content, image,
+                         approved=True, interrupt=interrupt)
+    operation = pending_id(registry)
+    with sqlite3.connect(registry) as database:
+        details = json.loads(database.execute("SELECT details FROM publication_operations WHERE operation_id=?", (operation,)).fetchone()[0])
+        bindings = database.execute("SELECT instance_id,registration_key FROM instances").fetchall()
+    target = project / details[member]
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"unrelated changed destination")
+    with pytest.raises(ValueError, match="destination changed"):
+        recover_publication(project, registry, operation, approved=True)
+    assert target.read_bytes() == b"unrelated changed destination"
+    with sqlite3.connect(registry) as database:
+        assert database.execute("SELECT instance_id,registration_key FROM instances").fetchall() == bindings
+        assert database.execute("SELECT count(*) FROM resource_locations").fetchone()[0] == 0
+        assert database.execute("SELECT state FROM publication_operations WHERE operation_id=?", (operation,)).fetchone()[0] in ("prepared", "installing")
+
+
+@pytest.mark.parametrize("member", ["record_path", "image_path"])
+def test_publication_rollback_refuses_changed_replacement(writable, member):
+    project, registry, instance, content, image = writable
+    publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+    def interrupt(state):
+        if state == "image-installed":
+            raise RuntimeError("qualification interruption")
+    with pytest.raises(RuntimeError, match="qualification interruption"):
+        publish_resource(project, registry, instance, "silhouettes", {**content, "confidence": 0.8}, image,
+                         approved=True, expected_revision=1, interrupt=interrupt)
+    operation = pending_id(registry)
+    with sqlite3.connect(registry) as database:
+        details = json.loads(database.execute("SELECT details FROM publication_operations WHERE operation_id=?", (operation,)).fetchone()[0])
+    target = project / details[member]
+    target.write_bytes(b"independently changed replacement")
+    with pytest.raises(ValueError, match="destination changed"):
+        recover_publication(project, registry, operation, approved=True, action="rollback")
+    assert target.read_bytes() == b"independently changed replacement"
+    with sqlite3.connect(registry) as database:
+        assert database.execute("SELECT state FROM publication_operations WHERE operation_id=?", (operation,)).fetchone()[0] == "installing"
+        assert database.execute("SELECT revision FROM resource_locations").fetchone()[0] == 1
+
+
+def test_committed_publication_explicitly_blocks_pair_rollback(writable):
+    project, registry, instance, content, image = writable
+    def interrupt(state):
+        if state == "committed":
+            raise RuntimeError("qualification committed boundary")
+    with pytest.raises(RuntimeError, match="committed boundary"):
+        publish_resource(project, registry, instance, "silhouettes", content, image,
+                         approved=True, interrupt=interrupt)
+    operation = pending_id(registry)
+    with pytest.raises(ValueError, match="Committed publication"):
+        recover_publication(project, registry, operation, approved=True, action="rollback")
+    with sqlite3.connect(registry) as database:
+        assert database.execute("SELECT revision FROM resource_locations").fetchone()[0] == 1
+        assert database.execute("SELECT state FROM publication_operations").fetchone()[0] == "committed"
+    assert recover_publication(project, registry, operation, approved=True)["state"] == "finished"
+
+
+@pytest.mark.parametrize("boundary", ["schema", "install"])
+@pytest.mark.parametrize("failure", ["enospc", "permission"])
+def test_unpublished_index_failure_preserves_active_index(writable, monkeypatch, boundary, failure):
+    import errno
+    from services import illustration_index as indexes
+    project, registry, instance, content, image = writable
+    publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+    active = indexes.rebuild_index(project, "silhouettes", "movie", registry=registry)["path"]
+    before = digest(active), digest(registry)
+    staged = project / "outputs/maintenance/qualification/replacement.sqlite3"
+    def fail(*args, **kwargs):
+        raise OSError(errno.ENOSPC if failure == "enospc" else errno.EACCES, "qualification index fault")
+    with monkeypatch.context() as patch:
+        if boundary == "schema":
+            patch.setattr(indexes, "_create_schema", fail)
+        else:
+            patch.setattr(indexes.os, "replace", fail)
+        with pytest.raises(OSError) as error:
+            indexes.rebuild_index(project, "silhouettes", "movie", registry=registry, destination=staged)
+        assert error.value.errno == (errno.ENOSPC if failure == "enospc" else errno.EACCES)
+    assert not staged.exists()
+    assert not list(staged.parent.glob(".*.tmp"))
+    assert (digest(active), digest(registry)) == before
+    assert indexes.query_page(project, "silhouettes", "movie")["records"][0]["instance_id"] == instance
+    assert indexes.rebuild_index(project, "silhouettes", "movie", registry=registry, destination=staged)["status"] == "ready"
+    with sqlite3.connect(staged) as database:
+        assert database.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert json.loads(database.execute("SELECT payload FROM records").fetchone()[0])["instance_id"] == instance
+    assert (digest(active), digest(registry)) == before
+
+
+@pytest.mark.parametrize("fault", ["directory", "metadata", "stage_copy", "install_copy", "registry_commit", "invalidation", "cleanup", "journal_prepare", "journal_install", "journal_finish"])
+@pytest.mark.parametrize("failure", ["enospc", "permission"])
+def test_publication_filesystem_fault_is_durable_and_retryable(writable, monkeypatch, fault, failure):
+    import errno
+    from contextlib import contextmanager
+    from services import resource_publication as publication
+    from services import illustration_index
+    from data import annotate
+    project, registry, instance, content, image = writable
+    publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+    original = resolve_silhouette(project, instance, registry=registry)
+    before = original["metadata"].read_bytes(), original["image"].read_bytes()
+    legacy = project / "data/silhouettes/catalog/movie/film/field/object_0001.json"
+    legacy_bytes = legacy.read_bytes(), legacy.with_suffix(".png").read_bytes()
+    with sqlite3.connect(registry) as database:
+        identities = database.execute("SELECT * FROM instances").fetchall()
+        reservations = database.execute("SELECT * FROM shots").fetchall()
+    changed = {**content, "confidence": 0.75}
+    raised = False
+    def fail():
+        nonlocal raised
+        raised = True
+        raise OSError(errno.ENOSPC if failure == "enospc" else errno.EACCES, "qualification fault")
+    with monkeypatch.context() as patch:
+        if fault == "directory":
+            patch.setattr(publication, "create_storage_directory", lambda *args, **kwargs: fail())
+        elif fault == "metadata":
+            patch.setattr(annotate, "atomic_write_text", lambda *args, **kwargs: fail())
+        elif fault in ("stage_copy", "install_copy"):
+            copy = publication._copy
+            def failing_copy(source, destination):
+                if (fault == "stage_copy" and destination.name == "new.png"
+                        or fault == "install_copy" and destination.name.startswith(".publication-")):
+                    destination.write_bytes(b"incomplete fixture write")
+                    fail()
+                return copy(source, destination)
+            patch.setattr(publication, "_copy", failing_copy)
+        elif fault == "registry_commit":
+            patch.setattr(ResourceStore, "commit_location", lambda *args, **kwargs: fail())
+        elif fault == "invalidation":
+            patch.setattr(illustration_index, "invalidate_index", lambda *args, **kwargs: fail())
+        elif fault == "cleanup":
+            patch.setattr(publication, "_cleanup", lambda *args, **kwargs: fail())
+        else:
+            transaction = ResourceStore.transaction
+            class FaultConnection:
+                def __init__(self, database):
+                    self.database = database
+                def __getattr__(self, name):
+                    return getattr(self.database, name)
+                def execute(self, statement, *args, **kwargs):
+                    matches = (fault == "journal_prepare" and statement.startswith("INSERT INTO publication_operations")
+                               or fault == "journal_install" and "SET state='installing'" in statement
+                               or fault == "journal_finish" and "SET state='finished'" in statement)
+                    if matches:
+                        fail()
+                    return self.database.execute(statement, *args, **kwargs)
+            @contextmanager
+            def faulty_transaction(store):
+                with transaction(store) as database:
+                    yield FaultConnection(database)
+            patch.setattr(ResourceStore, "transaction", faulty_transaction)
+        with pytest.raises(OSError) as error:
+            publish_resource(project, registry, instance, "silhouettes", changed, image,
+                             expected_revision=1, approved=True)
+        assert error.value.errno == (errno.ENOSPC if failure == "enospc" else errno.EACCES)
+    assert raised
+    rows = publication_status(project, registry, instance_id=instance)
+    operation = next((row for row in rows if row["details"]["metadata"].get("confidence") == 0.75), None)
+    if operation is None or operation["state"] == "prepared":
+        current = resolve_silhouette(project, instance, registry=registry)
+        assert (current["metadata"].read_bytes(), current["image"].read_bytes()) == before
+    elif operation["state"] in ("installing", "files_published", "committed"):
+        with pytest.raises(ValueError, match="recovery"):
+            resolve_silhouette(project, instance, registry=registry)
+    else:
+        assert operation["state"] == "finished"
+    if operation is None:
+        publish_resource(project, registry, instance, "silhouettes", changed, image,
+                         expected_revision=1, approved=True)
+    else:
+        for repeat in range(2):
+            assert recover_publication(project, registry, operation["operation_id"], approved=True)["state"] == "finished"
+    current = resolve_silhouette(project, instance, registry=registry)
+    assert current["record"]["confidence"] == 0.75 and current["revision"] == 2
+    assert current["image"].read_bytes() == before[1]
+    assert (legacy.read_bytes(), legacy.with_suffix(".png").read_bytes()) == legacy_bytes
+    with sqlite3.connect(registry) as database:
+        assert database.execute("SELECT * FROM instances").fetchall() == identities
+        assert database.execute("SELECT * FROM shots").fetchall() == reservations
+        assert database.execute("SELECT count(*) FROM publication_operations WHERE state!='finished'").fetchone()[0] == 0
 
 
 def test_collection_journal_supports_media_without_instance(writable):

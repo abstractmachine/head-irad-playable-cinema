@@ -9900,10 +9900,48 @@ def build_parser():
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
+    p_annotate = sub.add_parser("annotate", help="Annotate shots or scenes (LLM)")
+    p_backup = sub.add_parser("backup", help="Synchronize project folder to an external backup drive")
+    p_book = sub.add_parser("book", help="Manage books (create, delete, list, import PDF)")
+    p_engraving = sub.add_parser("engraving", help="Engraving generation utilities")
+    p_generate = sub.add_parser("generate", help="Generate content from project data (composition, mosaic, cloud)")
+    p_index = sub.add_parser(
+        "index",
+        help="Build and inspect annotation-embedding indexes and related indexes",
+    )
+    p_media = sub.add_parser(
+        "media",
+        help="Manage content: videos, subtitles, posters, and thumbnails",
+    )
+    p_meta = sub.add_parser("metadata", help="Manage media metadata")
+    p_search = sub.add_parser(
+        "search",
+        help="Search shot annotations",
+        epilog=(
+            "query modes:\n"
+            "  crossing search \"<phrase>\"          semantic search across all fields\n"
+            "  crossing search text \"<phrase>\"     search the annotation text field\n"
+            "  crossing search vocabulary <field>  list distinct values in a field\n"
+            "  crossing search vocabulary --all-fields  vocabulary for every field (JSON)\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_shotlist = sub.add_parser("shotlist", help="Manage shot and scene cuts and annotations")
     p_silhouette = sub.add_parser("silhouette", help="Read-only silhouette archival planning")
+    p_subtitles = sub.add_parser("subtitles", help="Subtitle analysis tools")
+    p_sync = sub.add_parser(
+        "sync",
+        help="Sync Visualizer service tools: audit indexes, test frame matching",
+    )
+    p_tool = sub.add_parser("tool", help="Tool settings: version, path, name, models, API keys")
+    p_visualizer = sub.add_parser(
+        "visualizer",
+        help="Open a visualizer GUI (project, shotlist, mosaic, cloud, illustration, sync)",
+    )
+
     silhouette_sub = p_silhouette.add_subparsers(dest="silhouette_subcommand", required=True)
     p_archive = silhouette_sub.add_parser("archive", help="Plan or explicitly execute journaled superseded archival")
-    p_archive.add_argument('archive_operation', nargs='?', default='plan', choices=['plan','initialize','preflight','protected-baseline','protected-verify','population-verify','pilot-select','pilot-run','apply','resume','status','verify','rollback','prune'])
+    p_archive.add_argument('archive_operation', nargs='?', default='plan', choices=['apply','initialize','pilot-run','pilot-select','plan','population-verify','preflight','protected-baseline','protected-verify','prune','resume','rollback','status','verify'])
     p_archive.add_argument('--apply', action='store_true', help='Execute an existing preflighted immutable plan; never create a plan')
     p_archive.add_argument('--pilot', action='store_true', help='Restrict movement/verification/rollback to journal-selected pilot records')
     p_archive.add_argument("--project", default=None, metavar="PATH", help="Project path (default: current project)")
@@ -9921,7 +9959,6 @@ def build_parser():
     p_reference.set_defaults(func=cmd_silhouette_reference)
 
     # annotate command: annotate shots or scenes (LLM)
-    p_annotate = sub.add_parser("annotate", help="Annotate shots or scenes (LLM)")
     p_annotate.set_defaults(func=_shotlist_annotate)
     annotate_sub = p_annotate.add_subparsers(dest="annotate_type", required=False)
 
@@ -10126,7 +10163,6 @@ def build_parser():
     # (moved under 'crossing tool model' — see tool_sub below)
 
     # generate command group — composition, mosaic, cloud
-    p_generate = sub.add_parser("generate", help="Generate content from project data (composition, mosaic, cloud)")
     p_generate.set_defaults(func=cmd_generate)
     generate_sub = p_generate.add_subparsers(dest="generate_subcommand", required=True)
 
@@ -10434,10 +10470,6 @@ def build_parser():
     _add_notify_args(p_film_title)
 
     # index command group
-    p_index = sub.add_parser(
-        "index",
-        help="Build and inspect annotation-embedding indexes and related indexes",
-    )
     p_index.set_defaults(func=cmd_index)
     index_sub = p_index.add_subparsers(dest="index_subcommand", required=True)
 
@@ -10731,18 +10763,18 @@ def build_parser():
         help="Extract, audit, and manage the silhouette object catalog (transparent PNGs)",
         epilog=(
             "Subcommands:\n"
-            "  extract   Extract transparent PNG objects for a label\n"
             "  audit     Show catalog statistics\n"
-            "  list      Page active Illustration-index candidates\n"
-            "  summary   Summarize active candidates for one term\n"
-            "  rank      Rank active candidates from persisted metadata\n"
-            "  cluster   Group active candidates by persisted variant metadata\n"
             "  canonical-search-audit  Revalidate historical source-shot membership with current search\n"
             "  canonical-search-provenance  Persist a completed canonical audit as authoritative provenance\n"
+            "  clear     Delete catalog entries\n"
+            "  cluster   Group active candidates by persisted variant metadata\n"
+            "  extract   Extract transparent PNG objects for a label\n"
+            "  list      Page active Illustration-index candidates\n"
             "  morphology-audit  Reclassify historical QUESTIONABLE_NUMBER rows\n"
-            "  number-direction-audit  Read-only forensic audit of reverse-direction number variants\n"
             "  number-ambiguity-audit  Read-only forensic audit of semantic number ambiguities\n"
-            "  clear     Delete catalog entries\n\n"
+            "  number-direction-audit  Read-only forensic audit of reverse-direction number variants\n"
+            "  rank      Rank active candidates from persisted metadata\n"
+            "  summary   Summarize active candidates for one term\n\n"
             "Examples:\n"
             "  crossing index silhouette extract horse --field animals --all\n"
             "  crossing index silhouette extract horse --field animals --title Django\n"
@@ -11775,10 +11807,6 @@ def build_parser():
     _add_verbose_arg(p_ann_migrate, help="Print each file action (rename / already / missing)")
 
     # media command group
-    p_media = sub.add_parser(
-        "media",
-        help="Manage content: videos, subtitles, posters, and thumbnails",
-    )
     p_media.set_defaults(func=cmd_media)
     media_sub = p_media.add_subparsers(dest="media_subcommand", required=True)
 
@@ -11805,7 +11833,6 @@ def build_parser():
     p_import.set_defaults(func=cmd_import, _parser=p_import)
 
     # metadata command group
-    p_meta = sub.add_parser("metadata", help="Manage media metadata")
     p_meta.set_defaults(func=cmd_metadata)
     meta_sub = p_meta.add_subparsers(dest="metadata_subcommand", required=True)
 
@@ -11941,18 +11968,6 @@ def build_parser():
     p_remove.add_argument("--confirm", action="store_true", help="Actually delete (default is a dry run)")
 
     # search command
-    p_search = sub.add_parser(
-        "search",
-        help="Search shot annotations",
-        epilog=(
-            "query modes:\n"
-            "  crossing search \"<phrase>\"          semantic search across all fields\n"
-            "  crossing search text \"<phrase>\"     search the annotation text field\n"
-            "  crossing search vocabulary <field>  list distinct values in a field\n"
-            "  crossing search vocabulary --all-fields  vocabulary for every field (JSON)\n"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
     p_search.add_argument(
         "query",
         help=(
@@ -12016,7 +12031,6 @@ def build_parser():
     p_search.set_defaults(func=cmd_search)
 
     # shotlist command group
-    p_shotlist = sub.add_parser("shotlist", help="Manage shot and scene cuts and annotations")
     p_shotlist.set_defaults(func=cmd_shotlist)
     p_shotlist.add_argument("--visualizer", action="store_true", help="Open the shot visualizer GUI (all films)")
     _add_media_arg(p_shotlist)
@@ -12173,7 +12187,6 @@ def build_parser():
     _add_media_arg(p_sub_list)
 
     # subtitles command group (analysis: align to shots)
-    p_subtitles = sub.add_parser("subtitles", help="Subtitle analysis tools")
     p_subtitles.set_defaults(func=cmd_subtitles)
     subtitles_sub = p_subtitles.add_subparsers(dest="subtitles_subcommand", required=True)
 
@@ -12187,7 +12200,6 @@ def build_parser():
     _add_media_arg(p_subtitles_align)
 
     # tool command group (version, path, name, key)
-    p_tool = sub.add_parser("tool", help="Tool settings: version, path, name, models, API keys")
     p_tool.set_defaults(func=cmd_tool)
     tool_sub = p_tool.add_subparsers(dest="tool_subcommand", required=True)
 
@@ -12297,7 +12309,6 @@ def build_parser():
     )
 
     # backup command group
-    p_backup = sub.add_parser("backup", help="Synchronize project folder to an external backup drive")
     p_backup.set_defaults(func=cmd_backup)
     _add_dry_run_arg(p_backup, help="Preview guarded mirror synchronization; never apply changes")
     backup_sub = p_backup.add_subparsers(dest="backup_subcommand", required=False)
@@ -12342,10 +12353,6 @@ def build_parser():
     )
 
     # visualizer command group — shortcut to all visualizer GUIs
-    p_visualizer = sub.add_parser(
-        "visualizer",
-        help="Open a visualizer GUI (project, shotlist, mosaic, cloud, illustration, sync)",
-    )
     p_visualizer.set_defaults(func=cmd_visualizer, visualizer_subcommand="project")
     visualizer_sub = p_visualizer.add_subparsers(dest="visualizer_subcommand", required=False)
 
@@ -12444,7 +12451,6 @@ def build_parser():
     )
 
     # ── engraving command ─────────────────────────────────────────────────────
-    p_engraving = sub.add_parser("engraving", help="Engraving generation utilities")
     p_engraving.set_defaults(func=cmd_engraving, engraving_subcommand=None)
     engraving_sub = p_engraving.add_subparsers(dest="engraving_subcommand", required=True)
 
@@ -12976,7 +12982,6 @@ def build_parser():
     p_bench_evidence.set_defaults(func=cmd_engraving)
 
     # ── book command ─────────────────────────────────────────────────────────
-    p_book = sub.add_parser("book", help="Manage books (create, delete, list, import PDF)")
     p_book.set_defaults(func=cmd_book, book_subcommand=None)
     book_sub = p_book.add_subparsers(dest="book_subcommand", required=False)
 
@@ -13005,10 +13010,6 @@ def build_parser():
     p_book_import.set_defaults(func=cmd_book)
 
     # sync command group — frame-match service and catalog tools
-    p_sync = sub.add_parser(
-        "sync",
-        help="Sync Visualizer service tools: audit indexes, test frame matching",
-    )
     p_sync.set_defaults(func=cmd_sync, sync_subcommand=None)
     sync_sub = p_sync.add_subparsers(dest="sync_subcommand", required=True)
 
@@ -13091,6 +13092,17 @@ def build_parser():
         visualizer_sub.choices[name].add_argument("--resource-registry", default=None, metavar="PATH", help="Explicit committed resource registry")
     p_vis_shot.add_argument("--approved-resource-edit", action="store_true", help="Explicit approval for controlled registered shotlist commits")
     p_sl_scene_detect.add_argument("--approved-resource-edit", action="store_true", help="Explicit approval for controlled registered shotlist commits")
+
+    pending_parsers = [parser]
+    while pending_parsers:
+        for action in pending_parsers.pop()._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                choices = sorted(action.choices.items())
+                action.choices.clear()
+                action.choices.update(choices)
+                action._choices_actions.sort(key=lambda choice: choice.dest)
+                pending_parsers.extend(action.choices.values())
+
     return parser
 
 

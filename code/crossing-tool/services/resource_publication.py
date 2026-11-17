@@ -552,6 +552,17 @@ def _resume_dirty_propagation(project, registry, operation_id, *, approved=False
     return {"activated": True, "updated": len(details["completed"]), "state": "finished", "operation_id": operation_id}
 
 
+def _check_publication_destinations(project, paths, details):
+    for key, checksum in (("metadata", "record_sha256"), ("image", "image_sha256")):
+        target = paths[key]
+        if os.path.lexists(target):
+            observed = digest(locations.project_file(project, target))
+            if observed not in (details[checksum], details["before"].get(key)):
+                raise ValueError("Publication destination changed; explicit conflict resolution required")
+        elif key in details["before"]:
+            raise ValueError("Publication destination changed; previous resource disappeared")
+
+
 def _finish(store, database, binding, operation_id, kind, mode, details, interrupt=None):
     from PIL import Image
     stage, paths = _operation_paths(store, binding, operation_id, kind, mode, details)
@@ -568,6 +579,7 @@ def _finish(store, database, binding, operation_id, kind, mode, details, interru
         if picture.format != "PNG":
             raise ValueError("Prepared image must be PNG")
         picture.verify()
+    _check_publication_destinations(store.project, paths, details)
     database.execute("UPDATE publication_operations SET state='installing' WHERE operation_id=?", (operation_id,))
     database.commit()
     create_storage_directory(store.project, paths["metadata"].parent)
@@ -621,6 +633,7 @@ def recover_publication(project, registry, operation_id, *, approved=False, acti
         if action == "rollback":
             if row["state"] == "committed":
                 raise ValueError("Committed publication cannot be implicitly rolled back")
+            _check_publication_destinations(project, paths, details)
             for key, backup in (("metadata", "previous.json"), ("image", "previous.png")):
                 if key in details["before"] and digest(locations.project_file(project, stage / backup)) != details["before"][key]:
                     raise ValueError("Publication before-image corrupted")
